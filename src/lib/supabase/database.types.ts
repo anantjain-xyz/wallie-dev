@@ -1707,6 +1707,160 @@ export type Database = {
           },
         ]
       }
+      factory_run_credential_receipts: {
+        Row: {
+          agent_provider: string
+          attempt_count: number
+          binding_id: string
+          binding_version: number
+          factory_id: string
+          job_id: string
+          material_revision: number
+          resolved_at: string
+          run_id: string
+          service_principal_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          agent_provider: string
+          attempt_count: number
+          binding_id: string
+          binding_version: number
+          factory_id: string
+          job_id: string
+          material_revision: number
+          resolved_at?: string
+          run_id: string
+          service_principal_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          agent_provider?: string
+          attempt_count?: number
+          binding_id?: string
+          binding_version?: number
+          factory_id?: string
+          job_id?: string
+          material_revision?: number
+          resolved_at?: string
+          run_id?: string
+          service_principal_id?: string
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_run_credential_receipts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_run_credential_receipts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
+            foreignKeyName: "factory_run_credential_receipts_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_run_credential_receipts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_run_credential_receipts_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      factory_secret_bindings: {
+        Row: {
+          agent_provider: string
+          created_at: string
+          created_by_member_id: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id: string
+          open_code_provider_id: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          service_principal_id: string
+          version: number
+          workspace_id: string
+          workspace_secret_id: string
+        }
+        Insert: {
+          agent_provider: string
+          created_at?: string
+          created_by_member_id: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id?: string
+          open_code_provider_id?: string | null
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          service_principal_id: string
+          version?: number
+          workspace_id: string
+          workspace_secret_id: string
+        }
+        Update: {
+          agent_provider?: string
+          created_at?: string
+          created_by_member_id?: string
+          execution_grant_id?: string
+          factory_agent_id?: string
+          factory_id?: string
+          id?: string
+          open_code_provider_id?: string | null
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          service_principal_id?: string
+          version?: number
+          workspace_id?: string
+          workspace_secret_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_secret_bindings_execution_grant_id_fkey"
+            columns: ["execution_grant_id"]
+            isOneToOne: false
+            referencedRelation: "factory_execution_grants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_secret_bindings_workspace_id_factory_id_factory_ag_fkey"
+            columns: ["workspace_id", "factory_id", "factory_agent_id"]
+            isOneToOne: false
+            referencedRelation: "factory_agents"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_secret_bindings_workspace_id_factory_id_service_pr_fkey"
+            columns: ["workspace_id", "factory_id", "service_principal_id"]
+            isOneToOne: false
+            referencedRelation: "service_principals"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_skill_revisions: {
         Row: {
           content_md: string
@@ -5836,6 +5990,8 @@ export type Database = {
           encrypted_value: string
           id: string
           key: string
+          material_revision: number
+          material_rotated_at: string | null
           updated_at: string
           value_preview: string | null
           workspace_id: string
@@ -5846,6 +6002,8 @@ export type Database = {
           encrypted_value: string
           id?: string
           key: string
+          material_revision?: number
+          material_rotated_at?: string | null
           updated_at?: string
           value_preview?: string | null
           workspace_id: string
@@ -5856,6 +6014,8 @@ export type Database = {
           encrypted_value?: string
           id?: string
           key?: string
+          material_revision?: number
+          material_rotated_at?: string | null
           updated_at?: string
           value_preview?: string | null
           workspace_id?: string
@@ -6415,6 +6575,19 @@ export type Database = {
           run_ids: string[]
         }[]
       }
+      check_factory_credential_binding: {
+        Args: {
+          p_agent_model: string
+          p_agent_provider: string
+          p_binding_id: string
+          p_execution_grant_id: string
+          p_execution_grant_version: number
+          p_factory_agent_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       claim_expired_session_attachments: {
         Args: { max_count?: number }
         Returns: {
@@ -6712,6 +6885,41 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_agent_prompt_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      create_factory_secret_binding: {
+        Args: {
+          p_actor_user_id: string
+          p_agent_provider: string
+          p_execution_grant_id: string
+          p_execution_grant_version: number
+          p_factory_agent_id: string
+          p_factory_id: string
+          p_open_code_provider_id?: string
+          p_workspace_id: string
+          p_workspace_secret_id: string
+        }
+        Returns: {
+          agent_provider: string
+          created_at: string
+          created_by_member_id: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id: string
+          open_code_provider_id: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          service_principal_id: string
+          version: number
+          workspace_id: string
+          workspace_secret_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_secret_bindings"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -7333,6 +7541,42 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      list_factory_bindable_workspace_secrets: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          id: string
+          key: string
+        }[]
+      }
+      list_factory_secret_bindings: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          agent_provider: string
+          created_at: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id: string
+          material_revision: number
+          open_code_provider_id: string
+          revoked_at: string
+          rotated_at: string
+          secret_key: string
+          service_principal_id: string
+          status: string
+          version: number
+          workspace_id: string
+          workspace_secret_id: string
+        }[]
       }
       list_run_artifacts: {
         Args: {
@@ -8036,6 +8280,22 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      resolve_factory_run_credential: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          agent_provider: string
+          binding_id: string
+          binding_version: number
+          encrypted_value: string
+          material_revision: number
+          service_principal_id: string
+        }[]
+      }
       restart_session_once_with_first_job: {
         Args: {
           agent_model_name: string
@@ -8145,6 +8405,37 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_factory_secret_binding: {
+        Args: {
+          p_actor_user_id: string
+          p_binding_id: string
+          p_expected_version: number
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          agent_provider: string
+          created_at: string
+          created_by_member_id: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id: string
+          open_code_provider_id: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          service_principal_id: string
+          version: number
+          workspace_id: string
+          workspace_secret_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_secret_bindings"
           isOneToOne: true
           isSetofReturn: false
         }

@@ -643,6 +643,31 @@ it("sanitizes private runtime-file transport failures and still removes the dire
   expect(JSON.stringify(sandbox.calls)).not.toContain(secret);
 });
 
+it.each(["working-tree", "committed"] as const)(
+  "rejects %s recovery when scoped scratch cleanup cannot be verified",
+  async (mode) => {
+    const sandbox = new FakeSandbox();
+    const baseSha = "a".repeat(40);
+    const secret = "scoped-scratch-fixture-secret";
+    sandbox.scriptExec("bash", [{ stream: "stdout", data: `UNCHANGED\n${baseSha}` }]);
+    sandbox.scriptExec("rm", [{ stream: "stderr", data: secret }], { exitCode: 1 });
+    const input = { sandbox, baseSha, scopedCredential: true as const, sensitiveValues: [secret] };
+    const capture =
+      mode === "committed"
+        ? captureCommittedSourceCheckpoint({ ...input, headSha: "b".repeat(40) })
+        : captureSourceCheckpoint(input);
+
+    await expect(capture).rejects.toMatchObject({
+      name: "ScopedCredentialCleanupError",
+      message: "Could not verify cleanup of the scoped credential in the sandbox.",
+    });
+    expect([...sandbox.files].find(([path]) => path.endsWith("/sensitive.json"))?.[1].mode).toBe(
+      0o600,
+    );
+    expect(JSON.stringify(sandbox.calls)).not.toContain(secret);
+  },
+);
+
 it("keeps the 4 MiB bundle limit without discarding oversized source", async () => {
   const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
   try {

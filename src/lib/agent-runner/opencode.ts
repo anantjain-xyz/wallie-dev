@@ -4,7 +4,8 @@ import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunUsage, AgentRunner, AgentRunnerStartInput } from "./types";
 import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
-import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { type AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-credentials";
 import { ToolEventTracker } from "./tool-event-tracker";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 import { isTokenCount, normalizeMeasuredUsage } from "./usage";
@@ -65,13 +66,15 @@ export class OpenCodeRunner implements AgentRunner {
   }
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
-    const safety = new AgentOutputSafety(input.secrets, input.onSensitiveValue);
-    return safety.events(this.startUnsafe(input, safety), input.signal);
+    return withRunnerCredentials(input, (safety, material) =>
+      this.startUnsafe(input, safety, material),
+    );
   }
 
   private async *startUnsafe(
     input: AgentRunnerStartInput,
     safety: AgentOutputSafety,
+    material?: ScopedRunnerMaterial,
   ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
     if (!sandbox) {
@@ -96,7 +99,9 @@ export class OpenCodeRunner implements AgentRunner {
       safety.addSecret(credential.secret);
     }
     const authEntries = buildOpenCodeAuthEntries(auth, this.modelProviderId);
-    await sandbox.writeFile(authFile, `${JSON.stringify(authEntries)}\n`, { mode: 0o600 });
+    const authJson = `${JSON.stringify(authEntries)}\n`;
+    if (material) await material.writeFile(authFile, authJson);
+    else await sandbox.writeFile(authFile, authJson, { mode: 0o600 });
     input.signal?.throwIfAborted();
 
     const cliArgs = ["run", "--format", "json", "--model", this.model];
@@ -105,11 +110,14 @@ export class OpenCodeRunner implements AgentRunner {
     }
 
     const shellCmd = `opencode ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
-    const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
+    const options = {
       cwd: sandbox.repoPath,
       env: { CI: "1", XDG_DATA_HOME: dataHome, ...WALLIE_GIT_IDENTITY_ENV },
       signal: input.signal,
-    });
+    };
+    const proc = material
+      ? await material.exec("bash", ["-lc", shellCmd], options)
+      : await sandbox.exec("bash", ["-lc", shellCmd], options);
 
     const secrets = [
       auth.credential?.secret,

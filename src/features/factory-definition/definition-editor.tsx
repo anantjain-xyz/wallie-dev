@@ -18,11 +18,13 @@ import {
 import { CandidateTestPanel } from "@/features/factory-definition/candidate-test-panel";
 import { FactoryRevisionHistory } from "@/features/factory-definition/revision-history";
 import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff";
+import { ServiceCredentialsPanel } from "@/features/factory-definition/service-credentials-panel";
 import { StructuredFactoryDefinitionEditor } from "@/features/factory-definition/structured-editor";
 import { useCandidateTests } from "@/features/factory-definition/use-candidate-tests";
 import type { CapabilityRepository } from "@/features/settings/sandbox-capability-section";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
+import { parseOpenCodeModelId } from "@/lib/agent-config/contracts";
 import {
   factoryEditorDocumentResponseSchema,
   factoryEditorHistoryResponseSchema,
@@ -33,6 +35,7 @@ import {
   type FactoryEditorSnapshot,
 } from "@/lib/factory-definitions/editor-contracts";
 import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
+import type { FactorySecretBindingScope } from "@/lib/factory-secret-bindings/contracts";
 import { workspaceFactoryDefinitionPath, workspaceSettingsPath } from "@/lib/routes";
 
 type Selection = ({ revision: string } | { draft: string }) & { test?: string };
@@ -50,6 +53,23 @@ const activationSavedSchema = z.object({ activation: z.object({ revisionId: z.st
 
 function sourceText(source: SerialFactoryDefinition) {
   return JSON.stringify(source, null, 2);
+}
+
+function credentialScopeFrom(
+  target: FactoryEditorDocument | null | undefined,
+): FactorySecretBindingScope | null {
+  const definition = target?.bundle;
+  if (!definition?.executionGrant || !definition.implementationAgent) return null;
+  const { provider, model } = definition.agent;
+  const scope = {
+    bindingId: definition.credentialBindingId,
+    grantId: definition.executionGrant.id,
+    grantVersion: definition.executionGrant.version,
+    agentId: definition.implementationAgent.agentId,
+  };
+  if (provider !== "opencode") return { ...scope, provider };
+  const parsed = parseOpenCodeModelId(model);
+  return parsed ? { ...scope, provider, openCodeProviderId: parsed.providerId } : null;
 }
 
 function editFrom(
@@ -162,6 +182,12 @@ export function FactoryDefinitionEditor({
         : undefined,
   });
   const capabilityTarget = selected ?? snapshot?.draft ?? snapshot?.published;
+  const credentialScope = credentialScopeFrom(capabilityTarget);
+  const workingTarget = snapshot?.draft ?? snapshot?.published;
+  const canUseCredentialBinding =
+    Boolean(edit && workingTarget && workingTarget.id === capabilityTarget?.id) &&
+    !locked &&
+    !dirty;
   const anchorCandidate =
     historyCandidate && selection?.test ? historyCandidate : (draft ?? historyCandidate);
   const anchorReady =
@@ -398,6 +424,17 @@ export function FactoryDefinitionEditor({
     setPreview(null);
     setDiagnostics([]);
     setFeedback(null);
+  }
+
+  function useCredentialBinding(id: string) {
+    if (!edit || !canUseCredentialBinding) return;
+    const value = { ...edit.original, credentialBindingId: id };
+    replaceInput(
+      edit.input.kind === "structured"
+        ? { kind: "structured", value }
+        : { kind: "json", text: sourceText(value) },
+    );
+    setFeedback({ kind: "success", text: "Credential binding added. Save the draft to apply it." });
   }
 
   return (
@@ -671,6 +708,25 @@ export function FactoryDefinitionEditor({
                 </p>
               )}
             </PageSection>
+            {capabilityTarget?.bundle.executionGrant && history ? (
+              <PageSection anchorId="service-credentials" title="Service credentials">
+                {credentialScope ? (
+                  <ServiceCredentialsPanel
+                    key={capabilityTarget.id}
+                    endpoint={`/api/workspaces/${workspaceId}/factories/${history.factoryId}/secret-bindings`}
+                    scope={credentialScope}
+                    workspaceSlug={workspaceSlug}
+                    canUseBinding={canUseCredentialBinding}
+                    onUseBinding={useCredentialBinding}
+                  />
+                ) : (
+                  <p className="type-secondary text-muted">
+                    Save an implementation agent revision and a supported model to attach a service
+                    credential.
+                  </p>
+                )}
+              </PageSection>
+            ) : null}
             {capabilityTarget ? (
               <PageSection
                 anchorId="capability-check"

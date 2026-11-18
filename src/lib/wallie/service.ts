@@ -219,6 +219,38 @@ export function assertSessionFirstRunReady(input: {
   return input.agentConfig;
 }
 
+export async function assertSessionFactoryCredentialReady(input: {
+  admin: AdminClient;
+  definition: PinnedFactoryExecution | null;
+  factoryId: string;
+  workspaceId: string;
+}) {
+  const { definition } = input;
+  if (!definition?.executionGrant) return;
+
+  const missing = "Choose an available service credential binding in Factory Definition.";
+  let message = missing;
+  if (definition.credentialBindingId && definition.implementationAgent) {
+    const { data, error } = await input.admin.rpc("check_factory_credential_binding", {
+      p_workspace_id: input.workspaceId,
+      p_factory_id: input.factoryId,
+      p_binding_id: definition.credentialBindingId,
+      p_execution_grant_id: definition.executionGrant.id,
+      p_execution_grant_version: definition.executionGrant.version,
+      p_factory_agent_id: definition.implementationAgent.agentId,
+      p_agent_provider: definition.agent.provider,
+      p_agent_model: definition.agent.model,
+    });
+    if (error) throw new Error("Could not verify the factory service credential binding.");
+    if (data === "ready") return;
+    if (data === "revoked")
+      message = "Publish a definition with an active service credential binding.";
+    if (data === "grant_unavailable")
+      message = "Review the factory execution grant and its credential binding.";
+  }
+  throw new WallieActionError({ code: "factory_credential_unavailable", message, statusCode: 422 });
+}
+
 export async function assertSessionSandboxCapabilityReady(input: {
   admin?: AdminClient;
   agentConfig: Pick<SessionFirstRunPrerequisites["agentConfig"], "model" | "provider">;
@@ -513,6 +545,12 @@ async function validateQueuedRunRequest(input: {
   if (activeRun) return { activeRun, session, runType: input.requestedRunType };
 
   const definition = await loadPinnedFactoryExecution(input.admin, session);
+  await assertSessionFactoryCredentialReady({
+    admin: input.admin,
+    definition,
+    factoryId: session.factory_id,
+    workspaceId: workspace.id,
+  });
   const pinnedRepositoryId = definition
     ? await loadPinnedFactoryRepositoryId(input.admin, session, definition)
     : undefined;

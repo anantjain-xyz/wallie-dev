@@ -95,6 +95,11 @@ export const serialFactoryDefinitionSchema = z
       .optional(),
     executionPolicy: optionalReferenceSchema,
     executionGrant: executionGrantSchema.optional(),
+    credentialBindingId: z
+      .string()
+      .uuid()
+      .transform((id) => id.toLowerCase())
+      .optional(),
     deliveryPolicy: optionalReferenceSchema,
     skills: z.array(referenceSchema).max(MAX_FACTORY_SKILL_REVISIONS).default([]),
     tools: z.array(referenceSchema).default([]),
@@ -138,6 +143,8 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
     (
       {
         executionGrant,
+        credentialBindingId,
+        implementationAgent,
         executionPolicyRevisionId,
         repositoryId,
         writableRepositoryIds,
@@ -151,6 +158,14 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
           path: ["executionGrant"],
           message:
             "A service execution grant requires one writable repository and an execution policy revision.",
+        });
+      }
+      if (credentialBindingId && (!executionGrant || !implementationAgent)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["credentialBindingId"],
+          message:
+            "A credential binding requires a service execution grant and an implementation agent revision.",
         });
       }
       const seen = new Set([repositoryId.toLowerCase()]);

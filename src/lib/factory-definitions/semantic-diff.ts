@@ -55,6 +55,7 @@ const definitionFields = [
   { label: "Execution policy revision", read: (value) => value.executionPolicyRevisionId },
   { label: "Service execution grant", read: (value) => value.executionGrant?.id ?? null },
   { label: "Execution grant version", read: (value) => value.executionGrant?.version ?? null },
+  { label: "Service credential binding", read: (value) => value.credentialBindingId ?? null },
   { label: "Delivery policy revision", read: (value) => value.deliveryPolicyRevisionId },
   { label: "Skills", read: (value) => value.skillIds },
   { label: "Tools", read: (value) => value.toolIds },

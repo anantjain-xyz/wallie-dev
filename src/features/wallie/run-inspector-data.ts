@@ -43,6 +43,39 @@ export type RunInspectorSkills =
   | { kind: "unrecorded" }
   | { kind: "unavailable" };
 
+export type RunInspectorCredential = {
+  bindingId: string;
+  bindingVersion: number;
+  materialRevision: number;
+  servicePrincipalId: string;
+  resolvedAt: string;
+};
+
+export async function loadRunInspectorCredential(input: {
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  workspaceId: string;
+  run: Pick<WorkspaceRunCatalogItem, "id" | "sessionId" | "attemptCount">;
+}): Promise<RunInspectorCredential | null> {
+  const { supabase, workspaceId, run } = input;
+  if (run.attemptCount === null) return null;
+  const { data, error } = await supabase
+    .from("factory_run_credential_receipts")
+    .select("binding_id, binding_version, material_revision, service_principal_id, resolved_at")
+    .eq("workspace_id", workspaceId)
+    .eq("session_id", run.sessionId)
+    .eq("run_id", run.id)
+    .eq("attempt_count", run.attemptCount)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    bindingId: data.binding_id,
+    bindingVersion: data.binding_version,
+    materialRevision: data.material_revision,
+    servicePrincipalId: data.service_principal_id,
+    resolvedAt: data.resolved_at,
+  };
+}
+
 export async function loadRunInspectorSkills(input: {
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
   workspaceId: string;
@@ -127,9 +160,10 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     run = await loadRun();
     if (!run) notFound();
   }
-  const [artifact, skills] = await Promise.all([
+  const [artifact, skills, credential] = await Promise.all([
     loadRunInspectorArtifact({ ...context, run }),
     loadRunInspectorSkills({ ...context, run }),
+    loadRunInspectorCredential({ ...context, run }),
   ]);
   return {
     workspaceId: workspace.id,
@@ -137,6 +171,7 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     run,
     artifact,
     skills,
+    credential,
     transcript,
   };
 }

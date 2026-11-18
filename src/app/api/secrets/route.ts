@@ -59,7 +59,7 @@ export async function POST(request: Request) {
   const admin = createSupabaseAdminClient();
   const { data: existingSecret, error: existingSecretError } = await admin
     .from("workspace_secrets")
-    .select("id, created_at, created_by_member_id")
+    .select("created_by_member_id")
     .eq("workspace_id", access.context.workspace.id)
     .eq("key", parsed.data.key)
     .maybeSingle();
@@ -75,7 +75,6 @@ export async function POST(request: Request) {
         created_by_member_id:
           existingSecret?.created_by_member_id ?? access.context.currentMember.id,
         encrypted_value: encryptSecretValue(parsed.data.value),
-        id: existingSecret?.id,
         key: parsed.data.key,
         value_preview: buildSecretPreview(parsed.data.value),
         workspace_id: access.context.workspace.id,

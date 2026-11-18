@@ -76,6 +76,7 @@ describe("POST /api/secrets", () => {
     const body = await response.text();
 
     expect(response.status).toBe(201);
+    expect(stored).not.toHaveProperty("id");
     expect(stored?.value_preview).toBe("••••");
     expect(stored?.encrypted_value).not.toContain("123456");
     expect(decryptSecretValue(stored?.encrypted_value as string)).toBe("123456");

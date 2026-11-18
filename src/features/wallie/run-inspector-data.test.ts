@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RunCatalogWorkspaceUnavailableError } from "@/features/wallie/run-catalog";
 import {
   loadRunInspectorArtifact,
+  loadRunInspectorCredential,
   loadRunInspectorData,
   loadRunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
@@ -50,16 +51,26 @@ const skillRevision = {
   contentSha256: "a".repeat(64),
   sourceKind: "repository",
 };
+const receipt = {
+  binding_id: "00000000-0000-4000-8000-000000000008",
+  binding_version: 1,
+  material_revision: 3,
+  service_principal_id: "00000000-0000-4000-8000-000000000009",
+  resolved_at: "2026-11-14T20:00:00Z",
+  encrypted_value: "synthetic-ciphertext-never-display",
+};
 
 function fixture({
   checkpoint = true,
   artifact = true,
   revisions = null,
+  credential = false,
   failure,
 }: {
   checkpoint?: boolean;
   artifact?: boolean;
   revisions?: unknown;
+  credential?: boolean;
   failure?: string;
 } = {}) {
   const requests: URL[] = [];
@@ -80,13 +91,17 @@ function fixture({
             : Response.json(revisions);
         }
         const data =
-          table === "session_git_checkpoints"
-            ? checkpoint
-              ? [{ artifact_id: artifactId }]
+          table === "factory_run_credential_receipts"
+            ? credential
+              ? [receipt]
               : []
-            : artifact
-              ? [artifactRow]
-              : [];
+            : table === "session_git_checkpoints"
+              ? checkpoint
+                ? [{ artifact_id: artifactId }]
+                : []
+              : artifact
+                ? [artifactRow]
+                : [];
         return new Response(
           JSON.stringify(table === failure ? { message: "private database error" } : data),
           {
@@ -105,6 +120,26 @@ function fixture({
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+describe("exact-attempt credential provenance", () => {
+  it("reads only safe metadata for the exact session, run and attempt", async () => {
+    const { input, requests } = fixture({ credential: true });
+    expect(await loadRunInspectorCredential(input)).toEqual({
+      bindingId: receipt.binding_id,
+      bindingVersion: 1,
+      materialRevision: 3,
+      servicePrincipalId: receipt.service_principal_id,
+      resolvedAt: receipt.resolved_at,
+    });
+    expect(Object.fromEntries(requests[0].searchParams)).toEqual({
+      select: "binding_id,binding_version,material_revision,service_principal_id,resolved_at",
+      workspace_id: `eq.${workspaceId}`,
+      session_id: `eq.${run.sessionId}`,
+      run_id: `eq.${run.id}`,
+      attempt_count: "eq.4",
+    });
+  });
+});
 
 describe("exact-attempt skill revisions", () => {
   it("reads safe revision metadata for the exact run and attempt through the caller's client", async () => {

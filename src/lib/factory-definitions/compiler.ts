@@ -33,7 +33,13 @@ export type FactoryDefinitionDiagnostic = {
 
 export type CompiledFactoryDefinition = Pick<
   SerialFactoryDefinition,
-  "schemaVersion" | "kind" | "agent" | "sandboxProvider" | "operatingRulesMd" | "executionGrant"
+  | "schemaVersion"
+  | "kind"
+  | "agent"
+  | "sandboxProvider"
+  | "operatingRulesMd"
+  | "executionGrant"
+  | "credentialBindingId"
 > & {
   implementationAgent?: FactoryAgentPromptSnapshot;
   pipelineId: string;
@@ -112,6 +118,17 @@ function compileSerialDefinition(
 ): FactoryDefinitionCompileResult {
   const diagnostics: FactoryDefinitionDiagnostic[] = [];
   const { schemaVersion, kind, agent, sandboxProvider, operatingRulesMd } = definition;
+  if (
+    definition.credentialBindingId &&
+    (!definition.executionGrant || !definition.implementationAgent)
+  ) {
+    diagnostics.push({
+      path: ["credentialBindingId"],
+      code: "invalid_schema",
+      message:
+        "A credential binding requires a service execution grant and an implementation agent revision.",
+    });
+  }
   if (
     definition.executionGrant &&
     (!definition.executionPolicy || definition.writableRepositories?.length)
@@ -292,6 +309,9 @@ function compileSerialDefinition(
     ...(writableRepositoryIds.length ? { writableRepositoryIds } : {}),
     ...(readContextRepositoryIds.length ? { readContextRepositoryIds } : {}),
     ...(definition.executionGrant ? { executionGrant: definition.executionGrant } : {}),
+    ...(definition.credentialBindingId
+      ? { credentialBindingId: definition.credentialBindingId }
+      : {}),
     executionPolicyRevisionId: executionPolicy ? normalizeFactoryId(executionPolicy.id) : null,
     deliveryPolicyRevisionId: deliveryPolicy ? normalizeFactoryId(deliveryPolicy.id) : null,
     skillIds,

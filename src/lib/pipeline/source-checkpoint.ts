@@ -2,6 +2,10 @@ import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
 
+import {
+  ScopedCredentialCleanupError,
+  verifyScopedCredentialCleanup,
+} from "@/lib/agent-runner/scoped-credentials";
 import { shellQuote } from "@/lib/sandbox/command";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import type { SandboxHandle } from "@/lib/sandbox/types";
@@ -158,6 +162,8 @@ type CaptureSourceCheckpointInput = {
   signal?: AbortSignal;
   /** Exact current prompts/credentials to reject, including encoded variants. Values shorter than 8 characters are ignored. */
   sensitiveValues?: readonly string[];
+  /** Verify removal of any staged copy before preserving the sandbox for recovery. */
+  scopedCredential?: true;
 };
 
 /** Capture the checkout's base before the agent changes branches or commits. */
@@ -338,6 +344,7 @@ async function captureCheckpoint(
   ].join("\n");
   let output: { stdout: string; stderr: string };
   let code: number | undefined;
+  let stagedSensitiveFile = false;
   try {
     const mkdir = await input.sandbox.exec("mkdir", ["-m", "700", directory], {
       cwd: "/tmp",
@@ -345,10 +352,12 @@ async function captureCheckpoint(
     });
     if ((await mkdir.exitCode) !== 0)
       throw new Error("Could not create a private checkpoint directory.");
-    if (sensitiveValues.length)
+    if (sensitiveValues.length) {
+      stagedSensitiveFile = true;
       await input.sandbox.writeFile(sensitiveFile, JSON.stringify(sensitiveValues), {
         mode: 0o600,
       });
+    }
     const proc = await input.sandbox.exec(
       "bash",
       mode.kind === "committed" ? ["--noprofile", "--norc", "-c", script] : ["-lc", script],
@@ -371,7 +380,15 @@ async function captureCheckpoint(
   } finally {
     // Also covers write/transport failures before the shell installs its trap.
     // Cleanup must still run if the execution signal has been aborted.
-    if (mode.kind === "working-tree" || code !== 0) {
+    if (input.scopedCredential && stagedSensitiveFile) {
+      await verifyScopedCredentialCleanup(async (signal) => {
+        const removal = await input.sandbox.exec("rm", ["-rf", "--", directory], {
+          cwd: "/tmp",
+          signal,
+        });
+        if ((await removal.exitCode) !== 0) throw new ScopedCredentialCleanupError();
+      });
+    } else if (mode.kind === "working-tree" || code !== 0) {
       await input.sandbox
         .exec("rm", ["-rf", directory], { cwd: "/tmp", signal: AbortSignal.timeout(5_000) })
         .then((proc) => proc.exitCode)

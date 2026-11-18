@@ -37,7 +37,7 @@ and usage/cost provenance, see [Execution budgets](execution-budgets.md).
    stage ID and exposed under the stage's current slug.
 4. It prepends operating rules to the stage template and performs template
    substitution.
-5. It resolves the credential belonging to the human who created the session.
+5. It verifies the attempt's pinned execution authority and any required factory credential reference.
 6. It resolves the pinned repository, mints a GitHub installation token scoped to that repository with only
    read-only contents permissions,
    derives the stage branch, and loads the selected sandbox connection.
@@ -47,8 +47,8 @@ and usage/cost provenance, see [Execution budgets](execution-budgets.md).
 8. Common setup checks out the branch, configures Git, installs the selected
    agent CLI, and installs Playwright/Chromium support.
 9. The runner creates a private per-invocation directory outside the checkout,
-   writes the prompt and provider auth there with owner-only permissions, starts
-   the CLI, and streams normalized, sanitized events.
+   resolves the authorized provider credential, and stages runtime inputs with owner-only permissions.
+   It starts the CLI and streams normalized, sanitized events.
 10. The processor persists events and fenced usage snapshots, uses only the
     successful completion event's nonblank `finalOutput` as the artifact,
     captures the source and immutable publication
@@ -138,7 +138,8 @@ completion event from every runner before it publishes reviewable output.
 | Cursor      | Expiring per-user API key minted by Cursor browser sign-in                                      | Runs Cursor CLI inside the external sandbox and streams normalized events                                   |
 | OpenCode    | Per-user OpenCode Zen API key, plus optional per-provider keys keyed by the model’s provider id | Runs OpenCode CLI with isolated XDG auth (`auth.json` entries by provider id) and streams normalized events |
 
-Credentials belong to the session creator, not the current reviewer. ChatGPT
+Human runs use the session creator's credentials. Grant-backed runs resolve the approved
+provider key from their [factory secret binding](factory-secret-bindings.md). ChatGPT
 subscription credentials are written to an isolated Codex home under a private
 `/tmp/wallie-codex-*` directory with owner-only permissions. Refreshed auth caches are persisted after the run with optimistic
 credential-version and generation guards. Runs may use the same saved
@@ -156,7 +157,7 @@ GitHub installation tokens are scoped to one repository and their purpose:
 
 The trusted publication policy requires local agent work and reserves remote Git
 and PR writes for Wallie, including when a customized prompt requests a push.
-Arbitrary `workspace_secrets` are not injected into the coding-agent process.
+Only the provider key authorized by the admitted binding is injected for a grant-backed attempt.
 
 Repository-local `AGENTS.md` files and installed skills are interpreted by the
 selected CLI. Wallie prepares those assets during repository onboarding, but

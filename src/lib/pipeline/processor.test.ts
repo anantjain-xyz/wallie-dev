@@ -6,6 +6,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "@/lib/agent-runner/types";
 import { CodexRunner } from "@/lib/agent-runner/codex";
+import { ClaudeCodeRunner } from "@/lib/agent-runner/claude-code";
+import { ScopedCredentialCleanupError } from "@/lib/agent-runner/scoped-credentials";
+import { ScopedRunCredentialUnavailableError } from "@/lib/agent-credentials/scoped-run-credential";
 import type { CreateAgentRunnerOptions } from "@/lib/agent-runner";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import {
@@ -47,6 +50,7 @@ const mocked = vi.hoisted(() => ({
     credential: { secret: "zen-test" },
     providerCredentials: {},
   }),
+  resolveScopedRunCredential: vi.fn(),
   markCursorReconnectRequired: vi.fn(),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
@@ -75,6 +79,11 @@ const mocked = vi.hoisted(() => ({
 
 vi.mock("@/lib/validation-evidence/service", () => ({
   validateCheckpoint: mocked.validateCheckpoint,
+}));
+
+vi.mock("@/lib/agent-credentials/scoped-run-credential", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agent-credentials/scoped-run-credential")>()),
+  resolveScopedRunCredential: mocked.resolveScopedRunCredential,
 }));
 
 vi.mock("./git-input", () => ({ checkoutPinnedGitInput: mocked.checkoutPinnedGitInput }));
@@ -1076,12 +1085,18 @@ describe("processPipelineJob (generic stage runner)", () => {
   });
 
   it.each([
-    { trigger: "manual_run", serviceBound: false },
-    { trigger: "manual_retry", serviceBound: false },
-    { trigger: "manual_run", serviceBound: true },
+    { trigger: "manual_run", scope: "human" },
+    { trigger: "manual_retry", scope: "human" },
+    { trigger: "manual_run", scope: "unbound" },
+    { trigger: "manual_run", scope: "revoked" },
+    { trigger: "manual_run", scope: "cleanup_failed" },
+    { trigger: "manual_run", scope: "scratch_failed" },
+    { trigger: "manual_run", scope: "retry_failed" },
+    { trigger: "manual_run", scope: "retry_race" },
+    { trigger: "manual_run", scope: "bound" },
   ] as const)(
-    "honors the compiled authorization for $trigger (service grant $serviceBound)",
-    async ({ trigger, serviceBound }) => {
+    "honors the compiled authorization for $trigger ($scope credential)",
+    async ({ trigger, scope }) => {
       const stageId = "77900000-0000-4000-8000-000000000001";
       const pipelineId = "77900000-0000-4000-8000-000000000002";
       const repositoryId = "77900000-0000-4000-8000-000000000003";
@@ -1094,7 +1109,80 @@ describe("processPipelineJob (generic stage runner)", () => {
           .update("Original implementation agent {{session.prompt}}")
           .digest("hex"),
       };
-      if (!serviceBound) mocked.loadRunAgentPrompt.mockResolvedValueOnce(implementationAgent);
+      const serviceBound = scope !== "human";
+      const bindingId = "77900000-0000-4000-8000-000000000009";
+      const credentialValue = "scoped-execution-fixture-key-5678";
+      const usesBinding = serviceBound && scope !== "unbound";
+      const retryCleanupFailed = scope === "retry_failed" || scope === "retry_race";
+      const cleanupFailed =
+        scope === "cleanup_failed" || scope === "scratch_failed" || retryCleanupFailed;
+      const retryRunnerStarted = Promise.withResolvers<void>();
+      const finishRetryRunner = Promise.withResolvers<void>();
+      const retentionUpdateStarted = Promise.withResolvers<void>();
+      const finishRetentionUpdate = Promise.withResolvers<void>();
+      if (scope !== "unbound") mocked.loadRunAgentPrompt.mockResolvedValueOnce(implementationAgent);
+      if (usesBinding) {
+        const sandbox = new FakeSandbox("scoped-sandbox");
+        vi.spyOn(sandbox, "stop");
+        sandbox.scriptExec(
+          (call) => call.cmd === "bash" && call.args.includes("wallie-credential"),
+          [
+            {
+              stream: "stdout",
+              data: JSON.stringify({
+                type: "result",
+                subtype: "success",
+                result: `Review ${credentialValue}`,
+              }),
+            },
+          ],
+        );
+        if (scope === "cleanup_failed") sandbox.scriptExec("rm", [], { exitCode: 1 });
+        mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+          await input.onSandboxCreated?.({ provider: "vercel", sandboxId: sandbox.id });
+          return sandbox;
+        });
+        mocked.createAgentRunner.mockImplementationOnce((_, options: CreateAgentRunnerOptions) => {
+          if (!options.claudeCode) throw new Error("Missing fixture runner configuration.");
+          if (retryCleanupFailed) {
+            return {
+              ...makeRunner([]),
+              async *start(input: AgentRunnerStartInput) {
+                const credential = await options.claudeCode?.loadCredential?.();
+                if (!credential) throw new Error("Missing fixture credential.");
+                input.onSensitiveValue?.(credential.secret);
+                yield {
+                  type: "usage",
+                  usage: { inputTokens: 2, outputTokens: 3, provenance: "measured" },
+                  sourceRecoveryRequired: true,
+                } as AgentEvent;
+                retryRunnerStarted.resolve();
+                await finishRetryRunner.promise;
+                yield {
+                  type: "completion",
+                  taskComplete: true,
+                  summary: "Completed",
+                  finalOutput: "Review changes",
+                } as AgentEvent;
+              },
+            };
+          }
+          return new ClaudeCodeRunner(options.claudeCode);
+        });
+        if (scope === "revoked") {
+          mocked.resolveScopedRunCredential.mockRejectedValueOnce(
+            new ScopedRunCredentialUnavailableError(),
+          );
+        } else {
+          mocked.resolveScopedRunCredential.mockResolvedValueOnce(credentialValue);
+        }
+        if (scope === "scratch_failed") {
+          mocked.captureSourceCheckpoint.mockRejectedValueOnce(new ScopedCredentialCleanupError());
+        }
+        if (retryCleanupFailed) {
+          mocked.saveRetryCheckpoint.mockRejectedValueOnce(new ScopedCredentialCleanupError());
+        }
+      }
       const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
         schemaVersion: 1,
         kind: "serial",
@@ -1103,6 +1191,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           ? {
               repositoryId,
               executionGrant: { id: "77900000-0000-4000-8000-000000000007", version: 1 },
+              ...(usesBinding ? { credentialBindingId: bindingId } : {}),
             }
           : {
               repositoryId: "7f5489ea-58a9-41d5-ba8d-890b08a0650c",
@@ -1138,7 +1227,14 @@ describe("processPipelineJob (generic stage runner)", () => {
           },
         ],
       });
-      const { admin, rpc } = buildAdminMock({
+      const { admin, rpc, updatedRuns } = buildAdminMock({
+        beforeRetentionUpdate:
+          scope === "retry_race"
+            ? async () => {
+                retentionUpdateStarted.resolve();
+                await finishRetentionUpdate.promise;
+              }
+            : undefined,
         session: baseSession({
           execute_pinned_definition: true,
           factory_definition_provenance: "pinned",
@@ -1163,26 +1259,106 @@ describe("processPipelineJob (generic stage runner)", () => {
         ],
       });
 
-      const result = await processPipelineJob({
-        admin,
-        job: baseJob({ stage_id: stageId, trigger_type: trigger }),
-      });
-      if (serviceBound) {
+      const job = baseJob({ stage_id: stageId, trigger_type: trigger });
+      const result = await (async () => {
+        if (!retryCleanupFailed) return processPipelineJob({ admin, job });
+        vi.useFakeTimers();
+        try {
+          const processing = processPipelineJob({
+            admin,
+            job,
+            deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+          await retryRunnerStarted.promise;
+          expect(updatedRuns).not.toContainEqual({ source_recovery_required: true });
+          if (scope === "retry_race") {
+            finishRetryRunner.resolve();
+            await retentionUpdateStarted.promise;
+          }
+          await vi.advanceTimersByTimeAsync(30_000);
+          expect(mocked.saveRetryCheckpoint).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ scopedCredential: true }),
+          );
+          finishRetryRunner.resolve();
+          finishRetentionUpdate.resolve();
+          return await processing;
+        } finally {
+          finishRetryRunner.resolve();
+          finishRetentionUpdate.resolve();
+          vi.useRealTimers();
+        }
+      })();
+      if (usesBinding) {
+        expect(mocked.resolveScopedRunCredential).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            admin,
+            attemptCount: baseJob().attempt_count,
+            bindingId,
+            jobId: "job-1",
+            provider: "claude-code",
+            runId: "run-1",
+            workspaceId: "ws-1",
+          }),
+        );
+        const manifestIndex = rpc.mock.calls.findIndex(
+          ([name]) => name === "pin_session_attempt_manifest",
+        );
+        expect(manifestIndex).toBeGreaterThanOrEqual(0);
+        expect(rpc.mock.calls[manifestIndex][1]).not.toHaveProperty("p_credential_owner_member_id");
+        expect(rpc.mock.invocationCallOrder[manifestIndex]).toBeLessThan(
+          mocked.resolveScopedRunCredential.mock.invocationCallOrder[0],
+        );
+        expect(mocked.getClaudeCodeCredentialForSession).not.toHaveBeenCalled();
+        expect(JSON.stringify(rpc.mock.calls)).not.toContain(credentialValue);
+      }
+      if (scope === "unbound" || scope === "revoked" || cleanupFailed) {
         expect(result).toMatchObject({ result: "error", runId: "run-1" });
         expect(rpc).toHaveBeenCalledWith(
           "fail_session_job_attempt",
           expect.objectContaining({
-            p_error:
-              "An approved service principal credential binding is required to start this run.",
+            p_error: cleanupFailed
+              ? "Could not verify cleanup of the scoped credential in the sandbox."
+              : "An approved service principal credential binding is required to start this run.",
             p_retry: false,
           }),
         );
-        expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
         expect(mocked.getClaudeCodeCredentialForSession).not.toHaveBeenCalled();
-        expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+        if (scope === "scratch_failed") {
+          expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
+            expect.objectContaining({ scopedCredential: true }),
+          );
+          expect(updatedRuns).toContainEqual({ source_recovery_required: true });
+          expect(updatedRuns).toContainEqual({ source_recovery_required: false });
+        } else {
+          expect(mocked.captureSourceCheckpoint).not.toHaveBeenCalled();
+        }
+        if (scope === "retry_race") {
+          expect(updatedRuns.filter((patch) => "source_recovery_required" in patch)).toEqual([
+            { source_recovery_required: true },
+            { source_recovery_required: false },
+          ]);
+        }
+        if (scope === "unbound") {
+          expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+          expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+          expect(mocked.resolveScopedRunCredential).not.toHaveBeenCalled();
+        }
+        if (cleanupFailed) {
+          const sandbox = await mocked.createSessionSandbox.mock.results[0].value;
+          expect(sandbox.stop).toHaveBeenCalledOnce();
+          expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+        }
         return;
       }
       expect(result.result).toBe("success");
+      if (scope === "bound") {
+        expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
+          expect.objectContaining({ sensitiveValues: expect.arrayContaining([credentialValue]) }),
+        );
+        expect(mocked.publishSessionCheckpoint).toHaveBeenCalledWith(
+          expect.objectContaining({ artifactMarkdown: "Review [REDACTED]" }),
+        );
+      }
       expect(mocked.loadWorkspaceAgentConfig).not.toHaveBeenCalled();
       expect(mocked.loadRunAgentPrompt).toHaveBeenCalledWith(admin, {
         workspaceId: "ws-1",

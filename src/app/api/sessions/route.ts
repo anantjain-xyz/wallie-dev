@@ -14,6 +14,7 @@ import { fingerprintSessionCreation } from "@/lib/sessions/creation-request";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import {
+  assertSessionFactoryCredentialReady,
   assertSessionFirstRunReady,
   assertSessionSandboxCapabilityReady,
   createSessionWithFirstJob,
@@ -406,6 +407,14 @@ export async function POST(request: Request) {
 
   let agentConfig;
   try {
+    if (pinned?.executionGrant) {
+      await assertSessionFactoryCredentialReady({
+        admin,
+        definition: pinned,
+        factoryId: pinned.factoryId,
+        workspaceId: normalized.workspaceId,
+      });
+    }
     if (firstRunPrereqsResult.error || !firstRunPrereqsResult.data) {
       throw firstRunPrereqsResult.error ?? new Error("Wallie is not ready to run.");
     }

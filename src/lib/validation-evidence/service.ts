@@ -135,6 +135,7 @@ export async function validateCheckpoint(input: {
   sandbox: import("@/lib/sandbox/types").SandboxHandle;
   checkpoint: import("@/lib/pipeline/source-checkpoint").SourceCheckpoint;
   secrets: string[];
+  scopedCredential?: true;
   signal?: AbortSignal;
 }) {
   const { captureValidationEvidence } = await import("./capture");
@@ -168,6 +169,7 @@ export async function validateCheckpoint(input: {
     sandbox: input.sandbox,
     baseSha: input.checkpoint.baseSha,
     sensitiveValues: input.secrets,
+    scopedCredential: input.scopedCredential,
     signal: input.signal,
   });
   if (evidence) {

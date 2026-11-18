@@ -4,7 +4,8 @@ import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
-import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { type AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-credentials";
 import { ToolEventTracker } from "./tool-event-tracker";
 import { DEFAULT_CURSOR_MODEL } from "./types";
 
@@ -12,7 +13,7 @@ export interface CursorRunnerOptions {
   /** Pre-resolved credentials; session callers use loadCredential. */
   credential?: CursorCredential;
   /** Session credentials are loaded after remote setup, immediately before launch. */
-  loadCredential?: () => Promise<CursorCredential>;
+  loadCredential?: () => Promise<CursorCredential | { scope: "factory"; secret: string }>;
   model?: string;
   onAuthenticationFailure?: (reason: string, credential: CursorCredential) => Promise<void>;
 }
@@ -28,13 +29,15 @@ export class CursorRunner implements AgentRunner {
   }
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
-    const safety = new AgentOutputSafety(input.secrets, input.onSensitiveValue);
-    return safety.events(this.startUnsafe(input, safety), input.signal);
+    return withRunnerCredentials(input, (safety, material) =>
+      this.startUnsafe(input, safety, material),
+    );
   }
 
   private async *startUnsafe(
     input: AgentRunnerStartInput,
     safety: AgentOutputSafety,
+    material?: ScopedRunnerMaterial,
   ): AsyncIterable<AgentEvent> {
     if (!input.sandbox) throw new Error("CursorRunner requires a sandbox.");
     const sandbox = input.sandbox;
@@ -68,11 +71,21 @@ export class CursorRunner implements AgentRunner {
     safety.addSecret(credential.secret);
     input.signal?.throwIfAborted();
 
-    const proc = await sandbox.exec("bash", ["-lc", command], {
+    const credentialEnv = { CURSOR_API_KEY: credential.secret };
+    const options = {
       cwd: sandbox.repoPath,
-      env: { CI: "1", CURSOR_API_KEY: credential.secret, ...WALLIE_GIT_IDENTITY_ENV },
+      env: { CI: "1", ...WALLIE_GIT_IDENTITY_ENV },
       signal: input.signal,
-    });
+    };
+    const proc = material
+      ? await material.exec("bash", ["-lc", command], options, {
+          path: `${directory}/credential.env`,
+          values: credentialEnv,
+        })
+      : await sandbox.exec("bash", ["-lc", command], {
+          ...options,
+          env: { ...options.env, ...credentialEnv },
+        });
 
     const secrets = [credential.secret, ...(input.secrets ?? [])];
     let stdout = "";
@@ -130,7 +143,7 @@ export class CursorRunner implements AgentRunner {
       }
       const redactedStderr = redactRunSensitiveText(safety.redact(stderr.trim()));
       const reason = `Cursor CLI exited with code ${code}: ${redactedStderr.slice(0, 500)}`;
-      if (isCursorAuthenticationError(stderr)) {
+      if (!("scope" in credential) && isCursorAuthenticationError(stderr)) {
         await this.options.onAuthenticationFailure?.(reason, credential);
       }
       yield {

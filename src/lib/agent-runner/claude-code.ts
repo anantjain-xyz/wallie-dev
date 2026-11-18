@@ -7,7 +7,8 @@ import type {
   AgentRunnerStartInput,
 } from "./types";
 import { redactRunSensitiveText } from "./redact-sensitive-text";
-import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { type AgentOutputSafety, prepareRunnerDirectory } from "./safety";
+import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-credentials";
 import { ToolEventTracker } from "./tool-event-tracker";
 import {
   DEFAULT_AGENT_RUNNER_CONFIG,
@@ -57,13 +58,15 @@ export class ClaudeCodeRunner implements AgentRunner {
   }
 
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
-    const safety = new AgentOutputSafety(input.secrets, input.onSensitiveValue);
-    return safety.events(this.startUnsafe(input, safety), input.signal);
+    return withRunnerCredentials(input, (safety, material) =>
+      this.startUnsafe(input, safety, material),
+    );
   }
 
   private async *startUnsafe(
     input: AgentRunnerStartInput,
     safety: AgentOutputSafety,
+    material?: ScopedRunnerMaterial,
   ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
     if (!sandbox) {
@@ -113,15 +116,24 @@ export class ClaudeCodeRunner implements AgentRunner {
     safety.addSecret(credential.secret);
     input.signal?.throwIfAborted();
 
-    const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
+    const credentialEnv = { ANTHROPIC_API_KEY: credential.secret };
+    const options = {
       cwd: sandbox.repoPath,
       env: {
-        ANTHROPIC_API_KEY: credential.secret,
         CI: "1",
         ...WALLIE_GIT_IDENTITY_ENV,
       },
       signal: input.signal,
-    });
+    };
+    const proc = material
+      ? await material.exec("bash", ["-lc", shellCmd], options, {
+          path: `${directory}/credential.env`,
+          values: credentialEnv,
+        })
+      : await sandbox.exec("bash", ["-lc", shellCmd], {
+          ...options,
+          env: { ...credentialEnv, ...options.env },
+        });
 
     let stdoutBuf = "";
     let stderrBuf = "";
