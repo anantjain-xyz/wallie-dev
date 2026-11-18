@@ -56,6 +56,7 @@ const mocked = vi.hoisted(() => ({
   materializeSessionAttachments: vi.fn().mockResolvedValue([]),
   formatSessionAttachmentPromptData: vi.fn(() => ""),
   loadWorkspaceAgentConfig: vi.fn(),
+  loadRunAgentPrompt: vi.fn(),
   loadRequiredWorkspaceSandboxConnection: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
@@ -108,7 +109,11 @@ vi.mock("./source-delivery", async (importOriginal) => ({
 
 vi.mock("@/lib/prompt-templates", () => ({
   renderStagePrompt: mocked.renderStagePrompt,
-  STAGE_PROMPT_RENDERER_VERSION: 1,
+  STAGE_PROMPT_RENDERER_VERSION: 2,
+}));
+
+vi.mock("@/lib/factory-agents/runtime", () => ({
+  loadRunAgentPrompt: mocked.loadRunAgentPrompt,
 }));
 
 vi.mock("@/lib/pipeline/session-attachments", () => ({
@@ -1011,6 +1016,12 @@ function makeRunner(
 describe("processPipelineJob (generic stage runner)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.loadRunAgentPrompt.mockResolvedValue({
+      agentId: "77900000-0000-4000-8000-000000000005",
+      promptRevisionId: "77900000-0000-4000-8000-000000000006",
+      promptMd: "",
+      promptSha256: createHash("sha256").update("").digest("hex"),
+    });
     mocked.prepareSourceDelivery.mockImplementation(async (input) => {
       input.onDurable();
       return true;
@@ -1070,6 +1081,15 @@ describe("processPipelineJob (generic stage runner)", () => {
       const pipelineId = "77900000-0000-4000-8000-000000000002";
       const repositoryId = "77900000-0000-4000-8000-000000000003";
       const revisionId = "77900000-0000-4000-8000-000000000004";
+      const implementationAgent = {
+        agentId: "77900000-0000-4000-8000-000000000005",
+        promptRevisionId: "77900000-0000-4000-8000-000000000006",
+        promptMd: "Original implementation agent {{session.prompt}}",
+        promptSha256: createHash("sha256")
+          .update("Original implementation agent {{session.prompt}}")
+          .digest("hex"),
+      };
+      mocked.loadRunAgentPrompt.mockResolvedValueOnce(implementationAgent);
       const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
         schemaVersion: 1,
         kind: "serial",
@@ -1085,6 +1105,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           maxRetries: 2,
           maxTurns: 17,
         },
+        implementationAgent,
         operatingRulesMd: "Original operating rules",
         operatingRuleStageIds: [],
         executionPolicyRevisionId: null,
@@ -1137,6 +1158,13 @@ describe("processPipelineJob (generic stage runner)", () => {
         ).result,
       ).toBe("success");
       expect(mocked.loadWorkspaceAgentConfig).not.toHaveBeenCalled();
+      expect(mocked.loadRunAgentPrompt).toHaveBeenCalledWith(admin, {
+        workspaceId: "ws-1",
+        factoryId: "factory-1",
+        sessionId: "sess-1",
+        runId: "run-1",
+        expected: implementationAgent,
+      });
       expect(mocked.loadStageById).not.toHaveBeenCalled();
       expect(mocked.loadPipelineOperatingRules).not.toHaveBeenCalled();
       expect(mocked.loadRequiredWorkspaceSandboxConnection).toHaveBeenCalledWith(
@@ -1154,6 +1182,11 @@ describe("processPipelineJob (generic stage runner)", () => {
           }),
         }),
         expect.objectContaining({
+          agentPromptMd: expect.objectContaining({
+            source: "agent.prompt",
+            trust: "trusted",
+            value: implementationAgent.promptMd,
+          }),
           operatingRulesMd: expect.objectContaining({ value: "Original operating rules" }),
           sessionTitle: expect.objectContaining({ value: "Initial title" }),
           sessionPrompt: expect.objectContaining({ value: "Initial user prompt" }),
@@ -1173,6 +1206,18 @@ describe("processPipelineJob (generic stage runner)", () => {
       );
     },
   );
+
+  it("fails the attempt before sandbox execution when its pinned agent prompt is unavailable", async () => {
+    mocked.loadRunAgentPrompt.mockRejectedValueOnce(
+      new Error("The run's pinned agent prompt is unavailable."),
+    );
+    const { admin } = buildAdminMock({ session: baseSession(), agentConfig: [] });
+
+    expect(await processPipelineJob({ admin, job: baseJob() })).toMatchObject({ result: "error" });
+    expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+  });
 
   it("executes the persisted input before starting the agent when the default branch moves", async () => {
     const pinnedSha = "b".repeat(40);
@@ -1668,7 +1713,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       p_attempt_count: 1,
       p_prompt_sha256: createHash("sha256").update("rendered prompt", "utf8").digest("hex"),
       p_prompt_utf8_bytes: Buffer.byteLength("rendered prompt", "utf8"),
-      p_renderer_version: 1,
+      p_renderer_version: 2,
       p_checkout_sha: "a".repeat(40),
       p_predecessors: [predecessor],
       p_worker_runtime: "node",
@@ -1684,6 +1729,12 @@ describe("processPipelineJob (generic stage runner)", () => {
       },
     );
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+    expect(mocked.loadRunAgentPrompt).toHaveBeenCalledWith(admin, {
+      workspaceId: session.workspace_id,
+      factoryId: session.factory_id,
+      sessionId: session.id,
+      runId: "run-1",
+    });
     expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         promptTemplateMd: expect.objectContaining({
@@ -1698,6 +1749,11 @@ describe("processPipelineJob (generic stage runner)", () => {
         }),
       }),
       expect.objectContaining({
+        agentPromptMd: expect.objectContaining({
+          source: "agent.prompt",
+          trust: "trusted",
+          value: "",
+        }),
         attemptFeedback: expect.objectContaining({
           source: "attempt.feedback",
           trust: "untrusted",

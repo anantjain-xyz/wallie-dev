@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { loadRunTranscript } from "@/features/wallie/run-transcript";
+import { loadRunAgentPrompt } from "@/lib/factory-agents/runtime";
 import {
   loadPinnedFactoryExecution,
   loadPinnedSessionPrompt,
@@ -59,6 +60,9 @@ const fixtureSchema = z.object({
   definitionRevisionId: z.string().uuid(),
   definitionDigest: z.string().regex(/^[0-9a-f]{64}$/),
   modelName: z.string().min(1),
+  agentId: z.string().uuid(),
+  agentPromptRevisionId: z.string().uuid(),
+  agentPrompt: z.string(),
 });
 
 async function checked<T>(request: PromiseLike<{ data: T; error: unknown }>): Promise<T> {
@@ -108,25 +112,6 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
         const stage = definition.stages[0];
         expect(stage.id).toBe(fixture.stageId);
         expect(predecessors.predecessors).toEqual([]);
-        const prompt = renderStagePrompt(
-          {
-            promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
-            slug: trustedPromptValue("stage.slug", stage.slug),
-          },
-          {
-            attemptFeedback: null,
-            attemptNumber: 1,
-            operatingRulesMd: trustedPromptValue(
-              "pipeline.operatingRules",
-              definition.operatingRulesMd,
-            ),
-            sessionPrompt: untrustedPromptValue("session.prompt", sourcePrompt.promptMd),
-            sessionTitle: untrustedPromptValue("session.title", sourcePrompt.title),
-          },
-        );
-        expect(prompt).toContain("Published replacement template 1");
-        expect(prompt).toContain("Native Workflow pinned replacement");
-        expect(prompt).toContain("Published replacement operating rules");
         const runId = await checked(
           worker.rpc("start_session_job_attempt", {
             p_job_id: job.id,
@@ -140,6 +125,36 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
           }),
         );
         assert(runId);
+        const agentPrompt = await loadRunAgentPrompt(worker, {
+          workspaceId: session.workspace_id,
+          factoryId: session.factory_id,
+          sessionId: session.id,
+          runId,
+          expected: definition.implementationAgent,
+        });
+        expect(agentPrompt.agentId).toBe(fixture.agentId);
+        expect(agentPrompt.promptRevisionId).toBe(fixture.agentPromptRevisionId);
+        const prompt = renderStagePrompt(
+          {
+            promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
+            slug: trustedPromptValue("stage.slug", stage.slug),
+          },
+          {
+            agentPromptMd: trustedPromptValue("agent.prompt", agentPrompt.promptMd),
+            attemptFeedback: null,
+            attemptNumber: 1,
+            operatingRulesMd: trustedPromptValue(
+              "pipeline.operatingRules",
+              definition.operatingRulesMd,
+            ),
+            sessionPrompt: untrustedPromptValue("session.prompt", sourcePrompt.promptMd),
+            sessionTitle: untrustedPromptValue("session.title", sourcePrompt.title),
+          },
+        );
+        expect(prompt).toContain("Published replacement template 1");
+        expect(prompt).toContain("Native Workflow pinned replacement");
+        expect(prompt).toContain("Published replacement operating rules");
+        expect(prompt.startsWith(fixture.agentPrompt)).toBe(true);
         const pinned = await checked(
           worker.rpc("pin_session_job_git_input", {
             p_job_id: job.id,

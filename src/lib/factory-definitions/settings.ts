@@ -115,6 +115,7 @@ async function loadSettingsContext(client: Client, workspaceId: string, includeD
       pipeline.id,
       stageRows,
       pipeline.operating_rules_md,
+      factoryId,
     ));
   if (!bundle) return null;
 
@@ -302,6 +303,7 @@ export async function mutateFactorySettings({
   const catalog = await loadFactoryDefinitionCatalog(client, {
     workspaceId,
     factoryId: context.factoryId,
+    agentPromptRevisionId: context.bundle.implementationAgent?.promptRevisionId,
   });
   if (command.action === "save") {
     const edited = applySettingsPatch(context, command.patch);

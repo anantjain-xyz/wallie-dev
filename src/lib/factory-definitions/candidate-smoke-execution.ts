@@ -107,6 +107,14 @@ async function renderPrompts(bundle: CompiledFactoryDefinition, signal: AbortSig
         slug: trustedPromptValue("stage.slug", stage.slug),
       },
       {
+        ...(bundle.implementationAgent
+          ? {
+              agentPromptMd: trustedPromptValue(
+                "agent.prompt",
+                bundle.implementationAgent.promptMd,
+              ),
+            }
+          : {}),
         attemptFeedback: null,
         attemptNumber: 1,
         operatingRulesMd: trustedPromptValue("pipeline.operatingRules", bundle.operatingRulesMd),

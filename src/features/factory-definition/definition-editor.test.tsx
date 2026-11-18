@@ -63,7 +63,11 @@ function document(
     skills,
     tools,
     stages,
-    ...runtime
+    agent,
+    sandboxProvider,
+    operatingRulesMd,
+    schemaVersion,
+    kind: workflowKind,
   } = source;
   return {
     id: id(number),
@@ -73,7 +77,11 @@ function document(
     sourceDraftId: kind === "revision" ? id(10) : null,
     source,
     bundle: {
-      ...runtime,
+      agent,
+      sandboxProvider,
+      operatingRulesMd,
+      schemaVersion,
+      kind: workflowKind,
       pipelineId: pipeline,
       repositoryId: repository,
       executionPolicyRevisionId: executionPolicy,

@@ -36,6 +36,16 @@ const definitionFields = [
   { label: "Workflow kind", read: (value) => value.kind },
   { label: "Pipeline", read: (value) => value.pipelineId },
   { label: "Repository", read: (value) => value.repositoryId },
+  { label: "Implementation agent", read: (value) => value.implementationAgent?.agentId ?? null },
+  {
+    label: "Agent prompt revision",
+    read: (value) => value.implementationAgent?.promptRevisionId ?? null,
+  },
+  {
+    label: "Agent instructions",
+    read: (value) => value.implementationAgent?.promptMd ?? null,
+    multiline: true,
+  },
   { label: "Sandbox provider", read: (value) => value.sandboxProvider },
   { label: "Execution policy revision", read: (value) => value.executionPolicyRevisionId },
   { label: "Delivery policy revision", read: (value) => value.deliveryPolicyRevisionId },

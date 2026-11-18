@@ -26,6 +26,8 @@ const repositoryId = "54600000-0000-4000-8000-000000000007";
 const installationId = "54600000-0000-4000-8000-000000000008";
 const stageId = "54600000-0000-4000-8000-000000000009";
 const stagedPolicyId = "54600000-0000-4000-8000-000000000010";
+const agentId = "54600000-0000-4000-8000-000000000011";
+const promptRevisionId = "54600000-0000-4000-8000-000000000012";
 const createdAt = "2026-11-16T04:10:00.288+00:00";
 const routeUrl = `http://localhost/api/workspaces/${workspaceId}/factory-definition/editor`;
 const context = () => ({ params: Promise.resolve({ workspaceId }) });
@@ -102,6 +104,15 @@ function authorized({ initial = false } = {}) {
       : [{ activation_number: 4, revision_id: revisionId }],
     factory_definition_drafts: initial ? [] : [draft],
     factory_definition_revisions: [revision],
+    factory_agent_prompt_revisions: [
+      {
+        id: promptRevisionId,
+        agent_id: agentId,
+        prompt_md: "",
+        prompt_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        factory_agents: { is_default: true },
+      },
+    ],
     pipelines: [{ id: pipelineId, name: "Default", operating_rules_md: "" }],
     pipeline_stages: [
       {
@@ -146,7 +157,12 @@ function authorized({ initial = false } = {}) {
     requests.push({ table, query, method: init?.method ?? "GET" });
     if (!(table in rows)) throw new Error(`Unexpected PostgREST request for ${table}`);
     const id = query.get("id");
-    return Response.json(id ? rows[table].filter((row) => `eq.${row.id}` === id) : rows[table]);
+    const result = id ? rows[table].filter((row) => `eq.${row.id}` === id) : rows[table];
+    return Response.json(
+      new Headers(init?.headers).get("accept") === "application/vnd.pgrst.object+json"
+        ? (result[0] ?? null)
+        : result,
+    );
   });
   const supabase = createClient<Database>("https://editor-fixture.invalid", "fixture-key", {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -222,7 +238,12 @@ describe("factory definition editor reads", () => {
       published: null,
       draft: null,
       baseline: {
-        source: { pipeline: pipelineId, repository: repositoryId, stages: [{ id: stageId }] },
+        source: {
+          pipeline: pipelineId,
+          repository: repositoryId,
+          implementationAgent: promptRevisionId,
+          stages: [{ id: stageId }],
+        },
       },
     });
     expect(

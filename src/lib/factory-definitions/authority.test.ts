@@ -9,6 +9,7 @@ import type { CompiledFactoryDefinition } from "./compiler";
 const workspaceId = "81b90000-0000-4000-8000-000000000001";
 const factoryId = "81b90000-0000-4000-8000-000000000003";
 const installationId = "81b90000-0000-4000-8000-000000000002";
+const promptRevisionId = "81b90000-0000-4000-8000-000000000004";
 
 function fixtureClient() {
   const requests: URL[] = [];
@@ -30,8 +31,21 @@ function fixtureClient() {
           : [{ id: "another-page" }],
       delivery_policy_revisions: [{ id: "delivery", pipeline_id: "pipeline" }],
       workspace_members: [{ id: "reviewer" }],
+      factory_agent_prompt_revisions: [
+        {
+          id: "81b90000-0000-4000-8000-000000000004",
+          agent_id: "81b90000-0000-4000-8000-000000000005",
+          prompt_md: "",
+          prompt_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+      ],
     };
     const record = table ? records[table] : undefined;
+    if (table === "factory_agent_prompt_revisions") {
+      expect(url.searchParams.get("id")).toBe(`eq.${promptRevisionId}`);
+      expect(url.searchParams.get("limit")).toBe("1");
+      expect(url.searchParams.has("offset")).toBe(false);
+    }
     return Response.json(record ?? [], { status: record ? 200 : 404 });
   };
 
@@ -74,8 +88,38 @@ describe("factory activation authority inputs", () => {
     expect(repos?.searchParams.get("is_archived")).toBe("eq.false");
     expect(repos?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
     expect(pipelines?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+    expect(requests.some((url) => url.pathname.endsWith("/factory_agent_prompt_revisions"))).toBe(
+      false,
+    );
+    expect(catalog.agentPromptRevisions).toEqual([]);
     expect(members?.searchParams.get("kind")).toBe("eq.human");
     expect(members?.searchParams.get("is_active")).toBe("eq.true");
+  });
+
+  it("loads only the selected immutable prompt without scanning revision history", async () => {
+    const { admin, requests } = fixtureClient();
+    const catalog = await loadFactoryDefinitionCatalog(admin, {
+      workspaceId,
+      factoryId,
+      agentPromptRevisionId: promptRevisionId,
+    });
+    const promptRequests = requests.filter((url) =>
+      url.pathname.endsWith("/factory_agent_prompt_revisions"),
+    );
+    expect(promptRequests).toHaveLength(1);
+    expect(promptRequests[0]?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+    expect(promptRequests[0]?.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+    expect(promptRequests[0]?.searchParams.get("id")).toBe(`eq.${promptRevisionId}`);
+    expect(catalog.agentPromptRevisions).toEqual([
+      {
+        id: promptRevisionId,
+        workspaceId,
+        agentId: "81b90000-0000-4000-8000-000000000005",
+        promptRevisionId,
+        promptMd: "",
+        promptSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      },
+    ]);
   });
 
   it("combines deployment provider eligibility with the agent-specific probe contract", () => {

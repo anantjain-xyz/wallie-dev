@@ -387,7 +387,9 @@ const baseTimestamp = "2026-01-01T00:00:00.000Z";
 
 function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
   return {
+    agent_id: "implementation-agent-1",
     agent_job_id: "job-1",
+    agent_prompt_revision_id: "implementation-prompt-1",
     attempt_count: null,
     branch_name: null,
     cost_provenance: "unavailable",

@@ -35,11 +35,19 @@ This example uses `default` and `team/service` as aliases in the caller's catalo
 
 The caller supplies eligible pipelines, repositories, execution and delivery policy revisions, skills, tools, active human approvers, and sandbox providers. The compiler resolves an exact ID first, then a unique alias inside the workspace. It uses the existing pipeline, agent, and sandbox settings schemas and checks the chosen model, effort, and component support. A delivery policy revision must belong to the chosen pipeline.
 
+The optional `implementationAgent` field selects an immutable prompt revision
+UUID from the factory's agent catalog. The compiler embeds its agent ID,
+revision ID, static instructions, and digest. Omission preserves the default
+implementation agent's initial empty instructions. Provider and model settings
+remain in `agent`.
+
 ## Stage order and prompt references
 
 - Stage prompts can reference artifacts from earlier stages. Shared operating rules can reference any stage. A conditional such as `{{#if artifact.previousStages.design-review}}…{{/if}}` lets shared rules wait until the artifact exists.
 - A stage with `anyoneCanApprove: false` and an empty approver list uses Wallie's existing owner and admin approval policy. Explicit approver IDs must resolve to eligible workspace members.
 - The compiler resolves these references to stage UUIDs and preserves prompt text. At execution, the existing renderer receives classified configuration and separately classified session, repository, feedback, and artifact values.
+- Named-agent instructions are static text. Template tokens in those
+  instructions remain literal and introduce no artifact dependencies.
 - Invalid candidates return diagnostics with a field path, code, and message. Diagnostics identify missing or ambiguous components, unsupported options, duplicate stages, and unreachable stage references.
 
 ## Canonical bundle

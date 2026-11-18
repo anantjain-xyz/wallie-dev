@@ -2,6 +2,7 @@ import { createHash, randomInt, randomUUID } from "node:crypto";
 
 import { expect, test, type Page } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
 
 import { candidateSmokeStartSchema } from "@/lib/factory-definitions/candidate-smoke-contracts";
 import {
@@ -19,6 +20,14 @@ const firstModel = "gpt-5.5";
 const secondModel = "gpt-5.6";
 const probes = getSandboxProviderContract(provider).capabilityProbes;
 const requiredProbes = [...new Set([...probes.required, ...probes.requiredByAgent.codex])];
+const agentRevisionResponseSchema = z.object({
+  revision: z.object({
+    id: z.string().uuid(),
+    agent_id: z.string().uuid(),
+    revision_number: z.number().int().positive(),
+    prompt_md: z.string(),
+  }),
+});
 
 function localUrl(value: string | undefined) {
   if (!value) throw new Error("Set the disposable local app and Supabase URLs.");
@@ -263,12 +272,16 @@ async function expectSessionPin(
     activationNumber,
     model,
     stageId,
+    agentId,
+    promptRevisionId,
   }: {
     title: string;
     revisionId: string;
     activationNumber: number;
     model: string;
     stageId: string;
+    agentId: string;
+    promptRevisionId: string;
   },
 ) {
   const session = await checked(
@@ -299,7 +312,7 @@ async function expectSessionPin(
   const run = await checked(
     admin
       .from("agent_runs")
-      .select("model_provider,model_name,stage_id,status")
+      .select("model_provider,model_name,stage_id,status,agent_id,agent_prompt_revision_id")
       .eq("workspace_id", workspaceId)
       .eq("session_id", session.id)
       .single(),
@@ -309,6 +322,8 @@ async function expectSessionPin(
     model_name: model,
     stage_id: stageId,
     status: "queued",
+    agent_id: agentId,
+    agent_prompt_revision_id: promptRevisionId,
   });
 }
 
@@ -358,7 +373,44 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       connectionRevision,
     });
     const editor = `/w/${workspace.slug}/settings/factory-definition`;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, editor, { baseURL: app, email });
+    const factory = await checked(
+      admin.from("factories").select("id").eq("workspace_id", workspace.id).single(),
+    );
+    const agentsPath = `/api/workspaces/${workspace.id}/factories/${factory.id}/agents`;
+    const createAgent = await page.request.post(agentsPath, {
+      data: {
+        name: "Implementation reviewer",
+        slug: "implementation-reviewer",
+        promptMd: "Review the assigned stage. {{session.prompt}} stays literal.",
+      },
+    });
+    expect(createAgent.status(), await createAgent.text()).toBe(201);
+    const firstAgentPrompt = agentRevisionResponseSchema.parse(await createAgent.json()).revision;
+    const promptInput = page.getByRole("textbox", { name: "Implementation agent prompt revision" });
+    await promptInput.fill(firstAgentPrompt.id);
+    await page.getByRole("button", { name: "Save draft" }).click();
+    await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
+    await expect(promptInput).toHaveValue(firstAgentPrompt.id);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({
+      path: testInfo.outputPath("01-agent-prompt-binding-desktop-light.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+    ).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      path: testInfo.outputPath("02-agent-prompt-binding-mobile-dark.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
     const publish = page.getByRole("button", { name: "Publish draft" });
     const draftTests = page.getByRole("region", { name: "Draft configuration tests" });
     const firstStage = await editAndSave(page, firstModel, false);
@@ -378,6 +430,20 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       );
     const original = (await activation(1)).revision_id;
 
+    const savePrompt = await page.request.post(
+      `${agentsPath}/${firstAgentPrompt.agent_id}/prompt-revisions`,
+      {
+        data: {
+          expectedRevisionNumber: firstAgentPrompt.revision_number,
+          promptMd: "Updated candidate instructions. {{attempt.feedback}} stays literal.",
+        },
+      },
+    );
+    expect(savePrompt.status(), await savePrompt.text()).toBe(201);
+    const secondAgentPrompt = agentRevisionResponseSchema.parse(await savePrompt.json()).revision;
+    await page.getByRole("button", { name: "Structured", exact: true }).click();
+    await expect(promptInput).toHaveValue(firstAgentPrompt.id);
+    await promptInput.fill(secondAgentPrompt.id);
     const secondStage = await editAndSave(page, secondModel, true);
     expect(secondStage.id).not.toBe(firstStage.id);
     await expect(publish).toBeDisabled();
@@ -400,6 +466,8 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       activationNumber: 2,
       model: secondModel,
       stageId: secondStage.id,
+      agentId: firstAgentPrompt.agent_id,
+      promptRevisionId: secondAgentPrompt.id,
     });
     await page.screenshot({ path: testInfo.outputPath("02-session-admitted.png"), fullPage: true });
 
@@ -425,6 +493,8 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       activationNumber: 2,
       model: secondModel,
       stageId: secondStage.id,
+      agentId: firstAgentPrompt.agent_id,
+      promptRevisionId: secondAgentPrompt.id,
     });
 
     const rolledBackTitle = "Qualify admission after rollback";
@@ -435,6 +505,8 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       activationNumber: 3,
       model: firstModel,
       stageId: firstStage.id,
+      agentId: firstAgentPrompt.agent_id,
+      promptRevisionId: firstAgentPrompt.id,
     });
     await page.screenshot({
       path: testInfo.outputPath("04-rollback-admitted.png"),

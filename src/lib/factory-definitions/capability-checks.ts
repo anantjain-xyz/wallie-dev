@@ -71,6 +71,8 @@ export async function startFactoryDefinitionCapabilityCheck(
     const catalog = await loadFactoryDefinitionCatalog(admin, {
       workspaceId,
       factoryId: target.factoryId,
+      agentPromptRevisionId: readCompiledFactoryDefinition(stored.definition_json)
+        ?.implementationAgent?.promptRevisionId,
     });
     const compiled = recompileStoredFactoryDefinition(
       stored.definition_json,

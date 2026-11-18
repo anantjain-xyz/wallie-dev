@@ -107,9 +107,21 @@ async function seedFactoryWork(
       )
       .select("id,number,title"),
   );
+  const implementation = await read(
+    admin
+      .from("factory_agent_prompt_revisions")
+      .select("id,agent_id,factory_agents!inner(is_default)")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .eq("revision_number", 1)
+      .eq("factory_agents.is_default", true)
+      .single(),
+  );
   await write(
     admin.from("agent_runs").insert(
       sessions.map((session): Database["public"]["Tables"]["agent_runs"]["Insert"] => ({
+        agent_id: implementation.agent_id,
+        agent_prompt_revision_id: implementation.id,
         workspace_id: workspaceId,
         session_id: session.id,
         stage_id: stage.id,

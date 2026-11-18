@@ -6,7 +6,7 @@ import { loadWorkspaceSandboxOverview } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { loadFactoryDefinitionCatalog } from "./authority";
-import { compileFactoryDefinition } from "./compiler";
+import { compileFactoryDefinition, factoryAgentPromptRevisionIdForSource } from "./compiler";
 import type {
   FactoryEditorContent,
   FactoryEditorDocument,
@@ -107,7 +107,7 @@ export async function loadFactoryEditorDocument(
   return readEditorDocument(client, workspaceId, factory.id, target);
 }
 
-async function loadEditorBaseline(client: Client, workspaceId: string) {
+async function loadEditorBaseline(client: Client, workspaceId: string, factoryId: string) {
   const { data: pipeline, error } = await client
     .from("pipelines")
     .select("id, operating_rules_md")
@@ -124,6 +124,7 @@ async function loadEditorBaseline(client: Client, workspaceId: string) {
     pipeline.id,
     stages,
     pipeline.operating_rules_md,
+    factoryId,
   );
   if (!bundle) return null;
 
@@ -146,7 +147,7 @@ export async function loadFactoryEditorSnapshot(
           id: activation.revision_id,
         })
       : null,
-    !activation && !draft ? loadEditorBaseline(client, workspaceId) : null,
+    !activation && !draft ? loadEditorBaseline(client, workspaceId, factoryId) : null,
     loadWorkspaceSandboxOverview(client, workspaceId),
   ]);
   // If the workspace is deleted during the load, the observed activation can no longer be resolved.
@@ -182,6 +183,7 @@ export async function previewFactoryEditorDefinition(
   const catalog = await loadFactoryDefinitionCatalog(client, {
     workspaceId,
     factoryId: head.factoryId,
+    agentPromptRevisionId: factoryAgentPromptRevisionIdForSource(request.source),
   });
   const compiled = compileFactoryDefinition(
     request.source,

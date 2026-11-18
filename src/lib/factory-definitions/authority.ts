@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import { getEnabledSandboxProviders } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
@@ -28,62 +29,78 @@ async function collectCatalogRows<T>(fetchPage: (from: number, to: number) => Ca
 
 export async function loadFactoryDefinitionCatalog(
   admin: AdminClient,
-  { workspaceId, factoryId }: { workspaceId: string; factoryId: string },
+  {
+    workspaceId,
+    factoryId,
+    agentPromptRevisionId,
+  }: {
+    workspaceId: string;
+    factoryId: string;
+    agentPromptRevisionId?: string;
+  },
 ): Promise<FactoryDefinitionCatalog> {
-  const [pipelines, repositories, installation, executionPolicies, deliveryPolicies, approvers] =
-    await Promise.all([
-      collectCatalogRows((from, to) =>
-        admin
-          .from("pipelines")
-          .select("id, name")
-          .eq("workspace_id", workspaceId)
-          .eq("factory_id", factoryId)
-          .order("id")
-          .range(from, to),
-      ),
-      collectCatalogRows((from, to) =>
-        admin
-          .from("github_repositories")
-          .select("id, full_name, github_installation_id")
-          .eq("workspace_id", workspaceId)
-          .eq("factory_id", factoryId)
-          .eq("is_archived", false)
-          .order("id")
-          .range(from, to),
-      ),
+  const [
+    pipelines,
+    repositories,
+    installation,
+    executionPolicies,
+    deliveryPolicies,
+    approvers,
+    agentPrompts,
+  ] = await Promise.all([
+    collectCatalogRows((from, to) =>
       admin
-        .from("github_installations")
+        .from("pipelines")
+        .select("id, name")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .order("id")
+        .range(from, to),
+    ),
+    collectCatalogRows((from, to) =>
+      admin
+        .from("github_repositories")
+        .select("id, full_name, github_installation_id")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .eq("is_archived", false)
+        .order("id")
+        .range(from, to),
+    ),
+    admin
+      .from("github_installations")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("suspended", false)
+      .maybeSingle(),
+    collectCatalogRows((from, to) =>
+      admin
+        .from("execution_policy_revisions")
         .select("id")
         .eq("workspace_id", workspaceId)
-        .eq("suspended", false)
-        .maybeSingle(),
-      collectCatalogRows((from, to) =>
-        admin
-          .from("execution_policy_revisions")
-          .select("id")
-          .eq("workspace_id", workspaceId)
-          .order("id")
-          .range(from, to),
-      ),
-      collectCatalogRows((from, to) =>
-        admin
-          .from("delivery_policy_revisions")
-          .select("id, pipeline_id")
-          .eq("workspace_id", workspaceId)
-          .order("id")
-          .range(from, to),
-      ),
-      collectCatalogRows((from, to) =>
-        admin
-          .from("workspace_members")
-          .select("id")
-          .eq("workspace_id", workspaceId)
-          .eq("kind", "human")
-          .eq("is_active", true)
-          .order("id")
-          .range(from, to),
-      ),
-    ]);
+        .order("id")
+        .range(from, to),
+    ),
+    collectCatalogRows((from, to) =>
+      admin
+        .from("delivery_policy_revisions")
+        .select("id, pipeline_id")
+        .eq("workspace_id", workspaceId)
+        .order("id")
+        .range(from, to),
+    ),
+    collectCatalogRows((from, to) =>
+      admin
+        .from("workspace_members")
+        .select("id")
+        .eq("workspace_id", workspaceId)
+        .eq("kind", "human")
+        .eq("is_active", true)
+        .order("id")
+        .range(from, to),
+    ),
+    loadSelectedAgentPromptRevision(admin, workspaceId, factoryId, agentPromptRevisionId),
+  ]);
   if (installation.error) throw installation.error;
 
   return {
@@ -99,12 +116,40 @@ export async function loadFactoryDefinitionCatalog(
       pipelineId: pipeline_id,
     })),
     approvers: approvers.map(({ id }) => ({ id, workspaceId })),
+    agentPromptRevisions: agentPrompts.map(({ id, agent_id, prompt_md, prompt_sha256 }) => ({
+      id,
+      workspaceId,
+      ...factoryAgentPromptSnapshotSchema.parse({
+        agentId: agent_id,
+        promptRevisionId: id,
+        promptMd: prompt_md,
+        promptSha256: prompt_sha256,
+      }),
+    })),
     // Setup receipts prove a repository owns a bundled onboarding snapshot.
     // Factories gain individual skill and tool grants with the registry in M03.
     skills: [],
     tools: [],
     sandboxProviders: getEnabledSandboxProviders(),
   };
+}
+
+async function loadSelectedAgentPromptRevision(
+  admin: AdminClient,
+  workspaceId: string,
+  factoryId: string,
+  revisionId: string | undefined,
+) {
+  if (!revisionId) return [];
+  const { data, error } = await admin
+    .from("factory_agent_prompt_revisions")
+    .select("id, agent_id, prompt_md, prompt_sha256")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
+    .eq("id", revisionId)
+    .limit(1);
+  if (error) throw error;
+  return data;
 }
 
 export function factoryActivationRequirements(bundle: CompiledFactoryDefinition): {

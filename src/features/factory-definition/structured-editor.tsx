@@ -256,6 +256,17 @@ export function StructuredFactoryDefinitionEditor({
               value={value[key] ?? ""}
             />
           ))}
+          <div className="space-y-1.5">
+            <TextField
+              label="Implementation agent prompt revision"
+              onChange={(next) => update("implementationAgent", next || undefined)}
+              placeholder="Optional immutable revision ID"
+              value={value.implementationAgent ?? ""}
+            />
+            <p className="type-annotation text-muted">
+              Agent instructions are fixed text. Template variables stay literal.
+            </p>
+          </div>
           <ReferenceList
             description="One skill ID or alias per line."
             label="Skills"

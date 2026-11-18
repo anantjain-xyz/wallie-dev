@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
-import { compileFactoryDefinition } from "./compiler";
+import { compileFactoryDefinition, factoryAgentPromptRevisionIdForSource } from "./compiler";
 import type { FactoryDefinitionCatalog } from "./references";
 import type { SerialFactoryDefinitionInput } from "./schema";
+import { factoryDefinitionFromBundle, recompileStoredFactoryDefinition } from "./stored-definition";
 
 const workspaceId = "c5410000-0000-4000-8000-000000000001";
 const otherWorkspaceId = "c5410000-0000-4000-8000-000000000002";
@@ -19,6 +20,8 @@ const firstStageId = "c5410000-0000-4000-8000-000000000008";
 const lastStageId = "c5410000-0000-4000-8000-000000000009";
 const approverId = "c5410000-0000-4000-8000-000000000010";
 const otherApproverId = "c5410000-0000-4000-8000-000000000011";
+const agentId = "c5410000-0000-4000-8000-000000000012";
+const promptRevisionId = "c5410000-0000-4000-8000-000000000013";
 
 const catalog: FactoryDefinitionCatalog = {
   workspaceId,
@@ -87,6 +90,112 @@ function compile(value: unknown, references: FactoryDefinitionCatalog = catalog)
 }
 
 describe("compileFactoryDefinition", () => {
+  it("reads a selected prompt revision only from valid structured or JSON sources", () => {
+    const value = { ...candidate(), implementationAgent: promptRevisionId.toUpperCase() };
+    expect(factoryAgentPromptRevisionIdForSource({ kind: "structured", value })).toBe(
+      promptRevisionId,
+    );
+    expect(
+      factoryAgentPromptRevisionIdForSource({ kind: "json", text: JSON.stringify(value) }),
+    ).toBe(promptRevisionId);
+    expect(
+      factoryAgentPromptRevisionIdForSource({ kind: "structured", value: candidate() }),
+    ).toBeUndefined();
+    expect(
+      factoryAgentPromptRevisionIdForSource({
+        kind: "structured",
+        value: { ...value, implementationAgent: "invalid-uuid" },
+      }),
+    ).toBeUndefined();
+    expect(factoryAgentPromptRevisionIdForSource({ kind: "json", text: "{" })).toBeUndefined();
+    expect(
+      factoryAgentPromptRevisionIdForSource({
+        kind: "json",
+        text: '{"implementationAgent":"one","implementationAgent":"two"}',
+      }),
+    ).toBeUndefined();
+  });
+
+  it("pins named-agent prompt bytes and keeps template-looking instructions literal", () => {
+    const promptMd =
+      "Use {{session.prompt}} and {{artifact.previousStages.future-stage}} literally.";
+    const prompt = {
+      id: promptRevisionId,
+      workspaceId,
+      agentId,
+      promptRevisionId,
+      promptMd,
+      promptSha256: createHash("sha256").update(promptMd, "utf8").digest("hex"),
+    };
+    const references = { ...catalog, agentPromptRevisions: [prompt] };
+    const compiled = compile({ ...candidate(), implementationAgent: promptRevisionId }, references);
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+    expect(compiled.bundle.implementationAgent).toEqual({
+      agentId,
+      promptRevisionId,
+      promptMd,
+      promptSha256: prompt.promptSha256,
+    });
+    expect(factoryDefinitionFromBundle(compiled.bundle).implementationAgent).toBe(promptRevisionId);
+    const updatedCatalog = {
+      ...references,
+      agentPromptRevisions: [
+        prompt,
+        {
+          ...prompt,
+          id: otherRepositoryId,
+          promptRevisionId: otherRepositoryId,
+          promptMd: "New candidate",
+        },
+      ],
+    };
+    expect(
+      recompileStoredFactoryDefinition(
+        compiled.definitionJson,
+        compiled.canonicalDigest,
+        updatedCatalog,
+      ),
+    ).toEqual(compiled);
+  });
+
+  it("rejects missing or foreign agent prompts and caller-supplied prompt authority", () => {
+    const promptMd = "Trusted instructions";
+    const foreign = {
+      id: promptRevisionId,
+      workspaceId: otherWorkspaceId,
+      agentId,
+      promptRevisionId,
+      promptMd,
+      promptSha256: createHash("sha256").update(promptMd, "utf8").digest("hex"),
+    };
+    expect(
+      compile(
+        { ...candidate(), implementationAgent: promptRevisionId },
+        {
+          ...catalog,
+          agentPromptRevisions: [foreign],
+        },
+      ),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [{ path: ["implementationAgent"], code: "missing_reference" }],
+    });
+    expect(
+      compile({ ...candidate(), implementationAgent: { ...foreign, authority: "owner" } }),
+    ).toMatchObject({ ok: false });
+    const original = compile(candidate());
+    expect(original.ok).toBe(true);
+    if (!original.ok) return;
+    expect(original.definitionJson).not.toContain("implementationAgent");
+    expect(
+      recompileStoredFactoryDefinition(original.definitionJson, original.canonicalDigest, {
+        ...catalog,
+        agentPromptRevisions: [],
+      }),
+    ).toEqual(original);
+  });
+
   it("compiles structured and JSON inputs into the same stable IDs, canonical bytes, and digest", () => {
     const input = candidate();
     input.agent.maxRetries = -0;
