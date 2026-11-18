@@ -118,6 +118,13 @@ class MissingReviewableOutputError extends Error {
   }
 }
 
+class ServicePrincipalCredentialUnavailableError extends Error {
+  constructor() {
+    super("An approved service principal credential binding is required to start this run.");
+    this.name = "ServicePrincipalCredentialUnavailableError";
+  }
+}
+
 export type PipelinePhaseActionResult = {
   error?: string;
   errorCode?: string;
@@ -352,6 +359,8 @@ async function runStage(input: {
       });
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
+
+    if (pinned?.executionGrant) throw new ServicePrincipalCredentialUnavailableError();
 
     const [agentPrompt, skillInstructions] = await Promise.all([
       loadRunAgentPrompt(admin, {
@@ -979,6 +988,14 @@ async function runStage(input: {
           !(error instanceof MissingReviewableOutputError) &&
           !(error instanceof SourcePreservationError) &&
           !(error instanceof ExecutionBudgetExhaustedError) &&
+          !(error instanceof ServicePrincipalCredentialUnavailableError) &&
+          !(
+            pinned?.executionGrant &&
+            error &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "42501"
+          ) &&
           !isSandboxConnectionSetupError(error),
       },
     );

@@ -1574,6 +1574,71 @@ export type Database = {
           },
         ]
       }
+      factory_execution_grants: {
+        Row: {
+          approved_at: string
+          approved_by_member_id: string
+          budget_payer_member_id: string
+          execution_policy_revision_id: string
+          expires_at: string
+          factory_id: string
+          github_repository_id: string
+          id: string
+          read_context_repository_ids: string[]
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          service_principal_id: string
+          tool_ids: string[]
+          version: number
+          workspace_id: string
+        }
+        Insert: {
+          approved_at: string
+          approved_by_member_id: string
+          budget_payer_member_id: string
+          execution_policy_revision_id: string
+          expires_at: string
+          factory_id: string
+          github_repository_id: string
+          id?: string
+          read_context_repository_ids: string[]
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          service_principal_id: string
+          tool_ids: string[]
+          version: number
+          workspace_id: string
+        }
+        Update: {
+          approved_at?: string
+          approved_by_member_id?: string
+          budget_payer_member_id?: string
+          execution_policy_revision_id?: string
+          expires_at?: string
+          factory_id?: string
+          github_repository_id?: string
+          id?: string
+          read_context_repository_ids?: string[]
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          service_principal_id?: string
+          tool_ids?: string[]
+          version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_execution_grants_workspace_id_factory_id_service_p_fkey"
+            columns: ["workspace_id", "factory_id", "service_principal_id"]
+            isOneToOne: false
+            referencedRelation: "service_principals"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_members: {
         Row: {
           factory_id: string
@@ -2374,6 +2439,44 @@ export type Database = {
           },
         ]
       }
+      service_principals: {
+        Row: {
+          created_at: string
+          created_by_member_id: string
+          factory_id: string
+          id: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_member_id: string
+          factory_id: string
+          id?: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by_member_id?: string
+          factory_id?: string
+          id?: string
+          name?: string
+          slug?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_principals_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       session_artifact_feedback: {
         Row: {
           created_at: string
@@ -2933,12 +3036,18 @@ export type Database = {
       session_factory_admission_inputs: {
         Row: {
           activation_number: number
+          budget_payer_member_id: string | null
           created_at: string
+          credential_owner_member_id: string | null
+          credential_owner_service_principal_id: string | null
           definition_digest: string
           definition_revision_id: string
+          execution_grant_id: string | null
+          execution_grant_version: number | null
           execution_policy_revision_id: string | null
           factory_id: string
           github_repository_id: string | null
+          invoking_actor_member_id: string | null
           model_name: string
           model_provider: string
           original_prompt_md: string | null
@@ -2952,12 +3061,18 @@ export type Database = {
         }
         Insert: {
           activation_number: number
+          budget_payer_member_id?: string | null
           created_at?: string
+          credential_owner_member_id?: string | null
+          credential_owner_service_principal_id?: string | null
           definition_digest: string
           definition_revision_id: string
+          execution_grant_id?: string | null
+          execution_grant_version?: number | null
           execution_policy_revision_id?: string | null
           factory_id: string
           github_repository_id?: string | null
+          invoking_actor_member_id?: string | null
           model_name: string
           model_provider: string
           original_prompt_md?: string | null
@@ -2971,12 +3086,18 @@ export type Database = {
         }
         Update: {
           activation_number?: number
+          budget_payer_member_id?: string | null
           created_at?: string
+          credential_owner_member_id?: string | null
+          credential_owner_service_principal_id?: string | null
           definition_digest?: string
           definition_revision_id?: string
+          execution_grant_id?: string | null
+          execution_grant_version?: number | null
           execution_policy_revision_id?: string | null
           factory_id?: string
           github_repository_id?: string | null
+          invoking_actor_member_id?: string | null
           model_name?: string
           model_provider?: string
           original_prompt_md?: string | null
@@ -6039,6 +6160,46 @@ export type Database = {
           run_ids: string[]
         }[]
       }
+      approve_factory_execution_grant: {
+        Args: {
+          p_actor_user_id: string
+          p_budget_payer_member_id: string
+          p_execution_policy_revision_id: string
+          p_expected_version: number
+          p_expires_at: string
+          p_factory_id: string
+          p_github_repository_id: string
+          p_grant_id?: string
+          p_read_context_repository_ids: string[]
+          p_service_principal_id: string
+          p_tool_ids: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          approved_at: string
+          approved_by_member_id: string
+          budget_payer_member_id: string
+          execution_policy_revision_id: string
+          expires_at: string
+          factory_id: string
+          github_repository_id: string
+          id: string
+          read_context_repository_ids: string[]
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          service_principal_id: string
+          tool_ids: string[]
+          version: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_execution_grants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       approve_session_stage: {
         Args: {
           approver_member_id: string
@@ -6584,6 +6745,30 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_skill_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      create_service_principal: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_name: string
+          p_slug: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by_member_id: string
+          factory_id: string
+          id: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "service_principals"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -7899,6 +8084,40 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_factory_execution_grant: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_version: number
+          p_factory_id: string
+          p_grant_id: string
+          p_reason?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          approved_at: string
+          approved_by_member_id: string
+          budget_payer_member_id: string
+          execution_policy_revision_id: string
+          expires_at: string
+          factory_id: string
+          github_repository_id: string
+          id: string
+          read_context_repository_ids: string[]
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          service_principal_id: string
+          tool_ids: string[]
+          version: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_execution_grants"
           isOneToOne: true
           isSetofReturn: false
         }

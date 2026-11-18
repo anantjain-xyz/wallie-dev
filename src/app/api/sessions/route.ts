@@ -497,6 +497,12 @@ export async function POST(request: Request) {
         { status: 422 },
       );
     }
+    if (pinned?.executionGrant && getErrorCode(error) === "PT409") {
+      return NextResponse.json(
+        { error: "Factory execution grant access is changing. Retry session creation." },
+        { status: 409 },
+      );
+    }
     if (getErrorCode(error) === "P0002") {
       return NextResponse.json(
         { error: getErrorMessage(error, "Workspace pipeline is not configured.") },

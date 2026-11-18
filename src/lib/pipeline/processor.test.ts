@@ -1075,9 +1075,13 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
   });
 
-  it.each(["manual_run", "manual_retry"] as const)(
-    "executes %s on the compiled stage with its original prompt and authorized sandbox",
-    async (trigger) => {
+  it.each([
+    { trigger: "manual_run", serviceBound: false },
+    { trigger: "manual_retry", serviceBound: false },
+    { trigger: "manual_run", serviceBound: true },
+  ] as const)(
+    "honors the compiled authorization for $trigger (service grant $serviceBound)",
+    async ({ trigger, serviceBound }) => {
       const stageId = "77900000-0000-4000-8000-000000000001";
       const pipelineId = "77900000-0000-4000-8000-000000000002";
       const repositoryId = "77900000-0000-4000-8000-000000000003";
@@ -1090,13 +1094,20 @@ describe("processPipelineJob (generic stage runner)", () => {
           .update("Original implementation agent {{session.prompt}}")
           .digest("hex"),
       };
-      mocked.loadRunAgentPrompt.mockResolvedValueOnce(implementationAgent);
+      if (!serviceBound) mocked.loadRunAgentPrompt.mockResolvedValueOnce(implementationAgent);
       const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
         schemaVersion: 1,
         kind: "serial",
         pipelineId,
-        repositoryId: "7f5489ea-58a9-41d5-ba8d-890b08a0650c",
-        writableRepositoryIds: [repositoryId],
+        ...(serviceBound
+          ? {
+              repositoryId,
+              executionGrant: { id: "77900000-0000-4000-8000-000000000007", version: 1 },
+            }
+          : {
+              repositoryId: "7f5489ea-58a9-41d5-ba8d-890b08a0650c",
+              writableRepositoryIds: [repositoryId],
+            }),
         sandboxProvider: "vercel",
         agent: {
           provider: "claude-code",
@@ -1110,7 +1121,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         implementationAgent,
         operatingRulesMd: "Original operating rules",
         operatingRuleStageIds: [],
-        executionPolicyRevisionId: null,
+        executionPolicyRevisionId: serviceBound ? "77900000-0000-4000-8000-000000000008" : null,
         deliveryPolicyRevisionId: null,
         skillIds: [],
         toolIds: [],
@@ -1152,14 +1163,26 @@ describe("processPipelineJob (generic stage runner)", () => {
         ],
       });
 
-      expect(
-        (
-          await processPipelineJob({
-            admin,
-            job: baseJob({ stage_id: stageId, trigger_type: trigger }),
-          })
-        ).result,
-      ).toBe("success");
+      const result = await processPipelineJob({
+        admin,
+        job: baseJob({ stage_id: stageId, trigger_type: trigger }),
+      });
+      if (serviceBound) {
+        expect(result).toMatchObject({ result: "error", runId: "run-1" });
+        expect(rpc).toHaveBeenCalledWith(
+          "fail_session_job_attempt",
+          expect.objectContaining({
+            p_error:
+              "An approved service principal credential binding is required to start this run.",
+            p_retry: false,
+          }),
+        );
+        expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+        expect(mocked.getClaudeCodeCredentialForSession).not.toHaveBeenCalled();
+        expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+        return;
+      }
+      expect(result.result).toBe("success");
       expect(mocked.loadWorkspaceAgentConfig).not.toHaveBeenCalled();
       expect(mocked.loadRunAgentPrompt).toHaveBeenCalledWith(admin, {
         workspaceId: "ws-1",
