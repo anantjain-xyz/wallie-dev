@@ -109,7 +109,7 @@ vi.mock("./source-delivery", async (importOriginal) => ({
 
 vi.mock("@/lib/prompt-templates", () => ({
   renderStagePrompt: mocked.renderStagePrompt,
-  STAGE_PROMPT_RENDERER_VERSION: 3,
+  STAGE_PROMPT_RENDERER_VERSION: 4,
 }));
 
 vi.mock("@/lib/factory-agents/runtime", () => ({
@@ -1716,7 +1716,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       p_attempt_count: 1,
       p_prompt_sha256: createHash("sha256").update("rendered prompt", "utf8").digest("hex"),
       p_prompt_utf8_bytes: Buffer.byteLength("rendered prompt", "utf8"),
-      p_renderer_version: 3,
+      p_renderer_version: 4,
       p_checkout_sha: "a".repeat(40),
       p_predecessors: [predecessor],
       p_worker_runtime: "node",

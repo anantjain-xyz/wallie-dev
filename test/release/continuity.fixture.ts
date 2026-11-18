@@ -598,7 +598,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       definition_provenance: "legacy",
       definition_revision_id: null,
       worker_runtime: "node",
-      renderer_version: 3,
+      renderer_version: 4,
       prompt_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       credential_owner_member_id: ids.memberId,
       predecessors: [
