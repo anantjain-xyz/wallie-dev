@@ -10,19 +10,14 @@ import {
 } from "@/lib/sandbox-capabilities/server";
 import type { Database } from "@/lib/supabase/database.types";
 
-import { loadFactoryDefinitionCatalog } from "./authority";
-import type { CompiledFactoryDefinition, FactoryDefinitionDiagnostic } from "./compiler";
+import type { CompiledFactoryDefinition } from "./compiler";
 import { factoryWritableRepositoryIds } from "./repository-bindings";
-import { catalogForStoredFactoryDefinition } from "./settings-persistence";
 import {
   selectDefaultFactory,
   selectStoredFactoryDefinition,
   type FactoryDefinitionTarget,
 } from "./storage";
-import {
-  readCompiledFactoryDefinition,
-  recompileStoredFactoryDefinition,
-} from "./stored-definition";
+import { readVerifiedFactoryDefinition } from "./stored-definition";
 
 type CheckScope = {
   admin: SupabaseClient<Database>;
@@ -34,17 +29,15 @@ type CheckFailure = {
   ok: false;
   status: 400 | 403 | 404 | 409 | 422 | 500;
   error: string;
-  diagnostics?: FactoryDefinitionDiagnostic[];
 };
 
 export async function readFactoryDefinitionCapabilityCheck(
   scope: CheckScope,
 ): Promise<CheckFailure | { ok: true; check: SandboxCapabilityCheckState | null }> {
   try {
-    const target = await loadStoredDefinition(scope);
-    if (!target) return unavailableDefinition();
-    const { stored } = target;
-    const bundle = readCompiledFactoryDefinition(stored.definition_json);
+    const stored = await loadStoredDefinition(scope);
+    if (!stored) return unavailableDefinition();
+    const bundle = readVerifiedFactoryDefinition(stored.definition_json, stored.canonical_digest);
     if (!bundle) return invalidDefinition();
     const repositoryId = selectCheckRepository(bundle, scope.repositoryId);
     if (!repositoryId) return unavailableRepository();
@@ -69,28 +62,18 @@ export async function startFactoryDefinitionCapabilityCheck(
 > {
   const { admin, workspaceId, actorUserId } = scope;
   try {
-    const target = await loadStoredDefinition(scope);
-    if (!target) return unavailableDefinition();
-    const { stored } = target;
-    const bundle = readCompiledFactoryDefinition(stored.definition_json);
-    const catalog = await loadFactoryDefinitionCatalog(admin, {
-      workspaceId,
-      factoryId: target.factoryId,
-      agentPromptRevisionId: bundle?.implementationAgent?.promptRevisionId,
-      skillRevisionIds: bundle?.skillIds,
-    });
-    const compiled = recompileStoredFactoryDefinition(
-      stored.definition_json,
-      stored.canonical_digest,
-      catalogForStoredFactoryDefinition(catalog, stored),
-    );
-    if (!compiled.ok) return invalidDefinition(compiled.diagnostics);
-    const { agent, sandboxProvider } = compiled.bundle;
-    const repositoryId = selectCheckRepository(compiled.bundle, scope.repositoryId);
+    const stored = await loadStoredDefinition(scope);
+    if (!stored) return unavailableDefinition();
+    const bundle = readVerifiedFactoryDefinition(stored.definition_json, stored.canonical_digest);
+    if (!bundle) return invalidDefinition();
+    // The reservation checks current access to the selected writer and sandbox.
+    // A probe of that runtime does not need the other resources used by execution.
+    const { agent, sandboxProvider } = bundle;
+    const repositoryId = selectCheckRepository(bundle, scope.repositoryId);
     if (!repositoryId) return unavailableRepository();
     const candidate = {
       agent: { provider: agent.provider, model: agent.model },
-      definitionDigest: compiled.canonicalDigest,
+      definitionDigest: stored.canonical_digest,
       sandboxProvider,
     };
     const { check, repository } = await startSandboxCapabilityCheck({
@@ -141,15 +124,14 @@ async function loadStoredDefinition({ admin, workspaceId, target }: CheckScope) 
     target,
   );
   if (error) throw error;
-  return data ? { stored: data, factoryId: factory.id } : null;
+  return data;
 }
 
-function invalidDefinition(diagnostics?: FactoryDefinitionDiagnostic[]): CheckFailure {
+function invalidDefinition(): CheckFailure {
   return {
     ok: false,
     status: 422,
     error: "Review the saved definition before checking its runtime.",
-    diagnostics,
   };
 }
 

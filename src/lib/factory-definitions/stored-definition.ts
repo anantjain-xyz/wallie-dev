@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   compileFactoryDefinition,
   type CompiledFactoryDefinition,
@@ -33,6 +35,11 @@ export function readCompiledFactoryDefinition(definitionJson: string) {
   const decoded = parseFactoryDefinitionJson(definitionJson);
   const parsed = compiledFactoryDefinitionSchema.safeParse(decoded.ok ? decoded.value : null);
   return parsed.success ? parsed.data : null;
+}
+
+export function readVerifiedFactoryDefinition(definitionJson: string, canonicalDigest: string) {
+  const digest = createHash("sha256").update(definitionJson, "utf8").digest("hex");
+  return digest === canonicalDigest ? readCompiledFactoryDefinition(definitionJson) : null;
 }
 
 export function factoryStageDefinition({

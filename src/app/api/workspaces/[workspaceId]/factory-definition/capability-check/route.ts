@@ -58,12 +58,7 @@ export async function GET(request: Request, { params }: RouteContext) {
       workspaceId: access.context.workspace.id,
       ...target.data,
     });
-    if (!result.ok) {
-      return Response.json(
-        { error: result.error, diagnostics: result.diagnostics },
-        { status: result.status, headers },
-      );
-    }
+    if (!result.ok) return errorResponse(result.error, result.status);
     return Response.json({ check: result.check }, { headers });
   } catch {
     return errorResponse("Could not load the factory definition capability check.", 500);
@@ -90,12 +85,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       actorUserId: access.context.user.id,
       ...parsed.data,
     });
-    if (!result.ok) {
-      return Response.json(
-        { error: result.error, diagnostics: result.diagnostics },
-        { status: result.status, headers },
-      );
-    }
+    if (!result.ok) return errorResponse(result.error, result.status);
 
     after(async () => {
       await result.complete();

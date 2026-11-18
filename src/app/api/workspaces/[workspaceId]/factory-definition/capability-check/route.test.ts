@@ -209,21 +209,17 @@ describe("POST saved factory definition capability check", () => {
     expect(mocked.after).not.toHaveBeenCalled();
   });
 
-  it("returns failed reservations with their diagnostics before any probe is scheduled", async () => {
+  it("returns failed reservations before scheduling a probe", async () => {
     authorize();
     const error = "Sandbox connection changed.";
-    const diagnostics = [
-      { path: ["sandboxProvider"], code: "unsupported_capability", message: error },
-    ];
     mocked.startFactoryDefinitionCapabilityCheck.mockResolvedValue({
       ok: false,
       status: 409,
       error,
-      diagnostics,
     });
     const response = await post({ target: { kind: "draft", id: targetId } });
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ error, diagnostics });
+    expect(await response.json()).toEqual({ error });
     expect(mocked.after).not.toHaveBeenCalled();
   });
 });

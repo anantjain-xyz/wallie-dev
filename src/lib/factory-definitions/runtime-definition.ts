@@ -1,15 +1,12 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { factoryWritableRepositoryIds } from "./repository-bindings";
-import { compiledFactoryDefinitionSchema } from "./schema";
-import { parseFactoryDefinitionJson } from "./serialization";
 import { selectDefaultFactory } from "./storage";
+import { readVerifiedFactoryDefinition } from "./stored-definition";
 
 type DefinitionClient = Pick<SupabaseClient<Database>, "from">;
 type SessionPin = Pick<
@@ -60,13 +57,11 @@ async function loadExecutionRevision(
   if (error) throw error;
   if (!data) throw new Error("The factory revision is unavailable in this workspace.");
 
-  const digest = createHash("sha256").update(data.definition_json, "utf8").digest("hex");
-  const decoded = parseFactoryDefinitionJson(data.definition_json);
-  const definition = compiledFactoryDefinitionSchema.safeParse(decoded.ok ? decoded.value : null);
-  if (digest !== data.canonical_digest || !definition.success) {
+  const definition = readVerifiedFactoryDefinition(data.definition_json, data.canonical_digest);
+  if (!definition) {
     throw new Error("The factory revision failed validation. Review its published configuration.");
   }
-  return { ...definition.data, canonicalDigest: digest };
+  return { ...definition, canonicalDigest: data.canonical_digest };
 }
 
 export type PinnedFactoryExecution = NonNullable<

@@ -75,7 +75,7 @@ const stored = {
   definition_json: compiled.definitionJson,
 };
 
-function testClient() {
+function testClient(saved = stored) {
   return createClient<Database>("http://localhost:9999", "test-service-role", {
     global: {
       fetch: async (input: string | Request | URL) => {
@@ -85,7 +85,7 @@ function testClient() {
         expect(url.pathname).toMatch(/\/factory_definition_revisions$/);
         expect(url.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
         expect(url.searchParams.get("id")).toBe(`eq.${target.id}`);
-        return Response.json([stored]);
+        return Response.json([saved]);
       },
     },
   });
@@ -186,6 +186,70 @@ describe("saved factory capability checks", () => {
       workspaceId,
       target,
       repositoryId: readContextRepositoryId,
+    };
+    await expect(
+      startFactoryDefinitionCapabilityCheck({ ...scope, actorUserId }),
+    ).resolves.toMatchObject({ ok: false, status: 422 });
+    await expect(readFactoryDefinitionCapabilityCheck(scope)).resolves.toMatchObject({
+      ok: false,
+      status: 422,
+    });
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.latest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { unavailable: "default writer", missingId: repositoryId, selectedId: writableRepositoryId },
+    {
+      unavailable: "alternate writer",
+      missingId: writableRepositoryId,
+      selectedId: repositoryId,
+    },
+    {
+      unavailable: "read context",
+      missingId: readContextRepositoryId,
+      selectedId: writableRepositoryId,
+    },
+  ])(
+    "checks a healthy writer when the saved $unavailable is unavailable",
+    async ({ missingId, selectedId }) => {
+      mocks.catalog.mockResolvedValue({
+        ...catalog,
+        repositories: catalog.repositories.filter(({ id }) => id !== missingId),
+      });
+      const admin = testClient();
+      const repository = { id: selectedId };
+      const check = { status: "running", githubRepositoryId: selectedId };
+      mocks.start.mockResolvedValue({ check, repository });
+
+      await expect(
+        startFactoryDefinitionCapabilityCheck({
+          admin,
+          workspaceId,
+          actorUserId,
+          target,
+          repositoryId: selectedId,
+        }),
+      ).resolves.toMatchObject({ ok: true, check });
+      expect(mocks.start).toHaveBeenCalledWith({
+        admin,
+        workspaceId,
+        repositoryId: selectedId,
+        candidate: {
+          actorUserId,
+          agent,
+          definitionDigest: stored.canonical_digest,
+          sandboxProvider: "daytona",
+        },
+      });
+    },
+  );
+
+  it("rejects saved definition bytes that do not match their recorded digest", async () => {
+    const scope = {
+      admin: testClient({ ...stored, definition_json: `\n${stored.definition_json}` }),
+      workspaceId,
+      target,
     };
     await expect(
       startFactoryDefinitionCapabilityCheck({ ...scope, actorUserId }),
