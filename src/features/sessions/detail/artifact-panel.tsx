@@ -27,6 +27,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { InlineArtifactReview } from "@/features/sessions/review/inline-artifact-review";
 import type { ReviewSessionReadOnlyReason } from "@/features/sessions/review/comment-access";
+import { SCREENSHOT_EVIDENCE_PARAM } from "@/features/wallie/browser-screenshot-evidence-contracts";
 import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-inspector";
 
 export type DisplayedArtifactIdentity = Pick<
@@ -1228,7 +1229,17 @@ function ArtifactPanelStage({
       {activeTab !== "versions" && visibleBody?.id ? (
         <div className="mb-3">
           <ArtifactEvidenceInspector
-            source={{ kind: "review", sessionId, artifactId: visibleBody.id }}
+            source={{
+              kind: "review",
+              sessionId,
+              artifactId: visibleBody.id,
+              artifactLinkQuery: new URLSearchParams({
+                [ARTIFACT_STAGE_PARAM]: stageSlug,
+                [ARTIFACT_ID_PARAM]: visibleBody.id,
+                [ARTIFACT_VERSION_PARAM]: String(visibleBody.version),
+                [SCREENSHOT_EVIDENCE_PARAM]: "1",
+              }).toString(),
+            }}
           />
         </div>
       ) : null}

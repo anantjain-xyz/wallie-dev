@@ -33,6 +33,7 @@ import {
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
 import {
+  ARTIFACT_ID_PARAM,
   ARTIFACT_STAGE_PARAM,
   ARTIFACT_VERSION_PARAM,
   ArtifactPanel,
@@ -45,6 +46,7 @@ import type {
 import { SessionRefreshContext } from "@/features/sessions/detail/session-refresh-context";
 import { loadSessionRecoverySnapshot, SessionRecoveryAccessError } from "./recovery-snapshot";
 import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
+import { SCREENSHOT_EVIDENCE_PARAM } from "@/features/wallie/browser-screenshot-evidence-contracts";
 import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
@@ -468,9 +470,20 @@ function SessionDetailContent({
       session.phaseStatus === "rejected" ||
       (hasFailedRun && session.phaseStatus !== "approved") ||
       stopPending);
+  const pinnedScreenshotArtifact =
+    searchParams.get(SCREENSHOT_EVIDENCE_PARAM) === "1" &&
+    Boolean(searchParams.get(ARTIFACT_ID_PARAM));
   const artifactAvailable =
-    Boolean(exactTarget) || latestArtifact !== null || shouldLoadLatestArtifact;
-  const stageFocus = runIsFocus && !exactTarget ? "run" : artifactAvailable ? "artifact" : "empty";
+    Boolean(exactTarget) ||
+    pinnedScreenshotArtifact ||
+    latestArtifact !== null ||
+    shouldLoadLatestArtifact;
+  const stageFocus =
+    runIsFocus && !exactTarget && !pinnedScreenshotArtifact
+      ? "run"
+      : artifactAvailable
+        ? "artifact"
+        : "empty";
 
   function handleSelectStage(stageSlug: string) {
     if (stageSlug === selectedStageSlug || exactTarget) return;
@@ -1340,7 +1353,7 @@ function SessionDetailContent({
       isAwaitingReview={selectedStageIsCurrent && session.phaseStatus === "awaiting_review"}
       isDrafting={false}
       latestArtifact={latestArtifact}
-      loadLatest={Boolean(exactTarget) || shouldLoadLatestArtifact}
+      loadLatest={Boolean(exactTarget) || pinnedScreenshotArtifact || shouldLoadLatestArtifact}
       onViewingHistoricalChange={setViewingHistoricalArtifact}
       onDisplayedArtifactChange={setDisplayedArtifact}
       persistStageInUrl={!selectedStageIsCurrent}

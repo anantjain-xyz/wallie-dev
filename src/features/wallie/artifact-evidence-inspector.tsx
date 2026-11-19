@@ -19,6 +19,7 @@ import {
   type InspectedArtifact,
 } from "./artifact-evidence-inspector-data";
 import type { RunArtifactAvailability, RunArtifactKind } from "./run-artifacts-contracts";
+import { BrowserScreenshotInspector } from "./browser-screenshot-evidence";
 
 const KINDS = {
   stage_markdown: "Agent-authored output",
@@ -120,7 +121,19 @@ export function ArtifactEvidenceInspector({ source }: { source: ArtifactEvidence
     source.kind === "review"
       ? `review:${source.sessionId}:${source.artifactId}`
       : `run:${source.workspaceId}:${source.runId}:${source.artifactId ?? ""}`;
-  return <ScopedArtifactEvidence key={sourceKey} source={source} />;
+  return (
+    <div key={sourceKey} className="min-w-0">
+      <ScopedArtifactEvidence source={source} />
+      {source.sessionId ? (
+        <BrowserScreenshotInspector
+          sessionId={source.sessionId}
+          artifactId={source.artifactId ?? undefined}
+          artifactLinkQuery={source.kind === "review" ? source.artifactLinkQuery : undefined}
+          runId={source.kind === "run" ? source.runId : undefined}
+        />
+      ) : null}
+    </div>
+  );
 }
 
 function ScopedArtifactEvidence({ source }: { source: ArtifactEvidenceSource }) {

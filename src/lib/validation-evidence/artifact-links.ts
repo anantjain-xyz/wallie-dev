@@ -12,12 +12,12 @@ type ArtifactEvidenceContext = {
 };
 
 /** An immutable checkpoint, never a latest run or timestamp, owns artifact evidence. */
-export async function loadArtifactEvidenceRun({
+export async function loadArtifactEvidenceCheckpoint({
   supabase,
   sessionId,
   workspaceId,
   artifactId,
-}: ArtifactEvidenceContext): Promise<string | null> {
+}: ArtifactEvidenceContext): Promise<{ runId: string; commitSha: string } | null> {
   const { data: checkpoint, error: checkpointError } = await supabase
     .from("session_git_checkpoints")
     .select("run_id, output_sha")
@@ -26,15 +26,23 @@ export async function loadArtifactEvidenceRun({
     .eq("workspace_id", workspaceId)
     .maybeSingle();
   if (checkpointError || !checkpoint) return null;
+  return { runId: checkpoint.run_id, commitSha: checkpoint.output_sha };
+}
 
+export async function loadArtifactEvidenceRun(
+  input: ArtifactEvidenceContext,
+): Promise<string | null> {
+  const checkpoint = await loadArtifactEvidenceCheckpoint(input);
+  if (!checkpoint) return null;
+  const { supabase, sessionId, workspaceId } = input;
   const { data: receipt, error: receiptError } = await supabase
     .from("session_validation_evidence")
     .select("run_id, commit_sha")
-    .eq("run_id", checkpoint.run_id)
+    .eq("run_id", checkpoint.runId)
     .eq("session_id", sessionId)
     .eq("workspace_id", workspaceId)
     .maybeSingle();
-  if (receiptError || !receipt || receipt.commit_sha !== checkpoint.output_sha) return null;
+  if (receiptError || !receipt || receipt.commit_sha !== checkpoint.commitSha) return null;
   return receipt.run_id;
 }
 

@@ -9,8 +9,14 @@ import {
 import type { findRunArtifact } from "./run-artifacts";
 
 export type ArtifactEvidenceSource =
-  | { kind: "run"; workspaceId: string; runId: string; artifactId?: string | null }
-  | { kind: "review"; sessionId: string; artifactId: string };
+  | {
+      kind: "run";
+      workspaceId: string;
+      runId: string;
+      sessionId?: string;
+      artifactId?: string | null;
+    }
+  | { kind: "review"; sessionId: string; artifactId: string; artifactLinkQuery?: string };
 
 export type ArtifactScope = { workspaceId: string; runId: string; workspaceSlug?: string };
 export type ArtifactTarget = { id: string; kind: RunArtifactKind };
