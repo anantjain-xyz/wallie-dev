@@ -8384,6 +8384,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      control_factory_flow_projection: {
+        Args: { p_action: string; p_factory_id: string; p_workspace_id: string }
+        Returns: Json
+      }
       correct_factory_memory: {
         Args: {
           p_body_md: string
@@ -9311,6 +9315,10 @@ export type Database = {
           p_to: string
           p_workspace_id: string
         }
+        Returns: Json
+      }
+      get_factory_flow_projection_health: {
+        Args: { p_factory_id: string; p_workspace_id: string }
         Returns: Json
       }
       get_factory_flow_summary: {

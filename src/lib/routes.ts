@@ -6,6 +6,7 @@ export type WorkspaceNavItem = {
   href: string;
   id:
     | "pipeline"
+    | "overview"
     | "sessions"
     | "inbox"
     | "runs"
@@ -45,6 +46,10 @@ function withSearchParams(pathname: string, query?: Record<string, QueryValue>) 
 
 export function workspaceBasePath(workspaceSlug: string) {
   return `/w/${workspaceSlug}`;
+}
+
+export function workspaceOverviewPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/overview`, query);
 }
 
 export function workspaceOnboardingPath(workspaceSlug: string) {
@@ -140,6 +145,12 @@ export function getWorkspaceNavItems(
   { canManageFactoryDefinition = false, canManageGovernance = false } = {},
 ): WorkspaceNavItem[] {
   const items: WorkspaceNavItem[] = [
+    {
+      id: "overview",
+      href: workspaceOverviewPath(workspaceSlug),
+      label: "Overview",
+      section: "Work",
+    },
     { id: "pipeline", href: workspaceBasePath(workspaceSlug), label: "Pipeline", section: "Work" },
     {
       id: "sessions",

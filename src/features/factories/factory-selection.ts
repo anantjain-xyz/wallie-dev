@@ -7,6 +7,7 @@ import {
   workspaceGovernancePath,
   workspaceInboxPath,
   workspaceMemoryPath,
+  workspaceOverviewPath,
   workspaceRunsPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
@@ -89,11 +90,18 @@ export function isManagedFactoryPath(pathname: string, workspaceSlug: string) {
   );
 }
 
+export function isFactoryOutcomePath(pathname: string, workspaceSlug: string) {
+  return (
+    pathname === workspaceAnalyticsPath(workspaceSlug) ||
+    pathname === workspaceOverviewPath(workspaceSlug)
+  );
+}
+
 export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
   return (
     isFactoryAggregatePath(pathname, workspaceSlug) ||
     pathname === workspaceAgentsPath(workspaceSlug) ||
-    pathname === workspaceAnalyticsPath(workspaceSlug) ||
+    isFactoryOutcomePath(pathname, workspaceSlug) ||
     isManagedFactoryPath(pathname, workspaceSlug)
   );
 }
@@ -115,7 +123,7 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
   const params = new URLSearchParams(search);
   for (const key of ["cursor", "stage", "stageId", "sessionId", "create", "after"])
     params.delete(key);
-  if (pathname.endsWith("/analytics")) {
+  if (pathname.endsWith("/analytics") || pathname.endsWith("/overview")) {
     for (const key of ["metric", "period", "facet", "bucket"]) params.delete(key);
   }
   if (pathname.endsWith("/governance")) {

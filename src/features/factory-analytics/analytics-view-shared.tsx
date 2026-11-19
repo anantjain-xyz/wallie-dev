@@ -6,6 +6,7 @@ import type {
   AnalyticsQuery,
   AnalyticsWindow,
 } from "@/features/factory-analytics/analytics-query";
+import { workspaceAnalyticsPath } from "@/lib/routes";
 
 export const dimensionLabels = {
   source: "Request source",
@@ -37,6 +38,24 @@ export type AnalyticsHref = (
     cursor?: string;
   },
 ) => string;
+
+export function analyticsCohortHref(
+  workspaceSlug: string,
+  factoryId: string,
+  query: AnalyticsQuery,
+  evidence?: Parameters<AnalyticsHref>[0],
+) {
+  const url = workspaceAnalyticsPath(workspaceSlug, {
+    factory: factoryId,
+    from: query.from.slice(0, 10),
+    to: query.to.slice(0, 10),
+    compare: query.comparison ? "previous" : undefined,
+    dimension: query.dimension,
+    environment: query.environment ?? undefined,
+    ...evidence,
+  });
+  return evidence ? `${url}#analytics-evidence` : url;
+}
 
 const day = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",

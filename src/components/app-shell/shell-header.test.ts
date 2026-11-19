@@ -201,6 +201,7 @@ describe("ShellHeader", () => {
     ["/w/acme-corp/sessions", "Sessions"],
     ["/w/acme-corp/inbox", "Inbox"],
     ["/w/acme-corp/analytics", "Analytics"],
+    ["/w/acme-corp/overview", "Overview"],
     ["/w/acme-corp/settings/profile", "Settings"],
     ["/w/acme-corp/runs/run-id", "Runs"],
   ])("names the drawer trigger after the current destination at %s", (pathname, label) => {
@@ -261,6 +262,11 @@ describe("ShellHeader", () => {
       "href",
       "/w/acme-corp/settings",
     );
+    expect(
+      within(within(nav).getByRole("list", { name: "Work" })).getByRole("link", {
+        name: "Overview",
+      }),
+    ).toHaveAttribute("href", "/w/acme-corp/overview");
   });
 
   it("restores desktop collapse when the shell mounts again", () => {
@@ -353,9 +359,12 @@ describe("ShellHeader", () => {
 
 describe("shell page title helpers", () => {
   it("marks only the pipeline root as active for the Pipeline item", () => {
-    expect(isActiveNavItem("/w/acme-corp", "acme-corp", navItems[0]!)).toBe(true);
-    expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", navItems[0]!)).toBe(false);
-    expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", navItems[1]!)).toBe(true);
+    const pipeline = navItems.find((item) => item.id === "pipeline")!;
+    const sessions = navItems.find((item) => item.id === "sessions")!;
+    expect(isActiveNavItem("/w/acme-corp", "acme-corp", pipeline)).toBe(true);
+    expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", pipeline)).toBe(false);
+    expect(isActiveNavItem("/w/acme-corp/overview", "acme-corp", pipeline)).toBe(false);
+    expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", sessions)).toBe(true);
   });
 });
 
