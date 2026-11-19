@@ -5,9 +5,13 @@ const mocks = vi.hoisted(() => ({
   capture: vi.fn(),
   checkpoint: vi.fn(),
   pinPlan: vi.fn(),
+  readIdentity: vi.fn(),
 }));
 vi.mock("@/lib/workspaces/resource-operations", () => ({ uploadWorkspaceObject: mocks.upload }));
-vi.mock("./capture", () => ({ captureValidationEvidence: mocks.capture }));
+vi.mock("./capture", () => ({
+  captureValidationEvidence: mocks.capture,
+  readValidationIdentity: mocks.readIdentity,
+}));
 vi.mock("./plan", () => ({ pinValidationPlan: mocks.pinPlan }));
 vi.mock("@/lib/pipeline/source-checkpoint", () => ({ captureSourceCheckpoint: mocks.checkpoint }));
 import {
@@ -63,6 +67,7 @@ beforeEach(() => {
   mocks.upload.mockResolvedValue({ error: null });
   mocks.capture.mockResolvedValue(evidence());
   mocks.pinPlan.mockResolvedValue({ plan: { version: 1, commands: [] } });
+  mocks.readIdentity.mockResolvedValue({ clean: true, commitSha: sha, treeSha: tree });
   mocks.checkpoint.mockResolvedValue({ kind: "unchanged", baseSha: sha, headSha: sha });
 });
 describe("durable validation evidence", () => {
@@ -115,7 +120,12 @@ describe("durable validation evidence", () => {
         browserIdentity: { runId, attemptCount: 3, commitSha: sha, treeSha: tree },
       });
       const admin = adminMock();
-      admin.rpc.mockRejectedValueOnce(new Error("browser receipt transport closed"));
+      admin.rpc.mockImplementation(async (name: string) => {
+        if (name === "record_session_browser_verification") {
+          throw new Error("browser receipt transport closed");
+        }
+        return { data: {}, error: null };
+      });
       await validateCheckpoint({
         admin: admin as never,
         workspaceId: "ws",
@@ -149,6 +159,54 @@ describe("durable validation evidence", () => {
       );
     },
   );
+
+  it("checks final checkout identity after text evidence before allowing browser capture", async () => {
+    const runId = "11111111-1111-4111-8111-111111111111";
+    const approvedToolScope = "11111111-1111-4111-8111-222222222222/capture";
+    const captureScreenshot = vi.fn();
+    mocks.pinPlan.mockResolvedValue({
+      plan: {
+        version: 2,
+        commands: [],
+        browser: [
+          {
+            key: "ready",
+            path: "/fixture",
+            timeoutSeconds: 10,
+            interactions: [],
+            regionTestId: "public",
+            excludedTestIds: [],
+            evidence: [{ kind: "screenshot", required: true }],
+          },
+        ],
+      },
+      browserIdentity: { runId, attemptCount: 1, commitSha: sha, treeSha: tree },
+    });
+    mocks.readIdentity.mockResolvedValue({ clean: true, commitSha: sha, treeSha: "c".repeat(40) });
+    const admin = adminMock();
+    await validateCheckpoint({
+      admin: admin as never,
+      workspaceId: "ws",
+      pipelineId: "pipeline",
+      approvedToolIds: [approvedToolScope],
+      browserRuntime: { approvalScopeId: approvedToolScope, captureScreenshot },
+      runId,
+      sandbox: {} as never,
+      checkpoint: { kind: "unchanged", baseSha: sha, headSha: sha },
+      secrets: [],
+    });
+    expect(captureScreenshot).not.toHaveBeenCalled();
+    expect(admin.rpc.mock.calls.map(([name]) => name)).toEqual([
+      "record_session_validation_evidence",
+      "record_session_browser_verification",
+    ]);
+    expect(admin.rpc).toHaveBeenLastCalledWith(
+      "record_session_browser_verification",
+      expect.objectContaining({
+        p_records: [expect.objectContaining({ status: "failed", reason: "source_changed" })],
+      }),
+    );
+  });
 
   it("preserves source without running commands if the plan cannot be frozen", async () => {
     mocks.pinPlan.mockRejectedValue(new Error("plan conflict"));

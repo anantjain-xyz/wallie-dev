@@ -12,6 +12,7 @@ vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: mocks.serv
 
 import { GET } from "./route";
 import { GET as downloadAsset } from "./assets/[assetId]/route";
+import { GET as downloadBrowserAsset } from "./browser-assets/[assetId]/route";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
 const workspaceId = "22222222-2222-4222-8222-222222222222";
@@ -33,6 +34,20 @@ const asset = {
   sha256: createHash("sha256").update(contents).digest("hex"),
   content_type: "text/plain",
   size_bytes: Buffer.byteLength(contents),
+};
+
+const screenshotId = "33333333-3333-4333-8333-333333333335";
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQVDIGAACuAGcVHqFfAAAAAElFTkSuQmCC",
+  "base64",
+);
+const screenshot = {
+  ...asset,
+  id: screenshotId,
+  storage_path: `${workspaceId}/${runId}/browser/${screenshotId}.png`,
+  sha256: createHash("sha256").update(png).digest("hex"),
+  content_type: "image/png",
+  size_bytes: png.length,
 };
 
 type Row = Record<string, unknown>;
@@ -59,7 +74,7 @@ function from(table: string) {
   return {
     select(value: string) {
       calls.push({ table, op: "select", args: [value] });
-      fields = value;
+      fields = value.replace(/plan:session_validation_plans!inner\([^)]*\)/, "plan");
       return this;
     },
     eq(column: string, value: unknown) {
@@ -108,6 +123,11 @@ const download = (ids: { sessionId?: string; assetId?: string } = {}, artifact?:
     },
   );
 
+const downloadScreenshot = (id = screenshotId) =>
+  downloadBrowserAsset(new Request("https://wallie.test/evidence/browser-asset"), {
+    params: Promise.resolve({ sessionId, assetId: id }),
+  });
+
 beforeEach(() => {
   vi.resetAllMocks();
   calls = [];
@@ -133,6 +153,8 @@ beforeEach(() => {
       },
     ],
     session_validation_assets: [{ ...asset }],
+    session_browser_verification_assets: [{ ...screenshot }],
+    session_browser_verification_receipts: [],
     session_git_checkpoints: [
       {
         artifact_id: artifactId,
@@ -201,7 +223,7 @@ describe("validation evidence metadata", () => {
 
   it("handles sessions with no execution evidence without inventing validation", async () => {
     rows.session_validation_evidence = [];
-    expect(await (await list()).json()).toEqual({ evidence: [], assets: [] });
+    expect(await (await list()).json()).toEqual({ evidence: [], assets: [], browserEvidence: [] });
     expect(calls.some((call) => call.table === "session_validation_assets")).toBe(false);
   });
 
@@ -386,4 +408,85 @@ describe("validation evidence asset downloads", () => {
       expect(mocks.download).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("private screenshot evidence", () => {
+  it("lists exact outcomes and authenticated image links without command evidence or provider metadata", async () => {
+    rows.session_validation_evidence = [];
+    rows.session_browser_verification_receipts = [
+      {
+        run_id: runId,
+        session_id: sessionId,
+        workspace_id: workspaceId,
+        created_at: "2026-11-19T08:00:00Z",
+        plan: { attempt_count: 2, commit_sha: commitSha, validation_tree_sha: "b".repeat(40) },
+        records: [
+          {
+            key: "checkout",
+            kind: "screenshot",
+            path: "/fixture",
+            policy: "isolated-fixture-v1",
+            status: "captured",
+            browserSessionId: artifactId,
+            manifest: {
+              assetId: screenshotId,
+              sha256: screenshot.sha256,
+              sizeBytes: screenshot.size_bytes,
+              contentType: "image/png",
+            },
+          },
+          {
+            key: "checkout",
+            kind: "video",
+            path: "/fixture",
+            policy: "isolated-fixture-v1",
+            status: "unavailable",
+            reason: "runtime_unavailable",
+          },
+        ],
+      },
+    ];
+    const body = await (await list()).json();
+    expect(body.browserEvidence).toEqual([
+      expect.objectContaining({
+        attemptCount: 2,
+        commitSha,
+        records: [
+          expect.objectContaining({
+            status: "captured",
+            downloadUrl: `/api/sessions/${sessionId}/validation-evidence/browser-assets/${screenshotId}`,
+          }),
+          expect.objectContaining({ status: "unavailable" }),
+        ],
+        runId,
+        treeSha: "b".repeat(40),
+      }),
+    ]);
+    expect(JSON.stringify(body)).not.toContain("storage_path");
+  });
+
+  it("returns an authenticated PNG after reading only the retained manifest and verifying its bytes", async () => {
+    mocks.readStream.mockResolvedValueOnce({ data: new Blob([png]).stream(), error: null });
+    const response = await downloadScreenshot();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("content-disposition")).toContain("attachment;");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
+    expect(mocks.download).toHaveBeenCalledWith(screenshot.storage_path, {}, expect.any(Object));
+  });
+
+  it("rechecks session, workspace, authorization, and stored integrity", async () => {
+    mocks.user.mockResolvedValueOnce(null);
+    expect((await downloadScreenshot()).status).toBe(401);
+    rows.session_browser_verification_assets[0]!.workspace_id = "foreign-workspace";
+    expect((await downloadScreenshot()).status).toBe(404);
+    rows.session_browser_verification_assets[0]!.workspace_id = workspaceId;
+    rows.session_browser_verification_assets[0]!.session_id = "foreign-session";
+    expect((await downloadScreenshot()).status).toBe(404);
+    expect(mocks.download).not.toHaveBeenCalled();
+
+    rows.session_browser_verification_assets[0]!.session_id = sessionId;
+    expect((await downloadScreenshot()).status).toBe(409);
+  });
 });

@@ -988,6 +988,88 @@ describe("review readiness details", () => {
     expect(textOnly?.evaluation.state).toBe("ready");
   });
 
+  it("requires verified private PNG bytes for a captured visual requirement", async () => {
+    const visualKey = "browser:screenshot:inbox";
+    const screenshotSessionId = "10000000-0000-4000-8000-000000000006";
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQVDIGAACuAGcVHqFfAAAAAElFTkSuQmCC",
+      "base64",
+    );
+    const browserAsset = {
+      id: assetId,
+      run_id: runId,
+      session_id: screenshotSessionId,
+      workspace_id: workspaceId,
+      storage_path: `${workspaceId}/${runId}/browser/${assetId}.png`,
+      content_type: "image/png",
+      size_bytes: png.byteLength,
+      sha256: createHash("sha256").update(png).digest("hex"),
+    };
+    const check = {
+      key: "inbox",
+      path: "/fixtures/inbox",
+      timeoutSeconds: 20,
+      interactions: [],
+      regionTestId: "inbox",
+      excludedTestIds: [],
+      evidence: [{ kind: "screenshot", required: true }],
+    };
+
+    const tables = serviceTables({
+      session_git_checkpoints: queryableTable({
+        ...exactAttempt,
+        session_id: screenshotSessionId,
+        output_sha: shaB,
+      }),
+      session_validation_evidence: queryableTable(null),
+      delivery_policy_revisions: queryableTable({
+        ...policyRevisionRow,
+        requirements: { ...requirements, requiredEvidence: [visualKey] },
+      }),
+      session_validation_plans: queryableTable({
+        ...validationPlan,
+        session_id: screenshotSessionId,
+        plan: { version: 2, commands: [], browser: [check] },
+      }),
+      session_browser_verification_receipts: queryableTable({
+        records: [
+          {
+            key: check.key,
+            kind: "screenshot",
+            path: check.path,
+            policy: BROWSER_CAPTURE_POLICY,
+            status: "captured",
+            browserSessionId: "10000000-0000-4000-8000-000000000123",
+            manifest: {
+              assetId,
+              sha256: browserAsset.sha256,
+              sizeBytes: png.byteLength,
+              contentType: "image/png",
+            },
+          },
+        ],
+      }),
+      session_browser_verification_assets: queryableTable([browserAsset]),
+    });
+    const ready = await loadSessionPrReadinessDetails(
+      buildServiceAdminClient(tables, vi.fn(), privateStorage(png).storage) as never,
+      screenshotSessionId,
+    );
+    expect(ready?.evaluation.state).toBe("ready");
+    expect(ready?.evidence?.required).toEqual([{ key: visualKey, status: "passed" }]);
+
+    const tampered = Buffer.from(png);
+    tampered[30] ^= 0xff;
+    const blocked = await loadSessionPrReadinessDetails(
+      buildServiceAdminClient(tables, vi.fn(), privateStorage(tampered).storage) as never,
+      screenshotSessionId,
+    );
+    expect(blocked?.evaluation.state).toBe("blocked");
+    expect(blocked?.evaluation.blockers).toEqual([
+      { code: "evidence_unavailable", requirement: visualKey },
+    ]);
+  });
+
   it.each(["plan", "deleted-stage"])(
     "targets session-wide blocking feedback on a historical %s artifact",
     async (stageSlug) => {

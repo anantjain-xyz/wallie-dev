@@ -6,11 +6,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
-import { unavailableBrowserReceipts } from "./browser-contract";
+import type { BrowserScreenshotRuntime } from "./browser-contract";
+import { recordBrowserVerification } from "./browser-service";
 import type { captureValidationEvidence } from "./capture";
+import { VALIDATION_EVIDENCE_BUCKET } from "./contracts";
 import { pinValidationPlan } from "./plan";
 
-export const VALIDATION_EVIDENCE_BUCKET = "session-validation-evidence";
+export { VALIDATION_EVIDENCE_BUCKET } from "./contracts";
 type CapturedEvidence = Awaited<ReturnType<typeof captureValidationEvidence>>;
 type AdminClient = SupabaseClient<Database>;
 
@@ -133,6 +135,7 @@ export async function validateCheckpoint(input: {
   pipelineId: string;
   pinnedDeliveryPolicyRevisionId?: string | null;
   approvedToolIds?: readonly string[];
+  browserRuntime?: BrowserScreenshotRuntime;
   runId: string;
   sandbox: import("@/lib/sandbox/types").SandboxHandle;
   checkpoint: import("@/lib/pipeline/source-checkpoint").SourceCheckpoint;
@@ -140,9 +143,13 @@ export async function validateCheckpoint(input: {
   scopedCredential?: true;
   signal?: AbortSignal;
 }) {
-  const { captureValidationEvidence } = await import("./capture");
+  const { captureValidationEvidence, readValidationIdentity } = await import("./capture");
   const { captureSourceCheckpoint } = await import("@/lib/pipeline/source-checkpoint");
   let evidence: CapturedEvidence | null = null;
+  let browser: {
+    identity: import("./browser-contract").BrowserRunIdentity;
+    plan: import("./browser-contract").BrowserVerificationPlan;
+  } | null = null;
   try {
     if (
       !(await shouldCaptureValidationEvidence(
@@ -155,25 +162,7 @@ export async function validateCheckpoint(input: {
       return input.checkpoint;
     const pinned = await pinValidationPlan({ ...input, commitSha: input.checkpoint.headSha });
     if ("browserIdentity" in pinned) {
-      const identity = pinned.browserIdentity;
-      try {
-        // Until an isolated capture runtime is installed, only an unavailable
-        // outcome is recorded. Its failure must not discard text evidence.
-        const request = input.admin.rpc("record_session_browser_verification", {
-          p_run_id: identity.runId,
-          p_attempt_count: identity.attemptCount,
-          p_commit_sha: identity.commitSha,
-          p_validation_tree_sha: identity.treeSha,
-          p_records: unavailableBrowserReceipts(pinned.plan.browser, {
-            status: "unavailable",
-            reason:
-              input.approvedToolIds?.length === 0 ? "tool_not_approved" : "runtime_unavailable",
-          }),
-        });
-        await (input.signal ? request.abortSignal(input.signal) : request);
-      } catch {
-        input.signal?.throwIfAborted();
-      }
+      browser = { identity: pinned.browserIdentity, plan: pinned.plan.browser };
     }
     evidence = await captureValidationEvidence({
       sandbox: input.sandbox,
@@ -208,21 +197,53 @@ export async function validateCheckpoint(input: {
         });
         const [output, code] = await Promise.all([process.output(), process.exitCode]);
         input.signal?.throwIfAborted();
-        if (code !== 0 || !/^[a-f0-9]{40}$/.test(output.stdout.trim())) return checkpoint;
-        evidence.treeSha = output.stdout.trim();
+        if (code === 0 && /^[a-f0-9]{40}$/.test(output.stdout.trim())) {
+          evidence.treeSha = output.stdout.trim();
+        } else {
+          evidence = null;
+        }
       } catch {
         input.signal?.throwIfAborted();
         // This identity probe is optional evidence work. The captured source
         // must still reach prepareSourceDelivery when its transport fails.
-        return checkpoint;
+        evidence = null;
       }
     }
     try {
-      await persistValidationEvidence({ ...input, evidence });
+      if (evidence) await persistValidationEvidence({ ...input, evidence });
     } catch {
       input.signal?.throwIfAborted();
       // Evidence outages must not discard durable source work. Readiness needs
       // an immutable receipt and therefore cannot pass when this write is absent.
+    }
+  }
+  if (browser) {
+    try {
+      let sourceMatches = checkpoint.headSha === browser.identity.commitSha;
+      if (sourceMatches && input.browserRuntime) {
+        try {
+          const identity = await readValidationIdentity(input.sandbox, input.signal);
+          sourceMatches =
+            identity.clean &&
+            identity.commitSha === browser.identity.commitSha &&
+            identity.treeSha === browser.identity.treeSha;
+        } catch {
+          input.signal?.throwIfAborted();
+          sourceMatches = false;
+        }
+      }
+      await recordBrowserVerification({
+        admin: input.admin,
+        workspaceId: input.workspaceId,
+        ...browser,
+        sourceMatches,
+        runtime: input.browserRuntime,
+        approvedToolIds: input.approvedToolIds,
+        signal: input.signal,
+      });
+    } catch {
+      input.signal?.throwIfAborted();
+      // Source publication and command evidence do not depend on browser I/O.
     }
   }
   return checkpoint;

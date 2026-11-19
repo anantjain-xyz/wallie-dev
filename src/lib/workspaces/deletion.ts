@@ -88,11 +88,13 @@ async function cleanupResourceReservations(
       }
       if (operation.kind === "upload" && operation.resource_id && operation.storage_bucket) {
         if (
-          operation.storage_bucket === "session-source-checkpoints" &&
-          /\/[a-f0-9-]{36}-retry-\d+-[a-f0-9-]{36}\.bundle$/.test(operation.resource_id)
+          (operation.storage_bucket === "session-source-checkpoints" &&
+            /\/[a-f0-9-]{36}-retry-\d+-[a-f0-9-]{36}\.bundle$/.test(operation.resource_id)) ||
+          (operation.storage_bucket === "session-validation-evidence" &&
+            /\/browser\/[a-f0-9-]{36}\.png$/.test(operation.resource_id))
         ) {
-          // The checkpoint transaction can consume this reservation after the
-          // initial scan. Claim it before touching Storage to serialize with
+          // The checkpoint or screenshot transaction can consume this
+          // reservation after the initial scan. Claim it before touching Storage to serialize with
           // that transfer and fence delayed uploads.
           const now = new Date().toISOString();
           const { data: claimed, error: claimError } = await admin

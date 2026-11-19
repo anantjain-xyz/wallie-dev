@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { BrowserScreenshotRuntime } from "@/lib/validation-evidence/browser-contract";
 import { workerRunCaptureEnvSchema } from "@/env/worker";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AttemptWorkerRuntime } from "@/lib/pipeline/attempt-manifest";
@@ -57,6 +58,7 @@ export async function runClaimedJob(
     recoveryTimeoutMs?: number;
     deadlineAt?: string;
     workerRuntime?: AttemptWorkerRuntime;
+    browserRuntime?: BrowserScreenshotRuntime;
   } = {},
 ): Promise<void> {
   const jobId = job.id;
@@ -92,6 +94,7 @@ export async function runClaimedJob(
         deadlineAt,
         signal: controller.signal,
         workerRuntime: options.workerRuntime ?? "node",
+        ...(options.browserRuntime ? { browserRuntime: options.browserRuntime } : {}),
       }),
       deadline,
     ]);

@@ -1,0 +1,368 @@
+import "server-only";
+
+import { randomUUID } from "node:crypto";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { z } from "zod";
+
+import { readBrowserFixtureEnvironment } from "@/env/browser-fixture";
+
+import {
+  browserRunIdentitySchema,
+  browserVerificationPlanSchema,
+  type BrowserScreenshotFailure,
+  type BrowserScreenshotInput,
+  type BrowserScreenshotResult,
+  type BrowserScreenshotRuntime,
+} from "./browser-contract";
+import {
+  resolveBrowserFixtureDocument,
+  type BrowserFixtureConfiguration,
+} from "./browser-fixture-target";
+
+const viewport = { width: 960, height: 540 };
+const maxImageBytes = 1024 * 1024;
+const fixtureOrigin = "https://wallie-browser-fixture.invalid";
+const fixtureContentPolicy = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+const mandatoryExclusions = [
+  "[data-wallie-private]",
+  "[data-wallie-credential]",
+  "[data-private]",
+  "[data-sensitive]",
+  "[contenteditable]",
+  "input",
+  "textarea",
+  "select",
+  "form",
+  "frame",
+  "iframe",
+  "object",
+  "embed",
+  "canvas",
+  "video",
+  "audio",
+  "img",
+  "svg",
+];
+
+const clipSchema = z.strictObject({
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  width: z.number().int().positive().max(viewport.width),
+  height: z.number().int().positive().max(viewport.height),
+});
+
+function testIdSelector(testId: string) {
+  return `[data-testid="${testId}"]`;
+}
+
+// This runs in a Chromium isolated world after page scripts are disabled.
+// Remove unsafe nodes even when their bounds are outside the region, since
+// their shadows, pseudo-elements, or overflow could otherwise paint into it.
+function isolateRegion(options: {
+  regionSelector: string;
+  excludedSelectors: string[];
+  forbiddenSelector: string;
+  viewport: { width: number; height: number };
+}) {
+  const body = document.body;
+  const matches = document.querySelectorAll(options.regionSelector);
+  const region = matches.item(0);
+  if (
+    !body ||
+    matches.length !== 1 ||
+    !(region instanceof HTMLElement) ||
+    body === region ||
+    !body.contains(region) ||
+    document.querySelectorAll("*").length > 2500 ||
+    options.excludedSelectors.some((selector) => document.querySelectorAll(selector).length !== 1)
+  ) {
+    return null;
+  }
+
+  const unsafe = Array.from(document.querySelectorAll(options.forbiddenSelector));
+  if (unsafe.some((element) => element.contains(region))) return null;
+  for (const element of unsafe) element.remove();
+  // Leave the approved region and its layout ancestors as the only painted
+  // subtree. There is no sibling overlay to escape the approved clip.
+  for (let element: Element = region; element !== body; ) {
+    const parent = element.parentElement;
+    if (!parent) return null;
+    for (const sibling of Array.from(parent.childNodes)) {
+      if (sibling !== element) sibling.remove();
+    }
+    element = parent;
+  }
+
+  const style = document.createElement("style");
+  style.textContent =
+    "* { animation: none !important; transition: none !important; caret-color: transparent !important; } " +
+    "*::before, *::after, *::marker { content: none !important; }";
+  document.head.append(style);
+  window.scrollTo({ left: 0, top: 0, behavior: "instant" });
+  const rect = region.getBoundingClientRect();
+  const css = getComputedStyle(region);
+  if (
+    css.visibility !== "visible" ||
+    css.opacity === "0" ||
+    window.scrollX !== 0 ||
+    window.scrollY !== 0 ||
+    rect.left < 0 ||
+    rect.top < 0 ||
+    rect.right > options.viewport.width ||
+    rect.bottom > options.viewport.height
+  ) {
+    return null;
+  }
+  const x = Math.ceil(rect.left);
+  const y = Math.ceil(rect.top);
+  return { x, y, width: Math.floor(rect.right) - x, height: Math.floor(rect.bottom) - y };
+}
+
+async function preparePage(context: BrowserContext, html: string, url: string) {
+  let delivered = false;
+  let blocked = false;
+  await context.route("**/*", async (route) => {
+    const request = route.request();
+    if (
+      !delivered &&
+      request.url() === url &&
+      request.method() === "GET" &&
+      request.isNavigationRequest() &&
+      request.resourceType() === "document"
+    ) {
+      delivered = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html; charset=utf-8",
+        headers: {
+          "Content-Security-Policy": fixtureContentPolicy,
+          "Referrer-Policy": "no-referrer",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+        body: html,
+      });
+      return;
+    }
+    blocked = true;
+    await route.abort();
+  });
+  await context.routeWebSocket("**/*", async (route) => {
+    blocked = true;
+    await route.close();
+  });
+  const page = await context.newPage();
+  context.on("page", (popup) => {
+    blocked = true;
+    void popup.close().catch(() => {});
+  });
+  page.on("download", (download) => {
+    blocked = true;
+    void download.cancel().catch(() => {});
+  });
+  return { page, passedIsolation: () => delivered && !blocked && page.frames().length === 1 };
+}
+
+async function captureClippedRegion({
+  context,
+  page,
+  regionSelector,
+  excludedSelectors,
+  forbiddenSelector,
+}: {
+  context: BrowserContext;
+  page: Page;
+  regionSelector: string;
+  excludedSelectors: string[];
+  forbiddenSelector: string;
+}): Promise<Buffer | null> {
+  const cdp = await context.newCDPSession(page);
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
+    frameId: frameTree.frame.id,
+    worldName: "wallie-capture",
+  });
+  await cdp.send("Emulation.setScriptExecutionDisabled", { value: true });
+  await cdp.send("DOM.enable");
+  const { nodes } = await cdp.send("DOM.getFlattenedDocument", { depth: -1, pierce: true });
+  if (
+    nodes.length > 10_000 ||
+    nodes.some(
+      (node) =>
+        (node.shadowRootType && node.shadowRootType !== "user-agent") ||
+        node.shadowRoots?.some(({ shadowRootType }) => shadowRootType !== "user-agent"),
+    )
+  ) {
+    return null;
+  }
+  const options = { regionSelector, excludedSelectors, forbiddenSelector, viewport };
+  const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", {
+    expression: `(${isolateRegion.toString()})(${JSON.stringify(options)})`,
+    contextId: executionContextId,
+    returnByValue: true,
+  });
+  const clip = clipSchema.safeParse(result.value);
+  if (
+    exceptionDetails ||
+    !clip.success ||
+    clip.data.x + clip.data.width > viewport.width ||
+    clip.data.y + clip.data.height > viewport.height
+  ) {
+    return null;
+  }
+
+  const { data } = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+    captureBeyondViewport: false,
+    clip: { ...clip.data, scale: 1 },
+  });
+  if (data.length > Math.ceil(maxImageBytes / 3) * 4) return null;
+  const bytes = Buffer.from(data, "base64");
+  return bytes.length > 0 && bytes.length <= maxImageBytes ? bytes : null;
+}
+
+async function captureBrowserScreenshot(
+  configuration: BrowserFixtureConfiguration,
+  input: BrowserScreenshotInput,
+): Promise<BrowserScreenshotResult> {
+  const runIdentity = browserRunIdentitySchema.safeParse(input.identity);
+  const plan = browserVerificationPlanSchema.safeParse([input.check]);
+  const check = plan.success ? plan.data[0] : undefined;
+  if (!runIdentity.success || !check?.evidence.some(({ kind }) => kind === "screenshot")) {
+    return { status: "failed", reason: "source_changed" };
+  }
+
+  const identity = runIdentity.data;
+  const plannedCheck = check;
+  const duration = check.timeoutSeconds * 1000;
+  const deadline = Date.now() + duration;
+  const timeout = AbortSignal.timeout(duration);
+  const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
+  const remainingTime = () => {
+    signal.throwIfAborted();
+    return Math.max(1, deadline - Date.now());
+  };
+  const captureFailed = {
+    status: "failed",
+    reason: "capture_failed",
+  } satisfies BrowserScreenshotFailure;
+  const policyExcluded = {
+    status: "failed",
+    reason: "policy_excluded",
+  } satisfies BrowserScreenshotFailure;
+  const aborted = Promise.withResolvers<BrowserScreenshotFailure>();
+  let browser: Browser | undefined;
+  let closing: Promise<void> | undefined;
+  const close = () => {
+    if (browser && !closing) closing = browser.close().catch(() => {});
+    return closing;
+  };
+  const onAbort = () => {
+    void close();
+    aborted.resolve(captureFailed);
+  };
+
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    signal.throwIfAborted();
+    return await Promise.race([aborted.promise, capture()]);
+  } catch {
+    return captureFailed;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+
+  async function capture(): Promise<BrowserScreenshotResult> {
+    try {
+      const html = await resolveBrowserFixtureDocument({
+        configuration,
+        identity,
+        check: plannedCheck,
+        signal,
+      });
+      if (html === null) return { status: "unavailable", reason: "isolated_target_unavailable" };
+      try {
+        browser = await chromium.launch({
+          headless: true,
+          chromiumSandbox: true,
+          args: [
+            "--host-resolver-rules=MAP * ~NOTFOUND",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+          ],
+          env: { PATH: "/usr/bin:/bin", LANG: "C" },
+          timeout: remainingTime(),
+        });
+      } catch {
+        return signal.aborted
+          ? captureFailed
+          : { status: "unavailable", reason: "runtime_unavailable" };
+      }
+      signal.throwIfAborted();
+      const context = await browser.newContext({
+        viewport,
+        deviceScaleFactor: 1,
+        serviceWorkers: "block",
+        acceptDownloads: false,
+        permissions: [],
+      });
+      const url = fixtureOrigin + plannedCheck.path;
+      const { page, passedIsolation } = await preparePage(context, html, url);
+      await page.goto(url, { waitUntil: "load", timeout: remainingTime() });
+      const excludedSelectors = plannedCheck.excludedTestIds.map(testIdSelector);
+      const forbiddenSelector = [...mandatoryExclusions, ...excludedSelectors].join(",");
+      const regionSelector = testIdSelector(plannedCheck.regionTestId);
+      for (const interaction of plannedCheck.interactions) {
+        const target = page.getByTestId(interaction.testId);
+        await target.waitFor({ state: "visible", timeout: remainingTime() });
+        const belongsToRegion = await target.evaluate(
+          (element, { regionSelector, forbiddenSelector }) =>
+            document.querySelector(regionSelector)?.contains(element) &&
+            !element.closest(forbiddenSelector),
+          { regionSelector, forbiddenSelector },
+          { timeout: remainingTime() },
+        );
+        if (!belongsToRegion) return policyExcluded;
+        if (interaction.action === "click") await target.click({ timeout: remainingTime() });
+      }
+      if (!passedIsolation() || page.url() !== url) return policyExcluded;
+      const bytes = await captureClippedRegion({
+        context,
+        page,
+        regionSelector,
+        excludedSelectors,
+        forbiddenSelector,
+      });
+      signal.throwIfAborted();
+      if (!bytes || !passedIsolation() || page.url() !== url) return policyExcluded;
+      return {
+        status: "captured",
+        identity,
+        path: plannedCheck.path,
+        browserSessionId: randomUUID(),
+        bytes,
+      };
+    } finally {
+      await close();
+    }
+  }
+}
+
+/** Only the Node worker entrypoint instantiates this adapter. */
+export function createBrowserScreenshotRuntime(
+  env: Record<string, string | undefined> = process.env,
+): BrowserScreenshotRuntime | null {
+  const configuration = readBrowserFixtureEnvironment(env);
+  if (!configuration) return null;
+  return {
+    approvalScopeId: configuration.approvalScopeId,
+    captureScreenshot: (input) => captureBrowserScreenshot(configuration, input),
+  };
+}

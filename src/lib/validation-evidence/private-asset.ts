@@ -8,7 +8,7 @@ import {
   type VerifiedPrivateObject,
 } from "@/lib/storage/private-object";
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import { VALIDATION_EVIDENCE_BUCKET } from "@/lib/validation-evidence/service";
+import { VALIDATION_EVIDENCE_BUCKET } from "@/lib/validation-evidence/contracts";
 
 const MAX_ASSET_BYTES = 1024 * 1024;
 const ASSET_READ_TIMEOUT_MS = 10_000;

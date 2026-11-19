@@ -146,12 +146,46 @@ contract requires an isolated browser session identity and a private asset
 manifest with verified content type, byte size, and SHA-256. A verified
 private read must match that digest before a visual requirement can pass.
 
-The contract-only worker records **unavailable** for requested browser evidence
-while it lacks an isolated capture adapter. A pinned factory with no approved
-tool operations records `tool_not_approved`; other runs report
-`runtime_unavailable`. An unrelated tool approval cannot authorize recording.
-The worker continues running the command plan. Subsequent screenshot
-and video capture changes supply the trusted adapter and private asset reader.
+### Trusted screenshot execution
+
+The Node worker can capture screenshots after it saves command evidence and
+verifies the checkout still matches the frozen plan. Install the pinned browser
+with `pnpm exec playwright-core install --with-deps chromium` on a Node worker
+that supports Chromium’s kernel sandbox. Set these deployment values together.
+
+| Setting                                 | Purpose                                                                                            |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `WALLIE_BROWSER_FIXTURE_BROKER_URL`     | The trusted HTTPS endpoint that supplies exact synthetic fixtures.                                 |
+| `WALLIE_BROWSER_FIXTURE_BROKER_TOKEN`   | A deployment credential for the broker request only.                                               |
+| `WALLIE_BROWSER_FIXTURE_ORIGIN`         | The one HTTPS origin from which the worker can fetch the broker’s preview document.                |
+| `WALLIE_BROWSER_FIXTURE_APPROVAL_SCOPE` | The exact `<tool revision UUID>/<operation>` approved in the factory and its live execution grant. |
+
+The broker response echoes the request nonce, run, attempt, commit, tree,
+requested path, target region, and capture policy. It includes a short-lived
+preview URL and the exact HTML digest. The worker downloads bounded, verified
+HTML and renders it from an isolated document URL in a new browser session.
+Use self-contained synthetic fixture pages. Chromium runs with no inherited
+cookies or credentials. Network requests, downloads, and unverified navigation
+stay blocked. After the planned interactions, Wallie disables fixture scripts,
+checks the visible region and exclusions, and captures the cropped pixels.
+
+Wallie validates and re-encodes the PNG, strips metadata, and limits the
+image to 960 × 540 pixels and 1 MiB. The private object starts with a cleanup
+reservation. The database records its manifest only after checking the exact
+run, policy, live approval, and upload reservation in one transaction.
+Unsettled uploads stay eligible for cleanup.
+
+Failed checks and uploads produce a nonpassing outcome. Missing runtime or
+approval is shown as unavailable. The native Workerd worker records browser
+unavailability while continuing command validation. Video capture returns
+unavailable.
+
+`GET /api/sessions/{sessionId}/validation-evidence` lists bounded visual outcomes
+and exact run provenance. A captured screenshot has an authenticated download
+link at
+`/api/sessions/{sessionId}/validation-evidence/browser-assets/{assetId}`.
+The link works after teardown. Each request uses the signed-in viewer’s access
+and verifies the private object size and SHA-256 before returning the PNG.
 
 ## Commit and tree identity
 
@@ -202,11 +236,9 @@ The collector reports sanitized failures rather than retaining raw provider
 exceptions. Redaction protects known runtime material; it is not a claim that
 arbitrary content is free of every possible secret.
 
-Opaque screenshots and previews are explicitly unavailable until a sanitized
-capture mechanism can remove sensitive pixels and metadata. They are never
-accepted as text reports or described as redacted images. A required unavailable
-asset blocks its evidence; an optional unavailable preview is distinguished from
-required execution evidence.
+Only the trusted browser path can produce screenshot evidence. Command uploads
+are bounded text reports. A command-authored screenshot remains unavailable.
+An unavailable required asset blocks its evidence.
 
 Active workspace members can read metadata through
 `GET /api/sessions/{sessionId}/validation-evidence` and download an asset through
@@ -233,7 +265,8 @@ Final Markdown can reference retained reports with an evidence identity:
 - Missing identities, legacy sandbox paths such as `/vercel/sandbox/docs/evidence/comments-toggle-pr-description.md`, and mismatched checkpoints display **Evidence unavailable**. Existing artifact Markdown remains immutable.
 - External URLs, relative repository links, anchors, and safe document links retain their existing behavior. Agent-controlled images remain explicit links and never load automatically.
 
-This reuses the bounded text-report collector. It does not upload arbitrary local files or enable binary screenshot capture.
+These Markdown links resolve the bounded command text reports. Trusted screenshot
+downloads use the browser evidence records and the authenticated image route.
 
 ## Run artifact catalog
 

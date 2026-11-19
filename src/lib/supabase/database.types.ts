@@ -3551,6 +3551,59 @@ export type Database = {
           },
         ]
       }
+      session_browser_verification_assets: {
+        Row: {
+          approval_scope_id: string
+          browser_session_id: string
+          content_type: string
+          evidence_key: string
+          id: string
+          required: boolean
+          run_id: string
+          session_id: string
+          sha256: string
+          size_bytes: number
+          storage_path: string
+          workspace_id: string
+        }
+        Insert: {
+          approval_scope_id: string
+          browser_session_id: string
+          content_type: string
+          evidence_key: string
+          id: string
+          required: boolean
+          run_id: string
+          session_id: string
+          sha256: string
+          size_bytes: number
+          storage_path: string
+          workspace_id: string
+        }
+        Update: {
+          approval_scope_id?: string
+          browser_session_id?: string
+          content_type?: string
+          evidence_key?: string
+          id?: string
+          required?: boolean
+          run_id?: string
+          session_id?: string
+          sha256?: string
+          size_bytes?: number
+          storage_path?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_browser_verification__run_id_workspace_id_session__fkey"
+            columns: ["run_id", "workspace_id", "session_id"]
+            isOneToOne: false
+            referencedRelation: "session_browser_verification_receipts"
+            referencedColumns: ["run_id", "workspace_id", "session_id"]
+          },
+        ]
+      }
       session_browser_verification_receipts: {
         Row: {
           created_at: string
@@ -7448,6 +7501,16 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      authorize_session_browser_screenshot: {
+        Args: {
+          p_approval_scope_id: string
+          p_attempt_count: number
+          p_commit_sha: string
+          p_run_id: string
+          p_validation_tree_sha: string
+        }
+        Returns: boolean
+      }
       authorize_session_pr_successor: {
         Args: {
           p_actor_user_id: string
@@ -9711,6 +9774,30 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "session_pr_verification_results"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      record_session_browser_screenshot_verification: {
+        Args: {
+          p_approval_scope_id?: string
+          p_attempt_count: number
+          p_commit_sha: string
+          p_records: Json
+          p_run_id: string
+          p_transfers: Json
+          p_validation_tree_sha: string
+        }
+        Returns: {
+          created_at: string
+          records: Json
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_browser_verification_receipts"
           isOneToOne: true
           isSetofReturn: false
         }

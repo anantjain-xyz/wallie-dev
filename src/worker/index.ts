@@ -12,6 +12,7 @@ import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
 import { drainFactoryEventDeliveries } from "@/lib/factory-event-subscriptions/dispatch";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
+import { createBrowserScreenshotRuntime } from "@/lib/validation-evidence/browser-runtime";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
@@ -50,6 +51,7 @@ async function main() {
   // once. It owns the in-flight set; the heartbeat timer reads it.
   const scheduler = createScheduler(admin, config, {
     isShuttingDown: () => draining,
+    browserRuntime: createBrowserScreenshotRuntime() ?? undefined,
   });
   const timerTasks = createTimerTaskTracker();
   const heartbeatTasks = createTimerTaskTracker();

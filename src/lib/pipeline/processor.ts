@@ -15,6 +15,7 @@ import {
 } from "@/lib/agent-credentials/scoped-run-credential";
 import { wakeWorker } from "@/lib/worker/wake";
 import { validateCheckpoint } from "@/lib/validation-evidence/service";
+import type { BrowserScreenshotRuntime } from "@/lib/validation-evidence/browser-contract";
 import { prepareValidationPlan, validationPlanInstructions } from "@/lib/validation-evidence/plan";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -164,6 +165,7 @@ export async function processPipelineJob(input: {
   deadlineAt?: string;
   signal?: AbortSignal;
   workerRuntime?: AttemptWorkerRuntime;
+  browserRuntime?: BrowserScreenshotRuntime;
 }): Promise<ProcessPipelineJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
   throwIfAborted(input.signal);
@@ -210,6 +212,7 @@ export async function processPipelineJob(input: {
     stage,
     pinned,
     workerRuntime: input.workerRuntime,
+    browserRuntime: input.browserRuntime,
   });
 }
 
@@ -230,6 +233,7 @@ async function runStage(input: {
   stage: PipelineStage;
   pinned: PinnedFactoryExecution | null;
   workerRuntime?: AttemptWorkerRuntime;
+  browserRuntime?: BrowserScreenshotRuntime;
 }): Promise<ProcessPipelineJobResult> {
   const { admin, job, session, stage, pinned, captureOrderedEvents = true } = input;
   const specificationStage = session.specification_stage_id === stage.id;
@@ -1022,6 +1026,7 @@ async function runStage(input: {
                 }
               : {}),
             admin,
+            browserRuntime: input.browserRuntime,
             workspaceId: session.workspace_id,
             pipelineId: stage.pipelineId,
             runId,
