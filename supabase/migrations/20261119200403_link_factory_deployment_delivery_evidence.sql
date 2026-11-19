@@ -11,17 +11,26 @@ from internal.factory_current_deployment_observations report
 cross join lateral (
   select match.*, count(*) over () as match_count
   from (
-    select merge.session_id, merge.id as canonical_merge_id, merge.observation_id as merge_observation_id,
+    select merge.session_id, merge.id as canonical_merge_id, merge.status,
+      merge.observation_id as merge_observation_id,
       merge.merged_at, merge.observed_at as merge_observed_at
     from internal.current_factory_canonical_pull_request_merges merge
-    where (merge.workspace_id, merge.factory_id, merge.repository_id, merge.merge_commit_sha) =
-      (report.workspace_id, report.factory_id, report.repository_id, report.source_sha)
-      and merge.status = 'observed'
+    where (merge.workspace_id, merge.factory_id, merge.repository_id) =
+      (report.workspace_id, report.factory_id, report.repository_id)
+      and (
+        (merge.status = 'observed' and merge.merge_commit_sha = report.source_sha)
+        or (merge.status = 'conflicting' and exists (
+          select 1 from internal.factory_canonical_pull_request_merge_observations snapshot
+          where (snapshot.merge_id, snapshot.provider_updated_at, snapshot.merge_commit_sha) =
+            (merge.id, merge.provider_updated_at, report.source_sha)
+        ))
+      )
     limit 2
   ) match
 ) candidate
 where report.outcome = 'succeeded'
   and candidate.match_count = 1
+  and candidate.status = 'observed'
   and report.authoritative_occurred_at >= candidate.merged_at;
 
 revoke all on internal.current_factory_linked_deployment_deliveries from public, anon, authenticated, service_role;

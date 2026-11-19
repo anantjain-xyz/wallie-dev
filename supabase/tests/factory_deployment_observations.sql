@@ -12,6 +12,8 @@ $$;
 insert into auth.users(id, email) values
   (pg_temp.deployment_id(1), 'deployment-owner@example.test'),
   (pg_temp.deployment_id(2), 'deployment-member@example.test');
+insert into auth.sessions(id, user_id, created_at, updated_at)
+values (pg_temp.deployment_id(8), pg_temp.deployment_id(1), now(), now());
 insert into public.workspaces(id, slug, name) values
   (pg_temp.deployment_id(4), 'deployment-observation-fixture', 'Deployment observations');
 insert into public.workspace_members(id, workspace_id, user_id, kind, role) values
@@ -37,7 +39,7 @@ join public.execution_policies policy on policy.workspace_id = principal.workspa
 cross join lateral public.approve_factory_execution_grant(pg_temp.deployment_id(4), pg_temp.deployment_factory(),
   pg_temp.deployment_id(1), principal.id, pg_temp.deployment_id(22), '{}', '{}', policy.current_revision_id,
   pg_temp.deployment_id(11), clock_timestamp() + interval '1 hour', 0, null,
-  '{deployments:observe,sessions:read}'::public.factory_command_scope[]) approved
+  enum_range(null::public.factory_command_scope)) approved
 where principal.workspace_id = pg_temp.deployment_id(4);
 
 select public.issue_factory_machine_token(workspace_id, factory_id, pg_temp.deployment_id(1), id, version,
@@ -71,6 +73,39 @@ select is((select status::text from public.admit_factory_command(pg_temp.deploym
 select ok((select isfinite(live_from) and live_from <= clock_timestamp()
   from internal.factory_outcome_capture_coverage where source = 'deployments'),
   'the deployment feed has an explicit installation boundary');
+
+create temp table observer_oauth_client as
+select client.* from deployment_grants approved
+cross join lateral public.register_factory_oauth_client(approved.workspace_id, pg_temp.deployment_id(1),
+  'Deployment API client', array['http://127.0.0.1:8192/callback'],
+  enum_range(null::public.factory_command_scope),
+  jsonb_build_array(jsonb_build_object('factory_id', approved.factory_id,
+    'execution_grant_id', approved.id, 'execution_grant_version', approved.version))) client
+where approved.slug = 'observer';
+select is((select cardinality(allowed_scopes) from observer_oauth_client), 6,
+  'a factory OAuth client can register all six API scopes');
+select throws_ok($$select * from observer_oauth_client client
+  cross join lateral public.begin_factory_oauth_authorization(client.id, pg_temp.deployment_id(1),
+    pg_temp.deployment_id(8), 'http://127.0.0.1:8192/callback', repeat('a', 42) || 'A',
+    enum_range(null::public.factory_command_scope), p_resource => pg_temp.deployment_mcp_resource())$$,
+  '23514', null, 'MCP resource consent excludes deployment observation scope');
+create temp table observer_oauth_request as
+select authorized.* from observer_oauth_client client
+cross join lateral public.begin_factory_oauth_authorization(client.id, pg_temp.deployment_id(1),
+  pg_temp.deployment_id(8), 'http://127.0.0.1:8192/callback', repeat('a', 42) || 'A',
+  enum_range(null::public.factory_command_scope)) authorized;
+select public.decide_factory_oauth_authorization(authorization_id, pg_temp.deployment_id(1), pg_temp.deployment_id(8),
+  true, array[pg_temp.deployment_factory()], pg_temp.deployment_id(51), repeat('c', 64))
+from observer_oauth_request;
+select ok((select issued.status = 'issued' and cardinality(issued.scopes) = 6
+  from observer_oauth_client client cross join lateral public.exchange_factory_oauth_code(
+    client.id, 'http://127.0.0.1:8192/callback', pg_temp.deployment_id(51), repeat('c', 64), repeat('a', 42) || 'A',
+    pg_temp.deployment_id(52), repeat('d', 64), pg_temp.deployment_id(53), repeat('e', 64)) issued),
+  'API OAuth consent binds and issues all six distinct command scopes');
+select is((select status::text from public.admit_factory_command(pg_temp.deployment_id(4),
+  pg_temp.deployment_factory(), 'oauth_access_token', pg_temp.deployment_id(52), repeat('d', 64), 'deployments:observe',
+  pg_temp.deployment_id(54), repeat('b', 64), 'api')), 'admitted',
+  'an API OAuth access token carrying all scopes admits a deployment report');
 
 create function pg_temp.approve_deployment_source(p_environment text, p_trusted boolean,
   p_user_id uuid default pg_temp.deployment_id(1)) returns jsonb language sql as $$
@@ -195,6 +230,21 @@ insert into public.github_repositories(id, workspace_id, factory_id, github_inst
 values (pg_temp.deployment_id(23), pg_temp.deployment_id(4), pg_temp.deployment_factory(), pg_temp.deployment_id(21),
   592002, 'other-deployments', 'fixture/other-deployments', true, 'https://github.test/fixture/other-deployments', 'main');
 
+create function pg_temp.observe_deployment_merge_snapshot(
+  p_number integer, p_merge_time timestamptz, p_provider_time timestamptz, p_merge_sha text
+) returns boolean language plpgsql as $$
+declare
+  epoch public.session_pr_epochs;
+  observation_id uuid;
+begin
+  select * into strict epoch from public.session_pr_epochs where id = pg_temp.deployment_id(2000 + p_number);
+  observation_id := public.begin_session_pr_observation(epoch.workspace_id, epoch.repository_id, epoch.branch_name, p_number);
+  return public.finish_session_pr_observation_with_merge(
+    observation_id, epoch.pr_url, 'merged', false, repeat('e', 40), p_provider_time,
+    p_merge_time, p_merge_sha, repeat('e', 40));
+end;
+$$;
+
 create function pg_temp.observe_deployment_merge(p_number integer, p_repository_id uuid, p_merge_time timestamptz)
 returns boolean language plpgsql as $$
 declare
@@ -203,7 +253,6 @@ declare
   epoch_id uuid := pg_temp.deployment_id(2000 + p_number);
   branch_name text := 'wallie/sessions/' || session_id::text || '/' || epoch_id::text;
   pr_url text;
-  observation_id uuid;
 begin
   select * into strict repository from public.github_repositories where id = p_repository_id;
   pr_url := 'https://github.test/' || repository.full_name || '/pull/' || p_number::text;
@@ -218,10 +267,7 @@ begin
     github_repository_id, base_branch, branch_name, fence_branch, pr_number, pr_url, pr_state, is_draft, pr_head_sha)
   values(epoch_id, session_id, repository.workspace_id, 1, repository.id, repository.full_name, repository.repo_id,
     'main', branch_name, 'refs/wallie/fences/' || epoch_id::text, p_number, pr_url, 'open', false, repeat('e', 40));
-  observation_id := public.begin_session_pr_observation(repository.workspace_id, repository.id, branch_name, p_number);
-  return public.finish_session_pr_observation_with_merge(
-    observation_id, pr_url, 'merged', false, repeat('e', 40), p_merge_time + interval '1 minute',
-    p_merge_time, repeat('d', 40), repeat('e', 40));
+  return pg_temp.observe_deployment_merge_snapshot(p_number, p_merge_time, p_merge_time + interval '1 minute', repeat('d', 40));
 end;
 $$;
 
@@ -267,9 +313,22 @@ select ok(pg_temp.observe_deployment_merge(203, pg_temp.deployment_id(22), '2026
 select is((select count(*) from internal.current_factory_linked_deployment_deliveries
   where workspace_id = pg_temp.deployment_id(4)), 0::bigint,
   'competing canonical matches stay ambiguous before any time filter');
+select ok(pg_temp.observe_deployment_merge_snapshot(203, '2026-01-02T07:00:00Z',
+  '2026-01-02T07:01:00Z', repeat('f', 40)), 'the second PR receives an equal-time conflicting correction');
+select is((select status from internal.current_factory_canonical_pull_request_merges
+  where workspace_id = pg_temp.deployment_id(4) and pull_request_number = 203), 'conflicting',
+  'canonical proof masks the commit of the competing PR while the latest snapshots conflict');
+select is((select count(*) from internal.current_factory_linked_deployment_deliveries
+  where workspace_id = pg_temp.deployment_id(4)), 0::bigint,
+  'an unresolved PR can still claim the deployment commit and blocks the competing match');
+select ok(pg_temp.observe_deployment_merge_snapshot(203, '2026-01-02T07:00:00Z',
+  '2026-01-02T07:02:00Z', repeat('f', 40)), 'a strictly newer provider observation settles the other commit');
+select is((select revision from internal.current_factory_linked_deployment_deliveries
+  where workspace_id = pg_temp.deployment_id(4)), 5,
+  'a settled different commit restores the surviving exact deployment link');
 select ok((select count(*) > 0 from internal.factory_current_deployment_observations
   where workspace_id = pg_temp.deployment_id(4) and outcome = 'succeeded'),
-  'ambiguous association leaves raw successful reports available');
+  'a link and its corrections preserve raw successful reports');
 
 create temp table deployment_prior_permit as select * from pg_temp.deployment_admit(121);
 select public.revoke_factory_deployment_source(pg_temp.deployment_id(4), pg_temp.deployment_factory(),

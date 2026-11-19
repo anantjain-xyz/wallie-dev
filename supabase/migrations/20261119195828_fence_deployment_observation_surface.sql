@@ -3,6 +3,27 @@
 insert into internal.factory_outcome_capture_coverage (source, live_from)
   values ('deployments', clock_timestamp());
 
+-- All command scopes can be delegated to a normal API OAuth client. Keep the
+-- enum and distinct-scope validation authoritative as the API surface grows.
+create or replace function internal.valid_factory_oauth_scopes(p_scopes public.factory_command_scope[])
+returns boolean language sql immutable set search_path = '' as $$
+  select coalesce(array_ndims(p_scopes) = 1 and cardinality(p_scopes) > 0
+    and cardinality(p_scopes) = (select count(distinct scope) from unnest(p_scopes) scope), false);
+$$;
+
+alter table public.factory_oauth_clients
+  drop constraint factory_oauth_clients_allowed_scopes_check,
+  add constraint factory_oauth_clients_allowed_scopes_check
+    check (cardinality(allowed_scopes) between 1 and cardinality(enum_range(null::public.factory_command_scope)));
+alter table public.factory_oauth_grants
+  drop constraint factory_oauth_grants_scopes_check,
+  add constraint factory_oauth_grants_scopes_check
+    check (cardinality(scopes) between 1 and cardinality(enum_range(null::public.factory_command_scope)));
+alter table public.factory_oauth_grant_bindings
+  drop constraint factory_oauth_grant_bindings_scopes_check,
+  add constraint factory_oauth_grant_bindings_scopes_check
+    check (cardinality(scopes) between 1 and cardinality(enum_range(null::public.factory_command_scope)));
+
 -- A credential can hold both API and MCP scopes. At the MCP boundary expose
 -- only scopes supported on that surface, including during identity discovery.
 create or replace function internal.resolve_factory_command_credential(

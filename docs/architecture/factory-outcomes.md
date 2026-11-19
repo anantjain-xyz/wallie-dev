@@ -78,7 +78,9 @@ provider revision time, and Wallie’s receipt time.
   matches one verified canonical merge in the same workspace, factory, and
   repository. The provider's authoritative deployment time must be at or
   after the merge. The link carries both observation IDs. Missing or
-  ambiguous links leave the raw report available for inspection.
+  ambiguous links leave the raw report available for inspection. A competing
+  PR with conflicting current evidence can keep a commit ambiguous until
+  a newer observation settles its identity.
 - The deployments coverage row records when the ingestion schema was
   installed. Each approved source records the start and end of its authority.
   The completeness of provider reporting remains unknown.
