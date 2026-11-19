@@ -275,10 +275,31 @@ type MarkdownOutputPolicy = {
   link: (href: string) => string | null;
 };
 
+const markdownTextBlocks = new Set([
+  "p",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "th",
+  "td",
+  "code",
+]);
+
 function restrictMarkdownOutput(policy: MarkdownOutputPolicy) {
   function visit(node: HtmlNode) {
     if (node.type === "text" && node.value) node.value = policy.text(node.value);
     if (node.type === "element") {
+      // Inline formatting can split a credential assignment across text nodes.
+      // If redaction changes a block, keep its safe text and discard its inline markup.
+      if (node.tagName && markdownTextBlocks.has(node.tagName)) {
+        const text = textContent(node);
+        const redacted = policy.text(text);
+        if (redacted !== text) node.children = [{ type: "text", value: redacted }];
+      }
       const original = node.properties;
       node.properties = {};
       if (node.tagName === "a") {

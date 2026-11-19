@@ -10,8 +10,7 @@ const PRIVATE_PATH =
   /(?:^|\/)(?:storage\/v1|(?:session-)?attachments|private-media|(?:review|validation)-evidence|sandbox|\.wallie|internal)(?:\/|$)/i;
 const PRIVATE_HOST =
   /(?:^|\.)(?:localhost|local|internal|supabase\.co|amazonaws\.com|storage\.googleapis\.com|blob\.core\.windows\.net)$/i;
-const URL_TEXT =
-  /\b(?:https?:\/\/|wallie-evidence:|sandbox:|file:|blob:|data:image\/)[^\s<>"'`()\[\]{}]+/giu;
+const URL_TEXT = /\b(?:https?:\/\/|wallie-evidence:|sandbox:|file:|blob:|data:image\/)\S+/giu;
 const WALLIE_CREDENTIAL =
   /\bwallie_(?:mt|oa|or|oc)_[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/gi;
 

@@ -40,6 +40,18 @@ describe("programmable read output", () => {
     ).toBe("Draft [redacted] [link unavailable] [link unavailable]");
   });
 
+  it.each(["report(1).pdf", "report[1].pdf", "actor's-report.pdf"])(
+    "withholds URL query and fragment after punctuation in %s",
+    (path) => {
+      const location = `https://cdn.example.com/${path}`;
+      const signed = `${location}?Signature=private#secret`;
+      expect(safeFactoryReadText(`Read ${signed}`)).toBe(`Read ${location}`);
+      const html = renderFactoryReadMarkdown(`See \`${signed}\``);
+      expect(html).toContain(location);
+      expect(html).not.toMatch(/Signature|private|#secret/);
+    },
+  );
+
   it("preserves readable Markdown without disclosing private media or decoded credentials", () => {
     const html = renderFactoryReadMarkdown(
       [
@@ -65,5 +77,21 @@ describe("programmable read output", () => {
     expect(renderConversationMarkdown("[Browser link](https://example.com/p?a=b)")).toContain(
       'href="https://example.com/p?a=b"',
     );
+  });
+
+  it.each([
+    "password: **hunter2**",
+    "**password**: `hunter2`",
+    "password&#58; **hunter2**",
+    "[password](https://example.com) = *hunter2*",
+    "- Password: **hunter2**",
+    "| Variable |\n| --- |\n| Password: **hunter2** |",
+  ])("detects secret assignments across inline Markdown nodes in %s", (markdown) => {
+    const html = renderFactoryReadMarkdown(
+      markdown + "\n\n[Design guide](https://example.com/guide)",
+    );
+    expect(html).not.toContain("hunter2");
+    expect(html).toContain("[redacted]");
+    expect(html).toContain('href="https://example.com/guide"');
   });
 });
