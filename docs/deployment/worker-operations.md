@@ -333,6 +333,27 @@ The fixture clicks through a change, checks the retained pixels for private
 canaries, and verifies that a second capture starts with empty cookie and local
 storage state. It uses synthetic data and does not require any live account.
 
+### Video recording support
+
+Install FFmpeg with VP8 encoding through libvpx and the matching FFprobe
+binary on the Node worker. Point these settings to trusted executables.
+
+| Setting                               | Value                                                             |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| `WALLIE_BROWSER_VIDEO_APPROVAL_SCOPE` | A factory-approved `<tool revision UUID>/record_video` operation. |
+| `WALLIE_BROWSER_FFMPEG_PATH`          | The absolute FFmpeg executable path.                              |
+| `WALLIE_BROWSER_FFPROBE_PATH`         | The absolute FFprobe executable path.                             |
+
+Use the same trusted fixture broker, with explicit `video` requests in the
+frozen validation plan. The worker encodes only sanitized, clipped images
+and verifies the completed WebM before any upload. The output contains a
+bounded sequence of half-second frames. Node deployments with missing
+encoder tools record video as unavailable while command and screenshot
+evidence continue through their existing paths.
+
+With Chromium and FFmpeg installed, verify frame privacy and cancellation by
+running `WALLIE_REQUIRE_BROWSER_VIDEO_TESTS=1 pnpm test src/lib/validation-evidence/browser-runtime.test.ts`.
+
 ## Heartbeats and activity
 
 - Registration upserts worker start time, heartbeat time, and an empty active

@@ -131,7 +131,7 @@ create function pg_temp.submit_browser(
     p_records,p_transfers,p_scope);
 $$;
 
-select ok((select not public and file_size_limit=1048576 and 'image/png'=any(allowed_mime_types)
+select ok((select not public and file_size_limit>=1048576 and 'image/png'=any(allowed_mime_types)
   and 'text/plain'=any(allowed_mime_types) and 'application/json'=any(allowed_mime_types)
   from storage.buckets where id='session-validation-evidence'),'the evidence bucket admits bounded PNG and stays private');
 select ok(public.authorize_session_browser_screenshot(pg_temp.run_id(),1,repeat('b',40),repeat('c',40),pg_temp.scope_id()),

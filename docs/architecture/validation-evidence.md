@@ -177,8 +177,7 @@ Unsettled uploads stay eligible for cleanup.
 
 Failed checks and uploads produce a nonpassing outcome. Missing runtime or
 approval is shown as unavailable. The native Workerd worker records browser
-unavailability while continuing command validation. Video capture returns
-unavailable.
+unavailability while continuing command validation.
 
 `GET /api/sessions/{sessionId}/validation-evidence` lists bounded visual outcomes
 and exact run provenance. A captured screenshot has an authenticated download
@@ -186,6 +185,32 @@ link at
 `/api/sessions/{sessionId}/validation-evidence/browser-assets/{assetId}`.
 The link works after teardown. Each request uses the signed-in viewer’s access
 and verifies the private object size and SHA-256 before returning the PNG.
+
+### Trusted video recordings
+
+A video request captures the initial approved region and one frame after
+each planned interaction in the same fresh browser context. Wallie freezes
+fixture scripts, applies private-region exclusions, and crops the result
+before retaining a frame. The worker restores the page between frames so
+the next approved interaction runs in the same workflow. A missing step,
+unsafe frame, changed region size, or cancellation discards the entire clip.
+
+The Node worker sends sanitized crops to its configured FFmpeg executable.
+The clip uses VP8 WebM at two frames per second. Each frame holds for 500 ms,
+so offsets are exact media timestamps from the initial frame at zero through
+the last planned step. The manifest includes validated encoded dimensions,
+duration, offsets, and the observed start and finish time. A recording can
+contain up to 13 frames and 8 MiB. It stays within the check's time budget.
+FFprobe verifies the complete decoded frame sequence before the worker can
+publish the private object.
+
+Video requires a separate live `<tool revision UUID>/record_video` approval.
+The worker rechecks approval at settlement. A mixed plan can settle verified
+screenshots and recordings in the same exact run receipt. Unavailable
+recordings and upload failures remain nonpassing. The browser evidence
+metadata identifies the retained WebM by its asset ID. Authorized reviewers
+can download the verified bytes after teardown through
+`GET /api/sessions/{sessionId}/validation-evidence/browser-videos/{assetId}`.
 
 ## Commit and tree identity
 

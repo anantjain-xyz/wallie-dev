@@ -91,7 +91,7 @@ async function cleanupResourceReservations(
           (operation.storage_bucket === "session-source-checkpoints" &&
             /\/[a-f0-9-]{36}-retry-\d+-[a-f0-9-]{36}\.bundle$/.test(operation.resource_id)) ||
           (operation.storage_bucket === "session-validation-evidence" &&
-            /\/browser\/[a-f0-9-]{36}\.png$/.test(operation.resource_id))
+            /\/browser\/[a-f0-9-]{36}\.(?:png|webm)$/.test(operation.resource_id))
         ) {
           // The checkpoint or screenshot transaction can consume this
           // reservation after the initial scan. Claim it before touching Storage to serialize with

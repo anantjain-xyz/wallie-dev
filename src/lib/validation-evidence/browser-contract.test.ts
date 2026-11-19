@@ -155,17 +155,30 @@ describe("trusted browser outcomes", () => {
     const video = browserCaptureReceiptSchema.parse({
       ...captured,
       kind: "video",
+      startedAt: "2026-11-19T00:00:00.000Z",
+      completedAt: "2026-11-19T00:00:00.500Z",
       manifest: {
         assetId: "33333333-3333-4333-8333-333333333333",
         sha256: "c".repeat(64),
         contentType: "video/webm",
         sizeBytes: 1024,
-        durationMs: 16_000,
+        widthPx: 120,
+        heightPx: 80,
+        durationMs: 1_500,
+        frameOffsetsMs: [0, 500, 1_000],
       },
     });
     expect(
       evaluateBrowserRequirement("browser:video:inbox", {
         ...exactEvidence,
+        plan: plan.map((check) => ({
+          ...check,
+          timeoutSeconds: 1,
+          interactions: [
+            { action: "expectVisible", testId: "user" },
+            { action: "expectVisible", testId: "subject" },
+          ],
+        })),
         receipts: [video],
       }),
     ).toBe("failed");

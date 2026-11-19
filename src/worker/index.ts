@@ -12,7 +12,10 @@ import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
 import { drainFactoryEventDeliveries } from "@/lib/factory-event-subscriptions/dispatch";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
-import { createBrowserScreenshotRuntime } from "@/lib/validation-evidence/browser-runtime";
+import {
+  createBrowserScreenshotRuntime,
+  createBrowserVideoRuntime,
+} from "@/lib/validation-evidence/browser-runtime";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
@@ -52,6 +55,7 @@ async function main() {
   const scheduler = createScheduler(admin, config, {
     isShuttingDown: () => draining,
     browserRuntime: createBrowserScreenshotRuntime() ?? undefined,
+    browserVideoRuntime: createBrowserVideoRuntime() ?? undefined,
   });
   const timerTasks = createTimerTaskTracker();
   const heartbeatTasks = createTimerTaskTracker();

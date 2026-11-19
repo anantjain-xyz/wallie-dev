@@ -2,10 +2,9 @@ import "server-only";
 
 import { deflateSync, inflateSync } from "node:zlib";
 
-import { MAX_BROWSER_SCREENSHOT_BYTES } from "./browser-contract";
+import { BROWSER_CAPTURE_DIMENSIONS, MAX_BROWSER_SCREENSHOT_BYTES } from "./browser-contract";
 
-const MAX_WIDTH = 960;
-const MAX_HEIGHT = 540;
+const { width: MAX_WIDTH, height: MAX_HEIGHT } = BROWSER_CAPTURE_DIMENSIONS;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   let code = index;

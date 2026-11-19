@@ -59,6 +59,9 @@ export type BrowserVerificationPlan = z.infer<typeof browserVerificationPlanSche
  */
 export const BROWSER_CAPTURE_POLICY = "isolated-fixture-v1";
 export const MAX_BROWSER_SCREENSHOT_BYTES = 1024 * 1024;
+export const MAX_BROWSER_VIDEO_BYTES = 8 * 1024 * 1024;
+export const BROWSER_VIDEO_FRAME_MS = 500;
+export const BROWSER_CAPTURE_DIMENSIONS = { width: 960, height: 540 };
 
 export const browserRunIdentitySchema = z.strictObject({
   runId: z.string().uuid(),
@@ -86,6 +89,32 @@ const capturedIdentity = {
   browserSessionId: z.string().uuid(),
 };
 
+const browserVideoTimelineFields = {
+  widthPx: z.number().int().positive().max(BROWSER_CAPTURE_DIMENSIONS.width).multipleOf(2),
+  heightPx: z.number().int().positive().max(BROWSER_CAPTURE_DIMENSIONS.height).multipleOf(2),
+  durationMs: z.number().int().positive().max(30_000),
+  frameOffsetsMs: z.array(z.number().int().nonnegative()).min(1).max(13),
+};
+
+function hasCompleteTimeline({
+  durationMs,
+  frameOffsetsMs,
+}: {
+  durationMs: number;
+  frameOffsetsMs: number[];
+}) {
+  return (
+    durationMs === frameOffsetsMs.length * BROWSER_VIDEO_FRAME_MS &&
+    frameOffsetsMs.every((offset, index) => offset === index * BROWSER_VIDEO_FRAME_MS)
+  );
+}
+
+export const browserVideoTimelineSchema = z
+  .strictObject(browserVideoTimelineFields)
+  .refine(hasCompleteTimeline, { message: "Video frames must cover the exact recorded timeline." });
+
+type BrowserVideoTimeline = z.infer<typeof browserVideoTimelineSchema>;
+
 export const browserCaptureReceiptSchema = z.union([
   z.strictObject({
     ...captureIdentity,
@@ -109,16 +138,18 @@ export const browserCaptureReceiptSchema = z.union([
   z.strictObject({
     ...capturedIdentity,
     kind: z.literal("video"),
-    manifest: z.strictObject({
-      ...assetIdentity,
-      contentType: z.literal("video/webm"),
-      sizeBytes: z
-        .number()
-        .int()
-        .positive()
-        .max(8 * 1024 * 1024),
-      durationMs: z.number().int().positive().max(30_000),
-    }),
+    startedAt: z.string().datetime(),
+    completedAt: z.string().datetime(),
+    manifest: z
+      .strictObject({
+        ...assetIdentity,
+        ...browserVideoTimelineFields,
+        contentType: z.literal("video/webm"),
+        sizeBytes: z.number().int().positive().max(MAX_BROWSER_VIDEO_BYTES),
+      })
+      .refine(hasCompleteTimeline, {
+        message: "Video frames must cover the exact recorded timeline.",
+      }),
   }),
 ]);
 export type BrowserCaptureReceipt = z.infer<typeof browserCaptureReceiptSchema>;
@@ -145,6 +176,19 @@ export type BrowserScreenshotResult =
 export type BrowserScreenshotRuntime = {
   approvalScopeId: string;
   captureScreenshot(input: BrowserScreenshotInput): Promise<BrowserScreenshotResult>;
+};
+
+export type BrowserVideoResult =
+  | (Extract<BrowserScreenshotResult, { status: "captured" }> & {
+      timeline: BrowserVideoTimeline;
+      startedAt: string;
+      completedAt: string;
+    })
+  | BrowserScreenshotFailure;
+
+export type BrowserVideoRuntime = {
+  approvalScopeId: string;
+  captureVideo(input: BrowserScreenshotInput): Promise<BrowserVideoResult>;
 };
 
 export type BrowserVerificationEvidence = {
@@ -192,7 +236,13 @@ export function evaluateBrowserRequirement(
   if (receipt.path !== check.path || receipt.policy !== BROWSER_CAPTURE_POLICY) return "stale";
   if (receipt.status === "failed") return receipt.reason === "source_changed" ? "stale" : "failed";
   if (receipt.status === "unavailable") return "unavailable";
-  if (receipt.kind === "video" && receipt.manifest.durationMs > check.timeoutSeconds * 1000) {
+  if (
+    receipt.kind === "video" &&
+    (receipt.manifest.durationMs > check.timeoutSeconds * 1000 ||
+      receipt.manifest.frameOffsetsMs.length !== check.interactions.length + 1 ||
+      Date.parse(receipt.completedAt) < Date.parse(receipt.startedAt) ||
+      Date.parse(receipt.completedAt) - Date.parse(receipt.startedAt) > check.timeoutSeconds * 1000)
+  ) {
     return "failed";
   }
   return evidence.accessibleAssetDigests.get(receipt.manifest.assetId) === receipt.manifest.sha256

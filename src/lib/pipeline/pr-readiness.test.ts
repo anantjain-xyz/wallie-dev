@@ -988,22 +988,42 @@ describe("review readiness details", () => {
     expect(textOnly?.evaluation.state).toBe("ready");
   });
 
-  it("requires verified private PNG bytes for a captured visual requirement", async () => {
-    const visualKey = "browser:screenshot:inbox";
-    const screenshotSessionId = "10000000-0000-4000-8000-000000000006";
-    const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQVDIGAACuAGcVHqFfAAAAAElFTkSuQmCC",
-      "base64",
-    );
+  it.each(["screenshot", "video"] as const)("verifies %s readiness", async (kind) => {
+    const visualKey = `browser:${kind}:inbox`;
+    const browserSessionId = "10000000-0000-4000-8000-000000000006";
+    const extension = kind === "video" ? "webm" : "png";
+    const contentType = kind === "video" ? "video/webm" : "image/png";
+    const bytes =
+      kind === "video"
+        ? Buffer.concat([Buffer.from("1a45dfa3", "hex"), Buffer.alloc(40)])
+        : Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQVDIGAACuAGcVHqFfAAAAAElFTkSuQmCC",
+            "base64",
+          );
+    const time = {
+      startedAt: "2026-11-06T00:00:00.000Z",
+      completedAt: "2026-11-06T00:00:01.000Z",
+    };
+    const timeline = { durationMs: 500, widthPx: 240, heightPx: 160, frameOffsetsMs: [0] };
     const browserAsset = {
       id: assetId,
       run_id: runId,
-      session_id: screenshotSessionId,
+      session_id: browserSessionId,
       workspace_id: workspaceId,
-      storage_path: `${workspaceId}/${runId}/browser/${assetId}.png`,
-      content_type: "image/png",
-      size_bytes: png.byteLength,
-      sha256: createHash("sha256").update(png).digest("hex"),
+      storage_path: `${workspaceId}/${runId}/browser/${assetId}.${extension}`,
+      content_type: contentType,
+      size_bytes: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      ...(kind === "video"
+        ? {
+            duration_ms: timeline.durationMs,
+            width_px: timeline.widthPx,
+            height_px: timeline.heightPx,
+            frame_offsets_ms: timeline.frameOffsetsMs,
+            capture_started_at: time.startedAt,
+            capture_completed_at: time.completedAt,
+          }
+        : {}),
     };
     const check = {
       key: "inbox",
@@ -1012,13 +1032,13 @@ describe("review readiness details", () => {
       interactions: [],
       regionTestId: "inbox",
       excludedTestIds: [],
-      evidence: [{ kind: "screenshot", required: true }],
+      evidence: [{ kind, required: true }],
     };
 
     const tables = serviceTables({
       session_git_checkpoints: queryableTable({
         ...exactAttempt,
-        session_id: screenshotSessionId,
+        session_id: browserSessionId,
         output_sha: shaB,
       }),
       session_validation_evidence: queryableTable(null),
@@ -1028,14 +1048,15 @@ describe("review readiness details", () => {
       }),
       session_validation_plans: queryableTable({
         ...validationPlan,
-        session_id: screenshotSessionId,
+        session_id: browserSessionId,
         plan: { version: 2, commands: [], browser: [check] },
       }),
       session_browser_verification_receipts: queryableTable({
         records: [
           {
             key: check.key,
-            kind: "screenshot",
+            kind,
+            ...(kind === "video" ? time : {}),
             path: check.path,
             policy: BROWSER_CAPTURE_POLICY,
             status: "captured",
@@ -1043,8 +1064,9 @@ describe("review readiness details", () => {
             manifest: {
               assetId,
               sha256: browserAsset.sha256,
-              sizeBytes: png.byteLength,
-              contentType: "image/png",
+              sizeBytes: bytes.byteLength,
+              contentType,
+              ...(kind === "video" ? timeline : {}),
             },
           },
         ],
@@ -1052,22 +1074,35 @@ describe("review readiness details", () => {
       session_browser_verification_assets: queryableTable([browserAsset]),
     });
     const ready = await loadSessionPrReadinessDetails(
-      buildServiceAdminClient(tables, vi.fn(), privateStorage(png).storage) as never,
-      screenshotSessionId,
+      buildServiceAdminClient(tables, vi.fn(), privateStorage(bytes).storage) as never,
+      browserSessionId,
     );
     expect(ready?.evaluation.state).toBe("ready");
     expect(ready?.evidence?.required).toEqual([{ key: visualKey, status: "passed" }]);
 
-    const tampered = Buffer.from(png);
+    const tampered = Buffer.from(bytes);
     tampered[30] ^= 0xff;
     const blocked = await loadSessionPrReadinessDetails(
       buildServiceAdminClient(tables, vi.fn(), privateStorage(tampered).storage) as never,
-      screenshotSessionId,
+      browserSessionId,
     );
     expect(blocked?.evaluation.state).toBe("blocked");
     expect(blocked?.evaluation.blockers).toEqual([
       { code: "evidence_unavailable", requirement: visualKey },
     ]);
+    if (kind === "video") {
+      const mismatchedTables = {
+        ...tables,
+        session_browser_verification_assets: queryableTable([{ ...browserAsset, width_px: 242 }]),
+      };
+      const mismatched = await loadSessionPrReadinessDetails(
+        buildServiceAdminClient(mismatchedTables, vi.fn(), privateStorage(bytes).storage) as never,
+        browserSessionId,
+      );
+      expect(mismatched?.evaluation.blockers).toEqual([
+        { code: "evidence_unavailable", requirement: visualKey },
+      ]);
+    }
   });
 
   it.each(["plan", "deleted-stage"])(
