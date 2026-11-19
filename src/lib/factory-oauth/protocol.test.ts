@@ -96,6 +96,17 @@ describe("factory OAuth authorization protocol", () => {
     });
   });
 
+  it("allows observer consent for the API and excludes it from MCP resource consent", () => {
+    const query = authorizationRequest();
+    query.set("scope", "deployments:observe");
+    expect(parseFactoryOAuthAuthorization(query)).toMatchObject({
+      ok: true,
+      request: { scopes: ["deployments:observe"], resource: undefined },
+    });
+    query.set("resource", `${issuer}/api/v1/workspaces/${clientId}/factories/${clientId}/mcp`);
+    expect(parseFactoryOAuthAuthorization(query)).toEqual({ ok: false, error: "invalid_scope" });
+  });
+
   it("rejects duplicate parameters and proof downgrade", () => {
     const duplicates = authorizationRequest();
     duplicates.append("redirect_uri", "https://another.example.test/callback");

@@ -7761,6 +7761,20 @@ export type Database = {
           run_ids: string[]
         }[]
       }
+      approve_factory_deployment_source: {
+        Args: {
+          p_actor_user_id: string
+          p_environment: string
+          p_execution_grant_id: string
+          p_execution_grant_version: number
+          p_factory_id: string
+          p_provider: string
+          p_provider_project_id: string
+          p_provider_time_authoritative: boolean
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       approve_factory_execution_grant: {
         Args: {
           p_actor_user_id: string
@@ -9023,6 +9037,28 @@ export type Database = {
           scopes: Database["public"]["Enums"]["factory_command_scope"][]
           status: string
         }[]
+      }
+      execute_factory_deployment_observation: {
+        Args: {
+          p_admission_id: string
+          p_credential_digest: string
+          p_credential_id: string
+          p_credential_kind: Database["public"]["Enums"]["factory_command_credential_kind"]
+          p_environment: string
+          p_external_deployment_id: string
+          p_factory_id: string
+          p_lease_id: string
+          p_outcome: string
+          p_provider_occurred_at?: string
+          p_request_hash: string
+          p_request_id: string
+          p_revision: number
+          p_source_id: string
+          p_source_sha?: string
+          p_surface: Database["public"]["Enums"]["factory_command_surface"]
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       execute_factory_session_mutation: {
         Args: {
@@ -10960,6 +10996,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      revoke_factory_deployment_source: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_source_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       revoke_factory_event_subscription: {
         Args: {
           p_actor_user_id: string
@@ -12034,6 +12079,7 @@ export type Database = {
         | "sessions:follow-up"
         | "sessions:clarify"
         | "sessions:cancel"
+        | "deployments:observe"
       factory_command_surface: "api" | "mcp"
       factory_event_subscription_credential_kind:
         | "machine_token"
@@ -12264,6 +12310,7 @@ export const Constants = {
         "sessions:follow-up",
         "sessions:clarify",
         "sessions:cancel",
+        "deployments:observe",
       ],
       factory_command_surface: ["api", "mcp"],
       factory_event_subscription_credential_kind: [
