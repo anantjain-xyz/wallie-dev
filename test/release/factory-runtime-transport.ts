@@ -1,17 +1,33 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
+import { factoryMemoryProposalPath } from "@/lib/factory-memory/proposal";
 import type {
   SandboxConnection,
   SandboxExecHandle,
   SandboxProviderDriver,
 } from "@/lib/sandbox/types";
+import type { ValidationPlan } from "@/lib/validation-evidence/contracts";
+import { validationPlanPath } from "@/lib/validation-evidence/plan";
 
 type E2BConnection = Extract<SandboxConnection, { provider: "e2b" }>;
 
 export const BASE_SHA = "128509c4128509c4128509c4128509c4128509c4";
+export const TREE_SHA = "628509c4128509c4128509c4128509c4128509c4";
 export const HOSTED_SANDBOX_KEY = "synthetic-local-sandbox-key";
 export const FIXTURE_AGENT_EXIT = "Local qualification reached the agent transport.";
+export const QUALIFICATION_COMMAND = "printf 'Wallie qualification passed\\n'";
+
+type CompletedAttempt = {
+  artifact: string;
+  plan?: ValidationPlan;
+  memoryProposal?: string;
+};
+
+type AttemptOutcome = { kind: "complete"; value: CompletedAttempt } | { kind: "fail" };
+
+const measuredUsage =
+  JSON.stringify({ type: "turn.completed", usage: { input_tokens: 21, output_tokens: 13 } }) + "\n";
 
 function commandResult(stdout = "", stderr = "", code = 0): SandboxExecHandle {
   return {
@@ -35,6 +51,7 @@ export function createFactoryRuntimeTransport() {
     scoped: boolean;
   }[] = [];
   const scopedMaterial = new Map<string, string>();
+  const outcomes = new Map<string, AttemptOutcome>();
   const driver: SandboxProviderDriver<E2BConnection> = {
     async create(request, connection) {
       assert.equal(connection.credentials.apiKey === HOSTED_SANDBOX_KEY, true);
@@ -53,6 +70,7 @@ export function createFactoryRuntimeTransport() {
         id: sandbox.id,
         repoPath: "/fixture/checkout",
         async exec(cmd, args, options) {
+          assert(!sandbox.stopped, "The processor used a stopped fixture sandbox.");
           if (cmd === "git" && args.join(" ") === "rev-parse --verify HEAD^{commit}") {
             return commandResult(BASE_SHA + "\n");
           }
@@ -66,15 +84,63 @@ export function createFactoryRuntimeTransport() {
           if (cmd === "rm") {
             for (const path of args.slice(2)) {
               files.delete(path);
+              for (const name of files.keys()) {
+                if (name.startsWith(path + "/")) files.delete(name);
+              }
               scopedMaterial.delete(path);
             }
             return commandResult();
+          }
+          const script = args[1];
+          if (
+            cmd === "node" &&
+            args[0] === "-e" &&
+            script?.includes("fs.openSync(process.argv[1]")
+          ) {
+            const [, , path, maxBytes] = args;
+            assert(
+              path &&
+                /^\/tmp\/wallie-(?:validation-plan|memory-proposal)-[a-f0-9-]+\.(?:json|md)$/.test(
+                  path,
+                ),
+            );
+            const content = files.get(path);
+            return content !== undefined && Buffer.byteLength(content) <= Number(maxBytes)
+              ? commandResult(content)
+              : commandResult("", "", 1);
+          }
+          if (cmd === "node" && args[0] === "-e" && script?.includes("HEAD^{tree}")) {
+            return commandResult(
+              JSON.stringify({ commitSha: BASE_SHA, treeSha: TREE_SHA, clean: true }),
+            );
+          }
+          if (
+            cmd === "node" &&
+            args[0] === "-e" &&
+            script?.includes("const command = JSON.parse(process.argv[1])")
+          ) {
+            const spec: unknown = JSON.parse(args[2]);
+            assert(spec && typeof spec === "object" && "command" in spec);
+            assert.equal(spec.command, QUALIFICATION_COMMAND);
+            return commandResult(
+              JSON.stringify({ exitCode: 0, error: false, truncated: false, log: "", reports: [] }),
+            );
+          }
+          if (
+            cmd === "bash" &&
+            args[0] === "-lc" &&
+            script?.includes("Preserve Wallie stage source")
+          ) {
+            assert(script.includes(BASE_SHA) && script.includes("reserved_runtime_path"));
+            return commandResult(`UNCHANGED\n${BASE_SHA}\n`);
           }
           const credentialIndex = args.indexOf("wallie-credential");
           const scoped = credentialIndex !== -1;
           const command = args.find((arg) => arg.includes("codex 'exec'"));
           if (cmd === "bash" && command) {
-            const prompt = [...files].find(([path]) => path.endsWith("/prompt.txt"))?.[1];
+            const [promptPath, prompt] =
+              [...files].find(([path]) => path.endsWith("/prompt.txt")) ?? [];
+            assert(promptPath);
             assert(prompt, "Codex was launched without the rendered prompt.");
             const credentialPath = args[credentialIndex + 1];
             const secret = scoped
@@ -87,8 +153,29 @@ export function createFactoryRuntimeTransport() {
               scopedMaterial.delete(credentialPath);
             }
             invocations.push({ repo: sandbox.repo, prompt, command, secret, scoped });
-            // Everything through launch is real. The remote CLI stops here so
-            // this fixture doesn't depend on source publication or vendor services.
+            for (const [runId, outcome] of outcomes) {
+              const path = validationPlanPath(runId);
+              if (!files.has(path)) continue;
+              outcomes.delete(runId);
+              if (outcome.kind === "fail")
+                return commandResult(measuredUsage, FIXTURE_AGENT_EXIT, 1);
+              const completion = outcome.value;
+              for (const [path, configuration] of files) {
+                if (!path.endsWith(".mcp.json")) continue;
+                assert(configuration.includes("https://browser-fixture.example.test/mcp"));
+                assert(
+                  configuration.includes('"capture"') && configuration.includes('"record_video"'),
+                );
+                // The synthetic hosted process exposes the exact approved fixture operations.
+                files.set(`${path}.ready`, "ready\n");
+              }
+              files.set(promptPath.replace(/prompt\.txt$/, "final-output.md"), completion.artifact);
+              if (completion.plan) files.set(path, JSON.stringify(completion.plan));
+              if (completion.memoryProposal) {
+                files.set(factoryMemoryProposalPath(runId), completion.memoryProposal);
+              }
+              return commandResult(measuredUsage);
+            }
             return commandResult("", FIXTURE_AGENT_EXIT, 1);
           }
           throw new Error("Unexpected sandbox qualification command: " + cmd);
@@ -106,11 +193,12 @@ export function createFactoryRuntimeTransport() {
         },
         async stop() {
           sandbox.stopped = true;
+          files.clear();
         },
       };
     },
     async createUtility() {
-      throw new Error("This fixture ends before utility sandbox execution.");
+      throw new Error("The unchanged fixture checkout cannot require a delivery sandbox.");
     },
     async listRunning() {
       return [];
@@ -123,7 +211,20 @@ export function createFactoryRuntimeTransport() {
       return { ok: true };
     },
   };
-  return { driver, sandboxes, invocations, scopedMaterial };
+  return {
+    driver,
+    sandboxes,
+    invocations,
+    scopedMaterial,
+    failAttemptAfterUsage(runId: string) {
+      assert(!outcomes.has(runId));
+      outcomes.set(runId, { kind: "fail" });
+    },
+    completeAttempt(runId: string, completion: CompletedAttempt) {
+      assert(!outcomes.has(runId));
+      outcomes.set(runId, { kind: "complete", value: completion });
+    },
+  };
 }
 
 export type FactoryRuntimeTransport = ReturnType<typeof createFactoryRuntimeTransport>;
