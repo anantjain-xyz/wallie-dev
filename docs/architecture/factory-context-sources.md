@@ -36,3 +36,13 @@ Wallie fetches at most 128 KiB of UTF-8 text from an exact GitHub default-branch
 Revocation, upstream deletion, and removal clear the active revision pointer. Historical revisions remain private. A successful fetch can reactivate a previously synchronized body when the same registered source is still authorized. Source status records an observed result. A later consumer must recheck its own current access.
 
 The operator API returns source metadata only. Revision bodies are stored as untrusted external text. This import path never sends them to the agent or prompt renderer.
+
+## Exact retrieval for new runs
+
+A factory manager can select private source revisions in an approved serial definition by adding `contextDocuments`. Each selection contains `sourceId` and `revisionId`. Use the exact revision UUID from the source metadata. The order of up to eight distinct sources is pinned when the definition is approved and is visible in its semantic diff.
+
+The attempt must use the same live execution grant and grant version as the source. The grant authorizes the underlying read-context repository. Selecting a document does not add the whole repository to the checkout. The worker verifies that the file is still readable at current GitHub HEAD and that the requested historical revision yields the stored body digest. It then checks the exact attempt, source and live grant again before accessing the cached body.
+
+Selected bodies have a 128 KiB combined UTF-8 budget. The worker returns ordered receipts for selection, exclusion and unavailability. A selected receipt includes the exact revision digest, checkable Git commit, source path, byte count and whether the source or current upstream body differs. A newer revision never substitutes for a requested revision. Deleted or revoked sources and inconclusive provider responses release no cached text.
+
+At render time, Wallie appends selected documents as individually classified untrusted input. Existing factory definitions without document selections keep their current prompt and repository behavior.

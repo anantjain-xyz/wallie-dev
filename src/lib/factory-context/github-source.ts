@@ -12,6 +12,7 @@ const maxGitMetadataBytes = 512 * 1024;
 const syncTimeoutMs = 12_000;
 const githubJson = "application/vnd.github+json";
 const gitObjectId = z.string().regex(/^[a-f0-9]{40}$/);
+const contentDigest = z.string().regex(/^[a-f0-9]{64}$/);
 const commitSchema = z.object({
   sha: gitObjectId,
   committer: z.object({ date: z.iso.datetime({ offset: true }) }),
@@ -57,6 +58,18 @@ export type GitHubContextResult =
   | { status: "access_revoked" }
   | { status: "upstream_deleted" }
   | { status: "unavailable" };
+
+type GitHubReadFailure = Exclude<GitHubContextResult, { status: "synced" }>;
+export type GitHubContextProof =
+  | { status: "verified"; currentContentSha256: string }
+  | { status: "revision_mismatch" }
+  | GitHubReadFailure;
+
+type ReadGitHubResource = (
+  suffix: string,
+  maxBytes: number,
+  accept?: string,
+) => Promise<Uint8Array>;
 
 class GitHubAccessError extends Error {}
 
@@ -111,11 +124,10 @@ function parseJson(bytes: Uint8Array): unknown {
   return JSON.parse(decodeUtf8(bytes));
 }
 
-async function readGitHubContextFile(
+async function createGitHubResourceReader(
   input: GitHubContextInput,
-  segments: string[],
   signal: AbortSignal,
-): Promise<GitHubContextResult> {
+): Promise<ReadGitHubResource> {
   let token: string;
   try {
     token = await mintSandboxRepositoryToken({
@@ -135,12 +147,12 @@ async function readGitHubContextFile(
         request.data.response?.data?.message,
       )
     ) {
-      return { status: "access_revoked" };
+      throw new GitHubAccessError();
     }
-    return { status: "unavailable" };
+    throw new Error("GitHub context credentials are unavailable.");
   }
 
-  async function readResource(suffix: string, maxBytes: number, accept = githubJson) {
+  return async (suffix, maxBytes, accept = githubJson) => {
     signal.throwIfAborted();
     const response = await fetch(
       `https://api.github.com/repositories/${input.repositoryId}/${suffix}`,
@@ -167,15 +179,24 @@ async function readGitHubContextFile(
       throw new Error("GitHub returned an unavailable resource.");
     }
     return readBoundedBytes(response, maxBytes, signal);
-  }
+  };
+}
 
-  const head = gitObjectId.parse(
+async function readGitHubHead(readResource: ReadGitHubResource) {
+  return gitObjectId.parse(
     decodeUtf8(await readResource("commits/HEAD", 64, "application/vnd.github.sha")).trim(),
   );
+}
+
+async function readGitHubContextFileAtRevision(
+  readResource: ReadGitHubResource,
+  segments: string[],
+  revision: string,
+): Promise<GitHubContextResult> {
   const commit = commitSchema.parse(
-    parseJson(await readResource(`git/commits/${head}`, maxGitMetadataBytes)),
+    parseJson(await readResource(`git/commits/${revision}`, maxGitMetadataBytes)),
   );
-  if (commit.sha !== head) return { status: "unavailable" };
+  if (commit.sha !== revision) return { status: "unavailable" };
   let treeId = commit.tree.sha;
 
   for (const [index, segment] of segments.entries()) {
@@ -218,7 +239,7 @@ async function readGitHubContextFile(
     return {
       status: "synced",
       content,
-      upstreamRevision: head,
+      upstreamRevision: revision,
       upstreamUpdatedAt: new Date(commit.committer.date).toISOString(),
     };
   }
@@ -226,10 +247,11 @@ async function readGitHubContextFile(
   return { status: "unavailable" };
 }
 
-/** Fetch external document bytes without granting them prompt authority. */
-export async function fetchGitHubContextFile(
+async function readGitHubContext<Result>(
   input: GitHubContextInput,
-): Promise<GitHubContextResult> {
+  read: (resource: ReadGitHubResource, segments: string[]) => Promise<Result>,
+  callerSignal?: AbortSignal,
+): Promise<Result | GitHubReadFailure> {
   const path = contextFilePathSchema.safeParse(input.filePath);
   if (
     !path.success ||
@@ -241,16 +263,19 @@ export async function fetchGitHubContextFile(
     return { status: "unavailable" };
   }
 
-  const signal = AbortSignal.timeout(syncTimeoutMs);
+  const timeout = AbortSignal.timeout(syncTimeoutMs);
+  const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
   let onAbort = () => {};
-  const deadline = new Promise<GitHubContextResult>((resolve) => {
+  const deadline = new Promise<{ status: "unavailable" }>((resolve) => {
     onAbort = () => resolve({ status: "unavailable" });
     signal.addEventListener("abort", onAbort, { once: true });
   });
   try {
     signal.throwIfAborted();
     return await Promise.race([
-      readGitHubContextFile(input, path.data.split("/"), signal),
+      createGitHubResourceReader(input, signal).then((resource) =>
+        read(resource, path.data.split("/")),
+      ),
       deadline,
     ]);
   } catch (error) {
@@ -259,4 +284,55 @@ export async function fetchGitHubContextFile(
   } finally {
     signal.removeEventListener("abort", onAbort);
   }
+}
+
+/** Fetch external document bytes without granting them prompt authority. */
+export async function fetchGitHubContextFile(
+  input: GitHubContextInput,
+): Promise<GitHubContextResult> {
+  return readGitHubContext(input, async (resource, segments) =>
+    readGitHubContextFileAtRevision(resource, segments, await readGitHubHead(resource)),
+  );
+}
+
+/** Recheck live file access and verify the historical bytes without returning upstream text. */
+export async function verifyLiveGitHubContextRevision(
+  input: GitHubContextInput & {
+    upstreamRevision: string;
+    contentSha256: string;
+    signal?: AbortSignal;
+  },
+): Promise<GitHubContextProof> {
+  const { upstreamRevision, contentSha256, signal } = input;
+  if (
+    !gitObjectId.safeParse(upstreamRevision).success ||
+    !contentDigest.safeParse(contentSha256).success
+  ) {
+    return { status: "revision_mismatch" };
+  }
+
+  return readGitHubContext<GitHubContextProof>(
+    input,
+    async (resource, segments) => {
+      const head = await readGitHubHead(resource);
+      const current = await readGitHubContextFileAtRevision(resource, segments, head);
+      if (current.status !== "synced") return current;
+      const currentContentSha256 = createHash("sha256").update(current.content).digest("hex");
+
+      if (head === upstreamRevision) {
+        return currentContentSha256 === contentSha256
+          ? { status: "verified", currentContentSha256 }
+          : { status: "revision_mismatch" };
+      }
+
+      const requested = await readGitHubContextFileAtRevision(resource, segments, upstreamRevision);
+      if (requested.status === "upstream_deleted") return { status: "revision_mismatch" };
+      if (requested.status !== "synced") return requested;
+      if (createHash("sha256").update(requested.content).digest("hex") !== contentSha256) {
+        return { status: "revision_mismatch" };
+      }
+      return { status: "verified", currentContentSha256 };
+    },
+    signal,
+  );
 }

@@ -41,6 +41,7 @@ import {
   loadPinnedSessionPrompt,
   type PinnedFactoryExecution,
 } from "@/lib/factory-definitions/runtime-definition";
+import { retrieveFactoryContextDocuments } from "@/lib/factory-context/retrieval";
 import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
 import {
   AGENT_PROVIDERS,
@@ -636,6 +637,15 @@ async function runStage(input: {
       signal,
       workspaceId: session.workspace_id,
     });
+    const externalContext = await retrieveFactoryContextDocuments({
+      admin,
+      workspaceId: session.workspace_id,
+      jobId: job.id,
+      runId,
+      attemptCount: job.attempt_count,
+      references: pinned?.contextDocuments ?? [],
+      signal,
+    });
     if (!specificationStage) await prepareValidationPlan(sandbox, runId);
     throwIfAborted(signal);
     const workerDeadlineMs =
@@ -683,6 +693,7 @@ async function runStage(input: {
           "repo.defaultBranch",
           pinned ? gitInput.base_branch : (github.repo.default_branch ?? "main"),
         ),
+        externalContextDocuments: externalContext.documents,
         readContext: readContext.length
           ? untrustedPromptValue("repo.readContext", readContext.join("\n"))
           : undefined,
