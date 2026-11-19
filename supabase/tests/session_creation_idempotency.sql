@@ -111,9 +111,9 @@ begin
     perform extensions.dblink_send_query(connection_name, $query$
       select created.session_id, created.session_number
       from (select set_config('request.jwt.claim.role', 'service_role', false) as role) config
-      cross join lateral public.create_session_once_with_first_job(
+      cross join lateral public.create_session_command_once(
         'b1b2c3d4-0001-4000-8000-000000000001', 'c1b2c3d4-0001-4000-8000-000000000001',
-        'ab000000-0000-4000-8000-000000000004', repeat('c', 64),
+        'ab000000-0000-4000-8000-000000000004', repeat('c', 64), '',
         'Concurrent retry proof' || left(config.role, 0),
         'All eight calls are the same request.', 'codex', 'gpt-5.5', '{}'::uuid[]
       ) created
@@ -134,6 +134,45 @@ select is((select count(distinct session_number)::integer from concurrent_retrie
   'concurrent retries return one session number');
 select is((select count(*)::integer from public.agent_jobs where session_id in (select session_id from concurrent_retries)),
   1, 'concurrent retries enqueue exactly one job');
+
+create temp table concurrent_cancellations (job_ids uuid[], run_ids uuid[], replayed boolean);
+do $$
+declare
+  connection_name text;
+  target_session_id uuid := (select distinct session_id from concurrent_retries);
+begin
+  for attempt in 1..2 loop
+    connection_name := 'session_cancel_retry_' || attempt;
+    perform extensions.dblink_connect(connection_name,
+      coalesce(nullif(current_setting('wallie.test_db_connection', true), ''),
+        'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'));
+    perform extensions.dblink_send_query(connection_name, format($query$
+      select canceled.* from public.sessions session
+      join public.agent_runs run on run.session_id = session.id
+      cross join lateral public.cancel_session_command_once(
+        session.workspace_id, session.factory_id, 'c1b2c3d4-0001-4000-8000-000000000001', session.id,
+        'ab000000-0000-4000-8000-000000000005', repeat('d', 64), run.id
+      ) canceled where session.id = %L
+    $query$, target_session_id));
+  end loop;
+  for attempt in 1..2 loop
+    connection_name := 'session_cancel_retry_' || attempt;
+    insert into concurrent_cancellations select * from extensions.dblink_get_result(connection_name)
+      as result(job_ids uuid[], run_ids uuid[], replayed boolean);
+    perform extensions.dblink_disconnect(connection_name);
+  end loop;
+end;
+$$;
+select is((select count(*) from concurrent_cancellations where not replayed), 1::bigint,
+  'only one concurrent cancellation commits the mutation');
+select is((select count(*) from concurrent_cancellations where replayed), 1::bigint,
+  'the other concurrent cancellation replays the committed receipt');
+select is((select count(distinct (job_ids, run_ids)) from concurrent_cancellations), 1::bigint,
+  'both callers receive the same exact canceled job and run IDs');
+select is((select count(*) from public.agent_run_messages message
+  where message.agent_run_id = any((select run_ids from concurrent_cancellations where not replayed)::uuid[])
+    and message.message_md = '**Canceled:** Stage canceled by a workspace member.'),
+  1::bigint, 'cancellation records one visible diagnostic even when the request is concurrent');
 
 delete from public.sessions where id in (select session_id from original_creation)
   or id in (select session_id from concurrent_retries);

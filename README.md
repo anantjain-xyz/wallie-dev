@@ -167,7 +167,7 @@ If you read only five files to understand Wallie, read these:
 | --- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)                                                   | Generic stage runner. Guard session state, render prompt, run agent in sandbox, write artifact/PR. Review handlers. |
 | 2   | [src/lib/pipeline/stages.ts](src/lib/pipeline/stages.ts)                                                         | Pipeline + stage loaders. Maps `pipeline_stages` rows into the runtime stage shape and gathers prior artifacts.     |
-| 3   | [src/app/api/sessions/[sessionId]/phase-action/route.ts](src/app/api/sessions/[sessionId]/phase-action/route.ts) | In-app approve/reject handler. Workspace membership + RLS, calls handleApproval / handleRejection.                  |
+| 3   | [src/app/api/sessions/[sessionId]/phase-action/route.ts](src/app/api/sessions/[sessionId]/phase-action/route.ts) | In-app approve/reject handler. Workspace membership + RLS, calls approval and the shared follow-up command.         |
 | 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                                                           | Transactional session creation plus job enqueue/run tracking, readiness checks, and deduplication.                  |
 | 5   | [src/worker/index.ts](src/worker/index.ts)                                                                       | Background daemon. Bounded scheduler, heartbeat, stall detector, Linear reconciler, and sandbox reaper.             |
 
@@ -183,7 +183,7 @@ If you read only five files to understand Wallie, read these:
 
 The whole module is stage-agnostic. There are no per-phase files; one generic runner drives every user-defined stage by reading rows from `pipeline_stages`.
 
-- [processor.ts](src/lib/pipeline/processor.ts) -- generic stage runner. The public entry is `processPipelineJob()`; its internal `runStage()` helper renders operating rules plus the stage prompt, spins a sandbox, runs the agent, writes the markdown artifact, and invokes best-effort PR synchronization. Also exports `handleApproval` / `handleRejection`.
+- [processor.ts](src/lib/pipeline/processor.ts) -- generic stage runner. The public entry is `processPipelineJob()`; its internal `runStage()` helper renders operating rules plus the stage prompt, spins a sandbox, runs the agent, writes the markdown artifact, and invokes best-effort PR synchronization. Also handles approval. Session command entry points live in [src/lib/sessions/](src/lib/sessions/).
 - [stages.ts](src/lib/pipeline/stages.ts) -- loaders for `pipelines` / `pipeline_stages`, pipeline operating rules, and the prior-stage artifact map used by the prompt template.
 - [source-pull-request.ts](src/lib/pipeline/source-pull-request.ts), [archive.ts](src/lib/pipeline/archive.ts), and [cancel.ts](src/lib/pipeline/cancel.ts) -- canonical PR synchronization and terminal session controls.
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).

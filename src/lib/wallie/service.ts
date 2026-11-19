@@ -301,6 +301,7 @@ export async function assertSessionSandboxCapabilityReady(input: {
 export async function createSessionWithFirstJob(input: {
   admin?: AdminClient;
   attachmentIds?: string[];
+  commandFactoryId?: string | null;
   creationRequest?: { id: string; fingerprint: string };
   creatorMemberId: string;
   /** A null snapshot confirms that the default factory has no active revision. */
@@ -335,6 +336,9 @@ export async function createSessionWithFirstJob(input: {
   if (input.restartOfSessionId && !input.creationRequest) {
     throw new Error("A creation request id is required to restart a session.");
   }
+  if (input.commandFactoryId !== undefined && input.factoryDefinitionDigest === undefined) {
+    throw new Error("A confirmed factory definition is required for a session command.");
+  }
   if (input.factoryDefinitionDigest !== undefined && !input.creationRequest) {
     throw new Error("A creation request id is required to confirm a factory definition.");
   }
@@ -345,20 +349,29 @@ export async function createSessionWithFirstJob(input: {
         target_request_hash: input.creationRequest.fingerprint,
       }
     : null;
-  const query = requestArgs
-    ? input.factoryDefinitionDigest !== undefined
-      ? admin.rpc("create_confirmed_factory_session_once_with_first_job", {
+  const confirmationArgs =
+    requestArgs && input.factoryDefinitionDigest !== undefined
+      ? {
           ...requestArgs,
           expected_factory_definition_digest: input.factoryDefinitionDigest ?? "",
           source_session_id: input.restartOfSessionId,
+        }
+      : null;
+  const query = confirmationArgs
+    ? input.commandFactoryId !== undefined
+      ? admin.rpc("create_session_command_once", {
+          ...confirmationArgs,
+          target_factory_id: input.commandFactoryId ?? undefined,
         })
-      : input.restartOfSessionId
+      : admin.rpc("create_confirmed_factory_session_once_with_first_job", confirmationArgs)
+    : requestArgs
+      ? input.restartOfSessionId
         ? admin.rpc("restart_session_once_with_first_job", {
             ...requestArgs,
             source_session_id: input.restartOfSessionId,
           })
         : admin.rpc("create_session_once_with_first_job", requestArgs)
-    : admin.rpc("create_session_with_first_job_and_attachments", args);
+      : admin.rpc("create_session_with_first_job_and_attachments", args);
   const { data, error } = await query.single();
 
   if (error || !data) {
@@ -379,18 +392,27 @@ export async function createSessionWithFirstJob(input: {
 /** Replay before external preflight: a committed request remains successful. */
 export async function findSessionCreationRequest(input: {
   admin: AdminClient;
+  commandFactoryId?: string | null;
   creationRequest: { id: string; fingerprint: string };
   creatorMemberId: string;
+  restartOfSessionId?: string;
   workspaceId: string;
 }): Promise<CreateSessionWithFirstJobResult | null> {
-  const { data, error } = await input.admin
-    .rpc("find_session_creation_request", {
-      target_workspace_id: input.workspaceId,
-      creator_member_id: input.creatorMemberId,
-      target_request_id: input.creationRequest.id,
-      target_request_hash: input.creationRequest.fingerprint,
-    })
-    .maybeSingle();
+  const args = {
+    target_workspace_id: input.workspaceId,
+    creator_member_id: input.creatorMemberId,
+    target_request_id: input.creationRequest.id,
+    target_request_hash: input.creationRequest.fingerprint,
+  };
+  const query =
+    input.commandFactoryId === undefined
+      ? input.admin.rpc("find_session_creation_request", args)
+      : input.admin.rpc("find_session_creation_command", {
+          ...args,
+          source_session_id: input.restartOfSessionId,
+          target_factory_id: input.commandFactoryId ?? undefined,
+        });
+  const { data, error } = await query.maybeSingle();
   if (error) throw error;
   return data
     ? {
