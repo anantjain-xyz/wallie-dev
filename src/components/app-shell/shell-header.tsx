@@ -421,23 +421,24 @@ export function ShellHeader({
     const href = isFactoryAggregatePath(item.href, workspace.slug)
       ? withFactoryQuery(item.href, factory)
       : item.id === "agents" ||
+          item.id === "analytics" ||
           item.id === "factory-definition" ||
           isManagedFactoryPath(item.href, workspace.slug)
         ? withFactoryQuery(item.href, scopedFactory)
         : item.href;
+    const skipPrefetch = item.id === "inbox" || item.id === "analytics";
     return {
       href,
       // From the pipeline, load the real page ahead of the click. The default
       // stops at loading.tsx, and prefetching every page from every page
       // competes with opening a session.
-      prefetch:
-        item.id === "inbox"
-          ? false
-          : item !== activeNavItem && pathname === pipelineHref
-            ? true
-            : undefined,
+      prefetch: skipPrefetch
+        ? false
+        : item !== activeNavItem && pathname === pipelineHref
+          ? true
+          : undefined,
       onClick: (event: MouseEvent<HTMLAnchorElement>) => handleNavClick(event, item, mobile),
-      ...(item.id === "inbox" ? {} : navPrefetchHandlers(href)),
+      ...(skipPrefetch ? {} : navPrefetchHandlers(href)),
     };
   }
 

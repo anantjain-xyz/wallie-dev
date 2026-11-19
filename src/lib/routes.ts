@@ -10,6 +10,7 @@ export type WorkspaceNavItem = {
     | "inbox"
     | "runs"
     | "activity"
+    | "analytics"
     | "context"
     | "memory"
     | "agents"
@@ -86,6 +87,10 @@ export function workspaceActivityPath(workspaceSlug: string, query?: Record<stri
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/activity`, query);
 }
 
+export function workspaceAnalyticsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/analytics`, query);
+}
+
 export function workspaceContextPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/context`, query);
 }
@@ -149,6 +154,12 @@ export function getWorkspaceNavItems(
       href: workspaceActivityPath(workspaceSlug),
       label: "Activity",
       section: "Work",
+    },
+    {
+      id: "analytics",
+      href: workspaceAnalyticsPath(workspaceSlug),
+      label: "Analytics",
+      section: "Improve",
     },
     {
       id: "agents",

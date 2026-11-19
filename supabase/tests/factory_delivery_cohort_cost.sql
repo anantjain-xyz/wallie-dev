@@ -220,6 +220,32 @@ select ok((select first_page.run_id < second_page.run_id
   cross join lateral public.list_factory_cost_contributions(pg_temp.cost_id(2), pg_temp.cost_factory(),
     period_from, period_to, 'delivery', p_after_run_id => first_page.run_id, p_limit => 1) second_page),
   'contribution cursors page exact rows without repeating or changing their accounting basis');
+select ok((select sum(facts.cost_usd) = (pg_temp.cost_summary(period_from, period_to)
+    #>> '{costs,delivery,knownCostUsd}')::numeric
+  and bool_and(facts.merge_id is not null and facts.cost_state in ('measured', 'estimated'))
+  from cost_clock cross join lateral public.list_factory_cost_contributions(pg_temp.cost_id(2), pg_temp.cost_factory(),
+    period_from, period_to, 'delivery', p_facet => 'known') facts group by period_from, period_to),
+  'known delivery-cost evidence exactly reproduces the included summary numerator');
+select ok((select facts.cost_state = 'estimated' and facts.run_id = pg_temp.cost_id(32)
+  from cost_clock cross join lateral public.list_factory_cost_contributions(pg_temp.cost_id(2), pg_temp.cost_factory(),
+    period_from, period_to, 'delivery', p_limit => 1, p_facet => 'estimated') facts),
+  'estimated delivery cost selects only included estimated attempts');
+select ok((select facts.cost_state = 'pending' and facts.attribution = 'unresolved'
+  from cost_clock cross join lateral public.list_factory_cost_contributions(pg_temp.cost_id(2), pg_temp.cost_factory(),
+    period_from, period_to, 'delivery', p_limit => 1, p_facet => 'pending') facts),
+  'pending coverage includes unresolved delivery attribution to match its aggregate');
+select ok((select jsonb_array_length(evidence->'items') = (pg_temp.cost_summary(period_from, period_to)
+    #>> '{mergeCohort,observedMergeCount}')::integer
+  and evidence #>> '{items,0,mergeObservationId}' = merge.observation_id::text and evidence->'nextCursor' = 'null'::jsonb
+  from cost_clock cross join second_epoch
+  join internal.current_factory_canonical_pull_request_merges merge on merge.epoch_id = second_epoch.epoch_id
+  cross join lateral public.list_factory_cost_merges(pg_temp.cost_id(2), pg_temp.cost_factory(),
+    period_from, period_to, p_limit => 1) evidence),
+  'cost ratio denominator evidence matches exact canonical observation membership');
+select throws_ok($$select public.list_factory_cost_contributions(pg_temp.cost_id(2), pg_temp.cost_factory(),
+  now() - interval '1 day', now(), 'delivery', p_facet => 'unrecognized')$$,
+  '22023', null, 'cost evidence rejects unsupported facets');
+
 select ok((with sample as (
   select pg_temp.cost_summary(now() + interval '1 hour', now() + interval '4 hours') value
 ) select (value #>> '{costs,operating,knownCostUsd}')::numeric = 6

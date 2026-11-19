@@ -52,6 +52,7 @@ const navIconPaths = {
   inbox: "M2.5 8.5 4.5 3.5h7l2 5v4h-11zM2.5 8.5h3l1 1.5h3l1-1.5h3",
   runs: "M2.5 8h2l1.7-4 3.4 8 1.7-4h2.2",
   activity: "M3 12V8m5 4V4m5 8V6M2 13.5h12",
+  analytics: "M3 3.5v9h10.5M5.5 10l2.3-3 2 1.5 3.2-4",
   context: "M2.5 4.5h4l1 1.5h6v6.5h-11zM5 8.5h6m-6 2h4",
   memory: "M4 3h8v10H4zM6.5 5.5h3m-3 2h3m-3 2h2",
   governance: "M8 2.5 13 4.5v3.2c0 3-2 4.9-5 6-3-1.1-5-3-5-6V4.5zM6 8l1.4 1.4L10 6.8",

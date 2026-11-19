@@ -200,6 +200,7 @@ describe("ShellHeader", () => {
     ["/w/acme-corp", "Pipeline"],
     ["/w/acme-corp/sessions", "Sessions"],
     ["/w/acme-corp/inbox", "Inbox"],
+    ["/w/acme-corp/analytics", "Analytics"],
     ["/w/acme-corp/settings/profile", "Settings"],
     ["/w/acme-corp/runs/run-id", "Runs"],
   ])("names the drawer trigger after the current destination at %s", (pathname, label) => {
@@ -232,7 +233,11 @@ describe("ShellHeader", () => {
       "page",
     );
     expect(within(nav).getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
-    expect(within(nav).queryByRole("list", { name: "Improve" })).toBeNull();
+    const improve = within(nav).getByRole("list", { name: "Improve" });
+    expect(within(improve).getByRole("link", { name: "Analytics" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/analytics",
+    );
     expect(within(nav).queryByRole("list", { name: "Platform" })).toBeNull();
   });
 

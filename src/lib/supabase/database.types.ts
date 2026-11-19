@@ -9756,6 +9756,7 @@ export type Database = {
         Args: {
           p_after_run_id?: string
           p_basis: string
+          p_facet?: string
           p_factory_id: string
           p_from: string
           p_limit?: number
@@ -9780,6 +9781,18 @@ export type Database = {
           usage_finalized_at: string
           usage_recorded_at: string
         }[]
+      }
+      list_factory_cost_merges: {
+        Args: {
+          p_cursor_at?: string
+          p_cursor_merge_id?: string
+          p_factory_id: string
+          p_from: string
+          p_limit?: number
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       list_factory_event_authorizations: {
         Args: {
@@ -9846,6 +9859,7 @@ export type Database = {
           p_cursor_end_at?: string
           p_cursor_session_id?: string
           p_environment?: string
+          p_facet?: string
           p_factory_id: string
           p_from: string
           p_limit?: number
@@ -9861,6 +9875,7 @@ export type Database = {
           p_cursor_merge_id?: string
           p_factory_id: string
           p_from: string
+          p_has_verified_revert?: boolean
           p_limit?: number
           p_status?: string
           p_to: string
