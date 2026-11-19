@@ -28,9 +28,18 @@ New enrolled sessions execute their compiled revision. The stage order, names, p
 
 Each pinned factory attempt records a service-only `session_run_context_manifests` row before the agent starts. It has the owned run and attempt identity, a digest of the canonical manifest, and the exact origin when replaying. The manifest stores identities, digests, byte counts and inclusion or omission receipts, including exact read-context repository commits. Text remains in its owning source, conversation, feedback batch or artifact.
 
-Packing reserves the required title, original prompt, applicable feedback and exact predecessor artifacts first. It then considers selected external revisions in definition order, followed by up to 32 earlier messages in conversation sequence order. The input budgets are 128 KiB and 32,768 conservatively estimated tokens. Each UTF-8 byte of context content counts as one estimated token. The manifest records excluded messages, omitted older messages and unavailable sources. A required input that cannot fit stops the attempt and names its provenance key.
+Packing reserves the required title, original prompt, applicable feedback and exact predecessor artifacts first. It then considers selected external revisions in definition order, up to eight approved factory memories, and up to 32 earlier messages in conversation sequence order. The input budgets are 128 KiB and 32,768 conservatively estimated tokens. Each UTF-8 byte of context content counts as one estimated token. The manifest records exclusions, omitted older messages and unavailable sources. A required input that cannot fit stops the attempt and names its provenance key.
 
 A retry restores the exact manifest selected by its job lineage. Current access is checked before reading private revisions. Wallie verifies the retained conversation messages and the exact required inputs against their recorded digests. If an input is missing, inaccessible, or changed, the retry reports that dependency and stops before launching the agent. New conversation messages, replacement source revisions, and other artifact versions cannot change a frozen attempt.
+
+## Factory memory
+
+- A pinned run can write one Markdown proposal, up to 4 KiB, to its private file outside the checkout. The Run Inspector records tool activity on that file with a generic label. Wallie stages the proposal against the producing run, attempt and exact final artifact digest. After publication, a factory manager can import it by artifact ID and version. Import creates a pending revision and consumes the staged body.
+- Approval or rejection records the current human member and exact pending revision. Correction creates a new pending revision and withdraws the prior approval from future retrieval. If the new version is approved, new attempts can use it. The review commands reject stale current or pending revision IDs.
+- Expiry stops retrieval at the configured timestamp. Forgetting removes the stored memory bodies and leaves the revision digests and review history available to explain earlier use.
+- New attempt manifests record the exact approved revision, approval receipt, digest and byte count. The packer uses memory as untrusted reference text. A retry stops if a selected revision was corrected, expired or forgotten. Version-one manifests replay without adding memory.
+
+Factory managers can read paginated memory and decision history or submit lifecycle commands at `/api/workspaces/{workspaceId}/factories/{factoryId}/memories`. Management uses the caller's human session, and attempt retrieval is service-only and scoped to the session's factory.
 
 ## Repository bindings
 

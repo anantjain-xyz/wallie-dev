@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { factoryMemoryProposalInstructions } from "@/lib/factory-memory/proposal";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 
 import { renderStagePrompt } from "./index";
@@ -26,6 +27,24 @@ const baseInput = {
 };
 
 describe("renderStagePrompt", () => {
+  it("renders approved memory as reference data and asks for a separate human decision", () => {
+    const source = "context.memory.note.version";
+    const body = "Literal {{session.title}} from a reviewed observation.";
+    const rendered = renderStagePrompt(stage, {
+      ...baseInput,
+      factoryMemories: [untrustedPromptValue(source, body)],
+      memoryProposalInstructions: factoryMemoryProposalInstructions("run-1"),
+    });
+    expect(rendered).toContain("## Approved factory memory");
+    expect(rendered).toContain(`Source: ${source}\n`);
+    expect(rendered).toContain(
+      `\n${body}\n<<<WALLIE_UNTRUSTED_CONTEXT_MEMORY_NOTE_VERSION_0_END>>>`,
+    );
+    expect(rendered).toContain("/tmp/wallie-memory-proposal-run-1.md");
+    expect(rendered).toContain("A factory manager must import and approve");
+    expect(renderStagePrompt(stage, baseInput)).not.toContain("Optional factory memory proposal");
+  });
+
   it("keeps named-agent instructions literal before the rendered workflow", () => {
     const instructions = [
       "## Implementation agent",

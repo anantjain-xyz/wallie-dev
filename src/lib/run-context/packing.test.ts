@@ -49,6 +49,7 @@ describe("packRunContext", () => {
     });
     expect(packRunContext(emptyInput)).toEqual({
       documents: [],
+      memories: [],
       conversationMessages: [],
       manifest: {
         version: 1,
@@ -63,6 +64,51 @@ describe("packRunContext", () => {
         },
       },
     });
+  });
+
+  it("spends one budget on approved memories before conversation and records exclusions", () => {
+    const memories = ["é", "over the budget"].map((body, i) => ({
+      memory_id: id(20 + i),
+      revision_id: id(30 + i),
+      approval_id: id(40 + i),
+      content_sha256: fingerprintRunContextInput(body).sha256,
+      body_md: body,
+    }));
+    const packed = packRunContext({
+      ...emptyInput,
+      memories,
+      conversation: { throughSequence: 1, olderOmitted: 0, messages: [{ sequence: 1, body: "x" }] },
+      limits: { maxUtf8Bytes: 4, maxEstimatedTokens: 2 },
+    });
+    expect(packed.manifest).toMatchObject({
+      version: 2,
+      memories: [
+        {
+          memoryId: memories[0].memory_id,
+          revisionId: memories[0].revision_id,
+          approvalId: memories[0].approval_id,
+          status: "selected",
+          sha256: memories[0].content_sha256,
+          utf8Bytes: 2,
+        },
+        {
+          memoryId: memories[1].memory_id,
+          revisionId: memories[1].revision_id,
+          status: "excluded",
+          reason: "context_budget",
+        },
+      ],
+      conversation: { messages: [{ sequence: 1, reason: "context_budget" }] },
+      budget: { usedUtf8Bytes: 2, estimatedTokens: 2 },
+    });
+    expect(packed.memories.map((value) => value.value)).toEqual(["é"]);
+    expect(packed.conversationMessages).toEqual([]);
+    expect(() =>
+      packRunContext({
+        ...emptyInput,
+        memories: [{ ...memories[0], content_sha256: "0".repeat(64) }],
+      }),
+    ).toThrow("does not match its recorded digest");
   });
 
   it("fails with the exact artifact or feedback key when required inputs cannot fit", () => {

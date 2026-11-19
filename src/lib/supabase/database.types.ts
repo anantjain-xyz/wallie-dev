@@ -2090,6 +2090,240 @@ export type Database = {
           },
         ]
       }
+      factory_memories: {
+        Row: {
+          created_at: string
+          current_approval_id: string | null
+          current_revision_id: string | null
+          factory_id: string
+          forgotten_at: string | null
+          id: string
+          pending_revision_id: string | null
+          source_artifact_id: string
+          source_artifact_version: number
+          source_attempt_count: number
+          source_commit_sha: string
+          source_content_sha256: string
+          source_run_id: string
+          source_session_id: string
+          title: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_approval_id?: string | null
+          current_revision_id?: string | null
+          factory_id: string
+          forgotten_at?: string | null
+          id?: string
+          pending_revision_id?: string | null
+          source_artifact_id: string
+          source_artifact_version: number
+          source_attempt_count: number
+          source_commit_sha: string
+          source_content_sha256: string
+          source_run_id: string
+          source_session_id: string
+          title?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          current_approval_id?: string | null
+          current_revision_id?: string | null
+          factory_id?: string
+          forgotten_at?: string | null
+          id?: string
+          pending_revision_id?: string | null
+          source_artifact_id?: string
+          source_artifact_version?: number
+          source_attempt_count?: number
+          source_commit_sha?: string
+          source_content_sha256?: string
+          source_run_id?: string
+          source_session_id?: string
+          title?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_memories_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_memories_workspace_id_factory_id_id_current_revis_fkey1"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "id",
+              "current_revision_id",
+              "current_approval_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_memory_review_events"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "memory_id",
+              "revision_id",
+              "id",
+            ]
+          },
+          {
+            foreignKeyName: "factory_memories_workspace_id_factory_id_id_current_revisi_fkey"
+            columns: ["workspace_id", "factory_id", "id", "current_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_memory_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "memory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_memories_workspace_id_factory_id_id_pending_revisi_fkey"
+            columns: ["workspace_id", "factory_id", "id", "pending_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_memory_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "memory_id", "id"]
+          },
+        ]
+      }
+      factory_memory_review_events: {
+        Row: {
+          action: string
+          actor_member_id: string
+          created_at: string
+          factory_id: string
+          id: string
+          memory_id: string
+          revision_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          action: string
+          actor_member_id: string
+          created_at?: string
+          factory_id: string
+          id?: string
+          memory_id: string
+          revision_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          action?: string
+          actor_member_id?: string
+          created_at?: string
+          factory_id?: string
+          id?: string
+          memory_id?: string
+          revision_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_memory_review_events_workspace_id_factory_id_memo_fkey1"
+            columns: ["workspace_id", "factory_id", "memory_id", "revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_memory_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "memory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_memory_review_events_workspace_id_factory_id_memor_fkey"
+            columns: ["workspace_id", "factory_id", "memory_id"]
+            isOneToOne: false
+            referencedRelation: "factory_memories"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_memory_revision_bodies: {
+        Row: {
+          body_md: string
+          factory_id: string
+          memory_id: string
+          revision_id: string
+          workspace_id: string
+        }
+        Insert: {
+          body_md: string
+          factory_id: string
+          memory_id: string
+          revision_id: string
+          workspace_id: string
+        }
+        Update: {
+          body_md?: string
+          factory_id?: string
+          memory_id?: string
+          revision_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_memory_revision_bodie_workspace_id_factory_id_memo_fkey"
+            columns: ["workspace_id", "factory_id", "memory_id", "revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_memory_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "memory_id", "id"]
+          },
+        ]
+      }
+      factory_memory_revisions: {
+        Row: {
+          content_sha256: string
+          created_at: string
+          expires_at: string | null
+          factory_id: string
+          id: string
+          memory_id: string
+          revision_number: number
+          supersedes_revision_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          content_sha256: string
+          created_at?: string
+          expires_at?: string | null
+          factory_id: string
+          id?: string
+          memory_id: string
+          revision_number: number
+          supersedes_revision_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          content_sha256?: string
+          created_at?: string
+          expires_at?: string | null
+          factory_id?: string
+          id?: string
+          memory_id?: string
+          revision_number?: number
+          supersedes_revision_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_memory_revisions_workspace_id_factory_id_memory_i_fkey1"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "memory_id",
+              "supersedes_revision_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_memory_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "memory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_memory_revisions_workspace_id_factory_id_memory_id_fkey"
+            columns: ["workspace_id", "factory_id", "memory_id"]
+            isOneToOne: false
+            referencedRelation: "factory_memories"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_oauth_client_bindings: {
         Row: {
           client_id: string
@@ -8053,6 +8287,41 @@ export type Database = {
         }
         Returns: boolean
       }
+      correct_factory_memory: {
+        Args: {
+          p_body_md: string
+          p_expected_current_revision_id?: string
+          p_expected_pending_revision_id?: string
+          p_expires_at?: string
+          p_factory_id: string
+          p_memory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          current_approval_id: string | null
+          current_revision_id: string | null
+          factory_id: string
+          forgotten_at: string | null
+          id: string
+          pending_revision_id: string | null
+          source_artifact_id: string
+          source_artifact_version: number
+          source_attempt_count: number
+          source_commit_sha: string
+          source_content_sha256: string
+          source_run_id: string
+          source_session_id: string
+          title: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_memories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       create_artifact_review_thread: {
         Args: {
           p_anchor: Json
@@ -8819,6 +9088,39 @@ export type Database = {
         Args: { p_workspace_id: string }
         Returns: boolean
       }
+      forget_factory_memory: {
+        Args: {
+          p_expected_current_revision_id?: string
+          p_expected_pending_revision_id?: string
+          p_factory_id: string
+          p_memory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          current_approval_id: string | null
+          current_revision_id: string | null
+          factory_id: string
+          forgotten_at: string | null
+          id: string
+          pending_revision_id: string | null
+          source_artifact_id: string
+          source_artifact_version: number
+          source_attempt_count: number
+          source_commit_sha: string
+          source_content_sha256: string
+          source_run_id: string
+          source_session_id: string
+          title: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_memories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       get_factory_inbox: {
         Args: {
           p_before_artifact_id?: string
@@ -9011,6 +9313,15 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      has_factory_run_memory_proposal: {
+        Args: {
+          p_artifact_id: string
+          p_artifact_version: number
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       inspect_factory_mcp_identity: {
         Args: {
@@ -9627,6 +9938,40 @@ export type Database = {
         }
         Returns: boolean
       }
+      propose_factory_memory: {
+        Args: {
+          p_artifact_id: string
+          p_artifact_version: number
+          p_expires_at?: string
+          p_factory_id: string
+          p_title: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          current_approval_id: string | null
+          current_revision_id: string | null
+          factory_id: string
+          forgotten_at: string | null
+          id: string
+          pending_revision_id: string | null
+          source_artifact_id: string
+          source_artifact_version: number
+          source_attempt_count: number
+          source_commit_sha: string
+          source_content_sha256: string
+          source_run_id: string
+          source_session_id: string
+          title: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_memories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       prune_factory_command_admissions: {
         Args: { p_batch_size?: number }
         Returns: {
@@ -9763,6 +10108,20 @@ export type Database = {
           service_principal_id: string
           status: string
           version: number
+        }[]
+      }
+      read_factory_memory_context: {
+        Args: {
+          p_factory_id: string
+          p_revision_ids?: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          approval_id: string
+          body_md: string
+          content_sha256: string
+          memory_id: string
+          revision_id: string
         }[]
       }
       read_factory_run_context_origin: {
@@ -10335,6 +10694,40 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: boolean
+      }
+      review_factory_memory: {
+        Args: {
+          p_decision: string
+          p_expected_current_revision_id?: string
+          p_expected_pending_revision_id?: string
+          p_factory_id: string
+          p_memory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          current_approval_id: string | null
+          current_revision_id: string | null
+          factory_id: string
+          forgotten_at: string | null
+          id: string
+          pending_revision_id: string | null
+          source_artifact_id: string
+          source_artifact_version: number
+          source_attempt_count: number
+          source_commit_sha: string
+          source_content_sha256: string
+          source_run_id: string
+          source_session_id: string
+          title: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_memories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       revoke_factory_event_subscription: {
         Args: {
@@ -11046,6 +11439,17 @@ export type Database = {
       settle_workspace_resource_operation: {
         Args: { p_operation_id: string; p_transferred: boolean }
         Returns: undefined
+      }
+      stage_factory_run_memory_proposal: {
+        Args: {
+          p_artifact_sha256: string
+          p_attempt_count: number
+          p_body_md: string
+          p_job_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       start_factory_definition_capability_check: {
         Args: {

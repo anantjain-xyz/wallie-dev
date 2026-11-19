@@ -15,6 +15,8 @@ export type TrustedPromptSource =
   | "wallie.buildGitPublicationPolicy"
   | "wallie.readContextInstructions"
   | "wallie.externalContextInstructions"
+  | "wallie.factoryMemoryInstructions"
+  | "wallie.factoryMemoryProposalPolicy"
   | "wallie.frozenConversationInstructions"
   | "wallie.retryCheckpointInstructions"
   | "wallie.specificationStagePolicy";
@@ -28,6 +30,7 @@ export type UntrustedPromptSource =
   | "repo.name"
   | "repo.readContext"
   | `context.document.${string}`
+  | `context.memory.${string}.${string}`
   | "session.prompt"
   | "session.attachments"
   | `skill.repositoryRevision.${string}`
