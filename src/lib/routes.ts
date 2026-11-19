@@ -7,6 +7,7 @@ export type WorkspaceNavItem = {
   id:
     | "pipeline"
     | "sessions"
+    | "inbox"
     | "runs"
     | "activity"
     | "agents"
@@ -71,6 +72,10 @@ export function workspaceRunsPath(workspaceSlug: string, query?: Record<string, 
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/runs`, query);
 }
 
+export function workspaceInboxPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/inbox`, query);
+}
+
 export function workspaceRunDetailPath(workspaceSlug: string, runId: string) {
   return `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`;
 }
@@ -127,6 +132,7 @@ export function getWorkspaceNavItems(
       label: "Sessions",
       section: "Work",
     },
+    { id: "inbox", href: workspaceInboxPath(workspaceSlug), label: "Inbox", section: "Work" },
     { id: "runs", href: workspaceRunsPath(workspaceSlug), label: "Runs", section: "Work" },
     {
       id: "activity",

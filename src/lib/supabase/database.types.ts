@@ -8397,6 +8397,15 @@ export type Database = {
         Args: { p_workspace_id: string }
         Returns: boolean
       }
+      get_factory_inbox: {
+        Args: {
+          p_before_artifact_id?: string
+          p_before_at?: string
+          p_factory_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_git_continuity_release_state: {
         Args: never
         Returns: {
