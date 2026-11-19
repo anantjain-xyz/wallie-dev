@@ -17,6 +17,7 @@ const attachmentIdsSchema = z
 export const createSessionPayloadSchema = z
   .object({
     attachmentIds: attachmentIdsSchema.optional(),
+    draftSpecification: z.boolean().optional(),
     factoryDefinitionDigest: z
       .string()
       .regex(/^[0-9a-f]{64}$/, "Factory definition digest is invalid.")
@@ -70,6 +71,7 @@ export function normalizeCreateSessionPayload(payload: CreateSessionPayload) {
 
   return {
     attachmentIds: payload.attachmentIds ?? [],
+    ...(payload.draftSpecification ? { draftSpecification: true } : {}),
     ...(payload.factoryDefinitionDigest
       ? { factoryDefinitionDigest: payload.factoryDefinitionDigest }
       : {}),

@@ -49,6 +49,7 @@ import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
 import { SessionDetailHeader } from "./session-detail-header";
 import { SessionStageWorkspace } from "./session-stage-workspace";
+import { SessionSpecificationControl, useSessionSpecification } from "./session-specification";
 import { SessionActivityPresentationProvider } from "./session-activity-presentation";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
 import { SessionReviewEvidence } from "@/features/sessions/detail/session-review-evidence";
@@ -330,6 +331,28 @@ function SessionDetailContent({
         }
       : null;
   const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
+  const selectedStageIsSpecification = Boolean(
+    selectedStage && selectedStage.id === session.specificationStageId,
+  );
+  const specificationArtifact =
+    session.specificationStageId === session.currentStageId &&
+    !session.archivedAt &&
+    (session.phaseStatus === "awaiting_review" || session.phaseStatus === "rejected") &&
+    session.currentArtifactId &&
+    session.currentArtifactVersion
+      ? {
+          sessionId: session.id,
+          stageId: session.currentStageId,
+          artifactId: session.currentArtifactId,
+          artifactVersion: session.currentArtifactVersion,
+          phaseStatus: session.phaseStatus,
+        }
+      : null;
+  const specification = useSessionSpecification(specificationArtifact);
+  const specificationExhausted =
+    session.phaseStatus === "rejected" &&
+    specification.view.clarification?.status === "answered" &&
+    specification.view.clarification.executionExhausted;
   const selectedStagePosition = stageIndex(session.pipeline, selectedStageSlug);
   const currentStagePosition = stageIndex(session.pipeline, session.currentStageSlug);
   const shouldLoadLatestArtifact =
@@ -1198,7 +1221,11 @@ function SessionDetailContent({
   const artifactViewer = artifactAvailable ? (
     <ArtifactPanel
       currentArtifactId={selectedStageIsCurrent ? (session.currentArtifactId ?? null) : undefined}
-      emptyText="No artifact recorded for this stage."
+      emptyText={
+        selectedStageIsSpecification
+          ? "No specification recorded for this stage."
+          : "No artifact recorded for this stage."
+      }
       initialFormattedArtifact={initialFormattedArtifact}
       initialFormattedArtifactKey={initialFormattedArtifactKey}
       initialNow={renderNow}
@@ -1212,6 +1239,7 @@ function SessionDetailContent({
       readOnlyReason={sessionReviewReadOnlyReason(session)}
       rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
       sessionId={session.id}
+      specification={selectedStageIsSpecification}
       stageSlug={selectedStageSlug}
     />
   ) : null;
@@ -1262,6 +1290,7 @@ function SessionDetailContent({
       <SessionStageWorkspace
         stageName={selectedStage?.name ?? selectedStageSlug}
         stageSlug={selectedStageSlug}
+        specification={selectedStageIsSpecification}
         focus={stageFocus}
         emptyText={
           selectedStagePosition > currentStagePosition
@@ -1279,27 +1308,56 @@ function SessionDetailContent({
           )
         }
         reviewControls={
-          <SessionReviewBar
-            attached
-            sessionId={session.id}
-            approveLabel="Approve stage"
-            approveDescription={
-              phaseActionPending
-                ? undefined
-                : "Approval advances or completes the session. Final-stage approval may also archive the session."
-            }
-            mode={stageFocus === "artifact" ? stickyReviewMode : { kind: "running" }}
-            onApprove={(artifact, revision) =>
-              void handlePhaseAction("approve", artifact, undefined, undefined, revision)
-            }
-            onReject={(feedback, artifact, submission) =>
-              handlePhaseAction("reject", artifact, feedback, submission)
-            }
-            requestError={phaseActionError}
-            reviewArtifact={reviewArtifact}
-            phaseActionPending={phaseActionPending}
-            stageName={selectedStage?.name}
-          />
+          (selectedStageIsSpecification && specificationExhausted) ||
+          (stageFocus === "artifact" &&
+            selectedStageIsSpecification &&
+            specificationArtifact &&
+            stickyReviewMode.kind === "reviewable" &&
+            !phaseActionPending &&
+            !specification.canReview) ? (
+            <SessionSpecificationControl
+              canAnswer={Boolean(reviewArtifact) && !actionPending}
+              onAccepted={(receipt, artifactId) => {
+                if (receipt.feedbackBatchId) {
+                  publishArtifactFeedbackSubmission({
+                    sessionId: session.id,
+                    artifactId,
+                    batchId: receipt.feedbackBatchId,
+                  });
+                }
+                queuedMutationRefreshRef.current = true;
+                setPostMutationRefreshRequested(true);
+              }}
+              refresh={async () => {
+                refreshSession();
+                await specification.refresh();
+              }}
+              sessionId={session.id}
+              view={specification.view}
+            />
+          ) : (
+            <SessionReviewBar
+              attached
+              sessionId={session.id}
+              approveLabel="Approve stage"
+              approveDescription={
+                phaseActionPending
+                  ? undefined
+                  : "Approval advances or completes the session. Final-stage approval may also archive the session."
+              }
+              mode={stageFocus === "artifact" ? stickyReviewMode : { kind: "running" }}
+              onApprove={(artifact, revision) =>
+                void handlePhaseAction("approve", artifact, undefined, undefined, revision)
+              }
+              onReject={(feedback, artifact, submission) =>
+                handlePhaseAction("reject", artifact, feedback, submission)
+              }
+              requestError={phaseActionError}
+              reviewArtifact={reviewArtifact}
+              phaseActionPending={phaseActionPending}
+              stageName={selectedStage?.name}
+            />
+          )
         }
         activity={
           <SessionRefreshContext.Provider
@@ -1315,6 +1373,9 @@ function SessionDetailContent({
                   phaseStatus: session.phaseStatus,
                 },
                 reviewIdentityUnavailable,
+                retryUnavailableReason: specificationExhausted
+                  ? "The specification’s execution budget is exhausted."
+                  : undefined,
                 stopControl,
               }}
             >

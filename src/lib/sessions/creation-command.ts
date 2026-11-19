@@ -291,6 +291,7 @@ export async function createSessionCommand({
         commandFactoryId: actor.factoryId ?? null,
         creationRequest,
         creatorMemberId: actor.memberId,
+        ...(normalized.draftSpecification ? { draftSpecification: true } : {}),
         ...(normalized.restartOfSessionId
           ? { restartOfSessionId: normalized.restartOfSessionId }
           : {}),
@@ -331,6 +332,13 @@ export async function createSessionCommand({
     normalized.factoryDefinitionDigest !== pinned?.canonicalDigest
   ) {
     return sessionOptionsChanged();
+  }
+
+  if (normalized.draftSpecification && !pinned?.implementationAgent) {
+    return creationFailure(
+      "unready",
+      "The active factory definition must select a named agent to draft a specification.",
+    );
   }
 
   let requestedRepositoryId = normalized.githubRepositoryId?.toLowerCase() ?? null;
@@ -497,6 +505,7 @@ export async function createSessionCommand({
       creationRequest: confirmedRequest,
       creatorMemberId: actor.memberId,
       factoryDefinitionDigest: pinned?.canonicalDigest ?? null,
+      ...(normalized.draftSpecification ? { draftSpecification: true } : {}),
       githubRepositoryId,
       linearIssueId: linearIssue?.identifier ?? normalized.linearIssueId,
       linearIssueUrl: linearIssue?.url ?? normalized.linearIssueUrl,

@@ -1134,6 +1134,204 @@ describe("SessionDetailPageClient", () => {
   });
 });
 
+it("replays an unconfirmed exact clarification answer and keeps approval closed", async () => {
+  const initial = makeSessionDetailData();
+  const stageId = "44444444-4444-4444-8444-444444444444";
+  const clarificationId = "55555555-5555-4555-8555-555555555555";
+  initial.session.pipeline.stages[0].id = stageId;
+  initial.session.currentStageId = stageId;
+  initial.session.specificationStageId = stageId;
+  initial.session.currentArtifactId = feedbackArtifactId;
+  const artifact = {
+    id: feedbackArtifactId,
+    createdAt: initial.session.updatedAt,
+    stageSlug: "product",
+    version: 1,
+    payload: "Initial specification",
+    sanitizedHtml: "<p>Initial specification</p>",
+  };
+  initial.session.artifacts = [artifact];
+  const clarification = {
+    id: clarificationId,
+    artifactId: feedbackArtifactId,
+    artifactVersion: 1,
+    reviewRevision: 7,
+    question: "Which region should launch first?",
+    status: "pending",
+    executionExhausted: false,
+  };
+  const attempts: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/specification") && init?.method === "POST") {
+        attempts.push(String(init.body));
+        return attempts.length === 1
+          ? new Response(null, { status: 502 })
+          : Response.json({
+              clarificationId,
+              feedbackBatchId,
+              jobId: "66666666-6666-4666-8666-666666666666",
+              runId: "77777777-7777-4777-8777-777777777777",
+              executionExhausted: false,
+              replayed: true,
+            });
+      }
+      if (url.endsWith("/specification"))
+        return Response.json({
+          stageId,
+          artifactId: feedbackArtifactId,
+          artifactVersion: 1,
+          reviewable: true,
+          clarification,
+        });
+      if (url.includes("/artifacts")) return Response.json({ artifact });
+      return new Response(null, { status: 404 });
+    }),
+  );
+
+  render(
+    createElement(SessionDetailPageClient, {
+      activity: null,
+      initialData: initial,
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+    }),
+  );
+
+  expect(screen.getByRole("heading", { name: "Specification" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Versions" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "Clarification needed" })).toBeVisible();
+  expect(screen.getByText(clarification.question)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+
+  const input = screen.getByRole("textbox", { name: "Your answer" });
+  await waitFor(() => expect(input).toBeEnabled());
+  fireEvent.change(input, { target: { value: "  Start in Europe.  " } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit answer" }));
+  expect(await screen.findByText("Answer unconfirmed. Your draft was kept.")).toBeVisible();
+  expect(input).toHaveValue("  Start in Europe.  ");
+  fireEvent.click(screen.getByRole("button", { name: "Submit answer" }));
+
+  expect(await screen.findByRole("heading", { name: "Clarification answered" })).toBeVisible();
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1]).toBe(attempts[0]);
+  expect(JSON.parse(attempts[0])).toMatchObject({
+    clarificationId,
+    artifactId: feedbackArtifactId,
+    artifactVersion: 1,
+    reviewRevision: 7,
+    answer: "Start in Europe.",
+  });
+  expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+  expect(mocked.refresh).toHaveBeenCalled();
+});
+
+it("waits for an authoritative current specification before offering approval", async () => {
+  const initial = makeSessionDetailData();
+  const stageId = "44444444-4444-4444-8444-444444444444";
+  initial.session.pipeline.stages[0].id = stageId;
+  initial.session.currentStageId = stageId;
+  initial.session.specificationStageId = stageId;
+  initial.session.currentArtifactId = feedbackArtifactId;
+  const artifact = {
+    id: feedbackArtifactId,
+    createdAt: initial.session.updatedAt,
+    stageSlug: "product",
+    version: 1,
+    payload: "Review this specification",
+    sanitizedHtml: "<p>Review this specification</p>",
+  };
+  initial.session.artifacts = [artifact];
+  const exact = {
+    stageId,
+    artifactId: feedbackArtifactId,
+    artifactVersion: 1,
+    reviewable: true,
+    clarification: null,
+  };
+  const states = [
+    { ...exact, artifactId: "55555555-5555-4555-8555-555555555555", artifactVersion: 2 },
+    { ...exact, reviewable: false },
+    exact,
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/specification")) return Response.json(states.shift());
+      if (url.includes("/artifacts")) return Response.json({ artifact });
+      return new Response(null, { status: 404 });
+    }),
+  );
+
+  render(
+    createElement(SessionDetailPageClient, {
+      activity: null,
+      initialData: initial,
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+    }),
+  );
+  for (let refresh = 0; refresh < 2; refresh++) {
+    expect(await screen.findByText("Could not confirm clarification status.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh clarification" }));
+  }
+  expect(await screen.findByRole("button", { name: "Approve stage" })).toBeEnabled();
+  expect(mocked.refresh).toHaveBeenCalled();
+});
+
+it("shows an accepted budget exhaustion after reloading the parked specification", async () => {
+  const initial = makeSessionDetailData();
+  const stageId = "44444444-4444-4444-8444-444444444444";
+  initial.session.pipeline.stages[0].id = stageId;
+  initial.session.currentStageId = stageId;
+  initial.session.specificationStageId = stageId;
+  initial.session.currentArtifactId = feedbackArtifactId;
+  initial.session.phaseStatus = "rejected";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (!url.endsWith("/specification")) return new Response(null, { status: 404 });
+      return Response.json({
+        stageId,
+        artifactId: feedbackArtifactId,
+        artifactVersion: 1,
+        reviewable: false,
+        clarification: {
+          id: "55555555-5555-4555-8555-555555555555",
+          artifactId: feedbackArtifactId,
+          artifactVersion: 1,
+          reviewRevision: 7,
+          question: "Which region should launch first?",
+          status: "answered",
+          executionExhausted: true,
+        },
+      });
+    }),
+  );
+  function RunRetryPolicy() {
+    return createElement("span", null, useSessionActivityPresentation()?.retryUnavailableReason);
+  }
+  render(
+    createElement(SessionDetailPageClient, {
+      activity: createElement(RunRetryPolicy),
+      initialData: initial,
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+    }),
+  );
+
+  expect(
+    await screen.findByText(
+      "The execution budget is exhausted. No specification revision was queued.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByText("The specification’s execution budget is exhausted.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Submit answer" })).toBeNull();
+});
+
 it("does not promise automatic archival for a Linear-linked manual-merge workflow", () => {
   const data = makeSessionDetailData();
   data.session.linearIssueId = "TEAM-123";

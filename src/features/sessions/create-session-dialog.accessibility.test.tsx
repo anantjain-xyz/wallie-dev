@@ -86,6 +86,7 @@ describe("CreateSessionDialog accessibility", () => {
       const shipId = "00000000-0000-4000-8000-000000000011";
       const factoryDefinitionDigest = "d".repeat(64);
       clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+        canDraftSpecification: available,
         defaultGithubRepositoryId: repositoryId,
         factoryDefinitionDigest,
         pipelineId: "00000000-0000-4000-8000-000000000010",
@@ -120,15 +121,20 @@ describe("CreateSessionDialog accessibility", () => {
         const repository = screen.getByRole("combobox", { name: "Repository" });
         expect(repository).toBeDisabled();
         expect(repository).toHaveTextContent("acme/pinned");
+        const specification = screen.getByRole("checkbox", { name: "Draft a specification first" });
+        expect(specification).not.toBeChecked();
+        await user.click(specification);
         await user.click(start);
         expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
           expect.objectContaining({
+            draftSpecification: true,
             factoryDefinitionDigest,
             githubRepositoryId: repositoryId,
             selectedStageIds: [compileId, shipId],
           }),
         );
       } else {
+        expect(screen.queryByRole("checkbox", { name: "Draft a specification first" })).toBeNull();
         expect(
           screen.getByText("Reconnect a writable factory repository before starting a session."),
         ).toBeVisible();
@@ -865,6 +871,59 @@ describe("CreateSessionDialog accessibility", () => {
       bodyRect.mockRestore();
       triggerRect.mockRestore();
     }
+  });
+
+  it("keeps a checked specification draft when refreshed options lose the named agent", async () => {
+    const user = userEvent.setup();
+    const key = { userId: "user-1", workspaceId: "workspace-1" };
+    const options = {
+      defaultGithubRepositoryId: "repo-1",
+      factoryDefinitionDigest: "a".repeat(64),
+      pipelineId: "pipeline-1",
+      repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
+      stageOptions: [{ description: "Scope work", id: "stage-1", name: "Scope", position: 1 }],
+    };
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...options,
+      canDraftSpecification: true,
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog {...key} onClose={vi.fn()} open workspaceSlug="acme" />
+      </OverlayProvider>,
+    );
+
+    const checkbox = await screen.findByRole("checkbox", { name: "Draft a specification first" });
+    await user.click(checkbox);
+    await user.type(screen.getByLabelText("Prompt"), "Scope the work");
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...options,
+      canDraftSpecification: false,
+    });
+    await act(async () => {
+      invalidateSessionRepositoryCache(key.workspaceId);
+      await loadSessionRepositories(key);
+    });
+
+    expect(checkbox).toBeChecked();
+    expect(checkbox).toBeEnabled();
+    expect(checkbox).toHaveAccessibleDescription(/available named agent/);
+    const start = screen.getByRole("button", { name: "Start session" });
+    expect(start).toBeDisabled();
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+
+    await user.click(checkbox);
+    await user.click(start);
+    expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce();
+    expect(clientMocks.createSessionFromClient.mock.calls[0][0]).not.toHaveProperty(
+      "draftSpecification",
+    );
   });
 
   it("blocks keyboard submission while cached repository options are stale", async () => {

@@ -12,6 +12,7 @@ import type { SessionAttachmentUploadResponse } from "@/lib/storage/contracts";
 
 export type CreateSessionInput = {
   attachmentIds?: string[];
+  draftSpecification?: boolean;
   factoryDefinitionDigest?: string;
   githubRepositoryId?: string | null;
   linearIssueUrl?: string | null;
@@ -60,6 +61,7 @@ export type SessionArchiveResult = {
 };
 
 export type SessionRepositoryOptionsResult = {
+  canDraftSpecification?: boolean;
   defaultGithubRepositoryId: string | null;
   factoryDefinitionDigest?: string;
   pipelineId: string | null;
@@ -164,6 +166,7 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
     method: "GET",
   });
   const responsePayload = (await response.json().catch(() => null)) as {
+    canDraftSpecification?: boolean;
     defaultGithubRepositoryId?: string | null;
     error?: string;
     factoryDefinitionDigest?: string;
@@ -188,6 +191,7 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
 
   const { factoryDefinitionDigest } = responsePayload;
   return {
+    ...(responsePayload.canDraftSpecification === true ? { canDraftSpecification: true } : {}),
     defaultGithubRepositoryId: responsePayload.defaultGithubRepositoryId ?? null,
     ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
     pipelineId: responsePayload.pipelineId ?? null,
@@ -211,6 +215,7 @@ export async function createSessionFromClient(
 
   const payload = {
     ...(input.attachmentIds ? { attachmentIds: input.attachmentIds } : {}),
+    ...(input.draftSpecification ? { draftSpecification: true } : {}),
     ...(input.factoryDefinitionDigest
       ? { factoryDefinitionDigest: input.factoryDefinitionDigest }
       : {}),

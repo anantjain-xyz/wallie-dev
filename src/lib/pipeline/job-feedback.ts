@@ -8,6 +8,7 @@ export async function loadJobFeedback(
   admin: SupabaseClient<Database>,
   job: Pick<Tables<"agent_jobs">, "id" | "session_id" | "workspace_id">,
   stageId: string,
+  options?: { exactOnly: true },
 ): Promise<string | null> {
   const { data: input, error: inputError } = await admin
     .from("artifact_feedback_batch_jobs")
@@ -30,6 +31,8 @@ export async function loadJobFeedback(
     if (!batch) throw new Error("The job's immutable feedback generation is unavailable.");
     return batch.rendered_feedback_text;
   }
+
+  if (options?.exactOnly) return null;
 
   // Existing whole-stage callers keep their established feedback record.
   const { data, error } = await admin

@@ -10,6 +10,7 @@ export type SessionStageFocus = "run" | "artifact" | "empty";
 export function SessionStageWorkspace({
   activity,
   artifact,
+  specification = false,
   emptyText,
   evidence,
   focus,
@@ -19,6 +20,7 @@ export function SessionStageWorkspace({
 }: {
   activity: ReactNode;
   artifact: ReactNode;
+  specification?: boolean;
   emptyText: string;
   evidence?: ReactNode;
   focus: SessionStageFocus;
@@ -27,16 +29,17 @@ export function SessionStageWorkspace({
   stageSlug: string;
 }) {
   const showingArtifact = focus === "artifact";
+  const artifactHeading = specification ? "Specification" : `${stageName} artifact`;
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <section
-        aria-label={showingArtifact ? `${stageName} artifact` : undefined}
+        aria-label={showingArtifact ? artifactHeading : undefined}
         className={showingArtifact ? "ui-sheet min-w-0" : "contents"}
       >
         {showingArtifact ? (
           <>
             <div className="border-b border-border px-4 py-4 sm:px-5">
-              <h2 className="text-base font-semibold text-foreground">{stageName} artifact</h2>
+              <h2 className="text-base font-semibold text-foreground">{artifactHeading}</h2>
             </div>
             <div className="min-w-0 p-4 sm:p-5">{artifact}</div>
           </>
@@ -65,13 +68,21 @@ export function SessionStageWorkspace({
         </div>
       </section>
       {focus === "run" && artifact ? (
-        <PreviousArtifact key={stageSlug}>{artifact}</PreviousArtifact>
+        <PreviousArtifact key={stageSlug} specification={specification}>
+          {artifact}
+        </PreviousArtifact>
       ) : null}
     </div>
   );
 }
 
-function PreviousArtifact({ children }: { children: ReactNode }) {
+function PreviousArtifact({
+  children,
+  specification,
+}: {
+  children: ReactNode;
+  specification: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <details
@@ -80,7 +91,7 @@ function PreviousArtifact({ children }: { children: ReactNode }) {
     >
       <summary className="flex min-h-9 cursor-pointer list-none flex-wrap items-center gap-2 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
         <ChevronDownIcon className="size-3.5 -rotate-90 group-open/previous:rotate-0" />
-        Previous artifact
+        {specification ? "Previous specification" : "Previous artifact"}
         <span className="type-annotation">Earlier output · not ready for review</span>
       </summary>
       {open ? <div className="mt-3 min-w-0">{children}</div> : null}

@@ -118,6 +118,7 @@ describe("createSessionFromClient", () => {
 
     const result = await createSessionFromClient({
       attachmentIds: [ATTACHMENT_ID],
+      draftSpecification: true,
       factoryDefinitionDigest: "a".repeat(64),
       githubRepositoryId: `  ${REPOSITORY_ID}  `,
       linearIssueUrl: "  https://linear.app/team/issue/TEAM-42/some-slug  ",
@@ -131,6 +132,7 @@ describe("createSessionFromClient", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/sessions", {
       body: JSON.stringify({
         attachmentIds: [ATTACHMENT_ID],
+        draftSpecification: true,
         factoryDefinitionDigest: "a".repeat(64),
         githubRepositoryId: REPOSITORY_ID,
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
@@ -214,6 +216,7 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
   it("loads repository options lazily for the workspace", async () => {
     const fetchMock = mockFetch({
       body: {
+        canDraftSpecification: true,
         defaultGithubRepositoryId: REPOSITORY_ID,
         factoryDefinitionDigest: "a".repeat(64),
         pipelineId: "55555555-5555-4555-8555-555555555555",
@@ -233,6 +236,7 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
     await expect(
       loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
     ).resolves.toEqual({
+      canDraftSpecification: true,
       defaultGithubRepositoryId: REPOSITORY_ID,
       factoryDefinitionDigest: "a".repeat(64),
       pipelineId: "55555555-5555-4555-8555-555555555555",
