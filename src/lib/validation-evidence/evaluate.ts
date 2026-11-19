@@ -1,3 +1,4 @@
+import { evaluateBrowserRequirement, type BrowserVerificationEvidence } from "./browser-contract";
 import type { ValidationEvidenceRecord } from "./contracts";
 
 /** Validation-only receipt check. PR readiness also needs GitHub and review inputs (OP-508). */
@@ -7,8 +8,11 @@ export function evaluateValidationEvidence(input: {
   treeSha: string;
   records: ValidationEvidenceRecord[];
   accessibleAssetKeys: ReadonlySet<string>;
+  browserEvidence?: BrowserVerificationEvidence | null;
 }) {
   return input.requiredKeys.map((key) => {
+    const browser = evaluateBrowserRequirement(key, input.browserEvidence);
+    if (browser) return { key, status: browser };
     const matches = input.records.filter((record) => record.key === key);
     const record = matches.length === 1 ? matches[0] : undefined;
     if (!record) return { key, status: "missing" as const };

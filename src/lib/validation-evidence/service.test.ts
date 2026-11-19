@@ -62,7 +62,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.upload.mockResolvedValue({ error: null });
   mocks.capture.mockResolvedValue(evidence());
-  mocks.pinPlan.mockResolvedValue({ version: 1, commands: [] });
+  mocks.pinPlan.mockResolvedValue({ plan: { version: 1, commands: [] } });
   mocks.checkpoint.mockResolvedValue({ kind: "unchanged", baseSha: sha, headSha: sha });
 });
 describe("durable validation evidence", () => {
@@ -71,7 +71,7 @@ describe("durable validation evidence", () => {
       version: 1,
       commands: [{ key: "unit", command: "pnpm test", timeoutSeconds: 300, reports: [] }],
     };
-    mocks.pinPlan.mockResolvedValue(plan);
+    mocks.pinPlan.mockResolvedValue({ plan });
     const admin = adminMock();
     await validateCheckpoint({
       admin: admin as never,
@@ -87,6 +87,69 @@ describe("durable validation evidence", () => {
     );
     expect(mocks.capture).toHaveBeenCalledWith(expect.objectContaining({ plan, commitSha: sha }));
   });
+  it.each([
+    { approvedToolIds: undefined, reason: "runtime_unavailable" },
+    { approvedToolIds: ["an-ordinary-tool-revision/read"], reason: "runtime_unavailable" },
+    { approvedToolIds: [], reason: "tool_not_approved" },
+  ])(
+    "records $reason on the frozen identity while executing commands",
+    async ({ approvedToolIds, reason }) => {
+      const plan = {
+        version: 2,
+        commands: [{ key: "unit", command: "pnpm test", timeoutSeconds: 30, reports: [] }],
+        browser: [
+          {
+            key: "inbox",
+            path: "/inbox",
+            timeoutSeconds: 10,
+            interactions: [],
+            regionTestId: "inbox-preview",
+            excludedTestIds: [],
+            evidence: [{ kind: "screenshot", required: true }],
+          },
+        ],
+      };
+      const runId = "11111111-1111-4111-8111-111111111111";
+      mocks.pinPlan.mockResolvedValue({
+        plan,
+        browserIdentity: { runId, attemptCount: 3, commitSha: sha, treeSha: tree },
+      });
+      const admin = adminMock();
+      admin.rpc.mockRejectedValueOnce(new Error("browser receipt transport closed"));
+      await validateCheckpoint({
+        admin: admin as never,
+        workspaceId: "ws",
+        pipelineId: "pipeline",
+        approvedToolIds,
+        runId,
+        sandbox: {} as never,
+        checkpoint: { kind: "unchanged", baseSha: sha, headSha: sha },
+        secrets: [],
+      });
+      expect(admin.rpc).toHaveBeenCalledWith("record_session_browser_verification", {
+        p_run_id: runId,
+        p_attempt_count: 3,
+        p_commit_sha: sha,
+        p_validation_tree_sha: tree,
+        p_records: [
+          {
+            key: "inbox",
+            kind: "screenshot",
+            path: "/inbox",
+            policy: "isolated-fixture-v1",
+            status: "unavailable",
+            reason,
+          },
+        ],
+      });
+      expect(mocks.capture).toHaveBeenCalledWith(expect.objectContaining({ plan, commitSha: sha }));
+      expect(admin.rpc).toHaveBeenCalledWith(
+        "record_session_validation_evidence",
+        expect.objectContaining({ p_run_id: runId }),
+      );
+    },
+  );
+
   it("preserves source without running commands if the plan cannot be frozen", async () => {
     mocks.pinPlan.mockRejectedValue(new Error("plan conflict"));
     const admin = adminMock();

@@ -3551,6 +3551,52 @@ export type Database = {
           },
         ]
       }
+      session_browser_verification_receipts: {
+        Row: {
+          created_at: string
+          records: Json
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          records: Json
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          records?: Json
+          run_id?: string
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_browser_verification_receipts_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "session_validation_plans"
+            referencedColumns: ["run_id"]
+          },
+          {
+            foreignKeyName: "session_browser_verification_receipts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_browser_verification_receipts_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_checkpoint_cleanup: {
         Row: {
           attempt_count: number
@@ -9642,6 +9688,28 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "session_pr_verification_results"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      record_session_browser_verification: {
+        Args: {
+          p_attempt_count: number
+          p_commit_sha: string
+          p_records: Json
+          p_run_id: string
+          p_validation_tree_sha: string
+        }
+        Returns: {
+          created_at: string
+          records: Json
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_browser_verification_receipts"
           isOneToOne: true
           isSetofReturn: false
         }
