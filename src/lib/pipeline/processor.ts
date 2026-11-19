@@ -321,7 +321,7 @@ async function runStage(input: {
     const [
       config,
       predecessorInputs,
-      attemptFeedback,
+      preloadedFeedback,
       operatingRulesMd,
       sessionPrompt,
       sessionAttachments,
@@ -331,7 +331,7 @@ async function runStage(input: {
     ] = await Promise.all([
       pinned?.agent ?? loadWorkspaceAgentConfig(admin, session.workspace_id),
       loadAttemptPredecessors(admin, session.id),
-      loadJobFeedback(admin, job, stage.id, specificationStage ? { exactOnly: true } : undefined),
+      specificationStage ? null : loadJobFeedback(admin, job, stage.id),
       pinned?.operatingRulesMd ?? loadPipelineOperatingRules(admin, stage.pipelineId),
       pinned
         ? loadPinnedSessionPrompt(admin, session)
@@ -420,7 +420,8 @@ async function runStage(input: {
       throw new ScopedRunCredentialUnavailableError();
     }
 
-    const [agentPrompt, skillInstructions] = await Promise.all([
+    // Starting a manual retry can bind it to the original immutable feedback batch.
+    const [agentPrompt, skillInstructions, attemptFeedback] = await Promise.all([
       loadRunAgentPrompt(admin, {
         workspaceId: session.workspace_id,
         factoryId: session.factory_id,
@@ -434,6 +435,9 @@ async function runStage(input: {
         skillRevisionIds: pinned?.skillIds ?? [],
         signal,
       }),
+      specificationStage
+        ? loadJobFeedback(admin, job, stage.id, { exactOnly: true })
+        : preloadedFeedback,
     ]);
     throwIfAborted(signal);
 

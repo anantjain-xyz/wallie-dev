@@ -7,10 +7,12 @@ import { loadSpecificationPromptContext } from "./specification-context";
 
 it("retains older answers and the exact prior draft without carrying its control directive", async () => {
   const requests: URL[] = [];
-  const previousDraft =
-    '<!-- wallie-clarification: {"question":"Current question"} -->\r\n' +
+  const savedSpecification =
     "`{{attempt.feedback}}`\n" +
-    "😀".repeat(12_001);
+    "😀".repeat(12_001) +
+    "\n## Acceptance criteria\nThe administrator can change the workspace role.";
+  const previousDraft =
+    '<!-- wallie-clarification: {"question":"Current question"} -->\r\n' + savedSpecification;
   const admin = createClient<Database>("https://supabase.example.test", "fixture", {
     auth: { autoRefreshToken: false, persistSession: false },
     global: {
@@ -54,10 +56,8 @@ it("retains older answers and the exact prior draft without carrying its control
   expect(result.priorDraft).toMatchObject({
     source: "specification.priorDraft",
     trust: "untrusted",
-    value: expect.stringMatching(/^`\{\{attempt\.feedback\}\}`\n😀/),
+    value: savedSpecification,
   });
-  expect(result.priorDraft?.value).not.toContain("Current question");
-  expect(Array.from(result.priorDraft?.value ?? "")).toHaveLength(12_000);
 
   expect(requests).toHaveLength(3);
   for (const request of requests) {

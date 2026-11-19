@@ -376,6 +376,7 @@ interface MockOptions {
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
   batchFeedback?: { rendered_feedback_text: string } | null;
+  batchFeedbackLinkedAtStart?: boolean;
   runSandboxUpdateError?: { message: string } | null;
   sourcePreparationError?: { message: string } | null;
   retentionUpdateError?: { message: string } | null;
@@ -456,6 +457,7 @@ function buildAdminMock(opts: MockOptions) {
     },
   ];
   let currentAttempt = opts.currentAttempt;
+  let batchFeedbackLinked = !opts.batchFeedbackLinkedAtStart;
   const runUpdateFilters: Array<Record<string, unknown>> = [];
 
   const lookup: Record<string, unknown> = {};
@@ -772,7 +774,7 @@ function buildAdminMock(opts: MockOptions) {
         const builder = {
           eq: () => builder,
           maybeSingle: async () => ({
-            data: opts.batchFeedback ? { batch_id: "batch-1" } : null,
+            data: opts.batchFeedback && batchFeedbackLinked ? { batch_id: "batch-1" } : null,
             error: null,
           }),
         };
@@ -912,6 +914,7 @@ function buildAdminMock(opts: MockOptions) {
       Object.assign(run, patch);
       updatedRuns.push(patch);
       updatedSessions.push({ phase_status: "in_progress" });
+      batchFeedbackLinked = true;
       return { data: run.id, error: null };
     }
     if (fn === "append_agent_run_event" || fn === "touch_agent_run_activity") {
@@ -1581,7 +1584,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     },
   );
 
-  it("publishes specification Markdown against only the pinned input and carries exact clarification feedback", async () => {
+  it("carries clarification feedback linked at manual retry start and publishes only against the pinned input", async () => {
     const stageId = "77900000-0000-4000-8000-000000000001";
     const pipelineId = "77900000-0000-4000-8000-000000000002";
     const repositoryId = "77900000-0000-4000-8000-000000000003";
@@ -1665,6 +1668,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       priorGitInput: { repository_id: repositoryId },
       githubRepositories: [{ id: repositoryId, full_name: "acme/app", default_branch: "main" }],
       batchFeedback: { rendered_feedback_text: feedback },
+      batchFeedbackLinkedAtStart: true,
       latestFeedback: { feedback_text: "A different job's note" },
       specificationClarificationCount: 3,
       specificationHistory: [

@@ -8,7 +8,6 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { untrustedPromptValue } from "./prompt-safety";
 
 const CLARIFICATION_LIMIT = 3;
-const PRIOR_DRAFT_CHARACTER_LIMIT = 12_000;
 const LEADING_CLARIFICATION_DIRECTIVE = /^<!-- wallie-clarification: [^\r\n]* -->\r?(?:\n|$)/;
 
 type SpecificationSession = Pick<
@@ -72,11 +71,7 @@ export async function loadSpecificationPromptContext(
     throw new Error("The exact prior specification draft is unavailable.");
   }
 
-  const draft = Array.from(
-    draftResult.data.artifact_json.replace(LEADING_CLARIFICATION_DIRECTIVE, ""),
-  )
-    .slice(0, PRIOR_DRAFT_CHARACTER_LIMIT)
-    .join("");
+  const draft = draftResult.data.artifact_json.replace(LEADING_CLARIFICATION_DIRECTIVE, "");
   const history = historyResult.data
     .flatMap(({ ordinal, question, answer_text: answer }) =>
       answer === null ? [] : [`Round ${ordinal}\nQuestion: ${question}\nAnswer: ${answer}`],
