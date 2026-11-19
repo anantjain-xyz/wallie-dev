@@ -407,9 +407,10 @@ export async function POST(request: Request) {
 
   let agentConfig;
   try {
-    if (pinned?.executionGrant) {
+    if (pinned) {
       await assertSessionFactoryCredentialReady({
         admin,
+        creatorMemberId: access.context.currentMember.id,
         definition: pinned,
         factoryId: pinned.factoryId,
         workspaceId: normalized.workspaceId,
@@ -444,6 +445,10 @@ export async function POST(request: Request) {
   }
 
   try {
+    const confirmedRequest = creationRequest ?? {
+      id: crypto.randomUUID(),
+      fingerprint: fingerprintSessionCreation(parsed.data),
+    };
     const title =
       linearIssue?.title ??
       (parsed.data.title?.trim() ||
@@ -452,9 +457,9 @@ export async function POST(request: Request) {
     const result = await createSessionWithFirstJob({
       admin,
       attachmentIds: normalized.attachmentIds,
-      ...(creationRequest ? { creationRequest } : {}),
+      creationRequest: confirmedRequest,
       creatorMemberId: access.context.currentMember.id,
-      ...(pinned && creationRequest ? { factoryDefinitionDigest: pinned.canonicalDigest } : {}),
+      factoryDefinitionDigest: pinned?.canonicalDigest ?? null,
       githubRepositoryId,
       linearIssueId: linearIssue?.identifier ?? normalized.linearIssueId,
       linearIssueUrl: linearIssue?.url ?? normalized.linearIssueUrl,

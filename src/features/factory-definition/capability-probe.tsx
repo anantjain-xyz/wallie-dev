@@ -6,7 +6,12 @@ import { factoryWritableRepositoryIds } from "@/lib/factory-definitions/reposito
 
 type FactoryCapabilityProbeProps = Pick<
   ComponentProps<typeof SandboxCapabilitySection>,
-  "canManage" | "repositories" | "sandboxConnected" | "setFlashMessage" | "workspaceId"
+  | "canManage"
+  | "onCheckChange"
+  | "repositories"
+  | "sandboxConnected"
+  | "setFlashMessage"
+  | "workspaceId"
 > & { target: FactoryEditorDocument };
 
 export function FactoryCapabilityProbe({

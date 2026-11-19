@@ -27,6 +27,8 @@ import type {
 } from "@/features/wallie/types";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { RECOMMENDED_AGENT_EFFORT } from "@/lib/agent-config/contracts";
+import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
+import { checkFactoryProfileCredentialReadiness } from "@/lib/factory-definitions/execution-profile-readiness";
 import {
   loadPinnedFactoryExecution,
   loadPinnedFactoryRepositoryId,
@@ -91,6 +93,7 @@ type SessionForRun = Pick<
   Tables<"sessions">,
   | "archived_at"
   | "created_at"
+  | "creator_member_id"
   | "current_stage_id"
   | "execute_pinned_definition"
   | "factory_definition_revision_id"
@@ -107,7 +110,7 @@ type AgentRunRow = Tables<"agent_runs">;
 type SessionForEnqueue = Pick<Tables<"sessions">, "current_stage_id" | "id" | "workspace_id">;
 
 const sessionSelect =
-  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status, execute_pinned_definition, factory_definition_revision_id, factory_id, github_repository_id";
+  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, creator_member_id, archived_at, phase_status, execute_pinned_definition, factory_definition_revision_id, factory_id, github_repository_id";
 const runSelect =
   "id, workspace_id, session_id, agent_job_id, attempt_count, branch_name, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, token_provenance, cost_provenance, usage_finalized_at, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 export class WallieActionError extends Error {
@@ -188,11 +191,17 @@ export async function loadSessionFirstRunPrerequisites(input: {
   workspaceId: string;
 }): Promise<SessionFirstRunPrerequisites> {
   const admin = input.admin ?? createSupabaseAdminClient();
+  const profile = input.pinned ? resolveFactoryExecutionProfile(input.pinned) : null;
   const [agentConfig, vercelSandboxConnection] = await Promise.all([
-    input.pinned
-      ? { ...input.pinned.agent, effort: input.pinned.agent.effort ?? RECOMMENDED_AGENT_EFFORT }
+    input.pinned && profile
+      ? {
+          ...input.pinned.agent,
+          provider: profile.provider,
+          model: profile.model,
+          effort: profile.effort ?? RECOMMENDED_AGENT_EFFORT,
+        }
       : loadWorkspaceAgentConfig(admin, input.workspaceId),
-    loadWallieVercelSandboxConnection(admin, input.workspaceId, input.pinned?.sandboxProvider),
+    loadWallieVercelSandboxConnection(admin, input.workspaceId, profile?.sandboxProvider),
   ]);
 
   return { agentConfig, vercelSandboxConnection };
@@ -221,34 +230,31 @@ export function assertSessionFirstRunReady(input: {
 
 export async function assertSessionFactoryCredentialReady(input: {
   admin: AdminClient;
+  creatorMemberId?: string | null;
   definition: PinnedFactoryExecution | null;
   factoryId: string;
   workspaceId: string;
 }) {
   const { definition } = input;
-  if (!definition?.executionGrant) return;
+  if (!definition) return null;
 
-  const missing = "Choose an available service credential binding in Factory Definition.";
-  let message = missing;
-  if (definition.credentialBindingId && definition.implementationAgent) {
-    const { data, error } = await input.admin.rpc("check_factory_credential_binding", {
-      p_workspace_id: input.workspaceId,
-      p_factory_id: input.factoryId,
-      p_binding_id: definition.credentialBindingId,
-      p_execution_grant_id: definition.executionGrant.id,
-      p_execution_grant_version: definition.executionGrant.version,
-      p_factory_agent_id: definition.implementationAgent.agentId,
-      p_agent_provider: definition.agent.provider,
-      p_agent_model: definition.agent.model,
+  const profile = resolveFactoryExecutionProfile(definition, input.creatorMemberId ?? undefined);
+  if (profile.unavailableReason) {
+    throw new WallieActionError({
+      code: "factory_profile_unavailable",
+      message: profile.unavailableReason,
+      statusCode: 422,
     });
-    if (error) throw new Error("Could not verify the factory service credential binding.");
-    if (data === "ready") return;
-    if (data === "revoked")
-      message = "Publish a definition with an active service credential binding.";
-    if (data === "grant_unavailable")
-      message = "Review the factory execution grant and its credential binding.";
   }
-  throw new WallieActionError({ code: "factory_credential_unavailable", message, statusCode: 422 });
+  const readiness = await checkFactoryProfileCredentialReadiness({ ...input, profile });
+  if (readiness.status === "unavailable") {
+    throw new WallieActionError({
+      code: "factory_credential_unavailable",
+      message: readiness.reason,
+      statusCode: 422,
+    });
+  }
+  return profile;
 }
 
 export async function assertSessionSandboxCapabilityReady(input: {
@@ -275,7 +281,7 @@ export async function assertSessionSandboxCapabilityReady(input: {
   try {
     await assertCurrentSandboxCapabilityCheck({
       admin: input.admin ?? createSupabaseAdminClient(),
-      agent: input.agentConfig,
+      agent: { provider: input.agentConfig.provider, model: input.agentConfig.model },
       connection: { provider, revision },
       ...(input.definitionDigest === undefined ? {} : { definitionDigest: input.definitionDigest }),
       repositoryId: input.repository.id,
@@ -297,7 +303,8 @@ export async function createSessionWithFirstJob(input: {
   attachmentIds?: string[];
   creationRequest?: { id: string; fingerprint: string };
   creatorMemberId: string;
-  factoryDefinitionDigest?: string;
+  /** A null snapshot confirms that the default factory has no active revision. */
+  factoryDefinitionDigest?: string | null;
   githubRepositoryId: string | null;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
@@ -328,7 +335,7 @@ export async function createSessionWithFirstJob(input: {
   if (input.restartOfSessionId && !input.creationRequest) {
     throw new Error("A creation request id is required to restart a session.");
   }
-  if (input.factoryDefinitionDigest && !input.creationRequest) {
+  if (input.factoryDefinitionDigest !== undefined && !input.creationRequest) {
     throw new Error("A creation request id is required to confirm a factory definition.");
   }
   const requestArgs = input.creationRequest
@@ -339,10 +346,10 @@ export async function createSessionWithFirstJob(input: {
       }
     : null;
   const query = requestArgs
-    ? input.factoryDefinitionDigest
+    ? input.factoryDefinitionDigest !== undefined
       ? admin.rpc("create_confirmed_factory_session_once_with_first_job", {
           ...requestArgs,
-          expected_factory_definition_digest: input.factoryDefinitionDigest,
+          expected_factory_definition_digest: input.factoryDefinitionDigest ?? "",
           source_session_id: input.restartOfSessionId,
         })
       : input.restartOfSessionId
@@ -545,8 +552,9 @@ async function validateQueuedRunRequest(input: {
   if (activeRun) return { activeRun, session, runType: input.requestedRunType };
 
   const definition = await loadPinnedFactoryExecution(input.admin, session);
-  await assertSessionFactoryCredentialReady({
+  const profile = await assertSessionFactoryCredentialReady({
     admin: input.admin,
+    creatorMemberId: session.creator_member_id,
     definition,
     factoryId: session.factory_id,
     workspaceId: workspace.id,
@@ -563,7 +571,7 @@ async function validateQueuedRunRequest(input: {
       supabase: input.admin,
       workspaceId: workspace.id,
     }),
-    loadWallieVercelSandboxConnection(input.admin, workspace.id, definition?.sandboxProvider),
+    loadWallieVercelSandboxConnection(input.admin, workspace.id, profile?.sandboxProvider),
   ]);
   const repository: WallieSessionRepository | null = repositoryResolution.repository
     ? {
@@ -590,8 +598,7 @@ async function validateQueuedRunRequest(input: {
     throw blockingError;
   }
 
-  const agentConfig =
-    definition?.agent ?? (await loadWorkspaceAgentConfig(input.admin, workspace.id));
+  const agentConfig = profile ?? (await loadWorkspaceAgentConfig(input.admin, workspace.id));
   await assertSessionSandboxCapabilityReady({
     admin: input.admin,
     agentConfig,
@@ -646,9 +653,10 @@ export async function resolveQueuedRunConfig(
   if (error) throw error;
   const definition = data ? await loadPinnedFactoryExecution(admin, data) : null;
   if (definition) {
+    const profile = resolveFactoryExecutionProfile(definition);
     return {
-      modelName: definition.agent.model,
-      modelProvider: definition.agent.provider,
+      modelName: profile.model,
+      modelProvider: profile.provider,
       runType: "code",
       usesPinnedDefinition: true,
     };

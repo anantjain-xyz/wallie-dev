@@ -6753,6 +6753,15 @@ export type Database = {
         }
         Returns: string
       }
+      check_session_agent_credential: {
+        Args: {
+          p_agent_model: string
+          p_agent_provider: string
+          p_creator_member_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       claim_expired_session_attachments: {
         Args: { max_count?: number }
         Returns: {
@@ -7535,6 +7544,14 @@ export type Database = {
           target_factory_id?: string
           target_pipeline_id?: string
           target_stage_id?: string
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_run_execution_profile: {
+        Args: {
+          target_attempt_count: number
+          target_run_id: string
           target_workspace_id: string
         }
         Returns: Json

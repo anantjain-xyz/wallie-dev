@@ -233,6 +233,9 @@ returns boolean language sql as $$
     repeat('a',40),'[]','workerd',7,'high',p_owner);
 $$;
 create temp table previous_run as select * from pg_temp.running_credential_fixture('First scoped credential run');
+update public.agent_runs set sandbox_provider='e2b', sandbox_connection_revision='55600200-aa00-4000-8000-000000000001'
+where id=(select run_id from previous_run);
+grant select on previous_run to authenticated;
 select throws_ok($$select * from previous_run p, lateral public.resolve_factory_run_credential(
     '55600200-1000-4000-8000-000000000001',p.job_id,p.run_id,1)$$,
   '42501', null, 'a running attempt cannot resolve a secret until its manifest is pinned');
@@ -240,6 +243,25 @@ select is((select pg_temp.pin_fixture_manifest(job_id,run_id,'55600200-2000-4000
   false, 'service attempt manifest rejects the human invoker as credential owner');
 select ok((select pg_temp.pin_fixture_manifest(job_id,run_id) from previous_run),
   'service manifest pins without a human credential owner');
+create temp table previous_profile as select jsonb_build_object(
+  'provider','codex','model','gpt-5.5','effort','high','maxTurns',7,
+  'sandboxProvider','e2b','sandboxConnectionRevision','55600200-aa00-4000-8000-000000000001',
+  'workerRuntime','workerd','definitionRevisionId',owner.factory_definition_revision_id,
+  'authority',jsonb_build_object('kind','service','grantId',grant_v1.id,'grantVersion',1,
+    'bindingId',binding_v1.id,'servicePrincipalId',principal.id)
+) profile
+from previous_run join public.sessions owner on owner.id=previous_run.session_id
+cross join grant_v1 cross join binding_v1 cross join principal;
+grant select on previous_profile to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000002';
+select is(public.get_run_execution_profile('55600200-1000-4000-8000-000000000001',run_id,1)->'authority',
+  '{"kind":"unavailable"}'::jsonb, 'a service attempt without its credential receipt cannot claim service authority')
+from previous_run;
+reset role;
+set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000001';
+set local request.jwt.claim.role = 'service_role';
 select throws_ok($$select * from previous_run p, lateral public.resolve_factory_run_credential(
     '55600200-1000-4000-8000-000000000001',p.job_id,p.run_id,2)$$,
   '42501', null, 'an unrelated attempt count cannot resolve the credential');
@@ -272,9 +294,14 @@ set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000002';
 select is((select count(*) from public.factory_run_credential_receipts where workspace_id='55600200-1000-4000-8000-000000000001'),
   1::bigint, 'session readers can see safe receipt metadata in their factory');
+select is(public.get_run_execution_profile('55600200-1000-4000-8000-000000000001',run_id,1),
+  profile, 'a session reader sees only the exact service profile and opaque authority identifiers')
+from previous_run cross join previous_profile;
 set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000003';
 select is((select count(*) from public.factory_run_credential_receipts where workspace_id='55600200-1000-4000-8000-000000000001'),
   0::bigint, 'another workspace cannot read the receipt');
+select is(public.get_run_execution_profile('55600200-1000-4000-8000-000000000001',run_id,1),
+  null::jsonb, 'a different workspace member cannot read the service profile') from previous_run;
 reset role;
 set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000001';
 set local request.jwt.claim.role = 'service_role';
@@ -335,6 +362,15 @@ select is((select public.check_factory_credential_binding(
   'revoked binding is still identifiable as safe history');
 select throws_ok($$select * from rotated_run p cross join lateral pg_temp.resolve_fixture(p.job_id,p.run_id)$$,
   'PT422', null, 'revocation denies new resolution of a previous receipt');
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000002';
+select is(public.get_run_execution_profile('55600200-1000-4000-8000-000000000001',run_id,1),
+  profile, 'revocation preserves the historical service profile')
+from previous_run cross join previous_profile;
+reset role;
+set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000001';
+set local request.jwt.claim.role = 'service_role';
 
 create temp table replacement_binding as
 select * from pg_temp.attach_binding(p_source => '55600200-9000-4000-8000-000000000004');
@@ -385,6 +421,13 @@ select ok((select material.encrypted_value='synthetic-opencode-material' and mat
 update public.agent_runs set model_name='anthropic/sonnet' where id=(select run_id from opencode_run);
 select throws_ok($$select * from opencode_run p cross join lateral pg_temp.resolve_fixture(p.job_id,p.run_id)$$,
   '42501', null, 'a run bound to a different OpenCode model cannot resolve the credential');
+grant select on opencode_run to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000002';
+select is(public.get_run_execution_profile('55600200-1000-4000-8000-000000000001',run_id,1),
+  null::jsonb, 'a run bound to a different model cannot borrow stale profile evidence') from opencode_run;
+reset role;
 
 select ok((select not exists (select 1 from public.factory_audit_events event join principal using (workspace_id, factory_id)
   where event.action like 'credential_binding.%' and (event.detail::text like '%synthetic-%'

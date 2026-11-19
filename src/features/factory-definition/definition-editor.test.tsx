@@ -231,6 +231,7 @@ function setup({
   );
   const reads: string[] = [];
   const capabilityReads: string[] = [];
+  const executionProfileReads: string[] = [];
   const credentialReads: string[] = [];
   const tests = new Map<string, CandidateSmokeTest[]>([
     [initialDraft.id, initialDraftPasses ? [receipt(initialDraft, "passed", 41)] : []],
@@ -242,6 +243,31 @@ function setup({
     if (pathname === credentialsEndpoint) {
       credentialReads.push(url);
       return Response.json(credentials);
+    }
+    if (pathname === `${endpoint}/execution-profile`) {
+      executionProfileReads.push(url);
+      const id = searchParams.get("draftId") ?? searchParams.get("revisionId");
+      const candidate = id ? records.get(id) : null;
+      if (!candidate) return Response.json({ error: "Definition unavailable." }, { status: 404 });
+      const { provider, model, effort } = candidate.bundle.agent;
+      return Response.json({
+        profile: {
+          provider,
+          model,
+          effort,
+          maxTurns: null,
+          sandboxProvider: candidate.bundle.sandboxProvider,
+          credentialAuthority: { kind: "human", memberId: null },
+        },
+        readiness: {
+          status: "checked",
+          credential: { status: "ready" },
+          sandbox: {
+            status: "unavailable",
+            reason: "Run a capability check for the primary repository.",
+          },
+        },
+      });
     }
     if (pathname === `${endpoint}/capability-check`) {
       if (options?.method !== "POST") {
@@ -328,6 +354,7 @@ function setup({
         return Response.json({ error: "The draft changed." }, { status: 409 });
       }
       const next = { ...snapshot.draft, id: id(11), kind: "revision" as const };
+      records.set(next.id, next);
       snapshot = { ...snapshot, published: next, draft: null, activationNumber: 3 };
       return Response.json({ snapshot: { activationNumber: 3 } });
     }
@@ -356,6 +383,7 @@ function setup({
     requests,
     reads,
     capabilityReads,
+    executionProfileReads,
     credentialReads,
     completeTest(targetId: string, status: "passed" | "failed") {
       const list = tests.get(targetId);
@@ -580,6 +608,28 @@ it("checks readiness for the selected revision's provider and refreshes it with 
   updateReadyProviders(["vercel", "e2b"]);
   fireEvent.click(screen.getByRole("button", { name: "Reload definition" }));
   await waitFor(() => expect(runCheck()).toBeEnabled());
+});
+
+it("loads the execution profile for the selected saved definition and refreshes that target", async () => {
+  const { executionProfileReads } = setup();
+  const heading = await screen.findByRole("heading", { name: "Effective execution profile" });
+  const section = heading.closest("section");
+  if (!section) throw new Error("Execution profile section is missing.");
+  const profile = within(section);
+  expect(await profile.findByText("Vercel Sandbox", { exact: true })).toBeVisible();
+  expect(profile.getByText("Run a capability check for the primary repository.")).toBeVisible();
+  expect(executionProfileReads).toEqual([`${endpoint}/execution-profile?draftId=${draft.id}`]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Activation #1/ }));
+  expect(await profile.findByText("E2B", { exact: true })).toBeVisible();
+  expect(executionProfileReads).toContain(
+    `${endpoint}/execution-profile?revisionId=${previous.id}`,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Reload definition" }));
+  await waitFor(() =>
+    expect(executionProfileReads.filter((url) => url.endsWith(previous.id))).toHaveLength(2),
+  );
 });
 
 it("checks the selected writable repository and excludes read-only context", async () => {

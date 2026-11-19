@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { ExecutionProfileFields } from "@/components/shared/execution-profile-fields";
 import { TimeDisplay } from "@/components/shared/time-display";
 import {
   MetadataItem,
@@ -15,6 +16,7 @@ import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type {
   RunInspectorArtifact,
   RunInspectorCredential,
+  RunInspectorExecutionProfile,
   RunInspectorMcpManifest,
   RunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
@@ -25,6 +27,7 @@ export function RunInspector({
   run,
   artifact,
   credential,
+  executionProfile,
   mcp,
   skills,
   workspaceId,
@@ -35,6 +38,7 @@ export function RunInspector({
   run: WorkspaceRunCatalogItem;
   artifact: RunInspectorArtifact;
   credential?: RunInspectorCredential | null;
+  executionProfile?: RunInspectorExecutionProfile;
   mcp?: RunInspectorMcpManifest | null;
   skills: RunInspectorSkills;
   workspaceId: string;
@@ -44,6 +48,7 @@ export function RunInspector({
 }) {
   const active = run.status === "started" || run.status === "running";
   const recovery = recoveryAction(run);
+  const recorded = executionProfile?.kind === "recorded" ? executionProfile.profile : null;
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
@@ -86,30 +91,14 @@ export function RunInspector({
                 </Link>
               }
             />
-            <MetadataItem
-              label="Agent"
-              value={`${RUN_PROVIDER_LABELS[run.modelProvider] ?? run.modelProvider} · ${run.modelName}`}
-            />
-            {credential && (
-              <>
-                <MetadataItem
-                  label="Service credential binding"
-                  value={
-                    <span className="break-all">
-                      {credential.bindingId} · v{credential.bindingVersion}
-                    </span>
-                  }
-                />
-                <MetadataItem
-                  label="Credential owner"
-                  value={<span className="break-all">{credential.servicePrincipalId}</span>}
-                />
-                <MetadataItem label="Secret revision" value={credential.materialRevision} />
-                <MetadataItem
-                  label="Credential resolved"
-                  value={<TimeDisplay initialNow={initialNow} value={credential.resolvedAt} />}
-                />
-              </>
+            {!recorded && (
+              <MetadataItem
+                label="Agent"
+                value={`${RUN_PROVIDER_LABELS[run.modelProvider] ?? run.modelProvider} · ${run.modelName}`}
+              />
+            )}
+            {credential && recorded?.authority.kind !== "service" && (
+              <RunCredentialFields credential={credential} initialNow={initialNow} />
             )}
             <MetadataItem
               label="Created"
@@ -166,6 +155,92 @@ export function RunInspector({
             />
           </MetadataList>
         </section>
+
+        {executionProfile && (
+          <PageSection
+            anchorId="execution-profile"
+            title={recorded ? "Recorded execution profile" : "Execution profile"}
+          >
+            <div className="ui-sheet px-4 py-5 sm:px-5">
+              {recorded ? (
+                <MetadataList>
+                  <ExecutionProfileFields profile={recorded} />
+                  <MetadataItem
+                    label="Worker runtime"
+                    value={recorded.workerRuntime === "node" ? "Node.js" : "Workerd"}
+                  />
+                  <MetadataItem
+                    label="Sandbox connection revision"
+                    value={
+                      recorded.sandboxConnectionRevision ? (
+                        <span className="break-all">{recorded.sandboxConnectionRevision}</span>
+                      ) : (
+                        "Unrecorded"
+                      )
+                    }
+                  />
+                  <MetadataItem
+                    label="Factory definition revision"
+                    value={
+                      recorded.definitionRevisionId ? (
+                        <span className="break-all">{recorded.definitionRevisionId}</span>
+                      ) : (
+                        "Legacy configuration"
+                      )
+                    }
+                  />
+                  {recorded.authority.kind === "human" ? (
+                    <MetadataItem
+                      label="Credential owner"
+                      value={
+                        <span className="break-all">Member · {recorded.authority.memberId}</span>
+                      }
+                    />
+                  ) : recorded.authority.kind === "service" ? (
+                    <>
+                      <MetadataItem
+                        label="Execution grant"
+                        value={
+                          <span className="break-all">
+                            {recorded.authority.grantId} · v{recorded.authority.grantVersion}
+                          </span>
+                        }
+                      />
+                      {credential ? (
+                        <RunCredentialFields credential={credential} initialNow={initialNow} />
+                      ) : (
+                        <>
+                          <MetadataItem
+                            label="Credential owner"
+                            value={
+                              <span className="break-all">
+                                Service principal · {recorded.authority.servicePrincipalId}
+                              </span>
+                            }
+                          />
+                          <MetadataItem
+                            label="Service credential binding"
+                            value={
+                              <span className="break-all">{recorded.authority.bindingId}</span>
+                            }
+                          />
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <MetadataItem label="Credential authority" value="Unrecorded" />
+                  )}
+                </MetadataList>
+              ) : (
+                <p className="type-secondary text-muted">
+                  {executionProfile.kind === "unavailable"
+                    ? "Recorded execution profile unavailable."
+                    : "This attempt has no recorded execution profile."}
+                </p>
+              )}
+            </div>
+          </PageSection>
+        )}
 
         <PageSection title="Outcome">
           <div className="ui-sheet divide-y divide-border">
@@ -258,6 +333,36 @@ export function RunInspector({
         {transcript}
       </div>
     </PageContainer>
+  );
+}
+
+function RunCredentialFields({
+  credential,
+  initialNow,
+}: {
+  credential: RunInspectorCredential;
+  initialNow: string;
+}) {
+  return (
+    <>
+      <MetadataItem
+        label="Service credential binding"
+        value={
+          <span className="break-all">
+            {credential.bindingId} · v{credential.bindingVersion}
+          </span>
+        }
+      />
+      <MetadataItem
+        label="Credential owner"
+        value={<span className="break-all">{credential.servicePrincipalId}</span>}
+      />
+      <MetadataItem label="Secret revision" value={credential.materialRevision} />
+      <MetadataItem
+        label="Credential resolved"
+        value={<TimeDisplay initialNow={initialNow} value={credential.resolvedAt} />}
+      />
+    </>
   );
 }
 

@@ -6,6 +6,7 @@ import {
   loadRunInspectorArtifact,
   loadRunInspectorCredential,
   loadRunInspectorData,
+  loadRunInspectorExecutionProfile,
   loadRunInspectorMcpManifest,
   loadRunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
@@ -67,6 +68,7 @@ function fixture({
   revisions = null,
   credential = false,
   mcp = null,
+  executionProfile = null,
   failure,
 }: {
   checkpoint?: boolean;
@@ -74,11 +76,13 @@ function fixture({
   revisions?: unknown;
   credential?: boolean;
   mcp?: unknown;
+  executionProfile?: unknown;
   failure?: string;
 } = {}) {
   const requests: URL[] = [];
   const skillRequests: unknown[] = [];
   const mcpRequests: unknown[] = [];
+  const profileRequests: unknown[] = [];
   const supabase = createClient<Database>("https://database.example.test", "test-key", {
     auth: { persistSession: false, autoRefreshToken: false },
     global: {
@@ -97,6 +101,12 @@ function fixture({
         if (table === "get_run_mcp_manifest") {
           mcpRequests.push(JSON.parse(String(init?.body)));
           return Response.json(mcp);
+        }
+        if (table === "get_run_execution_profile") {
+          profileRequests.push(JSON.parse(String(init?.body)));
+          return table === failure
+            ? Response.json({ message: "private database error" }, { status: 403 })
+            : Response.json(executionProfile);
         }
         const data =
           table === "factory_run_credential_receipts"
@@ -124,11 +134,52 @@ function fixture({
     requests,
     skillRequests,
     mcpRequests,
+    profileRequests,
     input: { supabase, workspaceId, workspaceSlug: "wallie", run },
   };
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+it("loads the recorded profile only for the exact attempt and rejects unexpected private fields", async () => {
+  const profile = {
+    provider: "claude-code",
+    model: "claude-sonnet-4-5",
+    effort: "high",
+    maxTurns: 5,
+    sandboxProvider: "e2b",
+    sandboxConnectionRevision: artifactId,
+    workerRuntime: "workerd",
+    definitionRevisionId: artifactId,
+    authority: { kind: "human", memberId: run.sessionId },
+  };
+  const valid = fixture({ executionProfile: profile });
+  expect(await loadRunInspectorExecutionProfile(valid.input)).toEqual({
+    kind: "recorded",
+    profile,
+  });
+  expect(valid.profileRequests).toEqual([
+    {
+      target_workspace_id: workspaceId,
+      target_run_id: run.id,
+      target_attempt_count: run.attemptCount,
+    },
+  ]);
+  const unavailable = fixture({ executionProfile: { ...profile, token: "private value" } });
+  expect(await loadRunInspectorExecutionProfile(unavailable.input)).toEqual({
+    kind: "unavailable",
+  });
+  const unrecorded = fixture();
+  expect(await loadRunInspectorExecutionProfile(unrecorded.input)).toEqual({ kind: "unrecorded" });
+  const queued = fixture();
+  expect(
+    await loadRunInspectorExecutionProfile({
+      ...queued.input,
+      run: { ...run, attemptCount: null },
+    }),
+  ).toEqual({ kind: "unrecorded" });
+  expect(queued.profileRequests).toEqual([]);
+});
 
 it("exposes only the exact planned MCP manifest and rejects material-bearing payloads", async () => {
   const payload = {

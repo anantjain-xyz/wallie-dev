@@ -8,6 +8,7 @@ import type { RunCatalogRecovery } from "@/features/wallie/run-catalog-recovery"
 import { RunInspector } from "@/features/wallie/run-inspector";
 import type {
   RunInspectorArtifact,
+  RunInspectorExecutionProfile,
   RunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
 import { parseRunFailure } from "@/lib/pipeline/run-failure";
@@ -70,10 +71,12 @@ function show(
   changes: Partial<WorkspaceRunCatalogItem> = {},
   artifact: RunInspectorArtifact = { kind: "none" },
   skills: RunInspectorSkills = { kind: "unrecorded" },
+  executionProfile?: RunInspectorExecutionProfile,
 ) {
   return render(
     <RunInspector
       artifact={artifact}
+      executionProfile={executionProfile}
       initialNow={now}
       run={{ ...run, ...changes }}
       skills={skills}
@@ -90,6 +93,27 @@ afterEach(() => {
 });
 
 describe("RunInspector", () => {
+  it("displays the recorded execution profile for this attempt", () => {
+    show({ modelName: "current-catalog-model" }, undefined, undefined, {
+      kind: "recorded",
+      profile: {
+        provider: "claude-code",
+        model: "claude-sonnet-4-5",
+        effort: "high",
+        maxTurns: 5,
+        sandboxProvider: "e2b",
+        sandboxConnectionRevision: artifact.id,
+        workerRuntime: "workerd",
+        definitionRevisionId: artifact.id,
+        authority: { kind: "human", memberId: workspaceId },
+      },
+    });
+    expect(screen.getByRole("heading", { name: "Recorded execution profile" })).toBeTruthy();
+    expect(screen.getByText("claude-sonnet-4-5")).toBeTruthy();
+    expect(screen.getByText("Workerd")).toBeTruthy();
+    expect(screen.getByText(`Member · ${workspaceId}`)).toBeTruthy();
+    expect(screen.queryByText(/current-catalog-model/)).toBeNull();
+  });
   it("shows the durable attempt, source session and exact accepted artifact link", () => {
     show({}, artifact);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(run.sessionTitle);

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WallieActionError } from "@/lib/wallie/service";
 
 const mocked = vi.hoisted(() => ({
+  assertSessionFactoryCredentialReady: vi.fn(),
   assertSessionFirstRunReady: vi.fn(),
   assertSessionSandboxCapabilityReady: vi.fn(),
   createSessionWithFirstJob: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("@/lib/wallie/service", async () => {
     await vi.importActual<typeof import("@/lib/wallie/service")>("@/lib/wallie/service");
   return {
     WallieActionError: actual.WallieActionError,
+    assertSessionFactoryCredentialReady: mocked.assertSessionFactoryCredentialReady,
     assertSessionFirstRunReady: mocked.assertSessionFirstRunReady,
     assertSessionSandboxCapabilityReady: mocked.assertSessionSandboxCapabilityReady,
     createSessionWithFirstJob: mocked.createSessionWithFirstJob,
@@ -259,6 +261,7 @@ function setupAccess(...args: Parameters<typeof buildSupabaseMock>) {
 describe("POST /api/sessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.assertSessionFactoryCredentialReady.mockReset().mockResolvedValue(undefined);
     mocked.generateSessionTitle.mockResolvedValue(null);
     mocked.findSessionCreationRequest.mockResolvedValue(null);
     mocked.loadActiveFactoryExecution.mockResolvedValue(null);
@@ -376,6 +379,57 @@ describe("POST /api/sessions", () => {
         restartOfSessionId: STAGE_ID,
       }),
     );
+  });
+
+  it("confirms the checked factory digest for a pinned request without a client request ID", async () => {
+    const pinned = {
+      repositoryId: REPOSITORY_ID,
+      canonicalDigest: "a".repeat(64),
+      factoryId: FACTORY_ID,
+    };
+    mocked.loadActiveFactoryExecution.mockResolvedValue(pinned);
+    const response = await POST(
+      makeRequest({ promptMd: "Run the pinned profile", workspaceId: WORKSPACE_ID }),
+    );
+    expect(response.status).toBe(201);
+    expect(mocked.assertSessionFactoryCredentialReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: pinned,
+        creatorMemberId: MEMBER_ID,
+        factoryId: FACTORY_ID,
+      }),
+    );
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        factoryDefinitionDigest: pinned.canonicalDigest,
+        creationRequest: {
+          id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+          fingerprint: expect.any(String),
+        },
+      }),
+    );
+    expect(mocked.findSessionCreationRequest).not.toHaveBeenCalled();
+  });
+
+  it("blocks creation when a pinned execution profile is unavailable", async () => {
+    mocked.loadActiveFactoryExecution.mockResolvedValue({
+      repositoryId: REPOSITORY_ID,
+      canonicalDigest: "a".repeat(64),
+      factoryId: FACTORY_ID,
+    });
+    mocked.assertSessionFactoryCredentialReady.mockRejectedValueOnce(
+      new WallieActionError({
+        code: "factory_profile_unavailable",
+        message: "Choose a supported agent for the approved MCP tools.",
+        statusCode: 422,
+      }),
+    );
+    const response = await POST(
+      makeRequest({ promptMd: "Run the pinned profile", workspaceId: WORKSPACE_ID }),
+    );
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ code: "factory_profile_unavailable" });
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
   it("requires access to the source session even with an explicit restart repository", async () => {
@@ -540,6 +594,19 @@ describe("POST /api/sessions", () => {
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
       expect.objectContaining({
         creationRequest: mocked.findSessionCreationRequest.mock.calls[0][0].creationRequest,
+      }),
+    );
+  });
+
+  it("refreshes session options when the first definition was activated after preflight", async () => {
+    mocked.createSessionWithFirstJob.mockRejectedValueOnce({ code: "P0003" });
+    const response = await POST(makeRequest({ promptMd: "Run a task", workspaceId: WORKSPACE_ID }));
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "session_options_changed" });
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        factoryDefinitionDigest: null,
+        creationRequest: { id: expect.any(String), fingerprint: expect.any(String) },
       }),
     );
   });

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { FactoryCapabilityProbe } from "@/features/factory-definition/capability-probe";
+import { FactoryExecutionProfilePanel } from "@/features/factory-definition/execution-profile-panel";
 import {
   draftSavedSchema,
   factoryEditorPost,
@@ -139,6 +140,14 @@ export function FactoryDefinitionEditor({
   const [conflict, setConflict] = useState(false);
   const [feedback, setFeedback] = useState<FlashMessage | null>(null);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
+  const [profileRefresh, setProfileRefresh] = useState(0);
+  const refreshProfile = useCallback(() => setProfileRefresh((value) => value + 1), []);
+  const refreshProfileAfterCheck = useCallback(
+    (check: { status: string }) => {
+      if (check.status !== "running") refreshProfile();
+    },
+    [refreshProfile],
+  );
   const inFlight = useRef(false);
   const scrolledReceiptUrl = useRef<string | null>(null);
   const dirty = edit ? editChanged(edit) : false;
@@ -289,6 +298,7 @@ export function FactoryDefinitionEditor({
       if (!dirty) setEdit(editFrom(current.snapshot, edit?.input.kind));
       draftTests.refresh();
       revisionTests.refresh();
+      refreshProfile();
     });
   }
 
@@ -725,6 +735,13 @@ export function FactoryDefinitionEditor({
                   : undefined
               }
             />
+            {capabilityTarget ? (
+              <FactoryExecutionProfilePanel
+                api={api}
+                refresh={profileRefresh}
+                target={capabilityTarget}
+              />
+            ) : null}
             {capabilityTarget?.bundle.executionGrant && history ? (
               <PageSection anchorId="service-credentials" title="Service credentials">
                 {credentialScope ? (
@@ -734,6 +751,7 @@ export function FactoryDefinitionEditor({
                     scope={credentialScope}
                     workspaceSlug={workspaceSlug}
                     canUseBinding={canUseCredentialBinding}
+                    onChanged={refreshProfile}
                     onUseBinding={useCredentialBinding}
                   />
                 ) : (
@@ -754,6 +772,7 @@ export function FactoryDefinitionEditor({
                   <FactoryCapabilityProbe
                     key={capabilityTarget.id}
                     canManage={!busy}
+                    onCheckChange={refreshProfileAfterCheck}
                     target={capabilityTarget}
                     repositories={repositories}
                     sandboxConnected={snapshot.readySandboxProviders.includes(

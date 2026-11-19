@@ -4,6 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
+import { RECOMMENDED_AGENT_EFFORT } from "@/lib/agent-config/contracts";
 import { candidateSmokeStartSchema } from "@/lib/factory-definitions/candidate-smoke-contracts";
 import {
   compiledFactoryDefinitionSchema,
@@ -338,6 +339,7 @@ async function recordSkillPromptManifest(
   workspaceId: string,
   title: string,
   skillBody: string,
+  connectionRevision: string,
 ) {
   const session = await checked(
     admin
@@ -390,6 +392,13 @@ async function recordSkillPromptManifest(
       }),
     );
     if (!runId) throw new Error("The qualification attempt did not start.");
+    await checked(
+      admin
+        .from("agent_runs")
+        .update({ sandbox_provider: provider, sandbox_connection_revision: connectionRevision })
+        .eq("id", runId)
+        .eq("workspace_id", workspaceId),
+    );
     const checkoutSha = "a".repeat(40);
     const [input] = await checked(
       admin.rpc("pin_session_job_git_input", {
@@ -418,6 +427,7 @@ async function recordSkillPromptManifest(
           p_checkout_sha: checkoutSha,
           p_predecessors: [],
           p_worker_runtime: "node",
+          p_agent_effort: RECOMMENDED_AGENT_EFFORT,
           ...(session.creator_member_id
             ? { p_credential_owner_member_id: session.creator_member_id }
             : {}),
@@ -566,6 +576,9 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await promptInput.fill(secondAgentPrompt.id);
     const secondStage = await editAndSave(page, secondModel, true);
     expect(secondStage.id).not.toBe(firstStage.id);
+    const effectiveProfile = page.locator("#execution-profile");
+    await expect(effectiveProfile.getByText(secondModel, { exact: true })).toBeVisible();
+    await expect(effectiveProfile.getByText("Session creator", { exact: true })).toBeVisible();
     await expect(publish).toBeDisabled();
     await draftTests.getByRole("button", { name: "Run configuration test" }).click();
     await expect(publish).toBeEnabled();
@@ -577,6 +590,10 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await expect(page.getByText("Draft published for new sessions.")).toBeVisible();
     const changed = (await activation(2)).revision_id;
     expect(changed).not.toBe(original);
+    await expect(effectiveProfile.getByText("Ready", { exact: true })).toHaveCount(2);
+    await effectiveProfile.screenshot({
+      path: testInfo.outputPath("07-effective-execution-profile.png"),
+    });
 
     const title = "Qualify the new factory activation";
     await startSession(page, title, secondStage.name);
@@ -593,6 +610,7 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
 
     await page.goto(editor);
     await page.getByRole("button", { name: /Activation #1,/ }).click();
+    await expect(effectiveProfile.getByText(firstModel, { exact: true })).toBeVisible();
     const rollback = page.getByRole("button", { name: "Roll back to this revision" });
     await expect(rollback).toBeDisabled();
     await page
@@ -633,8 +651,26 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       fullPage: true,
     });
 
-    const inspectedRun = await recordSkillPromptManifest(admin, workspace.id, title, skillBody);
+    const inspectedRun = await recordSkillPromptManifest(
+      admin,
+      workspace.id,
+      title,
+      skillBody,
+      connectionRevision,
+    );
     await page.goto(`/w/${workspace.slug}/runs/${inspectedRun}`);
+    const recordedProfile = page.locator("#execution-profile");
+    await expect(
+      recordedProfile.getByRole("heading", { name: "Recorded execution profile" }),
+    ).toBeVisible();
+    await expect(recordedProfile.getByText(secondModel, { exact: true })).toBeVisible();
+    await expect(recordedProfile.getByText("Node.js", { exact: true })).toBeVisible();
+    await expect(recordedProfile.getByText(connectionRevision, { exact: true })).toBeVisible();
+    await expect(recordedProfile.getByText(changed, { exact: true })).toBeVisible();
+    await expect(recordedProfile.getByText("E2B", { exact: true })).toBeVisible();
+    await recordedProfile.screenshot({
+      path: testInfo.outputPath("08-recorded-execution-profile.png"),
+    });
     await expect(page.getByRole("heading", { name: "Skill revisions" })).toBeVisible();
     await expect(page.getByRole("heading", { name: skillName })).toBeVisible();
     await expect(page.getByText("Revision 1 · Factory-authored", { exact: true })).toBeVisible();
@@ -654,6 +690,9 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await page.screenshot({
       path: testInfo.outputPath("06-run-skill-revision-mobile-dark.png"),
       fullPage: true,
+    });
+    await recordedProfile.screenshot({
+      path: testInfo.outputPath("09-recorded-execution-profile-mobile-dark.png"),
     });
   } finally {
     if (workspaceId) await checked(admin.from("workspaces").delete().eq("id", workspaceId));
