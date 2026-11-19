@@ -3452,7 +3452,6 @@ export type Database = {
           kind: Database["public"]["Enums"]["session_conversation_message_kind"]
           originating_member_id: string | null
           provenance_version: number
-          receipt_key: string
           run_id: string | null
           sequence: number
           session_id: string
@@ -3474,7 +3473,6 @@ export type Database = {
           kind: Database["public"]["Enums"]["session_conversation_message_kind"]
           originating_member_id?: string | null
           provenance_version?: number
-          receipt_key: string
           run_id?: string | null
           sequence: number
           session_id: string
@@ -3496,7 +3494,6 @@ export type Database = {
           kind?: Database["public"]["Enums"]["session_conversation_message_kind"]
           originating_member_id?: string | null
           provenance_version?: number
-          receipt_key?: string
           run_id?: string | null
           sequence?: number
           session_id?: string

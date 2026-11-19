@@ -23,7 +23,9 @@ select ok(exists (select 1 from public.session_conversation_messages
     and author_label = 'Wallie' and length(body_md) = 4000 and body_truncated and originating_member_id is null),
   'system-originated input is attributable and bounded');
 select ok(not has_table_privilege('service_role', 'public.session_conversation_messages', 'INSERT')
-  and not has_table_privilege('authenticated', 'public.session_conversation_sources', 'UPDATE'),
+  and not has_table_privilege('authenticated', 'public.session_conversation_sources', 'UPDATE')
+  and not has_table_privilege('authenticated', 'internal.session_conversation_message_receipts', 'SELECT')
+  and not has_table_privilege('service_role', 'internal.session_conversation_message_receipts', 'SELECT'),
   'ordinary and service callers write conversation history only through scoped operations');
 
 create function pg_temp.bind_conversation_source(
@@ -36,6 +38,8 @@ create function pg_temp.bind_conversation_source(
 $$;
 create temp table thread_link as
 select * from pg_temp.bind_conversation_source('af100000-0000-4000-8000-000000000001');
+create temp table alternate_thread_link as
+select * from pg_temp.bind_conversation_source('af100000-0000-4000-8000-000000000001', p_thread => 'thread:456');
 select results_eq($q$select * from pg_temp.bind_conversation_source('af100000-0000-4000-8000-000000000001')$q$,
   'select * from thread_link', 'an equivalent source binding returns the canonical link');
 select throws_ok($q$select * from pg_temp.bind_conversation_source('af100000-0000-4000-8000-000000000002')$q$,
@@ -65,9 +69,18 @@ select results_eq($q$select * from pg_temp.conversation_message('af100000-0000-4
 select results_eq($q$select * from pg_temp.conversation_message('af100000-0000-4000-8000-000000000005',
   'Message from an associated surface', (select id from thread_link), 'external:message:1', 'external:actor:1')$q$,
   'values (3, true)', 'the external identity deduplicates independent delivery requests');
+select throws_ok($q$select * from pg_temp.conversation_message('af100000-0000-4000-8000-000000000005',
+  'Message from an associated surface', (select id from thread_link), 'external:message:2', 'external:actor:1')$q$,
+  'P0005', 'This message receipt was already used for different input.', 'an accepted replay binds its new request key to the original message');
+select throws_ok($q$select * from pg_temp.conversation_message('af100000-0000-4000-8000-000000000005',
+  'Message from an associated surface', (select id from alternate_thread_link), 'external:message:1', 'external:actor:1')$q$,
+  'P0005', 'This message receipt was already used for different input.', 'a bound replay cannot move to another source association');
 select throws_ok($q$select * from pg_temp.conversation_message('af100000-0000-4000-8000-000000000004',
   'Message from an associated surface', (select id from thread_link), 'external:message:2', 'external:actor:1')$q$,
   'P0005', 'This message receipt was already used for different input.', 'a receipt cannot be reused for a different external message');
+select throws_ok($q$select * from pg_temp.conversation_message('af100000-0000-4000-8000-000000000003',
+  'Message from an associated surface', (select id from thread_link), 'external:message:1', 'external:actor:1')$q$,
+  'P0005', 'This message receipt was already used for different input.', 'request and external identities cannot resolve to different messages');
 select is((select last_sequence from public.session_conversations where session_id = 'af100000-0000-4000-8000-000000000001'),
   3, 'replay and conflict do not increment the sequence');
 select is((select count(*) from public.agent_jobs where session_id = 'af100000-0000-4000-8000-000000000001'),
@@ -76,6 +89,12 @@ select throws_ok($q$update public.session_conversation_messages set body_md = 'E
   where session_id = 'af100000-0000-4000-8000-000000000001' and sequence = 1$q$,
   '23514', 'Session conversation history is append-only.', 'message history cannot be edited in place');
 update public.sessions set archived_at = clock_timestamp() where id = 'af100000-0000-4000-8000-000000000001';
+select results_eq($q$select * from pg_temp.conversation_message('af100000-0000-4000-8000-000000000006',
+  'Message from an associated surface', (select id from thread_link), 'external:message:1', 'external:actor:1')$q$,
+  'values (3, true)', 'a provider receipt still replays against its exact message after archive');
+select throws_ok($q$select * from pg_temp.conversation_message('af100000-0000-4000-8000-000000000006',
+  'Message from an associated surface', (select id from thread_link), 'external:message:2', 'external:actor:1')$q$,
+  'P0005', 'This message receipt was already used for different input.', 'an accepted archived replay also binds its request key');
 select results_eq($q$select * from pg_temp.bind_conversation_source('af100000-0000-4000-8000-000000000001')$q$,
   'select * from thread_link', 'a committed source binding still replays after the session is archived');
 select throws_ok($q$select * from pg_temp.bind_conversation_source('af100000-0000-4000-8000-000000000001',
@@ -110,7 +129,8 @@ set local request.jwt.claim.role = 'service_role';
 delete from public.sessions where id = 'af100000-0000-4000-8000-000000000001';
 select ok(not exists (select 1 from public.session_conversation_sources where session_id = 'af100000-0000-4000-8000-000000000001')
   and not exists (select 1 from public.session_conversation_messages where session_id = 'af100000-0000-4000-8000-000000000001')
+  and not exists (select 1 from internal.session_conversation_message_receipts where session_id = 'af100000-0000-4000-8000-000000000001')
   and not exists (select 1 from public.session_conversations where session_id = 'af100000-0000-4000-8000-000000000001'),
-  'deleting a session removes its conversation, messages and source links together');
+  'deleting a session removes its conversation, messages, source links and private receipts together');
 select * from finish();
 rollback;

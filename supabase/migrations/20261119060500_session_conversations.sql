@@ -52,10 +52,8 @@ create table public.session_conversation_messages (
   body_md text not null check (length(body_md) between 1 and 4000 and btrim(body_md, E' \t\r\n') <> ''),
   body_truncated boolean not null default false,
   provenance_version smallint not null default 1 check (provenance_version = 1),
-  receipt_key text not null,
   created_at timestamptz not null default clock_timestamp(),
   primary key (session_id, sequence),
-  unique (session_id, receipt_key),
   unique (session_id, source_id, external_message_id),
   foreign key (session_id, workspace_id, factory_id)
     references public.session_conversations(session_id, workspace_id, factory_id) on delete cascade,
@@ -69,6 +67,18 @@ create table public.session_conversation_messages (
   check ((kind in ('artifact_feedback', 'review_ready')) = (artifact_id is not null)),
   check ((kind = 'artifact_feedback') = (feedback_batch_id is not null))
 );
+
+create table internal.session_conversation_message_receipts (
+  session_id uuid not null,
+  receipt_key text not null check (length(receipt_key) between 1 and 120),
+  sequence integer not null,
+  primary key (session_id, receipt_key),
+  foreign key (session_id, sequence) references public.session_conversation_messages(session_id, sequence) on delete cascade
+);
+create index session_conversation_message_receipts_message_idx
+  on internal.session_conversation_message_receipts(session_id, sequence);
+alter table internal.session_conversation_message_receipts enable row level security;
+revoke all on internal.session_conversation_message_receipts from public, anon, authenticated, service_role;
 
 alter table public.session_conversations enable row level security;
 alter table public.session_conversation_sources enable row level security;
@@ -98,6 +108,8 @@ create trigger preserve_session_conversation_messages before update or delete on
   for each row execute function internal.preserve_session_conversation_history();
 create trigger preserve_session_conversation_sources before update or delete on public.session_conversation_sources
   for each row execute function internal.preserve_session_conversation_history();
+create trigger preserve_session_conversation_message_receipts before update or delete on internal.session_conversation_message_receipts
+  for each row execute function internal.preserve_session_conversation_history();
 
 create function internal.ensure_session_conversation(p_session public.sessions)
 returns void language sql set search_path = '' as $$
@@ -111,7 +123,7 @@ revoke all on function internal.ensure_session_conversation(public.sessions) fro
 -- mutations. The counter update and message commit together, so later cursors
 -- cannot skip a transaction that allocated a lower sequence and committed late.
 create function internal.append_session_conversation_message(
-  p_session public.sessions, p_message public.session_conversation_messages
+  p_session public.sessions, p_message public.session_conversation_messages, p_receipt_key text
 ) returns table(sequence integer, replayed boolean)
 language plpgsql set search_path = '' as $$
 declare prior public.session_conversation_messages; appended_sequence integer;
@@ -119,7 +131,8 @@ begin
   for prior in
     select message.* from public.session_conversation_messages message
     where message.session_id = p_session.id and (
-      message.receipt_key = p_message.receipt_key or
+      message.sequence = (select receipt.sequence from internal.session_conversation_message_receipts receipt
+        where receipt.session_id = p_session.id and receipt.receipt_key = p_receipt_key) or
       (message.source_id, message.external_message_id) = (p_message.source_id, p_message.external_message_id))
   loop
     if (prior.kind, prior.author_kind, prior.originating_member_id, prior.run_id, prior.attempt_count,
@@ -134,6 +147,10 @@ begin
     appended_sequence := prior.sequence;
   end loop;
   if appended_sequence is not null then
+    -- A provider may deliver the same message with another request key. Bind
+    -- the accepted key now so a later retry cannot retarget it to new input.
+    insert into internal.session_conversation_message_receipts(session_id, receipt_key, sequence)
+    values (p_session.id, p_receipt_key, appended_sequence) on conflict (session_id, receipt_key) do nothing;
     return query select appended_sequence, true;
     return;
   end if;
@@ -147,17 +164,19 @@ begin
   insert into public.session_conversation_messages (
     session_id, workspace_id, factory_id, sequence, kind, author_kind, author_label, originating_member_id,
     run_id, attempt_count, artifact_id, feedback_batch_id, source_id, external_message_id, external_actor_id,
-    body_md, body_truncated, receipt_key
+    body_md, body_truncated
   ) values (
     p_session.id, p_session.workspace_id, p_session.factory_id, appended_sequence, p_message.kind, p_message.author_kind,
     left(p_message.author_label, 120), p_message.originating_member_id, p_message.run_id, p_message.attempt_count,
     p_message.artifact_id, p_message.feedback_batch_id, p_message.source_id, p_message.external_message_id,
-    p_message.external_actor_id, p_message.body_md, p_message.body_truncated, p_message.receipt_key
+    p_message.external_actor_id, p_message.body_md, p_message.body_truncated
   );
+  insert into internal.session_conversation_message_receipts(session_id, receipt_key, sequence)
+  values (p_session.id, p_receipt_key, appended_sequence);
   return query select appended_sequence, false;
 end;
 $$;
-revoke all on function internal.append_session_conversation_message(public.sessions, public.session_conversation_messages)
+revoke all on function internal.append_session_conversation_message(public.sessions, public.session_conversation_messages, text)
   from public, anon, authenticated, service_role;
 
 create function internal.lock_session_conversation(
@@ -256,8 +275,8 @@ begin
   message.external_message_id := p_external_message_id;
   message.external_actor_id := p_external_actor_id;
   message.body_truncated := false;
-  message.receipt_key := 'user:' || p_actor_member_id::text || ':' || p_request_id::text;
-  return query select * from internal.append_session_conversation_message(session, message);
+  return query select * from internal.append_session_conversation_message(session, message,
+    'user:' || p_actor_member_id::text || ':' || p_request_id::text);
 end;
 $$;
 revoke all on function public.append_session_conversation_message_once(uuid, uuid, uuid, uuid, uuid, text, uuid, text, text)
@@ -286,8 +305,7 @@ begin
   end if;
   message.body_md := rtrim(left(prompt, 4000), E' \t\r\n');
   message.body_truncated := length(prompt) > 4000;
-  message.receipt_key := 'initial_prompt';
-  perform internal.append_session_conversation_message(new, message);
+  perform internal.append_session_conversation_message(new, message, 'initial_prompt');
   return new;
 end;
 $$;
@@ -311,8 +329,7 @@ begin
   -- Only capture the submitter's own prose here and link to the reviewed input.
   message.body_md := coalesce(nullif(btrim(new.whole_stage_feedback, E' \t\r\n'), ''), 'Submitted inline feedback.');
   message.body_truncated := false;
-  message.receipt_key := 'artifact_feedback:' || new.id::text;
-  perform internal.append_session_conversation_message(session, message);
+  perform internal.append_session_conversation_message(session, message, 'artifact_feedback:' || new.id::text);
   return new;
 end;
 $$;
@@ -352,8 +369,7 @@ begin
   message.artifact_id := session.current_artifact_id;
   message.body_md := 'An artifact is ready for review.';
   message.body_truncated := false;
-  message.receipt_key := 'review_ready:' || session.current_artifact_id::text;
-  perform internal.append_session_conversation_message(session, message);
+  perform internal.append_session_conversation_message(session, message, 'review_ready:' || session.current_artifact_id::text);
   if p_deadline_at is not null and clock_timestamp() >= p_deadline_at then
     raise exception 'Worker attempt exceeded its publication deadline.' using errcode = '57014';
   end if;
