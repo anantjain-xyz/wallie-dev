@@ -327,6 +327,7 @@ describe("POST /api/sessions", () => {
     });
     expect(mocked.findSessionCreationRequest).toHaveBeenCalledWith(
       expect.objectContaining({
+        commandFactoryId: null,
         creatorMemberId: MEMBER_ID,
         workspaceId: WORKSPACE_ID,
         creationRequest: {
@@ -363,6 +364,9 @@ describe("POST /api/sessions", () => {
     );
 
     expect(response.status).toBe(201);
+    expect(mocked.findSessionCreationRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ restartOfSessionId: STAGE_ID }),
+    );
     expect(mocked.loadSessionFirstRunPrerequisites).toHaveBeenCalledWith(
       expect.objectContaining({ pinned, workspaceId: WORKSPACE_ID }),
     );
@@ -401,6 +405,7 @@ describe("POST /api/sessions", () => {
     );
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
       expect.objectContaining({
+        commandFactoryId: null,
         factoryDefinitionDigest: pinned.canonicalDigest,
         creationRequest: {
           id: expect.stringMatching(/^[0-9a-f-]{36}$/),
@@ -593,6 +598,7 @@ describe("POST /api/sessions", () => {
     expect(response.status).toBe(201);
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
       expect.objectContaining({
+        commandFactoryId: null,
         creationRequest: mocked.findSessionCreationRequest.mock.calls[0][0].creationRequest,
       }),
     );
@@ -638,6 +644,24 @@ describe("POST /api/sessions", () => {
       expect(await response.json()).toMatchObject({ code: "session_request_conflict" });
     },
   );
+
+  it("denies replay when the actor no longer has factory access", async () => {
+    mocked.findSessionCreationRequest.mockRejectedValueOnce({
+      code: "42501",
+      message: "Internal authorization details.",
+    });
+
+    const response = await POST(
+      makeRequest({ requestId: ATTACHMENT_ID, promptMd: "Add SSO", workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      code: "factory_access_denied",
+      error: "You cannot start a session with the selected factory resources.",
+    });
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
 
   it("does not create when the replay lookup is unavailable", async () => {
     mocked.findSessionCreationRequest.mockRejectedValueOnce(new Error("Database unavailable"));

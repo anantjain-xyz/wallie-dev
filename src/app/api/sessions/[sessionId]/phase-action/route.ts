@@ -6,7 +6,8 @@ import type {
   SessionMutationErrorResponse,
   SessionPhaseMutationResult,
 } from "@/features/sessions/mutation-contracts";
-import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
+import { handleApproval } from "@/lib/pipeline/processor";
+import { followUpSessionCommand } from "@/lib/sessions/follow-up-command";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { withServerTiming, type ServerTimingCollector } from "@/lib/server-timing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -100,7 +101,7 @@ export async function POST(request: Request, { params }: Params) {
       supabase
         .from("sessions")
         .select(
-          "id, workspace_id, phase_status, current_stage_id, archived_at, execute_pinned_definition, factory_definition_revision_id",
+          "id, workspace_id, factory_id, phase_status, current_stage_id, archived_at, execute_pinned_definition, factory_definition_revision_id",
         )
         .eq("id", sessionId)
         .maybeSingle(),
@@ -207,10 +208,11 @@ export async function POST(request: Request, { params }: Params) {
         return errorResponse("invalid_input", "Feedback is required", 400);
       }
       const result = await timing.segment("mutation", () =>
-        handleRejection({
+        followUpSessionCommand({
           expectedArtifactId: body.artifactId,
           expectedStageId: body.stageId,
           expectedWorkspaceId: sessionRow.workspace_id,
+          factoryId: sessionRow.factory_id,
           feedbackText,
           ...(body.feedbackSubmission ? { feedbackSubmission: body.feedbackSubmission } : {}),
           requestedByMemberId: memberRow.id,
@@ -258,6 +260,14 @@ function feedbackSubmissionError(code: string | undefined, message: string | und
     );
   if (code === "42501")
     return errorResponse("forbidden", "Active human workspace membership is required.", 403);
+  if (code === "PT409")
+    return errorResponse(
+      "mutation_conflict",
+      "Factory access is changing. Retry feedback submission.",
+      409,
+    );
+  if (code === "PT404" || code === "P0002")
+    return errorResponse("not_found", "Session not found", 404);
   if (code === "22001")
     return errorResponse(
       "invalid_input",

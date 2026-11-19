@@ -553,6 +553,7 @@ export type Database = {
           job_id: string | null
           rejection_count: number
           rendered_feedback_text: string
+          request_hash: string
           request_id: string
           requested_by_member_id: string
           review_revision: number
@@ -574,6 +575,7 @@ export type Database = {
           job_id?: string | null
           rejection_count: number
           rendered_feedback_text: string
+          request_hash?: string
           request_id: string
           requested_by_member_id: string
           review_revision: number
@@ -595,6 +597,7 @@ export type Database = {
           job_id?: string | null
           rejection_count?: number
           rendered_feedback_text?: string
+          request_hash?: string
           request_id?: string
           requested_by_member_id?: string
           review_revision?: number
@@ -6727,6 +6730,22 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      cancel_session_command_once: {
+        Args: {
+          actor_member_id: string
+          expected_run_id: string
+          target_factory_id: string
+          target_request_hash: string
+          target_request_id: string
+          target_session_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_ids: string[]
+          replayed: boolean
+          run_ids: string[]
+        }[]
+      }
       cancel_session_job_attempts: {
         Args: {
           p_expected_run_id?: string
@@ -7219,6 +7238,34 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_session_command_once: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          expected_factory_definition_digest: string
+          selected_pipeline_id?: string
+          selected_stage_ids?: string[]
+          session_attachment_ids: string[]
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          source_session_id?: string
+          target_factory_id?: string
+          target_request_hash: string
+          target_request_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
+      }
       create_session_once_with_first_job: {
         Args: {
           agent_model_name: string
@@ -7430,6 +7477,23 @@ export type Database = {
           p_run_id?: string
         }
         Returns: string
+      }
+      find_session_creation_command: {
+        Args: {
+          creator_member_id: string
+          source_session_id?: string
+          target_factory_id?: string
+          target_request_hash: string
+          target_request_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
       }
       find_session_creation_request: {
         Args: {
@@ -9313,6 +9377,37 @@ export type Database = {
           p_expected_artifact_id: string
           p_expected_review_revision: number
           p_expected_stage_id: string
+          p_feedback_text: string
+          p_request_id: string
+          p_requested_by_member_id?: string
+          p_run_type?: string
+          p_selected_thread_ids: string[]
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string
+          current_artifact_version: number
+          current_stage_id: string
+          feedback_batch_id: string
+          job_created: boolean
+          job_id: string
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          rejection_count: number
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }[]
+      }
+      submit_session_follow_up_once: {
+        Args: {
+          p_agent_model_name?: string
+          p_agent_model_provider?: string
+          p_artifact_version: number
+          p_expected_artifact_id: string
+          p_expected_review_revision: number
+          p_expected_stage_id: string
+          p_factory_id: string
           p_feedback_text: string
           p_request_id: string
           p_requested_by_member_id?: string

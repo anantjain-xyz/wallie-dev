@@ -61,10 +61,14 @@ begin
 end;
 $$;
 create function pg_temp.batch_send(target_label text,request_id uuid,selected uuid[],note text default '',review_token bigint default null,
-  actor uuid default 'c1b2c3d4-0001-4000-8000-000000000001',model_name text default 'gpt-5.5')
+  actor uuid default 'c1b2c3d4-0001-4000-8000-000000000001',model_name text default 'gpt-5.5',
+  factory_override uuid default null)
 returns jsonb language sql as $$
-  select to_jsonb(receipt) from batch_targets target cross join lateral public.submit_artifact_feedback_batch(
-    p_session_id=>target.session_id,p_workspace_id=>'b1b2c3d4-0001-4000-8000-000000000001',p_artifact_version=>1,
+  select to_jsonb(receipt) from batch_targets target
+  join public.sessions owner on owner.id = target.session_id
+  cross join lateral public.submit_session_follow_up_once(
+    p_session_id=>target.session_id,p_workspace_id=>owner.workspace_id,p_artifact_version=>1,
+    p_factory_id=>coalesce(factory_override,owner.factory_id),
     p_expected_stage_id=>target.stage_id,p_expected_artifact_id=>target.artifact_id,
     p_expected_review_revision=>coalesce(review_token,(select artifact_review_revision from public.sessions where id=target.session_id)),
     p_request_id=>request_id,p_selected_thread_ids=>selected,p_feedback_text=>note,
@@ -143,6 +147,13 @@ select ok((select batch.checkpoint_run_id=target.run_id and batch.artifact_id=ta
   from public.artifact_feedback_batches batch cross join batch_targets target cross join batch_review_token token
   where batch.id=(select (value->>'feedback_batch_id')::uuid from batch_receipt) and target.label='main'),
   'the immutable batch records the exact inspected artifact, review token, and accepted source');
+select ok((select request_hash ~ '^[0-9a-f]{64}$' and request_hash = internal.session_follow_up_request_hash(
+  session_id, stage_id, artifact_id, artifact_version, review_revision, selected_thread_ids, 'Whole-stage request')
+  and request_hash <> internal.session_follow_up_request_hash(
+    session_id, stage_id, artifact_id, artifact_version, review_revision, selected_thread_ids, 'Changed request')
+  from public.artifact_feedback_batches where id=(select (value->>'feedback_batch_id')::uuid from batch_receipt)),
+  'the durable follow-up hash records canonical intent and changes when feedback changes');
+
 select is((select count(*) from public.artifact_feedback_batch_threads where batch_id=(select (value->>'feedback_batch_id')::uuid from batch_receipt)),
   2::bigint,'only selected threads are snapshotted');
 select ok((select saved.thread_revision=current.revision and saved.anchor=current.anchor and saved.kind=current.kind
@@ -179,6 +190,10 @@ select is(pg_temp.batch_send('main','50200000-0000-4000-8000-000000000001',
 select is(pg_temp.batch_failure($q$select pg_temp.batch_send('main','50200000-0000-4000-8000-000000000001',
   array[(select id from batch_first_thread),(select id from batch_second_thread)],'Changed retry body',
   (select token from batch_review_token))$q$)->>'code','23505','a request UUID cannot silently accept changed semantic content');
+select is(pg_temp.batch_failure($q$select pg_temp.batch_send('main','50200000-0000-4000-8000-000000000001',
+  array[(select id from batch_first_thread),(select id from batch_second_thread)],'Whole-stage request',
+  (select token from batch_review_token),'c1b2c3d4-0001-4000-8000-000000000001','gpt-5.5',gen_random_uuid())$q$)->>'code',
+  'P0002','a receipt replay cannot retarget the reviewed session to another factory');
 select pg_temp.batch_fixture('other-session');
 select is(pg_temp.batch_failure($q$select pg_temp.batch_send('other-session','50200000-0000-4000-8000-000000000001','{}','Other session')$q$)->>'code',
   '23505','one actor request UUID cannot silently retarget another session');

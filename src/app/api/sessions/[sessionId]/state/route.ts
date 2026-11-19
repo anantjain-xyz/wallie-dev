@@ -4,10 +4,7 @@ import type {
   SessionMutationErrorResponse,
   SessionPhaseMutationResult,
 } from "@/features/sessions/mutation-contracts";
-import {
-  querySessionPhaseState,
-  resolveSessionPhaseState,
-} from "@/features/sessions/phase-state.server";
+import { readSessionCommand } from "@/lib/sessions/commands";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -27,27 +24,13 @@ export async function GET(_request: Request, { params }: Params) {
     );
   }
 
-  const { data, error } = await querySessionPhaseState(supabase, sessionId).maybeSingle();
-
-  if (error) {
+  const state = await readSessionCommand(supabase, sessionId);
+  if (!state.ok) {
     return NextResponse.json<SessionMutationErrorResponse>(
-      { code: "mutation_failed", error: error.message },
-      { status: 500 },
-    );
-  }
-  if (!data) {
-    return NextResponse.json<SessionMutationErrorResponse>(
-      { code: "not_found", error: "Session not found" },
-      { status: 404 },
-    );
-  }
-  const result = await resolveSessionPhaseState(supabase, data);
-  if (!result) {
-    return NextResponse.json<SessionMutationErrorResponse>(
-      { code: "mutation_failed", error: "Session stage not found" },
-      { status: 500 },
+      { code: state.code, error: state.error },
+      { status: state.code === "not_found" ? 404 : 500 },
     );
   }
 
-  return NextResponse.json<SessionPhaseMutationResult>(result);
+  return NextResponse.json<SessionPhaseMutationResult>(state.result);
 }

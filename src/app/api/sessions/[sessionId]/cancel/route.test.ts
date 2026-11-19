@@ -47,7 +47,7 @@ function buildAdminClient(resultPhaseStatus: string) {
     from: () => ({
       select: () => ({
         eq: () => ({
-          single: async () => ({
+          maybeSingle: async () => ({
             data: {
               archived_at: null,
               current_artifact_id: "artifact-current",
@@ -120,12 +120,14 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(mocked.cancelSessionWork).toHaveBeenCalledWith(expect.anything(), {
-      parkPhaseStatus: true,
-      reason: "Stage canceled by a workspace member.",
-      sessionId: session.id,
-      workspaceId: session.workspace_id,
-    });
+    expect(mocked.cancelSessionWork).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        reason: "Stage canceled by a workspace member.",
+        sessionId: session.id,
+        workspaceId: session.workspace_id,
+      }),
+    );
     await expect(response.json()).resolves.toEqual({
       archivedAt: null,
       currentArtifactId: "artifact-current",
