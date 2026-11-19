@@ -82,12 +82,14 @@ import {
 } from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 import { loadJobFeedback } from "./job-feedback";
+import { loadSpecificationPromptContext } from "./specification-context";
 import { pinSessionAttemptManifest, type AttemptWorkerRuntime } from "./attempt-manifest";
 import { ExecutionOwnershipLostError, RunEventCapture } from "./run-events";
 
 import {
   captureSourceCheckpoint,
   readSourceBase,
+  type SourceCheckpoint,
   UnsupportedLfsCheckpointError,
   UnsupportedSourceTransformError,
   UnsupportedSubmoduleCheckpointError,
@@ -215,8 +217,8 @@ export async function processPipelineJob(input: {
 // One implementation handles every user-defined stage. Render the stage's
 // prompt against the session context, run it through the agent runner, capture
 // the text output as a markdown artifact, and flip phase_status to
-// awaiting_review. No specialized output shapes — that's the v1 trade-off for
-// letting workspaces define their own pipeline.
+// awaiting_review. An opt-in specification stage uses the same runner and
+// publication ownership while carrying only the pinned source input.
 async function runStage(input: {
   admin: AdminClient;
   job: Tables<"agent_jobs">;
@@ -229,6 +231,7 @@ async function runStage(input: {
   workerRuntime?: AttemptWorkerRuntime;
 }): Promise<ProcessPipelineJobResult> {
   const { admin, job, session, stage, pinned, captureOrderedEvents = true } = input;
+  const specificationStage = session.specification_stage_id === stage.id;
   const supervisorSignal = input.signal;
   let signal = input.signal;
   let budgetController: AbortController | undefined;
@@ -300,6 +303,12 @@ async function runStage(input: {
   let capture: RunEventCapture | undefined;
   let captureOpen = false;
   try {
+    if (specificationStage && !pinned?.implementationAgent) {
+      throw new FactoryExecutionProfileUnavailableError(
+        "The specification stage requires a pinned named agent.",
+      );
+    }
+
     const profile =
       pinned && resolveFactoryExecutionProfile(pinned, session.creator_member_id ?? undefined);
     const gitInputPromise = loadPinnedSessionJobGitInput({
@@ -318,10 +327,11 @@ async function runStage(input: {
       sessionAttachments,
       repository,
       priorGitInput,
+      specification,
     ] = await Promise.all([
       pinned?.agent ?? loadWorkspaceAgentConfig(admin, session.workspace_id),
       loadAttemptPredecessors(admin, session.id),
-      loadJobFeedback(admin, job, stage.id),
+      loadJobFeedback(admin, job, stage.id, specificationStage ? { exactOnly: true } : undefined),
       pinned?.operatingRulesMd ?? loadPipelineOperatingRules(admin, stage.pipelineId),
       pinned
         ? loadPinnedSessionPrompt(admin, session)
@@ -341,6 +351,7 @@ async function runStage(input: {
         });
       }),
       gitInputPromise,
+      specificationStage ? loadSpecificationPromptContext(admin, session, stage.id) : undefined,
     ]);
     throwIfAborted(signal);
     if (pinned && predecessorInputs.predecessors.some(({ status }) => status !== "approved")) {
@@ -397,7 +408,9 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
-    const mcpManifest = pinned?.mcpManifest;
+    // Tool grants identify operations by name and do not classify writes. The
+    // specification stage only receives the existing read-only repository inputs.
+    const mcpManifest = specificationStage ? undefined : pinned?.mcpManifest;
     if (profile?.unavailableReason)
       throw new FactoryExecutionProfileUnavailableError(profile.unavailableReason);
 
@@ -596,6 +609,7 @@ async function runStage(input: {
       sandbox,
     };
     const resumed =
+      !specificationStage &&
       job.trigger_type === "manual_retry" &&
       (await restoreRetryInput({ ...retryCheckpointContext, signal }));
     if (resumed) {
@@ -618,14 +632,14 @@ async function runStage(input: {
       signal,
       workspaceId: session.workspace_id,
     });
-    await prepareValidationPlan(sandbox, runId);
+    if (!specificationStage) await prepareValidationPlan(sandbox, runId);
     throwIfAborted(signal);
     const workerDeadlineMs =
       input.deadlineAt && input.deadlineAt === executionDeadlineAt
         ? Date.parse(input.deadlineAt)
         : undefined;
     const checkpointAt =
-      workerDeadlineMs === undefined
+      specificationStage || workerDeadlineMs === undefined
         ? undefined
         : Math.max(
             workerDeadlineMs - RETRY_CHECKPOINT_LEAD_MS,
@@ -675,10 +689,14 @@ async function runStage(input: {
               `## Retry checkpoint\n\n${checkpointInstructions.join("\n\n")}`,
             )
           : undefined,
-        validationPlanInstructions: trustedPromptValue(
-          "run.validationPlanInstructions",
-          validationPlanInstructions(runId),
-        ),
+        ...(specificationStage
+          ? { specification }
+          : {
+              validationPlanInstructions: trustedPromptValue(
+                "run.validationPlanInstructions",
+                validationPlanInstructions(runId),
+              ),
+            }),
         previousStages: Object.fromEntries(
           Object.entries(predecessorInputs.promptArtifacts).map(([slug, artifact]) => [
             slug,
@@ -871,9 +889,10 @@ async function runStage(input: {
     })) {
       if (scopedCleanupFailed) throw new ScopedCredentialCleanupError();
       const sourceRecoveryRequired =
-        (event.type === "completion" && event.taskComplete) ||
-        // Scoped runners verify credential cleanup before terminal success.
-        (event.type === "usage" && event.sourceRecoveryRequired && !scopedBindingId);
+        !specificationStage &&
+        ((event.type === "completion" && event.taskComplete) ||
+          // Scoped runners verify credential cleanup before terminal success.
+          (event.type === "usage" && event.sourceRecoveryRequired && !scopedBindingId));
       if (sourceRecoveryRequired && !retainSource) {
         // Protect the only source copy synchronously, before usage persistence
         // or any other completion bookkeeping can fail or wait past the deadline.
@@ -976,25 +995,28 @@ async function runStage(input: {
     // the source is durable. A dual-store outage leaves the provider TTL as the
     // recovery window, and the reaper honors this explicit retention marker.
     try {
-      let checkpoint = await captureSourceCheckpoint({
-        sandbox,
-        baseSha: sourceBase,
-        signal,
-        sensitiveValues: sensitiveValues(),
-        ...(scopedBindingId ? { scopedCredential: true } : {}),
-      });
-      checkpoint = await validateCheckpoint({
-        ...(pinned ? { pinnedDeliveryPolicyRevisionId: pinned.deliveryPolicyRevisionId } : {}),
-        admin,
-        workspaceId: session.workspace_id,
-        pipelineId: stage.pipelineId,
-        runId,
-        sandbox,
-        checkpoint,
-        secrets: sensitiveValues(),
-        ...(scopedBindingId ? { scopedCredential: true } : {}),
-        signal,
-      });
+      // Specification output is Markdown only. Bind publication to the
+      // previously pinned input, never to the sandbox's post-run source.
+      const checkpoint: SourceCheckpoint = specificationStage
+        ? { kind: "unchanged", baseSha: sourceBase, headSha: sourceBase }
+        : await validateCheckpoint({
+            ...(pinned ? { pinnedDeliveryPolicyRevisionId: pinned.deliveryPolicyRevisionId } : {}),
+            admin,
+            workspaceId: session.workspace_id,
+            pipelineId: stage.pipelineId,
+            runId,
+            sandbox,
+            checkpoint: await captureSourceCheckpoint({
+              sandbox,
+              baseSha: sourceBase,
+              signal,
+              sensitiveValues: sensitiveValues(),
+              ...(scopedBindingId ? { scopedCredential: true } : {}),
+            }),
+            secrets: sensitiveValues(),
+            ...(scopedBindingId ? { scopedCredential: true } : {}),
+            signal,
+          });
       const prepared = await prepareSourceDelivery({
         admin,
         baseBranch: gitInput.base_branch,

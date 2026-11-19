@@ -630,21 +630,26 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
   });
 
   it.each([
-    ["PT409", "blocking_review", "Resolve or supersede"],
-    ["PT412", "stale_version", "This review changed"],
-  ])("returns a deterministic approval conflict for %s", async (errorCode, code, message) => {
-    mocked.handleApproval.mockResolvedValue({
-      success: false,
-      errorCode,
-      error: "Database conflict",
-    });
-    const response = await POST(makeRequest({ action: "approve", version: 1 }), routeContext());
-    expect(response.status).toBe(409);
-    const payload = await response.json();
-    expect(payload.code).toBe(code);
-    expect(payload.error).toContain(message);
-    expect(mocked.handleApproval).toHaveBeenCalledWith(
-      expect.objectContaining({ expectedReviewRevision: 7 }),
-    );
-  });
+    ["42501", 403, "forbidden", "You do not have access"],
+    ["PT409", 409, "blocking_review", "Resolve or supersede"],
+    ["PT423", 409, "invalid_state", "Answer the current clarification"],
+    ["PT412", 409, "stale_version", "This review changed"],
+  ])(
+    "returns a deterministic approval failure for %s",
+    async (errorCode, status, code, message) => {
+      mocked.handleApproval.mockResolvedValue({
+        success: false,
+        errorCode,
+        error: "Database conflict",
+      });
+      const response = await POST(makeRequest({ action: "approve", version: 1 }), routeContext());
+      expect(response.status).toBe(status);
+      const payload = await response.json();
+      expect(payload.code).toBe(code);
+      expect(payload.error).toContain(message);
+      expect(mocked.handleApproval).toHaveBeenCalledWith(
+        expect.objectContaining({ expectedReviewRevision: 7 }),
+      );
+    },
+  );
 });

@@ -287,6 +287,7 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     factory_definition_revision_id: null,
     execute_pinned_definition: false,
     pinned_delivery_policy_revision_id: null,
+    specification_stage_id: null,
     ...overrides,
   };
 }
@@ -344,6 +345,11 @@ interface MockOptions {
   startAdmissionError?: { code: string; message: string };
   releaseDeferError?: { message: string };
   currentAttempt?: number;
+  specificationClarificationCount?: number;
+  specificationHistory?: Array<
+    Pick<Tables<"session_specification_clarifications">, "ordinal" | "question" | "answer_text">
+  >;
+  specificationDraft?: string;
   replacementJobId?: string;
   failRpcError?: { message: string };
   checkpointPublications?: Array<
@@ -745,6 +751,22 @@ function buildAdminMock(opts: MockOptions) {
     factory_definition_revisions: readOnly(opts.pinnedDefinition),
     session_factory_admission_inputs: readOnly(opts.originalInput),
     session_artifact_feedback: feedbackTable,
+    session_specification_clarifications: {
+      select: () => {
+        const result = Promise.resolve({
+          count: opts.specificationClarificationCount ?? 0,
+          data: opts.specificationHistory ?? [],
+          error: null,
+        });
+        const chain = Object.assign(result, {
+          eq: () => chain,
+          lt: () => chain,
+          order: () => chain,
+          limit: () => chain,
+        });
+        return chain;
+      },
+    },
     artifact_feedback_batch_jobs: {
       select: () => {
         const builder = {
@@ -996,6 +1018,9 @@ function buildAdminMock(opts: MockOptions) {
   return {
     admin: createProcessorTestAdminClient({
       from: (name: string) => {
+        if (name === "session_artifacts" && opts.specificationDraft !== undefined) {
+          return readOnly({ artifact_json: opts.specificationDraft });
+        }
         if (name === "session_artifacts" || name === "agent_jobs") {
           legacyMutationCalls.push(name);
           throw new Error(`Processor must mutate ${name} through ownership RPCs`);
@@ -1555,6 +1580,187 @@ describe("processPipelineJob (generic stage runner)", () => {
       }
     },
   );
+
+  it("publishes specification Markdown against only the pinned input and carries exact clarification feedback", async () => {
+    const stageId = "77900000-0000-4000-8000-000000000001";
+    const pipelineId = "77900000-0000-4000-8000-000000000002";
+    const repositoryId = "77900000-0000-4000-8000-000000000003";
+    const revisionId = "77900000-0000-4000-8000-000000000004";
+    const implementationAgent = {
+      agentId: "77900000-0000-4000-8000-000000000005",
+      promptRevisionId: "77900000-0000-4000-8000-000000000006",
+      promptMd: "",
+      promptSha256: createHash("sha256").update("").digest("hex"),
+    };
+    const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
+      schemaVersion: 1,
+      kind: "serial",
+      pipelineId,
+      repositoryId,
+      executionGrant: { id: "77900000-0000-4000-8000-000000000007", version: 1 },
+      credentialBindingId: "77900000-0000-4000-8000-000000000009",
+      sandboxProvider: "vercel",
+      agent: {
+        provider: "codex",
+        model: "gpt-5.5",
+        concurrencyLimit: 2,
+        stallTimeoutMs: 120000,
+        maxRetries: 2,
+        maxTurns: 5,
+      },
+      implementationAgent,
+      operatingRulesMd: "",
+      operatingRuleStageIds: [],
+      executionPolicyRevisionId: "77900000-0000-4000-8000-000000000008",
+      deliveryPolicyRevisionId: null,
+      skillIds: [],
+      toolIds: [`${revisionId}/write_record`],
+      mcpManifest: {
+        agentId: implementationAgent.agentId,
+        servers: [
+          {
+            toolRevisionId: revisionId,
+            serverId: repositoryId,
+            serverSlug: "docs",
+            revisionNumber: 1,
+            endpoint: "https://docs.example.test/mcp",
+            operations: ["write_record"],
+            auth: { kind: "none" },
+          },
+        ],
+      },
+      stages: [
+        {
+          id: stageId,
+          slug: "original",
+          name: "Original",
+          description: "",
+          promptTemplateMd: "Draft the work.",
+          anyoneCanApprove: false,
+          approverMemberIds: [],
+          previousStageIds: [],
+        },
+      ],
+    });
+    const feedback = "Question: Which account?\nAnswer: Use Workspace ID.";
+    const { admin, updatedRuns } = buildAdminMock({
+      session: baseSession({
+        execute_pinned_definition: true,
+        factory_definition_provenance: "pinned",
+        factory_definition_revision_id: revisionId,
+        pipeline_id: pipelineId,
+        current_stage_id: stageId,
+        current_artifact_id: "artifact-three",
+        current_artifact_version: 3,
+        specification_stage_id: stageId,
+        github_repository_id: repositoryId,
+      }),
+      pinnedDefinition: { definition_json: definitionJson, canonical_digest: canonicalDigest },
+      originalInput: {
+        original_title: "Initial title",
+        original_prompt_md: "Initial user prompt",
+        definition_revision_id: revisionId,
+        github_repository_id: repositoryId,
+      },
+      priorGitInput: { repository_id: repositoryId },
+      githubRepositories: [{ id: repositoryId, full_name: "acme/app", default_branch: "main" }],
+      batchFeedback: { rendered_feedback_text: feedback },
+      latestFeedback: { feedback_text: "A different job's note" },
+      specificationClarificationCount: 3,
+      specificationHistory: [
+        { ordinal: 1, question: "Which provider?", answer_text: "Workspace." },
+        { ordinal: 2, question: "Which role?", answer_text: "Administrator." },
+      ],
+      specificationDraft:
+        '<!-- wallie-clarification: {"question":"Which account?"} -->\n# Current draft',
+    });
+    const agentStarted = Promise.withResolvers<void>();
+    const finishAgent = Promise.withResolvers<void>();
+    const runner: AgentRunner = {
+      ...makeRunner([], { provider: "codex" }),
+      start: vi.fn(async function* (): AsyncGenerator<AgentEvent> {
+        agentStarted.resolve();
+        await finishAgent.promise;
+        yield {
+          type: "completion",
+          taskComplete: true,
+          summary: "Done",
+          finalOutput: "Final specification",
+        };
+      }),
+    };
+    mocked.createAgentRunner.mockReturnValue(runner);
+
+    vi.useFakeTimers();
+    const processing = processPipelineJob({
+      admin,
+      job: baseJob({ stage_id: stageId, trigger_type: "manual_retry" }),
+      deadlineAt: new Date(Date.now() + 120_000).toISOString(),
+    });
+    try {
+      const started = await Promise.race([
+        agentStarted.promise.then(() => true),
+        processing.then(() => false),
+      ]);
+      expect(started).toBe(true);
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(mocked.saveRetryCheckpoint).not.toHaveBeenCalled();
+    } finally {
+      finishAgent.resolve();
+      vi.useRealTimers();
+    }
+
+    expect((await processing).result).toBe("success");
+    expect(mocked.loadRunAgentPrompt).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({ expected: implementationAgent }),
+    );
+    expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        attemptFeedback: expect.objectContaining({ trust: "untrusted", value: feedback }),
+        specification: expect.objectContaining({
+          canAskClarification: false,
+          priorDraft: expect.objectContaining({
+            trust: "untrusted",
+            value: "# Current draft",
+          }),
+          clarificationHistory: expect.objectContaining({
+            trust: "untrusted",
+            value: expect.stringContaining("Question: Which provider?\nAnswer: Workspace."),
+          }),
+        }),
+      }),
+    );
+    expect(runner.start).toHaveBeenCalledOnce();
+    expect(vi.mocked(runner.start).mock.calls[0]?.[0]).not.toHaveProperty("mcp");
+    expect(mocked.restoreRetryInput).not.toHaveBeenCalled();
+    expect(mocked.captureSourceCheckpoint).not.toHaveBeenCalled();
+    expect(mocked.validateCheckpoint).not.toHaveBeenCalled();
+    expect(updatedRuns).not.toContainEqual({ source_recovery_required: true });
+    expect(mocked.prepareSourceDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        checkpoint: { kind: "unchanged", baseSha: "a".repeat(40), headSha: "a".repeat(40) },
+        publication: expect.objectContaining({ artifactMarkdown: "Final specification" }),
+      }),
+    );
+  });
+
+  it("refuses to execute an opted-in specification stage without a pinned named agent", async () => {
+    const { admin, rpc } = buildAdminMock({
+      session: baseSession({ specification_stage_id: productStage.id }),
+    });
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("error");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_error: "The specification stage requires a pinned named agent.",
+        p_retry: false,
+      }),
+    );
+  });
 
   it("fails the attempt before sandbox execution when its pinned agent prompt is unavailable", async () => {
     mocked.loadRunAgentPrompt.mockRejectedValueOnce(

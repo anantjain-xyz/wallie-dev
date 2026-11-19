@@ -297,6 +297,23 @@ and the exact run, artifact, or source identity when applicable.
   to the messages, source links, and previews. It renders sanitized Markdown and
   displays image descriptions without fetching external images.
 
+## Collaborative specifications
+
+The session form offers **Draft a specification first** when the active factory
+definition selects a named agent. Wallie pins that role to the session’s first
+admitted stage. Its artifacts are versioned in the Review Workbench. A
+specification run publishes against the unchanged source checkpoint.
+
+A clarification belongs to the exact published artifact and run. The workbench
+shows the current question and waits for a reply before approval. An answer
+records the actor and continues the same stage with the saved input. Requests
+for a superseded artifact fail without advancing the session. A recorded
+answer can be replayed under the same request ID.
+
+The existing repair budget applies to the continuation. The workbench shows
+when an answer was saved and the budget prevented a new run. Later stages use
+their configured prompts and normal review and delivery rules.
+
 ## Deduplication
 
 Every enqueue producer uses:

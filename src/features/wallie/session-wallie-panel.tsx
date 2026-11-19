@@ -229,6 +229,7 @@ function SessionWalliePanelContent({
     phaseStatus: presentation?.currentStage.phaseStatus ?? "in_progress",
   });
   const retryUnavailableReason =
+    presentation?.retryUnavailableReason ??
     sessionRunBlock?.message ??
     (!currentStageId
       ? "Refresh the session to load the current stage before retrying."

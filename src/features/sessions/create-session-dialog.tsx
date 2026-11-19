@@ -190,6 +190,7 @@ function CreateSessionDialogBody({
   }, [open, userId, workspaceId]);
 
   const [prompt, setPrompt] = useState("");
+  const [draftSpecification, setDraftSpecification] = useState(false);
   const [imageDrafts, setImageDrafts] = useState<SessionImageDraft[]>([]);
   const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -202,6 +203,10 @@ function CreateSessionDialogBody({
   const repositoryCacheKey = { userId, workspaceId };
   const repositorySnapshot = useSessionRepositories(repositoryCacheKey);
   const factoryDefinitionDigest = repositorySnapshot.data?.factoryDefinitionDigest;
+  const canDraftSpecification = repositorySnapshot.data?.canDraftSpecification === true;
+  const specificationUnavailable = draftSpecification && !canDraftSpecification;
+  const specificationReadiness =
+    "This factory needs an available named agent to draft a specification. Uncheck to start without one.";
   const repositoryOptions = repositorySnapshot.data?.repositoryOptions ?? [];
   const stageOptions = repositorySnapshot.data?.stageOptions ?? [];
   const excludedStageIdSet = new Set(excludedStageIds);
@@ -483,6 +488,8 @@ function CreateSessionDialogBody({
       return;
     }
 
+    if (specificationUnavailable) return;
+
     if (!prompt.trim() && !linearUrl.trim()) {
       setErrorMessage("Enter a Linear issue URL or a prompt.");
       return;
@@ -513,6 +520,7 @@ function CreateSessionDialogBody({
     const attempt = {
       input: {
         attachmentIds: imageDrafts.map((image) => image.attachmentId!),
+        ...(draftSpecification ? { draftSpecification: true } : {}),
         ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
         githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
@@ -898,6 +906,39 @@ function CreateSessionDialogBody({
               </div>
             ) : null}
 
+            {canDraftSpecification || draftSpecification ? (
+              <label className="flex min-h-11 cursor-pointer items-start gap-3 py-1 text-sm text-foreground">
+                <input
+                  aria-describedby="session-specification-description"
+                  aria-labelledby="session-specification-label"
+                  checked={draftSpecification}
+                  className="mt-1 size-4 shrink-0 accent-accent"
+                  disabled={
+                    isSubmitting ||
+                    unconfirmed ||
+                    (repositorySnapshot.isStale && !draftSpecification)
+                  }
+                  onChange={(event) => setDraftSpecification(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  <span id="session-specification-label">Draft a specification first</span>
+                  <span
+                    id="session-specification-description"
+                    className={
+                      specificationUnavailable
+                        ? "mt-1 block text-xs text-danger"
+                        : "mt-1 block text-xs text-muted"
+                    }
+                    role={specificationUnavailable ? "alert" : undefined}
+                  >
+                    {specificationUnavailable
+                      ? specificationReadiness
+                      : "Review the first stage’s specification before implementation starts."}
+                  </span>
+                </span>
+              </label>
+            ) : null}
             <p className="text-xs text-muted">
               Closing keeps your draft while you stay in this workspace. Reloading clears it.
             </p>
@@ -928,7 +969,8 @@ function CreateSessionDialogBody({
               disabled={
                 unconfirmed
                   ? isSubmitting
-                  : isCreateSessionSubmitDisabled({
+                  : specificationUnavailable ||
+                    isCreateSessionSubmitDisabled({
                       hasRepositoryResult:
                         repositorySnapshot.data !== null && !factoryRepositorySelectionRequired,
                       hasBlockingAttachments,

@@ -55,6 +55,7 @@ export async function GET(_request: Request, context: RouteContext) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     return sessionOptions({
+      ...(pinned.implementationAgent ? { canDraftSpecification: true } : {}),
       defaultGithubRepositoryId: pinned.repositoryId,
       factoryDefinitionDigest: pinned.canonicalDigest,
       pipelineId: pinned.pipelineId,

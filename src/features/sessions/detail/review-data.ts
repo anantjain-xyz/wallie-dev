@@ -73,6 +73,9 @@ export function serializeSessionReviewData(
         pullRequestNumber: pullRequest.pullRequestNumber,
         pullRequestUrl: pullRequest.pullRequestUrl,
       })),
+      ...(payload.session.specificationStageId
+        ? { specificationStageId: payload.session.specificationStageId }
+        : {}),
       title: payload.session.title,
       updatedAt: payload.session.updatedAt,
     },

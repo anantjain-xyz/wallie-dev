@@ -4992,6 +4992,83 @@ export type Database = {
           },
         ]
       }
+      session_specification_clarifications: {
+        Row: {
+          answer_text: string | null
+          answered_at: string | null
+          answered_by_member_id: string | null
+          artifact_id: string
+          artifact_version: number
+          attempt_count: number
+          created_at: string
+          execution_exhausted: boolean
+          factory_id: string
+          feedback_batch_id: string | null
+          id: string
+          ordinal: number
+          question: string
+          run_id: string
+          session_id: string
+          stage_id: string
+          status: Database["public"]["Enums"]["session_specification_clarification_status"]
+          successor_job_id: string | null
+          successor_run_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          answer_text?: string | null
+          answered_at?: string | null
+          answered_by_member_id?: string | null
+          artifact_id: string
+          artifact_version: number
+          attempt_count: number
+          created_at?: string
+          execution_exhausted?: boolean
+          factory_id: string
+          feedback_batch_id?: string | null
+          id?: string
+          ordinal: number
+          question: string
+          run_id: string
+          session_id: string
+          stage_id: string
+          status?: Database["public"]["Enums"]["session_specification_clarification_status"]
+          successor_job_id?: string | null
+          successor_run_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          answer_text?: string | null
+          answered_at?: string | null
+          answered_by_member_id?: string | null
+          artifact_id?: string
+          artifact_version?: number
+          attempt_count?: number
+          created_at?: string
+          execution_exhausted?: boolean
+          factory_id?: string
+          feedback_batch_id?: string | null
+          id?: string
+          ordinal?: number
+          question?: string
+          run_id?: string
+          session_id?: string
+          stage_id?: string
+          status?: Database["public"]["Enums"]["session_specification_clarification_status"]
+          successor_job_id?: string | null
+          successor_run_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_specification_clarifi_session_id_workspace_id_fact_fkey"
+            columns: ["session_id", "workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id", "workspace_id", "factory_id"]
+          },
+        ]
+      }
       session_stage_approval_receipts: {
         Row: {
           approval_number: number
@@ -5334,6 +5411,7 @@ export type Database = {
           rejection_count: number
           search_document: unknown
           search_text: string | null
+          specification_stage_id: string | null
           title: string
           updated_at: string
           workspace_id: string
@@ -5367,6 +5445,7 @@ export type Database = {
           rejection_count?: number
           search_document?: unknown
           search_text?: string | null
+          specification_stage_id?: string | null
           title: string
           updated_at?: string
           workspace_id: string
@@ -5400,6 +5479,7 @@ export type Database = {
           rejection_count?: number
           search_document?: unknown
           search_text?: string | null
+          specification_stage_id?: string | null
           title?: string
           updated_at?: string
           workspace_id?: string
@@ -5459,6 +5539,13 @@ export type Database = {
             columns: ["pipeline_id"]
             isOneToOne: false
             referencedRelation: "pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_specification_stage_id_fkey"
+            columns: ["specification_stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
             referencedColumns: ["id"]
           },
           {
@@ -6675,6 +6762,31 @@ export type Database = {
         }
         Returns: boolean
       }
+      answer_session_specification_clarification_once: {
+        Args: {
+          p_actor_member_id: string
+          p_agent_model_name?: string
+          p_agent_model_provider?: string
+          p_answer_text: string
+          p_clarification_id: string
+          p_expected_artifact_id: string
+          p_expected_artifact_version: number
+          p_expected_review_revision: number
+          p_factory_id: string
+          p_request_id: string
+          p_run_type?: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          clarification_id: string
+          execution_exhausted: boolean
+          feedback_batch_id: string
+          job_id: string
+          replayed: boolean
+          run_id: string
+        }[]
+      }
       append_agent_run_event: {
         Args: {
           p_attempt_count: number
@@ -7531,6 +7643,7 @@ export type Database = {
           agent_model_name: string
           agent_model_provider: string
           creator_member_id: string
+          draft_specification?: boolean
           expected_factory_definition_digest: string
           selected_pipeline_id?: string
           selected_stage_ids?: string[]
@@ -7769,6 +7882,7 @@ export type Database = {
       find_session_creation_command: {
         Args: {
           creator_member_id: string
+          draft_specification?: boolean
           source_session_id?: string
           target_factory_id?: string
           target_request_hash: string
@@ -10003,6 +10117,7 @@ export type Database = {
         | "artifact_feedback"
         | "review_ready"
         | "system"
+      session_specification_clarification_status: "pending" | "answered"
       workspace_invitation_status: "pending" | "accepted" | "revoked"
     }
     CompositeTypes: {
@@ -10185,6 +10300,7 @@ export const Constants = {
         "review_ready",
         "system",
       ],
+      session_specification_clarification_status: ["pending", "answered"],
       workspace_invitation_status: ["pending", "accepted", "revoked"],
     },
   },

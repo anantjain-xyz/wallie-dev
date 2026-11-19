@@ -13,6 +13,7 @@ describe("session creation fingerprint", () => {
         requestId: "another-request",
         promptMd: ` ${input.promptMd} `,
         attachmentIds: [],
+        draftSpecification: false,
       }),
     ).toBe(fingerprintSessionCreation(input));
   });
@@ -20,6 +21,7 @@ describe("session creation fingerprint", () => {
   it.each([
     { promptMd: "Different work" },
     { title: "Explicit title" },
+    { draftSpecification: true },
     { workspaceId: "another-workspace" },
     { githubRepositoryId: "another-repository" },
     { selectedStageIds: ["stage-1"] },

@@ -5,6 +5,7 @@ import type { SessionPhaseStatus } from "@/features/sessions/types";
 
 export type SessionActivityPresentation = {
   reviewIdentityUnavailable?: boolean;
+  retryUnavailableReason?: string;
   currentStage: { id: string; name: string; phaseStatus: SessionPhaseStatus };
   /** Undefined uses run-level cancellation; null deliberately hides it. */
   stopControl: ReactNode;
