@@ -6,6 +6,7 @@ export async function mintSandboxRepositoryToken(input: {
   installationId: number;
   repositoryFullName: string;
   repositoryId?: number;
+  signal?: AbortSignal;
   /** Execution is reserved for trusted publication. */
   purpose: "checkout" | "execution" | "capability-check" | "read-context";
 }): Promise<string> {
@@ -22,6 +23,7 @@ export async function mintSandboxRepositoryToken(input: {
 
   // The worker runs through tsx's CommonJS loader; Octokit only exports an ESM entry.
   const { App } = await import("@octokit/app");
+  input.signal?.throwIfAborted();
   const app = new App(resolveGitHubAppConfig());
   const { data } = await app.octokit.request(
     "POST /app/installations/{installation_id}/access_tokens",
@@ -34,6 +36,7 @@ export async function mintSandboxRepositoryToken(input: {
         input.purpose === "execution"
           ? { contents: "write", pull_requests: "write" }
           : { contents: "read" },
+      ...(input.signal ? { request: { signal: input.signal, redirect: "error" } } : {}),
     },
   );
   return data.token;
