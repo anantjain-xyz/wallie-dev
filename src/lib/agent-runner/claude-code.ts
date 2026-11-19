@@ -88,14 +88,16 @@ export class ClaudeCodeRunner implements AgentRunner {
     const promptFile = `${directory}/prompt.txt`;
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
 
-    const mcp = input.mcp
-      ? await prepareMcpAdapter({
-          runtime: input.mcp,
-          sandbox,
-          directory,
-          signal: input.signal,
-        })
-      : undefined;
+    const mcp =
+      input.mcp && material
+        ? await prepareMcpAdapter({
+            runtime: input.mcp,
+            sandbox,
+            directory,
+            signal: input.signal,
+            material,
+          })
+        : undefined;
     const serverNames = new Set(mcp?.servers.map(({ name }) => name));
     const allowedTools = new Set(
       mcp?.servers.flatMap(({ name, operations }) =>

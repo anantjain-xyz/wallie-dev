@@ -563,18 +563,22 @@ function buildAdminMock(opts: MockOptions) {
     },
   };
 
-  const agentRunMessagesTable = {
-    insert: async (row: Record<string, unknown>) => {
-      await opts.beforeMessageInsert?.(row);
-      if (
-        opts.messageInsertError &&
-        (!opts.messageInsertErrorOnMessage || row.message_md === opts.messageInsertErrorOnMessage)
-      ) {
-        return { error: opts.messageInsertError };
-      }
+  const insertAgentRunMessage = async (row: Record<string, unknown>) => {
+    await opts.beforeMessageInsert?.(row);
+    if (
+      opts.messageInsertError &&
+      (!opts.messageInsertErrorOnMessage || row.message_md === opts.messageInsertErrorOnMessage)
+    ) {
+      return { error: opts.messageInsertError };
+    }
 
-      insertedMessages.push(row);
-      return { error: null };
+    insertedMessages.push(row);
+    return { error: null };
+  };
+  const agentRunMessagesTable = {
+    insert: (row: Record<string, unknown>) => {
+      const result = insertAgentRunMessage(row);
+      return Object.assign(result, { abortSignal: () => result });
     },
   } as const;
 
@@ -1103,6 +1107,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     { trigger: "manual_run", scope: "bound" },
     { trigger: "manual_run", scope: "mcp_pending" },
     { trigger: "manual_run", scope: "mcp_approved" },
+    { trigger: "manual_run", scope: "mcp_opencode" },
     { trigger: "manual_run", scope: "mcp_revoked" },
   ] as const)(
     "honors the compiled authorization for $trigger ($scope credential)",
@@ -1123,7 +1128,10 @@ describe("processPipelineJob (generic stage runner)", () => {
       const bindingId = "77900000-0000-4000-8000-000000000009";
       const credentialValue = "scoped-execution-fixture-key-5678";
       const unsupportedMcp = scope === "mcp_pending";
-      const hasMcp = unsupportedMcp || scope === "mcp_approved" || scope === "mcp_revoked";
+      const openCodeMcp = scope === "mcp_opencode";
+      const provider = unsupportedMcp ? "cursor" : openCodeMcp ? "opencode" : "claude-code";
+      const hasMcp =
+        unsupportedMcp || openCodeMcp || scope === "mcp_approved" || scope === "mcp_revoked";
       const usesBinding = serviceBound && scope !== "unbound" && !unsupportedMcp;
       const retryCleanupFailed = scope === "retry_failed" || scope === "retry_race";
       const cleanupFailed =
@@ -1156,16 +1164,18 @@ describe("processPipelineJob (generic stage runner)", () => {
           return sandbox;
         });
         mocked.createAgentRunner.mockImplementationOnce((_, options: CreateAgentRunnerOptions) => {
-          if (!options.claudeCode) throw new Error("Missing fixture runner configuration.");
           if (hasMcp) {
             return {
               ...makeRunner([]),
               async *start(input: AgentRunnerStartInput) {
-                const credential = await options.claudeCode?.loadCredential?.();
+                const credential = openCodeMcp
+                  ? await options.openCode?.loadAuth?.()
+                  : await options.claudeCode?.loadCredential?.();
                 if (!credential || !input.mcp || !input.scopedCredential) {
                   throw new Error("The scoped runner inputs are missing.");
                 }
                 await input.mcp.loadCredentials();
+                await input.mcp.onCleanup?.("removed");
                 yield {
                   type: "mcp_receipt",
                   servers: [{ slug: "docs", revision: 1, operations: ["read_record"] }],
@@ -1179,6 +1189,7 @@ describe("processPipelineJob (generic stage runner)", () => {
               },
             };
           }
+          if (!options.claudeCode) throw new Error("Missing fixture runner configuration.");
           if (retryCleanupFailed) {
             return {
               ...makeRunner([]),
@@ -1218,7 +1229,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           mocked.saveRetryCheckpoint.mockRejectedValueOnce(new ScopedCredentialCleanupError());
         }
       }
-      if (scope === "mcp_approved")
+      if (scope === "mcp_approved" || openCodeMcp)
         mocked.resolveFactoryMcpCredentials.mockResolvedValueOnce(new Map());
       if (scope === "mcp_revoked") {
         mocked.resolveFactoryMcpCredentials.mockRejectedValueOnce(
@@ -1241,8 +1252,12 @@ describe("processPipelineJob (generic stage runner)", () => {
             }),
         sandboxProvider: "vercel",
         agent: {
-          provider: unsupportedMcp ? "cursor" : "claude-code",
-          model: unsupportedMcp ? "composer-2" : "claude-sonnet-4-5",
+          provider,
+          model: unsupportedMcp
+            ? "composer-2"
+            : openCodeMcp
+              ? "opencode/gpt-5.6-sol"
+              : "claude-sonnet-4-5",
           effort: "max",
           concurrencyLimit: 2,
           stallTimeoutMs: 120000,
@@ -1287,7 +1302,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           },
         ],
       });
-      const { admin, rpc, updatedRuns } = buildAdminMock({
+      const { admin, insertedMessages, rpc, updatedRuns } = buildAdminMock({
         beforeRetentionUpdate:
           scope === "retry_race"
             ? async () => {
@@ -1353,7 +1368,9 @@ describe("processPipelineJob (generic stage runner)", () => {
         expect(rpc).toHaveBeenCalledWith(
           "fail_session_job_attempt",
           expect.objectContaining({
-            p_error: "The selected agent adapter does not support the pinned MCP tool manifest.",
+            p_error: expect.stringContaining(
+              "Cursor MCP is unavailable because Wallie cannot isolate team marketplace tools",
+            ),
             p_retry: false,
           }),
         );
@@ -1362,7 +1379,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         expect(mocked.createAgentRunner).not.toHaveBeenCalled();
         return;
       }
-      if (scope === "mcp_approved" || scope === "mcp_revoked") {
+      if (scope === "mcp_approved" || scope === "mcp_revoked" || openCodeMcp) {
         expect(mocked.resolveFactoryMcpCredentials).toHaveBeenCalledExactlyOnceWith(
           expect.objectContaining({
             admin,
@@ -1398,6 +1415,14 @@ describe("processPipelineJob (generic stage runner)", () => {
             },
           }),
         );
+        expect(insertedMessages).toContainEqual(
+          expect.objectContaining({
+            agent_run_id: "run-1",
+            workspace_id: "ws-1",
+            kind: "worker_progress",
+            message_md: `MCP configuration and credential cleanup verified for attempt ${job.attempt_count}.`,
+          }),
+        );
       }
       if (usesBinding) {
         expect(mocked.resolveScopedRunCredential).toHaveBeenCalledExactlyOnceWith(
@@ -1406,7 +1431,7 @@ describe("processPipelineJob (generic stage runner)", () => {
             attemptCount: baseJob().attempt_count,
             bindingId,
             jobId: "job-1",
-            provider: "claude-code",
+            provider,
             runId: "run-1",
             workspaceId: "ws-1",
           }),
@@ -1506,17 +1531,26 @@ describe("processPipelineJob (generic stage runner)", () => {
           repoDefaultBranch: expect.objectContaining({ value: "original-main" }),
         }),
       );
-      expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
-        claudeCode: expect.objectContaining({
-          model: "claude-sonnet-4-5",
-          maxTurns: 17,
-          effort: "max",
-        }),
-      });
-      expect(rpc).toHaveBeenCalledWith(
-        "pin_session_attempt_manifest",
-        expect.objectContaining({ p_max_turns: 17, p_agent_effort: "max" }),
-      );
+      if (openCodeMcp) {
+        expect(mocked.createAgentRunner).toHaveBeenCalledWith("opencode", {
+          openCode: expect.objectContaining({ model: "opencode/gpt-5.6-sol" }),
+        });
+        const pin = rpc.mock.calls.find(([name]) => name === "pin_session_attempt_manifest")?.[1];
+        expect(pin).toBeDefined();
+        expect(pin).not.toHaveProperty("p_agent_effort");
+      } else {
+        expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
+          claudeCode: expect.objectContaining({
+            model: "claude-sonnet-4-5",
+            maxTurns: 17,
+            effort: "max",
+          }),
+        });
+        expect(rpc).toHaveBeenCalledWith(
+          "pin_session_attempt_manifest",
+          expect.objectContaining({ p_max_turns: 17, p_agent_effort: "max" }),
+        );
+      }
     },
   );
 

@@ -1,12 +1,73 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import type { FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
-import type { AgentEvent } from "./types";
+import type { AgentEvent, AgentRunnerStartInput } from "./types";
 
-import { OpenCodeRunner, parseOpenCodeLine } from "./opencode";
+import { OpenCodeRunner, openCodeGitCredentialConfig, parseOpenCodeLine } from "./opencode";
+
+it("keeps the checkout's GitHub credential available through the isolated home", () => {
+  const directory = mkdtempSync(join(tmpdir(), "wallie-opencode-git-"));
+  try {
+    const home = join(directory, "isolated");
+    const file = join(directory, "approved .git-credentials");
+    const key = "synthetic-approved-checkout-token";
+    mkdirSync(home);
+    writeFileSync(file, `https://x-access-token:${key}@github.com\n`, { mode: 0o600 });
+    const credentialForHost = (host: string) =>
+      spawnSync("git", ["credential", "fill"], {
+        encoding: "utf8",
+        cwd: directory,
+        input: `protocol=https\nhost=${host}\n\n`,
+        env: {
+          ...openCodeGitCredentialConfig,
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_TERMINAL_PROMPT: "0",
+          HOME: home,
+          NODE_ENV: "test",
+          PATH: process.env.PATH,
+          WALLIE_GIT_CREDENTIAL_FILE: file,
+        },
+      });
+    const approved = credentialForHost("github.com");
+    expect(approved.status).toBe(0);
+    expect(approved.stdout).toContain(`password=${key}`);
+    const unrelated = credentialForHost("unrelated.example.test");
+    expect(unrelated.status).not.toBe(0);
+    expect(unrelated.stdout).not.toContain(key);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 const credential = { secret: "zen-secret-key-1234567890" };
+const toolRevisionId = "00000000-0000-4000-8000-000000000001";
+const toolBearer = "opencode-approved-mcp-fixture";
+const approvedMcp = {
+  agentId: "00000000-0000-4000-8000-000000000002",
+  servers: [
+    {
+      toolRevisionId,
+      serverId: "00000000-0000-4000-8000-000000000003",
+      serverSlug: "reference",
+      revisionNumber: 2,
+      endpoint: "https://reference.example.test/mcp",
+      operations: ["read_item"],
+      auth: { kind: "bearer", secretBindingId: "00000000-0000-4000-8000-000000000004" },
+    },
+  ],
+} satisfies FactoryMcpManifest;
+
+async function collectOpenCode(runner: OpenCodeRunner, input: AgentRunnerStartInput) {
+  const events: AgentEvent[] = [];
+  for await (const event of runner.start(input)) events.push(event);
+  return events;
+}
 
 async function collectOpenCodeRecords(records: unknown[], exitCode = 0) {
   const sandbox = new FakeSandbox();
@@ -30,6 +91,169 @@ async function collectOpenCodeRecords(records: unknown[], exitCode = 0) {
 }
 
 describe("OpenCodeRunner", () => {
+  it("loads the approved MCP bridge with only the selected model credential and removes its files", async () => {
+    const sandbox = new FakeSandbox();
+    const modelKey = "selected-provider-secret-key";
+    const loadAuth = vi.fn(async () => ({
+      credential,
+      providerCredentials: {
+        second: { secret: modelKey },
+        unused: { secret: "unused-provider-secret-key" },
+      },
+    }));
+    const loadCredentials = vi.fn(async () => new Map([[toolRevisionId, toolBearer]]));
+    sandbox.scriptExec("sh", () => {
+      sandbox.files.set(harnessPath(sandbox, "wallie1.mcp.json.ready"), {
+        data: Buffer.from("ready\n"),
+        mode: 0o600,
+      });
+      return [
+        {
+          stream: "stdout",
+          data: [
+            { type: "text", part: { id: "text", messageID: "final", text: toolBearer } },
+            { type: "step_finish", part: { messageID: "final", reason: "stop" } },
+          ]
+            .map((event) => JSON.stringify(event))
+            .join("\n"),
+        },
+      ];
+    });
+    const events = await collectOpenCode(new OpenCodeRunner({ model: "second/model", loadAuth }), {
+      sandbox,
+      sessionId: "pinned-mcp",
+      prompt: "Read the reference",
+      scopedCredential: true,
+      mcp: { manifest: approvedMcp, loadCredentials },
+    });
+
+    const configPath = harnessPath(sandbox, "config/opencode/opencode.json");
+    const bridgePath = harnessPath(sandbox, "wallie-mcp.cjs");
+    const descriptorPath = harnessPath(sandbox, "wallie1.mcp.json");
+    const authPath = harnessPath(sandbox, "data/opencode/auth.json");
+    expect(JSON.parse((await sandbox.readFile(configPath)) ?? "")).toEqual({
+      enabled_providers: ["second"],
+      mcp: {
+        wallie1: { type: "local", enabled: true, command: ["node", bridgePath, descriptorPath] },
+      },
+      share: "disabled",
+    });
+    expect(JSON.parse((await sandbox.readFile(authPath)) ?? "")).toEqual({
+      second: { type: "api", key: modelKey },
+    });
+    expect(await sandbox.readFile(descriptorPath)).toContain(toolBearer);
+    expect(loadCredentials).toHaveBeenCalledAfter(loadAuth);
+    const launch = sandbox.calls.find(({ cmd }) => cmd === "sh");
+    expect(launch?.args[1]).toContain('exec env -i PATH="$PATH"');
+    expect(launch?.args[1]).toContain('WALLIE_GIT_CREDENTIAL_FILE="$HOME/.git-credentials"');
+    expect(launch?.args[1]).toContain(
+      `'HOME=${harnessPath(sandbox, "prompt.txt").replace(/\/prompt\.txt$/, "")}'`,
+    );
+    expect(launch?.args[1]).toContain("'OPENCODE_DISABLE_PROJECT_CONFIG=1'");
+    expect(launch?.args[1]).toContain("'OPENCODE_PURE=1'");
+    expect(launch?.opts.env).toBeUndefined();
+    expect(JSON.stringify(sandbox.calls)).not.toContain(toolBearer);
+    expect(JSON.stringify(sandbox.calls)).not.toContain(modelKey);
+    expect(JSON.stringify(events)).not.toContain(toolBearer);
+    expect(events).toContainEqual({
+      type: "mcp_receipt",
+      servers: [{ slug: "reference", revision: 2, operations: ["read_item"] }],
+    });
+    expect(events.at(-1)).toMatchObject({ type: "completion", finalOutput: "[REDACTED]" });
+    expect(sandbox.calls).toContainEqual(
+      expect.objectContaining({
+        cmd: "rm",
+        args: expect.arrayContaining([
+          "--",
+          configPath,
+          harnessPath(sandbox, "config/opencode/AGENTS.md"),
+          bridgePath,
+          descriptorPath,
+          `${descriptorPath}.ready`,
+          authPath,
+        ]),
+      }),
+    );
+  });
+
+  it("removes the MCP config on setup failure before launching OpenCode", async () => {
+    const sandbox = new FakeSandbox();
+    const runner = new OpenCodeRunner({ credential });
+    await expect(
+      collectOpenCode(runner, {
+        sandbox,
+        sessionId: "revoked-mcp",
+        prompt: "Read the reference",
+        scopedCredential: true,
+        mcp: {
+          manifest: approvedMcp,
+          loadCredentials: async () => {
+            throw new Error("MCP operation grant revoked");
+          },
+        },
+      }),
+    ).rejects.toThrow("MCP operation grant revoked");
+    expect(sandbox.calls.some(({ cmd }) => cmd === "sh")).toBe(false);
+    expect(sandbox.files.has(harnessPath(sandbox, "data/opencode/auth.json"))).toBe(false);
+    expect(sandbox.calls).toContainEqual(
+      expect.objectContaining({
+        cmd: "rm",
+        args: expect.arrayContaining(["--", harnessPath(sandbox, "config/opencode/opencode.json")]),
+      }),
+    );
+  });
+
+  it("fails closed when the approved MCP server cannot verify its complete tool scope", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("sh", [
+      {
+        stream: "stdout",
+        data: JSON.stringify({
+          type: "step_finish",
+          part: { cost: 0.01, tokens: { input: 7, output: 4 } },
+        }),
+      },
+    ]);
+    const events: AgentEvent[] = [];
+    const run = async () => {
+      for await (const event of new OpenCodeRunner({ credential }).start({
+        sandbox,
+        sessionId: "unverified-mcp",
+        prompt: "Read the reference",
+        scopedCredential: true,
+        mcp: {
+          manifest: approvedMcp,
+          loadCredentials: async () => new Map([[toolRevisionId, toolBearer]]),
+        },
+      }))
+        events.push(event);
+    };
+    await expect(run()).rejects.toMatchObject({
+      name: "McpAdapterError",
+      message: "An approved MCP server did not expose its complete tool scope.",
+    });
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: false,
+        summary: "OpenCode session ended unsuccessfully",
+        usage: {
+          inputTokens: 7,
+          outputTokens: 4,
+          provenance: "measured",
+          costUsd: 0.01,
+          costProvenance: "measured",
+        },
+      },
+    ]);
+    expect(sandbox.calls).toContainEqual(
+      expect.objectContaining({
+        cmd: "rm",
+        args: expect.arrayContaining(["--", harnessPath(sandbox, "wallie1.mcp.json")]),
+      }),
+    );
+  });
+
   it("preserves terminal tool snapshots in order without replaying calls or results", async () => {
     // CLI terminal ToolPart snapshots: v1 callID and the current renderer's id.
     const completed = {
@@ -614,6 +838,9 @@ describe("OpenCodeRunner", () => {
     );
     expect(call.args[1]).not.toContain("'--auto'");
     expect(call.args[1]).toContain("for managed_dir in /etc/opencode");
+    expect(call.args[1]).toContain('export WALLIE_GIT_CREDENTIAL_FILE="$HOME/.git-credentials"');
+    expect(call.args[1]).toContain(`export HOME='${promptPath.replace(/\/prompt\.txt$/, "")}'`);
+    expect(call.args[1]).toContain("unset OPENCODE_TEST_HOME OPENCODE_TEST_MANAGED_CONFIG_DIR");
     expect(call.args[1]).toContain("'--session' 'native-previous'");
     expect(call.args[1]).toContain(`< '${promptPath}'`);
     expect(call.args.join(" ")).not.toContain(credential.secret);

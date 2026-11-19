@@ -29,29 +29,35 @@ const runtime: NonNullable<AgentRunnerStartInput["mcp"]> = {
   loadCredentials: async () => new Map([[toolRevisionId, token]]),
 };
 
-it.each(["completion", "timeout", "cancellation"])(
-  "removes MCP credential files after %s",
+it.each(["completion", "timeout", "cancellation", "setup failure"])(
+  "verifies MCP config and credential cleanup after %s",
   async (result) => {
     const directory = await mkdtemp(join(tmpdir(), "wallie-mcp-cleanup-"));
     const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
     const controller = new AbortController();
+    const onCleanup = vi.fn(async () => {});
     const input = {
       sessionId: "fixture",
       prompt: "Fixture",
       scopedCredential: true,
       signal: controller.signal,
       sandbox,
+      mcp: { ...runtime, onCleanup },
     } satisfies AgentRunnerStartInput;
-    const scoped = await prepareMcpAdapter({
-      runtime,
-      sandbox,
-      directory,
-      signal: controller.signal,
-    });
-    const credentialPath = scoped.servers[0].args[1];
+    const credentialPath = join(directory, "wallie1.mcp.json");
+    const bridgePath = join(directory, "wallie-mcp.cjs");
     const events = withRunnerCredentials(input, async function* (safety, material) {
       if (!material) throw new Error("Scoped material unavailable.");
+      const scoped = await prepareMcpAdapter({
+        runtime,
+        sandbox,
+        directory,
+        signal: controller.signal,
+        material,
+      });
       await scoped.stageCredentials(material, safety);
+      await sandbox.writeFile(`${credentialPath}.ready`, "ready\n");
+      if (result === "setup failure") throw new Error("The adapter setup failed.");
       if (result === "completion") {
         yield { type: "completion", taskComplete: true, summary: "Fixture done" };
         return;
@@ -60,26 +66,31 @@ it.each(["completion", "timeout", "cancellation"])(
       yield { type: "progress", text: "Provider started" };
     })[Symbol.asyncIterator]();
     try {
-      const received = await events.next();
-      if (result === "completion") {
-        expect(received.value).toMatchObject({ type: "completion" });
+      if (result === "setup failure") {
+        await expect(events.next()).rejects.toThrow("The adapter setup failed.");
       } else {
-        expect(received.value).toMatchObject({ type: "progress" });
-        await expect(readFile(credentialPath, "utf8")).resolves.toContain(token);
-        if (result === "timeout") {
-          const deadline = AbortSignal.timeout(10);
-          deadline.addEventListener("abort", () => controller.abort(deadline.reason), {
-            once: true,
-          });
+        const received = await events.next();
+        if (result === "completion") {
+          expect(received.value).toMatchObject({ type: "completion" });
         } else {
-          controller.abort(new Error("Fixture canceled"));
+          expect(received.value).toMatchObject({ type: "progress" });
+          await expect(readFile(credentialPath, "utf8")).resolves.toContain(token);
+          if (result === "timeout") {
+            const deadline = AbortSignal.timeout(10);
+            deadline.addEventListener("abort", () => controller.abort(deadline.reason), {
+              once: true,
+            });
+          } else {
+            controller.abort(new Error("Fixture canceled"));
+          }
         }
-        await vi.waitFor(async () => {
-          expect(controller.signal.aborted).toBe(true);
-          await expect(access(credentialPath)).rejects.toMatchObject({ code: "ENOENT" });
-        });
       }
-      await expect(access(credentialPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await vi.waitFor(async () => {
+        expect(onCleanup).toHaveBeenCalledExactlyOnceWith("removed");
+        for (const path of [bridgePath, credentialPath, `${credentialPath}.ready`]) {
+          await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+        }
+      });
       expect(JSON.stringify(sandbox.calls)).not.toContain(token);
     } finally {
       await events.return?.();

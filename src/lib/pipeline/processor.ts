@@ -72,6 +72,7 @@ import { evaluateSessionPrReadiness } from "@/lib/pipeline/pr-readiness";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { loadRunAgentPrompt } from "@/lib/factory-agents/runtime";
 import { resolveFactoryMcpCredentials } from "@/lib/factory-mcp/credentials";
+import { unavailableMcpAdapterReason } from "@/lib/factory-mcp/adapter-readiness";
 import { loadFactorySkillBundle } from "@/lib/factory-skills/runtime";
 import {
   formatSessionAttachmentPromptData,
@@ -131,8 +132,8 @@ class MissingReviewableOutputError extends Error {
 }
 
 class McpAdapterUnavailableError extends Error {
-  constructor() {
-    super("The selected agent adapter does not support the pinned MCP tool manifest.");
+  constructor(message: string) {
+    super(message);
     this.name = "McpAdapterUnavailableError";
   }
 }
@@ -394,9 +395,8 @@ async function runStage(input: {
     }
 
     const mcpManifest = pinned?.mcpManifest;
-    if (mcpManifest && provider !== "codex" && provider !== "claude-code") {
-      throw new McpAdapterUnavailableError();
-    }
+    const unavailableMcpReason = mcpManifest && unavailableMcpAdapterReason(provider);
+    if (unavailableMcpReason) throw new McpAdapterUnavailableError(unavailableMcpReason);
 
     const scopedBindingId = pinned?.executionGrant ? pinned.credentialBindingId : undefined;
     if (pinned?.executionGrant && !scopedBindingId) {
@@ -830,6 +830,18 @@ async function runStage(input: {
                   manifest: mcpManifest,
                   signal,
                 }),
+              onCleanup: async (status) => {
+                const attempt = job.attempt_count;
+                const messageMd =
+                  status === "removed"
+                    ? `MCP configuration and credential cleanup verified for attempt ${attempt}.`
+                    : `MCP configuration cleanup could not be verified for attempt ${attempt}.`;
+                await persistRunMessage(admin, credentialRunId, session.workspace_id, {
+                  kind: status === "removed" ? "worker_progress" : "worker_error",
+                  messageMd,
+                  signal: AbortSignal.timeout(5_000),
+                });
+              },
             },
           }
         : {}),
@@ -1603,14 +1615,15 @@ async function persistRunMessage(
   admin: AdminClient,
   runId: string,
   workspaceId: string,
-  input: { kind: string; messageMd: string },
+  input: { kind: string; messageMd: string; signal?: AbortSignal },
 ): Promise<void> {
-  const { error } = await admin.from("agent_run_messages").insert({
+  const request = admin.from("agent_run_messages").insert({
     agent_run_id: runId,
     kind: input.kind,
     message_md: input.messageMd,
     workspace_id: workspaceId,
   });
+  const { error } = await (input.signal ? request.abortSignal(input.signal) : request);
   if (error) throw error;
 }
 

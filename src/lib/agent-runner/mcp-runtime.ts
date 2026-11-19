@@ -18,11 +18,13 @@ export async function prepareMcpAdapter({
   sandbox,
   directory,
   signal,
+  material,
 }: {
   runtime: NonNullable<AgentRunnerStartInput["mcp"]>;
   sandbox: SandboxHandle;
   directory: string;
   signal?: AbortSignal;
+  material: ScopedRunnerMaterial;
 }) {
   const programPath = `${directory}/wallie-mcp.cjs`;
   const sources = runtime.manifest.servers.map((server, index) => {
@@ -45,7 +47,8 @@ export async function prepareMcpAdapter({
     };
   });
   signal?.throwIfAborted();
-  await sandbox.writeFile(programPath, mcpStdioBridge, { mode: 0o600 });
+  for (const { path } of sources) material.trackFile(`${path}.ready`);
+  await material.writeFile(programPath, mcpStdioBridge);
   const receipt = {
     type: "mcp_receipt",
     servers: sources.map(({ server }) => ({

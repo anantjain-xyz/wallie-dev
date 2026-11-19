@@ -3,6 +3,7 @@ import type { OpenCodeCredential } from "@/lib/opencode/contracts";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 import type { AgentEvent, AgentRunUsage, AgentRunner, AgentRunnerStartInput } from "./types";
+import { McpAdapterError, prepareMcpAdapter } from "./mcp-runtime";
 import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
 import { type AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-credentials";
@@ -33,6 +34,16 @@ export type ParsedOpenCodeLine = {
   usage?: AgentRunUsage;
   /** A malformed step invalidates the whole run's usage, rather than a partial total. */
   usageInvalid?: boolean;
+};
+
+// Sandbox setup writes the approved checkout token to the original home. Bind
+// the GitHub HTTPS helper to that file before OpenCode changes HOME.
+export const openCodeGitCredentialConfig = {
+  GIT_CONFIG_COUNT: "2",
+  GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
+  GIT_CONFIG_VALUE_0: "",
+  GIT_CONFIG_KEY_1: "credential.https://github.com.helper",
+  GIT_CONFIG_VALUE_1: '!git credential-store --file "$WALLIE_GIT_CREDENTIAL_FILE"',
 };
 
 /**
@@ -80,6 +91,12 @@ export class OpenCodeRunner implements AgentRunner {
     if (!sandbox) {
       throw new Error("OpenCodeRunner requires a sandbox.");
     }
+    if (input.mcp && !material) {
+      throw new McpAdapterError("OpenCode MCP requires scoped credential delivery.");
+    }
+    if (input.mcp && input.continueSessionId) {
+      throw new McpAdapterError("OpenCode cannot resume a run with pinned MCP operations.");
+    }
 
     const root = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
     const dataHome = `${root}/data`;
@@ -90,20 +107,52 @@ export class OpenCodeRunner implements AgentRunner {
     const promptFile = `${root}/prompt.txt`;
 
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
-    await sandbox.writeFile(configFile, '{"mcp":{}}\n', { mode: 0o600 });
+    const mcp =
+      input.mcp && material
+        ? await prepareMcpAdapter({
+            runtime: input.mcp,
+            sandbox,
+            directory: root,
+            signal: input.signal,
+            material,
+          })
+        : undefined;
+    if (mcp && material) {
+      material.trackFile(`${configDirectory}/AGENTS.md`);
+      const servers = Object.fromEntries(
+        mcp.servers.map(({ name, command, args }) => [
+          name,
+          { type: "local", enabled: true, command: [command, ...args] },
+        ]),
+      );
+      await material.writeFile(
+        configFile,
+        `${JSON.stringify({
+          mcp: servers,
+          enabled_providers: [this.modelProviderId],
+          share: "disabled",
+        })}\n`,
+      );
+    } else {
+      await sandbox.writeFile(configFile, '{"mcp":{}}\n', { mode: 0o600 });
+    }
 
     input.signal?.throwIfAborted();
     const auth = this.options.loadAuth ? await this.options.loadAuth() : this.options;
     input.signal?.throwIfAborted();
-    if (!secretForProvider(auth, this.modelProviderId)) {
+    const modelKey = secretForProvider(auth, this.modelProviderId);
+    if (!modelKey) {
       throw missingProviderCredentialError(this.modelProviderId);
     }
     safety.addSecret(auth.credential?.secret);
     for (const credential of Object.values(auth.providerCredentials ?? {})) {
       safety.addSecret(credential.secret);
     }
-    const authEntries = buildOpenCodeAuthEntries(auth, this.modelProviderId);
+    const authEntries = mcp
+      ? { [this.modelProviderId]: { type: "api", key: modelKey } }
+      : buildOpenCodeAuthEntries(auth, this.modelProviderId);
     const authJson = `${JSON.stringify(authEntries)}\n`;
+    if (mcp && material) await mcp.stageCredentials(material, safety);
     if (material) await material.writeFile(authFile, authJson);
     else await sandbox.writeFile(authFile, authJson, { mode: 0o600 });
     input.signal?.throwIfAborted();
@@ -113,9 +162,43 @@ export class OpenCodeRunner implements AgentRunner {
       cliArgs.push("--session", input.continueSessionId);
     }
 
+    const environment = {
+      CI: "1",
+      XDG_CONFIG_HOME: configHome,
+      XDG_DATA_HOME: dataHome,
+      XDG_STATE_HOME: `${root}/state`,
+      XDG_CACHE_HOME: `${root}/cache`,
+      OPENCODE_CONFIG: configFile,
+      OPENCODE_CONFIG_DIR: configDirectory,
+      OPENCODE_CONFIG_CONTENT: "{}",
+      OPENCODE_DISABLE_CLAUDE_CODE: "1",
+      OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      ...WALLIE_GIT_IDENTITY_ENV,
+    };
+    const isolatedEnvironment = {
+      ...environment,
+      HOME: root,
+      TMPDIR: root,
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+      OPENCODE_PURE: "1",
+    };
+    const cli = `opencode ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+    const gitAuth = [
+      'WALLIE_GIT_CREDENTIAL_FILE="$HOME/.git-credentials"',
+      ...Object.entries(openCodeGitCredentialConfig).map(([key, value]) =>
+        shellQuote(`${key}=${value}`),
+      ),
+    ].join(" ");
+    const launch = mcp
+      ? `exec env -i PATH="$PATH" ${gitAuth} ${Object.entries(isolatedEnvironment)
+          .map(([key, value]) => shellQuote(`${key}=${value}`))
+          .join(" ")} ${cli}`
+      : `export ${gitAuth}\nexport HOME=${shellQuote(root)} TMPDIR=${shellQuote(root)}\n${cli}`;
     const shellCmd = [
       "set -e",
-      `for managed_dir in /etc/opencode '/Library/Application Support/opencode' '/Library/Managed Preferences/ai.opencode.managed.plist' "/Library/Managed Preferences/$USER/ai.opencode.managed.plist"; do`,
+      "unset OPENCODE_TEST_HOME OPENCODE_TEST_MANAGED_CONFIG_DIR",
+      'managed_user="$(id -un 2>/dev/null || printf user)"',
+      `for managed_dir in /etc/opencode '/Library/Application Support/opencode' '/Library/Managed Preferences/ai.opencode.managed.plist' "/Library/Managed Preferences/$managed_user/ai.opencode.managed.plist"; do`,
       '  if [ -e "$managed_dir" ] || [ -L "$managed_dir" ]; then',
       "    printf '%s\\n' 'Wallie requires an isolated OpenCode MCP configuration.' >&2",
       "    exit 1",
@@ -127,28 +210,18 @@ export class OpenCodeRunner implements AgentRunner {
       "    break",
       "  fi",
       "done",
-      `opencode ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`,
+      launch,
     ].join("\n");
     const options = {
       cwd: sandbox.repoPath,
-      env: {
-        CI: "1",
-        XDG_CONFIG_HOME: configHome,
-        XDG_DATA_HOME: dataHome,
-        XDG_STATE_HOME: `${root}/state`,
-        XDG_CACHE_HOME: `${root}/cache`,
-        OPENCODE_CONFIG: configFile,
-        OPENCODE_CONFIG_DIR: configDirectory,
-        OPENCODE_CONFIG_CONTENT: "{}",
-        OPENCODE_DISABLE_CLAUDE_CODE: "1",
-        OPENCODE_DISABLE_PROJECT_CONFIG: "1",
-        ...WALLIE_GIT_IDENTITY_ENV,
-      },
+      ...(mcp ? {} : { env: environment }),
       signal: input.signal,
     };
+    const shellArgs = mcp ? ["-c", shellCmd] : ["-lc", shellCmd];
+    const shell = mcp ? "sh" : "bash";
     const proc = material
-      ? await material.exec("bash", ["-lc", shellCmd], options)
-      : await sandbox.exec("bash", ["-lc", shellCmd], options);
+      ? await material.exec(shell, shellArgs, options)
+      : await sandbox.exec(shell, shellArgs, options);
 
     const secrets = [
       auth.credential?.secret,
@@ -170,7 +243,7 @@ export class OpenCodeRunner implements AgentRunner {
     let lastStep: { messageId: string | undefined; reason: string | undefined } | undefined;
 
     const handleLine = (line: string): AgentEvent[] => {
-      const parsed = parseOpenCodeLine(line, secrets);
+      const parsed = parseOpenCodeLine(mcp ? safety.redact(line) : line, secrets);
       if (!parsed) return [];
       if (parsed.sessionId) lastSessionId = parsed.sessionId;
       if (parsed.step) {
@@ -272,15 +345,16 @@ export class OpenCodeRunner implements AgentRunner {
             hasCompleteCost ? costUsd : undefined,
           )
         : undefined;
-    if (code !== 0) {
-      if (finalUsage) {
-        yield {
+    const failedCompletion = finalUsage
+      ? ({
           type: "completion",
           taskComplete: false,
           summary: "OpenCode session ended unsuccessfully",
           usage: finalUsage,
-        };
-      }
+        } satisfies AgentEvent)
+      : undefined;
+    if (code !== 0) {
+      if (failedCompletion) yield failedCompletion;
       yield* deferredErrors;
       const redactedStderr = redactRunSensitiveText(safety.redact(stderrBuf).trim());
       yield {
@@ -295,16 +369,18 @@ export class OpenCodeRunner implements AgentRunner {
     }
 
     if (hadError) {
-      if (finalUsage) {
-        yield {
-          type: "completion",
-          taskComplete: false,
-          summary: "OpenCode session ended unsuccessfully",
-          usage: finalUsage,
-        };
-      }
+      if (failedCompletion) yield failedCompletion;
       yield* deferredErrors;
       return;
+    }
+
+    if (mcp) {
+      try {
+        yield await mcp.verifyReady();
+      } catch (error) {
+        if (failedCompletion) yield failedCompletion;
+        throw error;
+      }
     }
 
     // OpenCode's JSON stream has no run-level result. Only text belonging to

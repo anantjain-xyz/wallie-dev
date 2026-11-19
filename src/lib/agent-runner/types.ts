@@ -109,6 +109,7 @@ export interface AgentRunnerStartInput {
   mcp?: {
     manifest: FactoryMcpManifest;
     loadCredentials: () => Promise<ReadonlyMap<string, string>>;
+    onCleanup?: (status: "removed" | "failed") => Promise<void>;
   };
   /**
    * Extra secret values to strip from streamed events before persistence.

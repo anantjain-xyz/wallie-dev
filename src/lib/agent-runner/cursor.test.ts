@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { unavailableMcpAdapterReason } from "@/lib/factory-mcp/adapter-readiness";
+import type { FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
 import type { AgentEvent } from "./types";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
@@ -18,6 +20,51 @@ const credential = {
 };
 
 describe("CursorRunner", () => {
+  it.each([
+    { kind: "none" },
+    { kind: "bearer", secretBindingId: "22222222-2222-4222-8222-222222222222" },
+  ] satisfies FactoryMcpManifest["servers"][number]["auth"][])(
+    "rejects pinned MCP with $kind authentication before setup or credential release",
+    async (auth) => {
+      const sandbox = new FakeSandbox();
+      const loadCredential = vi.fn(async () => credential);
+      const loadCredentials = vi.fn(async () => new Map<string, string>());
+      const runner = new CursorRunner({ loadCredential });
+      const events = runner.start({
+        sessionId: "cursor-mcp",
+        prompt: "Run the approved operation",
+        sandbox,
+        scopedCredential: true,
+        mcp: {
+          loadCredentials,
+          manifest: {
+            agentId: credential.generation,
+            servers: [
+              {
+                toolRevisionId: "33333333-3333-4333-8333-333333333333",
+                serverId: "44444444-4444-4444-8444-444444444444",
+                serverSlug: "fixture",
+                revisionNumber: 1,
+                endpoint: "https://approved.example.test/mcp",
+                operations: ["read_item"],
+                auth,
+              },
+            ],
+          },
+        },
+      });
+
+      await expect(events[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+        name: "McpAdapterError",
+        message: unavailableMcpAdapterReason("cursor"),
+      });
+      expect(loadCredential).not.toHaveBeenCalled();
+      expect(loadCredentials).not.toHaveBeenCalled();
+      expect(sandbox.calls).toEqual([]);
+      expect(sandbox.files.size).toBe(0);
+    },
+  );
+
   it("rejects ancestor and nested checkout MCP config before launching the CLI", () => {
     const root = mkdtempSync(join(tmpdir(), "wallie-cursor-mcp-"));
     try {

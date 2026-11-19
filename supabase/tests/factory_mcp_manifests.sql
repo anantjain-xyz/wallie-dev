@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(70);
+select plan(74);
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '55700200-0000-4000-8000-000000000001';
 
@@ -50,7 +50,11 @@ insert into public.workspace_secrets(id,workspace_id,key,encrypted_value,value_p
   ('55700200-9000-4000-8000-000000000002','55700200-1000-4000-8000-000000000001',
    'TEST_PROVIDER_KEY','synthetic-provider-material','...provider'),
   ('55700200-9000-4000-8000-000000000003','55700200-1000-4000-8000-000000000001',
-   'LINEAR_API_KEY','synthetic-integration-material','...linear');
+   'LINEAR_API_KEY','synthetic-integration-material','...linear'),
+  ('55700200-9000-4000-8000-000000000004','55700200-1000-4000-8000-000000000001',
+   'TEST_OPENCODE_KEY','synthetic-opencode-material',null),
+  ('55700200-9000-4000-8000-000000000005','55700200-1000-4000-8000-000000000001',
+   'TEST_CURSOR_KEY','synthetic-cursor-material',null);
 
 create temp table fixture_agent as
 select agent.id, revision.id as revision_id, revision.prompt_md, revision.prompt_sha256
@@ -122,10 +126,10 @@ create function pg_temp.bind_mcp(
     coalesce(p_revision, approved_revision.id), p_source)
   from grant_v1 cross join fixture_agent cross join approved_revision;
 $$;
-create function pg_temp.bind_provider(p_source uuid)
+create function pg_temp.bind_provider(p_source uuid, p_provider text default 'codex', p_upstream text default null)
 returns public.factory_secret_bindings language sql as $$
   select public.create_factory_secret_binding(grant_v1.workspace_id, grant_v1.factory_id,
-    '55700200-0000-4000-8000-000000000001', grant_v1.id, 1, fixture_agent.id, 'codex', p_source)
+    '55700200-0000-4000-8000-000000000001', grant_v1.id, 1, fixture_agent.id, p_provider, p_source, p_upstream)
   from grant_v1 cross join fixture_agent;
 $$;
 select throws_ok($$select pg_temp.bind_mcp(p_version => 2)$$, 'PT409', null,
@@ -154,7 +158,8 @@ select ok(not exists (select 1 from principal cross join lateral public.list_fac
   where candidate.key = 'TEST_MCP_BEARER'), 'delegated bearer sources are unavailable in the shared picker');
 
 create function pg_temp.mcp_definition(
-  p_operation text default 'search', p_public boolean default false, p_include_tools boolean default true
+  p_operation text default 'search', p_public boolean default false, p_include_tools boolean default true,
+  p_provider text default 'codex', p_model text default 'gpt-5.5', p_credential_binding_id uuid default null
 ) returns jsonb language sql as $$
   with choice as (
     select * from approved_revision where not p_public
@@ -167,10 +172,10 @@ create function pg_temp.mcp_definition(
     'toolIds', case when p_include_tools then jsonb_build_array(choice.id::text || '/' || p_operation) else '[]'::jsonb end,
     'executionPolicyRevisionId', '55700200-8000-4000-8000-000000000001',
     'executionGrant', jsonb_build_object('id', grant_v1.id, 'version', grant_v1.version),
-    'credentialBindingId', provider_binding.id,
+    'credentialBindingId', coalesce(p_credential_binding_id, provider_binding.id),
     'implementationAgent', jsonb_build_object('agentId', agent.id, 'promptRevisionId', agent.revision_id,
       'promptMd', agent.prompt_md, 'promptSha256', agent.prompt_sha256),
-    'sandboxProvider', 'e2b', 'agent', jsonb_build_object('provider', 'codex', 'model', 'gpt-5.5'),
+    'sandboxProvider', 'e2b', 'agent', jsonb_build_object('provider', p_provider, 'model', p_model),
     'stages', jsonb_build_array(jsonb_build_object(
       'id', '55700200-5000-4000-8000-000000000001', 'slug', 'service-build', 'name', 'Build'))
   ) || case when p_include_tools then jsonb_build_object('mcpManifest', jsonb_build_object('agentId', agent.id,
@@ -237,12 +242,12 @@ select lives_ok($$select pg_temp.activate_mcp_fixture(1, pg_temp.mcp_definition(
 select lives_ok($$select pg_temp.activate_mcp_fixture(2, pg_temp.mcp_definition(p_include_tools => false))$$,
   'a grant with approved tools can still activate a definition with no tools');
 
-create function pg_temp.admit_mcp(p_label text)
+create function pg_temp.admit_mcp(p_label text, p_provider text default 'codex', p_model text default 'gpt-5.5')
 returns table(session_id uuid, session_number integer, workspace_slug text, job_id uuid, run_id uuid)
 language sql as $$
   select * from public.create_session_with_first_job(
     '55700200-1000-4000-8000-000000000001', '55700200-2000-4000-8000-000000000002',
-    p_label, 'MCP manifest fixture', 'codex', 'gpt-5.5',
+    p_label, 'MCP manifest fixture', p_provider, p_model,
     session_github_repository_id => '55700200-6000-4000-8000-000000000001');
 $$;
 create temp table empty_run as select * from pg_temp.admit_mcp('Empty MCP fixture');
@@ -252,7 +257,9 @@ create temp table admitted_run as select * from pg_temp.admit_mcp('Approved MCP 
 create temp table queued_run as select * from pg_temp.admit_mcp('Queued MCP fixture');
 grant select on empty_run, queued_run to authenticated;
 
-create function pg_temp.start_mcp(p_session uuid, p_job uuid)
+create function pg_temp.start_mcp(
+  p_session uuid, p_job uuid, p_provider text default 'codex', p_model text default 'gpt-5.5'
+)
 returns uuid language plpgsql as $$
 declare owner public.sessions;
 begin
@@ -260,7 +267,7 @@ begin
   update public.agent_jobs set git_continuity_release_revision = (select revision from public.get_git_continuity_release_state()),
     status = 'running', attempt_count = 1 where id = p_job;
   return public.start_session_job_attempt(p_job, 1, owner.current_stage_id, owner.current_artifact_version,
-    'codex', 'gpt-5.5', 'code', 'wallie/mcp-fixture-' || p_job::text);
+    p_provider, p_model, 'code', 'wallie/mcp-fixture-' || p_job::text);
 end;
 $$;
 create temp table started_run as select session_id, job_id, pg_temp.start_mcp(session_id,job_id) run_id from admitted_run;
@@ -307,6 +314,62 @@ select throws_ok($$select public.resolve_factory_run_mcp_credentials(
 select throws_ok($$select public.resolve_factory_run_mcp_credentials(
     '55700200-1000-4000-8000-000000000099',job_id,run_id,1) from started_run$$,
   '42501', null, 'a different workspace cannot resolve bearer material');
+
+create temp table opencode_binding as
+select * from pg_temp.bind_provider('55700200-9000-4000-8000-000000000004', 'opencode', 'opencode');
+create temp table cursor_binding as
+select * from pg_temp.bind_provider('55700200-9000-4000-8000-000000000005', 'cursor');
+
+select throws_ok($$select pg_temp.activate_mcp_fixture(4, pg_temp.mcp_definition(
+    p_provider => 'opencode', p_model => 'openai/gpt-5.5',
+    p_credential_binding_id => (select id from opencode_binding)))$$,
+  'PT422', 'A current scoped credential binding is required.',
+  'OpenCode cannot substitute an upstream model provider outside the approved binding');
+
+create function pg_temp.pin_adapter_mcp_attempt(
+  p_activation bigint, p_provider text, p_model text, p_binding_id uuid
+) returns table(job_id uuid, run_id uuid) language plpgsql as $$
+declare admitted record;
+begin
+  perform pg_temp.activate_mcp_fixture(p_activation, pg_temp.mcp_definition(
+    p_provider => p_provider, p_model => p_model, p_credential_binding_id => p_binding_id));
+  select * into strict admitted from pg_temp.admit_mcp('MCP ' || p_provider, p_provider, p_model);
+  job_id := admitted.job_id;
+  run_id := pg_temp.start_mcp(admitted.session_id, job_id, p_provider, p_model);
+  perform public.pin_session_job_git_input(job_id,1,run_id,
+    '55700200-6000-4000-8000-000000000001', 'main', repeat('a',40));
+  if not public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
+    repeat('a',40),'[]','node',7,null,null) then
+    raise exception 'The provider MCP fixture could not pin its admitted attempt.';
+  end if;
+  return next;
+end;
+$$;
+
+create temp table opencode_attempt as select * from pg_temp.pin_adapter_mcp_attempt(
+  4, 'opencode', 'opencode/gpt-5.6-sol', (select id from opencode_binding));
+create temp table cursor_attempt as select * from pg_temp.pin_adapter_mcp_attempt(
+  5, 'cursor', 'composer-2', (select id from cursor_binding));
+grant select on opencode_attempt, opencode_binding, cursor_attempt to service_role;
+set local role service_role;
+select results_eq($$select resolved.binding_id,resolved.encrypted_value
+    from opencode_attempt cross join lateral public.resolve_factory_run_credential(
+      '55700200-1000-4000-8000-000000000001',job_id,run_id,1) resolved$$,
+  $$select opencode_binding.id,'synthetic-opencode-material'::text from opencode_binding$$,
+  'the OpenCode attempt resolves the separately scoped upstream model credential');
+select results_eq($$select resolved.tool_revision_id,resolved.binding_id,resolved.material_revision,resolved.encrypted_value
+    from opencode_attempt cross join lateral public.resolve_factory_run_mcp_credentials(
+      '55700200-1000-4000-8000-000000000001',job_id,run_id,1) resolved$$,
+  $$select approved_revision.id,bearer_binding.id,2::bigint,'synthetic-encryption-version-2'::text
+    from approved_revision cross join bearer_binding$$,
+  'the exact OpenCode attempt can resolve its approved MCP bearer independently of its model credential');
+select throws_ok($$select public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',job_id,run_id,1) from cursor_attempt$$,
+  '42501', 'The worker does not own a current scoped MCP attempt.',
+  'a pinned Cursor attempt cannot release MCP credentials while Cursor readiness is unsupported');
+reset role;
+select pg_temp.activate_mcp_fixture(6, pg_temp.mcp_definition());
+
 update public.workspace_secrets set encrypted_value = 'synthetic-encryption-version-3'
   where key = 'TEST_MCP_BEARER';
 select throws_ok($$select public.resolve_factory_run_mcp_credentials(
@@ -330,7 +393,7 @@ select throws_ok($$select * from pg_temp.admit_mcp('Revoked endpoint MCP fixture
   'revoked endpoint revision blocks new session admission');
 select throws_ok($$select pg_temp.start_mcp(session_id,job_id) from queued_run$$, 'PT422', null,
   'attempt start rechecks the endpoint revision after admission');
-select pg_temp.activate_mcp_fixture(4, pg_temp.mcp_definition('lookup', true));
+select pg_temp.activate_mcp_fixture(7, pg_temp.mcp_definition('lookup', true));
 create temp table granted_queue as select * from pg_temp.admit_mcp('Public MCP fixture');
 create temp table public_attempt as
   select session_id,job_id,pg_temp.start_mcp(session_id,job_id) run_id

@@ -36,12 +36,17 @@ class ScopedRunnerMaterial {
   constructor(
     private readonly sandbox: SandboxHandle,
     private readonly signal?: AbortSignal,
+    private readonly onCleanup?: NonNullable<AgentRunnerStartInput["mcp"]>["onCleanup"],
   ) {}
 
-  async writeFile(path: string, value: string): Promise<void> {
+  trackFile(path: string): void {
     this.signal?.throwIfAborted();
     // Register before upload because a provider can report failure after writing.
     this.files.add(path);
+  }
+
+  async writeFile(path: string, value: string): Promise<void> {
+    this.trackFile(path);
     let upload: Promise<void> | undefined;
     try {
       upload = this.sandbox.writeFile(path, value, { mode: 0o600 });
@@ -119,8 +124,22 @@ class ScopedRunnerMaterial {
   }
 
   private close(): Promise<void> {
-    this.cleanup ??= this.remove();
+    this.cleanup ??= this.remove().then(
+      () => this.reportCleanup("removed"),
+      async (error: unknown) => {
+        await this.reportCleanup("failed");
+        throw error;
+      },
+    );
     return this.cleanup;
+  }
+
+  private async reportCleanup(status: "removed" | "failed"): Promise<void> {
+    try {
+      await this.onCleanup?.(status);
+    } catch {
+      // Receipt delivery cannot hide or change the cleanup result.
+    }
   }
 
   private async remove(): Promise<void> {
@@ -151,7 +170,7 @@ export function withRunnerCredentials(
   const safety = new AgentOutputSafety(input.secrets, input.onSensitiveValue);
   const material =
     input.scopedCredential && input.sandbox
-      ? new ScopedRunnerMaterial(input.sandbox, input.signal)
+      ? new ScopedRunnerMaterial(input.sandbox, input.signal, input.mcp?.onCleanup)
       : undefined;
   const events = run(safety, material);
   return safety.events(material ? material.guard(events) : events, input.signal);

@@ -85,9 +85,16 @@ export class CodexRunner implements AgentRunner {
     if (this.options.loadCredential || this.options.credential?.type !== "codex_access_token") {
       await ensureCodexHome(sandbox, codexHome, safety);
     }
-    const mcp = input.mcp
-      ? await prepareMcpAdapter({ runtime: input.mcp, sandbox, directory, signal: input.signal })
-      : undefined;
+    const mcp =
+      input.mcp && material
+        ? await prepareMcpAdapter({
+            runtime: input.mcp,
+            sandbox,
+            directory,
+            signal: input.signal,
+            material,
+          })
+        : undefined;
 
     // All nonsecret sandbox setup precedes the current authorization reads.
     input.signal?.throwIfAborted();
