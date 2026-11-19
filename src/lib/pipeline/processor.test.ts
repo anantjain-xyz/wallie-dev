@@ -264,6 +264,7 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     title: "Add SSO",
     prompt_md: "Add SSO via Google Workspace",
     creator_member_id: null,
+    creator_service_principal_id: null,
     github_repository_id: null,
     linear_issue_id: "TEAM-1",
     linear_issue_url: "https://linear.app/team/issue/TEAM-1",

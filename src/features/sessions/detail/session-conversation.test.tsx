@@ -37,7 +37,12 @@ const unavailableSource = { id: "unavailable", label: "Imported thread", url: "h
 
 function message(sequence: number, kind: SessionConversationMessage["kind"] = "user") {
   return {
-    authorLabel: { user: "Ada", agent: "Release agent", system: "Wallie" }[kind],
+    authorLabel: {
+      user: "Ada",
+      agent: "Release agent",
+      service: "Release client",
+      system: "Wallie",
+    }[kind],
     bodyHtml: `<p>Message ${sequence}</p>`,
     bodyTruncated: false,
     createdAt: now,

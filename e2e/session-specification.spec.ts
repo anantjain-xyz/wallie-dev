@@ -568,6 +568,78 @@ test("answers an exact specification once and advances only after the revised ap
         .single(),
     );
     expect(approval.artifact_version).toBe(2);
+
+    const deliveryRun = await row(
+      admin
+        .from("agent_runs")
+        .select("id")
+        .eq("session_id", session.id)
+        .eq("stage_id", deliveryStage.id)
+        .eq("status", "queued")
+        .single(),
+    );
+    // Lose both the first command response and its immediate live update so
+    // the browser must retry the exact intent it already submitted.
+    let delayLiveChanges = false;
+    await page.routeWebSocket("**/realtime/v1/websocket*", (socket) => {
+      const server = socket.connectToServer();
+      server.onMessage((message) => {
+        if (!delayLiveChanges || !message.toString().includes('"postgres_changes"')) {
+          socket.send(message);
+        }
+      });
+    });
+    await page.reload();
+    const stop = page.getByRole("button", { name: "Stop run", exact: true });
+    await expect(stop).toBeEnabled();
+    const cancelPath = `/api/sessions/${session.id}/cancel`;
+    const attempts: unknown[] = [];
+    let lostResponseStatus: number | null = null;
+    await page.route(`**${cancelPath}`, async (route) => {
+      attempts.push(route.request().postDataJSON());
+      if (attempts.length > 1) return route.continue();
+      const committed = await route.fetch();
+      lostResponseStatus = committed.status();
+      await route.abort("failed");
+    });
+    delayLiveChanges = true;
+    await stop.click();
+    await expect(page.getByText("Stop failed.", { exact: true })).toBeVisible();
+    expect(lostResponseStatus).toBe(200);
+    await expect(stop).toBeEnabled();
+    await page.screenshot({
+      path: testInfo.outputPath("04-stop-intent-retry-desktop.png"),
+      fullPage: true,
+    });
+
+    const retriedStop = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === cancelPath && response.request().method() === "POST",
+    );
+    await stop.click();
+    expect((await retriedStop).status()).toBe(200);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toEqual({ expectedRunId: deliveryRun.id, requestId: expect.any(String) });
+    expect(attempts[1]).toEqual(attempts[0]);
+    await expect(stop).toHaveCount(0);
+    expect(
+      await row(admin.from("agent_runs").select("status").eq("id", deliveryRun.id).single()),
+    ).toEqual({
+      status: "canceled",
+    });
+    const messages = await row(
+      admin
+        .from("agent_run_messages")
+        .select("id")
+        .eq("agent_run_id", deliveryRun.id)
+        .like("message_md", "**Canceled:**%"),
+    );
+    expect(messages).toHaveLength(1);
+    delayLiveChanges = false;
+    await page.screenshot({
+      path: testInfo.outputPath("05-stopped-exact-run-desktop.png"),
+      fullPage: true,
+    });
   } finally {
     try {
       if (workspaceId) await checked(admin.from("workspaces").delete().eq("id", workspaceId));

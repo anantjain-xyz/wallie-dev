@@ -555,7 +555,8 @@ export type Database = {
           rendered_feedback_text: string
           request_hash: string
           request_id: string
-          requested_by_member_id: string
+          requested_by_member_id: string | null
+          requested_by_service_principal_id: string | null
           review_revision: number
           run_id: string | null
           selected_thread_ids: string[]
@@ -577,7 +578,8 @@ export type Database = {
           rendered_feedback_text: string
           request_hash?: string
           request_id: string
-          requested_by_member_id: string
+          requested_by_member_id?: string | null
+          requested_by_service_principal_id?: string | null
           review_revision: number
           run_id?: string | null
           selected_thread_ids: string[]
@@ -599,7 +601,8 @@ export type Database = {
           rendered_feedback_text?: string
           request_hash?: string
           request_id?: string
-          requested_by_member_id?: string
+          requested_by_member_id?: string | null
+          requested_by_service_principal_id?: string | null
           review_revision?: number
           run_id?: string | null
           selected_thread_ids?: string[]
@@ -3649,6 +3652,7 @@ export type Database = {
           feedback_batch_id: string | null
           kind: Database["public"]["Enums"]["session_conversation_message_kind"]
           originating_member_id: string | null
+          originating_service_principal_id: string | null
           provenance_version: number
           run_id: string | null
           sequence: number
@@ -3670,6 +3674,7 @@ export type Database = {
           feedback_batch_id?: string | null
           kind: Database["public"]["Enums"]["session_conversation_message_kind"]
           originating_member_id?: string | null
+          originating_service_principal_id?: string | null
           provenance_version?: number
           run_id?: string | null
           sequence: number
@@ -3691,6 +3696,7 @@ export type Database = {
           feedback_batch_id?: string | null
           kind?: Database["public"]["Enums"]["session_conversation_message_kind"]
           originating_member_id?: string | null
+          originating_service_principal_id?: string | null
           provenance_version?: number
           run_id?: string | null
           sequence?: number
@@ -3806,6 +3812,7 @@ export type Database = {
           factory_id: string
           github_repository_id: string | null
           invoking_actor_member_id: string | null
+          invoking_actor_service_principal_id: string | null
           model_name: string
           model_provider: string
           original_prompt_md: string | null
@@ -3831,6 +3838,7 @@ export type Database = {
           factory_id: string
           github_repository_id?: string | null
           invoking_actor_member_id?: string | null
+          invoking_actor_service_principal_id?: string | null
           model_name: string
           model_provider: string
           original_prompt_md?: string | null
@@ -3856,6 +3864,7 @@ export type Database = {
           factory_id?: string
           github_repository_id?: string | null
           invoking_actor_member_id?: string | null
+          invoking_actor_service_principal_id?: string | null
           model_name?: string
           model_provider?: string
           original_prompt_md?: string | null
@@ -5195,6 +5204,7 @@ export type Database = {
           answer_text: string | null
           answered_at: string | null
           answered_by_member_id: string | null
+          answered_by_service_principal_id: string | null
           artifact_id: string
           artifact_version: number
           attempt_count: number
@@ -5217,6 +5227,7 @@ export type Database = {
           answer_text?: string | null
           answered_at?: string | null
           answered_by_member_id?: string | null
+          answered_by_service_principal_id?: string | null
           artifact_id: string
           artifact_version: number
           attempt_count: number
@@ -5239,6 +5250,7 @@ export type Database = {
           answer_text?: string | null
           answered_at?: string | null
           answered_by_member_id?: string | null
+          answered_by_service_principal_id?: string | null
           artifact_id?: string
           artifact_version?: number
           attempt_count?: number
@@ -5585,6 +5597,7 @@ export type Database = {
           artifact_review_revision: number
           created_at: string
           creator_member_id: string | null
+          creator_service_principal_id: string | null
           current_artifact_id: string | null
           current_artifact_version: number
           current_stage_id: string
@@ -5619,6 +5632,7 @@ export type Database = {
           artifact_review_revision?: number
           created_at?: string
           creator_member_id?: string | null
+          creator_service_principal_id?: string | null
           current_artifact_id?: string | null
           current_artifact_version?: number
           current_stage_id: string
@@ -5653,6 +5667,7 @@ export type Database = {
           artifact_review_revision?: number
           created_at?: string
           creator_member_id?: string | null
+          creator_service_principal_id?: string | null
           current_artifact_id?: string | null
           current_artifact_version?: number
           current_stage_id?: string
@@ -8152,6 +8167,24 @@ export type Database = {
           status: string
         }[]
       }
+      execute_factory_session_mutation: {
+        Args: {
+          p_admission_id: string
+          p_credential_digest: string
+          p_credential_id: string
+          p_credential_kind: Database["public"]["Enums"]["factory_command_credential_kind"]
+          p_factory_id: string
+          p_lease_id: string
+          p_operation: Database["public"]["Enums"]["factory_session_mutation_operation"]
+          p_payload: Json
+          p_request_hash: string
+          p_request_id: string
+          p_request_key: string
+          p_surface: Database["public"]["Enums"]["factory_command_surface"]
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       fail_session_checkpoint_cleanup: {
         Args: { p_claim_id: string; p_error_code: string; p_run_id: string }
         Returns: boolean
@@ -10550,6 +10583,11 @@ export type Database = {
         | "sessions:clarify"
         | "sessions:cancel"
       factory_command_surface: "api" | "mcp"
+      factory_session_mutation_operation:
+        | "create"
+        | "follow_up"
+        | "answer_clarification"
+        | "cancel"
       factory_session_read_operation:
         | "sessions"
         | "session"
@@ -10572,7 +10610,7 @@ export type Database = {
         | "merged"
         | "closed"
         | "not_applicable"
-      session_conversation_author_kind: "user" | "agent" | "system"
+      session_conversation_author_kind: "user" | "agent" | "system" | "service"
       session_conversation_message_kind:
         | "message"
         | "initial_prompt"
@@ -10748,6 +10786,12 @@ export const Constants = {
         "sessions:cancel",
       ],
       factory_command_surface: ["api", "mcp"],
+      factory_session_mutation_operation: [
+        "create",
+        "follow_up",
+        "answer_clarification",
+        "cancel",
+      ],
       factory_session_read_operation: [
         "sessions",
         "session",
@@ -10773,7 +10817,7 @@ export const Constants = {
         "closed",
         "not_applicable",
       ],
-      session_conversation_author_kind: ["user", "agent", "system"],
+      session_conversation_author_kind: ["user", "agent", "system", "service"],
       session_conversation_message_kind: [
         "message",
         "initial_prompt",
