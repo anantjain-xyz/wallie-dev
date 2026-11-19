@@ -22,6 +22,7 @@ export type WallieActionErrorCode =
   | "run_not_found"
   | "run_not_retryable"
   | "factory_credential_unavailable"
+  | "factory_profile_unavailable"
   | "execution_budget_exhausted";
 
 export type WallieBlockingReason = {

@@ -11,6 +11,10 @@ import {
 import { runCatalogItemParamsSchema } from "@/features/wallie/run-catalog-contracts";
 import { loadRunTranscript, RunTranscriptResetError } from "@/features/wallie/run-transcript";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
+import {
+  recordedRunExecutionProfileSchema,
+  type RecordedRunExecutionProfile,
+} from "@/lib/factory-definitions/execution-profile-contracts";
 import { factoryMcpManifestSchema } from "@/lib/factory-mcp/manifest";
 import { workspaceSessionDetailPath } from "@/lib/routes";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -60,6 +64,31 @@ const runMcpManifestSchema = z
   .strict();
 
 export type RunInspectorMcpManifest = z.infer<typeof runMcpManifestSchema>;
+
+export type RunInspectorExecutionProfile =
+  | { kind: "recorded"; profile: RecordedRunExecutionProfile }
+  | { kind: "unrecorded" | "unavailable" };
+
+export async function loadRunInspectorExecutionProfile({
+  supabase,
+  workspaceId,
+  run,
+}: {
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  workspaceId: string;
+  run: Pick<WorkspaceRunCatalogItem, "id" | "attemptCount">;
+}): Promise<RunInspectorExecutionProfile> {
+  if (run.attemptCount === null) return { kind: "unrecorded" };
+  const { data, error } = await supabase.rpc("get_run_execution_profile", {
+    target_workspace_id: workspaceId,
+    target_run_id: run.id,
+    target_attempt_count: run.attemptCount,
+  });
+  if (error) return { kind: "unavailable" };
+  if (data === null) return { kind: "unrecorded" };
+  const parsed = recordedRunExecutionProfileSchema.safeParse(data);
+  return parsed.success ? { kind: "recorded", profile: parsed.data } : { kind: "unavailable" };
+}
 
 export async function loadRunInspectorMcpManifest(input: {
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -186,11 +215,12 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     run = await loadRun();
     if (!run) notFound();
   }
-  const [artifact, skills, credential, mcp] = await Promise.all([
+  const [artifact, skills, credential, mcp, executionProfile] = await Promise.all([
     loadRunInspectorArtifact({ ...context, run }),
     loadRunInspectorSkills({ ...context, run }),
     loadRunInspectorCredential({ ...context, run }),
     loadRunInspectorMcpManifest({ ...context, run }),
+    loadRunInspectorExecutionProfile({ ...context, run }),
   ]);
   return {
     workspaceId: workspace.id,
@@ -200,6 +230,7 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     skills,
     credential,
     mcp,
+    executionProfile,
     transcript,
   };
 }

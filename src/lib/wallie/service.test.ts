@@ -21,6 +21,7 @@ describe("factory credential readiness", () => {
     credentialBindingId: "binding",
     implementationAgent: { agentId: "agent" },
     agent: { provider: "codex", model: "gpt-5.5" },
+    sandboxProvider: "vercel",
   } as Parameters<typeof assertSessionFactoryCredentialReady>[0]["definition"];
 
   it("checks only the pinned tuple for a grant-backed run", async () => {
@@ -510,6 +511,7 @@ function buildSupabaseMocks(opts: {
   receiptRun?: AgentRunRow | null;
   existingRun?: AgentRunRow | null;
   primaryRepositoryId?: string | null;
+  humanCredentialStatus?: string;
   repositories?: Array<{
     default_branch?: string | null;
     default_programming_language?: string | null;
@@ -529,6 +531,7 @@ function buildSupabaseMocks(opts: {
   const sessionRow = {
     archived_at: opts.archivedAt ?? null,
     current_stage_id: "stage-product",
+    creator_member_id: "original-owner",
     factory_id: "factory-1",
     github_repository_id: null,
     id: "sess-1",
@@ -590,6 +593,9 @@ function buildSupabaseMocks(opts: {
   let queuedRun: AgentRunRow | null | undefined;
   let receiptRunId: string | null = null;
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
+    if (name === "check_session_agent_credential") {
+      return { data: opts.humanCredentialStatus ?? "ready", error: null };
+    }
     if (name !== "enqueue_session_job_with_run" && name !== "enqueue_session_retry_with_checkpoint")
       throw new Error(`unexpected RPC: ${name}`);
     opts.enqueueCalls.push(args);
@@ -790,7 +796,7 @@ describe("authenticated run actions", () => {
 });
 
 describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
-  function pinnedRetry() {
+  function pinnedRetry(humanCredentialStatus?: string) {
     const digest = "a".repeat(64);
     mocks.loadPinnedFactoryExecution.mockResolvedValue({
       agent: { provider: "codex", model: "gpt-5.5" },
@@ -803,6 +809,7 @@ describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
     const { admin, rpc, supabase } = buildSupabaseMocks({
       agentConfig: [{ key: "agent_provider", value_json: "live-provider-unavailable" }],
       enqueueCalls,
+      humanCredentialStatus,
       primaryRepositoryId: "repo-live",
       repositories: [{ full_name: "acme/pinned", id: "repo-pinned" }],
     });
@@ -859,10 +866,25 @@ describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
     expect(enqueueCalls).toEqual([]);
   });
 
+  it("checks the original pinned session owner before admitting a retry", async () => {
+    const { enqueueCalls, retry, rpc } = pinnedRetry("expired");
+    await expect(retry()).rejects.toMatchObject({
+      code: "factory_credential_unavailable",
+      statusCode: 422,
+    });
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("check_session_agent_credential", {
+      p_workspace_id: "ws-1",
+      p_creator_member_id: "original-owner",
+      p_agent_provider: "codex",
+      p_agent_model: "gpt-5.5",
+    });
+    expect(enqueueCalls).toEqual([]);
+  });
+
   it("keeps pinned Retry on the checkpoint-aware RPC if its schema is unavailable", async () => {
     const { retry, rpc } = pinnedRetry();
     mocks.resolveSandboxImplementation.mockReturnValue("fake");
-    rpc.mockResolvedValueOnce({
+    rpc.mockResolvedValueOnce({ data: "ready", error: null }).mockResolvedValueOnce({
       data: null,
       error: {
         code: "PGRST202",
@@ -873,7 +895,7 @@ describe("retryWallieRun queued run configuration (WAL-3 regression)", () => {
       },
     });
     await expect(retry()).rejects.toMatchObject({ code: "PGRST202" });
-    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledTimes(2);
     expect(rpc).toHaveBeenCalledWith("enqueue_session_retry_with_checkpoint", expect.anything());
   });
 

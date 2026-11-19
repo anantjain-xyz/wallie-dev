@@ -141,6 +141,7 @@ vi.mock("@/lib/pipeline/session-attachments", () => ({
 
 vi.mock("@/lib/agent-runner", () => ({
   createAgentRunner: mocked.createAgentRunner,
+  DEFAULT_AGENT_EFFORT: "xhigh",
   DEFAULT_AGENT_RUNNER_CONFIG: {
     effort: "xhigh",
     provider: "codex",

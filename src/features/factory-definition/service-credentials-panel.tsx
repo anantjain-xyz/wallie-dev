@@ -32,12 +32,14 @@ export function ServiceCredentialsPanel({
   scope,
   workspaceSlug,
   canUseBinding,
+  onChanged,
   onUseBinding,
 }: {
   endpoint: string;
   scope: FactorySecretBindingScope;
   workspaceSlug: string;
   canUseBinding: boolean;
+  onChanged?: () => void;
   onUseBinding: (id: string) => void;
 }) {
   const [snapshot, setSnapshot] = useState<FactorySecretBindingResponse | null>(null);
@@ -99,6 +101,7 @@ export function ServiceCredentialsPanel({
       setRevokeOpen(false);
       setSecretId("");
       setNotice(command.action === "attach" ? "Saved secret attached." : "Binding revoked.");
+      onChanged?.();
       reload();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not change the credential binding.");

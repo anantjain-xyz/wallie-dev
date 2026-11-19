@@ -54,9 +54,57 @@ from (select distinct function_signature from credential_cases) functions;
 select ok(not has_function_privilege('anon', function_signature, 'EXECUTE'),
   function_signature || ' denies anonymous execution')
 from (select distinct function_signature from credential_cases) functions;
+select ok(has_function_privilege('service_role', 'public.check_session_agent_credential(uuid,uuid,text,text)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'public.check_session_agent_credential(uuid,uuid,text,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.check_session_agent_credential(uuid,uuid,text,text)', 'EXECUTE'),
+  'only the service role can inspect a session member credential status');
 
 set local role service_role;
 set local "request.jwt.claim.role" = 'service_role';
+
+create function pg_temp.readiness(provider text, model text,
+  member_id uuid default 'c1b2c3d4-0002-4000-8000-000000000002',
+  workspace_id uuid default 'b1b2c3d4-0001-4000-8000-000000000001'
+) returns text language sql as $$
+  select public.check_session_agent_credential(workspace_id, member_id, provider, model);
+$$;
+select is(pg_temp.readiness(provider, model), expected, description)
+from (values
+  ('codex', 'gpt-5.5', 'ready', 'the active member has a Codex connection'),
+  ('claude-code', 'claude-opus-4-8', 'ready', 'the active member has a Claude Code connection'),
+  ('cursor', 'composer-2', 'ready', 'the active member has a current Cursor connection'),
+  ('opencode', 'opencode/model', 'ready', 'the active member has an OpenCode Zen connection'),
+  ('opencode', 'opencode-go/model', 'ready', 'OpenCode checks the selected custom provider'),
+  ('opencode', 'openrouter/anthropic/model', 'ready', 'OpenCode supports exact nested model IDs'),
+  ('opencode', 'unconnected/model', 'missing', 'an unrelated OpenCode provider has no implicit credential'),
+  ('opencode', 'opencode-go/', 'missing', 'an invalid OpenCode model cannot select a saved credential'),
+  ('unsupported', 'model', 'missing', 'an unknown provider cannot select a saved credential')
+) as expected_status(provider, model, expected, description);
+select is(pg_temp.readiness('codex', 'gpt-5.5', workspace_id => 'ca530000-0000-4000-8000-000000000001'),
+  'missing', 'readiness cannot use the member ID in a different workspace');
+select is(pg_temp.readiness('codex', 'gpt-5.5', member_id => 'c1b2c3d4-0003-4000-8000-000000000003'),
+  'missing', 'readiness does not use a system member');
+select is(pg_temp.readiness('codex', 'gpt-5.5', member_id => null),
+  'missing', 'readiness requires a session owner');
+
+update public.user_codex_credentials
+set credential_type = 'chatgpt_auth_json', auth_reconnect_required = true, access_token_expires_at = now() - interval '1 hour'
+where user_id = 'a1b2c3d4-0002-4000-8000-000000000002';
+select is(pg_temp.readiness('codex', 'gpt-5.5'), 'expired', 'Codex detects expiry before reconnect status');
+update public.user_codex_credentials set access_token_expires_at = null
+where user_id = 'a1b2c3d4-0002-4000-8000-000000000002';
+select is(pg_temp.readiness('codex', 'gpt-5.5'), 'reconnect_required', 'Codex detects a stale subscription sign-in');
+update public.user_codex_credentials set credential_type = 'platform_api_key', auth_reconnect_required = false
+where user_id = 'a1b2c3d4-0002-4000-8000-000000000002';
+
+update public.user_cursor_credentials set reconnect_required = true, api_key_expires_at = now() - interval '1 hour'
+where user_id = 'a1b2c3d4-0002-4000-8000-000000000002';
+select is(pg_temp.readiness('cursor', 'composer-2'), 'reconnect_required', 'Cursor detects reconnect status before expiry');
+update public.user_cursor_credentials set reconnect_required = false
+where user_id = 'a1b2c3d4-0002-4000-8000-000000000002';
+select is(pg_temp.readiness('cursor', 'composer-2'), 'expired', 'Cursor detects an expired connection');
+update public.user_cursor_credentials set api_key_expires_at = now() + interval '1 day'
+where user_id = 'a1b2c3d4-0002-4000-8000-000000000002';
 
 select results_eq(
   format(read_sql, 'c1b2c3d4-0002-4000-8000-000000000002', 'b1b2c3d4-0001-4000-8000-000000000001'),
@@ -148,6 +196,9 @@ select * from public.remove_workspace_member(
   'c1b2c3d4-0002-4000-8000-000000000002', 'b1b2c3d4-0001-4000-8000-000000000001');
 select is((select count(*) from removed_session_owner), 1::bigint,
   'the normal member-removal transaction revokes the fixture membership');
+select is(pg_temp.readiness('codex', 'gpt-5.5'), 'missing', 'readiness removes a revoked member from credential selection');
+select is(pg_temp.readiness('codex', 'gpt-5.5', 'ca530000-0000-4000-8000-000000000002',
+  'ca530000-0000-4000-8000-000000000001'), 'ready', 'readiness still applies to the same user in an active workspace');
 
 select is_empty(
   format(read_sql, 'c1b2c3d4-0002-4000-8000-000000000002', 'b1b2c3d4-0001-4000-8000-000000000001'),

@@ -46,6 +46,17 @@ returns boolean language sql as $$
     checkout_sha, predecessors, 'workerd', 7, 'high', member_id);
 $$;
 create temp table legacy as select * from pg_temp.manifest_fixture('Legacy manifest');
+grant select on legacy to authenticated;
+select ok(has_function_privilege('authenticated', 'public.get_run_execution_profile(uuid,uuid,integer)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.get_run_execution_profile(uuid,uuid,integer)', 'EXECUTE'),
+  'the execution profile is an authenticated projection');
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = 'a1b2c3d4-0001-4000-8000-000000000001';
+select is(public.get_run_execution_profile('b1b2c3d4-0001-4000-8000-000000000001',run_id,1),
+  null::jsonb, 'a run without a pinned attempt has no recorded profile') from legacy;
+reset role;
+set local request.jwt.claim.role = 'service_role';
 
 select is(pg_temp.pin_manifest(job_id, gen_random_uuid()), false, 'a different run cannot pin the claim') from legacy;
 select is(pg_temp.pin_manifest(job_id, run_id, attempt => 2), false, 'a stale attempt cannot pin the claim') from legacy;
@@ -67,6 +78,19 @@ select is(checkout_sha, repeat('a',40), 'the persisted checkout binds to exact p
 select is(model_name, 'gpt-5.5', 'the manifest copies the actual run model') from first_manifest;
 select is(credential_owner_member_id, 'c1b2c3d4-0001-4000-8000-000000000001'::uuid,
   'the manifest retains the actual credential selector') from first_manifest;
+
+create function pg_temp.confirm_unpublished_factory(p_request_id uuid) returns uuid language sql as $$
+  select admitted.session_id from public.create_confirmed_factory_session_once_with_first_job(
+    'b1b2c3d4-0001-4000-8000-000000000001', 'c1b2c3d4-0001-4000-8000-000000000001',
+    p_request_id, repeat('6',64), '', 'Confirmed before first publication', 'Run the reviewed settings',
+    'codex', 'gpt-5.5', '{}'
+  ) admitted;
+$$;
+create temp table confirmed_unpublished as
+select pg_temp.confirm_unpublished_factory('56000000-0000-4000-8000-000000000001') as session_id;
+select ok((select not owner.execute_pinned_definition and owner.factory_definition_revision_id is null
+  from public.sessions owner join confirmed_unpublished confirmed on confirmed.session_id=owner.id),
+  'an empty digest expectation admits a legacy session before the first publication');
 
 insert into public.user_codex_credentials(user_id, credential_type, encrypted_credential)
 values ('a1b2c3d4-0001-4000-8000-000000000001', 'platform_api_key', 'manifest-test-ciphertext')
@@ -107,6 +131,11 @@ with definition as (
 )
 insert into public.factory_definition_activations (workspace_id, factory_id, revision_id, activation_number, created_by)
 select workspace_id, factory_id, id, 1, created_by from revision;
+select throws_ok($$select pg_temp.confirm_unpublished_factory('56000000-0000-4000-8000-000000000002')$$,
+  'P0003', 'The active factory definition changed.',
+  'an empty digest expectation cannot admit an unreviewed first publication');
+select is(pg_temp.confirm_unpublished_factory('56000000-0000-4000-8000-000000000001'),
+  (select session_id from confirmed_unpublished), 'a committed legacy admission replays after the first publication');
 
 create temp table approval_target as select * from pg_temp.manifest_fixture('Manifest with exact predecessor', true);
 create temp table legacy_target as select * from pg_temp.manifest_fixture('Manifest with older predecessor', true);
@@ -179,8 +208,22 @@ select throws_ok($$insert into public.session_attempt_manifests select * from pu
   '42501', null, 'service writers must use the fenced RPC');
 reset role;
 set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
 select throws_ok($$select * from public.session_attempt_manifests$$, '42501', null, 'the browser cannot read internal receipts');
+select is(public.get_run_execution_profile('b1b2c3d4-0001-4000-8000-000000000001',run_id,1),
+  '{"provider":"codex","model":"gpt-5.5","effort":"high","maxTurns":7,"sandboxProvider":null,
+    "sandboxConnectionRevision":null,"workerRuntime":"workerd","definitionRevisionId":null,
+    "authority":{"kind":"human","memberId":"c1b2c3d4-0001-4000-8000-000000000001"}}'::jsonb,
+  'an authorized reader sees the exact recorded human execution profile') from legacy;
+select is(public.get_run_execution_profile('b1b2c3d4-0001-4000-8000-000000000001',run_id,2),
+  null::jsonb, 'a different attempt cannot borrow the recorded profile') from legacy;
+select is(public.get_run_execution_profile(gen_random_uuid(),run_id,1),
+  null::jsonb, 'a different workspace cannot borrow the recorded profile') from legacy;
+set local request.jwt.claim.sub = '54100000-0000-4000-8000-000000000099';
+select is(public.get_run_execution_profile('b1b2c3d4-0001-4000-8000-000000000001',run_id,1),
+  null::jsonb, 'a user without session access cannot discover the recorded profile') from legacy;
 reset role;
+set local request.jwt.claim.role = 'service_role';
 
 select lives_ok($$delete from public.sessions where id = (select session_id from legacy)$$,
   'owning-session deletion cascades immutable manifests');

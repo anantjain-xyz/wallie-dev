@@ -14,6 +14,10 @@ A completion from before approval receipts is recorded as `legacy_unverified`. T
 
 ## Execution and retries
 
+- Factory Definition shows the effective harness, model, supported options, sandbox provider, and credential authority for the selected saved definition. Current readiness checks the exact saved connection, repository capability receipt, and credential binding or human owner.
+- Starting a session confirms the checked definition digest or the absence of an active revision at admission. Retry checks the original session owner or pinned service binding. The worker resolves the same model and sandbox provider from the admitted revision.
+- Run Inspector reads the recorded profile from the exact attempt manifest and scoped credential receipt. It shows the actual worker runtime and preserves historical authority after revocation.
+
 New enrolled sessions execute their compiled revision. The stage order, names, prompts, operating rules, approval policy, agent, sandbox provider, and execution and delivery policies come from that revision. Existing stable stage IDs anchor artifacts and reviews even when the live stage is renamed, moved, or archived. Publish a new revision to change the defaults for new sessions.
 
 - Automatic retry and Retry keep the session's revision, Git lineage, and accepted predecessor. A credential revocation or disconnected repository or sandbox blocks further execution. Reconnecting the same provider requires a current capability check.

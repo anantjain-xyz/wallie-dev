@@ -41,6 +41,7 @@ import {
   loadPinnedSessionPrompt,
   type PinnedFactoryExecution,
 } from "@/lib/factory-definitions/runtime-definition";
+import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
 import {
   AGENT_PROVIDERS,
   agentProviderSupportsEffort,
@@ -72,7 +73,6 @@ import { evaluateSessionPrReadiness } from "@/lib/pipeline/pr-readiness";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { loadRunAgentPrompt } from "@/lib/factory-agents/runtime";
 import { resolveFactoryMcpCredentials } from "@/lib/factory-mcp/credentials";
-import { unavailableMcpAdapterReason } from "@/lib/factory-mcp/adapter-readiness";
 import { loadFactorySkillBundle } from "@/lib/factory-skills/runtime";
 import {
   formatSessionAttachmentPromptData,
@@ -131,10 +131,10 @@ class MissingReviewableOutputError extends Error {
   }
 }
 
-class McpAdapterUnavailableError extends Error {
+class FactoryExecutionProfileUnavailableError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "McpAdapterUnavailableError";
+    this.name = "FactoryExecutionProfileUnavailableError";
   }
 }
 
@@ -300,6 +300,8 @@ async function runStage(input: {
   let capture: RunEventCapture | undefined;
   let captureOpen = false;
   try {
+    const profile =
+      pinned && resolveFactoryExecutionProfile(pinned, session.creator_member_id ?? undefined);
     const gitInputPromise = loadPinnedSessionJobGitInput({
       admin,
       jobId: job.id,
@@ -354,12 +356,13 @@ async function runStage(input: {
         "The pinned Git input belongs to a different repository. Restore the original repository connection before retrying.",
       );
     }
-    const provider = normalizeAgentProviderName(config.provider);
+    const provider = profile?.provider ?? normalizeAgentProviderName(config.provider);
     if (!provider) {
       throw new Error(
         `Unknown agent provider: "${config.provider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
       );
     }
+    const model = profile?.model ?? config.model;
 
     const { data: startedRunId, error: startError } = await admin.rpc("start_session_job_attempt", {
       p_job_id: job.id,
@@ -367,7 +370,7 @@ async function runStage(input: {
       p_expected_stage_id: stage.id,
       p_expected_artifact_version: session.current_artifact_version,
       p_model_provider: provider,
-      p_model_name: config.model,
+      p_model_name: model,
       p_run_type: inferWallieRunMode(repository.repositoryId),
       p_branch_name: branch,
     });
@@ -395,11 +398,12 @@ async function runStage(input: {
     }
 
     const mcpManifest = pinned?.mcpManifest;
-    const unavailableMcpReason = mcpManifest && unavailableMcpAdapterReason(provider);
-    if (unavailableMcpReason) throw new McpAdapterUnavailableError(unavailableMcpReason);
+    if (profile?.unavailableReason)
+      throw new FactoryExecutionProfileUnavailableError(profile.unavailableReason);
 
-    const scopedBindingId = pinned?.executionGrant ? pinned.credentialBindingId : undefined;
-    if (pinned?.executionGrant && !scopedBindingId) {
+    const authority = profile?.credentialAuthority;
+    const scopedBindingId = authority?.kind === "service" ? authority.bindingId : undefined;
+    if (authority?.kind === "service" && !scopedBindingId) {
       throw new ScopedRunCredentialUnavailableError();
     }
 
@@ -480,17 +484,17 @@ async function runStage(input: {
     const sandboxSelection =
       sandboxImplementation === "fake"
         ? null
-        : pinned
+        : profile
           ? await loadRequiredWorkspaceSandboxConnection(
               admin,
               session.workspace_id,
-              pinned.sandboxProvider,
+              profile.sandboxProvider,
             )
           : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
     if (sandboxSelection) {
       await assertCurrentSandboxCapabilityCheck({
         admin,
-        agent: { model: config.model, provider },
+        agent: { model, provider },
         connection: sandboxSelection.connection,
         ...(pinned ? { definitionDigest: pinned.canonicalDigest } : {}),
         repositoryId: github.repo.id,
@@ -705,11 +709,16 @@ async function runStage(input: {
       throw new ExecutionOwnershipLostError();
     throwIfAborted(signal);
     const checkoutSha = resumed ? await readSourceBase(sandbox, signal) : gitInput.input_sha;
-    const maxTurns =
-      provider === "claude-code"
+    const maxTurns = profile
+      ? (profile.maxTurns ?? undefined)
+      : provider === "claude-code"
         ? (config.maxTurns ?? DEFAULT_AGENT_RUNNER_CONFIG.maxTurns)
         : undefined;
-    const effort = config.effort ?? DEFAULT_AGENT_EFFORT;
+    const effort = profile
+      ? (profile.effort ?? undefined)
+      : agentProviderSupportsEffort(provider)
+        ? (config.effort ?? DEFAULT_AGENT_EFFORT)
+        : undefined;
     if (
       !(await pinSessionAttemptManifest({
         admin,
@@ -719,9 +728,13 @@ async function runStage(input: {
         prompt,
         checkoutSha,
         predecessors: predecessorInputs.predecessors,
-        credentialOwnerMemberId: scopedBindingId ? null : session.creator_member_id,
+        credentialOwnerMemberId: authority
+          ? authority.kind === "human"
+            ? authority.memberId
+            : null
+          : session.creator_member_id,
         workerRuntime: input.workerRuntime ?? "node",
-        ...(agentProviderSupportsEffort(provider) ? { effort } : {}),
+        ...(effort ? { effort } : {}),
         maxTurns,
         signal,
       }))
@@ -736,7 +749,7 @@ async function runStage(input: {
       admin,
       effort,
       maxTurns,
-      model: config.model,
+      model,
       provider,
       session,
       loadScopedCredential: scopedBindingId
@@ -1094,7 +1107,7 @@ async function runStage(input: {
         !(error instanceof MissingReviewableOutputError) &&
         !(error instanceof SourcePreservationError) &&
         !(error instanceof ExecutionBudgetExhaustedError) &&
-        !(error instanceof McpAdapterUnavailableError) &&
+        !(error instanceof FactoryExecutionProfileUnavailableError) &&
         !unsafeCredentialCleanup &&
         !(
           error instanceof Error &&
@@ -1428,7 +1441,7 @@ async function loadSessionById(admin: AdminClient, id: string): Promise<SessionR
 
 function createSessionAgentRunner(input: {
   admin: AdminClient;
-  effort: AgentEffort;
+  effort?: AgentEffort;
   maxTurns?: number;
   model?: string;
   provider: AgentProvider;
