@@ -71,6 +71,22 @@ provider revision time, and Wallie’s receipt time.
   returns its source head. The canonical readiness record keeps the unknown
   live head separate from that retained source evidence.
 
+## Throughput attribution
+
+Throughput counts unique canonical PRs using their provider merge time.
+Breakdowns use the recorded request surface and invoking actor, or the
+producing run’s exact manifest for agent, model, harness, and definition.
+
+- Each PR belongs to one bucket per dimension. Complete evidence with
+  distinct producing values uses the mixed bucket. Known values with incomplete
+  producer evidence use the partial bucket. Drilldowns keep each contributing run.
+- The request surface retains its creation receipt even after the command
+  admission is pruned. The invoking actor, credential owner, and budget payer
+  each keep their own identity. Factory managers can inspect the credential
+  owner and budget payer.
+- An unlinked PR keeps its request attribution. Unknown remains visible for
+  request sources or producing settings whose exact evidence is unavailable.
+
 ## Deployment observers
 
 - A factory manager approves a source through

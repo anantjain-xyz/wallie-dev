@@ -9332,6 +9332,16 @@ export type Database = {
         }
         Returns: Json
       }
+      get_factory_throughput_breakdown: {
+        Args: {
+          p_dimension?: string
+          p_factory_id: string
+          p_from: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_git_continuity_release_state: {
         Args: never
         Returns: {
@@ -9851,6 +9861,22 @@ export type Database = {
           workspace_id: string
           workspace_secret_id: string
         }[]
+      }
+      list_factory_throughput_contributions: {
+        Args: {
+          p_bucket_key?: string
+          p_cursor_at?: string
+          p_cursor_attempt_count?: number
+          p_cursor_merge_id?: string
+          p_cursor_run_id?: string
+          p_dimension?: string
+          p_factory_id: string
+          p_from: string
+          p_limit?: number
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       list_run_artifacts: {
         Args: {
