@@ -80,14 +80,18 @@ function claudeWrite() {
 }
 
 function codexWrite() {
+  return codexCommand(`printf '%s' '${note}' > '${path}'`);
+}
+
+function codexCommand(command: string, id = callId) {
   return parseCodexStreamLine(
     encode({
       type: "item.completed",
       item: {
         type: "command_execution",
-        id: callId,
+        id,
         status: "completed",
-        command: `printf '%s' '${note}' > '${path}'`,
+        command,
         aggregated_output: note,
         exit_code: 0,
       },
@@ -127,6 +131,22 @@ function openCodeWrite() {
 }
 
 describe("private factory memory proposal tool activity", () => {
+  it("withholds relative private file reads and writes, including results with only body text", async () => {
+    const fileName = path.slice(path.lastIndexOf("/") + 1);
+    const { record, recorded } = capture("codex");
+    const commands = [
+      `cd /tmp && printf '%s' '${note}' > './${fileName}'`,
+      `cd /tmp && cat '${fileName}'`,
+    ];
+    for (const [index, command] of commands.entries()) {
+      await record(codexCommand(command, `relative-${index}`));
+    }
+    expect(recorded.filter((event) => event.p_kind === "tool_call")).toHaveLength(2);
+    expect(recorded.filter((event) => event.p_kind === "tool_result")).toHaveLength(2);
+    expect(encode(recorded)).not.toContain(note);
+    expect(encode(recorded)).not.toContain(fileName);
+  });
+
   it.each([
     ["claude-code", claudeWrite],
     ["codex", codexWrite],

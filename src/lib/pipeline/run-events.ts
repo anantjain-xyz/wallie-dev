@@ -94,7 +94,7 @@ export class RunEventCapture {
   private readonly toolCallSequences = new Map<string, number>();
   private readonly earlyToolResults = new Set<string>();
   private readonly privateToolCalls = new Set<string>();
-  private privatePath: string | undefined;
+  private privateFileName: string | undefined;
   private coverage: AdapterCoverage | undefined;
 
   constructor(
@@ -108,7 +108,7 @@ export class RunEventCapture {
   }
 
   protectPrivatePath(path: string): void {
-    this.privatePath = path;
+    this.privateFileName = path.slice(path.lastIndexOf("/") + 1);
   }
 
   start(adapter: CaptureAdapter): void {
@@ -210,14 +210,17 @@ export class RunEventCapture {
   }
 
   private protectToolEvent(event: AgentEvent): AgentEvent {
-    const path = this.privatePath;
-    if (!path) return event;
-    if (event.type === "tool_use" && event.input.includes(path)) {
+    const fileName = this.privateFileName;
+    if (!fileName) return event;
+    if (event.type === "tool_use" && event.input.includes(fileName)) {
       if (event.callId) this.privateToolCalls.add(event.callId);
       return { ...event, tool: PRIVATE_PROPOSAL_TOOL, input: PRIVATE_PROPOSAL_WITHHELD };
     }
     if (event.type !== "tool_result") return event;
-    if (event.output.includes(path) || (event.callId && this.privateToolCalls.has(event.callId))) {
+    if (
+      event.output.includes(fileName) ||
+      (event.callId && this.privateToolCalls.has(event.callId))
+    ) {
       return { ...event, tool: PRIVATE_PROPOSAL_TOOL, output: PRIVATE_PROPOSAL_WITHHELD };
     }
     // An adapter can deliver a result without a start or call ID. Its output

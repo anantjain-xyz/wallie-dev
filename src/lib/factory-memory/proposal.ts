@@ -20,7 +20,7 @@ export function factoryMemoryProposalInstructions(runId: string) {
     "wallie.factoryMemoryProposalPolicy",
     `## Optional factory memory proposal
 
-If the run independently established a reusable project fact, you may write one short, non-sensitive Markdown note to \`${factoryMemoryProposalPath(runId)}\`. Keep it within 4 KiB. Put the note only in that file, outside the checkout. A factory manager must import and approve the proposal before future runs can retrieve it.`,
+If the run independently established a reusable project fact, you may write one short, non-sensitive Markdown note to \`${factoryMemoryProposalPath(runId)}\`. Use the literal path in the write tool input and keep the note within 4 KiB. Put the note only in that file, outside the checkout. A factory manager must import and approve the proposal before future runs can retrieve it.`,
   );
 }
 
