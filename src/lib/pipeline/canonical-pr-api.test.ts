@@ -11,6 +11,8 @@ type ProviderPr = {
   state: "open" | "closed";
   draft: boolean;
   merged_at: string | null;
+  merged?: boolean;
+  merge_commit_sha?: string | null;
   updated_at: string;
   head: { ref: string; sha: string; repo: typeof repository | null };
   base: { ref: string; repo: typeof repository | null };
@@ -127,9 +129,49 @@ it.each([
         head: { ref: branch, sha, repo: null },
       }),
     ]);
-    expect(await api.get(42)).toMatchObject({ number: 42, state: expected, headSha: sha });
+    expect(await api.get(42)).toMatchObject({ number: 42, state: expected, headSha: null });
   },
 );
+
+it("preserves verified merge identity from a pinned GET even after head deletion", async () => {
+  const mergedAt = "2026-11-05T11:00:00Z";
+  const mergeCommitSha = "c".repeat(40);
+  const { api } = setup([
+    pr({
+      state: "closed",
+      merged: true,
+      merged_at: mergedAt,
+      merge_commit_sha: mergeCommitSha,
+      head: { ref: branch, sha, repo: null },
+    }),
+  ]);
+  expect(await api.get(42)).toMatchObject({
+    state: "merged",
+    headSha: null,
+    merge: { mergedAt, mergeCommitSha, sourceHeadSha: sha },
+  });
+});
+
+it.each<Partial<ProviderPr>>([
+  { state: "open", merged: false, merged_at: null },
+  { state: "closed", merged: false, merged_at: null },
+  { state: "closed", merged: false },
+  { draft: true },
+  { merge_commit_sha: "not-a-sha" },
+  { merge_commit_sha: null },
+  { merged_at: "2026-11-05T13:00:00Z" },
+])("does not qualify an incomplete or contradictory hosted merge snapshot %o", async (changes) => {
+  const { api } = setup([
+    pr({
+      state: "closed",
+      merged: true,
+      merged_at: "2026-11-05T11:00:00Z",
+      merge_commit_sha: "c".repeat(40),
+      ...changes,
+    }),
+  ]);
+  expect(await api.get(42)).not.toHaveProperty("merge");
+});
 
 it.each([
   { head: { ref: "changed-branch", sha, repo: null } },

@@ -9201,11 +9201,44 @@ export type Database = {
         }
         Returns: boolean
       }
+      finish_session_pr_observation_with_merge: {
+        Args: {
+          p_is_draft: boolean
+          p_merge_commit_sha: string
+          p_merge_source_head_sha: string
+          p_merged_at: string
+          p_observation_id: string
+          p_pr_head_sha: string
+          p_pr_state: string
+          p_pr_updated_at: string
+          p_pr_url: string
+        }
+        Returns: boolean
+      }
       finish_session_pr_sync: {
         Args: {
           p_claim_id: string
           p_is_draft: boolean
           p_observation_id?: string
+          p_observed_fence_sha: string
+          p_observed_head_sha: string
+          p_operation_id: string
+          p_pr_head_sha: string
+          p_pr_number: number
+          p_pr_state: string
+          p_pr_updated_at: string
+          p_pr_url: string
+        }
+        Returns: boolean
+      }
+      finish_session_pr_sync_with_merge: {
+        Args: {
+          p_claim_id: string
+          p_is_draft: boolean
+          p_merge_commit_sha: string
+          p_merge_source_head_sha: string
+          p_merged_at: string
+          p_observation_id: string
           p_observed_fence_sha: string
           p_observed_head_sha: string
           p_operation_id: string

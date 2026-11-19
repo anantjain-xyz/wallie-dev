@@ -292,6 +292,74 @@ describe("canonical PR webhook observations", () => {
       );
     },
   );
+  it("records exact merge proof from the scoped GET with a deleted head repository", async () => {
+    const { rpc } = canonicalAdmin();
+    const mergedAt = "2026-10-10T10:00:00Z";
+    const mergeCommitSha = "b".repeat(40);
+    mocked.request.mockResolvedValue({
+      data: {
+        ...canonicalSnapshot(),
+        state: "closed",
+        merged: true,
+        merged_at: mergedAt,
+        merge_commit_sha: mergeCommitSha,
+        head: { ...canonicalSnapshot().head, repo: null },
+      },
+    });
+    await handleGitHubPullRequestEvent(canonicalPayload("closed"), env);
+    expect(rpc).toHaveBeenCalledWith("finish_session_pr_observation_with_merge", {
+      p_observation_id: "canonical-token",
+      p_pr_url: "https://github.com/acme/app/pull/42",
+      p_pr_state: "merged",
+      p_is_draft: false,
+      p_pr_head_sha: null,
+      p_pr_updated_at: "2026-10-11T00:00:00Z",
+      p_merged_at: mergedAt,
+      p_merge_commit_sha: mergeCommitSha,
+      p_merge_source_head_sha: "a".repeat(40),
+    });
+    expect(rpc).not.toHaveBeenCalledWith("finish_session_pr_observation", expect.anything());
+  });
+  it("ignores merge details in a webhook body if the authoritative GET is unmerged", async () => {
+    const { rpc } = canonicalAdmin();
+    const event = canonicalPayload("closed");
+    Object.assign(event.pull_request, {
+      state: "closed",
+      merged: true,
+      merged_at: "2026-10-10T10:00:00Z",
+      merge_commit_sha: "b".repeat(40),
+    });
+    await handleGitHubPullRequestEvent(event, env);
+    expect(rpc).toHaveBeenCalledWith(
+      "finish_session_pr_observation",
+      expect.objectContaining({ p_pr_state: "open" }),
+    );
+    expect(rpc).not.toHaveBeenCalledWith(
+      "finish_session_pr_observation_with_merge",
+      expect.anything(),
+    );
+  });
+  it("reconciles a merged state with malformed identity without recording exact merge proof", async () => {
+    const { rpc } = canonicalAdmin();
+    mocked.request.mockResolvedValue({
+      data: {
+        ...canonicalSnapshot(),
+        state: "closed",
+        merged: true,
+        merged_at: "2026-10-10T10:00:00Z",
+        merge_commit_sha: "not-a-sha",
+      },
+    });
+    await handleGitHubPullRequestEvent(canonicalPayload("closed"), env);
+    expect(rpc).toHaveBeenCalledWith(
+      "finish_session_pr_observation",
+      expect.objectContaining({ p_pr_state: "merged" }),
+    );
+    expect(rpc).not.toHaveBeenCalledWith(
+      "finish_session_pr_observation_with_merge",
+      expect.anything(),
+    );
+  });
   it("lets the database discard a superseded observation without a second write", async () => {
     const { rpc } = canonicalAdmin();
     rpc.mockImplementation(
