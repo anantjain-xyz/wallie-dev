@@ -35,3 +35,37 @@ For historical repair, the owner-only
 factory, event type, and fixed exclusive cutoff. Keep the cutoff at or before
 the lifecycle coverage start and pass the returned source ID to the next batch.
 Replaying a batch is safe. A null cursor means that the bounded scan is complete.
+
+## Deployment observers
+
+- A factory manager approves a source through
+  `POST /api/workspaces/{workspaceId}/factories/{factoryId}/deployment-sources`.
+  The `approve` command takes `executionGrantId`, `executionGrantVersion`,
+  `provider`, `providerProjectId`, and `environment`. Set
+  `providerTimeAuthoritative` only when the reporter obtains exact outcome times
+  from that provider. It defaults to false.
+- The reporter needs a machine token or API OAuth access token carrying
+  `deployments:observe` for the API audience. The approved grant fixes the
+  reporter and repository.
+  Call `POST /api/v1/workspaces/{workspaceId}/factories/{factoryId}/deployment-observations`
+  with the approved `sourceId`, matching `environment`, `externalDeploymentId`,
+  and positive provider `revision`.
+- Provide `outcome` as `pending`, `failed`, `unknown`, or `succeeded`. Provide
+  the provider's exact 40-character commit in `sourceRevision` and the
+  provider's timestamp of that outcome in `providerOccurredAt`. Use JSON
+  `null` for either unknown value.
+- The response preserves the immutable observation ID and its receipt time.
+  Identical retries return the same observation. Changed facts require a
+  greater provider revision. The highest revision determines the current
+  report even when earlier revisions arrive late.
+- A delivery measurement needs the current successful outcome, an
+  authoritative source timestamp, and an exact canonical source-change
+  match in the same factory and repository. Receipt time records when Wallie
+  learned the fact. An unmatched or unknown commit is unlinked.
+- The deployments coverage row records when the ingestion schema was
+  installed. Each approved source records the start and end of its authority.
+  The completeness of provider reporting remains unknown.
+- Revoke the source through the management endpoint with `action: "revoke"`
+  and its `sourceId`. The previous evidence stays attributable to the old
+  source. Replacing its authorization preserves the logical deployment
+  identity for that provider project, environment, and repository.

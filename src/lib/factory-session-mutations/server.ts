@@ -10,6 +10,7 @@ import {
   type FactoryCommandTransport,
 } from "@/lib/factory-command-authorization/server";
 import { factoryReadRoutes } from "@/lib/factory-read-api/contracts";
+import { readBoundedJsonBody } from "@/lib/http/bounded-json-body";
 import { workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { wakeWorker } from "@/lib/worker/wake";
@@ -71,42 +72,6 @@ function mutationError(code: ErrorCode, retryAfterSeconds?: number) {
     { code, error, ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}) },
     { status, headers: responseHeaders },
   );
-}
-
-async function readMutationBody(request: Request) {
-  const contentType = request.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase();
-  if (contentType !== "application/json") {
-    return { ok: false, code: "unsupported_media_type" } as const;
-  }
-  const length = request.headers.get("Content-Length");
-  if (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBodyBytes)) {
-    return { ok: false, code: "request_too_large" } as const;
-  }
-  if (!request.body) return { ok: false, code: "invalid_request" } as const;
-
-  const reader = request.body.getReader();
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  const parts: string[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maxBodyBytes) {
-        void reader.cancel().catch(() => undefined);
-        return { ok: false, code: "request_too_large" } as const;
-      }
-      parts.push(decoder.decode(value, { stream: true }));
-    }
-    parts.push(decoder.decode());
-    const body: unknown = JSON.parse(parts.join(""));
-    return { ok: true, body } as const;
-  } catch {
-    return { ok: false, code: "invalid_request" } as const;
-  } finally {
-    reader.releaseLock();
-  }
 }
 
 function mutationRpcFailure(code: string) {
@@ -197,7 +162,7 @@ export async function handleFactoryMutation(
     operation,
     rawParams,
     request.headers.get("Idempotency-Key"),
-    () => readMutationBody(request),
+    () => readBoundedJsonBody(request, maxBodyBytes),
     { surface: "api", authorization: request.headers.get("Authorization"), signal: request.signal },
     admin,
   );
@@ -207,7 +172,7 @@ export async function executeFactoryMutation(
   operation: FactoryMutationOperation,
   rawParams: unknown,
   rawKey: unknown,
-  readBody: () => ReturnType<typeof readMutationBody>,
+  readBody: () => ReturnType<typeof readBoundedJsonBody>,
   transport: FactoryCommandTransport,
   admin?: Admin,
 ) {
