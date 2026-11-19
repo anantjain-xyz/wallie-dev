@@ -51,3 +51,40 @@ provider revision time, and Wallie’s receipt time.
 - A deleted source repository still permits a trusted merge receipt when GitHub
   returns its source head. The canonical readiness record keeps the unknown
   live head separate from that retained source evidence.
+
+## Deployment observers
+
+- A factory manager approves a source through
+  `POST /api/workspaces/{workspaceId}/factories/{factoryId}/deployment-sources`.
+  The `approve` command takes `executionGrantId`, `executionGrantVersion`,
+  `provider`, `providerProjectId`, and `environment`. Set
+  `providerTimeAuthoritative` only when the reporter obtains exact outcome times
+  from that provider. It defaults to false.
+- The reporter needs a machine token or API OAuth access token carrying
+  `deployments:observe` for the API audience. The approved grant fixes the
+  reporter and repository.
+  Call `POST /api/v1/workspaces/{workspaceId}/factories/{factoryId}/deployment-observations`
+  with the approved `sourceId`, matching `environment`, `externalDeploymentId`,
+  and positive provider `revision`.
+- Provide `outcome` as `pending`, `failed`, `unknown`, or `succeeded`. Provide
+  the provider's exact 40-character commit in `sourceRevision` and the
+  provider's timestamp of that outcome in `providerOccurredAt`. Use JSON
+  `null` for either unknown value.
+- The response preserves the immutable observation ID and its receipt time.
+  Identical retries return the same observation. Changed facts require a
+  greater provider revision. The highest revision determines the current
+  report even when earlier revisions arrive late.
+- Delivery timing uses the current successful revision when its exact commit
+  matches one verified canonical merge in the same workspace, factory, and
+  repository. The provider's authoritative deployment time must be at or
+  after the merge. The link carries both observation IDs. Missing or
+  ambiguous links leave the raw report available for inspection. A competing
+  PR with conflicting current evidence can keep a commit ambiguous until
+  a newer observation settles its identity.
+- The deployments coverage row records when the ingestion schema was
+  installed. Each approved source records the start and end of its authority.
+  The completeness of provider reporting remains unknown.
+- Revoke the source through the management endpoint with `action: "revoke"`
+  and its `sourceId`. The previous evidence stays attributable to the old
+  source. Replacing its authorization preserves the logical deployment
+  identity for that provider project, environment, and repository.

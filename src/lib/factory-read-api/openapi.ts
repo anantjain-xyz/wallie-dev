@@ -1,6 +1,11 @@
 import { z } from "zod/v4";
 
 import {
+  factoryDeploymentErrorSchema,
+  factoryDeploymentObservationRoute,
+  factoryDeploymentScope,
+} from "@/lib/factory-deployments/contracts";
+import {
   factoryMutationErrorSchema,
   factoryMutationKeySchema,
   factoryMutationResponseSchema,
@@ -185,6 +190,47 @@ const mutationPaths = Object.fromEntries(
   }),
 );
 
+const deploymentResponse = {
+  "application/json": { schema: jsonSchema(factoryDeploymentObservationRoute.response) },
+};
+
+function deploymentError(description: string) {
+  return errorResponse(description, "DeploymentObservationError");
+}
+
+const deploymentObservationPath = {
+  post: {
+    operationId: "recordFactoryDeploymentObservation",
+    summary: "Report an observed deployment outcome for an approved source",
+    "x-wallie-scope": factoryDeploymentScope,
+    parameters: parameters(factoryDeploymentObservationRoute.params, "path"),
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": { schema: jsonSchema(factoryDeploymentObservationRoute.body, "input") },
+      },
+    },
+    responses: {
+      "200": { description: "Replay of the same provider revision.", content: deploymentResponse },
+      "201": { description: "New provider revision recorded.", content: deploymentResponse },
+      "400": deploymentError("Invalid deployment report."),
+      "401": {
+        ...deploymentError("A live machine or OAuth access credential is required."),
+        headers: { "WWW-Authenticate": { schema: { type: "string", const: "Bearer" } } },
+      },
+      "403": deploymentError("The credential or report does not match the approved source."),
+      "409": deploymentError("The admission or provider revision conflicted."),
+      "413": deploymentError("The JSON request exceeds the supported size."),
+      "415": deploymentError("The request requires application/json."),
+      "429": {
+        ...deploymentError("The workspace or service principal reached a request limit."),
+        headers: { "Retry-After": { schema: { type: "integer", minimum: 1 } } },
+      },
+      "503": deploymentError("The deployment observation service is temporarily unavailable."),
+    },
+  },
+};
+
 export const factoryReadOpenApi = {
   openapi: "3.1.0",
   info: {
@@ -200,11 +246,13 @@ export const factoryReadOpenApi = {
       ...readPaths[factoryReadRoutes.sessions.path],
       ...mutationPaths[factoryMutationRoutes.create.path],
     },
+    [factoryDeploymentObservationRoute.path]: deploymentObservationPath,
   },
   components: {
     schemas: {
       Error: jsonSchema(factoryReadErrorSchema),
       MutationError: jsonSchema(factoryMutationErrorSchema),
+      DeploymentObservationError: jsonSchema(factoryDeploymentErrorSchema),
     },
     securitySchemes: {
       factoryBearer: { type: "http", scheme: "bearer", bearerFormat: "Wallie credential" },

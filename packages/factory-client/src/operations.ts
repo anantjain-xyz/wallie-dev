@@ -58,6 +58,11 @@ export const factoryOperations = {
     path: "/api/v1/workspaces/{workspaceId}/factories/{factoryId}/sessions",
     requiresIdempotencyKey: false,
   },
+  recordFactoryDeploymentObservation: {
+    method: "POST",
+    path: "/api/v1/workspaces/{workspaceId}/factories/{factoryId}/deployment-observations",
+    requiresIdempotencyKey: false,
+  },
 } as const satisfies Record<keyof operations, FactoryOperation>;
 
 export type FactoryOperationId = keyof typeof factoryOperations;

@@ -87,7 +87,10 @@ export function parseFactoryOAuthAuthorization(params: URLSearchParams) {
   if (!authorization.success) return { ok: false, error: "invalid_request" } as const;
   if (responseType !== "code") return { ok: false, error: "unsupported_response_type" } as const;
   const scopes = parseScopes(fields.get("scope"));
-  if (!scopes.success) return { ok: false, error: "invalid_scope" } as const;
+  const resource = readResourceIndicator(params);
+  if (!scopes.success || (resource !== undefined && scopes.data.includes("deployments:observe"))) {
+    return { ok: false, error: "invalid_scope" } as const;
+  }
 
   const { clientId, redirectUri, challenge, state } = authorization.data;
   return {
@@ -98,7 +101,7 @@ export function parseFactoryOAuthAuthorization(params: URLSearchParams) {
       challenge,
       state,
       scopes: scopes.data,
-      resource: readResourceIndicator(params),
+      resource,
     },
   } as const;
 }

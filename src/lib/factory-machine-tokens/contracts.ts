@@ -8,6 +8,7 @@ export const factoryCommandLabels = {
   "sessions:follow-up": "Send follow-ups",
   "sessions:clarify": "Answer clarifications",
   "sessions:cancel": "Cancel session work",
+  "deployments:observe": "Report deployment observations",
 } satisfies Record<Enums<"factory_command_scope">, string>;
 
 export const factoryCommandScopeSchema = z.enum([
@@ -16,6 +17,7 @@ export const factoryCommandScopeSchema = z.enum([
   "sessions:follow-up",
   "sessions:clarify",
   "sessions:cancel",
+  "deployments:observe",
 ]);
 
 export const factoryCommandScopesSchema = z

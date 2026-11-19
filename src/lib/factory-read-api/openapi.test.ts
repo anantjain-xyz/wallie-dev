@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
 
+import {
+  factoryDeploymentObservationRoute,
+  factoryDeploymentScope,
+} from "@/lib/factory-deployments/contracts";
 import { factoryMutationRoutes } from "@/lib/factory-session-mutations/contracts";
 
 import { factoryReadRoutes } from "./contracts";
@@ -13,6 +17,7 @@ it("publishes the six protected reads and their versioned response contracts", (
     ...new Set([
       ...Object.values(factoryReadRoutes).map(({ path }) => path),
       ...Object.values(factoryMutationRoutes).map(({ path }) => path),
+      factoryDeploymentObservationRoute.path,
     ]),
   ]);
 
@@ -41,6 +46,31 @@ it("publishes the six protected reads and their versioned response contracts", (
     },
   });
   expect(JSON.stringify(spec)).not.toContain("bodyMarkdown");
+});
+
+it("publishes the observe-only deployment contract with provider revision identity", () => {
+  expect(factoryReadOpenApi.paths[factoryDeploymentObservationRoute.path]).toMatchObject({
+    post: {
+      "x-wallie-scope": factoryDeploymentScope,
+      requestBody: {
+        content: {
+          "application/json": {
+            schema: {
+              additionalProperties: false,
+              required: expect.arrayContaining([
+                "sourceId",
+                "environment",
+                "externalDeploymentId",
+                "revision",
+                "outcome",
+              ]),
+            },
+          },
+        },
+      },
+      responses: { "200": expect.anything(), "201": expect.anything(), "403": expect.anything() },
+    },
+  });
 });
 
 it("publishes protected mutation scopes, exact intent, and the required idempotency key", () => {
