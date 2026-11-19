@@ -1956,6 +1956,204 @@ export type Database = {
           },
         ]
       }
+      factory_oauth_client_bindings: {
+        Row: {
+          client_id: string
+          execution_grant_id: string
+          execution_grant_version: number
+          factory_id: string
+          service_principal_id: string
+          workspace_id: string
+        }
+        Insert: {
+          client_id: string
+          execution_grant_id: string
+          execution_grant_version: number
+          factory_id: string
+          service_principal_id: string
+          workspace_id: string
+        }
+        Update: {
+          client_id?: string
+          execution_grant_id?: string
+          execution_grant_version?: number
+          factory_id?: string
+          service_principal_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_oauth_client_bindings_workspace_id_client_id_fkey"
+            columns: ["workspace_id", "client_id"]
+            isOneToOne: false
+            referencedRelation: "factory_oauth_clients"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_oauth_client_bindings_workspace_id_factory_id_serv_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "service_principal_id",
+              "execution_grant_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_execution_grants"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "service_principal_id",
+              "id",
+            ]
+          },
+        ]
+      }
+      factory_oauth_clients: {
+        Row: {
+          allowed_scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          created_at: string
+          created_by_member_id: string
+          id: string
+          name: string
+          redirect_uris: string[]
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          allowed_scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          created_at?: string
+          created_by_member_id: string
+          id?: string
+          name: string
+          redirect_uris: string[]
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          allowed_scopes?: Database["public"]["Enums"]["factory_command_scope"][]
+          created_at?: string
+          created_by_member_id?: string
+          id?: string
+          name?: string
+          redirect_uris?: string[]
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_oauth_clients_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      factory_oauth_grant_bindings: {
+        Row: {
+          execution_grant_id: string
+          execution_grant_version: number
+          factory_id: string
+          grant_id: string
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          service_principal_id: string
+          workspace_id: string
+        }
+        Insert: {
+          execution_grant_id: string
+          execution_grant_version: number
+          factory_id: string
+          grant_id: string
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          service_principal_id: string
+          workspace_id: string
+        }
+        Update: {
+          execution_grant_id?: string
+          execution_grant_version?: number
+          factory_id?: string
+          grant_id?: string
+          scopes?: Database["public"]["Enums"]["factory_command_scope"][]
+          service_principal_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_oauth_grant_bindings_workspace_id_factory_id_servi_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "service_principal_id",
+              "execution_grant_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_execution_grants"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "service_principal_id",
+              "id",
+            ]
+          },
+          {
+            foreignKeyName: "factory_oauth_grant_bindings_workspace_id_grant_id_fkey"
+            columns: ["workspace_id", "grant_id"]
+            isOneToOne: false
+            referencedRelation: "factory_oauth_grants"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      factory_oauth_grants: {
+        Row: {
+          client_id: string
+          consenting_member_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          workspace_id: string
+        }
+        Insert: {
+          client_id: string
+          consenting_member_id: string
+          created_at: string
+          expires_at: string
+          id?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          workspace_id: string
+        }
+        Update: {
+          client_id?: string
+          consenting_member_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          scopes?: Database["public"]["Enums"]["factory_command_scope"][]
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_oauth_grants_workspace_id_client_id_fkey"
+            columns: ["workspace_id", "client_id"]
+            isOneToOne: false
+            referencedRelation: "factory_oauth_clients"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       factory_run_credential_receipts: {
         Row: {
           agent_provider: string
@@ -6873,6 +7071,23 @@ export type Database = {
         Args: { p_claim_id: string; p_run_id: string }
         Returns: boolean
       }
+      authorize_factory_oauth_access_token: {
+        Args: {
+          p_access_token_digest: string
+          p_access_token_id: string
+          p_factory_id: string
+          p_scope: Database["public"]["Enums"]["factory_command_scope"]
+          p_workspace_id: string
+        }
+        Returns: {
+          execution_grant_id: string
+          execution_grant_version: number
+          factory_id: string
+          oauth_grant_id: string
+          service_principal_id: string
+          workspace_id: string
+        }[]
+      }
       authorize_session_pr_successor: {
         Args: {
           p_actor_user_id: string
@@ -6892,6 +7107,26 @@ export type Database = {
           target_workspace_id: string
         }
         Returns: string
+      }
+      begin_factory_oauth_authorization: {
+        Args: {
+          p_actor_session_id: string
+          p_actor_user_id: string
+          p_client_id: string
+          p_code_challenge: string
+          p_redirect_uri: string
+          p_requested_scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          p_state?: string
+        }
+        Returns: {
+          authorization_id: string
+          client_name: string
+          expires_at: string
+          factories: Json
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          workspace_id: string
+          workspace_name: string
+        }[]
       }
       begin_github_pull_request_observation: {
         Args: {
@@ -7650,6 +7885,22 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      decide_factory_oauth_authorization: {
+        Args: {
+          p_actor_session_id: string
+          p_actor_user_id: string
+          p_allow: boolean
+          p_authorization_id: string
+          p_code_digest?: string
+          p_code_id?: string
+          p_factory_ids?: string[]
+        }
+        Returns: {
+          approved: boolean
+          redirect_uri: string
+          state: string
+        }[]
+      }
       defer_session_job_for_continuity_release: {
         Args: { p_attempt_count: number; p_job_id: string }
         Returns: boolean
@@ -7729,6 +7980,24 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      exchange_factory_oauth_code: {
+        Args: {
+          p_access_token_digest: string
+          p_access_token_id: string
+          p_client_id: string
+          p_code_digest: string
+          p_code_id: string
+          p_pkce_challenge: string
+          p_redirect_uri: string
+          p_refresh_token_digest: string
+          p_refresh_token_id: string
+        }
+        Returns: {
+          expires_in: number
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          status: string
+        }[]
       }
       fail_session_checkpoint_cleanup: {
         Args: { p_claim_id: string; p_error_code: string; p_run_id: string }
@@ -8579,6 +8848,13 @@ export type Database = {
         }
         Returns: boolean
       }
+      prune_factory_oauth_credentials: {
+        Args: { p_batch_size?: number }
+        Returns: {
+          authorizations_deleted: number
+          token_pairs_deleted: number
+        }[]
+      }
       publish_factory_definition_draft: {
         Args: {
           p_actor_user_id: string
@@ -8871,6 +9147,33 @@ export type Database = {
       record_workspace_resource_operation: {
         Args: { p_operation_id: string; p_resource_id: string }
         Returns: boolean
+      }
+      register_factory_oauth_client: {
+        Args: {
+          p_actor_user_id: string
+          p_allowed_scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          p_bindings: Json
+          p_name: string
+          p_redirect_uris: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          allowed_scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          created_at: string
+          created_by_member_id: string
+          id: string
+          name: string
+          redirect_uris: string[]
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_oauth_clients"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       reject_session_stage: {
         Args: {
@@ -9209,6 +9512,55 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      revoke_factory_oauth_client: {
+        Args: {
+          p_actor_user_id: string
+          p_client_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          allowed_scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          created_at: string
+          created_by_member_id: string
+          id: string
+          name: string
+          redirect_uris: string[]
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_oauth_clients"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_factory_oauth_grant: {
+        Args: {
+          p_actor_user_id: string
+          p_grant_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          client_id: string
+          consenting_member_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_oauth_grants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       revoke_factory_secret_binding: {
         Args: {
           p_actor_user_id: string
@@ -9314,6 +9666,23 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rotate_factory_oauth_refresh_token: {
+        Args: {
+          p_client_id: string
+          p_next_access_token_digest: string
+          p_next_access_token_id: string
+          p_next_refresh_token_digest: string
+          p_next_refresh_token_id: string
+          p_refresh_token_digest: string
+          p_refresh_token_id: string
+          p_requested_scopes?: Database["public"]["Enums"]["factory_command_scope"][]
+        }
+        Returns: {
+          expires_in: number
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          status: string
+        }[]
       }
       save_delivery_policy: {
         Args: {

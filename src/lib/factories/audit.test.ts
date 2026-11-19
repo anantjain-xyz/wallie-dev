@@ -110,7 +110,7 @@ describe("factory audit query", () => {
     },
   );
 
-  it("paginates grant actions and token actions using their own exact grant fields", async () => {
+  it("paginates grant and credential actions by their own exact grant fields", async () => {
     const { client, requests } = fixture([
       [row(eventId), row(previousEventId)],
       [row(previousEventId)],
@@ -128,7 +128,7 @@ describe("factory audit query", () => {
 
     const filter =
       `(and(action.in.(execution_grant.approved,execution_grant.updated,execution_grant.revoked),detail->>id.eq.${sourceId}),` +
-      `and(action.in.(machine_token.issued,machine_token.revoked),detail->>grantId.eq.${sourceId}))`;
+      `and(action.in.(machine_token.issued,machine_token.revoked,oauth_client.registered,oauth_grant.connected,oauth_grant.revoked),detail->>grantId.eq.${sourceId}))`;
     for (const { searchParams } of requests) {
       expect(searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
       expect(searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
@@ -154,5 +154,7 @@ describe("factory audit query", () => {
     expect(requests[1].searchParams.get("actor_member_id")).toBe(`eq.${sourceId}`);
     expect(requests[1].searchParams.get("action")).toContain("execution_grant.revoked");
     expect(requests[1].searchParams.get("action")).not.toContain("membership.granted");
+    expect(requests[1].searchParams.get("action")).toContain("oauth_grant.connected");
+    expect(requests[1].searchParams.get("action")).toContain("oauth_client.revoked");
   });
 });

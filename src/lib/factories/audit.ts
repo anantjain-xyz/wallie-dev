@@ -32,7 +32,13 @@ const executionGrantActions = [
   "execution_grant.updated",
   "execution_grant.revoked",
 ];
-const machineTokenActions = ["machine_token.issued", "machine_token.revoked"];
+const grantBoundActions = [
+  "machine_token.issued",
+  "machine_token.revoked",
+  "oauth_client.registered",
+  "oauth_grant.connected",
+  "oauth_grant.revoked",
+];
 const resourceFilters = {
   principal: { actions: ["service_principal.created"], key: "id" },
   binding: {
@@ -47,7 +53,8 @@ const resourceFilters = {
 const governanceActions = [
   ...Object.values(resourceFilters).flatMap(({ actions }) => actions),
   ...executionGrantActions,
-  ...machineTokenActions,
+  ...grantBoundActions,
+  "oauth_client.revoked",
 ];
 
 const auditCursorSchema = z
@@ -99,7 +106,7 @@ export async function readFactoryAuditPage(
     const grantId = factoryAuditSourceSchema.parse(source).id;
     request = request.or(
       `and(action.in.(${executionGrantActions.join(",")}),detail->>id.eq.${grantId}),` +
-        `and(action.in.(${machineTokenActions.join(",")}),detail->>grantId.eq.${grantId})`,
+        `and(action.in.(${grantBoundActions.join(",")}),detail->>grantId.eq.${grantId})`,
     );
   } else if (source) {
     const { actions, key } = resourceFilters[source.kind];

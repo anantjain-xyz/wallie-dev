@@ -36,7 +36,11 @@ describe("SettingsPage", () => {
 
     const element = (await SettingsPage({
       params: Promise.resolve({ workspaceSlug: "northwind" }),
-      searchParams: Promise.resolve({ category: "workspace", github: "connected" }),
+      searchParams: Promise.resolve({
+        category: "workspace",
+        github: "connected",
+        afterOAuthGrant: "56800000-0000-4000-8000-000000000001",
+      }),
     })) as ReactElement;
 
     expect(mocked.loadSettingsPageData).toHaveBeenCalledWith("northwind", "workspace");
@@ -46,6 +50,12 @@ describe("SettingsPage", () => {
       category: "workspace",
       initialData,
       searchState: { codexStatus: null, githubStatus: "connected" },
+      personalConnections: {
+        props: {
+          afterOAuthGrant: "56800000-0000-4000-8000-000000000001",
+          workspaceSlug: "northwind",
+        },
+      },
       setupData,
       usage,
       workspaceInvitations,

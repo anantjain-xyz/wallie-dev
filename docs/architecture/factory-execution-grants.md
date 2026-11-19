@@ -40,3 +40,29 @@ A grant can explicitly approve machine commands for reading sessions, creating s
 Open the grant in **Governance** to create, list, or revoke machine tokens. A token selects one or more of the grant’s approved commands. It belongs to the same workspace, factory, and service principal and stops working when the exact grant version expires, changes, or is revoked. The optional token expiry can shorten that window. Only the issue response contains the credential. The token list records the public ID, lifecycle, approved commands, and most recent successful command. Issuance and revocation appear in factory audit history.
 
 Machine commands must call `internal.require_factory_machine_token` inside their authoritative database transaction before accessing protected data or changing state. Pass the parsed ID and digest from the server-only credential parser. The check locks the factory, credential, and exact grant, and records successful use in the same transaction. Use the returned grant ID and version to apply its resource restrictions to the operation. Machine credentials carry no human review authority.
+
+## OAuth clients
+
+In **Governance**, register a client with its exact callback URIs, allowed
+commands, and one approved execution grant per factory. The operator selects
+which factories the client can request. Each authorization records the
+consenting human and the selected factories and scopes. Each displayed factory
+contributes the requested commands its approved grant covers.
+
+| Operation  | Authority                                                                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authorize  | `/oauth/authorize` checks the registered callback and S256 challenge. The consent decision uses the signed-in browser session and the selected factories’ current grants. |
+| Exchange   | `POST /oauth/token` accepts the authorization code, verifier, client ID, and exact callback. It consumes the code once.                                                   |
+| Refresh    | Submit the current refresh token to `/oauth/token`. A successful rotation replaces it. Reuse of an authenticated spent token revokes the connection and its credentials.  |
+| Disconnect | Disconnect your own connection in **Workspace Settings → Connected clients**. Operators revoke registrations in **Governance → OAuth clients**.                           |
+
+Use `internal.require_factory_oauth_access_token` in the protected command’s
+database transaction. It checks the connection, command scope, current human
+factory access, and exact grant version. Record the service principal and the
+consenting member separately. Artifact approval uses Wallie’s human review
+flow.
+
+Scheduled maintenance removes expired consent requests and credentials from
+revoked or expired connections. It retains spent refresh credentials while the
+connection is live so replay can still be detected. Grant and audit history
+remain available.

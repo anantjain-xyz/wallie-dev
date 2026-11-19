@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import type {
   SettingsInitialData,
@@ -34,6 +34,7 @@ import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts"
 type SettingsServerShellProps = {
   category: SettingsCategory;
   initialData: SettingsInitialData;
+  personalConnections?: ReactNode;
   searchState: { codexStatus: string | null; githubStatus: string | null };
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
@@ -263,6 +264,17 @@ function WorkspaceCategory(props: SettingsServerShellProps) {
       <Suspense fallback={<SettingsSectionFallback label="members and invitations" />}>
         <MembersSection {...props} />
       </Suspense>
+      {props.personalConnections && (
+        <Suspense
+          fallback={
+            <div id="connected-clients">
+              <SettingsSectionFallback label="connected clients" />
+            </div>
+          }
+        >
+          {props.personalConnections}
+        </Suspense>
+      )}
       <DangerActionsIsland initialData={props.initialData} />
     </div>
   );

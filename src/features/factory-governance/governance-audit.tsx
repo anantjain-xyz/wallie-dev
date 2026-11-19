@@ -13,6 +13,10 @@ import {
 } from "@/features/factory-governance/governance-resource-link";
 import type { FactoryAuditEvent } from "@/lib/factories/audit";
 import { factoryAuditSourceSchema, type FactoryAuditSource } from "@/lib/factories/audit-contracts";
+import {
+  factoryCommandLabels,
+  factoryCommandScopesSchema,
+} from "@/lib/factory-machine-tokens/contracts";
 import { workspaceAgentDetailPath, workspaceGovernancePath } from "@/lib/routes";
 
 const auditActions = {
@@ -26,6 +30,14 @@ const auditActions = {
   "execution_grant.revoked": { label: "Grant revoked", source: "grant", idKey: "id" },
   "machine_token.issued": { label: "Machine token issued", source: "grant", idKey: "grantId" },
   "machine_token.revoked": { label: "Machine token revoked", source: "grant", idKey: "grantId" },
+  "oauth_client.registered": {
+    label: "OAuth client registered",
+    source: "grant",
+    idKey: "grantId",
+  },
+  "oauth_client.revoked": { label: "OAuth client revoked" },
+  "oauth_grant.connected": { label: "OAuth client connected", source: "grant", idKey: "grantId" },
+  "oauth_grant.revoked": { label: "OAuth client disconnected", source: "grant", idKey: "grantId" },
   "credential_binding.created": {
     label: "Credential attached",
     source: "binding",
@@ -50,6 +62,11 @@ const auditActions = {
 
 const auditDetailSchema = z.object({
   id: z.string().optional(),
+  clientId: z.string().uuid().optional(),
+  oauthGrantId: z.string().uuid().optional(),
+  grantVersion: z.number().int().positive().safe().optional(),
+  scopes: factoryCommandScopesSchema.optional(),
+  reason: z.unknown().optional(),
   bindingId: z.string().optional(),
   name: z.string().optional(),
   version: z.number().int().positive().safe().optional(),
@@ -69,6 +86,12 @@ const auditDetailSchema = z.object({
   revocation_reason: z.string().nullable().optional(),
 });
 
+const oauthRevocationReasonSchema = z.enum(["disconnected", "refresh_reuse", "client_revoked"]);
+const oauthRevocationReasons = {
+  disconnected: "Disconnected by a member",
+  refresh_reuse: "Refresh credential reused",
+  client_revoked: "Client registration revoked",
+};
 const resourceNames = {
   grant: "Grant",
   principal: "Service principal",
@@ -90,16 +113,20 @@ function AuditEventCard({
   const { factory, workspaceSlug } = scope;
   const action = auditActions[event.action as keyof typeof auditActions];
   const detail = auditDetailSchema.safeParse(event.detail).data;
-  const resource = factoryAuditSourceSchema.safeParse({
-    kind: action?.source,
-    id: action && detail?.[action.idKey],
-  }).data;
+  const resource =
+    action && "source" in action
+      ? factoryAuditSourceSchema.safeParse({
+          kind: action.source,
+          id: detail?.[action.idKey],
+        }).data
+      : undefined;
   const actor = data.memberOptions.find(({ id }) => id === event.actor_member_id);
   const label = action?.label ?? "Governance operation";
   const linkProps = { factoryId: factory.id, workspaceSlug };
   const principalId = detail?.service_principal_id ?? detail?.servicePrincipalId;
   const grantId = detail?.executionGrantId ?? detail?.grantId;
   const agentId = detail?.factoryAgentId ?? detail?.agentId;
+  const oauthRevocationReason = oauthRevocationReasonSchema.safeParse(detail?.reason).data;
 
   return (
     <article className="min-w-0 space-y-3 p-4 sm:p-5">
@@ -151,12 +178,20 @@ function AuditEventCard({
               <GovernanceResourceLink {...linkProps} source={resource}>
                 {detail?.name ?? `${resourceNames[resource.kind]} ${resource.id.slice(0, 8)}`}
               </GovernanceResourceLink>
+            ) : detail?.clientId ? (
+              `OAuth client ${detail.clientId.slice(0, 8)}`
             ) : (
               "Unavailable"
             )
           }
         />
+        {detail?.grantVersion && (
+          <MetadataItem label="Recorded grant version" value={detail.grantVersion} />
+        )}
         {detail?.version && <MetadataItem label="Recorded version" value={detail.version} />}
+        {oauthRevocationReason && (
+          <MetadataItem label="Reason" value={oauthRevocationReasons[oauthRevocationReason]} />
+        )}
         {detail?.revocation_reason && (
           <MetadataItem
             label="Revocation reason"
@@ -166,6 +201,18 @@ function AuditEventCard({
         {focused && (
           <>
             <MetadataItem label="Event ID" value={event.id} monospace />
+            {detail?.clientId && (
+              <MetadataItem label="OAuth client ID" value={detail.clientId} monospace />
+            )}
+            {detail?.oauthGrantId && (
+              <MetadataItem label="Connection ID" value={detail.oauthGrantId} monospace />
+            )}
+            {detail?.scopes && (
+              <MetadataItem
+                label="Command scopes"
+                value={detail.scopes.map((scope) => factoryCommandLabels[scope]).join(", ")}
+              />
+            )}
             {detail?.id &&
               (event.action === "machine_token.issued" ||
                 event.action === "machine_token.revoked") && (
