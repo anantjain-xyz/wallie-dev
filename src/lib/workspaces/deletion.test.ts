@@ -288,29 +288,38 @@ describe("durable workspace deletion", () => {
     expect(f.state.exists).toBe(true);
   });
 
-  it.each(["abandoned", "transferred"] as const)(
-    "reconciles a stale retry upload reservation when the bundle was %s",
-    async (outcome) => {
-      const path = `${workspaceId}/11111111-1111-4111-8111-111111111111-retry-1-22222222-2222-4222-8222-222222222222.bundle`;
-      const bucket = "session-source-checkpoints";
-      const f = fixture([
-        operation({
-          kind: "upload",
-          provider: null,
-          resource_id: path,
-          storage_bucket: bucket,
-          recovery_after: "2020-01-01T00:00:00Z",
-        }),
-      ]);
-      f.state.deleting = false;
-      f.state.transferBeforeClaim = outcome === "transferred";
-      f.state.objects.set(bucket, new Set([path]));
-
-      await resumePendingWorkspaceDeletions(f.admin);
-
-      expect(f.state.operations).toEqual([]);
-      expect(f.state.objects.get(bucket)?.has(path)).toBe(outcome === "transferred");
-      expect(f.removals.flat()).toEqual(outcome === "transferred" ? [] : [path]);
+  describe.each([
+    {
+      bucket: "session-source-checkpoints",
+      path: `${workspaceId}/11111111-1111-4111-8111-111111111111-retry-1-22222222-2222-4222-8222-222222222222.bundle`,
     },
-  );
+    {
+      bucket: "session-validation-evidence",
+      path: `${workspaceId}/11111111-1111-4111-8111-111111111111/browser/22222222-2222-4222-8222-222222222222.png`,
+    },
+  ])("upload recovery in $bucket", ({ bucket, path }) => {
+    it.each(["abandoned", "transferred"] as const)(
+      "reconciles a stale upload reservation when the object was %s",
+      async (outcome) => {
+        const f = fixture([
+          operation({
+            kind: "upload",
+            provider: null,
+            resource_id: path,
+            storage_bucket: bucket,
+            recovery_after: "2020-01-01T00:00:00Z",
+          }),
+        ]);
+        f.state.deleting = false;
+        f.state.transferBeforeClaim = outcome === "transferred";
+        f.state.objects.set(bucket, new Set([path]));
+
+        await resumePendingWorkspaceDeletions(f.admin);
+
+        expect(f.state.operations).toEqual([]);
+        expect(f.state.objects.get(bucket)?.has(path)).toBe(outcome === "transferred");
+        expect(f.removals.flat()).toEqual(outcome === "transferred" ? [] : [path]);
+      },
+    );
+  });
 });

@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { browserVerificationPlanSchema } from "./browser-contract";
 
+export const VALIDATION_EVIDENCE_BUCKET = "session-validation-evidence";
+
 const evidenceKey = z
   .string()
   .min(1)

@@ -58,6 +58,7 @@ export type BrowserVerificationPlan = z.infer<typeof browserVerificationPlanSche
  * exclude additional elements. It cannot relax any of these requirements.
  */
 export const BROWSER_CAPTURE_POLICY = "isolated-fixture-v1";
+export const MAX_BROWSER_SCREENSHOT_BYTES = 1024 * 1024;
 
 export const browserRunIdentitySchema = z.strictObject({
   runId: z.string().uuid(),
@@ -102,11 +103,7 @@ export const browserCaptureReceiptSchema = z.union([
     manifest: z.strictObject({
       ...assetIdentity,
       contentType: z.literal("image/png"),
-      sizeBytes: z
-        .number()
-        .int()
-        .positive()
-        .max(1024 * 1024),
+      sizeBytes: z.number().int().positive().max(MAX_BROWSER_SCREENSHOT_BYTES),
     }),
   }),
   z.strictObject({
@@ -125,6 +122,30 @@ export const browserCaptureReceiptSchema = z.union([
   }),
 ]);
 export type BrowserCaptureReceipt = z.infer<typeof browserCaptureReceiptSchema>;
+
+export type BrowserScreenshotInput = {
+  identity: BrowserRunIdentity;
+  check: BrowserVerificationPlan[number];
+  signal?: AbortSignal;
+};
+export type BrowserScreenshotFailure =
+  | Pick<Extract<BrowserCaptureReceipt, { status: "unavailable" }>, "status" | "reason">
+  | Pick<Extract<BrowserCaptureReceipt, { status: "failed" }>, "status" | "reason">;
+
+export type BrowserScreenshotResult =
+  | {
+      status: "captured";
+      identity: BrowserRunIdentity;
+      path: string;
+      browserSessionId: string;
+      bytes: Buffer;
+    }
+  | BrowserScreenshotFailure;
+
+export type BrowserScreenshotRuntime = {
+  approvalScopeId: string;
+  captureScreenshot(input: BrowserScreenshotInput): Promise<BrowserScreenshotResult>;
+};
 
 export type BrowserVerificationEvidence = {
   expectedIdentity: BrowserRunIdentity;
