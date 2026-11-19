@@ -121,6 +121,35 @@ The fake proves Wallie's orchestration contract. It does not prove Vercel, E2B,
 Daytona, GitHub credentials, agent CLI installation, network access, or resource
 limits.
 
+## Factory qualification
+
+Use a disposable local Supabase project with current migrations. Run the
+runtime suite in isolation so it owns the local queue.
+
+```bash
+pnpm check:factory-runtime --workdir /path/to/disposable-project
+pnpm check:db-tests --workdir /path/to/disposable-project
+```
+
+- The runtime suite runs the Node worker and native Workflow in sequence. Each
+  uses the real processor, credential fences, and attempt receipts. Synthetic
+  Git, sandbox, and agent transport keep the run local.
+- For the production browser journey, export the disposable project’s
+  `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and
+  `SUPABASE_SECRET_KEY`. Clear `WALLIE_WORKER_WAKE_URL` and `OPENROUTER_API_KEY`.
+  Build the app with `pnpm build`, then run
+  `WALLIE_FACTORY_QUALIFICATION=1 pnpm exec playwright test e2e/factory-navigation.spec.ts e2e/factory-qualification.spec.ts`.
+- The two-factory fixtures cover scoped candidate publication, sibling
+  repository, skill, tool and credential rejection, and revocation after
+  admission. They inspect the original attempt after revocation and rollback.
+  Operator session creation follows the default factory. The named factory
+  fixture exercises configured scope and execution fences.
+
+Hosted enrollment follows the existing
+[candidate smoke checks](../architecture/factory-candidate-smoke.md). Use
+[worker operations](../deployment/worker-operations.md#controlled-checkpoint-continuity-release)
+for the hosted release control and recovery steps.
+
 ## Browser and benchmark commands
 
 The checked-in Playwright suites are targeted rather than one universal E2E

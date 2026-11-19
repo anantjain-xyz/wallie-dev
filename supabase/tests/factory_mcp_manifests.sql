@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(74);
+select plan(104);
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '55700200-0000-4000-8000-000000000001';
 
@@ -213,6 +213,15 @@ returns void language sql as $$
   insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
   select workspace_id, factory_id, id, p_activation, created_by from selected_revision;
 $$;
+create temp table legacy_default as select * from public.create_session_with_first_job(
+  '55700200-1000-4000-8000-000000000001', '55700200-2000-4000-8000-000000000002',
+  'Legacy default factory', 'Legacy prompt', 'codex', 'gpt-5.5');
+select ok((select session.factory_id = principal.factory_id
+    and session.pipeline_id = '55700200-4000-4000-8000-000000000001'
+    and session.factory_definition_provenance = 'legacy' and session.factory_definition_revision_id is null
+    and not session.execute_pinned_definition
+  from legacy_default legacy join public.sessions session on session.id = legacy.session_id cross join principal),
+  'admission without an active definition retains the default factory and legacy pipeline');
 select throws_ok($$select pg_temp.activate_mcp_fixture(1, pg_temp.mcp_definition() - 'executionGrant')$$,
   '42501', null, 'activation requires a live execution grant for any MCP scope');
 select throws_ok($$select pg_temp.activate_mcp_fixture(1, pg_temp.mcp_definition() - 'mcpManifest')$$,
@@ -455,6 +464,244 @@ select is((select public.get_run_mcp_manifest('55700200-1000-4000-8000-000000000
 set local request.jwt.claim.sub = '55700200-0000-4000-8000-000000000003';
 select is((select public.get_run_mcp_manifest('55700200-1000-4000-8000-000000000001',run_id,1)
   from started_run), null::jsonb, 'an outsider cannot inspect a scoped attempt');
+
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '55700200-0000-4000-8000-000000000001';
+
+create temp table named_factory as select factory.* from principal
+cross join lateral public.create_factory(principal.workspace_id,
+  '55700200-0000-4000-8000-000000000001','Release factory','release-factory') factory;
+insert into auth.users(id,email) values ('55700200-0000-4000-8000-000000000004','release-factory-invoker@example.test');
+insert into public.workspace_members(id,workspace_id,user_id,kind,role)
+select '55700200-2000-4000-8000-000000000004',workspace_id,'55700200-0000-4000-8000-000000000004','human','member'
+from named_factory;
+select public.grant_factory_membership(workspace_id,id,'55700200-0000-4000-8000-000000000001',
+  '55700200-2000-4000-8000-000000000004','member') from named_factory;
+select public.revoke_factory_membership(workspace_id,factory_id,'55700200-0000-4000-8000-000000000001',
+  '55700200-2000-4000-8000-000000000004') from principal;
+
+insert into public.pipelines(id,workspace_id,factory_id,name)
+select '55700200-4000-4000-8000-000000000002',workspace_id,id,'Named pipeline' from named_factory;
+insert into public.pipeline_stages(id,pipeline_id,workspace_id,position,slug,name)
+select '55700200-5000-4000-8000-000000000002','55700200-4000-4000-8000-000000000002',
+  workspace_id,1,'release','Release' from named_factory;
+insert into public.github_repositories(id,workspace_id,factory_id,github_installation_id,repo_id,name,full_name,private,html_url,default_branch)
+select repository.id,factory.workspace_id,factory.id,'55700200-7000-4000-8000-000000000001',
+  repository.repo_id,repository.name,'fixture/' || repository.name,true,'https://github.com/fixture/' || repository.name,'main'
+from named_factory factory cross join (values
+  ('55700200-6000-4000-8000-000000000002'::uuid,55700202,'release-writer'),
+  ('55700200-6000-4000-8000-000000000003'::uuid,55700203,'release-context')
+) repository(id,repo_id,name);
+insert into public.workspace_secrets(id,workspace_id,key,encrypted_value)
+select secret.id, factory.workspace_id, secret.key, secret.material from named_factory factory cross join (values
+  ('55700200-9000-4000-8000-000000000006'::uuid,'RELEASE_MODEL_KEY','synthetic-release-model'),
+  ('55700200-9000-4000-8000-000000000007'::uuid,'RELEASE_MCP_KEY','synthetic-release-mcp')
+) secret(id,key,material);
+
+create temp table named_principal as select service.* from named_factory factory cross join lateral public.create_service_principal(
+  factory.workspace_id,factory.id,'55700200-0000-4000-8000-000000000001','Release service','release-service') service;
+create temp table named_prompt as select prompt.* from named_factory factory cross join lateral public.create_factory_agent(
+  factory.workspace_id,factory.id,'55700200-0000-4000-8000-000000000001','Release agent','release-agent','Release fixture prompt') prompt;
+create temp table named_tool as select tool.* from named_factory factory cross join lateral public.create_factory_mcp_server(
+  factory.workspace_id,factory.id,'55700200-0000-4000-8000-000000000001','Release tool','release-tool',
+  'https://release.example.test/mcp',array['lookup'],'bearer') tool;
+
+create function pg_temp.approve_named_grant(p_writer uuid,p_context uuid) returns public.factory_execution_grants
+language sql as $$
+  select public.approve_factory_execution_grant(service.workspace_id,service.factory_id,
+    '55700200-0000-4000-8000-000000000001',service.id,p_writer,array[p_context],
+    array[named_tool.id::text || '/lookup',public_revision.id::text || '/lookup'],
+    '55700200-8000-4000-8000-000000000001','55700200-2000-4000-8000-000000000001',
+    statement_timestamp() + interval '10 minutes',0)
+  from named_principal service cross join named_tool cross join public_revision;
+$$;
+select throws_ok($$select pg_temp.approve_named_grant('55700200-6000-4000-8000-000000000001','55700200-6000-4000-8000-000000000003')$$,
+  '22023',null,'the named factory cannot grant its sibling writer');
+select throws_ok($$select pg_temp.approve_named_grant('55700200-6000-4000-8000-000000000002','55700200-6000-4000-8000-000000000001')$$,
+  '22023',null,'the named factory cannot grant its sibling repository as context');
+create temp table named_grant as select * from pg_temp.approve_named_grant(
+  '55700200-6000-4000-8000-000000000002','55700200-6000-4000-8000-000000000003');
+select throws_ok($$select public.create_factory_secret_binding(g.workspace_id,g.factory_id,
+  '55700200-0000-4000-8000-000000000001',g.id,g.version,prompt.agent_id,'codex',binding.workspace_secret_id)
+  from named_grant g cross join named_prompt prompt cross join opencode_binding binding$$,
+  'PT409',null,'a named factory cannot claim active model material reserved in its sibling');
+select throws_ok($$select public.create_factory_mcp_secret_binding(g.workspace_id,g.factory_id,
+  '55700200-0000-4000-8000-000000000001',g.id,g.version,prompt.agent_id,tool.id,binding.workspace_secret_id)
+  from named_grant g cross join named_prompt prompt cross join named_tool tool cross join opencode_binding binding$$,
+  'PT409',null,'a named tool cannot claim active model material reserved in its sibling');
+create temp table named_model_binding as select binding.* from named_grant g cross join named_prompt prompt
+cross join lateral public.create_factory_secret_binding(g.workspace_id,g.factory_id,
+  '55700200-0000-4000-8000-000000000001',g.id,g.version,prompt.agent_id,'codex',
+  '55700200-9000-4000-8000-000000000006') binding;
+create temp table named_mcp_binding as select binding.* from named_grant g cross join named_prompt prompt cross join named_tool tool
+cross join lateral public.create_factory_mcp_secret_binding(g.workspace_id,g.factory_id,
+  '55700200-0000-4000-8000-000000000001',g.id,g.version,prompt.agent_id,tool.id,
+  '55700200-9000-4000-8000-000000000007') binding;
+
+create temp table named_definition as
+select jsonb_build_object(
+  'schemaVersion',1,'kind','serial','pipelineId','55700200-4000-4000-8000-000000000002',
+  'repositoryId',g.github_repository_id,'readContextRepositoryIds',to_jsonb(g.read_context_repository_ids),
+  'toolIds',jsonb_build_array(tool.id::text || '/lookup'), 'executionPolicyRevisionId',g.execution_policy_revision_id,
+  'executionGrant',jsonb_build_object('id',g.id,'version',g.version),'credentialBindingId',model.id,
+  'implementationAgent',jsonb_build_object('agentId',prompt.agent_id,'promptRevisionId',prompt.id,
+    'promptMd',prompt.prompt_md,'promptSha256',prompt.prompt_sha256),
+  'sandboxProvider','e2b','agent',jsonb_build_object('provider','codex','model','gpt-5.5'),
+  'stages',jsonb_build_array(jsonb_build_object('id','55700200-5000-4000-8000-000000000002','slug','release','name','Release')),
+  'mcpManifest',jsonb_build_object('agentId',prompt.agent_id,'servers',jsonb_build_array(jsonb_build_object(
+      'toolRevisionId',tool.id,'serverId',tool.server_id,'serverSlug','release-tool','revisionNumber',tool.revision_number,
+      'endpoint',tool.endpoint,'operations',jsonb_build_array('lookup'),
+      'auth',jsonb_build_object('kind','bearer','secretBindingId',credential.id))))
+) body from named_grant g cross join named_prompt prompt cross join named_tool tool
+cross join named_model_binding model cross join named_mcp_binding credential;
+
+create function pg_temp.activate_named_factory(p_definition jsonb) returns uuid language sql as $$
+  with revision as (
+    insert into public.factory_definition_revisions(workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+    select workspace_id,id,1,p_definition::text,encode(sha256(convert_to(p_definition::text,'UTF8')),'hex'),
+      '55700200-0000-4000-8000-000000000001' from named_factory
+    returning workspace_id,factory_id,id,created_by
+  )
+  insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+  select workspace_id,factory_id,id,1,created_by from revision returning revision_id;
+$$;
+select throws_ok($$select pg_temp.activate_named_factory(body || jsonb_build_object(
+  'toolIds',jsonb_build_array(tool.id::text || '/lookup'),
+  'mcpManifest',jsonb_set(body->'mcpManifest','{servers}',jsonb_build_array(jsonb_build_object(
+    'toolRevisionId',tool.id,'serverId',tool.server_id,'serverSlug','fixture-public','revisionNumber',tool.revision_number,
+    'endpoint',tool.endpoint,'operations',jsonb_build_array('lookup'),'auth',jsonb_build_object('kind','none'))))))
+  from named_definition cross join public_revision tool$$,
+  'PT422','A selected MCP revision is unavailable or revoked in this factory.',
+  'a grant naming a real sibling operation cannot activate that sibling tool');
+select throws_ok($$select pg_temp.activate_named_factory(jsonb_set(body,'{credentialBindingId}',to_jsonb(binding.id)))
+  from named_definition cross join opencode_binding binding$$,
+  'PT422','A current scoped credential binding is required.','a named definition cannot borrow a sibling model binding ID');
+select throws_ok($$select pg_temp.activate_named_factory(jsonb_set(body,'{mcpManifest,servers,0,auth,secretBindingId}',to_jsonb(binding.id)))
+  from named_definition cross join bearer_binding binding$$,
+  '42501','The MCP bearer binding is unavailable for this grant, agent, and revision.',
+  'an approved named tool cannot borrow a sibling MCP binding ID');
+create temp table named_activation as select pg_temp.activate_named_factory(body) as revision_id from named_definition;
+
+-- The public creation RPC selects the default factory. Seed the named admission through its guarded tables.
+create function pg_temp.queue_named_factory(p_number integer) returns table(session_id uuid,job_id uuid,run_id uuid)
+language plpgsql as $$
+declare saved_session public.sessions; saved_job uuid; saved_run uuid; revision public.factory_definition_revisions;
+begin
+  select stored.* into strict revision from public.factory_definition_revisions stored
+    join named_activation active on active.revision_id = stored.id;
+  insert into public.sessions(workspace_id,factory_id,number,title,prompt_md,creator_member_id,pipeline_id,
+    current_stage_id,phase_status,github_repository_id,factory_definition_provenance,factory_definition_revision_id,
+    execute_pinned_definition,execution_policy_revision_id)
+  values (revision.workspace_id,revision.factory_id,p_number,'Named factory qualification','Release fixture input',
+    '55700200-2000-4000-8000-000000000004','55700200-4000-4000-8000-000000000002',
+    '55700200-5000-4000-8000-000000000002','in_progress','55700200-6000-4000-8000-000000000002',
+    'pinned',revision.id,true,'55700200-8000-4000-8000-000000000001') returning * into saved_session;
+  insert into public.session_factory_admission_inputs(session_id,workspace_id,factory_id,activation_number,definition_revision_id,
+    definition_digest,pipeline_id,github_repository_id,selected_stage_ids,execution_policy_revision_id,model_provider,model_name,
+    title_sha256,prompt_sha256,original_title,original_prompt_md)
+  values (saved_session.id,revision.workspace_id,revision.factory_id,1,revision.id,revision.canonical_digest,
+    saved_session.pipeline_id,saved_session.github_repository_id,array[saved_session.current_stage_id],saved_session.execution_policy_revision_id,
+    'codex','gpt-5.5',encode(sha256(convert_to(saved_session.title,'UTF8')),'hex'),
+    encode(sha256(convert_to(saved_session.prompt_md,'UTF8')),'hex'),saved_session.title,saved_session.prompt_md);
+  insert into public.session_selected_stages(session_id,workspace_id,stage_id)
+  values (saved_session.id,revision.workspace_id,saved_session.current_stage_id);
+  insert into public.agent_jobs(workspace_id,session_id,requested_by_member_id,stage_id,stage_slug,stage_name,trigger_type,status,dedupe_key)
+  values (revision.workspace_id,saved_session.id,saved_session.creator_member_id,saved_session.current_stage_id,
+    'release','Release','assignment','queued','qualification:' || saved_session.id::text) returning id into saved_job;
+  insert into public.agent_runs(workspace_id,session_id,agent_job_id,triggered_by_member_id,stage_id,stage_slug,stage_name,
+    run_type,model_provider,model_name,status)
+  values (revision.workspace_id,saved_session.id,saved_job,saved_session.creator_member_id,saved_session.current_stage_id,
+    'release','Release','code','codex','gpt-5.5','queued') returning id into saved_run;
+  return query select saved_session.id,saved_job,saved_run;
+end;
+$$;
+
+update public.agent_jobs set status = 'canceled' where status = 'queued';
+create temp table named_node as select * from pg_temp.queue_named_factory(901);
+select is((select id from public.claim_next_agent_job(200)),(select job_id from named_node),
+  'Node claims a named factory job after the default grant is revoked');
+create temp table named_workerd as select * from pg_temp.queue_named_factory(902);
+create temp table named_dispatch as select * from public.claim_next_worker_dispatch(200,200,300000);
+select is((select job_id from named_dispatch),(select job_id from named_workerd),
+  'native dispatch claims its own named factory job after the default grant is revoked');
+select ok((select public.begin_worker_dispatch(job_id,attempt_count,workflow_id) from named_dispatch),
+  'native dispatch starts the exact claimed attempt');
+
+create temp table named_runs as select 'node'::text as runtime,node.* from named_node node
+union all select 'workerd',native.* from named_workerd native;
+select ok((select bool_and(public.start_session_job_attempt(f.job_id,1,s.current_stage_id,s.current_artifact_version,
+  'codex','gpt-5.5','code','wallie/m03-qualification-' || f.job_id::text) = f.run_id)
+  from named_runs f join public.sessions s on s.id = f.session_id),
+  'both workers begin exactly their authorized named-factory attempt');
+select lives_ok($$select public.pin_session_job_git_input(job_id,1,run_id,
+  '55700200-6000-4000-8000-000000000002','main',repeat('c',40)) from named_runs$$,
+  'both named attempts pin the authorized writer and checkout SHA');
+select ok((select bool_and(public.pin_session_attempt_manifest(job_id,run_id,1,repeat('d',64),24,3,
+  repeat('c',40),'[]',runtime,7,'high',null)) from named_runs),
+  'both worker claim paths freeze the same named configuration with their own runtime');
+select results_eq($$select f.runtime,r.binding_id,r.encrypted_value from named_runs f cross join named_factory factory
+  cross join lateral public.resolve_factory_run_credential(factory.workspace_id,f.job_id,f.run_id,1) r order by f.runtime$$,
+  $$select f.runtime,binding.id,'synthetic-release-model'::text from named_runs f cross join named_model_binding binding order by f.runtime$$,
+  'both workers can resolve only the named model credential');
+select results_eq($$select f.runtime,r.tool_revision_id,r.binding_id,r.encrypted_value from named_runs f cross join named_factory factory
+  cross join lateral public.resolve_factory_run_mcp_credentials(factory.workspace_id,f.job_id,f.run_id,1) r order by f.runtime$$,
+  $$select f.runtime,tool.id,binding.id,'synthetic-release-mcp'::text from named_runs f cross join named_tool tool
+    cross join named_mcp_binding binding order by f.runtime$$,'both workers can resolve only the approved named tool credential');
+
+select public.save_factory_agent_prompt_revision(workspace_id,factory_id,'55700200-0000-4000-8000-000000000001',
+  agent_id,revision_number,'Updated prompt for future activation') from named_prompt;
+create temp table named_queued as select * from pg_temp.queue_named_factory(903);
+create temp table named_queued_native as select * from pg_temp.queue_named_factory(904);
+update public.agent_jobs set scheduled_at = now() + interval '1 hour'
+where id = (select job_id from named_queued_native);
+select is((select (public.revoke_factory_execution_grant(workspace_id,factory_id,
+  '55700200-0000-4000-8000-000000000001',id,version)).version from named_grant),2::bigint,
+  'revocation advances the exact named grant version');
+select throws_ok($$select pg_temp.queue_named_factory(905)$$,'42501',null,
+  'the named admission fence rejects new sessions after revocation');
+select is((select id from public.claim_next_agent_job(200)),(select job_id from named_queued),
+  'existing queued work still requires the attempt authorization fence');
+select throws_ok($$select public.start_session_job_attempt(f.job_id,1,s.current_stage_id,s.current_artifact_version,
+  'codex','gpt-5.5','code','wallie/revoked-named-attempt') from named_queued f join public.sessions s on s.id = f.session_id$$,
+  '42501',null,'Node cannot start a queued named attempt after revocation');
+update public.agent_jobs set scheduled_at = null where id = (select job_id from named_queued_native);
+select is((select job_id from public.claim_next_worker_dispatch(200,200,300000)),(select job_id from named_queued_native),
+  'native dispatch also reaches the attempt authorization fence');
+select throws_ok($$select public.start_session_job_attempt(f.job_id,1,s.current_stage_id,s.current_artifact_version,
+  'codex','gpt-5.5','code','wallie/revoked-native-attempt') from named_queued_native f join public.sessions s on s.id = f.session_id$$,
+  '42501',null,'native dispatch cannot start a queued named attempt after revocation');
+select throws_ok(format('select public.resolve_factory_run_credential(%L,%L,%L,1)',factory.workspace_id,f.job_id,f.run_id),
+  '42501',null,f.runtime || ' cannot obtain model material after grant revocation') from named_runs f cross join named_factory factory;
+select throws_ok(format('select public.resolve_factory_run_mcp_credentials(%L,%L,%L,1)',factory.workspace_id,f.job_id,f.run_id),
+  '42501',null,f.runtime || ' cannot obtain tool material after grant revocation') from named_runs f cross join named_factory factory;
+
+grant select on named_runs,named_factory,named_prompt,named_activation,named_grant,named_model_binding,named_tool to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '55700200-0000-4000-8000-000000000004';
+select results_eq($$select profile->>'workerRuntime',profile->>'factoryId',profile->>'definitionRevisionId',
+    profile->>'agentId',profile->>'promptRevisionId',profile->>'invokingMemberId',profile->>'triggeredByMemberId',profile->'authority'
+  from named_runs f cross join named_factory factory
+  cross join lateral public.get_run_execution_profile(factory.workspace_id,f.run_id,1) profile order by f.runtime$$,
+  $$select f.runtime,factory.id::text,activation.revision_id::text,prompt.agent_id::text,prompt.id::text,
+    '55700200-2000-4000-8000-000000000004'::text,'55700200-2000-4000-8000-000000000004'::text,
+    jsonb_build_object('kind','service','grantId',g.id,'grantVersion',g.version,'servicePrincipalId',g.service_principal_id,'bindingId',binding.id)
+  from named_runs f cross join named_factory factory cross join named_prompt prompt cross join named_activation activation
+  cross join named_grant g cross join named_model_binding binding order by f.runtime$$,
+  'both historical runs preserve their exact factory, revision, prompt, actors and credential authority after edits and revocation');
+select ok((select bool_and(public.get_run_mcp_manifest(factory.workspace_id,f.run_id,1)
+    #>>'{manifest,servers,0,toolRevisionId}' = tool.id::text)
+  from named_runs f cross join named_factory factory cross join named_tool tool),
+  'the authorized inspector retains the exact named tool revision after revocation');
+select is((select public.get_run_execution_profile(factory.workspace_id,f.run_id,2)
+  from named_runs f cross join named_factory factory where f.runtime = 'node'),null::jsonb,
+  'an incorrect attempt cannot borrow pinned named-factory identities');
+set local request.jwt.claim.sub = '55700200-0000-4000-8000-000000000002';
+select ok((select bool_and(public.get_run_execution_profile(factory.workspace_id,f.run_id,1) is null
+  and public.get_run_mcp_manifest(factory.workspace_id,f.run_id,1) is null)
+  from named_runs f cross join named_factory factory),
+  'a sibling-only participant cannot inspect either exact named attempt');
 
 select * from finish();
 rollback;

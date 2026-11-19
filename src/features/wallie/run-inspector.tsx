@@ -21,7 +21,7 @@ import type {
   RunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
 import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs-list-state";
-import { workspaceRunsPath } from "@/lib/routes";
+import { workspaceActivityPath, workspaceAgentDetailPath, workspaceRunsPath } from "@/lib/routes";
 
 export function RunInspector({
   run,
@@ -189,6 +189,59 @@ export function RunInspector({
                       )
                     }
                   />
+                  <MetadataItem
+                    label="Implementation agent"
+                    value={
+                      recorded.agentId ? (
+                        <Link
+                          className="break-all text-foreground underline underline-offset-4"
+                          href={workspaceAgentDetailPath(workspaceSlug, recorded.agentId, {
+                            factory: recorded.factoryId,
+                            revision: recorded.promptRevisionId ?? undefined,
+                          })}
+                          prefetch={false}
+                        >
+                          {recorded.agentId}
+                        </Link>
+                      ) : (
+                        "Unrecorded"
+                      )
+                    }
+                  />
+                  <MetadataItem
+                    label="Agent prompt revision"
+                    monospace
+                    value={
+                      <span className="break-all">{recorded.promptRevisionId ?? "Unrecorded"}</span>
+                    }
+                  />
+                  <MetadataItem
+                    label="Invoking member"
+                    value={
+                      recorded.invokingMemberId ? (
+                        <RecordedRunActor
+                          workspaceSlug={workspaceSlug}
+                          factoryId={recorded.factoryId}
+                          memberId={recorded.invokingMemberId}
+                        />
+                      ) : (
+                        "Unrecorded"
+                      )
+                    }
+                  />
+                  {recorded.triggeredByMemberId &&
+                    recorded.triggeredByMemberId !== recorded.invokingMemberId && (
+                      <MetadataItem
+                        label="Triggered by"
+                        value={
+                          <RecordedRunActor
+                            workspaceSlug={workspaceSlug}
+                            factoryId={recorded.factoryId}
+                            memberId={recorded.triggeredByMemberId}
+                          />
+                        }
+                      />
+                    )}
                   {recorded.authority.kind === "human" ? (
                     <MetadataItem
                       label="Credential owner"
@@ -333,6 +386,26 @@ export function RunInspector({
         {transcript}
       </div>
     </PageContainer>
+  );
+}
+
+function RecordedRunActor({
+  workspaceSlug,
+  factoryId,
+  memberId,
+}: {
+  workspaceSlug: string;
+  factoryId: string;
+  memberId: string;
+}) {
+  return (
+    <Link
+      className="break-all text-foreground underline underline-offset-4"
+      href={workspaceActivityPath(workspaceSlug, { factory: factoryId, actor: memberId })}
+      prefetch={false}
+    >
+      {memberId}
+    </Link>
   );
 }
 

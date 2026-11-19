@@ -273,6 +273,29 @@ review transitions, restart recovery and stable canonical PR identity. Ordinary
 only unadopted, expired owned refs after seven days and cannot delete referenced
 lineage; private payload-retention exceptions are documented in Worker operations.
 
+## Factory qualification
+
+Use [the factory qualification checks](../development/verification.md#factory-qualification)
+to replay admission, execution, and revocation with a disposable database.
+
+| Harness     | Sandbox providers            | Approved MCP bindings                |
+| ----------- | ---------------------------- | ------------------------------------ |
+| Codex       | Vercel Sandbox, E2B, Daytona | Scoped Streamable HTTP through stdio |
+| Claude Code | Vercel Sandbox, E2B, Daytona | Scoped Streamable HTTP through stdio |
+| OpenCode    | Vercel Sandbox, E2B, Daytona | Scoped Streamable HTTP through stdio |
+| Cursor      | Vercel Sandbox, E2B, Daytona | Empty manifest only                  |
+
+Each combination requires the pinned repository and current sandbox connection
+capability receipt. A scoped service credential also requires the exact
+provider, grant version, and agent binding. OpenCode binds its upstream provider
+separately. See [Factory MCP manifests](factory-mcp-manifests.md) for the adapter
+and provider qualification rules.
+
+Run Inspector reads the exact attempt receipt. It shows the definition, agent
+and prompt revision, the admitting member, and the resolved credential
+authority. A separately recorded trigger remains visible. Publication,
+rollback, and revocation preserve prior receipts.
+
 ## Known implementation gaps
 
 These are current limitations, not desired contracts:

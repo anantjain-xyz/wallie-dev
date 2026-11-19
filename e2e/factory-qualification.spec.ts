@@ -9,7 +9,9 @@ import { candidateSmokeStartSchema } from "@/lib/factory-definitions/candidate-s
 import {
   compiledFactoryDefinitionSchema,
   serialFactoryDefinitionSchema,
+  type SerialFactoryDefinition,
 } from "@/lib/factory-definitions/schema";
+import { mcpOperationScopeId } from "@/lib/factory-mcp/manifest";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -19,6 +21,7 @@ type Admin = SupabaseClient<Database>;
 const provider = "e2b";
 const firstModel = "gpt-5.5";
 const secondModel = "gpt-5.6";
+const toolOperation = "read_release";
 const probes = getSandboxProviderContract(provider).capabilityProbes;
 const requiredProbes = [...new Set([...probes.required, ...probes.requiredByAgent.codex])];
 const agentRevisionResponseSchema = z.object({
@@ -133,29 +136,36 @@ async function setupDraftWorkspace(admin: Admin, workspaceId: string, userId: st
         .eq("workspace_id", workspaceId),
     ),
   ]);
-  return connection.connection_revision;
+  return {
+    factoryId: factory.id,
+    repositoryId: repository.id,
+    installationId: installation.id,
+    connectionRevision: connection.connection_revision,
+  };
 }
 
 async function substituteCandidateExecution({
   page,
   admin,
   workspaceId,
+  factoryId,
+  legacyDefault = false,
   userId,
   connectionRevision,
 }: {
   page: Page;
   admin: Admin;
   workspaceId: string;
+  factoryId: string;
+  legacyDefault?: boolean;
   userId: string;
   connectionRevision: string;
 }) {
-  const factory = await checked(
-    admin.from("factories").select("id").eq("workspace_id", workspaceId).single(),
-  );
   // Run the real reservation and receipt writes, substituting the hosted provider result.
   // The editor's eligibility, evidence reads, publish, rollback and admission stay real.
+  const path = `factories/${factoryId}/definition`;
   await page.route(
-    `**/api/workspaces/${workspaceId}/{factory-definition,factories/${factory.id}/definition}/candidate-tests`,
+    `**/api/workspaces/${workspaceId}/${legacyDefault ? `{factory-definition,${path}}` : path}/candidate-tests`,
     async (route) => {
       if (route.request().method() !== "POST") return route.continue();
       const command = candidateSmokeStartSchema.parse(route.request().postDataJSON());
@@ -168,6 +178,7 @@ async function substituteCandidateExecution({
           .from(table)
           .select("definition_json,canonical_digest")
           .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
           .eq("id", command.target.id)
           .single(),
       );
@@ -191,7 +202,7 @@ async function substituteCandidateExecution({
       const reservation = await checked(
         admin.rpc("start_factory_definition_smoke_test", {
           p_workspace_id: workspaceId,
-          p_factory_id: factory.id,
+          p_factory_id: factoryId,
           p_actor_user_id: userId,
           p_expected_activation_number: command.expectedActivationNumber,
           p_target_kind: command.target.kind,
@@ -233,7 +244,174 @@ async function substituteCandidateExecution({
   );
 }
 
-async function editAndSave(page: Page, model: string, reorder: boolean) {
+async function fixtureRepository(
+  admin: Admin,
+  scope: {
+    workspaceId: string;
+    factoryId: string;
+    installationId: string;
+  },
+  name: string,
+) {
+  return checked(
+    admin
+      .from("github_repositories")
+      .insert({
+        workspace_id: scope.workspaceId,
+        factory_id: scope.factoryId,
+        github_installation_id: scope.installationId,
+        repo_id: randomInt(100_000_000, 1_000_000_000),
+        name,
+        full_name: `factory-qualification/${name}`,
+        html_url: `https://github.com/factory-qualification/${name}`,
+        private: true,
+        default_branch: "main",
+      })
+      .select("id")
+      .single(),
+  );
+}
+
+async function registerTool(page: Page, api: string, slug: string) {
+  const response = await page.request.post(`${api}/tools`, {
+    data: {
+      action: "register",
+      name: slug,
+      slug,
+      endpoint: `https://fixture.example.test/${slug}`,
+      operationNames: [toolOperation, "inspect_fixture"],
+      authKind: "none",
+    },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+  return z.object({ revision: z.object({ id: z.string().uuid() }) }).parse(await response.json())
+    .revision.id;
+}
+
+async function setupServiceAuthority(
+  admin: Admin,
+  scope: {
+    workspaceId: string;
+    factoryId: string;
+    actorId: string;
+    memberId: string;
+    agentId: string;
+    writableId: string;
+    contextId: string;
+    toolId: string;
+    policyId: string;
+    slug: string;
+  },
+) {
+  const actor = {
+    p_workspace_id: scope.workspaceId,
+    p_factory_id: scope.factoryId,
+    p_actor_user_id: scope.actorId,
+  };
+  const principal = await checked(
+    admin.rpc("create_service_principal", {
+      ...actor,
+      p_name: scope.slug,
+      p_slug: scope.slug,
+    }),
+  );
+  const grant = await checked(
+    admin.rpc("approve_factory_execution_grant", {
+      ...actor,
+      p_service_principal_id: principal.id,
+      p_github_repository_id: scope.writableId,
+      p_read_context_repository_ids: [scope.contextId],
+      p_tool_ids: [mcpOperationScopeId(scope.toolId, toolOperation)],
+      p_execution_policy_revision_id: scope.policyId,
+      p_budget_payer_member_id: scope.memberId,
+      p_expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+      p_expected_version: 0,
+    }),
+  );
+  const ciphertext = `unused-${scope.slug}-fixture-ciphertext`;
+  const secret = await checked(
+    admin
+      .from("workspace_secrets")
+      .insert({
+        workspace_id: scope.workspaceId,
+        key: `MODEL_${scope.slug.replaceAll("-", "_").toUpperCase()}`,
+        encrypted_value: ciphertext,
+      })
+      .select("id")
+      .single(),
+  );
+  const binding = await checked(
+    admin.rpc("create_factory_secret_binding", {
+      ...actor,
+      p_execution_grant_id: grant.id,
+      p_execution_grant_version: grant.version,
+      p_factory_agent_id: scope.agentId,
+      p_agent_provider: "codex",
+      p_workspace_secret_id: secret.id,
+    }),
+  );
+  return {
+    principalId: principal.id,
+    bindingId: binding.id,
+    ciphertext,
+    grant: { id: grant.id, version: grant.version },
+    definition: {
+      repository: scope.writableId,
+      readContextRepositories: [scope.contextId],
+      executionPolicy: scope.policyId,
+      executionGrant: { id: grant.id, version: grant.version },
+      credentialBindingId: binding.id,
+      mcpBindings: [{ toolRevisionId: scope.toolId, operations: [toolOperation] }],
+    } satisfies Partial<SerialFactoryDefinition>,
+  };
+}
+
+async function expectForeignBindingsRejected(
+  page: Page,
+  api: string,
+  source: SerialFactoryDefinition,
+  foreign: {
+    repositoryId: string;
+    contextId: string;
+    skillId: string;
+    toolId: string;
+  },
+  activationNumber: number,
+) {
+  const preview = await page.request.post(`${api}/definition/editor`, {
+    data: {
+      expectedActivationNumber: activationNumber,
+      expectedDraftId: null,
+      source: {
+        kind: "structured",
+        value: {
+          ...source,
+          repository: foreign.repositoryId,
+          readContextRepositories: [foreign.contextId],
+          skills: [foreign.skillId],
+          mcpBindings: [{ toolRevisionId: foreign.toolId, operations: [toolOperation] }],
+        },
+      },
+    },
+  });
+  expect(preview.status()).toBe(422);
+  const { diagnostics } = z
+    .object({
+      diagnostics: z.array(z.object({ path: z.array(z.union([z.string(), z.number()])) })),
+    })
+    .parse(await preview.json());
+  expect(diagnostics.map(({ path }) => path[0])).toEqual(
+    expect.arrayContaining(["repository", "readContextRepositories", "skills", "mcpBindings"]),
+  );
+}
+
+async function editAndSave(
+  page: Page,
+  model: string,
+  reorder: boolean,
+  bindings?: Partial<SerialFactoryDefinition>,
+  beforeSave?: (source: SerialFactoryDefinition) => Promise<void>,
+) {
   await page.getByRole("button", { name: "JSON source" }).click();
   const input = page.getByRole("textbox", { name: "Definition JSON" });
   const source = serialFactoryDefinitionSchema.parse(JSON.parse(await input.inputValue()));
@@ -241,9 +419,9 @@ async function editAndSave(page: Page, model: string, reorder: boolean) {
     ...stage,
     promptTemplateMd: `${model} ${stage.name} reviews {{session.title}}.`,
   }));
-  await input.fill(
-    JSON.stringify({ ...source, agent: { ...source.agent, model }, stages }, null, 2),
-  );
+  const next = { ...source, ...bindings, agent: { ...source.agent, model }, stages };
+  await beforeSave?.(next);
+  await input.fill(JSON.stringify(next, null, 2));
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
   return stages[0]!;
@@ -281,6 +459,7 @@ async function expectSessionPin(
     stageId,
     agentId,
     promptRevisionId,
+    status = "queued",
   }: {
     title: string;
     revisionId: string;
@@ -289,6 +468,7 @@ async function expectSessionPin(
     stageId: string;
     agentId: string;
     promptRevisionId: string;
+    status?: "queued" | "running";
   },
 ) {
   const session = await checked(
@@ -328,7 +508,7 @@ async function expectSessionPin(
     model_provider: "codex",
     model_name: model,
     stage_id: stageId,
-    status: "queued",
+    status,
     agent_id: agentId,
     agent_prompt_revision_id: promptRevisionId,
   });
@@ -340,6 +520,7 @@ async function recordSkillPromptManifest(
   title: string,
   skillBody: string,
   connectionRevision: string,
+  service?: { bindingId: string; principalId: string },
 ) {
   const session = await checked(
     admin
@@ -428,12 +609,28 @@ async function recordSkillPromptManifest(
           p_predecessors: [],
           p_worker_runtime: "node",
           p_agent_effort: RECOMMENDED_AGENT_EFFORT,
-          ...(session.creator_member_id
+          ...(!service && session.creator_member_id
             ? { p_credential_owner_member_id: session.creator_member_id }
             : {}),
         }),
       ),
     ).toBe(true);
+    if (service) {
+      const receipts = await checked(
+        admin.rpc("resolve_factory_run_credential", {
+          p_workspace_id: workspaceId,
+          p_job_id: job.id,
+          p_run_id: runId,
+          p_attempt_count: 1,
+        }),
+      );
+      expect(
+        receipts.map(({ binding_id, service_principal_id }) => ({
+          bindingId: binding_id,
+          principalId: service_principal_id,
+        })),
+      ).toEqual([service]);
+    }
     return runId;
   } finally {
     if (!release.enabled) {
@@ -457,7 +654,7 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     process.env.WALLIE_FACTORY_QUALIFICATION !== "1",
     "Requires a disposable local Supabase stack.",
   );
-  test.setTimeout(120_000);
+  test.setTimeout(150_000);
   const app = localUrl(baseURL);
   const supabase = localUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const key = process.env.SUPABASE_SECRET_KEY;
@@ -488,11 +685,15 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       }),
     );
     workspaceId = workspace.id;
-    const connectionRevision = await setupDraftWorkspace(admin, workspace.id, user.id);
+    const fixture = await setupDraftWorkspace(admin, workspace.id, user.id);
+    const { connectionRevision } = fixture;
+    const factory = { id: fixture.factoryId };
     await substituteCandidateExecution({
       page,
       admin,
       workspaceId: workspace.id,
+      factoryId: factory.id,
+      legacyDefault: true,
       userId: user.id,
       connectionRevision,
     });
@@ -500,10 +701,8 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, editor, { baseURL: app, email });
-    const factory = await checked(
-      admin.from("factories").select("id").eq("workspace_id", workspace.id).single(),
-    );
-    const agentsPath = `/api/workspaces/${workspace.id}/factories/${factory.id}/agents`;
+    const factoryApi = `/api/workspaces/${workspace.id}/factories/${factory.id}`;
+    const agentsPath = `${factoryApi}/agents`;
     const skillName = "Check release evidence";
     const skillBody = "Check the release notes against retained validation evidence.";
     const createSkill = await page.request.post(
@@ -592,10 +791,178 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
           .from("factory_definition_activations")
           .select("revision_id")
           .eq("workspace_id", workspace.id)
+          .eq("factory_id", factory.id)
           .eq("activation_number", number)
           .single(),
       );
     const original = (await activation(1)).revision_id;
+
+    const owner = await checked(
+      admin
+        .from("workspace_members")
+        .select("id")
+        .eq("workspace_id", workspace.id)
+        .eq("user_id", user.id)
+        .single(),
+    );
+    const policy = await checked(
+      admin.rpc("save_execution_policy", {
+        p_workspace_id: workspace.id,
+        p_actor_user_id: user.id,
+        p_expected_revision: 0,
+        p_requirements: {
+          version: 1,
+          maxRepairAttempts: 2,
+          maxExecutionMs: 30_000,
+          maxTotalTokens: 1000,
+          maxCostUsd: 1,
+        },
+      }),
+    );
+    const sibling = await checked(
+      admin.rpc("create_factory", {
+        p_workspace_id: workspace.id,
+        p_actor_user_id: user.id,
+        p_name: "Private research",
+        p_slug: "private-research",
+      }),
+    );
+    const siblingApi = `/api/workspaces/${workspace.id}/factories/${sibling.id}`;
+    const siblingScope = {
+      workspaceId: workspace.id,
+      factoryId: sibling.id,
+      installationId: fixture.installationId,
+    };
+    const [context, siblingRepository, siblingContext, toolId, siblingToolId] = await Promise.all([
+      fixtureRepository(admin, { workspaceId: workspace.id, ...fixture }, "release-context"),
+      fixtureRepository(admin, siblingScope, "research-private"),
+      fixtureRepository(admin, siblingScope, "research-context"),
+      registerTool(page, factoryApi, "release-evidence"),
+      registerTool(page, siblingApi, "research-tool"),
+    ]);
+    const siblingPipeline = await checked(
+      admin
+        .from("pipelines")
+        .insert({
+          workspace_id: workspace.id,
+          factory_id: sibling.id,
+          name: "Private research pipeline",
+        })
+        .select("id")
+        .single(),
+    );
+    await checked(
+      admin.from("pipeline_stages").insert({
+        workspace_id: workspace.id,
+        pipeline_id: siblingPipeline.id,
+        name: "Research",
+        slug: "research",
+        position: 1,
+        anyone_can_approve: true,
+        prompt_template_md: "Review research scope.",
+      }),
+    );
+    const siblingSkillResponse = await page.request.post(`${siblingApi}/skills`, {
+      data: {
+        name: "Private research skill",
+        slug: "private-research-skill",
+        contentMd: "Review private research evidence.",
+      },
+    });
+    expect(siblingSkillResponse.status()).toBe(201);
+    const siblingSkill = skillRevisionResponseSchema.parse(
+      await siblingSkillResponse.json(),
+    ).revision;
+    const siblingAgentResponse = await page.request.post(`${siblingApi}/agents`, {
+      data: {
+        name: "Private research agent",
+        slug: "private-research-agent",
+        promptMd: "Summarize research evidence.",
+      },
+    });
+    expect(siblingAgentResponse.status()).toBe(201);
+    const siblingAgent = agentRevisionResponseSchema.parse(
+      await siblingAgentResponse.json(),
+    ).revision;
+    const authorityScope = {
+      workspaceId: workspace.id,
+      actorId: user.id,
+      memberId: owner.id,
+      policyId: policy.id,
+    };
+    const [service, siblingService] = await Promise.all([
+      setupServiceAuthority(admin, {
+        ...authorityScope,
+        factoryId: factory.id,
+        writableId: fixture.repositoryId,
+        contextId: context.id,
+        agentId: firstAgentPrompt.agent_id,
+        toolId,
+        slug: "release-runner",
+      }),
+      setupServiceAuthority(admin, {
+        ...authorityScope,
+        factoryId: sibling.id,
+        writableId: siblingRepository.id,
+        contextId: siblingContext.id,
+        agentId: siblingAgent.agent_id,
+        toolId: siblingToolId,
+        slug: "research-runner",
+      }),
+    ]);
+    const siblingAgents = `/w/${workspace.slug}/agents?factory=${sibling.id}`;
+    await page.goto(`/w/${workspace.slug}/agents?factory=${factory.id}`);
+    const factoryPicker = page.getByRole("combobox", { name: "Factory", exact: true });
+    await expect(
+      factoryPicker.getByRole("option", { name: sibling.name, exact: true }),
+    ).toHaveCount(1);
+    await factoryPicker.selectOption(sibling.id);
+    await expect(page).toHaveURL(`${app}${siblingAgents}`);
+    await expect(
+      page.getByRole("link", { name: "Implementation reviewer", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("link", { name: "Private research agent", exact: true }).click();
+    await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
+    await expect(promptInput).toHaveValue(siblingAgent.id, { timeout: 30_000 });
+    await editAndSave(
+      page,
+      firstModel,
+      false,
+      { ...siblingService.definition, skills: [siblingSkill.id] },
+      (source) =>
+        expectForeignBindingsRejected(
+          page,
+          siblingApi,
+          source,
+          {
+            repositoryId: fixture.repositoryId,
+            contextId: context.id,
+            skillId: skillRevision.id,
+            toolId,
+          },
+          0,
+        ),
+    );
+    await substituteCandidateExecution({
+      page,
+      admin,
+      workspaceId: workspace.id,
+      factoryId: sibling.id,
+      userId: user.id,
+      connectionRevision,
+    });
+    await draftTests.getByRole("button", { name: "Run configuration test" }).click();
+    await expect(publish).toBeEnabled();
+    await publish.click();
+    await expect(page.getByText("Draft published for new sessions.")).toBeVisible();
+    await page.goto(`/w/${workspace.slug}/agents/${siblingAgent.agent_id}?factory=${sibling.id}`);
+    await expect(page.locator("#published-bindings")).toContainText("research-tool");
+    await expect(page.locator("#published-bindings")).toContainText("research-context");
+    await expect(page.locator("#published-bindings")).toContainText("Private research skill");
+    await page.screenshot({
+      path: testInfo.outputPath("12-research-factory-bindings.png"),
+      fullPage: true,
+    });
 
     await page.goto(agentPage);
     const published = page.locator("#published-bindings");
@@ -627,11 +994,43 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     );
     await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
     await expect(promptInput).toHaveValue(secondAgentPrompt.id);
-    const secondStage = await editAndSave(page, secondModel, true);
+    await page.getByRole("button", { name: "Add tool binding", exact: true }).click();
+    const toolRevisionInput = page.getByRole("combobox", { name: "Tool revision 1", exact: true });
+    await expect(toolRevisionInput).toBeVisible();
+    await toolRevisionInput.fill(toolId);
+    await page
+      .getByRole("textbox", { name: "Allowed operations", exact: true })
+      .fill(toolOperation);
+    const wrongBinding = await page.request.get(
+      `${factoryApi}/secret-bindings?${new URLSearchParams({
+        agentId: firstAgentPrompt.agent_id,
+        grantId: service.grant.id,
+        grantVersion: String(service.grant.version),
+        bindingId: siblingService.bindingId,
+        provider: "codex",
+      })}`,
+    );
+    expect(wrongBinding.ok()).toBe(true);
+    expect(await wrongBinding.json()).toMatchObject({ binding: null, grantMatches: true });
+    expect(await wrongBinding.text()).not.toContain(siblingService.ciphertext);
+    const secondStage = await editAndSave(page, secondModel, true, service.definition, (source) =>
+      expectForeignBindingsRejected(
+        page,
+        factoryApi,
+        source,
+        {
+          repositoryId: siblingRepository.id,
+          contextId: siblingContext.id,
+          skillId: siblingSkill.id,
+          toolId: siblingToolId,
+        },
+        1,
+      ),
+    );
     expect(secondStage.id).not.toBe(firstStage.id);
     const effectiveProfile = page.locator("#execution-profile");
     await expect(effectiveProfile.getByText(secondModel, { exact: true })).toBeVisible();
-    await expect(effectiveProfile.getByText("Session creator", { exact: true })).toBeVisible();
+    await expect(effectiveProfile.getByText("Service principal", { exact: true })).toBeVisible();
     await expect(publish).toBeDisabled();
     await draftTests.getByRole("button", { name: "Run configuration test" }).click();
     await expect(publish).toBeEnabled();
@@ -687,10 +1086,13 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       const readerBindings = readerPage.locator("#published-bindings");
       await expect(readerBindings.getByText(secondModel, { exact: true })).toBeVisible();
       await expect(readerBindings.getByText(`${skillName} · v1`, { exact: true })).toBeVisible();
+      await expect(readerBindings).toContainText("release-evidence · v1 · read_release");
+      await expect(readerBindings).not.toContainText("inspect_fixture");
       await expect(readerPage.getByRole("link", { name: "Configure bindings" })).toHaveCount(0);
       await expect(readerPage.getByRole("link", { name: "Review readiness" })).toHaveCount(0);
       await expect(readerPage.getByRole("button", { name: "Save prompt revision" })).toHaveCount(0);
-      await expect(readerPage.getByText("unused-local-fixture", { exact: true })).toHaveCount(0);
+      await expect(readerPage.locator("main")).not.toContainText(service.ciphertext);
+      await expect(readerPage.locator("main")).not.toContainText(siblingService.ciphertext);
       const denied = await readerPage.request.post(revisionsPath, {
         data: {
           expectedRevisionNumber: 2,
@@ -709,6 +1111,9 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
         path: testInfo.outputPath("11-agent-detail-mobile-dark.png"),
         fullPage: true,
       });
+      await readerPage.goto(siblingAgents);
+      await expect(readerPage.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
+      await expect(readerPage.locator("main")).not.toContainText("Private research agent");
     } finally {
       await readerContext.close();
     }
@@ -733,6 +1138,73 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       promptRevisionId: secondAgentPrompt.id,
     });
     await page.screenshot({ path: testInfo.outputPath("02-session-admitted.png"), fullPage: true });
+
+    const inspectedRun = await recordSkillPromptManifest(
+      admin,
+      workspace.id,
+      title,
+      skillBody,
+      connectionRevision,
+      {
+        bindingId: service.bindingId,
+        principalId: service.principalId,
+      },
+    );
+    const admitPin = await checked(
+      admin
+        .from("session_factory_admission_inputs")
+        .select(
+          "factory_id, github_repository_id, invoking_actor_member_id, credential_owner_service_principal_id, execution_grant_id, execution_grant_version",
+        )
+        .eq("workspace_id", workspace.id)
+        .eq("definition_revision_id", changed)
+        .single(),
+    );
+    expect(admitPin).toMatchObject({
+      factory_id: factory.id,
+      github_repository_id: fixture.repositoryId,
+      invoking_actor_member_id: owner.id,
+      credential_owner_service_principal_id: service.principalId,
+      execution_grant_id: service.grant.id,
+      execution_grant_version: service.grant.version,
+    });
+    const recordedDefinition = await checked(
+      admin
+        .from("factory_definition_revisions")
+        .select("definition_json")
+        .eq("workspace_id", workspace.id)
+        .eq("factory_id", factory.id)
+        .eq("id", changed)
+        .single(),
+    );
+    expect(
+      compiledFactoryDefinitionSchema.parse(JSON.parse(recordedDefinition.definition_json)),
+    ).toMatchObject({
+      readContextRepositoryIds: [context.id],
+      skillIds: [skillRevision.id],
+      toolIds: [mcpOperationScopeId(toolId, toolOperation)],
+      credentialBindingId: service.bindingId,
+    });
+    const revoke = await page.request.post(`${factoryApi}/execution-grants`, {
+      data: {
+        action: "revoke",
+        grantId: service.grant.id,
+        expectedVersion: service.grant.version,
+        reason: "Qualify retained authority after revocation",
+      },
+    });
+    expect(revoke.status()).toBe(200);
+    const blocked = await page.request.post("/api/sessions", {
+      data: {
+        workspaceId: workspace.id,
+        requestId: randomUUID(),
+        githubRepositoryId: fixture.repositoryId,
+        title: "This session must not be admitted",
+        promptMd: "Check the revoked execution grant.",
+      },
+    });
+    expect(blocked.status()).toBe(422);
+    expect(await blocked.text()).toMatch(/grant/i);
 
     await page.goto(editor);
     await page.getByRole("button", { name: /Activation #1,/ }).click();
@@ -759,6 +1231,7 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       stageId: secondStage.id,
       agentId: firstAgentPrompt.agent_id,
       promptRevisionId: secondAgentPrompt.id,
+      status: "running",
     });
 
     const rolledBackTitle = "Qualify admission after rollback";
@@ -777,13 +1250,6 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       fullPage: true,
     });
 
-    const inspectedRun = await recordSkillPromptManifest(
-      admin,
-      workspace.id,
-      title,
-      skillBody,
-      connectionRevision,
-    );
     await page.goto(`/w/${workspace.slug}/runs/${inspectedRun}`);
     const recordedProfile = page.locator("#execution-profile");
     await expect(
@@ -794,6 +1260,28 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await expect(recordedProfile.getByText(connectionRevision, { exact: true })).toBeVisible();
     await expect(recordedProfile.getByText(changed, { exact: true })).toBeVisible();
     await expect(recordedProfile.getByText("E2B", { exact: true })).toBeVisible();
+    await expect(recordedProfile.getByText("Implementation agent", { exact: true })).toBeVisible();
+    await expect(
+      recordedProfile.getByRole("link", { name: firstAgentPrompt.agent_id, exact: true }),
+    ).toHaveAttribute("href", `${agentPage}&revision=${secondAgentPrompt.id}`);
+    await expect(recordedProfile.getByText("Agent prompt revision", { exact: true })).toBeVisible();
+    await expect(recordedProfile.getByText(secondAgentPrompt.id, { exact: true })).toBeVisible();
+    await expect(recordedProfile.getByText("Invoking member", { exact: true })).toBeVisible();
+    await expect(
+      recordedProfile.getByRole("link", { name: owner.id, exact: true }),
+    ).toHaveAttribute(
+      "href",
+      `/w/${workspace.slug}/activity?factory=${factory.id}&actor=${owner.id}`,
+    );
+    await expect(recordedProfile).toContainText(service.principalId);
+    await expect(recordedProfile).toContainText(`${service.grant.id} · v${service.grant.version}`);
+    await expect(recordedProfile).toContainText(`${service.bindingId} · v1`);
+    await expect(page.getByRole("heading", { name: "Pinned MCP manifest" })).toBeVisible();
+    await expect(page.getByText("release-evidence · Revision 1", { exact: true })).toBeVisible();
+    await expect(page.getByText(toolOperation, { exact: true })).toBeVisible();
+    await expect(page.locator("main")).not.toContainText("inspect_fixture");
+    await expect(page.locator("main")).not.toContainText(service.ciphertext);
+    await expect(page.locator("main")).not.toContainText(siblingService.ciphertext);
     await recordedProfile.screenshot({
       path: testInfo.outputPath("08-recorded-execution-profile.png"),
     });

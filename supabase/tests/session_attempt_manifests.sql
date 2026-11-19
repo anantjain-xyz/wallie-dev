@@ -210,11 +210,16 @@ reset role;
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';
 select throws_ok($$select * from public.session_attempt_manifests$$, '42501', null, 'the browser cannot read internal receipts');
-select is(public.get_run_execution_profile('b1b2c3d4-0001-4000-8000-000000000001',run_id,1),
+select is(public.get_run_execution_profile('b1b2c3d4-0001-4000-8000-000000000001',legacy.run_id,1),
   '{"provider":"codex","model":"gpt-5.5","effort":"high","maxTurns":7,"sandboxProvider":null,
     "sandboxConnectionRevision":null,"workerRuntime":"workerd","definitionRevisionId":null,
-    "authority":{"kind":"human","memberId":"c1b2c3d4-0001-4000-8000-000000000001"}}'::jsonb,
-  'an authorized reader sees the exact recorded human execution profile') from legacy;
+    "invokingMemberId":null,"triggeredByMemberId":"c1b2c3d4-0001-4000-8000-000000000001",
+    "authority":{"kind":"human","memberId":"c1b2c3d4-0001-4000-8000-000000000001"}}'::jsonb
+    || jsonb_build_object('factoryId',session.factory_id,'agentId',agent.id,'promptRevisionId',revision.id),
+  'an authorized reader sees the exact legacy factory, default agent, and recorded human authority')
+from legacy join public.sessions session on session.id = legacy.session_id
+join public.factory_agents agent on (agent.workspace_id,agent.factory_id) = (session.workspace_id,session.factory_id) and agent.is_default
+join public.factory_agent_prompt_revisions revision on revision.agent_id = agent.id and revision.revision_number = 1;
 select is(public.get_run_execution_profile('b1b2c3d4-0001-4000-8000-000000000001',run_id,2),
   null::jsonb, 'a different attempt cannot borrow the recorded profile') from legacy;
 select is(public.get_run_execution_profile(gen_random_uuid(),run_id,1),

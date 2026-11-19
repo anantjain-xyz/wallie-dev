@@ -24,6 +24,7 @@ const expectedScripts = {
   test: "vitest run",
   "check:db-tests": "node --import tsx scripts/check-db-tests.ts",
   "check:continuity": "node --import tsx scripts/check-continuity.ts",
+  "check:factory-runtime": "node --import tsx scripts/check-factory-runtime.ts",
   "db:types:check": "tsx scripts/check-db-types-drift.ts",
   "check:fast":
     "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
@@ -41,6 +42,7 @@ const classifiedScripts = {
   "environment-dependent": [
     "analyze:authenticated-bundle",
     "db:types",
+    "check:factory-runtime",
     "test:e2e:onboarding",
     "test:e2e:responsive",
     "test:e2e:session-prefetch",

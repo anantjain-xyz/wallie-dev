@@ -53,6 +53,11 @@ export const recordedRunExecutionProfileSchema = profileFields
     sandboxConnectionRevision: uuid.nullable(),
     workerRuntime: z.enum(["node", "workerd"]),
     definitionRevisionId: uuid.nullable(),
+    factoryId: uuid,
+    agentId: uuid.nullable(),
+    promptRevisionId: uuid.nullable(),
+    invokingMemberId: uuid.nullable(),
+    triggeredByMemberId: uuid.nullable(),
     authority: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("human"), memberId: uuid }).strict(),
       z
