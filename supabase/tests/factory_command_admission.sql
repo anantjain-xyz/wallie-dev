@@ -176,6 +176,8 @@ select is((select result.id from expiring_admission admission cross join lateral
 select pg_sleep(greatest(0,extract(epoch from lease_expires_at-clock_timestamp()))+0.03) from expiring_admission;
 select ok((select status='concurrency_limited' and retry_after_seconds=1 and lease_id is null from pg_temp.command_admit(121,32,p_surface=>'mcp')),
   'an expired permit locked by a separate actual command still consumes the slot');
+select results_eq('select * from public.prune_factory_command_admissions()', 'values (0, 0)',
+  'maintenance skips an expired permit held by the verified command transaction');
 select extensions.dblink_exec('command_first',format($q$do $$begin perform internal.record_factory_command_use(%L,%L);end$$$q$,
   admission_id,lease_id)) from expiring_admission;
 select extensions.dblink_exec('command_first','commit');
@@ -218,9 +220,68 @@ select count(*) from extensions.dblink_get_result('command_second') result(revok
 select is((select status::text from pg_temp.command_admit(131)),'unauthorized','no fresh permit can use the revoked credential');
 select ok(exists(select 1 from internal.factory_command_uses where admission_id=(select admission_id from revocation_admission)),
   'the operation that ran before revocation retains its committed use receipt');
+select public.release_factory_command_admission(admission_id,lease_id) from revocation_admission;
+
+select ok(not has_function_privilege('anon','public.prune_factory_command_admissions(integer)','execute')
+  and not has_function_privilege('authenticated','public.prune_factory_command_admissions(integer)','execute')
+  and has_function_privilege('service_role','public.prune_factory_command_admissions(integer)','execute')
+  and not has_table_privilege('service_role','internal.factory_command_admissions','delete')
+  and not has_table_privilege('service_role','internal.factory_command_uses','delete'),
+  'only the maintenance RPC allows service cleanup of private command history');
+select throws_ok($q$delete from internal.factory_command_admissions where request_id=pg_temp.command_id(101)$q$,
+  '23514','Command admissions are immutable.','recent command history cannot be deleted directly');
+
+-- Seed historical receipts directly to exercise retention without waiting a
+-- week or altering an existing receipt. The live lease models a held command
+-- and the optional use entries model commands whose result already committed.
+insert into internal.factory_command_admissions(id,workspace_id,factory_id,service_principal_id,
+  execution_grant_id,execution_grant_version,credential_kind,credential_id,scope,surface,request_id,request_hash,admitted_at)
+select pg_temp.command_id(fixture.slot),receipt.workspace_id,receipt.factory_id,receipt.service_principal_id,
+  receipt.execution_grant_id,receipt.execution_grant_version,receipt.credential_kind,receipt.credential_id,receipt.scope,
+  receipt.surface,pg_temp.command_id(fixture.slot),receipt.request_hash,clock_timestamp()-fixture.age
+from internal.factory_command_admissions receipt
+cross join (values (201,interval '9 days'),(202,interval '10 days'),(203,interval '8 days'),
+  (204,interval '8 days'),(205,interval '30 seconds')) fixture(slot,age)
+where receipt.workspace_id=pg_temp.command_id(4) and receipt.request_id=pg_temp.command_id(101);
+insert into internal.factory_command_leases(admission_id,workspace_id,service_principal_id,expires_at)
+select receipt.id,receipt.workspace_id,receipt.service_principal_id,clock_timestamp()+fixture.remaining
+from (values (202,interval '-30 seconds'),(203,interval '-20 seconds'),(204,interval '1 hour'),(205,interval '-10 seconds')) fixture(slot,remaining)
+join internal.factory_command_admissions receipt on receipt.id=pg_temp.command_id(fixture.slot);
+insert into internal.factory_command_uses(admission_id,used_at)
+select receipt.id,receipt.admitted_at from internal.factory_command_admissions receipt
+where receipt.id in (pg_temp.command_id(201),pg_temp.command_id(202),pg_temp.command_id(205));
+commit;
+begin;
+select extensions.dblink_exec('command_first','begin');
+select id from extensions.dblink('command_first',format(
+  'select admission_id from internal.factory_command_leases where admission_id=%L for update',pg_temp.command_id(202))) held(id uuid);
+set local lock_timeout='2s';
+select results_eq('select * from public.prune_factory_command_admissions(1)', 'values (1, 1)',
+  'maintenance bounds both expiry and history deletions independently');
+select ok(not exists(select 1 from internal.factory_command_leases where admission_id=pg_temp.command_id(203))
+  and not exists(select 1 from internal.factory_command_admissions where id=pg_temp.command_id(201))
+  and not exists(select 1 from internal.factory_command_uses where admission_id=pg_temp.command_id(201))
+  and exists(select 1 from internal.factory_command_admissions where id=pg_temp.command_id(203))
+  and exists(select 1 from internal.factory_command_leases where admission_id=pg_temp.command_id(205)),
+  'cleanup removes oldest eligible rows first and cascades only their successful use');
+select results_eq('select * from public.prune_factory_command_admissions(1)', 'values (1, 1)',
+  'a later batch continues cleanup while preserving the held permit');
+select results_eq('select * from public.prune_factory_command_admissions()', 'values (0, 0)',
+  'an old admission with a locked expiry or a live lease survives every batch');
+select extensions.dblink_exec('command_first','commit');
+select results_eq('select * from public.prune_factory_command_admissions()', 'values (1, 1)',
+  'an old expired admission and permit become pruneable after unlock');
+select ok(not exists(select 1 from internal.factory_command_uses where admission_id=pg_temp.command_id(202))
+  and exists(select 1 from internal.factory_command_uses where admission_id=pg_temp.command_id(205))
+  and exists(select 1 from internal.factory_command_leases where admission_id=pg_temp.command_id(204)),
+  'recent quota and use history and old live work remain intact');
 select extensions.dblink_disconnect('command_second');
 select extensions.dblink_disconnect('command_first');
 delete from public.workspaces where id=pg_temp.command_id(4);
+select ok(not exists(select 1 from internal.factory_command_admissions where workspace_id=pg_temp.command_id(4))
+  and not exists(select 1 from internal.factory_command_leases where admission_id=pg_temp.command_id(204))
+  and not exists(select 1 from internal.factory_command_uses where admission_id=pg_temp.command_id(205)),
+  'workspace deletion still cascades recent receipts, live permits and successful uses');
 delete from auth.users where id in (pg_temp.command_id(1),pg_temp.command_id(2));
 select * from finish();
 commit;

@@ -42,6 +42,7 @@ create table internal.factory_command_admissions (
 create index factory_command_admissions_workspace_time_idx on internal.factory_command_admissions(workspace_id, admitted_at desc);
 create index factory_command_admissions_principal_time_idx
   on internal.factory_command_admissions(workspace_id, service_principal_id, admitted_at desc);
+create index factory_command_admissions_retention_idx on internal.factory_command_admissions(admitted_at, id);
 
 create table internal.factory_command_leases (
   admission_id uuid primary key,
@@ -56,6 +57,7 @@ create table internal.factory_command_leases (
 create index factory_command_leases_workspace_expiry_idx on internal.factory_command_leases(workspace_id, expires_at);
 create index factory_command_leases_principal_expiry_idx
   on internal.factory_command_leases(workspace_id, service_principal_id, expires_at);
+create index factory_command_leases_retention_idx on internal.factory_command_leases(expires_at, admission_id);
 
 -- Successful use is distinct from admission. Its insertion belongs to the
 -- protected command transaction, so failed protected work cannot record use.
@@ -74,13 +76,52 @@ revoke all on internal.factory_command_quotas, internal.factory_command_admissio
 create function internal.preserve_factory_command_admission()
 returns trigger language plpgsql set search_path = '' as $$
 begin
-  if tg_op = 'DELETE' and not exists (select 1 from public.workspaces where id = old.workspace_id) then return old; end if;
+  if tg_op = 'DELETE' and (
+    not exists (select 1 from public.workspaces where id = old.workspace_id)
+    or (old.admitted_at <= clock_timestamp() - interval '7 days' and not exists (
+      select 1 from internal.factory_command_leases lease where lease.admission_id = old.id
+    ))
+  ) then return old; end if;
   raise exception 'Command admissions are immutable.' using errcode = '23514';
 end;
 $$;
 revoke all on function internal.preserve_factory_command_admission() from public, anon, authenticated, service_role;
 create trigger preserve_factory_command_admission before update or delete on internal.factory_command_admissions
   for each row execute function internal.preserve_factory_command_admission();
+
+create function public.prune_factory_command_admissions(p_batch_size integer default 500)
+returns table(leases_deleted integer, admissions_deleted integer)
+language plpgsql security definer set search_path = '' as $$
+declare
+  batch_size integer := least(greatest(coalesce(p_batch_size, 500), 1), 500);
+  cutoff timestamptz := clock_timestamp();
+begin
+  with expired as (
+    select lease.admission_id from internal.factory_command_leases lease
+    where lease.expires_at <= cutoff
+    order by lease.expires_at, lease.admission_id
+    limit batch_size for update skip locked
+  )
+  delete from internal.factory_command_leases lease using expired where lease.admission_id = expired.admission_id;
+  get diagnostics leases_deleted = row_count;
+
+  -- Preserve all receipts in the quota window, including completed uses, and
+  -- any admission still carrying a lease. A locked expired lease remains live
+  -- for retention until its guarded operation commits or rolls back.
+  with stale as (
+    select receipt.id from internal.factory_command_admissions receipt
+    where receipt.admitted_at <= cutoff - interval '7 days'
+      and not exists (select 1 from internal.factory_command_leases lease where lease.admission_id = receipt.id)
+    order by receipt.admitted_at, receipt.id
+    limit batch_size for update of receipt skip locked
+  )
+  delete from internal.factory_command_admissions receipt using stale where receipt.id = stale.id;
+  get diagnostics admissions_deleted = row_count;
+  return next;
+end;
+$$;
+revoke all on function public.prune_factory_command_admissions(integer) from public, anon, authenticated, service_role;
+grant execute on function public.prune_factory_command_admissions(integer) to service_role;
 
 create function public.configure_factory_command_quotas(
   p_workspace_id uuid, p_actor_user_id uuid, p_workspace_rate_limit integer, p_workspace_concurrency_limit integer,

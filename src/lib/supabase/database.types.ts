@@ -8888,6 +8888,13 @@ export type Database = {
         }
         Returns: boolean
       }
+      prune_factory_command_admissions: {
+        Args: { p_batch_size?: number }
+        Returns: {
+          admissions_deleted: number
+          leases_deleted: number
+        }[]
+      }
       prune_factory_oauth_credentials: {
         Args: { p_batch_size?: number }
         Returns: {

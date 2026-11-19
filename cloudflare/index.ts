@@ -29,6 +29,7 @@ import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
+import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
@@ -301,6 +302,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["attachment cleanup", () => cleanupExpiredSessionAttachments(admin)],
       ["run retention", () => drainRunRetention(admin)],
       ["OAuth credential cleanup", () => pruneFactoryOAuthCredentials(admin)],
+      ["factory command cleanup", () => pruneFactoryCommandAdmissions(admin)],
       ["workspace cleanup", () => resumePendingWorkspaceDeletions(admin)],
       ["run exports", () => drainRunExports(admin)],
       ["run export cleanup", () => cleanupRunExports(admin)],

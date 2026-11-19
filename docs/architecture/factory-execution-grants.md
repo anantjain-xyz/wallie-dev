@@ -93,3 +93,7 @@ Permission failures happen before protected data access. An admission denial
 reports the quota type and retry delay. Mutation idempotency belongs to the
 shared session command, independently of each request’s quota admission.
 Artifact approval continues through Wallie’s human-authorized review flow.
+
+Scheduled maintenance in both worker runtimes prunes expired leases and
+retains admission and successful-use receipts for seven days. A lease held by
+an active database transaction remains protected until that transaction ends.
