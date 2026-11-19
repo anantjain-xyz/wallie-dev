@@ -13,6 +13,7 @@ import {
   ApproveGrant,
   CreateServicePrincipal,
 } from "@/features/factory-governance/governance-actions";
+import { GrantMachineTokens } from "@/features/factory-governance/governance-machine-tokens";
 import { GovernanceAudit } from "@/features/factory-governance/governance-audit";
 import {
   loadGovernance,
@@ -47,6 +48,7 @@ const filters = z.object({
   afterBinding: z.string().uuid().optional(),
   afterGrant: z.string().uuid().optional(),
   afterPrincipal: z.string().uuid().optional(),
+  afterToken: z.string().uuid().optional(),
   beforeAudit: factoryAuditCursorTokenSchema.optional(),
 });
 
@@ -153,15 +155,51 @@ function GovernanceResources({
         );
       case "grant":
         return (
-          <PageSection title="Execution grant">
-            {grantList.selected ? (
-              <div className="ui-sheet">
-                <GrantCard data={data} focused grant={grantList.selected} scope={scope} />
-              </div>
-            ) : (
-              <p className="type-secondary text-muted">This execution grant is unavailable.</p>
+          <>
+            <PageSection title="Execution grant">
+              {grantList.selected ? (
+                <div className="ui-sheet">
+                  <GrantCard data={data} focused grant={grantList.selected} scope={scope} />
+                </div>
+              ) : (
+                <p className="type-secondary text-muted">This execution grant is unavailable.</p>
+              )}
+            </PageSection>
+            {grantList.selected && (
+              <PageSection anchorId="machine-tokens" title="Machine tokens">
+                <GrantMachineTokens
+                  key={`${source.id}:${grantList.selected.version}:${query.afterToken ?? ""}`}
+                  asOf={data.asOf}
+                  factoryActive={canApprove}
+                  factoryId={factory.id}
+                  grant={{
+                    id: grantList.selected.id,
+                    version: grantList.selected.version,
+                    command_scopes: grantList.selected.command_scopes,
+                    expires_at: grantList.selected.expires_at,
+                    revoked_at: grantList.selected.revoked_at,
+                  }}
+                  tokens={data.tokenList.entries}
+                  workspaceId={scope.workspaceId}
+                />
+                <ResourcePages
+                  href={`${workspaceGovernancePath(workspaceSlug, {
+                    factory: factory.id,
+                    grant: source.id,
+                  })}#machine-tokens`}
+                  next={
+                    data.tokenList.next &&
+                    `${workspaceGovernancePath(workspaceSlug, {
+                      factory: factory.id,
+                      grant: source.id,
+                      afterToken: data.tokenList.next,
+                    })}#machine-tokens`
+                  }
+                  previous={Boolean(query.afterToken)}
+                />
+              </PageSection>
             )}
-          </PageSection>
+          </>
         );
       case "binding":
         return (

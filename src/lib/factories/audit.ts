@@ -42,7 +42,11 @@ const resourceFilters = {
     key: "bindingId",
   },
 };
-const governanceActions = Object.values(resourceFilters).flatMap(({ actions }) => actions);
+const governanceActions = [
+  ...Object.values(resourceFilters).flatMap(({ actions }) => actions),
+  "machine_token.issued",
+  "machine_token.revoked",
+];
 
 const auditCursorSchema = z
   .object({

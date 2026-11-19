@@ -24,6 +24,8 @@ const auditActions = {
   "execution_grant.approved": { label: "Grant approved", source: "grant", idKey: "id" },
   "execution_grant.updated": { label: "Grant updated", source: "grant", idKey: "id" },
   "execution_grant.revoked": { label: "Grant revoked", source: "grant", idKey: "id" },
+  "machine_token.issued": { label: "Machine token issued", source: "grant", idKey: "grantId" },
+  "machine_token.revoked": { label: "Machine token revoked", source: "grant", idKey: "grantId" },
   "credential_binding.created": {
     label: "Credential attached",
     source: "binding",
@@ -164,6 +166,11 @@ function AuditEventCard({
         {focused && (
           <>
             <MetadataItem label="Event ID" value={event.id} monospace />
+            {detail?.id &&
+              (event.action === "machine_token.issued" ||
+                event.action === "machine_token.revoked") && (
+                <MetadataItem label="Token ID" value={detail.id} monospace />
+              )}
             {principalId && (
               <MetadataItem
                 label="Service principal"

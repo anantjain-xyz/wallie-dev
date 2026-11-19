@@ -13,6 +13,7 @@ import {
   createServicePrincipalSchema,
   factoryExecutionGrantCommandSchema,
 } from "@/lib/factory-execution-grants/contracts";
+import { factoryCommandLabels } from "@/lib/factory-machine-tokens/contracts";
 import { workspaceGovernancePath } from "@/lib/routes";
 
 type Scope = { factoryId: string; workspaceId: string; workspaceSlug: string };
@@ -222,6 +223,7 @@ export function ApproveGrant({
       writableRepositoryId: fields.get("writable"),
       readContextRepositoryIds: fields.getAll("readonly"),
       toolIds: fields.getAll("tools"),
+      commandScopes: fields.getAll("commands"),
       executionPolicyRevisionId: fields.get("policy"),
       budgetPayerMemberId: fields.get("payer"),
       expiresAt: expiry.toISOString(),
@@ -278,6 +280,11 @@ export function ApproveGrant({
           name="readonly"
         />
         <ScopeChoices choices={tools} label="Allowed tool operations" name="tools" />
+        <ScopeChoices
+          choices={Object.entries(factoryCommandLabels).map(([id, label]) => ({ id, label }))}
+          label="Machine command scopes"
+          name="commands"
+        />
         <button className="ui-button ui-button-primary" type="submit">
           <ActionButtonLabel
             idle="Approve grant"
