@@ -3,17 +3,28 @@ import { defineConfig } from "vitest/config";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 
 const nativeHistoryFixture = process.env.WALLIE_NATIVE_HISTORY_FIXTURE;
+const factoryRuntimeFixture = process.env.WALLIE_FACTORY_RUNTIME_FIXTURE;
 
 export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
       remoteBindings: false,
-      ...(nativeHistoryFixture
+      ...(nativeHistoryFixture || factoryRuntimeFixture
         ? {
             miniflare: {
               bindings: {
-                WALLIE_NATIVE_HISTORY_FIXTURE: nativeHistoryFixture,
+                ...(nativeHistoryFixture && {
+                  WALLIE_NATIVE_HISTORY_FIXTURE: nativeHistoryFixture,
+                }),
+                ...(factoryRuntimeFixture && {
+                  WALLIE_FACTORY_RUNTIME_FIXTURE: factoryRuntimeFixture,
+                  WALLIE_ENCRYPTION_KEY: process.env.WALLIE_ENCRYPTION_KEY,
+                  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+                  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
+                    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+                  SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
+                }),
                 WALLIE_ORDERED_RUN_CAPTURE_ENABLED: "true",
                 WALLIE_WORKER_DISPATCH_ENABLED: "false",
                 WALLIE_WORKER_AUTH_ENABLED: "false",
