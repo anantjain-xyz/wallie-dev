@@ -153,6 +153,7 @@ export function BrowserVideoInspector({
                 artifactLinkQuery={artifactLinkQuery}
                 offsetMs={linkedRecording === record ? target?.offsetMs : undefined}
                 findingHash={linkedRecording === record ? hash : undefined}
+                onReselectFinding={() => setDismissedHash("")}
               />
             ))}
           </ul>
@@ -170,6 +171,7 @@ function RecordingReceipt({
   artifactLinkQuery,
   offsetMs,
   findingHash,
+  onReselectFinding,
 }: {
   record: BrowserVideoRecord;
   evidence: BrowserEvidenceReceipt;
@@ -178,6 +180,7 @@ function RecordingReceipt({
   artifactLinkQuery?: string;
   offsetMs?: number;
   findingHash?: string;
+  onReselectFinding: () => void;
 }) {
   const captured = record.status === "captured" ? record : null;
   const steps = captured ? findingsFor(evidence, captured) : null;
@@ -272,8 +275,10 @@ function RecordingReceipt({
                         !event.metaKey &&
                         !event.shiftKey &&
                         window.location.hash === `#${anchor}`
-                      )
+                      ) {
+                        onReselectFinding();
                         setSeekRequest((value) => value + 1);
+                      }
                     }}
                   >
                     <span className="shrink-0 font-mono">{formatOffset(step.offsetMs)}</span>

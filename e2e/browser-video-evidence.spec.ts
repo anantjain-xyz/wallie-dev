@@ -238,3 +238,36 @@ test("keeps invalid finding times and dismissed requests from opening private me
   await expect(captured.locator("video")).toHaveCount(0);
   await expect(captured.getByRole("button", { name: "Load recording" })).toBeVisible();
 });
+
+test("reselects the same run step after closing and reopening the evidence disclosure", async ({
+  page,
+}) => {
+  const requested = await stubEvidence(page);
+  const findingAnchor = anchor(availableId, 1000);
+  const exactMetadata = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === metadataPath && url.searchParams.get("runId") === runId;
+  });
+  await page.goto(`${previewPath}?projection=run${findingAnchor}`);
+  await exactMetadata;
+
+  const disclosure = page.getByRole("button", { name: "Browser recordings" });
+  const step = page.getByRole("link", { name: "0:01 Verify confirmation is visible" }).first();
+  const video = page.locator("video[aria-label='Recording captured for review-queue']");
+  await expect(step).toHaveAttribute("href", findingAnchor);
+  await expectPausedAt(video, 1);
+  expect(requested.video).toEqual([availableId]);
+
+  await disclosure.press("Enter");
+  await expect(video).toHaveCount(0);
+  await disclosure.press("Enter");
+  await expect(step).toBeVisible();
+  await expect(page).toHaveURL((url) => url.hash === findingAnchor);
+  expect(requested.video).toEqual([availableId]);
+
+  await step.press("Enter");
+  await expectPausedAt(video, 1);
+  await frameDominates(video, 2);
+  await expect(step).toHaveAttribute("aria-current", "location");
+  expect(requested.video).toEqual([availableId, availableId]);
+});
