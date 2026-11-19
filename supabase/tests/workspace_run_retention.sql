@@ -115,7 +115,7 @@ set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = 'a1b2c3d4-0001-4000-8000-000000000001';
 select ok(not has_function_privilege(current_user, 'public.mark_expired_workspace_run_content(integer,integer)', 'EXECUTE'),
   'clients cannot run retention work');
-select ok(not has_function_privilege(current_user, 'public.save_workspace_run_retention(uuid,uuid,integer,integer)', 'EXECUTE'),
+select ok(not has_function_privilege(current_user, 'public.save_workspace_run_retention(uuid,uuid,integer,integer,integer)', 'EXECUTE'),
   'manager writes pass through the privileged authorization boundary');
 select is((select count(*) from public.agent_run_events where agent_run_id =
   '53800000-0005-4000-8000-000000000001'), 0::bigint,

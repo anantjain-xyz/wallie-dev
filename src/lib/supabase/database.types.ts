@@ -1345,9 +1345,10 @@ export type Database = {
       }
       factory_context_source_revisions: {
         Row: {
-          content: string
-          content_bytes: number | null
-          content_sha256: string | null
+          content: string | null
+          content_bytes: number
+          content_purged_at: string | null
+          content_sha256: string
           created_at: string
           factory_id: string
           id: string
@@ -1358,9 +1359,10 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
-          content: string
-          content_bytes?: number | null
-          content_sha256?: string | null
+          content?: string | null
+          content_bytes: number
+          content_purged_at?: string | null
+          content_sha256: string
           created_at?: string
           factory_id: string
           id?: string
@@ -1371,9 +1373,10 @@ export type Database = {
           workspace_id: string
         }
         Update: {
-          content?: string
-          content_bytes?: number | null
-          content_sha256?: string | null
+          content?: string | null
+          content_bytes?: number
+          content_purged_at?: string | null
+          content_sha256?: string
           created_at?: string
           factory_id?: string
           id?: string
@@ -3785,6 +3788,41 @@ export type Database = {
           },
         ]
       }
+      session_browser_asset_withholdings: {
+        Row: {
+          asset_id: string
+          cleanup_available_at: string
+          cleanup_claim_id: string | null
+          purged_at: string | null
+          recorded_at: string
+          state: string
+        }
+        Insert: {
+          asset_id: string
+          cleanup_available_at?: string
+          cleanup_claim_id?: string | null
+          purged_at?: string | null
+          recorded_at?: string
+          state: string
+        }
+        Update: {
+          asset_id?: string
+          cleanup_available_at?: string
+          cleanup_claim_id?: string | null
+          purged_at?: string | null
+          recorded_at?: string
+          state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_browser_asset_withholdings_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: true
+            referencedRelation: "session_browser_verification_assets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_browser_verification_assets: {
         Row: {
           approval_scope_id: string
@@ -5410,6 +5448,48 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_retained_content_erasures: {
+        Row: {
+          actor_member_id: string
+          archived_at: string
+          erased_at: string
+          factory_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_member_id: string
+          archived_at: string
+          erased_at?: string
+          factory_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          actor_member_id?: string
+          archived_at?: string
+          erased_at?: string
+          factory_id?: string
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_retained_content_erasures_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_retained_content_erasures_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
           },
         ]
       }
@@ -7107,6 +7187,7 @@ export type Database = {
       }
       workspace_run_retention: {
         Row: {
+          context_days: number | null
           evidence_days: number | null
           last_swept_at: string | null
           transcript_days: number | null
@@ -7114,6 +7195,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          context_days?: number | null
           evidence_days?: number | null
           last_swept_at?: string | null
           transcript_days?: number | null
@@ -7121,6 +7203,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          context_days?: number | null
           evidence_days?: number | null
           last_swept_at?: string | null
           transcript_days?: number | null
@@ -8900,6 +8983,28 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      erase_session_retained_content: {
+        Args: {
+          expected_archived_at: string
+          target_factory_id: string
+          target_session_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          actor_member_id: string
+          archived_at: string
+          erased_at: string
+          factory_id: string
+          session_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_retained_content_erasures"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       exchange_factory_oauth_code: {
         Args: {
           p_access_token_digest: string
@@ -9270,6 +9375,23 @@ export type Database = {
           original_filename: string
           size_bytes: number
         }[]
+      }
+      get_session_retained_content_erasure: {
+        Args: { target_session_id: string; target_workspace_id: string }
+        Returns: {
+          actor_member_id: string
+          archived_at: string
+          erased_at: string
+          factory_id: string
+          session_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_retained_content_erasures"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       get_session_retry_checkpoint: {
         Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
@@ -10103,6 +10225,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      purge_expired_factory_memory_bodies: {
+        Args: { p_item_limit?: number }
+        Returns: number
       }
       purge_expired_run_transcripts: {
         Args: { p_entry_limit?: number; p_run_limit?: number }
@@ -11379,11 +11505,13 @@ export type Database = {
       save_workspace_run_retention: {
         Args: {
           p_actor_user_id: string
+          p_context_days?: number
           p_evidence_days?: number
           p_transcript_days?: number
           p_workspace_id: string
         }
         Returns: {
+          context_days: number | null
           evidence_days: number | null
           last_swept_at: string | null
           transcript_days: number | null

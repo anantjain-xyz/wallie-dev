@@ -301,8 +301,14 @@ describe("session detail loader", () => {
       order: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
     };
+    const factoryMemberQuery = {
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { role: "manager" }, error: null }),
+      select: vi.fn().mockReturnThis(),
+    };
     const from = vi.fn((table: string) => {
       if (table === "workspace_members") return memberQuery;
+      if (table === "factory_members") return factoryMemberQuery;
       if (table === "pipeline_stages") return stageQuery;
       if (table === "sessions") {
         return {
@@ -311,6 +317,7 @@ describe("session detail loader", () => {
             data: {
               execute_pinned_definition: false,
               factory_definition_revision_id: null,
+              factory_id: "factory-1",
               pipeline_id: payload.session.pipelineId,
               workspace_id: payload.activity.workspaceId,
             },
@@ -336,6 +343,9 @@ describe("session detail loader", () => {
     const result = await loadSessionDetailPageData("acme-corp", "18");
 
     expect(result.canReview).toBe(true);
+    expect(result.review.retainedContent).toEqual({ canManage: true, erasedAt: null });
+    expect(factoryMemberQuery.eq).toHaveBeenCalledWith("factory_id", "factory-1");
+    expect(factoryMemberQuery.eq).toHaveBeenCalledWith("member_id", "member-1");
     expect(result.hasFailedRun).toBe(false);
     expect(result.failedStageSlug).toBeNull();
     expect(result.latestRun).toEqual({

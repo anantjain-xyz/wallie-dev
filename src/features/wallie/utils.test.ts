@@ -61,7 +61,7 @@ describe("getWallieSessionRunBlock", () => {
         getWallieSessionRunBlock({ archivedAt: "2026-11-08T12:00:00.000Z", phaseStatus }),
       ).toEqual({
         code: "session_archived",
-        message: "This session is archived. Unarchive it to run Wallie.",
+        message: "This session is archived.",
       });
     },
   );

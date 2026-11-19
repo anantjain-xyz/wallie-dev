@@ -3,10 +3,12 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import type { Tables } from "@/lib/supabase/database.types";
+import { canManageSessionRetainedContent } from "./retained-content-access";
 import type { StageExecution } from "./stage-execution";
 
 export type SessionReviewCapabilities = {
   canApprove: boolean;
+  canManageRetainedContent: boolean;
   failedStageSlug: string | null;
   hasFailedRun: boolean;
   latestRun: StageExecution | null;
@@ -53,7 +55,7 @@ export function canApproveSessionStage(
     : member.role === "owner" || member.role === "admin";
 }
 
-async function resolveCanApprove({
+async function resolveViewerCapabilities({
   memberUserId,
   sessionId,
   stageId,
@@ -65,7 +67,7 @@ async function resolveCanApprove({
   stageId: string;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
   workspaceId: string;
-}): Promise<boolean> {
+}): Promise<Pick<SessionReviewCapabilities, "canApprove" | "canManageRetainedContent">> {
   const [{ data: member, error: memberError }, { data: session, error: sessionError }] =
     await Promise.all([
       supabase
@@ -79,18 +81,25 @@ async function resolveCanApprove({
       supabase
         .from("sessions")
         .select(
-          "pipeline_id, workspace_id, execute_pinned_definition, factory_definition_revision_id",
+          "pipeline_id, workspace_id, factory_id, execute_pinned_definition, factory_definition_revision_id",
         )
         .eq("id", sessionId)
         .eq("workspace_id", workspaceId)
         .maybeSingle(),
     ]);
 
-  if (memberError || sessionError || !member || !session) return false;
-  return canApproveSessionStage(
-    await loadSessionStageApprovers(supabase, session, stageId),
-    member,
-  );
+  if (memberError || sessionError || !member || !session) {
+    return { canApprove: false, canManageRetainedContent: false };
+  }
+  const [stage, canManageRetainedContent] = await Promise.all([
+    loadSessionStageApprovers(supabase, session, stageId),
+    canManageSessionRetainedContent(
+      supabase,
+      { workspaceId, factoryId: session.factory_id },
+      member,
+    ),
+  ]);
+  return { canApprove: canApproveSessionStage(stage, member), canManageRetainedContent };
 }
 
 export async function resolveLatestRunFailure({
@@ -136,13 +145,13 @@ export async function loadSessionReviewCapabilities({
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
   workspaceId: string;
 }): Promise<SessionReviewCapabilities> {
-  const [canApprove, failure] = await Promise.all([
-    resolveCanApprove({ memberUserId, sessionId, stageId, supabase, workspaceId }),
+  const [viewer, failure] = await Promise.all([
+    resolveViewerCapabilities({ memberUserId, sessionId, stageId, supabase, workspaceId }),
     resolveLatestRunFailure({ sessionId, supabase }),
   ]);
 
   return {
-    canApprove,
+    ...viewer,
     failedStageSlug: failure.failedStageSlug,
     hasFailedRun: failure.hasFailedRun,
     latestRun: failure.latestRun,

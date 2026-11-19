@@ -22,7 +22,7 @@ const queued: RunExportSummary = {
   processedCount: 0,
 };
 
-const retention = { transcriptDays: null, evidenceDays: 90 };
+const retention = { transcriptDays: null, evidenceDays: 90, contextDays: 120 };
 const retentionUrl = `/api/workspaces/${workspaceId}/run-retention`;
 const exportsUrl = `/api/workspaces/${workspaceId}/run-exports`;
 
@@ -73,7 +73,7 @@ describe("run history settings", () => {
       retentionUrl,
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ transcriptDays: 30, evidenceDays: 90 }),
+        body: JSON.stringify({ transcriptDays: 30, evidenceDays: 90, contextDays: 120 }),
       }),
     );
     expect(screen.getByRole("link", { name: "Download manifest" })).toHaveAttribute(

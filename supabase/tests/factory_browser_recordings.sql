@@ -94,7 +94,7 @@ begin
 end;
 $$;
 create temp table screenshot_runs as
-select label,run.* from (values ('complete'),('incomplete'),('revoked')) fixture(label)
+select label,run.* from (values ('complete'),('incomplete'),('revoked'),('aged')) fixture(label)
 cross join lateral pg_temp.browser_run('Media run ' || label) run;
 create function pg_temp.run_id(p_label text default 'complete') returns uuid language sql stable as $$
   select run_id from screenshot_runs where label=p_label;
@@ -247,7 +247,7 @@ set local request.jwt.claim.sub='58600000-0000-4000-8000-000000000001';
 select is((select count(*) from public.session_browser_verification_assets where content_type='video/webm'),
   1::bigint,'a scoped reviewer can inspect the completed private video after capture ends');
 select is((select count(*) from storage.objects where name=pg_temp.media_path(pg_temp.run_id(),pg_temp.browser_id(8,2),'webm')),
-  1::bigint,'private storage recognizes its exact authorized review session');
+  0::bigint,'an authorized reviewer gets video through the Wallie proxy instead of direct Storage access');
 select is((select count(*) from storage.objects where name=pg_temp.media_path(pg_temp.run_id('incomplete'),pg_temp.browser_id(8,3),'webm')),
   0::bigint,'staged unverified bytes are unavailable even to the authorized reviewer');
 set local request.jwt.claim.sub='58600000-0000-4000-8000-000000000002';
@@ -255,6 +255,232 @@ select is((select count(*) from public.session_browser_verification_assets),0::b
 select is((select count(*) from storage.objects where bucket_id='session-validation-evidence'),0::bigint,
   'another workspace cannot retrieve private evidence');
 reset role;
+
+
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '58600000-0000-4000-8000-000000000001';
+select ok(has_table_privilege('service_role', 'public.session_browser_asset_withholdings', 'select')
+  and not has_table_privilege('service_role', 'public.session_browser_asset_withholdings', 'insert')
+  and not has_table_privilege('authenticated', 'public.session_browser_asset_withholdings', 'select')
+  and not has_function_privilege('anon', 'public.erase_session_retained_content(uuid,uuid,uuid,timestamptz)', 'execute'),
+  'private withholding is service-readable and permanent erasure is never anonymous');
+
+-- Seed an aged copy with its exact plan and already retained manifest. The
+-- ordinary capture tests above exercise acquisition and actual settlement.
+insert into public.session_browser_verification_receipts
+  (run_id, workspace_id, session_id, records, created_at)
+select run_id,pg_temp.browser_id(1),session_id,'[]',clock_timestamp()-interval '3 days'
+from screenshot_runs where label='aged';
+insert into public.session_browser_verification_assets
+  (id, run_id, workspace_id, session_id, evidence_key, browser_session_id, approval_scope_id, required,
+   storage_path, sha256, content_type, size_bytes, duration_ms, width_px, height_px, frame_offsets_ms,
+   capture_started_at, capture_completed_at)
+select candidate.id,run.run_id,asset.workspace_id,run.session_id,asset.evidence_key,
+  pg_temp.browser_id(9,candidate.slot),asset.approval_scope_id,asset.required,
+  pg_temp.media_path(run.run_id,candidate.id,case when asset.content_type='image/png' then 'png' else 'webm' end),
+  asset.sha256,asset.content_type,asset.size_bytes,asset.duration_ms,asset.width_px,asset.height_px,asset.frame_offsets_ms,
+  asset.capture_started_at,asset.capture_completed_at
+from public.session_browser_verification_assets asset
+join (values (pg_temp.browser_id(8,1),pg_temp.browser_id(9,11),1),
+  (pg_temp.browser_id(8,2),pg_temp.browser_id(9,12),2)) candidate(source_id,id,slot) on candidate.source_id=asset.id
+cross join screenshot_runs run where run.label='aged';
+select public.fail_session_job_attempt(job_id,1,'Fixture finished',false,2,run_id) from screenshot_runs where label='aged';
+update public.agent_runs set finished_at=clock_timestamp()-interval '3 days' where id=pg_temp.run_id('aged');
+select public.save_workspace_run_retention(pg_temp.browser_id(1),pg_temp.browser_id(0),p_evidence_days=>1);
+select is((select evidence_expired from public.mark_expired_workspace_run_content()),1,
+  'routine evidence retention expires old optional PNGs without expiring a required video in an active session');
+select is((select state from public.session_browser_asset_withholdings where asset_id=pg_temp.browser_id(9,11)),
+  'expired','an aged screenshot retains an explicit reason rather than an advertised asset');
+select ok(not exists(select 1 from public.session_browser_asset_withholdings where asset_id=pg_temp.browser_id(9,12)),
+  'the active required video has no withholding marker');
+select public.archive_session_job_attempts(session_id,pg_temp.browser_id(1),'Temporarily archived')
+from screenshot_runs where label='aged';
+select is((select evidence_expired from public.mark_expired_workspace_run_content()),1,
+  'the same aged required browser asset is eligible when its session is archived');
+update public.sessions set archived_at=null where id=(select session_id from screenshot_runs where label='aged');
+select is((select state from public.session_browser_asset_withholdings where asset_id=pg_temp.browser_id(9,12)),
+  'expired','restoring an ordinary archive cannot resurrect withheld evidence');
+
+-- Stage another provisional upload for the exact complete run while its
+-- authorization still exists. There is no immutable receipt for this path.
+create temp table late_browser_upload as
+select pg_temp.reserve_media(pg_temp.run_id(),pg_temp.browser_id(9,20),'png') as operation_id;
+insert into storage.objects(bucket_id,name,metadata) values
+  ('session-validation-evidence',pg_temp.media_path(pg_temp.run_id(),pg_temp.browser_id(9,20),'png'),
+    '{"mimetype":"image/png"}');
+
+insert into public.session_artifacts(id,workspace_id,session_id,stage_id,stage_slug,version,artifact_json)
+select pg_temp.browser_id(9,30),pg_temp.browser_id(1),session_id,pg_temp.browser_id(4),'visual-build',1,
+  to_jsonb('Legacy stage output without a producer checkpoint'::text)
+from screenshot_runs where label='complete';
+insert into public.session_run_context_manifests(run_id,workspace_id,session_id,job_id,attempt_count,manifest,manifest_sha256)
+select run_id,pg_temp.browser_id(1),session_id,job_id,1,payload,encode(sha256(convert_to(payload::text,'UTF8')),'hex')
+from screenshot_runs
+cross join (select '{"version":2,"required":[],"documents":[],"memories":[],"conversation":{"throughSequence":0,"olderOmitted":0,"messages":[]},
+  "budget":{"maxUtf8Bytes":131072,"maxEstimatedTokens":32768,"usedUtf8Bytes":0,"estimatedTokens":0}}'::jsonb as payload) context
+where label='incomplete';
+-- The grant was revoked above. Seed the previously staged candidate's
+-- immutable identity instead of making a fresh proposal as a revoked agent.
+insert into internal.factory_run_memory_proposals
+  (run_id,workspace_id,factory_id,session_id,attempt_count,artifact_sha256,body_md,body_sha256)
+select run.run_id,factory.workspace_id,factory.id,run.session_id,1,repeat('a',64),'Pending private note',
+  encode(sha256(convert_to('Pending private note','UTF8')),'hex')
+from screenshot_runs run cross join browser_factory factory where run.label='incomplete';
+
+insert into public.factory_memories(id,workspace_id,factory_id,title,source_session_id,source_artifact_id,
+  source_artifact_version,source_run_id,source_attempt_count,source_commit_sha,source_content_sha256)
+select pg_temp.browser_id(10,source.slot),factory.workspace_id,factory.id,'Derived private memory title',
+  run.session_id,pg_temp.browser_id(9,30+source.slot),1,run.run_id,1,repeat('b',40),repeat('c',64)
+from (values ('complete',1),('aged',2)) source(label,slot)
+join screenshot_runs run using (label) cross join browser_factory factory;
+insert into public.factory_memory_revisions(id,workspace_id,factory_id,memory_id,revision_number,content_sha256)
+select pg_temp.browser_id(11,row_number() over (order by memory.id)::integer),memory.workspace_id,memory.factory_id,memory.id,1,
+  encode(sha256(convert_to('Approved private memory body','UTF8')),'hex')
+from public.factory_memories memory where memory.workspace_id=pg_temp.browser_id(1);
+insert into public.factory_memory_revision_bodies(workspace_id,factory_id,memory_id,revision_id,body_md)
+select revision.workspace_id,revision.factory_id,revision.memory_id,revision.id,'Approved private memory body'
+from public.factory_memory_revisions revision where revision.workspace_id=pg_temp.browser_id(1);
+insert into public.factory_memory_review_events(id,workspace_id,factory_id,memory_id,revision_id,actor_member_id,action)
+select pg_temp.browser_id(12,1),r.workspace_id,r.factory_id,r.memory_id,r.id,pg_temp.browser_id(2),'approved'
+from public.factory_memory_revisions r where r.memory_id=pg_temp.browser_id(10,1);
+update public.factory_memories memory set current_revision_id=event.revision_id,current_approval_id=event.id
+from public.factory_memory_review_events event where event.memory_id=memory.id;
+
+create temp table old_browser_export as
+select * from public.request_run_export(pg_temp.browser_id(1),pg_temp.browser_id(0),pg_temp.browser_id(13,1));
+create temp table old_browser_export_claim as select * from public.claim_run_export();
+select ok(exists(select 1 from internal.run_export_entries entry join old_browser_export_claim claim using (export_id)
+  where entry.record_kind='stage_markdown' and entry.record_id=pg_temp.browser_id(9,30) and entry.run_id is null),
+  'the existing workspace export contains a legacy unlinked artifact from the session');
+
+grant select on browser_factory, screenshot_runs to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select throws_ok($$select public.erase_session_retained_content(factory.workspace_id,factory.id,run.session_id,null)
+  from browser_factory factory cross join screenshot_runs run where run.label='complete'$$,
+  'PT409',null,'an active session cannot be erased without a matching archive');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+update public.sessions set archived_at=clock_timestamp() where id=(select session_id from screenshot_runs where label='complete');
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select throws_ok($$select public.erase_session_retained_content(factory.workspace_id,factory.id,run.session_id,owner.archived_at)
+  from browser_factory factory cross join screenshot_runs run join public.sessions owner on owner.id=run.session_id
+  where run.label='complete'$$, 'PT409',null,'an archived flag alone cannot erase an active attempt');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select public.archive_session_job_attempts(session_id,pg_temp.browser_id(1),'Cancel before permanent erasure')
+from screenshot_runs where label in ('complete','incomplete');
+create temp table erasure_targets as
+select owner.workspace_id,owner.factory_id,owner.id as session_id,owner.archived_at,fixture.label
+from screenshot_runs fixture join public.sessions owner on owner.id=fixture.session_id
+where fixture.label in ('complete','incomplete');
+grant select on erasure_targets to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '58600000-0000-4000-8000-000000000002';
+select throws_ok($$select public.erase_session_retained_content(workspace_id,factory_id,session_id,archived_at)
+  from erasure_targets where label='complete'$$, '42501',null,'a foreign workspace owner cannot erase the session');
+set local request.jwt.claim.sub = '58600000-0000-4000-8000-000000000001';
+select throws_ok($$select public.erase_session_retained_content(workspace_id,factory_id,session_id,
+  archived_at-interval '1 second') from erasure_targets where label='complete'$$,
+  'PT409',null,'a stale archive version cannot authorize permanent erasure');
+create temp table erasure_receipts as
+select target.label,receipt.* from erasure_targets target cross join lateral public.erase_session_retained_content(
+  target.workspace_id,target.factory_id,target.session_id,target.archived_at) receipt;
+select is((select (public.erase_session_retained_content(workspace_id,factory_id,session_id,archived_at)).erased_at
+  from erasure_targets where label='complete'), (select erased_at from erasure_receipts where label='complete'),
+  'repeating the exact erasure returns its original receipt');
+select ok((select (public.get_session_retained_content_erasure(workspace_id,session_id)).actor_member_id=pg_temp.browser_id(2)
+  from erasure_targets where label='complete'),'the authorized reviewer sees the exact erasure and human actor');
+set local request.jwt.claim.sub = '58600000-0000-4000-8000-000000000002';
+select is((select (public.get_session_retained_content_erasure(workspace_id,session_id)).erased_at
+  from erasure_targets where label='complete'), null::timestamptz,'an unrelated viewer cannot read the erasure receipt');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+
+select throws_ok($$update public.sessions set archived_at=null where id=(select session_id from erasure_targets where label='complete')$$,
+  'PT409',null,'an exact erased session cannot be restored through the normal update');
+select throws_ok($$select pg_temp.reserve_media(pg_temp.run_id(),pg_temp.browser_id(9,21),'webm')$$,
+  'PT409',null,'a new Storage reservation cannot target an erased run');
+select throws_ok($$update storage.objects set metadata='{"mimetype":"image/png","size":123}'
+  where bucket_id='session-validation-evidence' and name=pg_temp.media_path(pg_temp.run_id(),pg_temp.browser_id(9,20),'png')$$,
+  'PT409',null,'a provisional upload cannot finalize after the owning session is erased');
+select is((select count(*) from public.workspace_resource_operations where id=(select operation_id from late_browser_upload)),
+  1::bigint,'the fenced late upload still belongs to the existing abandoned-upload cleanup');
+select throws_ok($$select pg_temp.record_media(pg_temp.run_id(),records,transfers) from media_inputs$$,
+  'PT409',null,'an erased browser receipt cannot be returned as a fresh adoption');
+select throws_ok($$select public.authorize_session_browser_video(pg_temp.run_id(),1,repeat('b',40),repeat('c',40),
+  pg_temp.video_scope())$$, 'PT409',null,'browser capture authorization rechecks the exact erasure marker');
+select is((select count(*) from public.session_browser_asset_withholdings marker
+  join public.session_browser_verification_assets asset on asset.id=marker.asset_id
+  where asset.run_id=pg_temp.run_id() and marker.state='erased' and marker.purged_at is null),
+  2::bigint,'both exact asset references are unavailable while their bytes still exist');
+select is((select records from public.session_browser_verification_receipts where run_id=pg_temp.run_id()),
+  (select records from published_media),'erasure leaves the immutable capture record unchanged');
+select is((select count(*) from internal.factory_run_memory_proposals where run_id=pg_temp.run_id('incomplete')),
+  0::bigint,'the staged note owned by the erased session is physically removed');
+select ok((select forgotten_at is not null and title is null and current_revision_id is null
+  from public.factory_memories where id=pg_temp.browser_id(10,1)), 'a memory sourced by the erased session is forgotten');
+select is((select count(*) from public.factory_memory_revision_bodies where memory_id=pg_temp.browser_id(10,1)),
+  0::bigint,'the source-owned note no longer has a private body');
+select is((select count(*) from public.factory_memory_revision_bodies where memory_id=pg_temp.browser_id(10,2)),
+  1::bigint,'another session and its memory are untouched');
+select is((select count(*) from public.factory_memory_review_events where memory_id=pg_temp.browser_id(10,1)
+  and action='forgotten' and actor_member_id=pg_temp.browser_id(2)),1::bigint,
+  'session erasure records the same human memory forget decision');
+
+select ok((select status='expired' and failure_code='source_withheld' and lease_token is null
+  from public.run_exports where id=(select export_id from old_browser_export_claim)),
+  'erasure atomically invalidates the prior export and its running lease');
+select ok(not (select public.complete_run_export(export_id,lease_token) from old_browser_export_claim),
+  'a previously claimed export cannot publish after erasure');
+select is((select count(*) from old_browser_export_claim claim
+  cross join lateral public.read_run_export_page(claim.export_id,claim.lease_token) page),0::bigint,
+  'an old lease cannot read the pending export page');
+select public.request_run_export(pg_temp.browser_id(1),pg_temp.browser_id(0),pg_temp.browser_id(13,2));
+create temp table next_browser_export_claim as select * from public.claim_run_export();
+select is((select count(*) from internal.run_export_entries entry join next_browser_export_claim claim using (export_id)
+  where entry.run_id in (pg_temp.run_id(),pg_temp.run_id('incomplete')) or entry.record_id=pg_temp.browser_id(9,30)),
+  0::bigint,'new snapshots omit erased run content and its legacy unlinked artifact');
+
+create temp table first_browser_purge as select * from public.claim_run_evidence_purges(3);
+select is((select count(*) from first_browser_purge),3::bigint,'the shared evidence claim honors its global batch cap');
+create temp table rest_browser_purge as select * from public.claim_run_evidence_purges();
+select is((select count(*) from rest_browser_purge),1::bigint,'leased evidence paths cannot be claimed by another worker');
+create temp table browser_purge as select * from first_browser_purge union all select * from rest_browser_purge;
+select is(public.complete_run_evidence_purges((select array_agg(claim_id) from browser_purge
+  where asset_id in (pg_temp.browser_id(8,1),pg_temp.browser_id(8,2)))),0,
+  'the browser cleanup acknowledgement cannot settle a physically present object');
+update public.session_browser_asset_withholdings set cleanup_available_at=clock_timestamp()-interval '1 second'
+where asset_id in (pg_temp.browser_id(8,1),pg_temp.browser_id(8,2));
+create temp table retry_browser_purge as select * from public.claim_run_evidence_purges();
+select results_eq($$select storage_path from retry_browser_purge order by storage_path$$,
+  $$select storage_path from browser_purge where asset_id in (pg_temp.browser_id(8,1),pg_temp.browser_id(8,2)) order by storage_path$$,
+  'lease recovery retries just the identical exact media paths');
+-- These are synthetic Storage metadata rows with no backend bytes.
+set local storage.allow_delete_query = 'true';
+delete from storage.objects where bucket_id='session-validation-evidence' and name in (select storage_path from retry_browser_purge);
+select is(public.complete_run_evidence_purges((select array_agg(claim_id) from browser_purge
+  where asset_id in (pg_temp.browser_id(8,1),pg_temp.browser_id(8,2)))),0,'a stale lease cannot settle a retry');
+select is(public.complete_run_evidence_purges((select array_agg(claim_id) from retry_browser_purge)),2,
+  'the current lease acknowledges the exact absent PNG and WebM');
+select is(public.complete_run_evidence_purges((select array_agg(claim_id) from retry_browser_purge)),0,
+  'repeating a completed acknowledgement is idempotent');
+
+select public.archive_session_job_attempts(session_id,pg_temp.browser_id(1),'Stop before workspace erase')
+from screenshot_runs where label='revoked';
+select public.begin_workspace_deletion(pg_temp.browser_id(1),pg_temp.browser_id(2),'Private video fixture');
+select is(public.finish_workspace_deletion(pg_temp.browser_id(1)),false,
+  'workspace deletion waits for remaining upload reservations and physical evidence');
+delete from storage.objects where bucket_id='session-validation-evidence' and split_part(name,'/',1)=pg_temp.browser_id(1)::text;
+delete from public.workspace_resource_operations where workspace_id=pg_temp.browser_id(1);
+select is(public.finish_workspace_deletion(pg_temp.browser_id(1)),true,
+  'workspace deletion can finish and cascade frozen browser evidence, memory and retention metadata');
+select is((select count(*) from public.session_browser_asset_withholdings),0::bigint,
+  'workspace cascade leaves no orphan browser withholding rows');
+select is((select count(*) from public.session_retained_content_erasures),0::bigint,
+  'workspace cascade leaves no orphan session erasure rows');
 
 select * from finish();
 rollback;

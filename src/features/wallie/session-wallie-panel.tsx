@@ -923,7 +923,7 @@ function SessionWalliePanelContent({
           className="rounded-[6px] border border-border bg-control-muted p-3 text-sm leading-5 text-muted"
           role="status"
         >
-          This session is archived. Unarchive it to run Wallie again.
+          Wallie is inactive in this archived session.
         </div>
       ) : null}
 

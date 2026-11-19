@@ -1,5 +1,12 @@
 # Validation evidence
 
+## Retention and erasure
+
+- Validation evidence retention covers privately stored command evidence, PNGs, and WebM. The worker protects required evidence in unarchived sessions and records an unavailable state before removing eligible bytes.
+- Browser downloads go through Wallie's authenticated evidence routes. The routes check the exact viewer, run, asset, and live retention state after verifying the private bytes. A withheld clip or image keeps its immutable capture receipt and digest.
+- A factory manager can erase retained content for the displayed archived session. Erasure withdraws exact evidence, removes retained transcripts and source-owned memory bodies, and revokes affected exports. The archive is permanent and retains provenance.
+- Cleanup claims have bounded leases. A failed Storage removal or acknowledgement can retry the same path. Successful cleanup records the completion against that claim even when an earlier worker already removed the object.
+
 Wallie records command execution independently of the agent's final markdown.
 An agent saying that tests passed is a claim for a reviewer to read; it never
 becomes observed execution evidence. The harness owns the command identity,

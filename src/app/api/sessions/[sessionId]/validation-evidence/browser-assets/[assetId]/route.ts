@@ -12,6 +12,7 @@ import {
 } from "@/lib/validation-evidence/browser-assets";
 import { loadArtifactEvidenceCheckpoint } from "@/lib/validation-evidence/artifact-links";
 import { browserEvidenceSelection } from "@/features/wallie/browser-evidence-contracts";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const preferredRegion = "home";
 type RouteContext = { params: Promise<{ sessionId: string; assetId: string }> };
@@ -63,13 +64,23 @@ export async function GET(request: Request, { params }: RouteContext) {
     }
 
     const result = await readPrivateBrowserScreenshot({
-      supabase,
+      supabase: createSupabaseAdminClient(),
+      viewer: supabase,
       workspaceId: session.workspace_id,
       sessionId: session.id,
       runId: asset.run_id,
       asset,
       signal: request.signal,
     });
+    if (result.status === "viewer_unavailable") {
+      return reviewJson({ error: "Evidence image not found." }, 404);
+    }
+    if (result.status === "withheld") {
+      return reviewJson(
+        { error: "Evidence image is unavailable.", availability: result.availability },
+        410,
+      );
+    }
     if (result.status !== "available") {
       return reviewJson({ error: "Evidence image is unavailable." }, 409);
     }

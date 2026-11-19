@@ -54,6 +54,7 @@ import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
 import { SessionDetailHeader } from "./session-detail-header";
+import { ArchivedRetentionActions } from "./archived-retention-actions";
 import { useApprovalReview } from "./use-approval-review";
 import { SessionStageWorkspace } from "./session-stage-workspace";
 import { SessionSpecificationControl, useSessionSpecification } from "./session-specification";
@@ -1299,22 +1300,42 @@ function SessionDetailContent({
 
   const headerActions = session.archivedAt ? (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="ui-button gap-1.5"
-          disabled={archivePending !== null || phaseActionPending !== null}
-          onClick={() => void handleUnarchive()}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <ArchivedRetentionActions
+          initialStatus={
+            initialData.retainedContent
+              ? {
+                  archivedAt: session.archivedAt,
+                  erasedAt: initialData.retainedContent.erasedAt,
+                  canErase:
+                    initialData.retainedContent.canManage &&
+                    archivePending === null &&
+                    phaseActionPending === null,
+                }
+              : undefined
+          }
+          key={session.id + session.archivedAt}
+          onErased={() => {
+            archiveUndoVersionRef.current = null;
+          }}
+          sessionId={session.id}
         >
-          {archivePending !== null ? (
-            <>
-              <Spinner />
-              {archivePending === "archive" ? "Archiving…" : "Unarchiving…"}
-            </>
-          ) : (
-            "Unarchive"
-          )}
-        </button>
+          <button
+            type="button"
+            className="ui-button gap-1.5"
+            disabled={archivePending !== null || phaseActionPending !== null}
+            onClick={() => void handleUnarchive()}
+          >
+            {archivePending !== null ? (
+              <>
+                <Spinner />
+                {archivePending === "archive" ? "Archiving…" : "Unarchiving…"}
+              </>
+            ) : (
+              "Unarchive"
+            )}
+          </button>
+        </ArchivedRetentionActions>
       </div>
       {archiveError ? <span className="text-xs text-danger">{archiveError}</span> : null}
     </div>

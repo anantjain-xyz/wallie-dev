@@ -225,7 +225,7 @@ set local request.jwt.claim.sub='58400000-0000-4000-8000-000000000001';
 select is((select count(*) from public.session_browser_verification_assets where run_id=pg_temp.run_id()),2::bigint,
   'the exact authorized session reviewer can inspect durable metadata');
 select is((select count(*) from storage.objects where name=pg_temp.browser_path(pg_temp.run_id(),pg_temp.browser_id(8))),
-  1::bigint,'the reviewer can still authorize private storage when no sandbox exists');
+  0::bigint,'the reviewer uses the authorized proxy and cannot directly access or sign screenshot Storage');
 select is((select count(*) from storage.objects where name=pg_temp.browser_path(pg_temp.run_id('revoked'),pg_temp.browser_id(8,4))),
   0::bigint,'unpublished uploaded pixels remain private even to the workspace owner');
 select throws_ok($$select public.authorize_session_browser_screenshot(pg_temp.run_id(),1,repeat('b',40),repeat('c',40),'untrusted')$$,

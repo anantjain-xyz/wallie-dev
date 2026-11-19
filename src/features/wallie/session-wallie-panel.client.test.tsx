@@ -377,7 +377,8 @@ describe("SessionWalliePanel run history lifecycle", () => {
       expect(screen.queryByRole("button", { name: /Retry .* stage/ })).toBeNull();
     if (scenario.phaseStatus === "approved")
       expect(screen.getByText(/Historical attempts are read-only/)).toBeTruthy();
-    if (scenario.archivedAt) expect(screen.getByText(/This session is archived/)).toBeTruthy();
+    if (scenario.archivedAt)
+      expect(screen.getByText("Wallie is inactive in this archived session.")).toBeTruthy();
     if (active) expect(screen.getByText(/Wait for it to finish before retrying/)).toBeTruthy();
   });
 

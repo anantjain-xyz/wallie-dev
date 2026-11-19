@@ -193,7 +193,7 @@ describe("SessionWalliePanel", () => {
       "2026-06-07T12:00:00.000Z",
     );
 
-    expect(html).toContain("This session is archived. Unarchive it to run Wallie again.");
+    expect(html).toContain("Wallie is inactive in this archived session.");
     expect(html).not.toContain("Retry Product stage");
   });
 
@@ -204,7 +204,7 @@ describe("SessionWalliePanel", () => {
     );
     expect(html).not.toContain("Setup needed before");
     expect(html).not.toContain("Open Workspace Settings");
-    expect(html).toContain("This session is archived.");
+    expect(html).toContain("Wallie is inactive in this archived session.");
     expect(html).not.toContain("Retry Product stage");
   });
 

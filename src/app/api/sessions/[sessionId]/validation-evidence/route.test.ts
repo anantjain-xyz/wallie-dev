@@ -5,11 +5,13 @@ import { exactBrowserEvidenceSchema } from "@/features/wallie/browser-evidence-c
 const mocks = vi.hoisted(() => ({
   user: vi.fn(),
   server: vi.fn(),
+  admin: vi.fn(),
   download: vi.fn(),
   readStream: vi.fn(),
 }));
 vi.mock("@/lib/supabase/auth", () => ({ getSupabaseUserOrNull: mocks.user }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: mocks.server }));
+vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: mocks.admin }));
 
 import { GET } from "./route";
 import { GET as downloadAsset } from "./assets/[assetId]/route";
@@ -57,13 +59,15 @@ let rows: Record<string, Row[]>;
 let errors: Record<string, unknown>;
 let calls: Array<{ table: string; op: string; args: unknown[] }>;
 let storageFrom: ReturnType<typeof vi.fn>;
+let browserStorageFrom: ReturnType<typeof vi.fn>;
+let viewerRevoked: boolean;
 
-function from(table: string) {
+function from(table: string, privileged = false) {
   const filters: Array<(row: Row) => boolean> = [];
   let maximum = Infinity;
   let fields = "*";
   const result = () => ({
-    data: (rows[table] ?? [])
+    data: (viewerRevoked && !privileged ? [] : (rows[table] ?? []))
       .filter((row) => filters.every((filter) => filter(row)))
       .slice(0, maximum)
       .map((row) =>
@@ -71,7 +75,9 @@ function from(table: string) {
           ? row
           : Object.fromEntries(fields.split(",").map((field) => [field.trim(), row[field.trim()]])),
       ),
-    error: errors[table] ?? null,
+    error:
+      errors[table] ??
+      (table === "session_browser_asset_withholdings" && !privileged ? { code: "42501" } : null),
   });
   return {
     select(value: string) {
@@ -130,10 +136,63 @@ const downloadScreenshot = (id = screenshotId, query = "") =>
     params: Promise.resolve({ sessionId, assetId: id }),
   });
 
+const browserSelection = `?artifactId=${artifactId}&runId=${runId}`;
+
+function markBrowserAsset(id: string, state: "expired" | "erased") {
+  rows.session_browser_asset_withholdings.push({
+    asset_id: id,
+    workspace_id: workspaceId,
+    session_id: sessionId,
+    run_id: runId,
+    state,
+    recorded_at: "2026-11-20T09:30:00.000Z",
+    purged_at: null,
+  });
+}
+
+/** Hold the stream after presenting one valid byte to the private reader. */
+function pauseBrowserRead(bytes: Uint8Array) {
+  const paused = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  mocks.readStream.mockImplementationOnce(async () => {
+    let sentFirst = false;
+    return {
+      data: new ReadableStream<Uint8Array>(
+        {
+          async pull(controller) {
+            if (!sentFirst) {
+              sentFirst = true;
+              controller.enqueue(bytes.subarray(0, 1));
+              return;
+            }
+            paused.resolve();
+            await release.promise;
+            controller.enqueue(bytes.subarray(1));
+            controller.close();
+          },
+        },
+        { highWaterMark: 0 },
+      ),
+      error: null,
+    };
+  });
+  return { paused: paused.promise, release: release.resolve };
+}
+
+async function expectWithheld(response: Response, availability: "expired" | "erased") {
+  expect(response.status).toBe(410);
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  expect(response.headers.get("content-type")).toMatch(/^application\/json/);
+  expect(response.headers.get("content-disposition")).toBeNull();
+  expect(response.headers.get("location")).toBeNull();
+  expect(await response.json()).toEqual({ error: expect.any(String), availability });
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   calls = [];
   errors = {};
+  viewerRevoked = false;
   rows = {
     sessions: [{ id: sessionId, workspace_id: workspaceId, archived_at: null }],
     workspace_members: [
@@ -156,6 +215,7 @@ beforeEach(() => {
     ],
     session_validation_assets: [{ ...asset }],
     session_browser_verification_assets: [{ ...screenshot }],
+    session_browser_asset_withholdings: [],
     session_browser_verification_receipts: [],
     session_validation_plans: [
       { run_id: runId, workspace_id: workspaceId, session_id: sessionId, commit_sha: commitSha },
@@ -178,6 +238,11 @@ beforeEach(() => {
   }));
   storageFrom = vi.fn(() => ({ download: mocks.download }));
   mocks.server.mockResolvedValue({ from, storage: { from: storageFrom } });
+  browserStorageFrom = vi.fn(() => ({ download: mocks.download }));
+  mocks.admin.mockReturnValue({
+    from: (table: string) => from(table, true),
+    storage: { from: browserStorageFrom },
+  });
 });
 
 describe("validation evidence metadata", () => {
@@ -591,6 +656,35 @@ describe("private screenshot evidence", () => {
     expect(response.headers.get("content-disposition")).toContain("attachment;");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
     expect(mocks.download).toHaveBeenCalledWith(screenshot.storage_path, {}, expect.any(Object));
+    expect(browserStorageFrom).toHaveBeenCalledOnce();
+    expect(storageFrom).not.toHaveBeenCalled();
+  });
+
+  it("preserves the exact PNG receipt after retention while refusing bytes before Storage", async () => {
+    const receipt = capturedReceipt();
+    rows.session_browser_verification_receipts = [receipt];
+    rows.session_validation_evidence = [];
+    markBrowserAsset(screenshotId, "expired");
+
+    const historical = await list(sessionId, browserSelection);
+    expect(historical.status).toBe(200);
+    expect(exactBrowserEvidenceSchema.parse(await historical.json()).browserEvidence).toMatchObject(
+      [{ runId, commitSha, records: receipt.records }],
+    );
+    await expectWithheld(await downloadScreenshot(screenshotId, browserSelection), "expired");
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("discards a verified PNG when the erasure marker lands while its stream is open", async () => {
+    const held = pauseBrowserRead(png);
+    const response = downloadScreenshot(screenshotId, browserSelection);
+    await held.paused;
+    markBrowserAsset(screenshotId, "erased");
+    held.release();
+
+    await expectWithheld(await response, "erased");
+    expect(browserStorageFrom).toHaveBeenCalledOnce();
+    expect(storageFrom).not.toHaveBeenCalled();
   });
 
   it("rechecks session, workspace, authorization, and stored integrity", async () => {
@@ -767,11 +861,50 @@ describe("exact browser recording evidence", () => {
     expect(available.headers.get("Cache-Control")).toBe("private, no-store");
     expect(Buffer.from(await available.arrayBuffer())).toEqual(bytes);
     expect(mocks.download).toHaveBeenCalledWith(path, {}, expect.any(Object));
+    expect(browserStorageFrom).toHaveBeenCalledOnce();
+    expect(storageFrom).not.toHaveBeenCalled();
 
     mocks.readStream.mockResolvedValueOnce({ data: null, error: { status: 404 } });
     expect((await readVideo()).status).toBe(409);
     rows.session_browser_verification_assets[1]!.frame_offsets_ms = [0, 1000];
     expect((await readVideo()).status).toBe(409);
     expect(mocks.download).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains the exact recording's provenance while its pending erasure prevents new reads", async () => {
+    markBrowserAsset(videoId, "erased");
+    const historical = await list(sessionId, query);
+    expect(historical.status).toBe(200);
+    expect(exactBrowserEvidenceSchema.parse(await historical.json()).browserEvidence).toMatchObject(
+      [{ runId, commitSha, records: [record] }],
+    );
+    await expectWithheld(await readVideo(), "erased");
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("discards verified WebM when expiration is committed during the read", async () => {
+    const held = pauseBrowserRead(bytes);
+    const response = readVideo();
+    await held.paused;
+    markBrowserAsset(videoId, "expired");
+    held.release();
+
+    await expectWithheld(await response, "expired");
+    expect(mocks.download).toHaveBeenCalledOnce();
+    expect(storageFrom).not.toHaveBeenCalled();
+  });
+
+  it("does not hand already-fetched WebM to a viewer whose access ends during the read", async () => {
+    const held = pauseBrowserRead(bytes);
+    const response = readVideo();
+    await held.paused;
+    viewerRevoked = true;
+    held.release();
+
+    const denied = await response;
+    expect(denied.status).toBe(404);
+    expect(denied.headers.get("content-disposition")).toBeNull();
+    expect(denied.headers.get("content-type")).toMatch(/^application\/json/);
+    expect(mocks.download).toHaveBeenCalledOnce();
   });
 });
