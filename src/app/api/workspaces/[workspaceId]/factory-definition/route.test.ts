@@ -16,6 +16,7 @@ vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
 
+import { GET as GET_SCOPED, POST as POST_SCOPED } from "../factories/[factoryId]/definition/route";
 import { GET, POST } from "./route";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
@@ -26,6 +27,8 @@ const revisionId = "00000000-0000-4000-8000-000000000005";
 const now = "2026-11-15T00:00:00Z";
 const routeUrl = `http://localhost/api/workspaces/${workspaceId}/factory-definition`;
 const context = () => ({ params: Promise.resolve({ workspaceId }) });
+const scopedContext = { params: Promise.resolve({ workspaceId, factoryId }) };
+const scopedUrl = `http://localhost/api/workspaces/${workspaceId}/factories/${factoryId}/definition`;
 
 function authorized(from = vi.fn()) {
   mocked.requireWorkspaceAccessById.mockResolvedValue({
@@ -117,6 +120,7 @@ describe("GET factory activation history", () => {
     ]);
     expect(factory.eq.mock.calls).toEqual([
       ["workspace_id", workspaceId],
+      ["status", "active"],
       ["is_default", true],
     ]);
     for (const query of [head, page]) {
@@ -129,6 +133,39 @@ describe("GET factory activation history", () => {
     expect(head.limit).toHaveBeenCalledWith(1);
     expect(page.lte).toHaveBeenCalledWith("activation_number", 8);
     expect(page.limit).toHaveBeenCalledWith(3);
+  });
+
+  it("keeps the explicit factory constraint and never falls back after an unavailable lookup", async () => {
+    const factory = tableQuery(null);
+    const from = authorized(vi.fn().mockReturnValueOnce(factory));
+    const response = await GET_SCOPED(new Request(scopedUrl), scopedContext);
+    expect(response.status).toBe(404);
+    expect(from.mock.calls).toEqual([["factories"]]);
+    expect(factory.eq.mock.calls).toEqual([
+      ["workspace_id", workspaceId],
+      ["status", "active"],
+      ["id", factoryId],
+    ]);
+  });
+
+  it("passes the exact factory to the shared mutation", async () => {
+    authorized();
+    const client = {};
+    const command = { action: "publish", draftId, expectedActivationNumber: 0 };
+    mocked.createSupabaseAdminClient.mockReturnValue(client);
+    mocked.mutateFactoryDefinition.mockResolvedValue({ ok: true, result: {} });
+    const response = await POST_SCOPED(
+      new Request(scopedUrl, { method: "POST", body: JSON.stringify(command) }),
+      scopedContext,
+    );
+    expect(response.status).toBe(201);
+    expect(mocked.mutateFactoryDefinition).toHaveBeenCalledWith({
+      admin: client,
+      workspaceId,
+      factoryId,
+      actorUserId,
+      command,
+    });
   });
 
   it("limits the first page to the current activation and uses a 25-item default", async () => {

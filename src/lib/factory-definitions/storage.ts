@@ -8,11 +8,48 @@ export type FactoryDefinitionTarget = { kind: "draft" | "revision"; id: string }
 type AdminClient = SupabaseClient<Database>;
 
 export function selectDefaultFactory(admin: Pick<AdminClient, "from">, workspaceId: string) {
-  return admin
+  return selectFactory(admin, workspaceId);
+}
+
+export function selectFactory(
+  client: Pick<AdminClient, "from">,
+  workspaceId: string,
+  factoryId?: string,
+) {
+  const query = client
     .from("factories")
-    .select("id")
+    .select("id, name, is_default")
     .eq("workspace_id", workspaceId)
-    .eq("is_default", true)
+    .eq("status", "active");
+  return (
+    factoryId === undefined ? query.eq("is_default", true) : query.eq("id", factoryId)
+  ).maybeSingle();
+}
+
+export function selectFactoryBaselinePipeline(
+  client: Pick<AdminClient, "from">,
+  workspaceId: string,
+  factory: { id: string; is_default: boolean },
+) {
+  const columns = "id, name, is_default, operating_rules_md";
+  const pipelines = client.from("pipelines");
+  if (factory.is_default) {
+    return pipelines
+      .select(columns)
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factory.id)
+      .eq("is_default", true)
+      .maybeSingle();
+  }
+  return pipelines
+    .select(`${columns}, pipeline_stages()`)
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factory.id)
+    .is("pipeline_stages.archived_at", null)
+    .not("pipeline_stages", "is", null)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(1)
     .maybeSingle();
 }
 

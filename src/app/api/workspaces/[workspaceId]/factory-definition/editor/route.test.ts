@@ -98,7 +98,7 @@ const draft = {
 function authorized({ initial = false } = {}) {
   const requests: { table: string; query: URLSearchParams; method: string }[] = [];
   const rows: Record<string, { id?: string; [field: string]: unknown }[]> = {
-    factories: [{ id: factoryId }],
+    factories: [{ id: factoryId, is_default: true }],
     factory_definition_activations: initial
       ? []
       : [{ activation_number: 4, revision_id: revisionId }],
@@ -137,6 +137,7 @@ function authorized({ initial = false } = {}) {
       },
     ],
     github_installations: [{ id: installationId }],
+    workspace_repository_profiles: [{ github_repository_id: repositoryId }],
     execution_policy_revisions: [],
     delivery_policy_revisions: [],
     execution_policies: [],

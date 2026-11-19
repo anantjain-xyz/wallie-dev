@@ -54,8 +54,18 @@ flowchart LR
   remains literal. Session requests, artifacts, and feedback retain their typed
   untrusted boundaries.
 
-The factory-scoped `agents` API lists authorized identities and prompt history.
-Its create and prompt-revision commands require factory-manager authority.
-Concurrent prompt writes use an expected revision number. The definition
-editor accepts a revision reference while the agent configuration screens are
-introduced by their own milestone.
+## Configure an agent
+
+1. Open **Agents** and choose a factory. Factory managers can create named agents
+   and save prompt revisions. Concurrent prompt writes check the displayed
+   revision number.
+2. Open a prompt revision and select **Configure bindings**. Workspace
+   operators can save the selected revision in the factory’s shared draft and
+   configure skill, repository, tool, and execution bindings there.
+3. Validate the draft, review its resolved references, and run the candidate
+   checks. Publish after the candidate passes. **Agents** shows the pinned
+   prompt and bindings from the published definition.
+
+People with read access can inspect permitted agent revisions and published
+bindings. Credential controls show reference IDs, ownership, and readiness.
+An archived factory preserves its history and rejects new definition writes.

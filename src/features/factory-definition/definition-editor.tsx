@@ -36,10 +36,12 @@ import {
   type FactoryEditorDocument,
   type FactoryEditorSnapshot,
 } from "@/lib/factory-definitions/editor-contracts";
+import type { FactoryEditorReferenceOptions } from "@/lib/factory-definitions/editor-reference-options";
 import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
 import type { FactorySecretBindingScope } from "@/lib/factory-secret-bindings/contracts";
 import { workspaceFactoryDefinitionPath, workspaceSettingsPath } from "@/lib/routes";
 
+type AgentSelection = { agentId: string; promptRevisionId: string };
 type Selection = ({ revision: string } | { draft: string }) & { test?: string };
 type Input =
   | { kind: "structured"; value: SerialFactoryDefinition }
@@ -77,15 +79,31 @@ function credentialScopeFrom(
 function editFrom(
   snapshot: FactoryEditorSnapshot,
   mode: Input["kind"] = "structured",
+  initialAgent?: AgentSelection,
 ): Edit | null {
-  const original = (snapshot.draft ?? snapshot.published ?? snapshot.baseline)?.source;
+  const document = snapshot.draft ?? snapshot.published;
+  const original = (document ?? snapshot.baseline)?.source;
   if (!original) return null;
+  const value = { ...original };
+  if (initialAgent) {
+    value.implementationAgent = initialAgent.promptRevisionId;
+    if (document?.bundle.implementationAgent?.agentId !== initialAgent.agentId) {
+      delete value.credentialBindingId;
+      if (value.mcpBindings?.some((binding) => binding.secretBindingId)) {
+        value.mcpBindings = value.mcpBindings.map((binding) => {
+          const next = { ...binding };
+          delete next.secretBindingId;
+          return next;
+        });
+      }
+    }
+  }
   return {
     original,
     input:
       mode === "structured"
-        ? { kind: "structured", value: original }
-        : { kind: "json", text: sourceText(original) },
+        ? { kind: "structured", value }
+        : { kind: "json", text: sourceText(value) },
     activationNumber: snapshot.activationNumber,
     draftId: snapshot.draft?.id ?? null,
   };
@@ -118,17 +136,29 @@ function errorText(error: unknown) {
 }
 
 export function FactoryDefinitionEditor({
+  factoryId,
+  factoryName,
+  initialAgent,
   workspaceId,
   workspaceSlug,
   selection,
   repositories,
+  referenceOptions,
 }: {
+  factoryId?: string;
+  factoryName?: string;
+  initialAgent?: AgentSelection;
   workspaceId: string;
   workspaceSlug: string;
   selection: Selection | null;
   repositories: readonly CapabilityRepository[];
+  referenceOptions?: FactoryEditorReferenceOptions;
 }) {
-  const api = `/api/workspaces/${workspaceId}/factory-definition`;
+  const api = factoryId
+    ? `/api/workspaces/${workspaceId}/factories/${factoryId}/definition`
+    : `/api/workspaces/${workspaceId}/factory-definition`;
+  const initialAgentId = initialAgent?.agentId;
+  const initialPromptRevisionId = initialAgent?.promptRevisionId;
   const editorApi = `${api}/editor`;
   const [snapshot, setSnapshot] = useState<FactoryEditorSnapshot | null>(null);
   const [history, setHistory] = useState<FactoryEditorHistory | null>(null);
@@ -241,7 +271,15 @@ export function FactoryDefinitionEditor({
         if (signal.aborted) return;
         setSnapshot(current.snapshot);
         setHistory(current.history);
-        setEdit(editFrom(current.snapshot));
+        setEdit(
+          editFrom(
+            current.snapshot,
+            "structured",
+            initialAgentId && initialPromptRevisionId
+              ? { agentId: initialAgentId, promptRevisionId: initialPromptRevisionId }
+              : undefined,
+          ),
+        );
         const target = requestedRevision
           ? { revision: requestedRevision }
           : requestedDraft
@@ -258,7 +296,14 @@ export function FactoryDefinitionEditor({
       }
     })();
     return () => controller.abort();
-  }, [editorApi, loadWorkspace, requestedDraft, requestedRevision]);
+  }, [
+    editorApi,
+    initialAgentId,
+    initialPromptRevisionId,
+    loadWorkspace,
+    requestedDraft,
+    requestedRevision,
+  ]);
 
   async function run(operation: Operation, task: () => Promise<void>) {
     if (inFlight.current || loading) return;
@@ -433,7 +478,7 @@ export function FactoryDefinitionEditor({
   function receiptHref(document: FactoryEditorDocument, test: string) {
     const query =
       document.kind === "draft" ? { draft: document.id, test } : { revision: document.id, test };
-    return `${workspaceFactoryDefinitionPath(workspaceSlug, query)}#candidate-tests`;
+    return `${workspaceFactoryDefinitionPath(workspaceSlug, { ...query, factory: factoryId })}#candidate-tests`;
   }
 
   function resetToLatest(keepEdits: boolean) {
@@ -460,7 +505,11 @@ export function FactoryDefinitionEditor({
     <PageContainer className="max-w-[1240px]">
       <PageHeader
         title="Factory definition"
-        description="Edit the configuration new sessions use and inspect the revisions this workspace has published."
+        description={
+          factoryName
+            ? `Edit the configuration new sessions use in ${factoryName} and inspect its published revisions.`
+            : "Edit the configuration new sessions use and inspect published revisions."
+        }
         eyebrow={
           <Link
             className="text-accent underline underline-offset-2"
@@ -545,6 +594,7 @@ export function FactoryDefinitionEditor({
                         <Link
                           className="text-accent underline underline-offset-2"
                           href={workspaceFactoryDefinitionPath(workspaceSlug, {
+                            factory: factoryId,
                             revision: snapshot.published.id,
                           })}
                           target="_blank"
@@ -565,6 +615,7 @@ export function FactoryDefinitionEditor({
                         <Link
                           className="text-accent underline underline-offset-2"
                           href={workspaceFactoryDefinitionPath(workspaceSlug, {
+                            factory: factoryId,
                             draft: snapshot.draft.id,
                           })}
                           target="_blank"
@@ -616,6 +667,7 @@ export function FactoryDefinitionEditor({
                       <StructuredFactoryDefinitionEditor
                         disabled={busy}
                         repositories={repositories}
+                        referenceOptions={referenceOptions}
                         value={edit.input.value}
                         onChange={(value) => replaceInput({ kind: "structured", value })}
                       />
@@ -677,8 +729,8 @@ export function FactoryDefinitionEditor({
                   </>
                 ) : (
                   <p className="type-secondary text-muted">
-                    Configure a repository and default pipeline in Settings to create the first
-                    draft.
+                    Add an active pipeline with at least one stage and connect a repository to this
+                    factory to create the first draft.
                   </p>
                 )}
               </div>
@@ -772,6 +824,7 @@ export function FactoryDefinitionEditor({
                   <FactoryCapabilityProbe
                     key={capabilityTarget.id}
                     canManage={!busy}
+                    definitionEndpoint={`${api}/capability-check`}
                     onCheckChange={refreshProfileAfterCheck}
                     target={capabilityTarget}
                     repositories={repositories}
@@ -831,8 +884,12 @@ export function FactoryDefinitionEditor({
             onSelect={(id) => void selectRevision(id)}
             onLoadMore={() => void loadMore()}
             onRollback={rollback}
-            revisionHref={(revision) => workspaceFactoryDefinitionPath(workspaceSlug, { revision })}
-            sourceDraftHref={(draft) => workspaceFactoryDefinitionPath(workspaceSlug, { draft })}
+            revisionHref={(revision) =>
+              workspaceFactoryDefinitionPath(workspaceSlug, { revision, factory: factoryId })
+            }
+            sourceDraftHref={(draft) =>
+              workspaceFactoryDefinitionPath(workspaceSlug, { draft, factory: factoryId })
+            }
           />
         </div>
       ) : null}

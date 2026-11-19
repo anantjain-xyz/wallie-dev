@@ -41,6 +41,7 @@ const target = { kind: "draft" as const, id: fixtureId(6) };
 const stageId = fixtureId(7);
 const testId = fixtureId(8);
 const connectionRevision = fixtureId(9);
+const otherFactoryId = fixtureId(10);
 const catalog: FactoryDefinitionCatalog = {
   workspaceId,
   pipelines: [{ id: pipelineId, workspaceId }],
@@ -124,17 +125,30 @@ function fixture({
           return Response.json(state === "running");
         }
         expect(url.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
-        if (url.pathname.endsWith("/factories")) return Response.json([{ id: factoryId }]);
+        if (url.pathname.endsWith("/factories")) {
+          const selected = url.searchParams.get("id");
+          return Response.json(
+            selected === `eq.${otherFactoryId}`
+              ? [{ id: otherFactoryId, is_default: false }]
+              : [{ id: factoryId, is_default: true }],
+          );
+        }
         if (url.pathname.endsWith("/factory_definition_drafts")) {
           expect(url.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
           expect(url.searchParams.get("id")).toBe(`eq.${target.id}`);
           return Response.json([stored]);
         }
         expect(url.pathname).toMatch(/\/factory_definition_smoke_tests$/);
+        const inFactory = url.searchParams.get("factory_id") === `eq.${factoryId}`;
         if (url.searchParams.has("status")) {
           expect(url.searchParams.get("id")).toBe(`eq.${testId}`);
           expect(url.searchParams.get("status")).toBe("eq.running");
-          return Response.json(state === "running" ? [{ id: testId }] : []);
+          return Response.json(inFactory && state === "running" ? [{ id: testId }] : []);
+        }
+        if (url.searchParams.get("select") === "id") {
+          return Response.json(
+            inFactory && url.searchParams.get("id") === `eq.${testId}` ? [{ id: testId }] : [],
+          );
         }
         expect(url.searchParams.get("target_kind")).toBe(`eq.${target.kind}`);
         expect(url.searchParams.get("target_id")).toBe(`eq.${target.id}`);
@@ -143,12 +157,12 @@ function fixture({
         if (url.searchParams.has("id")) {
           expect(url.searchParams.get("select")).toContain(",evidence");
           return Response.json(
-            exactDigest && url.searchParams.get("id") === `eq.${testId}` ? [row] : [],
+            inFactory && exactDigest && url.searchParams.get("id") === `eq.${testId}` ? [row] : [],
           );
         }
         expect(exactDigest).toBe(true);
         expect(url.searchParams.get("select")).not.toContain("evidence");
-        return Response.json([{ ...row, evidence: undefined }]);
+        return Response.json(inFactory ? [{ ...row, evidence: undefined }] : []);
       },
     },
   });
@@ -174,6 +188,27 @@ describe("candidate smoke orchestration", () => {
       provider: "vercel",
       connection: { provider: "vercel", revision: connectionRevision },
     });
+  });
+
+  it("does not read or cancel another factory’s candidate smoke test", async () => {
+    const { admin, calls } = fixture();
+    const selected = {
+      workspaceId,
+      factoryId: otherFactoryId,
+      digest: command.expectedDigest,
+      target,
+    };
+    await expect(listFactoryDefinitionSmokeTests({ client: admin, ...selected })).resolves.toEqual({
+      ok: true,
+      tests: [],
+    });
+    await expect(
+      readFactoryDefinitionSmokeTest({ client: admin, ...selected, testId }),
+    ).resolves.toMatchObject({ ok: false, status: 404 });
+    await expect(
+      cancelFactoryDefinitionSmokeTest({ admin, ...selected, actorUserId, testId }),
+    ).resolves.toMatchObject({ ok: false, status: 404 });
+    expect(calls).toEqual([]);
   });
 
   it("reserves the exact target and digest before provisioning its selected runtime", async () => {

@@ -20,7 +20,7 @@ import {
   readFactorySettingsMetadata,
   saveSettingsFactoryDraft,
 } from "./settings-persistence";
-import { selectDefaultFactory, selectStoredFactoryDefinition } from "./storage";
+import { selectFactory, selectStoredFactoryDefinition } from "./storage";
 import {
   readCompiledFactoryDefinition,
   recompileStoredFactoryDefinition,
@@ -68,15 +68,17 @@ type AdminClient = SupabaseClient<Database>;
 export async function mutateFactoryDefinition({
   admin,
   workspaceId,
+  factoryId,
   actorUserId,
   command,
 }: {
   admin: AdminClient;
   workspaceId: string;
+  factoryId?: string;
   actorUserId: string;
   command: FactoryDefinitionMutation;
 }): Promise<FactoryMutationResult> {
-  const { data: factory, error: factoryError } = await selectDefaultFactory(admin, workspaceId);
+  const { data: factory, error: factoryError } = await selectFactory(admin, workspaceId, factoryId);
   if (factoryError) return mutationError(factoryError);
   if (!factory) return mutationError({ code: "P0002" });
 

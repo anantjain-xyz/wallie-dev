@@ -1,3 +1,7 @@
+import {
+  factoryDefinitionRouteParamsSchema,
+  type FactoryDefinitionRouteContext,
+} from "@/lib/factory-definitions/route-params";
 import { loadFactorySettings, mutateFactorySettings } from "@/lib/factory-definitions/settings";
 import { factorySettingsCommandSchema } from "@/lib/factory-definitions/settings-contracts";
 import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
@@ -31,8 +35,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
   }
 }
 
-export async function POST(request: Request, { params }: RouteContext) {
-  const parsed = workspaceIdParamsSchema.safeParse(await params);
+export async function POST(request: Request, { params }: FactoryDefinitionRouteContext) {
+  const parsed = factoryDefinitionRouteParamsSchema.safeParse(await params);
   if (!parsed.success) return respond({ error: "Invalid workspace id." }, 400);
 
   try {
@@ -53,6 +57,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const result = await mutateFactorySettings({
       client: createSupabaseAdminClient(),
       workspaceId: access.context.workspace.id,
+      ...(parsed.data.factoryId ? { factoryId: parsed.data.factoryId } : {}),
       actorUserId: access.context.user.id,
       command: command.data,
     });

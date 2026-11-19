@@ -14,7 +14,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import type { CompiledFactoryDefinition } from "./compiler";
 import { factoryWritableRepositoryIds } from "./repository-bindings";
 import {
-  selectDefaultFactory,
+  selectFactory,
   selectStoredFactoryDefinition,
   type FactoryDefinitionTarget,
 } from "./storage";
@@ -23,6 +23,7 @@ import { readVerifiedFactoryDefinition } from "./stored-definition";
 type CheckScope = {
   admin: SupabaseClient<Database>;
   workspaceId: string;
+  factoryId?: string;
   target: FactoryDefinitionTarget;
   repositoryId?: string;
 };
@@ -115,8 +116,8 @@ function unavailableRepository(): CheckFailure {
   };
 }
 
-async function loadStoredDefinition({ admin, workspaceId, target }: CheckScope) {
-  const { data: factory, error: factoryError } = await selectDefaultFactory(admin, workspaceId);
+async function loadStoredDefinition({ admin, workspaceId, factoryId, target }: CheckScope) {
+  const { data: factory, error: factoryError } = await selectFactory(admin, workspaceId, factoryId);
   if (factoryError) throw factoryError;
   if (!factory) return null;
   const { data, error } = await selectStoredFactoryDefinition(

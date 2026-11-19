@@ -113,6 +113,27 @@ describe("structured factory definition editor", () => {
     expect(current().mcpBindings).toEqual(mcpBindings);
   });
 
+  it("edits and removes exact tool revision bindings", () => {
+    const toolRevisionId = "00000000-0000-4000-8000-000000000005";
+    const secretBindingId = "00000000-0000-4000-8000-000000000006";
+    const { current } = renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Add tool binding" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Tool revision 1" }), {
+      target: { value: toolRevisionId },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Allowed operations" }), {
+      target: { value: "read_item\nlist_items" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "MCP secret binding" }), {
+      target: { value: secretBindingId },
+    });
+    expect(current().mcpBindings).toEqual([
+      { toolRevisionId, operations: ["read_item", "list_items"], secretBindingId },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Remove tool binding 1" }));
+    expect(current().mcpBindings).toBeUndefined();
+  });
+
   it("emits editable compiler input for references, runtime, and operating rules", () => {
     const { current } = renderEditor();
     const skills = screen.getByRole("textbox", { name: "Skills" });

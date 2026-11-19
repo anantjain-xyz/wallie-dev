@@ -66,13 +66,18 @@ const source = {
 const compiled = compileFactoryDefinition(source, catalog);
 if (!compiled.ok) throw new Error("The factory definition test fixture did not compile.");
 
-function fixture(handler: (request: { url: URL; body?: unknown }) => Response) {
+function fixture(
+  handler: (request: { url: URL; body?: unknown }) => Response,
+  selectedFactoryId?: string,
+) {
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.pathname.endsWith("/factories")) {
       expect(url.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
-      expect(url.searchParams.get("is_default")).toBe("eq.true");
-      return Response.json([{ id: factoryId }]);
+      expect(url.searchParams.get("status")).toBe("eq.active");
+      expect(url.searchParams.get("id")).toBe(selectedFactoryId ? `eq.${selectedFactoryId}` : null);
+      expect(url.searchParams.get("is_default")).toBe(selectedFactoryId ? null : "eq.true");
+      return Response.json([{ id: factoryId, is_default: selectedFactoryId === undefined }]);
     }
     return handler({
       url,
@@ -106,51 +111,55 @@ describe("factory definition commands", () => {
     });
   });
 
-  it("saves compiler bytes and the explicit workspace and actor scope", async () => {
-    const { admin } = fixture(({ url, body }) => {
-      if (url.pathname.endsWith("/factory_definition_drafts")) {
-        expect(url.searchParams.get("base_activation_number")).toBe("is.null");
-        return Response.json([]);
-      }
-      if (url.pathname.endsWith("/pipeline_stages")) return Response.json([{ id: stageId }]);
-      expect(url.pathname).toMatch(/\/rpc\/save_settings_factory_definition_draft$/);
-      expect(body).toEqual({
-        p_workspace_id: workspaceId,
-        p_factory_id: factoryId,
-        p_actor_user_id: actorUserId,
-        p_expected_activation_number: 0,
-        p_definition_json: stored.definition_json,
-        p_canonical_digest: stored.canonical_digest,
-        p_settings_metadata: { newStageIds: [] },
-      });
-      return Response.json({
-        id: draftId,
-        base_activation_number: null,
-        schema_version: 1,
-        canonical_digest: stored.canonical_digest,
-        created_at: createdAt,
-      });
-    });
-    await expect(
-      mutateFactoryDefinition({
-        admin,
-        workspaceId,
-        actorUserId,
-        command: { action: "draft", expectedActivationNumber: 0, source },
-      }),
-    ).resolves.toEqual({
-      ok: true,
-      result: {
-        draft: {
+  it.each([undefined, factoryId])(
+    "saves compiler bytes and the workspace and actor scope for factory %s",
+    async (selectedFactoryId) => {
+      const { admin } = fixture(({ url, body }) => {
+        if (url.pathname.endsWith("/factory_definition_drafts")) {
+          expect(url.searchParams.get("base_activation_number")).toBe("is.null");
+          return Response.json([]);
+        }
+        if (url.pathname.endsWith("/pipeline_stages")) return Response.json([{ id: stageId }]);
+        expect(url.pathname).toMatch(/\/rpc\/save_settings_factory_definition_draft$/);
+        expect(body).toEqual({
+          p_workspace_id: workspaceId,
+          p_factory_id: factoryId,
+          p_actor_user_id: actorUserId,
+          p_expected_activation_number: 0,
+          p_definition_json: stored.definition_json,
+          p_canonical_digest: stored.canonical_digest,
+          p_settings_metadata: { newStageIds: [] },
+        });
+        return Response.json({
           id: draftId,
-          baseActivationNumber: null,
-          schemaVersion: 1,
-          canonicalDigest: stored.canonical_digest,
-          createdAt,
+          base_activation_number: null,
+          schema_version: 1,
+          canonical_digest: stored.canonical_digest,
+          created_at: createdAt,
+        });
+      }, selectedFactoryId);
+      await expect(
+        mutateFactoryDefinition({
+          admin,
+          workspaceId,
+          factoryId: selectedFactoryId,
+          actorUserId,
+          command: { action: "draft", expectedActivationNumber: 0, source },
+        }),
+      ).resolves.toEqual({
+        ok: true,
+        result: {
+          draft: {
+            id: draftId,
+            baseActivationNumber: null,
+            schemaVersion: 1,
+            canonicalDigest: stored.canonical_digest,
+            createdAt,
+          },
         },
-      },
-    });
-  });
+      });
+    },
+  );
 
   it("carries the exact published stage archive into the next declarative draft", async () => {
     const removedId = "54200000-0001-4000-8000-000000000010";

@@ -13,6 +13,7 @@ vi.mock("@/lib/factory-definitions/settings", () => ({
   mutateFactorySettings: mocks.mutate,
 }));
 
+import { POST as POST_SCOPED } from "../../factories/[factoryId]/definition/settings/route";
 import { GET, POST } from "./route";
 
 const workspaceId = "54200000-0006-4000-8000-000000000001";
@@ -73,6 +74,32 @@ it("passes the displayed revision through and reports a publication conflict", a
   });
   expect(response.status).toBe(409);
   await expect(response.json()).resolves.toEqual({ error: "The factory draft changed." });
+});
+
+it("keeps a selected factory on the shared latest-draft publication command", async () => {
+  authorize("admin");
+  const factoryId = "54200000-0006-4000-8000-000000000004";
+  const command = { action: "publish", expectedActivationNumber: 0, draftId };
+  mocks.adminClient.mockReturnValue(adminClient);
+  mocks.mutate.mockResolvedValue({ ok: true, snapshot: { activationNumber: 1 } });
+  const response = await POST_SCOPED(
+    new Request(
+      `http://localhost/api/workspaces/${workspaceId}/factories/${factoryId}/definition/settings`,
+      {
+        method: "POST",
+        body: JSON.stringify(command),
+      },
+    ),
+    { params: Promise.resolve({ workspaceId, factoryId }) },
+  );
+  expect(response.status).toBe(200);
+  expect(mocks.mutate).toHaveBeenCalledWith({
+    client: adminClient,
+    workspaceId,
+    factoryId,
+    actorUserId,
+    command,
+  });
 });
 
 it("rejects a save without the displayed draft token before obtaining the service client", async () => {
