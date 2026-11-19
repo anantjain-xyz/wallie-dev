@@ -16,6 +16,7 @@ export async function canManageSessionRetainedContent(
     .eq("workspace_id", scope.workspaceId)
     .eq("factory_id", scope.factoryId)
     .eq("member_id", member.id)
+    .is("revoked_at", null)
     .maybeSingle();
   return !error && data?.role === "manager";
 }

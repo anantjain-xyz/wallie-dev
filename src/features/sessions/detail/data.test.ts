@@ -301,9 +301,17 @@ describe("session detail loader", () => {
       order: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
     };
+    const activeMembershipFilter = vi.fn().mockReturnThis();
     const factoryMemberQuery = {
       eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: { role: "manager" }, error: null }),
+      is: activeMembershipFilter,
+      maybeSingle: vi.fn(async () =>
+        activeMembershipFilter.mock.calls.some(
+          ([column, value]) => column === "revoked_at" && value === null,
+        )
+          ? { data: { role: "manager" }, error: null }
+          : { data: null, error: { code: "PGRST116" } },
+      ),
       select: vi.fn().mockReturnThis(),
     };
     const from = vi.fn((table: string) => {
@@ -346,6 +354,7 @@ describe("session detail loader", () => {
     expect(result.review.retainedContent).toEqual({ canManage: true, erasedAt: null });
     expect(factoryMemberQuery.eq).toHaveBeenCalledWith("factory_id", "factory-1");
     expect(factoryMemberQuery.eq).toHaveBeenCalledWith("member_id", "member-1");
+    expect(activeMembershipFilter).toHaveBeenCalledWith("revoked_at", null);
     expect(result.hasFailedRun).toBe(false);
     expect(result.failedStageSlug).toBeNull();
     expect(result.latestRun).toEqual({
