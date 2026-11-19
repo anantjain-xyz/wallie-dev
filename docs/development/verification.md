@@ -150,6 +150,39 @@ Hosted enrollment follows the existing
 [worker operations](../deployment/worker-operations.md#controlled-checkpoint-continuity-release)
 for the hosted release control and recovery steps.
 
+### Shared work across browser, API and MCP
+
+Use a disposable Supabase project with the current migrations, a working local
+mailbox, Chromium, and the `psql` client. Use the project's loopback API and
+database URLs. Export its `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY`. Set
+`WALLIE_CROSS_SURFACE_DATABASE_URL` to its local Postgres URL and
+`NEXT_PUBLIC_APP_URL` to the Playwright loopback origin. Keep the worker stopped
+so the fixture owns its synthetic attempts. Clear deployed worker wake and
+provider credentials and use `WALLIE_SANDBOX_IMPL=fake`.
+
+```sh
+pnpm build
+WALLIE_CROSS_SURFACE_E2E=1 pnpm exec playwright test e2e/factory-cross-surface.spec.ts
+```
+
+| Boundary                 | Evidence checked by the fixture                                                                                                                                                                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session and conversation | The browser captures its own request key, API and MCP replay the same receipt, changed or reordered intents leave the original session intact, and both clients resume the same conversation.                                                        |
+| Human review             | Inbox opens the exact question and specification revision. One signed-in approval authorizes the downstream result against the exact artifact.                                                                                                       |
+| External access          | Revoking the writer token during a disconnect blocks reads and mutation replays. Pinned queued work remains available to the worker, and the browser reconciles with the current Inbox upon reconnect. The observer grant loses access after expiry. |
+| Outbound recovery        | A process exits after claiming and beginning a send. Recovery preserves an unknown outcome and the event ID for the retry. A queued delivery with revoked authority releases neither event nor signing material.                                     |
+
+The qualifying run recorded one creation receipt and one human approval of the
+second specification revision. Three exact attempts used the pinned service
+credential, including the downstream result after writer token revocation.
+The receiver retry retained the original event ID.
+
+The run uses synthetic Git, worker attempts and receiver data. Use
+[Factory API and MCP](../architecture/factory-api.md) for client contracts and
+[outbound delivery recovery](../deployment/worker-operations.md#outbound-factory-delivery)
+for operator procedures.
+
 ## Browser and benchmark commands
 
 The checked-in Playwright suites are targeted rather than one universal E2E
