@@ -15,6 +15,7 @@ export type WorkspaceNavItem = {
     | "context"
     | "memory"
     | "agents"
+    | "scorers"
     | "governance"
     | "factory-definition"
     | "settings";
@@ -123,6 +124,21 @@ export function workspaceAgentDetailPath(
   );
 }
 
+export function workspaceScorersPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/scorers`, query);
+}
+
+export function workspaceScorerDetailPath(
+  workspaceSlug: string,
+  scorerId: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(
+    `${workspaceScorersPath(workspaceSlug)}/${encodeURIComponent(scorerId)}`,
+    query,
+  );
+}
+
 export function workspaceSettingsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
@@ -132,6 +148,7 @@ export function workspaceFactoryDefinitionPath(
   query?: {
     factory?: string;
     implementationAgent?: string;
+    scorerRevision?: string;
     revision?: string;
     draft?: string;
     test?: string;
@@ -176,6 +193,12 @@ export function getWorkspaceNavItems(
       id: "agents",
       href: workspaceAgentsPath(workspaceSlug),
       label: "Agents",
+      section: "Configure",
+    },
+    {
+      id: "scorers",
+      href: workspaceScorersPath(workspaceSlug),
+      label: "Scorers",
       section: "Configure",
     },
   ];

@@ -22,7 +22,7 @@ import { isFactoryDefinitionText } from "./text";
 
 export const FACTORY_DEFINITION_SCHEMA_VERSION = 1;
 export const FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION = 2;
-const maxScorerRevisions = 32;
+export const MAX_FACTORY_SCORER_REVISIONS = 32;
 export const factoryDefinitionExpectedActivationSchema = z
   .number()
   .int()
@@ -122,7 +122,7 @@ const serialDefinitionFields = z
 const stableUuid = z.string().uuid();
 const scorerRevisionIdsSchema = z
   .array(stableUuid.transform((id) => id.toLowerCase()))
-  .max(maxScorerRevisions)
+  .max(MAX_FACTORY_SCORER_REVISIONS)
   .superRefine((ids, context) => {
     const seen = new Set<string>();
     ids.forEach((id, index) => {
@@ -196,7 +196,7 @@ export const compiledFactoryDefinitionSchema = z
       schemaVersion: z.literal(FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION),
       scorerRevisionIds: z
         .array(stableUuid)
-        .max(maxScorerRevisions)
+        .max(MAX_FACTORY_SCORER_REVISIONS)
         .refine(
           (ids) =>
             ids.every(

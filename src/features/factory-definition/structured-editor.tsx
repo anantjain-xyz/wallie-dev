@@ -19,7 +19,11 @@ import {
   stallTimeoutMsToMinutes,
 } from "@/lib/agent-config/contracts";
 import type { FactoryEditorReferenceOptions } from "@/lib/factory-definitions/editor-reference-options";
-import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
+import {
+  FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+  MAX_FACTORY_SCORER_REVISIONS,
+  type SerialFactoryDefinition,
+} from "@/lib/factory-definitions/schema";
 import { MAX_MCP_BINDINGS } from "@/lib/factory-mcp/manifest";
 import { SANDBOX_PROVIDERS, sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 
@@ -171,6 +175,12 @@ export function StructuredFactoryDefinitionEditor({
   const [stageAnnouncement, setStageAnnouncement] = useState("");
   const { agent, stages, mcpBindings = [], executionGrant } = value;
   const skillOptions = referenceOptions?.skills.filter(({ id }) => !value.skills.includes(id));
+  const scorerRevisionIds =
+    value.schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
+      ? value.scorerRevisionIds
+      : [];
+  const scorerOptions = referenceOptions?.scorers ?? [];
+  const availableScorers = scorerOptions.filter(({ id }) => !scorerRevisionIds.includes(id));
   const toolOptions = referenceOptions?.tools ?? [];
   const toolListId = `${editorId}-tool-revisions`;
   const stageKeys = new Set<string>();
@@ -187,6 +197,14 @@ export function StructuredFactoryDefinitionEditor({
     next: SerialFactoryDefinition[K],
   ) {
     onChange({ ...value, [key]: next });
+  }
+
+  function updateScorers(ids: string[]) {
+    onChange({
+      ...value,
+      schemaVersion: FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+      scorerRevisionIds: ids,
+    });
   }
 
   function updateTool(index: number, patch: Partial<ToolBinding>) {
@@ -328,6 +346,64 @@ export function StructuredFactoryDefinitionEditor({
             ) : null}
           </div>
         </div>
+      </section>
+
+      <section
+        aria-labelledby={`${editorId}-scorers`}
+        className="min-w-0 space-y-3 border-t border-border pt-6"
+      >
+        <h3 className="type-section-title text-foreground" id={`${editorId}-scorers`}>
+          Scorers
+        </h3>
+        {scorerRevisionIds.length > 0 ? (
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {scorerRevisionIds.map((id) => {
+              const label = scorerOptions.find((option) => option.id === id)?.label ?? id;
+              return (
+                <li
+                  className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+                  key={id}
+                >
+                  <span className="min-w-0 break-all text-sm">{label}</span>
+                  <button
+                    aria-label={`Remove ${label}`}
+                    className="ui-button"
+                    onClick={() => updateScorers(scorerRevisionIds.filter((bound) => bound !== id))}
+                    type="button"
+                  >
+                    Remove
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="type-secondary text-muted">No scorer revisions selected.</p>
+        )}
+        {availableScorers.length > 0 ? (
+          <Field label="Add a scorer revision">
+            <select
+              className="ui-select"
+              disabled={scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS}
+              onChange={(event) => {
+                if (event.target.value) updateScorers([...scorerRevisionIds, event.target.value]);
+              }}
+              value=""
+            >
+              <option value="">Choose a scorer revision</option>
+              {availableScorers.map(({ id, label }) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
+        {scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS ? (
+          <p className="type-annotation text-muted">
+            A definition can bind up to {MAX_FACTORY_SCORER_REVISIONS} scorer revisions.
+          </p>
+        ) : null}
       </section>
 
       <section

@@ -421,6 +421,7 @@ export function ShellHeader({
     const href = isFactoryAggregatePath(item.href, workspace.slug)
       ? withFactoryQuery(item.href, factory)
       : item.id === "agents" ||
+          item.id === "scorers" ||
           item.id === "analytics" ||
           item.id === "overview" ||
           item.id === "factory-definition" ||

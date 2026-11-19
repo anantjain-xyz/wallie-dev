@@ -97,3 +97,18 @@ Numeric thresholds must be distinct and within the score range. Values
 outside the range produce an error. Results carry the available evidence
 references. A score appears only for a pass, fail, or between-thresholds
 result.
+
+## Configure a scorer
+
+1. Open **Scorers** and select a factory. Factory managers can create scorers
+   and publish rubric revisions. Validate the rubric before publishing if
+   you want to check the evidence and thresholds separately.
+2. Open the exact revision you want to use. Workspace owners and admins can
+   select **Configure binding** to add it to the working definition. You can
+   also select a revision from **Scorers** in the definition editor.
+3. Validate and save the draft. The **Scorer bindings** section shows which
+   revisions the validated edit, saved draft, and active definition use.
+   Run the candidate checks before publishing the definition.
+
+Revision history shows the exact prior rubric. A conflicting publish preserves
+the draft in the form so you can review it before reloading the latest revision.

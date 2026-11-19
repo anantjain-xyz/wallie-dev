@@ -19,6 +19,7 @@ import {
 import { CandidateTestPanel } from "@/features/factory-definition/candidate-test-panel";
 import { FactoryMcpManifestInspector } from "@/features/factory-definition/mcp-manifest-inspector";
 import { FactoryRevisionHistory } from "@/features/factory-definition/revision-history";
+import { FactoryScorerBindings } from "@/features/factory-definition/scorer-bindings";
 import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff";
 import { ServiceCredentialsPanel } from "@/features/factory-definition/service-credentials-panel";
 import { StructuredFactoryDefinitionEditor } from "@/features/factory-definition/structured-editor";
@@ -37,7 +38,11 @@ import {
   type FactoryEditorSnapshot,
 } from "@/lib/factory-definitions/editor-contracts";
 import type { FactoryEditorReferenceOptions } from "@/lib/factory-definitions/editor-reference-options";
-import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
+import {
+  FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+  MAX_FACTORY_SCORER_REVISIONS,
+  type SerialFactoryDefinition,
+} from "@/lib/factory-definitions/schema";
 import type { FactorySecretBindingScope } from "@/lib/factory-secret-bindings/contracts";
 import { workspaceFactoryDefinitionPath, workspaceSettingsPath } from "@/lib/routes";
 
@@ -80,11 +85,12 @@ function editFrom(
   snapshot: FactoryEditorSnapshot,
   mode: Input["kind"] = "structured",
   initialAgent?: AgentSelection,
+  initialScorerRevisionId?: string,
 ): Edit | null {
   const document = snapshot.draft ?? snapshot.published;
   const original = (document ?? snapshot.baseline)?.source;
   if (!original) return null;
-  const value = { ...original };
+  let value = { ...original };
   if (initialAgent) {
     value.implementationAgent = initialAgent.promptRevisionId;
     if (document?.bundle.implementationAgent?.agentId !== initialAgent.agentId) {
@@ -97,6 +103,21 @@ function editFrom(
         });
       }
     }
+  }
+  const scorerRevisionIds =
+    value.schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
+      ? value.scorerRevisionIds
+      : [];
+  if (
+    initialScorerRevisionId &&
+    !scorerRevisionIds.includes(initialScorerRevisionId) &&
+    scorerRevisionIds.length < MAX_FACTORY_SCORER_REVISIONS
+  ) {
+    value = {
+      ...value,
+      schemaVersion: FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+      scorerRevisionIds: [...scorerRevisionIds, initialScorerRevisionId],
+    };
   }
   return {
     original,
@@ -139,6 +160,7 @@ export function FactoryDefinitionEditor({
   factoryId,
   factoryName,
   initialAgent,
+  initialScorerRevisionId,
   workspaceId,
   workspaceSlug,
   selection,
@@ -148,6 +170,7 @@ export function FactoryDefinitionEditor({
   factoryId?: string;
   factoryName?: string;
   initialAgent?: AgentSelection;
+  initialScorerRevisionId?: string;
   workspaceId: string;
   workspaceSlug: string;
   selection: Selection | null;
@@ -278,6 +301,7 @@ export function FactoryDefinitionEditor({
             initialAgentId && initialPromptRevisionId
               ? { agentId: initialAgentId, promptRevisionId: initialPromptRevisionId }
               : undefined,
+            initialScorerRevisionId,
           ),
         );
         const target = requestedRevision
@@ -300,6 +324,7 @@ export function FactoryDefinitionEditor({
     editorApi,
     initialAgentId,
     initialPromptRevisionId,
+    initialScorerRevisionId,
     loadWorkspace,
     requestedDraft,
     requestedRevision,
@@ -754,6 +779,23 @@ export function FactoryDefinitionEditor({
                 />
               </div>
             ) : null}
+            <FactoryScorerBindings
+              factoryId={history?.factoryId ?? factoryId}
+              workspaceSlug={workspaceSlug}
+              options={referenceOptions?.scorers ?? []}
+              definitions={[
+                { label: "Active definition", content: snapshot.published },
+                { label: "Saved draft", content: snapshot.draft },
+                { label: "Validated edit", content: preview },
+                {
+                  label: selected?.kind === "draft" ? "Historical draft" : "Historical definition",
+                  content:
+                    selected?.id !== snapshot.published?.id && selected?.id !== snapshot.draft?.id
+                      ? selected
+                      : null,
+                },
+              ]}
+            />
             <PageSection anchorId="semantic-diff" title="Semantic diff">
               {selected ? (
                 <button
