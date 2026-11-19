@@ -37,6 +37,37 @@ jobs:
       - name: Run unit tests
         run: pnpm test
 
+  browser-screenshot-runtime:
+    # Downloaded Chromium needs sandbox support without changes to host policy.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      WALLIE_REQUIRE_BROWSER_CAPTURE_TESTS: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright-core install --with-deps chromium
+
+      - name: Verify screenshot capture with real Chromium
+        run: pnpm test src/lib/validation-evidence/browser-runtime.test.ts
+
   route-budgets:
     runs-on: ubuntu-latest
     timeout-minutes: 15

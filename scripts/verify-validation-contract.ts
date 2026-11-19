@@ -122,6 +122,22 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
             },
           ],
         },
+        "browser-screenshot-runtime": {
+          "runs-on": "ubuntu-22.04",
+          "timeout-minutes": 10,
+          env: { WALLIE_REQUIRE_BROWSER_CAPTURE_TESTS: "1" },
+          steps: [
+            ...setupSteps,
+            {
+              name: "Install Chromium",
+              run: "pnpm exec playwright-core install --with-deps chromium",
+            },
+            {
+              name: "Verify screenshot capture with real Chromium",
+              run: "pnpm test src/lib/validation-evidence/browser-runtime.test.ts",
+            },
+          ],
+        },
         "cloudflare-worker": {
           "runs-on": "ubuntu-latest",
           "timeout-minutes": 15,

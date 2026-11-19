@@ -9,6 +9,10 @@ import {
 } from "@/lib/delivery-policy/contracts";
 import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import {
+  BROWSER_ASSET_FIELDS,
+  readPrivateBrowserScreenshot,
+} from "@/lib/validation-evidence/browser-assets";
+import {
   browserCaptureReceiptSchema,
   browserRunIdentitySchema,
   isBrowserEvidenceRequirement,
@@ -521,12 +525,14 @@ async function readBrowserEvidence({
   sessionId,
   checkpoint,
   plan,
+  requiredKeys,
 }: {
   admin: AdminClient;
   workspaceId: string;
   sessionId: string;
   checkpoint: RunEvidenceIdentity & { output_sha: string };
   plan: RunEvidenceIdentity & { commit_sha: string; validation_tree_sha: string; plan: Json };
+  requiredKeys: string[];
 }): Promise<BrowserVerificationEvidence | null> {
   const parsed = validationPlanSchema.safeParse(plan.plan);
   if (!parsed.success || parsed.data.version !== 2) return null;
@@ -549,6 +555,46 @@ async function readBrowserEvidence({
   const receipts = z.array(browserCaptureReceiptSchema).max(10).safeParse(data.records);
   if (!receipts.success) return null;
 
+  const accessibleAssetDigests = new Map<string, string>();
+  const required = new Set(requiredKeys);
+  const requirements = receipts.data.flatMap((receipt) =>
+    receipt.status === "captured" &&
+    receipt.kind === "screenshot" &&
+    required.has(`browser:screenshot:${receipt.key}`)
+      ? [receipt.manifest]
+      : [],
+  );
+  if (checkpoint.output_sha === plan.commit_sha && requirements.length) {
+    const { data: assets } = await admin
+      .from("session_browser_verification_assets")
+      .select(BROWSER_ASSET_FIELDS)
+      .eq("workspace_id", workspaceId)
+      .eq("session_id", sessionId)
+      .eq("run_id", checkpoint.run_id)
+      .in(
+        "id",
+        requirements.map(({ assetId }) => assetId),
+      );
+    const byId = new Map((assets ?? []).map((asset) => [asset.id, asset]));
+    await Promise.all(
+      requirements.map(async (manifest) => {
+        const asset = byId.get(manifest.assetId);
+        if (!asset || asset.sha256 !== manifest.sha256 || asset.size_bytes !== manifest.sizeBytes) {
+          return;
+        }
+        const result = await readPrivateBrowserScreenshot({
+          supabase: admin,
+          workspaceId,
+          sessionId,
+          runId: checkpoint.run_id,
+          asset,
+          signal: AbortSignal.timeout(ASSET_READ_TIMEOUT_MS),
+        });
+        if (result.status === "available") accessibleAssetDigests.set(asset.id, asset.sha256);
+      }),
+    );
+  }
+
   return {
     expectedIdentity: {
       runId: checkpoint.run_id,
@@ -559,8 +605,7 @@ async function readBrowserEvidence({
     recordedIdentity: recordedIdentity.data,
     plan: parsed.data.browser,
     receipts: receipts.data,
-    // This contract-only increment has no authorized capture/asset reader.
-    accessibleAssetDigests: new Map(),
+    accessibleAssetDigests,
   };
 }
 
@@ -874,6 +919,7 @@ async function loadEvaluatorInput(
           sessionId,
           checkpoint,
           plan,
+          requiredKeys: policy.requirements.requiredEvidence,
         })
       : null;
 

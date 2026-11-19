@@ -271,6 +271,68 @@ or the deployed daemon. Fresh child processes restore persisted inputs and a
 prepared publication after the original sandbox has stopped. Retain its safe
 SHA/ref/PR/digest receipts and sandbox cleanup evidence with the release review.
 
+## Trusted screenshot capture
+
+Use a Node worker on a host that supports the Chromium sandbox. Install the
+browser for the same user that runs the worker. On supported Linux hosts, run
+`pnpm exec playwright-core install --with-deps chromium`. The standard worker
+container does not include Chromium. Native Workerd reports captures unavailable.
+
+Configure all four values in the Node worker environment.
+
+| Variable                                | Value                                                                         |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| `WALLIE_BROWSER_FIXTURE_BROKER_URL`     | Fixed HTTPS endpoint that resolves independently verified synthetic fixtures. |
+| `WALLIE_BROWSER_FIXTURE_BROKER_TOKEN`   | Dedicated bearer token sent only to the broker.                               |
+| `WALLIE_BROWSER_FIXTURE_ORIGIN`         | The exact HTTPS origin allowed to serve fixture documents.                    |
+| `WALLIE_BROWSER_FIXTURE_APPROVAL_SCOPE` | The exact MCP tool revision UUID and approved operation, separated by `/`.    |
+
+Local fixtures may use HTTP at `127.0.0.1`. The broker endpoint and preview
+origin cannot include user information, fragments, or queries. The approval
+scope must be pinned in the factory definition and allowed by its live execution
+grant before Wallie calls the broker.
+
+The JSON broker request is a `POST` with these fields.
+
+| Field          | Meaning                                                    |
+| -------------- | ---------------------------------------------------------- |
+| `nonce`        | A fresh UUID for this request.                             |
+| `identity`     | Exact `runId`, `attemptCount`, `commitSha`, and `treeSha`. |
+| `path`         | The frozen fixture path.                                   |
+| `regionTestId` | The one region allowed for this check.                     |
+| `policy`       | The fixed value `isolated-fixture-v1`.                     |
+
+The broker independently verifies the exact source and approved synthetic
+fixture before echoing those fields. It adds `previewUrl` on the configured
+origin at the exact path, `expiresAt` as an ISO timestamp at most 90 seconds
+ahead, and `documentSha256` as the lowercase SHA-256 of the standalone UTF-8
+HTML. The broker response is limited to 8 KiB. The worker makes one bounded
+`GET` for at most 512 KiB of `text/html` without credentials. An optional
+short-lived preview ticket can be carried in the preview URL query. Redirects
+are rejected on both requests. Chromium receives only the verified HTML at a
+separate synthetic origin. Tickets, tokens, and cookies from the fetch never
+enter its fresh context.
+
+The fixture may use inline JavaScript to respond to an exact `data-testid`
+`click` or expose a target for `expectVisible` inside the approved region.
+External resources, network actions, popups, form submissions, and embedded
+browser content cannot be used for a passing capture. The fixture must use
+synthetic data and mark private and credential-bearing elements with
+`data-wallie-private` and `data-wallie-credential`. Wallie also excludes
+form controls and the plan's unique `excludedTestIds`. It disables fixture
+scripts before final capture, rejects author shadow content, removes excluded
+and outside-region nodes, and clips the PNG within a 960×540 viewport.
+
+To run the loopback broker and real-pixel qualification fixture:
+
+```sh
+WALLIE_REQUIRE_BROWSER_CAPTURE_TESTS=1 pnpm test src/lib/validation-evidence/browser-runtime.test.ts
+```
+
+The fixture clicks through a change, checks the retained pixels for private
+canaries, and verifies that a second capture starts with empty cookie and local
+storage state. It uses synthetic data and does not require any live account.
+
 ## Heartbeats and activity
 
 - Registration upserts worker start time, heartbeat time, and an empty active

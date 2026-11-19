@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { BrowserScreenshotRuntime } from "@/lib/validation-evidence/browser-contract";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import type { WorkerConfig } from "./config";
@@ -14,6 +15,7 @@ export interface SchedulerOptions {
   isShuttingDown: () => boolean;
   /** Sleep helper; injectable for tests. */
   delay?: (ms: number) => Promise<void>;
+  browserRuntime?: BrowserScreenshotRuntime;
 }
 
 export interface Scheduler {
@@ -58,7 +60,10 @@ export function createScheduler(
     // attempts so old completion cannot erase its replacement's heartbeat or
     // make shutdown/capacity accounting forget work still running locally.
     const attemptKey = `${job.id}:${job.attempt_count}`;
-    const promise = runClaimedJob(admin, job, { timeoutMs: config.jobTimeoutMs })
+    const promise = runClaimedJob(admin, job, {
+      timeoutMs: config.jobTimeoutMs,
+      ...(options.browserRuntime ? { browserRuntime: options.browserRuntime } : {}),
+    })
       .catch((error) => {
         // runClaimedJob is designed never to reject; guard anyway so an
         // unhandled rejection can't trip the process crash handlers.
