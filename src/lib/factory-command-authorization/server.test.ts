@@ -128,11 +128,12 @@ it("admits a machine request with a fresh receipt ID and keeps the credential an
 
 it("keeps OAuth attribution and intent tied to the authorized MCP request", async () => {
   const row = { ...admittedRow, consenting_member_id: consentingMemberId };
-  const { admin } = fixture(Response.json(row), Response.json(row), Response.json(false));
+  const { admin, fetch } = fixture(Response.json(row), Response.json(row), Response.json(false));
   const access = issueFactoryOAuthCredential("access");
   const command = {
     ...request,
     surface: "mcp",
+    resource: `https://wallie.example.test/api/v1/workspaces/${request.workspaceId}/factories/${request.factoryId}/mcp`,
     authorization: `Bearer ${access.credential}`,
   } as const;
   const first = await authorizeFactoryCommand(command, admin);
@@ -144,6 +145,11 @@ it("keeps OAuth attribution and intent tied to the authorized MCP request", asyn
     actor: { kind: "oauth_access_token", servicePrincipalId, consentingMemberId },
   });
   const firstInput = factoryCommandTransactionInput(first.admission);
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+    p_resource: command.resource,
+  });
+  expect(firstInput).not.toHaveProperty("p_resource");
+
   expect(firstInput).toMatchObject({
     p_credential_kind: "oauth_access_token",
     p_credential_id: access.id,

@@ -10,6 +10,10 @@ $$;
 create function pg_temp.command_factory() returns uuid language sql stable as $$
   select id from public.factories where workspace_id=pg_temp.command_id(4) and is_default
 $$;
+create function pg_temp.command_resource(origin text default 'https://wallie.example.test',factory uuid default null)
+returns text language sql stable as $$
+  select origin||'/api/v1/workspaces/'||pg_temp.command_id(4)||'/factories/'||coalesce(factory,pg_temp.command_factory())||'/mcp'
+$$;
 insert into auth.users(id,email) values (pg_temp.command_id(1),'command-owner@example.test'),(pg_temp.command_id(2),'command-member@example.test');
 insert into auth.sessions(id,user_id,created_at,updated_at) values (pg_temp.command_id(8),pg_temp.command_id(2),now(),now());
 insert into public.workspaces(id,slug,name) values (pg_temp.command_id(4),'command-admission-fixture','Command admission');
@@ -34,20 +38,73 @@ where principal.workspace_id=pg_temp.command_id(4);
 select public.issue_factory_machine_token(workspace_id,factory_id,pg_temp.command_id(1),id,version,
   pg_temp.command_id(case when slug='command-client' then 31 else 33 end),repeat('a',64),'Fixture token','{sessions:read}')
 from command_grants;
+select public.issue_factory_machine_token(workspace_id,factory_id,pg_temp.command_id(1),id,version,
+  pg_temp.command_id(34),repeat('a',64),'Write-only token','{sessions:cancel}') from command_grants where slug='command-client';
 create temp table command_client as select registration.* from command_grants approved
 cross join lateral public.register_factory_oauth_client(approved.workspace_id,pg_temp.command_id(1),'Fixture OAuth',
   array['http://127.0.0.1:8123/callback'],'{sessions:read,sessions:cancel}',jsonb_build_array(jsonb_build_object(
     'factory_id',approved.factory_id,'execution_grant_id',approved.id,'execution_grant_version',approved.version))) registration
 where approved.slug='command-client';
+select throws_ok($q$select * from command_client client cross join lateral public.begin_factory_oauth_authorization(
+  client.id,pg_temp.command_id(2),pg_temp.command_id(8),'http://127.0.0.1:8123/callback',repeat('a',42)||'A',
+  '{sessions:read}',p_resource=>pg_temp.command_resource(factory=>pg_temp.command_id(9)))$q$,
+  'PT400','Invalid OAuth resource.','a valid client cannot authorize an MCP resource outside its registered factory');
+select throws_ok($q$select * from command_client client cross join lateral public.begin_factory_oauth_authorization(
+  client.id,pg_temp.command_id(2),pg_temp.command_id(8),'https://unregistered.example.test/callback',repeat('a',42)||'A',
+  '{sessions:read}',p_resource=>'')$q$,'42501','OAuth client, redirect or scope is unavailable.',
+  'resource validation cannot authorize redirecting to an unregistered callback');
 create temp table command_consent as select consent.* from command_client client
 cross join lateral public.begin_factory_oauth_authorization(client.id,pg_temp.command_id(2),pg_temp.command_id(8),
-  'http://127.0.0.1:8123/callback',repeat('a',42)||'A','{sessions:read,sessions:cancel}') consent;
+  'http://127.0.0.1:8123/callback',repeat('a',42)||'A','{sessions:read,sessions:cancel}',p_resource=>pg_temp.command_resource()) consent;
+select ok((select jsonb_array_length(factories)=1 and factories->0->>'factory_id'=pg_temp.command_factory()::text from command_consent),
+  'MCP consent names the single exact resource factory');
 select public.decide_factory_oauth_authorization(authorization_id,pg_temp.command_id(2),pg_temp.command_id(8),true,
   array[pg_temp.command_factory()],pg_temp.command_id(36),repeat('c',64)) from command_consent;
-select is((select issued.status from command_client client cross join lateral public.exchange_factory_oauth_code(
-  client.id,'http://127.0.0.1:8123/callback',pg_temp.command_id(36),repeat('c',64),repeat('a',42)||'A',
-  pg_temp.command_id(32),repeat('a',64),pg_temp.command_id(37),repeat('b',64)) issued),
+create function pg_temp.command_exchange(resource text) returns text language sql as $$
+  select issued.status from command_client client cross join lateral public.exchange_factory_oauth_code(
+    client.id,'http://127.0.0.1:8123/callback',pg_temp.command_id(36),repeat('c',64),repeat('a',42)||'A',
+    pg_temp.command_id(41),repeat('a',64),pg_temp.command_id(42),repeat('b',64),p_resource=>resource) issued
+$$;
+select is(pg_temp.command_exchange(null),'invalid_target','an MCP authorization code cannot exchange at the default API audience');
+select is(pg_temp.command_exchange(pg_temp.command_resource('https://other.example.test')),'invalid_target',
+  'an identical factory path at a different origin is a different OAuth resource');
+select is(pg_temp.command_exchange(pg_temp.command_resource()),
   'issued','the exact same principal obtains independent machine-token and OAuth credentials');
+
+create function pg_temp.command_refresh(resource text) returns text language sql as $$
+  select rotated.status from command_client client cross join lateral public.rotate_factory_oauth_refresh_token(
+    client.id,pg_temp.command_id(42),repeat('b',64),pg_temp.command_id(32),repeat('a',64),pg_temp.command_id(37),repeat('b',64),
+    '{sessions:read}',p_resource=>resource) rotated
+$$;
+select is(pg_temp.command_refresh(null),'invalid_target','an unused MCP refresh cannot issue a default API credential');
+select is(pg_temp.command_refresh(pg_temp.command_resource(factory=>pg_temp.command_id(9))),'invalid_target',
+  'an unused refresh cannot switch factory resources');
+select is(pg_temp.command_refresh(pg_temp.command_resource()),'issued','the original audience survives code exchange and refresh');
+
+select results_eq($q$select * from public.inspect_factory_mcp_identity(pg_temp.command_id(4),pg_temp.command_factory(),
+  'oauth_access_token',pg_temp.command_id(32),repeat('a',64),pg_temp.command_resource())$q$,
+  $q$values ('authorized'::text,'{sessions:read}'::public.factory_command_scope[])$q$,
+  'discovery returns the current OAuth pair scopes after downscoping');
+select results_eq($q$select * from public.inspect_factory_mcp_identity(pg_temp.command_id(4),pg_temp.command_factory(),
+  'machine_token',pg_temp.command_id(34),repeat('a',64),pg_temp.command_resource())$q$,
+  $q$values ('authorized'::text,'{sessions:cancel}'::public.factory_command_scope[])$q$,
+  'the scope-neutral handshake works with a cancel-only credential');
+select results_eq($q$select * from public.inspect_factory_mcp_identity(pg_temp.command_id(4),pg_temp.command_factory(),
+  'oauth_access_token',pg_temp.command_id(32),repeat('a',64),pg_temp.command_resource('https://other.example.test'))$q$,
+  $q$values ('unauthorized'::text,'{}'::public.factory_command_scope[])$q$,'wrong audience exposes no identity metadata');
+select ok(not exists(select 1 from internal.factory_command_admissions where workspace_id=pg_temp.command_id(4))
+  and (select last_used_at is null from public.factory_machine_tokens where id=pg_temp.command_id(34)),
+  'MCP identity queries consume no quota and do not mark a credential as used');
+select ok(not exists(select 1 from public.list_factory_event_authorizations(pg_temp.command_id(4),pg_temp.command_factory(),
+  pg_temp.command_id(1)) listed where listed.credential_kind='oauth_grant'),
+  'MCP-only OAuth consents are unavailable to outbound destinations');
+select throws_ok($q$select public.authorize_factory_oauth_access_token(pg_temp.command_id(4),pg_temp.command_factory(),
+  pg_temp.command_id(32),repeat('a',64),'sessions:read')$q$,'42501',null,
+  'the legacy OAuth access check does not accept an MCP-only token');
+select ok(not has_function_privilege('authenticated',
+  'public.inspect_factory_mcp_identity(uuid,uuid,public.factory_command_credential_kind,uuid,text,text)','execute')
+  and not has_table_privilege('service_role','internal.factory_oauth_grant_resources','select'),
+  'MCP identity and persistent audiences stay outside browser and raw service-role table access');
 
 create function pg_temp.command_config(workspace_rate integer,principal_rate integer,workspace_concurrent integer default 12,
   principal_concurrent integer default 4,lease_length integer default 60) returns void language sql as $$
@@ -63,7 +120,8 @@ returns table(status public.factory_command_admission_status,retry_after_seconds
 language sql as $$
   select * from public.admit_factory_command(pg_temp.command_id(4),pg_temp.command_factory(),
     case when p_credential=32 then 'oauth_access_token'::public.factory_command_credential_kind else 'machine_token' end,
-    pg_temp.command_id(p_credential),p_digest,p_scope,pg_temp.command_id(p_request),p_hash,p_surface);
+    pg_temp.command_id(p_credential),p_digest,p_scope,pg_temp.command_id(p_request),p_hash,p_surface,
+    case when p_surface='mcp' then pg_temp.command_resource() end);
 $$;
 select throws_ok('select pg_temp.command_config(0,10)', '22023', 'Invalid command quota limits.', 'quota settings validate bounds');
 select throws_ok($q$select public.configure_factory_command_quotas(pg_temp.command_id(4),pg_temp.command_id(2),10,4,5,2)$q$,
@@ -74,7 +132,10 @@ select ok(not has_function_privilege('authenticated',
   'browser authorization stays outside the machine RPC and its private ledger');
 select is((select status::text from pg_temp.command_admit(101,p_digest=>repeat('c',64))),'unauthorized','a guessed credential yields a stable denial');
 select is((select status::text from pg_temp.command_admit(101,p_scope=>'sessions:cancel')),'forbidden','a narrower machine token denies scope before admission');
-select is((select status::text from pg_temp.command_admit(101,32,'sessions:create')),'forbidden','OAuth uses the same scope-denial contract');
+select is((select status::text from pg_temp.command_admit(101,32,'sessions:create',p_surface=>'mcp')),'forbidden',
+  'live OAuth MCP credentials use the same scope-denial contract');
+select is((select status::text from pg_temp.command_admit(101,32)),'unauthorized',
+  'an MCP OAuth credential cannot reserve quota on the API service');
 select is((select count(*) from internal.factory_command_admissions where workspace_id=pg_temp.command_id(4)),0::bigint,
   'denials return no identity, reserve no permit and consume no quota');
 select pg_temp.command_config(10,1);
@@ -142,9 +203,10 @@ end;
 $$;
 create function pg_temp.command_query(p_request integer,p_credential integer) returns text language sql as $$
   select format($q$select status::text,retry_after_seconds,admission_id,lease_id,lease_expires_at
-    from public.admit_factory_command(%L,%L,%L,%L,repeat('a',64),'sessions:read',%L,repeat('b',64),%L)$q$,
+    from public.admit_factory_command(%L,%L,%L,%L,repeat('a',64),'sessions:read',%L,repeat('b',64),%L,%L)$q$,
     pg_temp.command_id(4),pg_temp.command_factory(),case when p_credential=32 then 'oauth_access_token' else 'machine_token' end,
-    pg_temp.command_id(p_credential),pg_temp.command_id(p_request),case when p_credential=32 then 'mcp' else 'api' end);
+    pg_temp.command_id(p_credential),pg_temp.command_id(p_request),case when p_credential=32 then 'mcp' else 'api' end,
+    case when p_credential=32 then pg_temp.command_resource() end);
 $$;
 select extensions.dblink_exec('command_first','begin');
 create temp table race_admission as select * from extensions.dblink('command_first',pg_temp.command_query(110,31))
@@ -188,12 +250,24 @@ select ok(exists(select 1 from internal.factory_command_admissions receipt join 
     where receipt.request_id=pg_temp.command_id(120))
   and not exists(select 1 from internal.factory_command_leases lease where lease.admission_id=(select admission_id from expiring_admission)),
   'expiry reclaims concurrency without refunding the original request or its successful use');
-select public.revoke_factory_oauth_grant(pg_temp.command_id(4),pg_temp.command_id(2),
-  (select id from public.factory_oauth_grants where client_id=(select id from command_client)));
 select throws_ok($q$select internal.require_factory_command(workspace_id,factory_id,'oauth_access_token',pg_temp.command_id(32),
-  repeat('a',64),'sessions:read',pg_temp.command_id(121),repeat('b',64),'mcp',admission_id,lease_id) from recovered_admission$q$,
-  '42501','OAuth token is unavailable.','a protected command rechecks authority after provisional admission');
+  repeat('a',64),'sessions:read',pg_temp.command_id(121),repeat('b',64),'api',admission_id,lease_id) from recovered_admission$q$,
+  'PT409','Command admission is unavailable.','the protected handler cannot relabel an authenticated MCP permit as an API permit');
+select (internal.require_factory_command(workspace_id,factory_id,'oauth_access_token',pg_temp.command_id(32),
+  repeat('a',64),'sessions:read',pg_temp.command_id(121),repeat('b',64),'mcp',admission_id,lease_id)).id from recovered_admission;
+select internal.record_factory_command_use(admission_id,lease_id) from recovered_admission;
+select ok(exists(select 1 from internal.factory_command_admissions receipt join internal.factory_command_uses used on used.admission_id=receipt.id
+  where receipt.id=(select admission_id from recovered_admission) and receipt.resource_uri=pg_temp.command_resource()),
+  'protected work rereads the exact persisted MCP audience and records use only after successful authorization');
 select public.release_factory_command_admission(admission_id,lease_id) from recovered_admission;
+create temp table revoked_mcp_admission as select * from pg_temp.command_admit(122,32,p_surface=>'mcp');
+select is(pg_temp.command_refresh(''),'invalid_grant','a verified spent refresh revokes its family even with a malformed audience');
+select is((select revocation_reason from public.factory_oauth_grants where client_id=(select id from command_client)),
+  'refresh_reuse','the replay revocation commits');
+select throws_ok($q$select internal.require_factory_command(workspace_id,factory_id,'oauth_access_token',pg_temp.command_id(32),
+  repeat('a',64),'sessions:read',pg_temp.command_id(122),repeat('b',64),'mcp',admission_id,lease_id) from revoked_mcp_admission$q$,
+  '42501','OAuth token is unavailable.','a protected command rechecks authority after provisional admission');
+select public.release_factory_command_admission(admission_id,lease_id) from revoked_mcp_admission;
 select pg_temp.command_config(100,100,12,1);
 commit;
 begin;

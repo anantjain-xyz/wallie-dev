@@ -5,12 +5,14 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { resolveAppOrigin } from "@/lib/app-url";
 import {
   factoryCommandLabels,
   factoryCommandScopesSchema,
 } from "@/lib/factory-machine-tokens/contracts";
+import { parseFactoryMcpResource } from "@/lib/factory-mcp/resource";
 import { authenticateFactoryOAuthBrowser } from "@/lib/factory-oauth/browser-auth";
-import { parseFactoryOAuthAuthorization } from "@/lib/factory-oauth/protocol";
+import { factoryOAuthRedirect, parseFactoryOAuthAuthorization } from "@/lib/factory-oauth/protocol";
 import { loginPath } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -23,6 +25,7 @@ export const metadata: Metadata = {
 const consentSchema = z.object({
   authorization_id: z.string().uuid(),
   client_name: z.string().min(1),
+  workspace_id: z.string().uuid(),
   workspace_name: z.string().min(1),
   factories: z
     .array(
@@ -60,6 +63,8 @@ export default async function FactoryOAuthAuthorizePage({
   if (!parsed.ok) return <Unavailable />;
 
   const request = parsed.request;
+  const target = request.resource === undefined ? null : parseFactoryMcpResource(request.resource);
+  const resource = request.resource === undefined ? undefined : (target?.resource ?? "");
   const actor = await authenticateFactoryOAuthBrowser();
   if (!actor) {
     const resume = new URLSearchParams({
@@ -71,6 +76,7 @@ export default async function FactoryOAuthAuthorizePage({
       code_challenge_method: "S256",
     });
     if (request.state !== undefined) resume.set("state", request.state);
+    if (resource !== undefined) resume.set("resource", resource);
     redirect(loginPath(`/oauth/authorize?${resume}`));
   }
   if (!actor.sessionId) return <Unavailable />;
@@ -84,13 +90,33 @@ export default async function FactoryOAuthAuthorizePage({
       p_code_challenge: request.challenge,
       p_requested_scopes: request.scopes,
       p_state: request.state,
+      p_resource: resource,
     })
     .single();
+  if (resource !== undefined && error?.code === "PT400") {
+    // A resource error follows the database's exact registered redirect check.
+    redirect(
+      factoryOAuthRedirect({
+        issuer: resolveAppOrigin(),
+        redirectUri: request.redirectUri,
+        state: request.state,
+        response: { kind: "error", error: "invalid_target" },
+      }).href,
+    );
+  }
   if (error) return <Unavailable />;
   const consent = consentSchema.safeParse(data);
   if (!consent.success) return <Unavailable />;
 
-  const { authorization_id, client_name, workspace_name, factories } = consent.data;
+  const { authorization_id, client_name, workspace_id, workspace_name, factories } = consent.data;
+  if (
+    resource !== undefined &&
+    (!target ||
+      target.workspaceId !== workspace_id ||
+      factories.length !== 1 ||
+      factories[0].factory_id !== target.factoryId)
+  )
+    return <Unavailable />;
   return (
     <PageContainer className="max-w-xl">
       <PageHeader title="Authorize client" />
@@ -107,27 +133,53 @@ export default async function FactoryOAuthAuthorizePage({
           Returns to {new URL(request.redirectUri).origin}
         </p>
         <fieldset className="min-w-0 space-y-2">
-          <legend className="type-label text-foreground">Factories</legend>
-          <p className="type-secondary text-muted">Choose the factories this client can access.</p>
+          <legend className="type-label text-foreground">{target ? "Factory" : "Factories"}</legend>
+          {!target && (
+            <p className="type-secondary text-muted">
+              Choose the factories this client can access.
+            </p>
+          )}
           {factories.map((factory) => (
             <div className="min-w-0 space-y-1" key={factory.factory_id}>
-              <label className="flex items-start gap-2 text-sm text-foreground [overflow-wrap:anywhere]">
-                <input
-                  aria-describedby={`scopes-${factory.factory_id}`}
-                  className="mt-0.5"
-                  defaultChecked={factories.length === 1}
-                  name="factoryIds"
-                  type="checkbox"
-                  value={factory.factory_id}
-                />
-                {factory.name}
-              </label>
-              <p className="type-secondary pl-5 text-muted" id={`scopes-${factory.factory_id}`}>
+              {target ? (
+                <>
+                  <input name="factoryIds" type="hidden" value={factory.factory_id} />
+                  <p className="text-sm text-foreground [overflow-wrap:anywhere]">{factory.name}</p>
+                </>
+              ) : (
+                <label className="flex items-start gap-2 text-sm text-foreground [overflow-wrap:anywhere]">
+                  <input
+                    aria-describedby={`scopes-${factory.factory_id}`}
+                    className="mt-0.5"
+                    defaultChecked={factories.length === 1}
+                    name="factoryIds"
+                    type="checkbox"
+                    value={factory.factory_id}
+                  />
+                  {factory.name}
+                </label>
+              )}
+              <p
+                className={target ? "type-secondary text-muted" : "type-secondary pl-5 text-muted"}
+                id={`scopes-${factory.factory_id}`}
+              >
                 {factory.scopes.map((scope) => factoryCommandLabels[scope]).join(", ")}
               </p>
             </div>
           ))}
         </fieldset>
+        {target && (
+          <dl className="min-w-0 space-y-2 [overflow-wrap:anywhere]">
+            <div>
+              <dt className="type-label text-foreground">Issuer</dt>
+              <dd className="type-secondary text-muted">{resolveAppOrigin()}</dd>
+            </div>
+            <div>
+              <dt className="type-label text-foreground">Resource</dt>
+              <dd className="type-secondary text-muted">{target.resource}</dd>
+            </div>
+          </dl>
+        )}
         <div className="flex flex-wrap justify-end gap-2">
           <button className="ui-button" name="decision" type="submit" value="deny">
             Deny

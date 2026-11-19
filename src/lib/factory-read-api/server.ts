@@ -8,6 +8,7 @@ import {
   factoryCommandTransactionInput,
   releaseFactoryCommandAdmission,
   type FactoryCommandTransactionInput,
+  type FactoryCommandTransport,
 } from "@/lib/factory-command-authorization/server";
 import { workspaceSessionDetailPath } from "@/lib/routes";
 import { exactSessionReviewHref } from "@/lib/sessions/review-link";
@@ -69,17 +70,12 @@ function readError(code: FactoryReadErrorCode, retryAfterSeconds?: number) {
   );
 }
 
-function projectReadArgs(operation: FactoryReadOperation, request: Request, rawParams: unknown) {
+function projectReadArgs(operation: FactoryReadOperation, rawParams: unknown, rawQuery: unknown) {
   const contract = factoryReadRoutes[operation];
   const params = contract.params.safeParse(rawParams);
   if (!params.success) return { ok: false, code: "invalid_request" } as const;
 
-  const search = new URL(request.url).searchParams;
-  const queryValues = Object.fromEntries(search);
-  if (search.size !== Object.keys(queryValues).length) {
-    return { ok: false, code: "invalid_request" } as const;
-  }
-  const query = contract.query.safeParse(queryValues);
+  const query = contract.query.safeParse(rawQuery);
   if (!query.success) {
     const code = query.error.issues.some(({ path }) => path[0] === "cursor")
       ? "invalid_cursor"
@@ -309,7 +305,30 @@ export async function handleFactoryRead(
   rawParams: unknown,
   admin?: Admin,
 ) {
-  const parsed = projectReadArgs(operation, request, rawParams);
+  const search = new URL(request.url).searchParams;
+  const query = Object.fromEntries(search);
+  if (search.size !== Object.keys(query).length) return readError("invalid_request");
+  return executeFactoryRead(
+    operation,
+    rawParams,
+    query,
+    {
+      surface: "api",
+      authorization: request.headers.get("Authorization"),
+      signal: request.signal,
+    },
+    admin,
+  );
+}
+
+export async function executeFactoryRead(
+  operation: FactoryReadOperation,
+  rawParams: unknown,
+  rawQuery: unknown,
+  transport: FactoryCommandTransport,
+  admin?: Admin,
+) {
+  const parsed = projectReadArgs(operation, rawParams, rawQuery);
   if (!parsed.ok) return readError(parsed.code);
 
   const { scope, selectors } = parsed;
@@ -318,10 +337,9 @@ export async function handleFactoryRead(
     .digest("hex");
   const authorized = await authorizeFactoryCommand(
     {
-      authorization: request.headers.get("Authorization"),
+      ...transport,
       ...scope,
       scope: "sessions:read",
-      surface: "api",
       requestHash,
     },
     admin,
@@ -345,7 +363,7 @@ export async function handleFactoryRead(
         ...selectors,
         p_operation: operation,
       })
-      .abortSignal(request.signal);
+      .abortSignal(transport.signal);
     if (error) return readRpcFailure(error.code);
 
     const result = envelopeSchema.parse(data);

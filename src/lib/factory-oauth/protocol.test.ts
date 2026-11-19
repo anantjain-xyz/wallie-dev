@@ -15,6 +15,7 @@ const registered = "https://Client.example.test/callback?view=a%20b";
 const clientId = "aca1c4bf-9836-444a-a48b-b7e20ed21c8f";
 const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+const issuer = "https://wallie.example.test";
 
 function authorizationRequest() {
   return new URLSearchParams({
@@ -68,13 +69,31 @@ describe("factory OAuth authorization protocol", () => {
 
   it("retains the registered query and escapes the returned state", () => {
     const callback = factoryOAuthRedirect({
+      issuer,
       redirectUri: registered,
       state: "value&code=injected",
       response: { kind: "error", error: "access_denied" },
     });
 
-    expect(callback.search).toBe("?view=a%20b&error=access_denied&state=value%26code%3Dinjected");
+    expect(callback.search).toBe(
+      "?view=a%20b&error=access_denied&state=value%26code%3Dinjected&iss=https%3A%2F%2Fwallie.example.test",
+    );
     expect(callback.searchParams.has("code")).toBe(false);
+  });
+
+  it("preserves explicit resource intent and marks multiple resources as invalid", () => {
+    const query = authorizationRequest();
+    const resource = `${issuer}/api/v1/workspaces/${clientId}/factories/${clientId}/mcp`;
+    query.set("resource", resource);
+    expect(parseFactoryOAuthAuthorization(query)).toMatchObject({
+      ok: true,
+      request: { resource },
+    });
+    query.append("resource", resource);
+    expect(parseFactoryOAuthAuthorization(query)).toMatchObject({
+      ok: true,
+      request: { resource: "" },
+    });
   });
 
   it("rejects duplicate parameters and proof downgrade", () => {

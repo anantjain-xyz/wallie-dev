@@ -73,6 +73,7 @@
   "dependencies": {
     "@cursor/sdk": "1.0.30",
     "@daytona/sdk": "0.200.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "@octokit/app": "^16.1.2",
     "@octokit/webhooks-methods": "^6.0.0",
     "@radix-ui/react-alert-dialog": "^1.1.19",

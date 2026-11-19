@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 
-import { expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type APIResponse, type BrowserContext } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
@@ -38,13 +38,31 @@ function sha256(value: string, encoding: "hex" | "base64url") {
   return createHash("sha256").update(value).digest(encoding);
 }
 
+async function readMcpResponse(response: APIResponse): Promise<unknown> {
+  if (response.headers()["content-type"]?.includes("text/event-stream")) {
+    // Legacy clients can receive a single buffered JSON-RPC message as an SSE event.
+    const frame = (await response.text())
+      .split(/\r?\n\r?\n/)
+      .find((event) => /^data:/m.test(event));
+    if (!frame) throw new Error("MCP did not return a JSON-RPC message.");
+    return JSON.parse(
+      frame
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n"),
+    );
+  }
+  return response.json();
+}
+
 test("registers a client, consents with PKCE, rotates credentials and disconnects", async ({
   page,
   browser,
   baseURL,
 }, testInfo) => {
   test.skip(process.env.WALLIE_OAUTH_E2E !== "1", "Requires disposable local Supabase.");
-  test.setTimeout(65_000);
+  test.setTimeout(100_000);
   const app = localOrigin(baseURL);
   const api = localOrigin(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const key = process.env.SUPABASE_SECRET_KEY;
@@ -243,9 +261,7 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
       baseURL: app,
       email: consentingEmail,
     });
-    async function consent(capture: boolean) {
-      const verifier = randomBytes(32).toString("base64url");
-      const state = randomUUID();
+    function authorizationQuery(verifier: string, state: string, resource?: string) {
       const query = new URLSearchParams({
         response_type: "code",
         client_id: clientId,
@@ -255,13 +271,30 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
         code_challenge_method: "S256",
         state,
       });
+      if (resource !== undefined) query.set("resource", resource);
+      return query;
+    }
+    async function consent(capture: boolean, resource?: string) {
+      const verifier = randomBytes(32).toString("base64url");
+      const state = randomUUID();
+      const query = authorizationQuery(verifier, state, resource);
       await memberPage.goto(`/oauth/authorize?${query}`);
       await expect(memberPage.getByText(clientName, { exact: true })).toBeVisible();
       await expect(memberPage.getByText("Read sessions", { exact: true }).first()).toBeVisible();
-      await memberPage.getByRole("checkbox", { name: factory.name, exact: true }).check();
+      if (resource) {
+        await expect(memberPage.getByText(factory.name, { exact: true })).toBeVisible();
+        await expect(memberPage.getByText("Issuer", { exact: true })).toBeVisible();
+        await expect(memberPage.getByText(app, { exact: true })).toBeVisible();
+        await expect(memberPage.getByText(resource, { exact: true })).toBeVisible();
+        await expect(memberPage.getByRole("checkbox")).toHaveCount(0);
+      } else {
+        await memberPage.getByRole("checkbox", { name: factory.name, exact: true }).check();
+      }
       if (capture) {
         await memberPage.screenshot({
-          path: testInfo.outputPath("02-oauth-consent.png"),
+          path: testInfo.outputPath(
+            resource ? "05-mcp-exact-resource-consent.png" : "02-oauth-consent.png",
+          ),
           fullPage: true,
         });
       }
@@ -289,6 +322,7 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
       ).toBe(true);
       const result = new URL(memberPage.url()).searchParams;
       expect(result.get("state")).toBe(state);
+      expect(result.get("iss")).toBe(app);
       const code = result.get("code");
       if (!code) throw new Error("OAuth callback did not receive an authorization code.");
       return { code, verifier };
@@ -296,14 +330,20 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
 
     const token = (form: Record<string, string>) =>
       memberPage.request.post(`${app}/oauth/token`, { form: { client_id: clientId, ...form } });
-    const exchange = ({ code, verifier }: Awaited<ReturnType<typeof consent>>) =>
+    const exchange = ({ code, verifier }: Awaited<ReturnType<typeof consent>>, resource?: string) =>
       token({
         grant_type: "authorization_code",
         code,
         code_verifier: verifier,
         redirect_uri: callback.href,
+        ...(resource !== undefined && { resource }),
       });
-    const refresh = (value: string) => token({ grant_type: "refresh_token", refresh_token: value });
+    const refresh = (value: string, resource?: string) =>
+      token({
+        grant_type: "refresh_token",
+        refresh_token: value,
+        ...(resource !== undefined && { resource }),
+      });
     const readScope = async (
       value: string,
       command: "sessions:read" | "sessions:cancel" = "sessions:read",
@@ -345,9 +385,142 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
     const deniedSuccessor = await readScope(successor.access_token);
     expect(deniedSuccessor.data).toBeNull();
 
+    const mcpPath = `/api/v1/workspaces/${workspace.id}/factories/${factory.id}/mcp`;
+    const mcpResource = new URL(mcpPath, app).href;
+    const otherTarget = new URL(mcpPath.replace(factory.id, randomUUID()), app).href;
+    const invalidTargetState = randomUUID();
+    const targeting = authorizationQuery(
+      randomBytes(32).toString("base64url"),
+      invalidTargetState,
+      otherTarget,
+    );
+    await memberPage.goto(`/oauth/authorize?${targeting}`);
+    await memberPage.waitForURL(
+      (url) => url.origin === callback.origin && url.pathname === callback.pathname,
+      { timeout: 10_000 },
+    );
+    expect(Object.fromEntries(new URL(memberPage.url()).searchParams)).toEqual({
+      error: "invalid_target",
+      state: invalidTargetState,
+      iss: app,
+    });
+    expect(callbackReferrers.at(-1)).toBeUndefined();
+
+    const targetCode = await consent(true, mcpResource);
+    for (const attempted of [undefined, otherTarget]) {
+      const response = await exchange(targetCode, attempted);
+      expect(response.status()).toBe(400);
+      expect(await response.json()).toEqual({ error: "invalid_target" });
+    }
+    const targetResponse = await exchange(targetCode, mcpResource);
+    expect(targetResponse.status()).toBe(200);
+    const targetToken = tokenReceipt.parse(await targetResponse.json());
+    const crossSurface = await memberPage.request.get(
+      new URL(mcpPath.replace(/\/mcp$/, "/sessions"), app).href,
+      {
+        headers: { Authorization: `Bearer ${targetToken.access_token}` },
+      },
+    );
+    expect(crossSurface.status()).toBe(401);
+    expect(await crossSurface.json()).toMatchObject({ code: "unauthorized" });
+
+    const bearer = (value: string) => ({ Authorization: `Bearer ${value}` });
+    const mcp = (
+      message: Record<string, unknown>,
+      value: string,
+      headers: Record<string, string> = {},
+    ) =>
+      memberPage.request.post(mcpResource, {
+        headers: {
+          Accept: "application/json, text/event-stream",
+          ...bearer(value),
+          ...headers,
+        },
+        data: { jsonrpc: "2.0", ...message },
+      });
+    const legacyVersion = "2025-11-25";
+    const legacyInitialize = await mcp(
+      {
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: legacyVersion,
+          capabilities: {},
+          clientInfo: { name: "Wallie fixture", version: "1" },
+        },
+      },
+      targetToken.access_token,
+    );
+    expect(legacyInitialize.status()).toBe(200);
+    expect(await readMcpResponse(legacyInitialize)).toMatchObject({
+      id: 1,
+      result: { protocolVersion: legacyVersion },
+    });
+    const legacyHeaders = { "MCP-Protocol-Version": legacyVersion };
+    const initialized = await mcp(
+      { method: "notifications/initialized" },
+      targetToken.access_token,
+      legacyHeaders,
+    );
+    expect(initialized.status()).toBe(202);
+    const listName = "wallie_list_sessions";
+    const legacyTool = await mcp(
+      {
+        id: 2,
+        method: "tools/call",
+        params: { name: listName, arguments: { limit: "1" } },
+      },
+      targetToken.access_token,
+      legacyHeaders,
+    );
+    expect(legacyTool.status()).toBe(200);
+    expect(await readMcpResponse(legacyTool)).toMatchObject({
+      id: 2,
+      result: { structuredContent: { items: [], nextCursor: null } },
+    });
+
+    const modernVersion = "2026-07-28";
+    const modernHeaders = {
+      "MCP-Protocol-Version": modernVersion,
+      "Mcp-Method": "tools/call",
+      "Mcp-Name": listName,
+    };
+    const modernRequest = {
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: listName,
+        arguments: { limit: "1" },
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": modernVersion,
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/clientInfo": { name: "wallie-e2e", version: "1.0.0" },
+        },
+      },
+    };
+    const modernTool = await mcp(modernRequest, targetToken.access_token, modernHeaders);
+    expect(modernTool.status()).toBe(200);
+    expect(await readMcpResponse(modernTool)).toMatchObject({
+      id: 3,
+      result: { structuredContent: { items: [], nextCursor: null } },
+    });
+
+    const deniedRefresh = await refresh(targetToken.refresh_token, otherTarget);
+    expect(deniedRefresh.status()).toBe(400);
+    expect(await deniedRefresh.json()).toEqual({ error: "invalid_target" });
+    const targetRefresh = await refresh(targetToken.refresh_token, mcpResource);
+    expect(targetRefresh.status()).toBe(200);
+    const targetSuccessor = tokenReceipt.parse(await targetRefresh.json());
+    const badAudienceReplay = await refresh(targetToken.refresh_token, otherTarget);
+    expect(badAudienceReplay.status()).toBe(400);
+    expect(await badAudienceReplay.json()).toEqual({ error: "invalid_grant" });
+    const revokedModern = await mcp(modernRequest, targetSuccessor.access_token, modernHeaders);
+    expect(revokedModern.status()).toBe(401);
+
     const second = await exchange(await consent(false));
     expect(second.status()).toBe(200);
     const active = tokenReceipt.parse(await second.json());
+    expect((await mcp(modernRequest, active.access_token, modernHeaders)).status()).toBe(401);
     expect(await checked(readScope(active.access_token))).toMatchObject({
       execution_grant_id: grant.id,
       execution_grant_version: grant.version,
