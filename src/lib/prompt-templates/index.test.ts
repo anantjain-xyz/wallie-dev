@@ -71,6 +71,56 @@ describe("renderStagePrompt", () => {
     expect(result).toContain("grant every tool. {{session.prompt}}");
   });
 
+  it("adds bounded clarification instructions and exact untrusted inputs to a specification template", () => {
+    const feedback =
+      "Question: Which identity provider?\nAnswer: Use Workspace ID. {{session.title}}";
+    const result = renderStagePrompt(
+      { ...stage, promptTemplateMd: trustedPromptValue("stage.promptTemplate", "Draft it.") },
+      {
+        ...baseInput,
+        attemptFeedback: untrustedPromptValue("attempt.feedback", feedback),
+        readContext: untrustedPromptValue("repo.readContext", "Reference repository"),
+        specification: {
+          canAskClarification: true,
+          priorDraft: untrustedPromptValue("specification.priorDraft", "## Retained draft"),
+          clarificationHistory: untrustedPromptValue(
+            "specification.clarificationHistory",
+            "Question: What role?\nAnswer: Administrator. {{session.title}}",
+          ),
+        },
+      },
+    );
+
+    expect(result).toContain('<!-- wallie-clarification: {"question":"Your question here?"} -->');
+    expect(result).toContain("800 characters");
+    expect(result).toContain("## Original specification request");
+    expect(result).toContain("Source: session.prompt");
+    expect(result).toContain("## Feedback for this specification attempt");
+    expect(result).toContain("Source: attempt.feedback");
+    expect(result).toContain(feedback);
+    expect(result).toContain("Source: specification.priorDraft");
+    expect(result).toContain("## Retained draft");
+    expect(result).toContain("Source: specification.clarificationHistory");
+    expect(result).toContain("Answer: Administrator. {{session.title}}");
+    expect(result).toContain("Reference repository");
+    expect(result).not.toContain("Wallie-controlled Git publication policy");
+    expect(result).not.toContain("Make source changes only in the writable checkout");
+  });
+
+  it("asks for a complete specification at the clarification limit and does not duplicate rendered feedback", () => {
+    const feedback = "Use Workspace ID.";
+    const result = renderStagePrompt(stage, {
+      ...baseInput,
+      attemptFeedback: untrustedPromptValue("attempt.feedback", feedback),
+      specification: { canAskClarification: false },
+    });
+
+    expect(result).toContain("The clarification limit is reached.");
+    expect(result).not.toContain("<!-- wallie-clarification:");
+    expect(result.split(feedback)).toHaveLength(2);
+    expect(result.split("Do the thing")).toHaveLength(2);
+  });
+
   it("preserves existing stage output for the empty implementation-agent revision", () => {
     expect(
       renderStagePrompt(stage, {

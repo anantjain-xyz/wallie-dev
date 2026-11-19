@@ -304,6 +304,7 @@ export async function createSessionWithFirstJob(input: {
   commandFactoryId?: string | null;
   creationRequest?: { id: string; fingerprint: string };
   creatorMemberId: string;
+  draftSpecification?: boolean;
   /** A null snapshot confirms that the default factory has no active revision. */
   factoryDefinitionDigest?: string | null;
   githubRepositoryId: string | null;
@@ -336,6 +337,9 @@ export async function createSessionWithFirstJob(input: {
   if (input.restartOfSessionId && !input.creationRequest) {
     throw new Error("A creation request id is required to restart a session.");
   }
+  if (input.draftSpecification && input.commandFactoryId === undefined) {
+    throw new Error("A confirmed session command is required to draft a specification.");
+  }
   if (input.commandFactoryId !== undefined && input.factoryDefinitionDigest === undefined) {
     throw new Error("A confirmed factory definition is required for a session command.");
   }
@@ -362,6 +366,7 @@ export async function createSessionWithFirstJob(input: {
       ? admin.rpc("create_session_command_once", {
           ...confirmationArgs,
           target_factory_id: input.commandFactoryId ?? undefined,
+          draft_specification: input.draftSpecification || undefined,
         })
       : admin.rpc("create_confirmed_factory_session_once_with_first_job", confirmationArgs)
     : requestArgs
@@ -395,6 +400,7 @@ export async function findSessionCreationRequest(input: {
   commandFactoryId?: string | null;
   creationRequest: { id: string; fingerprint: string };
   creatorMemberId: string;
+  draftSpecification?: boolean;
   restartOfSessionId?: string;
   workspaceId: string;
 }): Promise<CreateSessionWithFirstJobResult | null> {
@@ -409,6 +415,7 @@ export async function findSessionCreationRequest(input: {
       ? input.admin.rpc("find_session_creation_request", args)
       : input.admin.rpc("find_session_creation_command", {
           ...args,
+          draft_specification: input.draftSpecification || undefined,
           source_session_id: input.restartOfSessionId,
           target_factory_id: input.commandFactoryId ?? undefined,
         });

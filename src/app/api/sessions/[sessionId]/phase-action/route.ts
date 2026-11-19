@@ -179,6 +179,16 @@ export async function POST(request: Request, { params }: Params) {
         }),
       );
       if (!result.success) {
+        if (result.errorCode === "42501") {
+          return errorResponse("forbidden", "You do not have access to approve this stage.", 403);
+        }
+        if (result.errorCode === "PT423") {
+          return errorResponse(
+            "invalid_state",
+            "Answer the current clarification before approving.",
+            409,
+          );
+        }
         if (result.errorCode === "PT409")
           return errorResponse(
             "blocking_review",

@@ -35,6 +35,7 @@ export type DisplayedArtifactIdentity = Pick<
 >;
 
 type ArtifactPanelProps = {
+  specification?: boolean;
   readOnlyReason?: ReviewSessionReadOnlyReason | null;
   /** Exact current-stage authority; null must not reuse a cached latest artifact. */
   currentArtifactId?: string | null;
@@ -289,6 +290,7 @@ function ArtifactPanelStage({
   readOnlyReason = null,
   seenRejectionCountByStage,
   sessionId,
+  specification = false,
   stageSlug,
 }: ArtifactPanelProps & {
   bodyCache: Map<string, CachedArtifactBody>;
@@ -1151,10 +1153,11 @@ function ArtifactPanelStage({
     compare: hasReviewBrief ? "Compare versions" : "Compare",
   };
 
+  const artifactLabel = specification ? "Specification" : `${stageSlug} artifact`;
   const versionHeading =
     viewingVersion === null
-      ? `${stageSlug} artifact`
-      : `${stageSlug} artifact · version ${viewingVersion}${viewingIsLatest ? " (latest)" : ""}`;
+      ? artifactLabel
+      : `${artifactLabel} · version ${viewingVersion}${viewingIsLatest ? " (latest)" : ""}`;
 
   return (
     <div>
@@ -1162,7 +1165,11 @@ function ArtifactPanelStage({
         {versionHeading}
       </h3>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div aria-label="Artifact views" className="flex flex-wrap gap-1" role="tablist">
+        <div
+          aria-label={specification ? "Specification views" : "Artifact views"}
+          className="flex flex-wrap gap-1"
+          role="tablist"
+        >
           {tabs.map((tab) => (
             <TabButton
               key={tab}

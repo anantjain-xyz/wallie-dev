@@ -135,6 +135,7 @@ describe("session repositories route", () => {
     mocked.loadActiveFactoryExecution.mockResolvedValueOnce({
       canonicalDigest: "a".repeat(64),
       factoryId: "factory-1",
+      implementationAgent: { agentId: "configured-agent" },
       pipelineId: "compiled-pipeline",
       repositoryId: "repo-pinned",
       writableRepositoryIds: ["repo-alternate"],
@@ -150,6 +151,7 @@ describe("session repositories route", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toEqual({
+      canDraftSpecification: true,
       defaultGithubRepositoryId: "repo-pinned",
       factoryDefinitionDigest: "a".repeat(64),
       pipelineId: "compiled-pipeline",

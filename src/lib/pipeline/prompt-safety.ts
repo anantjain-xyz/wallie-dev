@@ -14,7 +14,8 @@ export type TrustedPromptSource =
   | "wallie.artifactEvidencePolicy"
   | "wallie.buildGitPublicationPolicy"
   | "wallie.readContextInstructions"
-  | "wallie.retryCheckpointInstructions";
+  | "wallie.retryCheckpointInstructions"
+  | "wallie.specificationStagePolicy";
 
 export type UntrustedPromptSource =
   | "attempt.feedback"
@@ -26,7 +27,9 @@ export type UntrustedPromptSource =
   | "session.prompt"
   | "session.attachments"
   | `skill.repositoryRevision.${string}`
-  | "session.title";
+  | "session.title"
+  | "specification.clarificationHistory"
+  | "specification.priorDraft";
 
 type PromptTrust = "trusted" | "untrusted";
 

@@ -99,6 +99,12 @@ describe("loadJobFeedback", () => {
     expect(filters).toContainEqual(["session_artifact_feedback", "session_id", job.session_id]);
     expect(filters).toContainEqual(["session_artifact_feedback", "stage_id", "stage-1"]);
   });
+  it("does not substitute a legacy stage note when the specification attempt has no linked batch", async () => {
+    const { admin, tables } = client(null);
+    expect(await loadJobFeedback(admin, job, "stage-1", { exactOnly: true })).toBeNull();
+    expect(tables).toEqual(["artifact_feedback_batch_jobs"]);
+  });
+
   it("fails closed instead of replacing a batch with later feedback when lookup fails", async () => {
     const error = { message: "Unavailable" };
     const { admin, tables } = client(null, error);
