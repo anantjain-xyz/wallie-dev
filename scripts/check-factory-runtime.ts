@@ -55,9 +55,10 @@ async function runFactoryRuntime() {
   try {
     const [flag, directory, ...extra] = process.argv.slice(2);
     const m05 = extra.length === 1 && extra[0] === "--m05";
-    if (flag !== "--workdir" || !directory || (extra.length > 0 && !m05)) {
+    const m06 = extra.length === 1 && extra[0] === "--m06";
+    if (flag !== "--workdir" || !directory || (extra.length > 0 && !m05 && !m06)) {
       throw new FixtureConfigurationError(
-        "Pass --workdir with a disposable local Supabase project and optionally --m05.",
+        "Pass --workdir with a disposable local Supabase project and optionally --m05 or --m06.",
       );
     }
     const status = JSON.parse(
@@ -69,11 +70,36 @@ async function runFactoryRuntime() {
       }),
     ) as Record<string, string>;
     const url = loopbackUrl(status.API_URL, ["http:"]);
-    loopbackUrl(status.DB_URL, ["postgresql:", "postgres:"]);
+    const databaseUrl = loopbackUrl(status.DB_URL, ["postgresql:", "postgres:"]);
     const serviceKey = status.SERVICE_ROLE_KEY || status.SECRET_KEY;
     const publishableKey = status.ANON_KEY || status.PUBLISHABLE_KEY;
     if (!serviceKey || !publishableKey) {
       throw new FixtureConfigurationError("The local test credentials are unavailable.");
+    }
+
+    if (m06) {
+      const result = spawnSync(
+        process.execPath,
+        ["--import", "tsx", "test/release/factory-outcome-runtime.ts"],
+        {
+          env: {
+            NODE_ENV: "test",
+            PATH: process.env.PATH,
+            TMPDIR: process.env.TMPDIR,
+            NEXT_PUBLIC_APP_URL: url,
+            NEXT_PUBLIC_SUPABASE_URL: url,
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: publishableKey,
+            SUPABASE_SECRET_KEY: serviceKey,
+            WALLIE_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
+            WALLIE_FACTORY_ANALYTICS_DATABASE_URL: databaseUrl,
+            CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false",
+            WRANGLER_SEND_METRICS: "false",
+          },
+          stdio: "inherit",
+        },
+      );
+      process.exitCode = result.status ?? 1;
+      return;
     }
 
     const env: NodeJS.ProcessEnv = {

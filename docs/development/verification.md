@@ -217,6 +217,46 @@ The run uses synthetic Git, worker attempts and receiver data. Use
 [outbound delivery recovery](../deployment/worker-operations.md#outbound-factory-delivery)
 for operator procedures.
 
+### Factory outcome analytics
+
+Use exclusive disposable Supabase projects with the current migrations.
+Install Chromium and make `psql` available. Run the runtime qualification from
+an isolated checkout without `.env.local` so the daemon receives the selected
+loopback project configuration. Start with an empty runtime database. The SQL
+regression suite uses the repository’s demo seed in its separate local project.
+
+```sh
+pnpm exec playwright install chromium
+supabase db reset --local --no-seed --workdir /path/to/disposable-runtime-project
+pnpm check:factory-runtime --workdir /path/to/disposable-runtime-project --m06
+pnpm check:db-tests --workdir /path/to/seeded-disposable-project
+```
+
+For the signed-in browser run, set `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` from the same
+local project. Set `WALLIE_FACTORY_ANALYTICS_DATABASE_URL` to its loopback
+Postgres URL. Use the same `localhost` origin for `NEXT_PUBLIC_APP_URL` and
+Playwright. Set a disposable `WALLIE_ENCRYPTION_KEY`, for example with
+`openssl rand -hex 32`. Run the runtime and browser fixtures separately so
+each owns the test database queue.
+
+```sh
+pnpm build
+WALLIE_FACTORY_OUTCOMES_E2E=1 pnpm exec playwright test e2e/factory-outcome-release.spec.ts
+```
+
+| Evidence          | What the qualification verifies                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Outcome facts     | Retry and cancellation observations, duplicate and late merge evidence, corrected deployments, and measured, estimated, and missing costs                                             |
+| Reported cohorts  | Exact Overview and Analytics filters, no-merge periods, mature and incomplete revert windows, and source drilldowns                                                                   |
+| Export snapshots  | CSV and JSON membership, frozen facts after a late correction, and a reconciliation that recomputes durations, distributions, counts, and ratios from the exact exported observations |
+| Runtime recovery  | Projection pause, replay, rebuild, and convergence through the Node daemon and native Workerd maintenance                                                                             |
+| Access boundaries | Signed-in requests and exports stay scoped to the authorized workspace and factory                                                                                                    |
+
+The browser proof uses synthetic source evidence and signed-in local accounts.
+See [metric coverage](../architecture/factory-outcomes.md#qualification-and-coverage-limits)
+and [projection recovery](../deployment/worker-operations.md#factory-outcome-projection-recovery).
+
 ## Browser and benchmark commands
 
 The checked-in Playwright suites are targeted rather than one universal E2E
