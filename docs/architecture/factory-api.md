@@ -58,7 +58,9 @@ Each write takes a UUID in the `Idempotency-Key` header.
 
 - A review reference identifies the current stage, artifact ID and version,
   producing run and attempt, and review revision. Open its link in the
-  authenticated Review Workbench to take the human action.
+  authenticated Review Workbench to take the human action. The link preserves
+  that artifact and revision through sign-in. A superseded review opens its
+  designated artifact read-only, with a link to open the current review.
 - An artifact read returns its recorded stage and version, producing run and
   attempt, and exact checkpoint commit. Run coverage distinguishes unavailable
   artifact provenance and the expiry of retained transcript data.

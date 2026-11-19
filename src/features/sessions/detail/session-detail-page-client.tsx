@@ -11,6 +11,7 @@ import {
   useTransition,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer } from "@/components/ui/page-shell";
@@ -48,6 +49,7 @@ import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
 import { SessionDetailHeader } from "./session-detail-header";
+import { useApprovalReview } from "./use-approval-review";
 import { SessionStageWorkspace } from "./session-stage-workspace";
 import { SessionSpecificationControl, useSessionSpecification } from "./session-specification";
 import { SessionActivityPresentationProvider } from "./session-activity-presentation";
@@ -92,7 +94,8 @@ import {
   subscribeDeferredAuthenticatedChannel,
 } from "@/lib/supabase/deferred-browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
-import { workspaceSessionsPath } from "@/lib/routes";
+import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
+import type { ExactSessionReviewTarget } from "@/lib/sessions/review-link";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 
@@ -125,6 +128,7 @@ type SessionDetailPageClientProps = {
   hasFailedRun?: boolean;
   latestRun?: StageExecution | null;
   initialData: SessionReviewData;
+  initialExactReviewTarget?: ExactSessionReviewTarget | null;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
   initialNow?: string;
@@ -185,9 +189,41 @@ export function reconcilePhaseMutationResult(
 
 export { centerStageTimelineSelection as centerStageRailSelection } from "@/features/sessions/detail/stage-timeline";
 
+function exactReviewStatus(
+  target: ExactSessionReviewTarget,
+  isCurrent: boolean,
+  specification: ReturnType<typeof useSessionSpecification> | null,
+  approval: ReturnType<typeof useApprovalReview>,
+) {
+  if (!isCurrent) return "stale";
+  if (approval.value && approval.value.reviewRevision !== target.reviewRevision) return "stale";
+
+  if (target.clarificationId) {
+    if (!specification) return "stale";
+    const { clarification, status, reviewable } = specification.view;
+    if (status !== "ready") return status;
+    return reviewable &&
+      clarification?.id === target.clarificationId &&
+      clarification.status === "pending" &&
+      clarification.reviewRevision === target.reviewRevision
+      ? "clarification"
+      : "stale";
+  }
+
+  if (specification && !specification.canReview) {
+    return specification.view.status === "ready" ? "stale" : specification.view.status;
+  }
+  if (approval.value) return "review";
+  return approval.error ? "error" : "checking";
+}
+
 export function SessionDetailPageClient(props: SessionDetailPageClientProps) {
+  const target = props.initialExactReviewTarget;
+  const key = target
+    ? `${props.initialData.session.id}:${target.stageId}:${target.artifactId}:${target.artifactVersion}:${target.reviewRevision}:${target.clarificationId ?? ""}`
+    : props.initialData.session.id;
   return (
-    <SessionExecutionProvider key={props.initialData.session.id}>
+    <SessionExecutionProvider key={key}>
       <SessionDetailContent {...props} />
     </SessionExecutionProvider>
   );
@@ -200,6 +236,7 @@ function SessionDetailContent({
   hasFailedRun: initialHasFailedRun = false,
   latestRun: initialLatestRun = null,
   initialData,
+  initialExactReviewTarget: exactTarget,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
   initialNow,
@@ -219,13 +256,14 @@ function SessionDetailContent({
   const latestSessionRef = useRef(session);
   latestSessionRef.current = session;
   const creatorDisplayName = initialData.creatorDisplayName;
-  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(() => {
+  const [stageSelection, setSelectedStageSlug] = useState<string>(() => {
     const fromUrl = searchParams.get(ARTIFACT_STAGE_PARAM);
     if (fromUrl && initialData.session.pipeline.stages.some((stage) => stage.slug === fromUrl)) {
       return fromUrl;
     }
     return initialData.session.currentStageSlug;
   });
+  const selectedStageSlug = exactTarget?.stageSlug ?? stageSelection;
   const [canApprove, setCanApprove] = useState(canReview);
   const [hasFailedRun, setHasFailedRun] = useState(initialHasFailedRun);
   const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
@@ -354,6 +392,32 @@ function SessionDetailContent({
         }
       : null;
   const specification = useSessionSpecification(specificationArtifact);
+  const exactTargetIsCurrent = Boolean(
+    exactTarget &&
+    !session.archivedAt &&
+    !hasFailedRun &&
+    session.phaseStatus === "awaiting_review" &&
+    session.currentStageId === exactTarget.stageId &&
+    session.currentStageSlug === exactTarget.stageSlug &&
+    session.currentArtifactId === exactTarget.artifactId &&
+    session.currentArtifactVersion === exactTarget.artifactVersion,
+  );
+  const exactApproval = useApprovalReview(
+    exactTargetIsCurrent ? session.id : undefined,
+    exactTarget?.artifactId,
+  );
+  const exactReviewState = exactTarget
+    ? exactReviewStatus(
+        exactTarget,
+        exactTargetIsCurrent,
+        selectedStageIsSpecification ? specification : null,
+        exactApproval,
+      )
+    : null;
+  const exactReadOnly =
+    exactReviewState !== null &&
+    exactReviewState !== "review" &&
+    exactReviewState !== "clarification";
   const specificationExhausted =
     session.phaseStatus === "rejected" &&
     specification.view.clarification?.status === "answered" &&
@@ -402,11 +466,12 @@ function SessionDetailContent({
       session.phaseStatus === "rejected" ||
       (hasFailedRun && session.phaseStatus !== "approved") ||
       stopPending);
-  const artifactAvailable = latestArtifact !== null || shouldLoadLatestArtifact;
-  const stageFocus = runIsFocus ? "run" : artifactAvailable ? "artifact" : "empty";
+  const artifactAvailable =
+    Boolean(exactTarget) || latestArtifact !== null || shouldLoadLatestArtifact;
+  const stageFocus = runIsFocus && !exactTarget ? "run" : artifactAvailable ? "artifact" : "empty";
 
   function handleSelectStage(stageSlug: string) {
-    if (stageSlug === selectedStageSlug) return;
+    if (stageSlug === selectedStageSlug || exactTarget) return;
     setSelectedStageSlug(stageSlug);
     setViewingHistoricalArtifact(false);
     // Stage selection must survive refresh even when no artifact viewer is mounted.
@@ -821,6 +886,25 @@ function SessionDetailContent({
   ): Promise<boolean> {
     if (phaseActionPending !== null) return false;
     if (viewingHistoricalArtifact) return false;
+    if (
+      exactTarget &&
+      (exactReviewState !== "review" ||
+        actionPending ||
+        reviewArtifact?.artifactId !== exactTarget.artifactId ||
+        artifact?.artifactId !== exactTarget.artifactId ||
+        artifact.stageId !== exactTarget.stageId ||
+        artifact.version !== exactTarget.artifactVersion ||
+        (action === "approve"
+          ? expectedReviewRevision !== exactTarget.reviewRevision ||
+            !canApprove ||
+            exactApproval.value?.blockingCount !== 0 ||
+            Boolean(
+              exactApproval.value.delivery?.required &&
+              exactApproval.value.delivery.state !== "ready",
+            )
+          : feedbackSubmission?.expectedReviewRevision !== exactTarget.reviewRevision))
+    )
+      return false;
     if (!artifact) {
       pushToast({
         title: "Review unavailable.",
@@ -972,6 +1056,10 @@ function SessionDetailContent({
       return true;
     } catch (error) {
       finishInteraction(action, "error");
+      if (exactTarget) {
+        void exactApproval.refresh();
+        if (selectedStageIsSpecification) void specification.refresh();
+      }
       if (action === "reject")
         setPhaseActionError(error instanceof Error ? error.message : "Action failed.");
       pushToast({
@@ -1243,39 +1331,41 @@ function SessionDetailContent({
           ? "No specification recorded for this stage."
           : "No artifact recorded for this stage."
       }
+      exactArtifact={exactTarget}
       initialFormattedArtifact={initialFormattedArtifact}
       initialFormattedArtifactKey={initialFormattedArtifactKey}
       initialNow={renderNow}
       isAwaitingReview={selectedStageIsCurrent && session.phaseStatus === "awaiting_review"}
       isDrafting={false}
       latestArtifact={latestArtifact}
-      loadLatest={shouldLoadLatestArtifact}
+      loadLatest={Boolean(exactTarget) || shouldLoadLatestArtifact}
       onViewingHistoricalChange={setViewingHistoricalArtifact}
       onDisplayedArtifactChange={setDisplayedArtifact}
       persistStageInUrl={!selectedStageIsCurrent}
-      readOnlyReason={sessionReviewReadOnlyReason(session)}
+      readOnlyReason={
+        sessionReviewReadOnlyReason(session) ?? (exactReadOnly ? "historical_review" : null)
+      }
       rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
       sessionId={session.id}
       specification={selectedStageIsSpecification}
       stageSlug={selectedStageSlug}
     />
   ) : null;
-  const stopControl =
-    !session.archivedAt &&
+  const stopControl = exactTarget ? null : !session.archivedAt &&
     (session.phaseStatus === "in_progress" || stopPending) &&
     phaseActionPending === null ? (
-      <button
-        type="button"
-        className="ui-button text-danger"
-        disabled={stopPending || archivePending !== null || !stoppableRunId}
-        onClick={() => void handleStopRun()}
-      >
-        <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />
-      </button>
-    ) : !session.archivedAt &&
-      session.phaseStatus === "rejected" &&
-      phaseActionPending === null &&
-      archivePending === null ? undefined : null;
+    <button
+      type="button"
+      className="ui-button text-danger"
+      disabled={stopPending || archivePending !== null || !stoppableRunId}
+      onClick={() => void handleStopRun()}
+    >
+      <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />
+    </button>
+  ) : !session.archivedAt &&
+    session.phaseStatus === "rejected" &&
+    phaseActionPending === null &&
+    archivePending === null ? undefined : null;
 
   return (
     <PageContainer className="pb-4">
@@ -1297,9 +1387,29 @@ function SessionDetailContent({
         }
       />
       <SessionCompletionSummary session={session} />
+      {exactTarget ? (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <p role="status" className="text-muted">
+            {exactReviewState === "stale"
+              ? "This review link is no longer current."
+              : exactReviewState === "checking"
+                ? "Checking this review link…"
+                : exactReviewState === "error"
+                  ? "Could not verify this review link."
+                  : "Viewing a linked review."}
+          </p>
+          <Link
+            className="text-accent underline underline-offset-2"
+            href={workspaceSessionDetailPath(initialData.workspaceSlug, session.number)}
+          >
+            Open current review
+          </Link>
+        </div>
+      ) : null}
       <div className="mb-5">
         <StageTimeline
           onSelect={handleSelectStage}
+          selectionDisabled={Boolean(exactTarget)}
           selectedStageSlug={selectedStageSlug}
           timeline={stageTimeline}
         />
@@ -1316,7 +1426,7 @@ function SessionDetailContent({
         }
         artifact={artifactViewer}
         evidence={
-          stageFocus === "run" ? null : (
+          stageFocus === "run" || exactReadOnly ? null : (
             <SessionReviewEvidence
               historical={!selectedStageIsCurrent || viewingHistoricalArtifact}
               initialNow={renderNow}
@@ -1325,13 +1435,15 @@ function SessionDetailContent({
           )
         }
         reviewControls={
-          (selectedStageIsSpecification && specificationExhausted) ||
-          (stageFocus === "artifact" &&
-            selectedStageIsSpecification &&
-            specificationArtifact &&
-            stickyReviewMode.kind === "reviewable" &&
-            !phaseActionPending &&
-            !specification.canReview) ? (
+          exactReviewState === "clarification" ||
+          (!exactTarget &&
+            ((selectedStageIsSpecification && specificationExhausted) ||
+              (stageFocus === "artifact" &&
+                selectedStageIsSpecification &&
+                specificationArtifact &&
+                stickyReviewMode.kind === "reviewable" &&
+                !phaseActionPending &&
+                !specification.canReview))) ? (
             <SessionSpecificationControl
               canAnswer={Boolean(reviewArtifact) && !actionPending}
               onAccepted={(receipt, artifactId) => {
@@ -1356,13 +1468,22 @@ function SessionDetailContent({
             <SessionReviewBar
               attached
               sessionId={session.id}
+              approvalReview={exactTarget ? exactApproval : undefined}
+              exactReviewRevision={exactTarget?.reviewRevision}
               approveLabel="Approve stage"
               approveDescription={
                 phaseActionPending
                   ? undefined
                   : "Approval advances or completes the session. Final-stage approval may also archive the session."
               }
-              mode={stageFocus === "artifact" ? stickyReviewMode : { kind: "running" }}
+              mode={
+                stageFocus === "artifact" &&
+                (!exactTarget ||
+                  (exactReviewState === "review" && Boolean(reviewArtifact)) ||
+                  phaseActionPending)
+                  ? stickyReviewMode
+                  : { kind: "running" }
+              }
               onApprove={(artifact, revision) =>
                 void handlePhaseAction("approve", artifact, undefined, undefined, revision)
               }

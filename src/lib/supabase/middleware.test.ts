@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextResponse } from "next/server";
 
 const mocked = vi.hoisted(() => ({
   auth: {
@@ -27,11 +28,13 @@ vi.mock("next/server", () => ({
 }));
 
 import { updateSupabaseSession } from "@/lib/supabase/middleware";
+import { SESSION_REVIEW_RETURN_HEADER } from "@/lib/sessions/review-link";
 
 function createRequest(cookieNames = ["sb-example-auth-token"]) {
   const values = new Map(cookieNames.map((name) => [name, "cookie-value"]));
 
   return {
+    headers: new Headers(),
     cookies: {
       delete: vi.fn((name: string) => values.delete(name)),
       getAll: vi.fn(() => [...values].map(([name, value]) => ({ name, value }))),
@@ -47,6 +50,7 @@ describe("Supabase session middleware", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("WALLIE_TIMING_LOGS", "0");
     mocked.auth.getClaims.mockReset();
+    vi.mocked(NextResponse.next).mockClear();
     mocked.cookieOptions = null;
     mocked.responses.length = 0;
     mocked.createServerClient.mockReset();
@@ -63,6 +67,26 @@ describe("Supabase session middleware", () => {
 
     expect(mocked.createServerClient).not.toHaveBeenCalled();
     expect(mocked.auth.getClaims).not.toHaveBeenCalled();
+  });
+
+  it("replaces inbound review-return metadata with the path derived by middleware", async () => {
+    const request = createRequest([]);
+    request.headers.set(SESSION_REVIEW_RETURN_HEADER, "/w/foreign/sessions/7");
+    const exact = "/w/local/sessions/42?reviewRevision=9";
+
+    await updateSupabaseSession(request as never);
+    expect(
+      vi
+        .mocked(NextResponse.next)
+        .mock.lastCall?.[0]?.request?.headers?.has(SESSION_REVIEW_RETURN_HEADER),
+    ).toBe(false);
+
+    await updateSupabaseSession(request as never, exact);
+    expect(
+      vi
+        .mocked(NextResponse.next)
+        .mock.lastCall?.[0]?.request?.headers?.get(SESSION_REVIEW_RETURN_HEADER),
+    ).toBe(exact);
   });
 
   it("accepts asymmetric verified claims without an auth user request", async () => {

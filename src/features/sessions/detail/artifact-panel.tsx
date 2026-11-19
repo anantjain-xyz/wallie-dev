@@ -45,6 +45,7 @@ type ArtifactPanelProps = {
    */
   isAwaitingReview?: boolean;
   emptyText: string;
+  exactArtifact?: { artifactId: string; artifactVersion: number } | null;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
   initialNow?: string;
@@ -213,6 +214,7 @@ export function ArtifactPanel(props: ArtifactPanelProps) {
 }
 
 function ArtifactPanelCache({
+  exactArtifact,
   sessionId,
   stageSlug,
   persistStageInUrl = false,
@@ -234,7 +236,7 @@ function ArtifactPanelCache({
   // Timeline stage changes: drop any historical version, and either pin the prior
   // stage in the URL (`artifactStage`) or clear stage params for the current stage.
   useEffect(() => {
-    if (!stageJustChanged) return;
+    if (!stageJustChanged || exactArtifact) return;
     queueMicrotask(() => setTrackedStageSlug(stageSlug));
     const params = currentSearchParams();
     params.delete(ARTIFACT_VERSION_PARAM);
@@ -245,7 +247,7 @@ function ArtifactPanelCache({
       params.delete(ARTIFACT_STAGE_PARAM);
     }
     replaceClientSearchUrl(pathname, params);
-  }, [pathname, persistStageInUrl, stageJustChanged, stageSlug]);
+  }, [exactArtifact, pathname, persistStageInUrl, stageJustChanged, stageSlug]);
 
   return (
     <ArtifactPanelStage
@@ -253,6 +255,7 @@ function ArtifactPanelCache({
       {...props}
       bodyCache={bodyCache}
       currentStageKey={currentStageKey}
+      exactArtifact={exactArtifact}
       ignoreUrlVersion={stageJustChanged}
       latestArtifactIdCache={latestArtifactIdCache}
       latestVersionCache={latestVersionCache}
@@ -271,6 +274,7 @@ function ArtifactPanelStage({
   currentArtifactId,
   currentStageKey,
   emptyText,
+  exactArtifact,
   ignoreUrlVersion = false,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
@@ -307,7 +311,7 @@ function ArtifactPanelStage({
   const { pushToast } = useOptionalToast();
 
   const urlArtifactId = searchParams.get(ARTIFACT_ID_PARAM);
-  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(() =>
+  const [artifactIdSelection, setSelectedArtifactId] = useState<string | null>(() =>
     ignoreUrlVersion || !loadLatest ? null : urlArtifactId,
   );
   const urlVersion = parseArtifactVersionParam(searchParams.get(ARTIFACT_VERSION_PARAM));
@@ -319,9 +323,11 @@ function ArtifactPanelStage({
   // so selecting a version does not trigger an RSC reload. When the stage just
   // changed, ignore a leftover stage-agnostic URL version.
   const [suppressUrlVersion, setSuppressUrlVersion] = useState(ignoreUrlVersion || !loadLatest);
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(() =>
+  const [versionSelection, setSelectedVersion] = useState<number | null>(() =>
     ignoreUrlVersion || !loadLatest ? null : urlVersion,
   );
+  const selectedArtifactId = exactArtifact?.artifactId ?? artifactIdSelection;
+  const selectedVersion = exactArtifact?.artifactVersion ?? versionSelection;
   const pendingAuthoritativeMetadata = useRef(
     pendingAuthorRefreshByStage.get(currentStageKey) === true,
   );
@@ -423,17 +429,26 @@ function ArtifactPanelStage({
             selectedArtifactId ?? undefined,
           ),
         ) ?? null);
-  const visibleBody = viewingIsLatest
+  const useLatestBody = viewingIsLatest && !exactArtifact;
+  const selectedVersionBody = (
+    selectedArtifactId
+      ? selectedBody?.id === selectedArtifactId
+      : selectedBody?.version === viewingVersion
+  )
+    ? selectedBody
+    : cachedSelectedBody;
+  const displayedBody = useLatestBody
     ? currentArtifactId !== undefined && latestBody?.id !== currentArtifactId
       ? null
       : latestBody
-    : (
-          selectedArtifactId
-            ? selectedBody?.id === selectedArtifactId
-            : selectedBody?.version === viewingVersion
-        )
-      ? selectedBody
-      : cachedSelectedBody;
+    : (selectedVersionBody ?? (exactArtifact && viewingIsLatest ? latestBody : null));
+  const visibleBody =
+    !exactArtifact ||
+    (displayedBody?.id === exactArtifact.artifactId &&
+      displayedBody.version === exactArtifact.artifactVersion &&
+      displayedBody.stageSlug === stageSlug)
+      ? displayedBody
+      : null;
   const hasReviewBrief =
     isAwaitingReview &&
     !readOnlyReason &&
@@ -732,6 +747,7 @@ function ArtifactPanelStage({
   useEffect(() => {
     // After a stage switch we intentionally ignore a leftover URL version until the
     // router clears the param (or the user picks a version again).
+    if (exactArtifact) return;
     if (suppressUrlVersion) {
       if (urlVersion !== null || urlArtifactId !== null) {
         queueMicrotask(() => {
@@ -746,11 +762,11 @@ function ArtifactPanelStage({
       setSelectedVersion(urlVersion);
       setSelectedArtifactId(urlArtifactId);
     });
-  }, [suppressUrlVersion, urlVersion, urlArtifactId]);
+  }, [exactArtifact, suppressUrlVersion, urlVersion, urlArtifactId]);
 
   // Load latest body for cache / default view.
   useEffect(() => {
-    if (!loadLatest) return;
+    if (!loadLatest || exactArtifact) return;
     if (currentArtifactId === null) {
       latestBodyController.current?.abort();
       queueMicrotask(() => {
@@ -860,6 +876,7 @@ function ArtifactPanelStage({
   }, [
     currentArtifactId,
     currentStageKey,
+    exactArtifact,
     initialFormattedArtifactKey,
     latestArtifact,
     latestArtifactKey,
@@ -981,12 +998,12 @@ function ArtifactPanelStage({
     stageSlug,
   ]);
 
-  // Load non-latest selected version body when Rendered/Raw need it.
+  // Load a pinned artifact or a historical selection by its exact selector.
   useEffect(() => {
     if (
       activeTab === "versions" ||
       (viewingVersion === null && !selectedArtifactId) ||
-      viewingIsLatest
+      useLatestBody
     ) {
       return;
     }
@@ -1031,7 +1048,12 @@ function ArtifactPanelStage({
         } | null;
         if (!response.ok) throw new Error(payload?.error ?? "Could not load this version.");
         if (!isArtifactBody(payload?.artifact)) throw new Error("Artifact response was invalid.");
-        if (selectedArtifactId && payload.artifact.id !== selectedArtifactId)
+        if (
+          (selectedArtifactId && payload.artifact.id !== selectedArtifactId) ||
+          (exactArtifact &&
+            (payload.artifact.version !== exactArtifact.artifactVersion ||
+              payload.artifact.stageSlug !== stageSlug))
+        )
           throw new Error("Artifact response did not match the requested artifact.");
         return payload.artifact;
       })
@@ -1056,11 +1078,12 @@ function ArtifactPanelStage({
   }, [
     activeTab,
     bodyCache,
+    exactArtifact,
     initialFormattedArtifactKey,
     selectedBodyRetry,
     sessionId,
     stageSlug,
-    viewingIsLatest,
+    useLatestBody,
     viewingVersion,
     selectedArtifactId,
   ]);
@@ -1071,6 +1094,7 @@ function ArtifactPanelStage({
   }
 
   function selectVersion(artifact: SessionArtifactMetadata) {
+    if (exactArtifact) return;
     const { version, id } = artifact;
     const isLatest = id ? id === latestArtifactId : version === latestVersion;
     setSuppressUrlVersion(false);
@@ -1138,10 +1162,10 @@ function ArtifactPanelStage({
   const bodyMotionRef = useChangeMotion<HTMLDivElement>(
     `${sessionId}:${visibleBody?.stageSlug ?? stageSlug}:${activeTab}:${bodyHasContent ? visibleBody.version : "loading"}`,
   );
-  const bodyLoading = viewingIsLatest ? latestLoading : selectedBodyLoading;
-  const bodyError = viewingIsLatest ? latestError : selectedBodyError;
+  const bodyLoading = useLatestBody ? latestLoading : selectedBodyLoading;
+  const bodyError = useLatestBody ? latestError : selectedBodyError;
   const retryBody = () => {
-    if (viewingIsLatest) setLatestRetry((value) => value + 1);
+    if (useLatestBody) setLatestRetry((value) => value + 1);
     else setSelectedBodyRetry((value) => value + 1);
   };
 
@@ -1236,6 +1260,7 @@ function ArtifactPanelStage({
                   <li key={artifact.id ?? artifact.version}>
                     <button
                       type="button"
+                      disabled={Boolean(exactArtifact)}
                       aria-current={isSelected ? "true" : undefined}
                       className={cn(
                         "w-full rounded-[6px] border px-3 py-2.5 text-left transition-colors",

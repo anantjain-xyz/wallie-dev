@@ -156,11 +156,17 @@ export function stageTimelineLabel(entry: StageTimelineEntry): string {
 
 type StageTimelineProps = {
   onSelect: (stageSlug: string) => void;
+  selectionDisabled?: boolean;
   selectedStageSlug: string;
   timeline: StageTimelineEntry[];
 };
 
-export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTimelineProps) {
+export function StageTimeline({
+  onSelect,
+  selectionDisabled = false,
+  selectedStageSlug,
+  timeline,
+}: StageTimelineProps) {
   const railRef = useRef<HTMLOListElement>(null);
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
 
@@ -188,12 +194,13 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
                   }
                 }}
                 type="button"
+                disabled={selectionDisabled}
                 onClick={() => onSelect(entry.stage.slug)}
                 className={cn(
                   "group flex min-w-0 max-w-full items-center gap-2 rounded-[6px] px-3 py-2 text-left text-xs font-medium transition-colors",
                   isSelected
                     ? "bg-accent-soft text-accent"
-                    : "text-muted hover:bg-control-muted hover:text-foreground",
+                    : "text-muted enabled:hover:bg-control-muted enabled:hover:text-foreground",
                 )}
                 aria-label={`${entry.stage.name}: ${label}`}
                 aria-current={isCurrent ? "step" : undefined}

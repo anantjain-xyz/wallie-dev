@@ -77,6 +77,50 @@ function fixture(responses: Response[], authorization?: string | null) {
   return { admin, bearer, fetch, request, rpcBody };
 }
 
+it("returns the exact artifact and review revision in the human Workbench link", async () => {
+  const review = {
+    stageId,
+    stageSlug: artifact.stageSlug,
+    artifactId,
+    artifactVersion: artifact.version,
+    reviewRevision: 7,
+    runId,
+    attemptCount: 2,
+    checkpointRunId: runId,
+    clarification: null,
+  };
+  const { admin, request } = fixture([
+    Response.json(admitted),
+    success({
+      id: sessionId,
+      number: 12,
+      title: "Exact review",
+      archivedAt: null,
+      status: "awaiting_review",
+      createdAt,
+      updatedAt: createdAt,
+      currentStageId: stageId,
+      currentRunId: runId,
+      specificationStageId: null,
+      review,
+    }),
+    Response.json(true),
+  ]);
+  const response = await handleFactoryRead("session", request(), sessionScope, admin);
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.review).toMatchObject(review);
+  const link = new URL(body.review.href, "https://wallie.test");
+  expect(link.pathname).toBe(canonicalUrl);
+  expect(Object.fromEntries(link.searchParams)).toEqual({
+    artifactStage: artifact.stageSlug,
+    artifactId,
+    artifactVersion: String(artifact.version),
+    reviewStageId: stageId,
+    reviewRevision: "7",
+  });
+});
+
 it("authenticates and reads the exact artifact under one permit, then releases it", async () => {
   const { admin, bearer, fetch, request, rpcBody } = fixture([
     Response.json(admitted),

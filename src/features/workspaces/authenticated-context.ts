@@ -1,5 +1,6 @@
 import "server-only";
 
+import { headers } from "next/headers";
 import { cache } from "react";
 import { notFound, redirect } from "next/navigation";
 
@@ -10,6 +11,7 @@ import {
   workspaceLoginRedirectPath,
 } from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
+import { SESSION_REVIEW_RETURN_HEADER, sessionReviewReturnPath } from "@/lib/sessions/review-link";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { type SupabaseAuthIdentity, verifySupabaseAuthIdentity } from "@/lib/supabase/auth";
 import type { Tables } from "@/lib/supabase/database.types";
@@ -53,7 +55,12 @@ export const loadAuthenticatedWorkspaceContext = cache(
       const user = verification.identity;
 
       if (!user) {
-        redirect(loginPath(workspaceLoginRedirectPath(workspaceSlug)));
+        const forwarded = (await headers()).get(SESSION_REVIEW_RETURN_HEADER);
+        const reviewReturn =
+          forwarded?.startsWith("/") && !forwarded.startsWith("//")
+            ? sessionReviewReturnPath(new URL(forwarded, "https://wallie.invalid"), workspaceSlug)
+            : undefined;
+        redirect(loginPath(reviewReturn ?? workspaceLoginRedirectPath(workspaceSlug)));
       }
 
       const workspaceAccess = await timing.segment(

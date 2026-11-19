@@ -1,4 +1,4 @@
-export type ReviewSessionReadOnlyReason = "archived" | "approved";
+export type ReviewSessionReadOnlyReason = "archived" | "approved" | "historical_review";
 export type ReviewReadOnlyReason =
   | ReviewSessionReadOnlyReason
   | "unauthorized"
@@ -22,6 +22,8 @@ export function reviewReadOnlyMessage(reason: ReviewReadOnlyReason): string {
       return "Archived · Comments are read-only.";
     case "approved":
       return "Approved · Comments are read-only.";
+    case "historical_review":
+      return "Linked review · Comments are read-only.";
     case "unauthorized":
       return "You don’t have permission to comment.";
     case "loading":

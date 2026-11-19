@@ -334,6 +334,19 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
     expect(mocked.handleApproval).not.toHaveBeenCalled();
   });
 
+  it.each(["wallie_mt", "wallie_oa"])(
+    "requires a human browser session when a %s bearer is supplied",
+    async (prefix) => {
+      mocked.getSupabaseUserOrNull.mockResolvedValueOnce(null);
+      const request = makeRequest({ action: "approve", version: 1 });
+      request.headers.set("Authorization", `Bearer ${prefix}_${ARTIFACT_ID}.${"a".repeat(43)}`);
+      const response = await POST(request, routeContext());
+      expect(response.status).toBe(401);
+      expect(mocked.handleApproval).not.toHaveBeenCalled();
+      expect(mocked.handleRejection).not.toHaveBeenCalled();
+    },
+  );
+
   it("preserves unauthorized, archived, and approver-forbidden HTTP semantics", async () => {
     mocked.getSupabaseUserOrNull.mockResolvedValueOnce(null);
     const unauthorized = await POST(makeRequest({ action: "approve", version: 1 }), routeContext());

@@ -10,6 +10,7 @@ import {
   type FactoryCommandTransactionInput,
 } from "@/lib/factory-command-authorization/server";
 import { workspaceSessionDetailPath } from "@/lib/routes";
+import { exactSessionReviewHref } from "@/lib/sessions/review-link";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -180,10 +181,13 @@ function sessionProjection(session: z.infer<typeof factoryReadSessionRecordSchem
                 question: safeFactoryReadText(review.clarification.question),
               }
             : null,
-          href: workspaceSessionDetailPath(slug, session.number, {
-            ...artifactQuery(review.stageSlug, review.artifactId, review.artifactVersion),
+          href: exactSessionReviewHref(slug, session.number, {
+            stageId: review.stageId,
+            stageSlug: review.stageSlug,
+            artifactId: review.artifactId,
+            artifactVersion: review.artifactVersion,
             reviewRevision: review.reviewRevision,
-            clarificationId: review.clarification?.id,
+            clarificationId: review.clarification?.id ?? null,
           }),
         }
       : null,

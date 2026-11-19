@@ -49,6 +49,8 @@ function threadQuote(thread: ArtifactReviewThread) {
 type SessionReviewBarProps = {
   sessionId?: string;
   attached?: boolean;
+  approvalReview?: ReturnType<typeof useApprovalReview>;
+  exactReviewRevision?: number;
   approveLabel: string;
   approveDescription?: string;
   mode: ReviewMode;
@@ -67,6 +69,8 @@ type SessionReviewBarProps = {
 export function SessionReviewBar({
   sessionId,
   attached = false,
+  approvalReview: suppliedApprovalReview,
+  exactReviewRevision,
   approveLabel,
   approveDescription,
   mode,
@@ -100,10 +104,14 @@ export function SessionReviewBar({
   const reviewLoadSequence = useRef(0);
   const reviewController = useRef<AbortController | null>(null);
   const requestMemory = useRef(new Map<string, string>());
-  const approvalReview = useApprovalReview(
-    mode.kind === "reviewable" && mode.canApprove ? sessionId : undefined,
+  const currentApprovalReview = useApprovalReview(
+    !suppliedApprovalReview && mode.kind === "reviewable" && mode.canApprove
+      ? sessionId
+      : undefined,
     reviewArtifact?.artifactId,
   );
+  const approvalReview = suppliedApprovalReview ?? currentApprovalReview;
+  const exactReviewClosed = exactReviewRevision !== undefined && mode.kind !== "reviewable";
   // Server-owned PR delivery readiness gates only a configured final approval.
   // A missing evaluation is decided by the approval RPC, which fails closed.
   const delivery = approvalReview.value?.delivery ?? null;
@@ -199,6 +207,11 @@ export function SessionReviewBar({
         )
           throw new Error("Could not confirm this review. Refresh comments before submitting.");
         if (controller.signal.aborted || sequence !== reviewLoadSequence.current) return;
+        if (exactReviewRevision !== undefined && payload.reviewRevision !== exactReviewRevision) {
+          setReviewChanged(true);
+          setReviewError("This review link is no longer current. Note kept.");
+          return;
+        }
         if (cursor && reviewRevisionRef.current !== payload.reviewRevision) {
           setReviewChanged(true);
           setReviewError("Review changed. Refresh comments and reselect threads. Note kept.");
@@ -232,7 +245,7 @@ export function SessionReviewBar({
           setReviewLoading(false);
       }
     },
-    [sessionId],
+    [exactReviewRevision, sessionId],
   );
 
   useEffect(() => {
@@ -284,7 +297,7 @@ export function SessionReviewBar({
   }
 
   async function submitReject() {
-    if (phaseActionBusy || rejectInFlightRef.current) return;
+    if (phaseActionBusy || exactReviewClosed || rejectInFlightRef.current) return;
     const trimmed = feedbackDraft.trim();
     if (artifactChanged) return;
     if (
@@ -368,7 +381,7 @@ export function SessionReviewBar({
             ref={requestChangesTriggerRef}
             type="button"
             className="ui-button min-h-11 sm:min-h-9"
-            disabled={phaseActionBusy}
+            disabled={phaseActionBusy || exactReviewClosed}
             onClick={() => {
               setFeedbackError(null);
               rejectionArtifactRef.current = reviewArtifact ? { ...reviewArtifact } : null;
@@ -622,6 +635,7 @@ export function SessionReviewBar({
                 className="ui-button"
                 disabled={
                   phaseActionBusy ||
+                  exactReviewClosed ||
                   previewLoading ||
                   reviewLoading ||
                   reviewChanged ||
@@ -647,6 +661,7 @@ export function SessionReviewBar({
               className="ui-button-primary"
               disabled={
                 phaseActionBusy ||
+                exactReviewClosed ||
                 artifactChanged ||
                 (Boolean(sessionId) &&
                   (reviewLoading ||

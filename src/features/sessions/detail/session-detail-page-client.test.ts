@@ -24,10 +24,11 @@ import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { useSessionRefresh } from "@/features/sessions/detail/session-refresh-context";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import type { ExactSessionReviewTarget } from "@/lib/sessions/review-link";
 
 vi.mock("@/features/sessions/detail/use-approval-review", () => ({
   useApprovalReview: () => ({
-    value: { reviewRevision: 7, blockingCount: 0 },
+    value: mocked.approvalReview,
     error: null,
     refresh: vi.fn(),
   }),
@@ -65,6 +66,7 @@ const mocked = vi.hoisted(() => {
     statuses: new Map<string, (status: string) => void>(),
     rpc: vi.fn(),
     handlers: new Map<string, (payload: unknown) => void>(),
+    approvalReview: { reviewRevision: 7, blockingCount: 0 },
   };
 });
 
@@ -167,6 +169,43 @@ function renderDetail(
   );
 }
 
+function exactReviewFixture(overrides: Partial<ExactSessionReviewTarget> = {}) {
+  const data = makeSessionDetailData();
+  const target = {
+    artifactId: feedbackArtifactId,
+    artifactVersion: 1,
+    stageId: "44444444-4444-4444-8444-444444444444",
+    stageSlug: "product",
+    reviewRevision: 7,
+    clarificationId: null,
+    ...overrides,
+  };
+  data.session.pipeline.stages[0].id = target.stageId;
+  data.session.currentStageId = target.stageId;
+  data.session.currentArtifactId = target.artifactId;
+  const artifact = {
+    id: target.artifactId,
+    stageSlug: target.stageSlug,
+    version: target.artifactVersion,
+    createdAt: data.session.updatedAt,
+    payload: "Pinned product artifact",
+    sanitizedHtml: "<p>Pinned product artifact</p>",
+  };
+  return { artifact, data, target };
+}
+
+function renderExactReview(data: SessionReviewData, target: ExactSessionReviewTarget) {
+  return render(
+    createElement(SessionDetailPageClient, {
+      activity: null,
+      initialData: data,
+      initialExactReviewTarget: target,
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+    }),
+  );
+}
+
 afterEach(() => {
   for (const unsubscribe of feedbackEventCleanups.splice(0)) unsubscribe();
   cleanup();
@@ -179,6 +218,7 @@ afterEach(() => {
   vi.mocked(createSupabaseBrowserClient).mockClear();
   mocked.statuses.clear();
   mocked.handlers.clear();
+  mocked.approvalReview = { reviewRevision: 7, blockingCount: 0 };
 });
 
 describe("SessionDetailPageClient", () => {
@@ -186,6 +226,117 @@ describe("SessionDetailPageClient", () => {
     const markup = renderDetail();
     expect(markup).toContain("Product artifact");
     expect(createSupabaseBrowserClient).not.toHaveBeenCalled();
+  });
+
+  it("only submits approval for the pinned artifact and review revision", async () => {
+    const { artifact, data, target } = exactReviewFixture();
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/artifacts?")) return Response.json({ artifact });
+      return Response.json({ error: "Review is stale." }, { status: 409 });
+    });
+    renderExactReview(data, target);
+
+    await waitFor(() => expect(screen.getByText(artifact.payload)).toBeVisible());
+    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        `/api/sessions/${data.session.id}/phase-action`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            action: "approve",
+            expectedReviewRevision: target.reviewRevision,
+            artifactId: target.artifactId,
+            stageId: target.stageId,
+            version: target.artifactVersion,
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("keeps an anchored artifact read-only when a newer review revision exists", async () => {
+    const { artifact, data, target } = exactReviewFixture();
+    mocked.approvalReview = { reviewRevision: target.reviewRevision + 1, blockingCount: 0 };
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      return url.includes("/artifacts?") ? Response.json({ artifact }) : Response.json({});
+    });
+    renderExactReview(data, target);
+
+    await waitFor(() => expect(screen.getByText(artifact.payload)).toBeVisible());
+    expect(screen.getByText("This review link is no longer current.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open current review" })).toHaveAttribute(
+      "href",
+      "/w/acme/sessions/7",
+    );
+    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+    expect(request.mock.calls.some(([url]) => String(url).endsWith("/phase-action"))).toBe(false);
+  });
+
+  it("does not replace the anchored specification question with a newer question", async () => {
+    const { artifact, data, target } = exactReviewFixture({
+      clarificationId: "55555555-5555-4555-8555-555555555555",
+    });
+    data.session.specificationStageId = target.stageId;
+    const question = "Which region should launch first?";
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/artifacts?")) return Response.json({ artifact });
+      if (url.endsWith("/specification"))
+        return Response.json({
+          stageId: target.stageId,
+          artifactId: artifact.id,
+          artifactVersion: artifact.version,
+          reviewable: true,
+          clarification: {
+            id: "66666666-6666-4666-8666-666666666666",
+            artifactId: artifact.id,
+            artifactVersion: artifact.version,
+            reviewRevision: target.reviewRevision + 1,
+            question,
+            status: "pending",
+            executionExhausted: false,
+          },
+        });
+      return Response.json({});
+    });
+    renderExactReview(data, target);
+
+    expect(await screen.findByText("This review link is no longer current.")).toBeVisible();
+    await waitFor(() => expect(screen.getByText(artifact.payload)).toBeVisible());
+    expect(screen.queryByText(question)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Submit answer" })).toBeNull();
+    expect(request.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
+  });
+
+  it("does not replace a pinned artifact after the session advances to another stage", async () => {
+    const { artifact, data, target } = exactReviewFixture();
+    data.session.pipeline.stages.push({
+      id: "stage-2",
+      slug: "build",
+      name: "Build",
+      position: 1,
+      description: "Build",
+    });
+    data.session.currentStageId = "stage-2";
+    data.session.currentStageSlug = "build";
+    data.session.currentArtifactId = "artifact-next";
+    data.session.phaseStatus = "in_progress";
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes(`artifactId=${artifact.id}`)) return Response.json({ artifact });
+      return Response.json({});
+    });
+    renderExactReview(data, target);
+
+    await waitFor(() => expect(screen.getByText(artifact.payload)).toBeVisible());
+    expect(screen.getByRole("region", { name: "Product artifact" })).toBeVisible();
+    expect(screen.getByText("This review link is no longer current.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(request.mock.calls.some(([url]) => String(url).includes("stage=build"))).toBe(false);
   });
 
   it("allows run-level cancellation for rejected reruns but suppresses it when archived", () => {

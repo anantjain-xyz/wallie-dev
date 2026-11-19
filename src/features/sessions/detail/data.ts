@@ -117,9 +117,12 @@ type SessionDetailRpcAccessMiss = {
 
 type SessionDetailRpcResult = SessionDetailRpcAccessMiss | SessionDetailRpcPayload;
 
+type SessionReviewReturnQuery = Record<string, string | number | undefined>;
+
 export async function loadSessionDetailPageData(
   workspaceSlug: string,
   sessionNumberValue: string,
+  reviewReturnQuery?: SessionReviewReturnQuery,
 ): Promise<SessionDetailPageData> {
   const sessionNumber = Number(sessionNumberValue);
   if (!Number.isInteger(sessionNumber) || sessionNumber < 1) {
@@ -132,7 +135,8 @@ export async function loadSessionDetailPageData(
       sessionNumber,
       workspaceSlug,
     },
-    (timing) => loadSessionDetailPageDataWithTiming(workspaceSlug, sessionNumber, timing),
+    (timing) =>
+      loadSessionDetailPageDataWithTiming(workspaceSlug, sessionNumber, timing, reviewReturnQuery),
   );
 }
 
@@ -140,6 +144,7 @@ async function loadSessionDetailPageDataWithTiming(
   workspaceSlug: string,
   sessionNumber: number,
   timing: ServerTimingCollector,
+  reviewReturnQuery?: SessionReviewReturnQuery,
 ): Promise<SessionDetailPageData> {
   const supabase = await createSupabaseServerClient();
   const [
@@ -176,7 +181,9 @@ async function loadSessionDetailPageDataWithTiming(
   ]);
 
   if (!user) {
-    redirect(loginPath(workspaceSessionDetailPath(workspaceSlug, sessionNumber)));
+    redirect(
+      loginPath(workspaceSessionDetailPath(workspaceSlug, sessionNumber, reviewReturnQuery)),
+    );
   }
 
   if (rpcError) throw rpcError;
