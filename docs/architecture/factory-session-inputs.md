@@ -47,6 +47,12 @@ Factory managers can read paginated memory and decision history or submit lifecy
 - **Memory** shows the producing run and artifact, revision history and human decisions. Managers can import a private proposal from its producing run, correct or review it, set expiry, or forget the stored note. A forgotten revision keeps its provenance and displays the unavailable note state.
 - **Frozen inputs** in Run Inspector lists what the attempt used, unavailable inputs and budget omissions. Authorized reviewers see exact revision and decision IDs and digests. Managers can follow these receipts to the scoped source and memory history. The inspector does not fetch memory or document bodies.
 
+### Context and memory retention
+
+- Set **Historical context retention** in workspace settings to remove old, superseded document bodies and unimported private proposals from finished runs. Current source revisions stay available. An exact replay stops when its recorded revision is unavailable.
+- Removing a Context source clears its sync lease and erases its stored bodies. Revision IDs, digests, and byte counts remain available for historical inspection. A new sync cannot restore an erased revision.
+- A memory revision's configured expiry withdraws it from retrieval. The worker purges the elapsed body and retains its revision and review records. Forgetting clears the family title and all of its revision bodies immediately.
+
 ## Repository bindings
 
 | Purpose                       | Execution behavior                                                                                                                                                                                                                                       |

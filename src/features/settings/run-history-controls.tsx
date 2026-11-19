@@ -19,6 +19,7 @@ import {
 const retentionFields = [
   { key: "transcriptDays", label: "Transcript retention (days)" },
   { key: "evidenceDays", label: "Validation evidence retention (days)" },
+  { key: "contextDays", label: "Historical context retention (days)" },
 ] as const;
 
 type RetentionDraft = Record<keyof RunRetention, string>;
@@ -27,6 +28,7 @@ function toDraft(policy: RunRetention): RetentionDraft {
   return {
     transcriptDays: policy.transcriptDays === null ? "" : String(policy.transcriptDays),
     evidenceDays: policy.evidenceDays === null ? "" : String(policy.evidenceDays),
+    contextDays: policy.contextDays === null ? "" : String(policy.contextDays),
   };
 }
 
@@ -58,6 +60,7 @@ function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void 
       const policy = runRetentionSchema.safeParse({
         transcriptDays: draft?.transcriptDays ? Number(draft.transcriptDays) : null,
         evidenceDays: draft?.evidenceDays ? Number(draft.evidenceDays) : null,
+        contextDays: draft?.contextDays ? Number(draft.contextDays) : null,
       });
       if (!policy.success) {
         return Response.json({ error: "Check the retention limits." }, { status: 400 });
@@ -74,7 +77,7 @@ function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void 
       onSaved();
     },
     setFlashMessage: setMessage,
-    successText: "Retention saved. The worker will apply it to eligible finished runs.",
+    successText: "Retention saved. The worker will apply it to eligible content.",
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -89,9 +92,10 @@ function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void 
       <div className="space-y-1">
         <h3 className="text-[15px] font-semibold text-foreground">Retention</h3>
         <p className="max-w-2xl text-[13px] leading-5 text-muted">
-          Leave a limit blank to retain that content indefinitely. Shorter limits can permanently
-          remove existing content from finished runs. Run history and artifact provenance remain
-          visible. Retention protects required validation evidence for unarchived sessions.
+          Leave a limit blank to keep that content indefinitely. Validation retention protects
+          required evidence for unarchived sessions. Historical context retention permanently erases
+          older document revisions and unimported proposals from finished runs. Current document
+          bodies stay available while their source is active.
         </p>
       </div>
       {draft ? (

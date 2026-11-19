@@ -82,6 +82,7 @@ export type SessionReviewSession = {
 /** The only session-detail data serialized into the critical client surface. */
 export type SessionReviewData = {
   creatorDisplayName: string | null;
+  retainedContent?: { canManage: boolean; erasedAt: string | null };
   session: SessionReviewSession;
   workspaceSlug: string;
 };
@@ -206,15 +207,27 @@ async function loadSessionDetailPageDataWithTiming(
     (attachmentData ?? []) as SessionAttachmentRpcRow[],
   );
   const repository = serializeSessionReviewRepository(payload.activity.repository);
-  const capabilities = await timing.segment("review.authorization", () =>
-    loadSessionReviewCapabilities({
-      memberUserId: user.id,
-      sessionId: payload.session.id,
-      stageId: payload.session.currentStageId,
-      supabase,
-      workspaceId: payload.activity.workspaceId,
-    }),
-  );
+  const [capabilities, erasure] = await Promise.all([
+    timing.segment("review.authorization", () =>
+      loadSessionReviewCapabilities({
+        memberUserId: user.id,
+        sessionId: payload.session.id,
+        stageId: payload.session.currentStageId,
+        supabase,
+        workspaceId: payload.activity.workspaceId,
+      }),
+    ),
+    payload.session.archivedAt
+      ? supabase.rpc("get_session_retained_content_erasure", {
+          target_workspace_id: payload.activity.workspaceId,
+          target_session_id: payload.session.id,
+        })
+      : null,
+  ]);
+  const erasedAt = erasure?.data?.erased_at ?? null;
+  if (capabilities.canManageRetainedContent || erasedAt) {
+    review.retainedContent = { canManage: capabilities.canManageRetainedContent, erasedAt };
+  }
 
   await timing.segment("review-contract", () => review, {
     payloadBytes: approximatePayloadSizeBytes(review),

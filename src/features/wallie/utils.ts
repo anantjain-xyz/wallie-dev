@@ -43,7 +43,7 @@ export function getWallieSessionRunBlock(input: {
   if (input.archivedAt) {
     return {
       code: "session_archived",
-      message: "This session is archived. Unarchive it to run Wallie.",
+      message: "This session is archived.",
     };
   }
 

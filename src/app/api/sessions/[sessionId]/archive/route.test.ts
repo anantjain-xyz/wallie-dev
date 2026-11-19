@@ -150,6 +150,19 @@ describe("/api/sessions/[sessionId]/archive", () => {
     );
   });
 
+  it("surfaces a permanent erasure conflict without internal SQL details", async () => {
+    mocked.unarchiveSession.mockRejectedValueOnce({
+      code: "PT409",
+      message: "Private database diagnostic.",
+    });
+    const response = await DELETE(makeRequest("DELETE"), routeContext());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "An archive with erased content cannot be restored.",
+    });
+  });
+
   it("rejects an invalid expected archive version", async () => {
     const response = await DELETE(
       makeRequest("DELETE", { expectedArchivedAt: 42 }),

@@ -632,6 +632,7 @@ function serviceTables(overrides: Record<string, unknown> = {}) {
     session_validation_plans: queryableTable(validationPlan),
     session_validation_assets: queryableTable([reportAsset]),
     session_validation_asset_withholdings: queryableTable(null),
+    session_browser_asset_withholdings: queryableTable(null),
     session_selected_stages: queryableTable([{ stage_id: "stage-1" }, { stage_id: "stage-2" }]),
     pipeline_stages: queryableTable([
       { id: "stage-1", position: 1 },
@@ -1079,6 +1080,33 @@ describe("review readiness details", () => {
     );
     expect(ready?.evaluation.state).toBe("ready");
     expect(ready?.evidence?.required).toEqual([{ key: visualKey, status: "passed" }]);
+
+    const pendingRemoval = privateStorage(bytes);
+    const withheld = await loadSessionPrReadinessDetails(
+      buildServiceAdminClient(
+        {
+          ...tables,
+          session_browser_asset_withholdings: queryableTable({
+            asset_id: assetId,
+            workspace_id: workspaceId,
+            session_id: browserSessionId,
+            run_id: runId,
+            state: "erased",
+            recorded_at: "2026-11-06T00:02:00.000Z",
+            purged_at: null,
+          }),
+        },
+        vi.fn(),
+        pendingRemoval.storage,
+      ) as never,
+      browserSessionId,
+    );
+    expect(withheld?.evaluation.state).toBe("blocked");
+    expect(withheld?.evidence?.required).toEqual([{ key: visualKey, status: "unavailable" }]);
+    expect(withheld?.evaluation.blockers).toEqual([
+      { code: "evidence_unavailable", requirement: visualKey },
+    ]);
+    expect(pendingRemoval.download).not.toHaveBeenCalled();
 
     const tampered = Buffer.from(bytes);
     tampered[30] ^= 0xff;

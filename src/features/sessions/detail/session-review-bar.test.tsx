@@ -241,7 +241,7 @@ describe("SessionReviewBar", () => {
     renderBar({
       mode: {
         kind: "archived",
-        reason: "This session is archived. Unarchive it to resume review.",
+        reason: "This archived session is read-only.",
       },
     });
     expect(screen.getByText(/archived/i)).toBeTruthy();

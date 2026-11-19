@@ -25,6 +25,7 @@ it("retries the exact object after a Storage failure and acknowledges only the c
           case "mark_expired_workspace_run_content":
             return Response.json([{ transcripts_expired: 0, evidence_expired: 0 }]);
           case "purge_expired_run_transcripts":
+          case "purge_expired_factory_memory_bodies":
             return Response.json(0);
           case "claim_run_evidence_purges":
             return Response.json(

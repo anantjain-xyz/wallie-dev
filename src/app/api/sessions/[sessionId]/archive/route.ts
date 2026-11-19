@@ -107,13 +107,24 @@ export async function DELETE(request: Request, { params }: Params) {
   }
 
   const admin = createSupabaseAdminClient();
-  const result = await unarchiveSession(admin, {
-    ...(typeof body?.expectedArchivedAt === "string"
-      ? { expectedArchivedAt: body.expectedArchivedAt }
-      : {}),
-    sessionId: resolved.row.id,
-    workspaceId: resolved.row.workspace_id,
-  });
+  let result;
+  try {
+    result = await unarchiveSession(admin, {
+      ...(typeof body?.expectedArchivedAt === "string"
+        ? { expectedArchivedAt: body.expectedArchivedAt }
+        : {}),
+      sessionId: resolved.row.id,
+      workspaceId: resolved.row.workspace_id,
+    });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "PT409") {
+      return NextResponse.json(
+        { error: "An archive with erased content cannot be restored." },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
 
   return NextResponse.json({
     archivedAt: result.archivedAt,

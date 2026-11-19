@@ -48,12 +48,34 @@ const videoMetadataSchema = z.object({
 
 type PrivateBrowserAssetInput = {
   supabase: SupabaseClient<Database>;
+  viewer?: SupabaseClient<Database>;
   workspaceId: string;
   sessionId: string;
   runId: string;
   asset: unknown;
   signal?: AbortSignal;
 };
+
+const browserWithholdingSchema = z.enum(["expired", "erased"]);
+
+async function browserAssetWithholding(
+  supabase: SupabaseClient<Database>,
+  assetId: string,
+  signal: AbortSignal,
+) {
+  const { data, error } = await supabase
+    .from("session_browser_asset_withholdings")
+    .select("state")
+    .eq("asset_id", assetId)
+    .abortSignal(signal)
+    .maybeSingle();
+  if (error) return { status: "unavailable" as const };
+  if (!data) return null;
+  const availability = browserWithholdingSchema.safeParse(data.state);
+  return availability.success
+    ? { status: "withheld" as const, availability: availability.data }
+    : { status: "unavailable" as const };
+}
 
 export async function readPrivateBrowserScreenshot(input: PrivateBrowserAssetInput) {
   return readPrivateBrowserAsset(input, "image/png");
@@ -100,12 +122,30 @@ async function readPrivateBrowserAsset(
     return { status: "integrity_mismatch" as const };
   }
   const deadline = AbortSignal.timeout(10_000);
-  return readVerifiedPrivateObject({
+  const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline;
+  const before = await browserAssetWithholding(input.supabase, asset.data.id, signal);
+  if (before) return before;
+  const object = await readVerifiedPrivateObject({
     supabase: input.supabase,
     bucket: VALIDATION_EVIDENCE_BUCKET,
     path: asset.data.storage_path,
     sizeBytes: asset.data.size_bytes,
     sha256: asset.data.sha256,
-    signal: input.signal ? AbortSignal.any([input.signal, deadline]) : deadline,
+    signal,
   });
+  if (input.viewer) {
+    const { data, error } = await input.viewer
+      .from("session_browser_verification_assets")
+      .select("id")
+      .eq("id", asset.data.id)
+      .eq("workspace_id", input.workspaceId)
+      .eq("session_id", input.sessionId)
+      .eq("run_id", input.runId)
+      .eq("content_type", contentType)
+      .abortSignal(signal)
+      .maybeSingle();
+    if (error || data?.id !== asset.data.id) return { status: "viewer_unavailable" as const };
+  }
+  const after = await browserAssetWithholding(input.supabase, asset.data.id, signal);
+  return after ?? object;
 }

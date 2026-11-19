@@ -1307,7 +1307,7 @@ describe("SessionDetailPageClient", () => {
     const unarchive = [...document.querySelectorAll("header button")].find((button) =>
       button.textContent?.includes("Unarchive"),
     );
-    expect(html).toContain("This session is archived.");
+    expect(html).toContain("This archived session is read-only.");
     expect(document.querySelector('header [data-status="archived"]')).toBeNull();
     expect(html).not.toContain("Request changes");
     expect(unarchive).toBeDefined();

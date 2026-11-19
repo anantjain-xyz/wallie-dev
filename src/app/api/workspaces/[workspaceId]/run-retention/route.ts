@@ -21,7 +21,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   const { data, error } = await access.context.supabase
     .from("workspace_run_retention")
-    .select("transcript_days, evidence_days")
+    .select("transcript_days, evidence_days, context_days")
     .eq("workspace_id", access.context.workspace.id)
     .maybeSingle();
   if (error) {
@@ -32,6 +32,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
       retention: {
         transcriptDays: data?.transcript_days ?? null,
         evidenceDays: data?.evidence_days ?? null,
+        contextDays: data?.context_days ?? null,
       },
     },
     { headers },
@@ -62,6 +63,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     p_actor_user_id: access.context.user.id,
     p_transcript_days: retention.data.transcriptDays ?? undefined,
     p_evidence_days: retention.data.evidenceDays ?? undefined,
+    p_context_days: retention.data.contextDays ?? undefined,
   });
   if (error?.code === "42501") {
     return Response.json(
@@ -77,7 +79,13 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   return Response.json(
-    { retention: { transcriptDays: data.transcript_days, evidenceDays: data.evidence_days } },
+    {
+      retention: {
+        transcriptDays: data.transcript_days,
+        evidenceDays: data.evidence_days,
+        contextDays: data.context_days,
+      },
+    },
     { headers },
   );
 }

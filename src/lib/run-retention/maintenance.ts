@@ -14,6 +14,10 @@ export async function drainRunRetention(admin: AdminClient) {
     "purge_expired_run_transcripts",
   );
   if (purgeError) throw purgeError;
+  const { data: memoryBodiesPurged, error: memoryError } = await admin.rpc(
+    "purge_expired_factory_memory_bodies",
+  );
+  if (memoryError) throw memoryError;
 
   const { data: claims, error: claimError } = await admin.rpc("claim_run_evidence_purges");
   if (claimError) throw claimError;
@@ -21,6 +25,7 @@ export async function drainRunRetention(admin: AdminClient) {
     transcriptsExpired: marked?.[0]?.transcripts_expired ?? 0,
     evidenceExpired: marked?.[0]?.evidence_expired ?? 0,
     transcriptsPurged: transcriptsPurged ?? 0,
+    memoryBodiesPurged: memoryBodiesPurged ?? 0,
     evidencePurged: 0,
   };
   if (!claims?.length) return result;

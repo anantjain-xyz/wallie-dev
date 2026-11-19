@@ -46,7 +46,7 @@ export function resolveReviewMode(input: ResolveReviewModeInput): ReviewMode {
   if (input.archivedAt) {
     return {
       kind: "archived",
-      reason: "This session is archived. Unarchive it to resume review.",
+      reason: "This archived session is read-only.",
     };
   }
 

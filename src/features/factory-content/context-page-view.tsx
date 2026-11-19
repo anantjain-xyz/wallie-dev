@@ -197,6 +197,14 @@ export function ContextPageView({
                             : `${data.revision.content_bytes.toLocaleString("en")} bytes`
                         }
                       />
+                      {data.revision.content_purged_at ? (
+                        <MetadataItem
+                          label="Body removed"
+                          value={
+                            <TimeDisplay value={data.revision.content_purged_at} initialNow={now} />
+                          }
+                        />
+                      ) : null}
                     </MetadataList>
                   </div>
                 )}
@@ -220,7 +228,11 @@ export function ContextPageView({
                           Revision {item.upstream_revision.slice(0, 12)}
                         </Link>
                         <span className="type-annotation text-muted">
-                          <TimeDisplay value={item.created_at} initialNow={now} />
+                          {item.content_purged_at ? (
+                            "Body removed"
+                          ) : (
+                            <TimeDisplay value={item.created_at} initialNow={now} />
+                          )}
                         </span>
                       </li>
                     ))}

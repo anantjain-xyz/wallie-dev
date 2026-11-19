@@ -33,7 +33,7 @@ export const parseMemoryQuery = memoryQuery.safeParse;
 const sourceColumns =
   "id, repository_id, grant_id, grant_version, file_path, status, current_revision_id, upstream_revision, last_successful_sync_at, last_sync_attempt_at";
 const sourceRevisionColumns =
-  "id, source_id, upstream_revision, upstream_updated_at, media_type, content_bytes, content_sha256, created_at";
+  "id, source_id, upstream_revision, upstream_updated_at, media_type, content_bytes, content_sha256, created_at, content_purged_at";
 const memoryColumns =
   "id, title, source_session_id, source_artifact_id, source_artifact_version, source_run_id, source_attempt_count, source_commit_sha, source_content_sha256, current_revision_id, pending_revision_id, current_approval_id, forgotten_at, created_at";
 const memoryRevisionColumns =

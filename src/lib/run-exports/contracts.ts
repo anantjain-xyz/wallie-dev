@@ -7,6 +7,7 @@ export const runRetentionSchema = z
   .object({
     transcriptDays: retentionDays,
     evidenceDays: retentionDays,
+    contextDays: retentionDays,
   })
   .strict();
 
