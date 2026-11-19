@@ -51,3 +51,28 @@ provider revision time, and Wallie’s receipt time.
 - A deleted source repository still permits a trusted merge receipt when GitHub
   returns its source head. The canonical readiness record keeps the unknown
   live head separate from that retained source evidence.
+
+## Cost per merged PR
+
+Both measures use one currently verified canonical PR per denominator entry,
+selected by GitHub merge time in the half-open period `[from, to)`.
+
+| Measure          | Product attempt cost included                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Delivery cohort  | Lifetime settled attempts attributable to those merges, including failed and canceled attempts from before the selected period |
+| Period operating | All attempts started in the selected period, including abandoned work, detached runs, and runs unlinked to any merge           |
+
+- An exact source publication qualifies first. Other attempts must fit wholly
+  within a provable session delivery window. Assignment considers earlier
+  epochs outside the selected period. A run contributes to at most one merge.
+  Cross-boundary evidence and unfinished runs remain visible as unresolved.
+- Product attempt values come from the retained usage receipt. Measured and
+  estimated amounts contribute to the known subtotal. Pending or unavailable
+  costs have no numeric value. An explicit measured zero remains zero.
+- The ratio divides the known subtotal by observed merges. The coverage state
+  exposes partial usage or merge history. The ratio is undefined with zero
+  observed merges. Evaluation, experiment, maintenance, and compute costs
+  remain separately unavailable until their sources are instrumented.
+- `get_factory_cost_summary` reads the current scope. The
+  `list_factory_cost_contributions` cursor reads its retained run IDs and
+  exact merge observation IDs. A correction can change current membership.

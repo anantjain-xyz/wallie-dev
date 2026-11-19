@@ -9259,6 +9259,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      get_factory_cost_summary: {
+        Args: {
+          p_factory_id: string
+          p_from: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_inbox: {
         Args: {
           p_before_artifact_id?: string
@@ -9658,6 +9667,35 @@ export type Database = {
         Returns: {
           source_id: string
           status: string
+        }[]
+      }
+      list_factory_cost_contributions: {
+        Args: {
+          p_after_run_id?: string
+          p_basis: string
+          p_factory_id: string
+          p_from: string
+          p_limit?: number
+          p_merge_id?: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: {
+          attempt_count: number
+          attribution: string
+          candidate_merge_id: string
+          cost_state: string
+          cost_usd: number
+          finished_at: string
+          merge_id: string
+          merge_observation_id: string
+          run_id: string
+          run_status: string
+          session_id: string
+          started_at: string
+          usage_estimation_revision: string
+          usage_finalized_at: string
+          usage_recorded_at: string
         }[]
       }
       list_factory_event_authorizations: {
