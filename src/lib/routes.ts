@@ -10,6 +10,8 @@ export type WorkspaceNavItem = {
     | "inbox"
     | "runs"
     | "activity"
+    | "context"
+    | "memory"
     | "agents"
     | "governance"
     | "factory-definition"
@@ -84,6 +86,14 @@ export function workspaceActivityPath(workspaceSlug: string, query?: Record<stri
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/activity`, query);
 }
 
+export function workspaceContextPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/context`, query);
+}
+
+export function workspaceMemoryPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/memory`, query);
+}
+
 export function workspaceGovernancePath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/governance`, query);
 }
@@ -156,6 +166,20 @@ export function getWorkspaceNavItems(
     });
   }
   if (canManageGovernance) {
+    items.push(
+      {
+        id: "context",
+        href: workspaceContextPath(workspaceSlug),
+        label: "Context",
+        section: "Improve",
+      },
+      {
+        id: "memory",
+        href: workspaceMemoryPath(workspaceSlug),
+        label: "Memory",
+        section: "Improve",
+      },
+    );
     items.push({
       id: "governance",
       href: workspaceGovernancePath(workspaceSlug),

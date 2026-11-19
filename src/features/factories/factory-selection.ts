@@ -2,8 +2,10 @@ import {
   workspaceActivityPath,
   workspaceAgentsPath,
   workspaceBasePath,
+  workspaceContextPath,
   workspaceGovernancePath,
   workspaceInboxPath,
+  workspaceMemoryPath,
   workspaceRunsPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
@@ -67,11 +69,19 @@ export function defaultsToAllFactories(pathname: string, workspaceSlug: string) 
   );
 }
 
+export function isManagedFactoryPath(pathname: string, workspaceSlug: string) {
+  return (
+    pathname === workspaceGovernancePath(workspaceSlug) ||
+    pathname === workspaceContextPath(workspaceSlug) ||
+    pathname === workspaceMemoryPath(workspaceSlug)
+  );
+}
+
 export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
   return (
     isFactoryAggregatePath(pathname, workspaceSlug) ||
     pathname === workspaceAgentsPath(workspaceSlug) ||
-    pathname === workspaceGovernancePath(workspaceSlug)
+    isManagedFactoryPath(pathname, workspaceSlug)
   );
 }
 
@@ -104,6 +114,20 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
       "afterPrincipal",
       "afterBinding",
       "beforeAudit",
+    ])
+      params.delete(key);
+  }
+  if (pathname.endsWith("/context") || pathname.endsWith("/memory")) {
+    for (const key of [
+      "source",
+      "revision",
+      "memory",
+      "decision",
+      "proposal",
+      "version",
+      "before",
+      "grantAfter",
+      "repoAfter",
     ])
       params.delete(key);
   }

@@ -16,7 +16,8 @@ import {
   type RecordedRunExecutionProfile,
 } from "@/lib/factory-definitions/execution-profile-contracts";
 import { factoryMcpManifestSchema } from "@/lib/factory-mcp/manifest";
-import { workspaceSessionDetailPath } from "@/lib/routes";
+import { runContextInspectionSchema } from "@/lib/run-context/contracts";
+import { workspaceMemoryPath, workspaceSessionDetailPath } from "@/lib/routes";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type RunInspectorArtifact =
@@ -192,6 +193,31 @@ export async function loadRunInspectorArtifact(input: {
   };
 }
 
+export type RunInspectorContext =
+  | { kind: "recorded"; context: z.infer<typeof runContextInspectionSchema> }
+  | { kind: "unrecorded" | "unavailable" };
+
+export async function loadRunInspectorContext({
+  supabase,
+  workspaceId,
+  run,
+}: {
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  workspaceId: string;
+  run: Pick<WorkspaceRunCatalogItem, "id" | "attemptCount">;
+}): Promise<RunInspectorContext> {
+  if (run.attemptCount === null) return { kind: "unrecorded" };
+  const { data, error } = await supabase.rpc("get_run_context_inputs", {
+    target_workspace_id: workspaceId,
+    target_run_id: run.id,
+    target_attempt_count: run.attemptCount,
+  });
+  if (error) return { kind: "unavailable" };
+  if (data === null) return { kind: "unrecorded" };
+  const parsed = runContextInspectionSchema.safeParse(data);
+  return parsed.success ? { kind: "recorded", context: parsed.data } : { kind: "unavailable" };
+}
+
 export async function loadRunInspectorData(workspaceSlug: string, runId: string) {
   const { supabase, workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
   if (!runCatalogItemParamsSchema.safeParse({ workspaceId: workspace.id, runId }).success) {
@@ -215,13 +241,25 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     run = await loadRun();
     if (!run) notFound();
   }
-  const [artifact, skills, credential, mcp, executionProfile] = await Promise.all([
+  const [artifact, skills, credential, mcp, executionProfile, frozenContext] = await Promise.all([
     loadRunInspectorArtifact({ ...context, run }),
     loadRunInspectorSkills({ ...context, run }),
     loadRunInspectorCredential({ ...context, run }),
     loadRunInspectorMcpManifest({ ...context, run }),
     loadRunInspectorExecutionProfile({ ...context, run }),
+    loadRunInspectorContext({ ...context, run }),
   ]);
+  const memoryProposal =
+    frozenContext.kind === "recorded" &&
+    frozenContext.context.canManage &&
+    artifact.kind === "available"
+      ? await supabase.rpc("has_factory_run_memory_proposal", {
+          p_workspace_id: workspace.id,
+          p_factory_id: frozenContext.context.factoryId,
+          p_artifact_id: artifact.id,
+          p_artifact_version: artifact.version,
+        })
+      : null;
   return {
     workspaceId: workspace.id,
     workspaceSlug: workspace.slug,
@@ -231,6 +269,17 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     credential,
     mcp,
     executionProfile,
+    frozenContext,
+    memoryProposalHref:
+      memoryProposal?.data === true &&
+      frozenContext.kind === "recorded" &&
+      artifact.kind === "available"
+        ? workspaceMemoryPath(workspace.slug, {
+            factory: frozenContext.context.factoryId,
+            proposal: artifact.id,
+            version: artifact.version,
+          })
+        : null,
     transcript,
   };
 }

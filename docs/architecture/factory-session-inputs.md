@@ -41,6 +41,12 @@ A retry restores the exact manifest selected by its job lineage. Current access 
 
 Factory managers can read paginated memory and decision history or submit lifecycle commands at `/api/workspaces/{workspaceId}/factories/{factoryId}/memories`. Management uses the caller's human session, and attempt retrieval is service-only and scoped to the session's factory.
 
+## Context and Memory review
+
+- **Context** shows repository read grants, sync status and exact revision history. Factory managers see revision IDs, commits, digests and sizes. The history endpoint and page load never return document bodies.
+- **Memory** shows the producing run and artifact, revision history and human decisions. Managers can import a private proposal from its producing run, correct or review it, set expiry, or forget the stored note. A forgotten revision keeps its provenance and displays the unavailable note state.
+- **Frozen inputs** in Run Inspector lists what the attempt used, unavailable inputs and budget omissions. Authorized reviewers see exact revision and decision IDs and digests. Managers can follow these receipts to the scoped source and memory history. The inspector does not fetch memory or document bodies.
+
 ## Repository bindings
 
 | Purpose                       | Execution behavior                                                                                                                                                                                                                                       |

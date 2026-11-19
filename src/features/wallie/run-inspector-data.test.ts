@@ -5,6 +5,7 @@ import { RunCatalogWorkspaceUnavailableError } from "@/features/wallie/run-catal
 import {
   loadRunInspectorArtifact,
   loadRunInspectorCredential,
+  loadRunInspectorContext,
   loadRunInspectorData,
   loadRunInspectorExecutionProfile,
   loadRunInspectorMcpManifest,
@@ -444,4 +445,72 @@ describe("run inspector composition", () => {
     mocks.catalog.mockRejectedValueOnce(new Error("Read failed"));
     await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("Read failed");
   });
+});
+
+describe("exact frozen input inspection", () => {
+  const document = {
+    sourceId: "00000000-0000-4000-8000-000000000010",
+    revisionId: "00000000-0000-4000-8000-000000000011",
+    status: "selected",
+    reason: "exact_revision",
+    upstreamRevision: "a".repeat(40),
+    contentSha256: "b".repeat(64),
+    contentBytes: 4,
+    stale: true,
+    sha256: "c".repeat(64),
+    utf8Bytes: 4,
+  };
+  const projection = (documents: unknown[]) => ({
+    factoryId: "00000000-0000-4000-8000-000000000012",
+    canManage: false,
+    originRunId: null,
+    manifestSha256: "d".repeat(64),
+    createdAt: "2026-11-14T20:00:00Z",
+    manifest: {
+      version: 1,
+      required: [],
+      documents,
+      conversation: { throughSequence: 0, olderOmitted: 0, messages: [] },
+      budget: {
+        maxUtf8Bytes: 131072,
+        maxEstimatedTokens: 32768,
+        usedUtf8Bytes: 4,
+        estimatedTokens: 4,
+      },
+    },
+  });
+
+  it("reads the exact attempt while preserving safe receipt IDs for ordinary reviewers", async () => {
+    const calls: unknown[] = [];
+    const supabase = createClient<Database>("https://database.example.test", "test-key", {
+      global: {
+        fetch: async (_input, request) => {
+          calls.push(JSON.parse(String(request?.body)));
+          return Response.json(projection([document]));
+        },
+      },
+    });
+    await expect(loadRunInspectorContext({ supabase, workspaceId, run })).resolves.toMatchObject({
+      kind: "recorded",
+      context: { canManage: false, manifest: { documents: [document] } },
+    });
+    expect(calls).toEqual([
+      { target_workspace_id: workspaceId, target_run_id: run.id, target_attempt_count: 4 },
+    ]);
+  });
+
+  it.each([
+    { ...document, filePath: "docs/private.md" },
+    { ...document, content: "private body" },
+  ])(
+    "fails closed if a reviewer projection includes private fields",
+    async (unexpectedDocument) => {
+      const supabase = createClient<Database>("https://database.example.test", "test-key", {
+        global: { fetch: async () => Response.json(projection([unexpectedDocument])) },
+      });
+      await expect(loadRunInspectorContext({ supabase, workspaceId, run })).resolves.toEqual({
+        kind: "unavailable",
+      });
+    },
+  );
 });

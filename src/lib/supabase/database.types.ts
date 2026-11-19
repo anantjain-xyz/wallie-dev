@@ -9150,6 +9150,14 @@ export type Database = {
         }
         Returns: Json
       }
+      get_run_context_inputs: {
+        Args: {
+          target_attempt_count: number
+          target_run_id: string
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
       get_run_execution_profile: {
         Args: {
           target_attempt_count: number
@@ -9469,6 +9477,32 @@ export type Database = {
         Returns: {
           id: string
           key: string
+        }[]
+      }
+      list_factory_context_repository_options: {
+        Args: {
+          target_after_grant_id?: string
+          target_after_repository_id?: string
+          target_factory_id: string
+          target_limit?: number
+          target_workspace_id: string
+        }
+        Returns: {
+          grant_id: string
+          grant_version: number
+          repository_full_name: string
+          repository_id: string
+        }[]
+      }
+      list_factory_context_source_access: {
+        Args: {
+          target_factory_id: string
+          target_source_ids: string[]
+          target_workspace_id: string
+        }
+        Returns: {
+          source_id: string
+          status: string
         }[]
       }
       list_factory_event_authorizations: {

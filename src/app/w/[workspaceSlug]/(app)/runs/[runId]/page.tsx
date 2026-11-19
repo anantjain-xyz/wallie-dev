@@ -14,6 +14,8 @@ export default async function RunInspectorPage({
       artifact={data.artifact}
       credential={data.credential}
       executionProfile={data.executionProfile}
+      frozenContext={data.frozenContext}
+      memoryProposalHref={data.memoryProposalHref}
       mcp={data.mcp}
       initialNow={new Date().toISOString()}
       run={data.run}

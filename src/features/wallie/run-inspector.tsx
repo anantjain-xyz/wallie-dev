@@ -16,10 +16,12 @@ import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type {
   RunInspectorArtifact,
   RunInspectorCredential,
+  RunInspectorContext,
   RunInspectorExecutionProfile,
   RunInspectorMcpManifest,
   RunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
+import { RunContextInspection } from "@/features/wallie/run-context-inspection";
 import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs-list-state";
 import { workspaceActivityPath, workspaceAgentDetailPath, workspaceRunsPath } from "@/lib/routes";
 
@@ -28,6 +30,8 @@ export function RunInspector({
   artifact,
   credential,
   executionProfile,
+  frozenContext,
+  memoryProposalHref,
   mcp,
   skills,
   workspaceId,
@@ -39,6 +43,8 @@ export function RunInspector({
   artifact: RunInspectorArtifact;
   credential?: RunInspectorCredential | null;
   executionProfile?: RunInspectorExecutionProfile;
+  frozenContext?: RunInspectorContext;
+  memoryProposalHref?: string | null;
   mcp?: RunInspectorMcpManifest | null;
   skills: RunInspectorSkills;
   workspaceId: string;
@@ -155,6 +161,15 @@ export function RunInspector({
             />
           </MetadataList>
         </section>
+
+        {frozenContext && (
+          <RunContextInspection
+            result={frozenContext}
+            workspaceSlug={workspaceSlug}
+            initialNow={initialNow}
+            memoryProposalHref={memoryProposalHref}
+          />
+        )}
 
         {executionProfile && (
           <PageSection
