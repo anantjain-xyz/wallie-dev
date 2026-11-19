@@ -516,9 +516,8 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
     await page.getByLabel("Agent name", { exact: true }).fill("Implementation reviewer");
     await page.getByLabel("Identifier", { exact: true }).fill("implementation-reviewer");
-    await page
-      .getByLabel("Implementation prompt", { exact: true })
-      .fill("Review the assigned stage. {{session.prompt}} stays literal.");
+    const agentPrompt = page.getByRole("textbox", { name: "Implementation prompt", exact: true });
+    await agentPrompt.fill("Review the assigned stage. {{session.prompt}} stays literal.");
     const [createAgent] = await Promise.all([
       page.waitForResponse(
         (response) =>
@@ -605,9 +604,8 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await expect(
       published.getByText("factory-qualification/fixture", { exact: true }),
     ).toBeVisible();
-    await page
-      .getByLabel("Implementation prompt", { exact: true })
-      .fill("Updated candidate instructions. {{attempt.feedback}} stays literal.");
+    await expect(agentPrompt).toHaveValue(firstAgentPrompt.prompt_md);
+    await agentPrompt.fill("Updated candidate instructions. {{attempt.feedback}} stays literal.");
     const revisionsPath = `${agentsPath}/${firstAgentPrompt.agent_id}/prompt-revisions`;
     const [savePrompt] = await Promise.all([
       page.waitForResponse(
@@ -623,6 +621,10 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     ).toBeVisible();
     await expect(page.locator("pre")).toContainText(secondAgentPrompt.prompt_md);
     await expect(published.getByText(firstModel, { exact: true })).toBeVisible();
+    await expect(published.getByRole("link", { name: "View published prompt" })).toHaveAttribute(
+      "href",
+      `${agentPage}&revision=${firstAgentPrompt.id}#prompt-revision`,
+    );
     await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
     await expect(promptInput).toHaveValue(secondAgentPrompt.id);
     const secondStage = await editAndSave(page, secondModel, true);
