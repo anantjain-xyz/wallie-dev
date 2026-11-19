@@ -4,9 +4,72 @@ import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
 
 import { ClaudeCodeRunner, parseStreamJsonLine } from "./claude-code";
-import type { AgentEvent } from "./types";
+import { prepareMcpAdapter } from "./mcp-runtime";
+import type { AgentEvent, AgentRunnerStartInput } from "./types";
 
 const anthropicCredential = { secret: "sk-ant-test" };
+
+const mcpRevisionId = "11111111-1111-4111-8111-111111111111";
+const mcpToken = "synthetic-claude-mcp-fixture-token";
+
+async function claudeMcpFixture({ bridgeReady = true } = {}) {
+  const runtime: NonNullable<AgentRunnerStartInput["mcp"]> = {
+    manifest: {
+      agentId: "22222222-2222-4222-8222-222222222222",
+      servers: [
+        {
+          toolRevisionId: mcpRevisionId,
+          serverId: "33333333-3333-4333-8333-333333333333",
+          serverSlug: "docs",
+          revisionNumber: 1,
+          endpoint: "https://tools.example.test/mcp",
+          operations: ["read_page"],
+          auth: {
+            kind: "bearer",
+            secretBindingId: "44444444-4444-4444-8444-444444444444",
+          },
+        },
+      ],
+    },
+    loadCredentials: vi.fn(async () => new Map([[mcpRevisionId, mcpToken]])),
+  };
+  const expected = await prepareMcpAdapter({
+    runtime,
+    sandbox: new FakeSandbox(),
+    directory: "/tmp/wallie-claude-mcp-projection",
+  });
+  const [server] = expected.servers;
+  const [operation] = server.operations;
+  const tool = `mcp__${server.name}__${operation.name}`;
+  const init = {
+    type: "system",
+    subtype: "init",
+    tools: ["Bash", tool],
+    mcp_servers: [{ name: server.name, status: "connected" }],
+  };
+  const sandbox = new FakeSandbox();
+  const readFile = sandbox.readFile.bind(sandbox);
+  vi.spyOn(sandbox, "readFile").mockImplementation((path) =>
+    bridgeReady && path.endsWith(".ready") ? Promise.resolve("ready\n") : readFile(path),
+  );
+  const completion = { type: "result", subtype: "success", result: "done" };
+  const run = async (records: unknown[], events: AgentEvent[] = []) => {
+    const output = [...records, completion].map((record) => JSON.stringify(record)).join("\n");
+    sandbox.scriptExec("wallie-credential", [{ stream: "stdout", data: output }]);
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
+    for await (const event of runner.start({
+      sandbox,
+      sessionId: "mcp-fixture",
+      prompt: "Read the approved documents.",
+      scopedCredential: true,
+      mcp: runtime,
+    })) {
+      events.push(event);
+    }
+    return events;
+  };
+  return { run, sandbox, expected, init, server, tool, runtime };
+}
 
 async function runClaudeToolRecords(records: unknown[]): Promise<AgentEvent[]> {
   const sandbox = new FakeSandbox();
@@ -118,6 +181,83 @@ describe("ClaudeCodeRunner", () => {
       GIT_COMMITTER_NAME: "wallie-dev[bot]",
     });
   });
+
+  it("exposes only the approved MCP operations through an isolated Claude invocation", async () => {
+    const { run, sandbox, expected, init, server, tool, runtime } = await claudeMcpFixture();
+    const events = await run([
+      init,
+      {
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: tool, id: "call", input: {} }] },
+      },
+    ]);
+    expect(events[0]).toEqual(expected.receipt);
+    expect(events[1]).toMatchObject({ type: "tool_use", tool });
+    expect(events.at(-1)).toMatchObject({ type: "completion", taskComplete: true });
+    expect(runtime.loadCredentials).toHaveBeenCalledOnce();
+    const launch = sandbox.calls.find(({ args }) => args.includes("wallie-credential"));
+    expect(launch?.args.at(-1)).toMatch(/^exec claude /);
+    expect(launch?.args.at(-1)).toContain("'--strict-mcp-config'");
+    expect(launch?.args.at(-1)).toContain(`"${server.name}":{"type":"stdio"`);
+    expect(launch?.args.at(-1)).toContain("'--setting-sources' '' '--no-session-persistence'");
+    expect(launch?.opts.env).toMatchObject({
+      ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+      CLAUDE_CONFIG_DIR: harnessPath(sandbox, "claude"),
+    });
+    expect(JSON.stringify(sandbox.calls)).not.toContain(mcpToken);
+    expect(JSON.stringify(events)).not.toContain(mcpToken);
+    const secretPaths = [...sandbox.files]
+      .filter(([, { data }]) => data.toString().includes(mcpToken))
+      .map(([path]) => path);
+    expect(secretPaths).toHaveLength(1);
+    for (const path of secretPaths) {
+      expect(sandbox.files.get(path)?.mode).toBe(0o600);
+      expect(sandbox.calls).toContainEqual(
+        expect.objectContaining({ cmd: "rm", args: expect.arrayContaining(["-f", "--", path]) }),
+      );
+    }
+  });
+
+  it.each(["missing", "disconnected", "extra tool", "bridge unavailable", "unsupported operation"])(
+    "fails a scoped invocation for %s without an unverified capability receipt or deliverable",
+    async (scenario) => {
+      const { run, init, server, sandbox, expected } = await claudeMcpFixture({
+        bridgeReady: scenario !== "bridge unavailable",
+      });
+      const events: AgentEvent[] = [];
+      const denied = `mcp__${server.name}__ungranted`;
+      const recordsByScenario: Readonly<Record<string, unknown[]>> = {
+        missing: [],
+        disconnected: [{ ...init, mcp_servers: [{ name: server.name, status: "failed" }] }],
+        "extra tool": [{ ...init, tools: [...init.tools, denied] }],
+        "bridge unavailable": [init],
+        "unsupported operation": [
+          init,
+          {
+            type: "assistant",
+            message: {
+              content: [{ type: "tool_use", name: denied, input: { fixture: mcpToken } }],
+            },
+          },
+        ],
+      };
+      await expect(run(recordsByScenario[scenario], events)).rejects.toThrow(
+        /approved MCP|unsupported MCP/,
+      );
+      expect(events).toEqual(scenario === "unsupported operation" ? [expected.receipt] : []);
+      const secretPaths = [...sandbox.files]
+        .filter(([, { data }]) => data.toString().includes(mcpToken))
+        .map(([path]) => path);
+      expect(secretPaths).toHaveLength(1);
+      expect(sandbox.calls).toContainEqual(
+        expect.objectContaining({
+          cmd: "rm",
+          args: expect.arrayContaining(["-f", "--", ...secretPaths]),
+        }),
+      );
+      expect(JSON.stringify(sandbox.calls)).not.toContain(mcpToken);
+    },
+  );
 
   it.each([
     { progress: [] },

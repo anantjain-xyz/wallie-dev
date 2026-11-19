@@ -3,6 +3,10 @@ import { z } from "zod";
 export const MAX_MCP_OPERATIONS = 32;
 export const MAX_MCP_BINDINGS = MAX_MCP_OPERATIONS;
 
+export function isMcpBearerToken(value: string): boolean {
+  return value.length >= 8 && value.length <= 8192 && /^[A-Za-z0-9._~+/-]+=*$/.test(value);
+}
+
 export const mcpIdSchema = z
   .string()
   .uuid()
