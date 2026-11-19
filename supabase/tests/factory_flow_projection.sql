@@ -380,5 +380,160 @@ select ok((select (result #>> '{merge,unknown}')::integer = 1 and (result #>> '{
   'known terminal merge state with no exact endpoint leaves merge and deploy timing unknown');
 
 reset role;
+set local request.jwt.claim.role = 'service_role';
+insert into auth.sessions(id, user_id, not_after) values
+  (pg_temp.flow_id(751), pg_temp.flow_id(1), null),
+  (pg_temp.flow_id(752), pg_temp.flow_id(2), null),
+  (pg_temp.flow_id(753), pg_temp.flow_id(2), statement_timestamp() - interval '1 second');
+select ok(not has_table_privilege('authenticated', 'internal.factory_analytics_exports', 'select')
+  and not has_function_privilege('service_role', 'public.read_factory_analytics_export(uuid,uuid,uuid)', 'execute')
+  and not has_function_privilege('authenticated', 'public.prune_factory_analytics_exports(integer)', 'execute'),
+  'analytics snapshots are reachable only through live authenticated and bounded retention RPCs');
+
+create function pg_temp.request_flow_export(p_request integer, p_environment text default 'production', p_factory uuid default null)
+returns jsonb language sql as $$
+  select public.create_factory_analytics_export(pg_temp.flow_id(4),
+    coalesce(p_factory, (select included from flow_scopes)), pg_temp.flow_time(0), pg_temp.flow_time(86400),
+    pg_temp.flow_id(p_request), 'source', p_environment, true)
+$$;
+create function pg_temp.switch_export_viewer(p_user integer, p_auth_session integer) returns void language sql as $$
+  select set_config('request.jwt.claim.sub', pg_temp.flow_id(p_user)::text, true);
+  select set_config('request.jwt.claims', jsonb_build_object(
+    'sub', pg_temp.flow_id(p_user), 'role', 'authenticated', 'session_id', pg_temp.flow_id(p_auth_session))::text, true);
+$$;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select pg_temp.switch_export_viewer(2, 752);
+create temp table flow_export_receipt as select pg_temp.request_flow_export(760) receipt;
+create temp table flow_export_frozen as
+select public.read_factory_analytics_export(pg_temp.flow_id(4), included, (receipt->>'id')::uuid) raw
+from flow_scopes cross join flow_export_receipt;
+select ok((select raw::jsonb #>> '{filters,dimension}' = 'source'
+  and raw::jsonb #>> '{filters,deploymentEnvironment}' = 'production'
+  and (raw::jsonb #>> '{filters,comparePrevious}')::boolean
+  and raw::jsonb #>> '{periods,0,rolesVisibility}' = 'redacted'
+  and (raw::jsonb #>> '{periods,1,window,from}')::timestamptz = pg_temp.flow_time(-86400)
+  and (raw::jsonb #>> '{periods,1,window,to}')::timestamptz = pg_temp.flow_time(0)
+  and (raw::jsonb->>'expiresAt')::timestamptz = (raw::jsonb->>'capturedAt')::timestamptz + interval '24 hours'
+  from flow_export_frozen), 'one short-lived receipt freezes the same UTC filters and complete comparison window');
+select ok((select document #> '{periods,0,summaries,flow,flow}' = live->'flow'
+  and document #> '{periods,0,summaries,flow,deployment}' = live->'deployment'
+  and (document #>> '{periods,0,summaries,throughput,observedMergeCount}')::integer = 1
+  and (document #>> '{periods,0,summaries,revert,immatureCount}')::integer = 0
+  and (document #>> '{periods,0,summaries,cost,mergeCohort,observedMergeCount}')::integer =
+    jsonb_array_length(document #> '{periods,0,evidence,costMerges}')
+  and (document #>> '{periods,1,summaries,cost,mergeCohort,observedMergeCount}')::integer = 0
+  from flow_export_frozen cross join lateral (select raw::jsonb document) snapshot
+  cross join flow_scopes cross join lateral public.get_factory_flow_summary(pg_temp.flow_id(4), included,
+    pg_temp.flow_time(0), pg_temp.flow_time(86400), 'production') live),
+  'every exported dashboard period retains the same field values and precise cost denominator');
+select results_eq(
+  $$select (item->>'requestObservationId')::uuid, (item->>'mergeObservationId')::uuid,
+      (item->>'deploymentObservationId')::uuid
+    from flow_export_frozen cross join lateral jsonb_array_elements(raw::jsonb #> '{periods,0,evidence,deployment}') item
+    where item->>'status' = 'measured'$$,
+  $$select request_id, merge_id, deployment_id from flow_expected_measurement$$,
+  'the frozen measurement points to the same request, merge, and deployment as Analytics evidence');
+select is(pg_temp.request_flow_export(760), (select receipt from flow_export_receipt),
+  'retrying the same request ID returns the original export receipt');
+select throws_ok($$select pg_temp.request_flow_export(760, 'preview')$$, 'PT409', null,
+  'a replay cannot substitute different export filters');
+select throws_ok($$select pg_temp.request_flow_export(761, p_factory => excluded) from flow_scopes$$,
+  'PT404', null, 'a member cannot request a snapshot from a restricted sibling factory');
+select ok((select public.read_factory_analytics_export(pg_temp.flow_id(4), excluded, (receipt->>'id')::uuid) is null
+  from flow_scopes cross join flow_export_receipt), 'a snapshot ID does not authorize another factory');
+select pg_temp.switch_export_viewer(1, 751);
+select ok((select public.read_factory_analytics_export(pg_temp.flow_id(4), included, (receipt->>'id')::uuid) is null
+  from flow_scopes cross join flow_export_receipt), 'a different member cannot download a copied snapshot link');
+select pg_temp.switch_export_viewer(2, 753);
+select ok((select public.read_factory_analytics_export(pg_temp.flow_id(4), included, (receipt->>'id')::uuid) is null
+  from flow_scopes cross join flow_export_receipt), 'an expired login cannot use an existing download URL');
+
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select ok((select public.finish_session_pr_observation_with_merge(
+  public.begin_session_pr_observation(workspace_id, repository_id, branch_name, pr_number),
+  pr_url, 'merged', false, repeat('b', 40), pg_temp.flow_time(181), pg_temp.flow_time(180),
+  repeat('d', 40), repeat('b', 40))
+  from public.session_pr_epochs where id = pg_temp.flow_id(710)),
+  'late canonical correction changes the current timing and detaches the old deployment');
+select public.process_factory_flow_projection(50);
+select public.grant_factory_membership(pg_temp.flow_id(4), pg_temp.flow_factory(),
+  pg_temp.flow_id(1), pg_temp.flow_id(11), 'manager');
+select public.grant_factory_membership(pg_temp.flow_id(4), pg_temp.flow_factory(),
+  pg_temp.flow_id(1), pg_temp.flow_id(12), 'manager');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select pg_temp.switch_export_viewer(2, 752);
+create temp table flow_export_manager as select pg_temp.request_flow_export(762) receipt;
+select ok((select corrected::jsonb #>> '{periods,0,rolesVisibility}' = 'full'
+  and (corrected::jsonb #>> '{periods,0,summaries,flow,deployment,measured}')::integer = 0
+  and (raw::jsonb #>> '{periods,0,summaries,flow,deployment,measured}')::integer = 1
+  and raw = public.read_factory_analytics_export(pg_temp.flow_id(4), included, (initial.receipt->>'id')::uuid)
+  from flow_scopes cross join flow_export_receipt initial cross join flow_export_frozen
+  cross join flow_export_manager cross join lateral public.read_factory_analytics_export(
+    pg_temp.flow_id(4), included, (flow_export_manager.receipt->>'id')::uuid) corrected),
+  'late observations change a new snapshot while the old download remains byte-identical');
+
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select public.grant_factory_membership(pg_temp.flow_id(4), pg_temp.flow_factory(),
+  pg_temp.flow_id(1), pg_temp.flow_id(12), 'member');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select ok((select public.read_factory_analytics_export(pg_temp.flow_id(4), included, (receipt->>'id')::uuid) is null
+  from flow_scopes cross join flow_export_manager),
+  'downgraded managers cannot download previously frozen privileged source roles');
+select throws_ok($$select pg_temp.request_flow_export(762)$$, 'PT404', null,
+  'a replay cannot disclose the manager snapshot after role downgrade');
+
+reset role;
+set local request.jwt.claim.role = 'service_role';
+insert into public.sessions(id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id, created_at)
+select pg_temp.flow_id(1000 + slot), pg_temp.flow_id(4), pg_temp.flow_factory(), 1000 + slot,
+  'Bounded export request', pg_temp.flow_id(11), pg_temp.flow_id(20), pg_temp.flow_id(21), pg_temp.flow_time(300 + slot)
+from generate_series(1, 101) slot;
+do $$
+begin
+  for batch in 1..20 loop
+    if not (public.process_factory_flow_projection(50)->>'hasMore')::boolean then return; end if;
+  end loop;
+  raise exception 'Could not drain the bounded export projection fixture.';
+end;
+$$;
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select throws_ok($$select pg_temp.request_flow_export(763)$$, 'PT422', null,
+  'oversized source evidence rejects the complete export instead of freezing a truncated cohort');
+
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select ok(not exists (select 1 from internal.factory_analytics_exports where request_id = pg_temp.flow_id(763)),
+  'the failed bounded request never saves a partial export');
+select public.revoke_factory_membership(pg_temp.flow_id(4), pg_temp.flow_factory(),
+  pg_temp.flow_id(1), pg_temp.flow_id(12), 'Remove disposable fixture access');
+insert into internal.factory_analytics_exports(
+  id, workspace_id, factory_id, requester_member_id, request_id, captured_at, expires_at, requires_manager, filters, payload
+) values (pg_temp.flow_id(764), pg_temp.flow_id(4), pg_temp.flow_factory(), pg_temp.flow_id(11), pg_temp.flow_id(765),
+  statement_timestamp() - interval '25 hours', statement_timestamp() - interval '1 hour', true, '{}', '{}');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select ok((select public.read_factory_analytics_export(pg_temp.flow_id(4), included, (receipt->>'id')::uuid) is null
+  from flow_scopes cross join flow_export_receipt), 'revoking factory membership invalidates old download URLs');
+select pg_temp.switch_export_viewer(1, 751);
+select ok((select public.read_factory_analytics_export(pg_temp.flow_id(4), included, pg_temp.flow_id(764)) is null
+  from flow_scopes), 'expired snapshots are unreadable even before storage cleanup');
+
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select ok(public.prune_factory_analytics_exports(100) >= 1, 'worker retention claims bounded expired payloads');
+select ok(not exists (select 1 from internal.factory_analytics_exports where id = pg_temp.flow_id(764))
+  and exists (select 1 from internal.factory_analytics_exports where request_id = pg_temp.flow_id(760)),
+  'worker retention purges expired payloads and preserves unexpired frozen snapshots');
+
 select * from finish();
 rollback;

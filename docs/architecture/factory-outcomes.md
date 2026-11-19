@@ -198,3 +198,18 @@ link separately to the contributing attempts and the exact observed merges.
 Projection freshness and capture boundaries are reported with the results.
 Pending inputs, a missing denominator, and an immature revert window have
 separate states from a measured zero.
+
+## Exporting a cohort
+
+Use **Create export snapshot** in Analytics to capture the applied filters,
+periods, metric revisions, and supporting observations from one database
+snapshot. CSV and JSON downloads use the same snapshot ID. CSV includes
+common evidence fields and a JSON column for the complete record.
+
+- A snapshot expires after 24 hours. Downloads require an active login and
+  the requester's current factory access. Downloads with manager-only fields
+  also require current manager access.
+- Requests above 100 rows per evidence set, 800 evidence rows in total, or
+  1 MiB of stored JSON fail. Shorten the period to export a smaller cohort.
+- Data that arrives after capture affects new snapshots. A snapshot keeps
+  its original values and observation IDs until expiry.
