@@ -5,6 +5,7 @@ import { runtimeMcpManifest } from "@/lib/factory-mcp/manifest";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
+import { compareFactoryDefinitions } from "./semantic-diff";
 import {
   compileFactoryDefinition,
   factoryComponentRevisionsForBundle,
@@ -340,6 +341,50 @@ describe("compileFactoryDefinition", () => {
     expect(
       recompileStoredFactoryDefinition(result.definitionJson, result.canonicalDigest, catalog),
     ).toEqual(result);
+  });
+
+  it("pins ordered exact context documents without adding a whole repository snapshot", () => {
+    const contextDocuments = [
+      { sourceId: "aa410000-0000-4000-8000-000000000027", revisionId: docsMcpRevisionId },
+      { sourceId: "ba410000-0000-4000-8000-000000000028", revisionId: buildMcpRevisionId },
+    ];
+    const source = { ...candidate(), executionGrant: { id: grantId, version: 3 } };
+    const original = compile(source);
+    const selected = compile({
+      ...source,
+      contextDocuments: contextDocuments.map(({ sourceId, revisionId }) => ({
+        sourceId: sourceId.toUpperCase(),
+        revisionId: revisionId.toUpperCase(),
+      })),
+    });
+    const reversed = compile({ ...source, contextDocuments: contextDocuments.toReversed() });
+    if (!original.ok || !selected.ok || !reversed.ok)
+      throw new Error("Expected compiled definitions.");
+
+    expect(selected.bundle.contextDocuments).toEqual(contextDocuments);
+    expect(selected.bundle.readContextRepositoryIds).toBeUndefined();
+    expect(selected.canonicalDigest).not.toBe(reversed.canonicalDigest);
+    expect(factoryDefinitionFromBundle(selected.bundle).contextDocuments).toEqual(contextDocuments);
+    expect(
+      recompileStoredFactoryDefinition(selected.definitionJson, selected.canonicalDigest, catalog),
+    ).toMatchObject({ ok: true, canonicalDigest: selected.canonicalDigest });
+    expect(compareFactoryDefinitions(original.bundle, selected.bundle).fields).toEqual([
+      expect.objectContaining({
+        label: "External context documents",
+        before: [],
+        after: [
+          contextDocuments[0].sourceId + " · " + contextDocuments[0].revisionId,
+          contextDocuments[1].sourceId + " · " + contextDocuments[1].revisionId,
+        ],
+      }),
+    ]);
+    expect(compile({ ...candidate(), contextDocuments })).toMatchObject({
+      ok: false,
+      diagnostics: [{ path: ["contextDocuments"] }],
+    });
+    expect(
+      compile({ ...source, contextDocuments: [contextDocuments[0], contextDocuments[0]] }),
+    ).toMatchObject({ ok: false, diagnostics: [{ path: ["contextDocuments"] }] });
   });
 
   it.each([
