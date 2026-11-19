@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  defaultsToAllFactories,
   factorySwitchHref,
   isFactoryAggregatePath,
   isFactorySelectorPath,
@@ -47,9 +48,18 @@ describe("factory scope on aggregate routes", () => {
     expect(isFactoryAggregatePath("/w/acme/sessions", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/runs", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/activity", "acme")).toBe(true);
+    expect(isFactoryAggregatePath("/w/acme/inbox", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/sessions/42", "acme")).toBe(false);
     expect(isFactoryAggregatePath("/w/acme/runs/c66", "acme")).toBe(false);
     expect(isFactoryAggregatePath("/w/acme/settings", "acme")).toBe(false);
+  });
+
+  it("defaults Inbox to every permitted factory and drops a previous cursor when switching", () => {
+    expect(defaultsToAllFactories("/w/acme/inbox", "acme")).toBe(true);
+    expect(defaultsToAllFactories("/w/acme/sessions", "acme")).toBe(false);
+    expect(factorySwitchHref("/w/acme/inbox", "cursor=old", secondary.id)).toBe(
+      "/w/acme/inbox?factory=secondary-id",
+    );
   });
 
   it("resets only scope-specific filters and preserves unrelated state", () => {

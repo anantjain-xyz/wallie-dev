@@ -199,6 +199,7 @@ describe("ShellHeader", () => {
   it.each([
     ["/w/acme-corp", "Pipeline"],
     ["/w/acme-corp/sessions", "Sessions"],
+    ["/w/acme-corp/inbox", "Inbox"],
     ["/w/acme-corp/settings/profile", "Settings"],
     ["/w/acme-corp/runs/run-id", "Runs"],
   ])("names the drawer trigger after the current destination at %s", (pathname, label) => {
@@ -248,6 +249,9 @@ describe("ShellHeader", () => {
       "href",
       "/w/acme-corp/runs?factory=all",
     );
+    expect(
+      within(within(nav).getByRole("list", { name: "Work" })).getByRole("link", { name: "Inbox" }),
+    ).toHaveAttribute("href", "/w/acme-corp/inbox?factory=all");
     expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute(
       "href",
       "/w/acme-corp/settings",

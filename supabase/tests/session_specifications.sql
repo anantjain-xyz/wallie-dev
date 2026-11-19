@@ -146,6 +146,19 @@ select ok(pg_temp.spec_publish((select id from first_spec_run),pg_temp.spec_mark
 create temp table first_question as select * from public.session_specification_clarifications where session_id=(select session_id from main_spec);
 select ok((select status='pending' and ordinal=1 and run_id=(select id from first_spec_run) and attempt_count=1
   and question='What deadline applies?' from first_question), 'the pending clarification has exact artifact and producing attempt provenance');
+
+set local request.jwt.claim.role='authenticated';
+create temp table clarification_inbox as select public.get_factory_inbox(pg_temp.spec_id(2),pg_temp.spec_factory()) snapshot;
+select is((select snapshot->'counts' from clarification_inbox),'{"review":0,"clarification":1}'::jsonb,
+  'a pending clarification replaces the duplicate approval item in the Inbox');
+select ok((select inbox.snapshot->'items'->0 @> jsonb_build_object(
+  'kind','clarification','clarificationId',question.id,'artifactId',question.artifact_id,
+  'artifactVersion',question.artifact_version,'sourceLabel',message.author_label)
+  from clarification_inbox inbox cross join first_question question
+  join public.session_conversation_messages message on message.artifact_id=question.artifact_id and message.kind='review_ready'),
+  'the Inbox uses the exact question and source without carrying the clarification answer or body');
+set local request.jwt.claim.role='service_role';
+
 select throws_ok($q$select * from first_question question cross join lateral public.approve_session_stage(
   question.session_id,question.workspace_id,question.stage_id,question.artifact_id,question.artifact_version,
   pg_temp.spec_id(3),'codex','gpt-5.5','code',0)$q$, 'PT423',
@@ -180,6 +193,12 @@ select throws_ok($q$select * from first_question question cross join lateral pub
   'An unbound response',p_requested_by_member_id=>pg_temp.spec_id(3))$q$,
   '22023','Specification feedback requires an exact review receipt.','specification follow-up cannot bypass exact feedback');
 create temp table first_answer as select * from pg_temp.spec_answer((select id from first_question),201);
+
+set local request.jwt.claim.role='authenticated';
+select is(public.get_factory_inbox(pg_temp.spec_id(2),pg_temp.spec_factory())->'counts',
+  '{"review":0,"clarification":0}'::jsonb,'answering the exact question removes it as soon as the revision is queued');
+set local request.jwt.claim.role='service_role';
+
 select ok((select not replayed and not execution_exhausted and feedback_batch_id is not null and job_id is not null and run_id is not null from first_answer),
   'a clarification answer queues one exact canonical revision and returns its receipt');
 select ok(exists(select 1 from public.artifact_feedback_batches batch join first_answer answer on answer.feedback_batch_id=batch.id

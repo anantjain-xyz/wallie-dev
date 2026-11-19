@@ -49,6 +49,7 @@ function getServerSidebarPreference() {
 const navIconPaths = {
   pipeline: "M2.5 3.5h11v9h-11zM6.2 3.5v9m3.6-9v9",
   sessions: "M5 4h8M5 8h8m-8 4h8M2.5 4h.1m-.1 4h.1m-.1 4h.1",
+  inbox: "M2.5 8.5 4.5 3.5h7l2 5v4h-11zM2.5 8.5h3l1 1.5h3l1-1.5h3",
   runs: "M2.5 8h2l1.7-4 3.4 8 1.7-4h2.2",
   activity: "M3 12V8m5 4V4m5 8V6M2 13.5h12",
   governance: "M8 2.5 13 4.5v3.2c0 3-2 4.9-5 6-3-1.1-5-3-5-6V4.5zM6 8l1.4 1.4L10 6.8",
