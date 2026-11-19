@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import {
+  factoryOAuthAuthorizationServerMetadata,
+  parseFactoryMcpResource,
+} from "@/lib/factory-mcp/resource";
+import {
   factoryOAuthPKCEChallenge,
   issueFactoryOAuthCredential,
   parseFactoryOAuthCredential,
@@ -19,13 +23,14 @@ const tokenResultSchema = z.discriminatedUnion("status", [
     expires_in: z.number().int().positive(),
     scopes: factoryCommandScopesSchema.refine((scopes) => scopes.length > 0),
   }),
-  z.object({ status: z.enum(["invalid_grant", "invalid_scope"]) }),
+  z.object({ status: z.enum(["invalid_grant", "invalid_scope", "invalid_target"]) }),
 ]);
 
 type TokenError =
   | "invalid_request"
   | "invalid_grant"
   | "invalid_scope"
+  | "invalid_target"
   | "unsupported_grant_type"
   | "server_error";
 
@@ -45,12 +50,23 @@ export async function POST(request: Request) {
   if (!parsed.ok) return tokenError(parsed.error);
 
   const input = parsed.request;
+  if (
+    input.resource !== undefined &&
+    new URL(request.url).origin !== factoryOAuthAuthorizationServerMetadata()?.issuer
+  ) {
+    return tokenError("invalid_target");
+  }
+
   const presented =
     input.kind === "authorization_code"
       ? parseFactoryOAuthCredential("code", input.code)
       : parseFactoryOAuthCredential("refresh", input.refreshToken);
   if (!presented) return tokenError("invalid_grant");
 
+  const resource =
+    input.resource === undefined
+      ? undefined
+      : (parseFactoryMcpResource(input.resource)?.resource ?? "");
   const access = issueFactoryOAuthCredential("access");
   const refresh = issueFactoryOAuthCredential("refresh");
   try {
@@ -67,6 +83,7 @@ export async function POST(request: Request) {
             p_access_token_digest: access.digest,
             p_refresh_token_id: refresh.id,
             p_refresh_token_digest: refresh.digest,
+            p_resource: resource,
           })
         : admin.rpc("rotate_factory_oauth_refresh_token", {
             p_client_id: input.clientId,
@@ -77,6 +94,7 @@ export async function POST(request: Request) {
             p_next_refresh_token_id: refresh.id,
             p_next_refresh_token_digest: refresh.digest,
             p_requested_scopes: input.scopes,
+            p_resource: resource,
           });
     const { data, error } = await query.single();
     if (error) return tokenError("server_error");

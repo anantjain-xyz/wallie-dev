@@ -7,6 +7,7 @@ import {
   authorizeFactoryCommand,
   factoryCommandTransactionInput,
   releaseFactoryCommandAdmission,
+  type FactoryCommandTransport,
 } from "@/lib/factory-command-authorization/server";
 import { factoryReadRoutes } from "@/lib/factory-read-api/contracts";
 import { workspaceSessionDetailPath } from "@/lib/routes";
@@ -191,17 +192,32 @@ export async function handleFactoryMutation(
   rawParams: unknown,
   admin?: Admin,
 ) {
+  if (new URL(request.url).search) return mutationError("invalid_request");
+  return executeFactoryMutation(
+    operation,
+    rawParams,
+    request.headers.get("Idempotency-Key"),
+    () => readMutationBody(request),
+    { surface: "api", authorization: request.headers.get("Authorization"), signal: request.signal },
+    admin,
+  );
+}
+
+export async function executeFactoryMutation(
+  operation: FactoryMutationOperation,
+  rawParams: unknown,
+  rawKey: unknown,
+  readBody: () => ReturnType<typeof readMutationBody>,
+  transport: FactoryCommandTransport,
+  admin?: Admin,
+) {
   const contract = factoryMutationRoutes[operation];
   const params = contract.params.safeParse(rawParams);
-  const key = factoryMutationKeySchema.safeParse(request.headers.get("Idempotency-Key"));
-  if (!params.success || !key.success || new URL(request.url).search) {
-    return mutationError("invalid_request");
-  }
+  const key = factoryMutationKeySchema.safeParse(rawKey);
+  if (!params.success || !key.success) return mutationError("invalid_request");
+  if (!transport.authorization) return mutationError("unauthorized");
 
-  const authorization = request.headers.get("Authorization");
-  if (!authorization) return mutationError("unauthorized");
-
-  const raw = await readMutationBody(request);
+  const raw = await readBody();
   if (!raw.ok) return mutationError(raw.code);
   const body = contract.body.safeParse(raw.body);
   if (!body.success) return mutationError("invalid_request");
@@ -225,7 +241,7 @@ export async function handleFactoryMutation(
     .digest("hex");
 
   const decision = await authorizeFactoryCommand(
-    { authorization, workspaceId, factoryId, scope: contract.scope, surface: "api", requestHash },
+    { ...transport, workspaceId, factoryId, scope: contract.scope, requestHash },
     admin,
   );
   if (!decision.ok) {
@@ -249,7 +265,7 @@ export async function handleFactoryMutation(
         p_request_key: requestKey,
         p_payload: payload,
       })
-      .abortSignal(request.signal);
+      .abortSignal(transport.signal);
     if (error) return mutationRpcFailure(error.code);
     const parsed = factoryMutationReceiptSchema.safeParse(data);
     if (!parsed.success) return mutationError("unavailable");

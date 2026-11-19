@@ -56,13 +56,16 @@ describe("OAuth browser consent decision", () => {
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
 
-  it("rejects duplicate decisions and callback inputs from the browser form", async () => {
+  it("rejects duplicate decisions and callback or audience inputs from the browser form", async () => {
     const repeated = consent();
     repeated.append("decision", "deny");
     const redirected = consent();
     redirected.set("redirect_uri", "https://client.example.test/changed");
+    const retargeted = consent();
+    retargeted.set("resource", "https://wallie.example.test/another-factory");
     expect((await POST(post(repeated))).status).toBe(400);
     expect((await POST(post(redirected))).status).toBe(400);
+    expect((await POST(post(retargeted))).status).toBe(400);
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
 
@@ -87,6 +90,7 @@ describe("OAuth browser consent decision", () => {
       code: code.credential,
       kept: "1",
       state: "opaque state",
+      iss: origin,
     });
   });
 

@@ -6966,33 +6966,62 @@ export type Database = {
         }
         Returns: Json
       }
-      admit_factory_command: {
-        Args: {
-          p_credential_digest: string
-          p_credential_id: string
-          p_credential_kind: Database["public"]["Enums"]["factory_command_credential_kind"]
-          p_factory_id: string
-          p_request_hash: string
-          p_request_id: string
-          p_scope: Database["public"]["Enums"]["factory_command_scope"]
-          p_surface: Database["public"]["Enums"]["factory_command_surface"]
-          p_workspace_id: string
-        }
-        Returns: {
-          admission_id: string
-          consenting_member_id: string
-          execution_grant_id: string
-          execution_grant_version: number
-          factory_id: string
-          lease_expires_at: string
-          lease_id: string
-          retry_after_seconds: number
-          scope: Database["public"]["Enums"]["factory_command_scope"]
-          service_principal_id: string
-          status: Database["public"]["Enums"]["factory_command_admission_status"]
-          workspace_id: string
-        }[]
-      }
+      admit_factory_command:
+        | {
+            Args: {
+              p_credential_digest: string
+              p_credential_id: string
+              p_credential_kind: Database["public"]["Enums"]["factory_command_credential_kind"]
+              p_factory_id: string
+              p_request_hash: string
+              p_request_id: string
+              p_scope: Database["public"]["Enums"]["factory_command_scope"]
+              p_surface: Database["public"]["Enums"]["factory_command_surface"]
+              p_workspace_id: string
+            }
+            Returns: {
+              admission_id: string
+              consenting_member_id: string
+              execution_grant_id: string
+              execution_grant_version: number
+              factory_id: string
+              lease_expires_at: string
+              lease_id: string
+              retry_after_seconds: number
+              scope: Database["public"]["Enums"]["factory_command_scope"]
+              service_principal_id: string
+              status: Database["public"]["Enums"]["factory_command_admission_status"]
+              workspace_id: string
+            }[]
+          }
+        | {
+            Args: {
+              p_credential_digest: string
+              p_credential_id: string
+              p_credential_kind: Database["public"]["Enums"]["factory_command_credential_kind"]
+              p_factory_id: string
+              p_request_hash: string
+              p_request_id: string
+              p_resource: string
+              p_scope: Database["public"]["Enums"]["factory_command_scope"]
+              p_surface: Database["public"]["Enums"]["factory_command_surface"]
+              p_workspace_id: string
+            }
+            Returns: {
+              admission_id: string
+              consenting_member_id: string
+              execution_grant_id: string
+              execution_grant_version: number
+              factory_id: string
+              lease_expires_at: string
+              lease_id: string
+              retry_after_seconds: number
+              scope: Database["public"]["Enums"]["factory_command_scope"]
+              service_principal_id: string
+              status: Database["public"]["Enums"]["factory_command_admission_status"]
+              workspace_id: string
+            }[]
+          }
       adopt_session_checkpoint_publication: {
         Args: {
           p_claim_id: string
@@ -7298,6 +7327,7 @@ export type Database = {
           p_code_challenge: string
           p_redirect_uri: string
           p_requested_scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          p_resource?: string
           p_state?: string
         }
         Returns: {
@@ -8221,6 +8251,7 @@ export type Database = {
           p_redirect_uri: string
           p_refresh_token_digest: string
           p_refresh_token_id: string
+          p_resource?: string
         }
         Returns: {
           expires_in: number
@@ -8589,6 +8620,20 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      inspect_factory_mcp_identity: {
+        Args: {
+          p_credential_digest: string
+          p_credential_id: string
+          p_credential_kind: Database["public"]["Enums"]["factory_command_credential_kind"]
+          p_factory_id: string
+          p_resource: string
+          p_workspace_id: string
+        }
+        Returns: {
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          status: string
+        }[]
       }
       issue_factory_machine_token: {
         Args: {
@@ -10055,6 +10100,7 @@ export type Database = {
           p_refresh_token_digest: string
           p_refresh_token_id: string
           p_requested_scopes?: Database["public"]["Enums"]["factory_command_scope"][]
+          p_resource?: string
         }
         Returns: {
           expires_in: number

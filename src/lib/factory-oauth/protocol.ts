@@ -58,10 +58,19 @@ function parseScopes(value: string | undefined) {
 function readParameters(params: URLSearchParams) {
   const unique = new Map<string, string>();
   for (const [name, value] of params) {
+    if (name === "resource") continue;
     if (unique.has(name)) return null;
     unique.set(name, value);
   }
   return unique;
+}
+
+/** Wallie accepts one resource. An empty marker must remain distinct from omission. */
+function readResourceIndicator(params: URLSearchParams) {
+  const resources = params.getAll("resource");
+  if (resources.length === 0) return undefined;
+  const resource = resources[0];
+  return resources.length === 1 && resource.length <= 2048 ? resource : "";
 }
 
 export function parseFactoryOAuthAuthorization(params: URLSearchParams) {
@@ -83,7 +92,14 @@ export function parseFactoryOAuthAuthorization(params: URLSearchParams) {
   const { clientId, redirectUri, challenge, state } = authorization.data;
   return {
     ok: true,
-    request: { clientId, redirectUri, challenge, state, scopes: scopes.data },
+    request: {
+      clientId,
+      redirectUri,
+      challenge,
+      state,
+      scopes: scopes.data,
+      resource: readResourceIndicator(params),
+    },
   } as const;
 }
 
@@ -94,6 +110,7 @@ export function parseFactoryOAuthToken(params: URLSearchParams) {
   if (!fields || !client.success || !grantType || fields.has("client_secret")) {
     return { ok: false, error: "invalid_request" } as const;
   }
+  const resource = readResourceIndicator(params);
   if (grantType === "authorization_code") {
     const code = authorizationCodeSchema.safeParse({
       redirectUri: fields.get("redirect_uri"),
@@ -103,7 +120,7 @@ export function parseFactoryOAuthToken(params: URLSearchParams) {
     if (!code.success) return { ok: false, error: "invalid_request" } as const;
     return {
       ok: true,
-      request: { kind: "authorization_code", clientId: client.data, ...code.data },
+      request: { kind: "authorization_code", clientId: client.data, ...code.data, resource },
     } as const;
   }
   if (grantType === "refresh_token") {
@@ -119,6 +136,7 @@ export function parseFactoryOAuthToken(params: URLSearchParams) {
         clientId: client.data,
         refreshToken: refresh.data,
         scopes: scopes?.data,
+        resource,
       },
     } as const;
   }
@@ -169,22 +187,25 @@ type AuthorizationResponse =
         | "access_denied"
         | "invalid_request"
         | "invalid_scope"
+        | "invalid_target"
         | "unsupported_response_type"
         | "server_error";
     };
 
 /** Call only after the database has confirmed the exact registered redirect. */
 export function factoryOAuthRedirect(input: {
+  issuer: string;
   redirectUri: string;
   state?: string;
   response: AuthorizationResponse;
 }) {
-  const { redirectUri, state, response } = input;
+  const { issuer, redirectUri, state, response } = input;
   const params =
     response.kind === "code"
       ? new URLSearchParams({ code: response.code })
       : new URLSearchParams({ error: response.error });
   if (state !== undefined) params.set("state", state);
+  params.set("iss", issuer);
   const separator = redirectUri.includes("?") ? "&" : "?";
   return new URL(`${redirectUri}${separator}${params}`);
 }

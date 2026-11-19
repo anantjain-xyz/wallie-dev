@@ -95,3 +95,23 @@ Verify `Wallie-Signature` by parsing `t=<unix-seconds>,v1=<hex>`. Compute HMAC-S
 Use **Inspect deliveries** to see the delivery state, attempt count, HTTP status, and retry time. A timeout or process interruption can leave delivery unconfirmed even when the receiver applied it. Automatic and eligible manual retries are bounded. The current credential and grant must still allow sending after the connection is verified and before Wallie signs or writes the request. A send whose permission was already recorded may settle after revocation. Delivery history is retained for seven days.
 
 The Node daemon sends directly. The native worker invokes the Node sender at `WALLIE_FACTORY_EVENT_DISPATCH_RELAY_URL`, which targets `/api/internal/factory-event-dispatch` on the Wallie application. Set the same dedicated `WALLIE_FACTORY_EVENT_DISPATCH_RELAY_SECRET` on the native worker and Node application. Both runtimes use the same durable delivery claims and authorization checks.
+
+## Factory MCP
+
+Connect a client to `/api/v1/workspaces/{workspaceId}/factories/{factoryId}/mcp` on the configured Wallie origin. The endpoint supports the 2026-07-28 and 2025-11-25 revisions of Streamable HTTP. Use a factory machine token or a registered OAuth client. OAuth clients request the exact MCP URL as their `resource` during authorization, code exchange and refresh, and use PKCE S256. The Bearer challenge links to the protected-resource metadata for that factory.
+
+| Tools                                                                                                                                                          | Required scope       |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `wallie_list_sessions`, `wallie_get_session`, `wallie_list_runs`, `wallie_get_run`, `wallie_get_artifact`, `wallie_read_conversation`, `wallie_review_handoff` | `sessions:read`      |
+| `wallie_create_session`                                                                                                                                        | `sessions:create`    |
+| `wallie_send_follow_up`                                                                                                                                        | `sessions:follow-up` |
+| `wallie_answer_clarification`                                                                                                                                  | `sessions:clarify`   |
+| `wallie_cancel_session`                                                                                                                                        | `sessions:cancel`    |
+
+The endpoint fixes the workspace and factory. The tools accept the same request fields as their API operations, plus `idempotencyKey` on writes. Keep that UUID when retrying after disconnect or retrying the same intent through the API. Successful writes return the shared receipt, and changing its intent returns an idempotency conflict. API and MCP consume the same command quota. An HTTP 429 includes `Retry-After`.
+
+Pass a session ID to `wallie_review_handoff` when a gate needs a human decision. To bind the handoff to an artifact you already saw, pass `expectedReview` with its stage ID, artifact ID, artifact version and review revision. The response returns `human_action_required` and a signed-in Workbench link for the exact review or pending question. The browser checks the current target and human authority when the reviewer acts.
+
+MCP OAuth credentials are scoped to their exact MCP resource. API OAuth and event subscriptions use their own authorization. Factory credential or grant revocation takes effect on subsequent tool calls, including retries.
+
+[MCP Streamable HTTP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) · [MCP Streamable HTTP 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)

@@ -84,11 +84,11 @@ select ok(not has_table_privilege('authenticated', 'internal.factory_oauth_autho
 
 create function pg_temp.begin_oauth(
   p_redirect text default 'http://127.0.0.1:8123/callback', p_browser_slot integer default 8,
-  p_challenge text default repeat('a',42) || 'A'
+  p_challenge text default repeat('a',42) || 'A', p_resource text default null
 ) returns table(authorization_id uuid, client_name text, workspace_id uuid, workspace_name text,
   scopes public.factory_command_scope[], factories jsonb, expires_at timestamptz) language sql as $$
   select * from public.begin_factory_oauth_authorization((select id from oauth_client), pg_temp.oauth_id(2),
-    pg_temp.oauth_id(p_browser_slot), p_redirect, p_challenge, '{sessions:read,sessions:cancel}', 'round-trip-state');
+    pg_temp.oauth_id(p_browser_slot), p_redirect, p_challenge, '{sessions:read,sessions:cancel}', 'round-trip-state', p_resource);
 $$;
 select throws_ok($q$select * from pg_temp.begin_oauth('http://127.0.0.1:8124/callback')$q$,
   '42501', null, 'an unregistered redirect change is denied before consent');
@@ -111,6 +111,14 @@ returns table(redirect_uri text, state text, approved boolean) language sql as $
     pg_temp.oauth_id(2), pg_temp.oauth_id(p_browser_slot), true,
     coalesce(p_factories, array[pg_temp.default_factory(),pg_temp.oauth_id(13)]), pg_temp.oauth_id(p_code_slot), repeat('c', 64));
 $$;
+create temp table mcp_oauth_consent as select * from pg_temp.begin_oauth(p_resource=>
+  format('https://wallie.example.test/api/v1/workspaces/%s/factories/%s/mcp',pg_temp.oauth_id(4),pg_temp.oauth_id(13)));
+select ok((select jsonb_array_length(factories)=1 and factories @> jsonb_build_array(
+  jsonb_build_object('factory_id',pg_temp.oauth_id(13),'scopes',jsonb_build_array('sessions:cancel')))
+  from mcp_oauth_consent),'MCP offers only the scopes of its resource even when the client covers two factories');
+select throws_ok($q$select * from pg_temp.accept_oauth(p_factories=>array[pg_temp.default_factory()],
+  p_authorization_id=>(select authorization_id from mcp_oauth_consent))$q$,'22023',null,
+  'MCP consent cannot replace its resource with another factory registered to the same client');
 select throws_ok($q$select * from pg_temp.accept_oauth(9)$q$, '42501', null, 'consent is bound to its initiating browser login');
 select throws_ok($q$select * from pg_temp.accept_oauth(p_factories => array[pg_temp.oauth_id(99)])$q$,
   '22023', null, 'consent cannot add a factory outside the offered set');
@@ -162,6 +170,11 @@ create function pg_temp.use_oauth(p_slot integer, p_scope public.factory_command
 $$;
 select ok(pg_temp.use_oauth(31) and pg_temp.use_oauth(31, 'sessions:cancel', pg_temp.oauth_id(13)),
   'one grant authorizes the approved command in each selected factory');
+select results_eq($q$select * from public.inspect_factory_mcp_identity(pg_temp.oauth_id(4),pg_temp.default_factory(),
+  'oauth_access_token',pg_temp.oauth_id(31),repeat('a',64),
+  format('https://wallie.example.test/api/v1/workspaces/%s/factories/%s/mcp',pg_temp.oauth_id(4),pg_temp.default_factory()))$q$,
+  $q$values ('unauthorized'::text,'{}'::public.factory_command_scope[])$q$,
+  'an existing API OAuth token is valid for its API audience and cannot discover MCP tools');
 select throws_ok($q$select pg_temp.use_oauth(31, 'sessions:cancel')$q$,
   '42501', null, 'the cancel scope of a sibling factory does not extend the read-only factory');
 select throws_ok($q$select pg_temp.use_oauth(31, 'sessions:read', pg_temp.oauth_id(13))$q$,

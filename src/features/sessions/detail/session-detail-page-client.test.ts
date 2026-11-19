@@ -238,7 +238,7 @@ describe("SessionDetailPageClient", () => {
     renderExactReview(data, target);
 
     await waitFor(() => expect(screen.getByText(artifact.payload)).toBeVisible());
-    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve stage" }));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(
         `/api/sessions/${data.session.id}/phase-action`,

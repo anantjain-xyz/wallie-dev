@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   issueFactoryOAuthCredential,
@@ -20,16 +20,20 @@ const endpoint = "https://wallie.example.test/oauth/token";
 const clientId = "aca1c4bf-9836-444a-a48b-b7e20ed21c8f";
 const redirectUri = "https://Client.example.test/callback?view=a%20b";
 const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const origin = new URL(endpoint).origin;
+const resource = `${origin}/api/v1/workspaces/${clientId}/factories/${clientId}/mcp`;
 
-function submit(params: URLSearchParams) {
-  return POST(new Request(endpoint, { method: "POST", body: params }));
+function submit(params: URLSearchParams, url = endpoint) {
+  return POST(new Request(url, { method: "POST", body: params }));
 }
 
 describe("POST /oauth/token", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", origin);
     mocked.rpc.mockReturnValue({ single: mocked.single });
   });
+  afterEach(() => vi.unstubAllEnvs());
 
   it("passes only digests and the exact redirect to the exchange transaction", async () => {
     const code = issueFactoryOAuthCredential("code");
@@ -103,7 +107,7 @@ describe("POST /oauth/token", () => {
     });
   });
 
-  it.each(["invalid_grant", "invalid_scope"])(
+  it.each(["invalid_grant", "invalid_scope", "invalid_target"])(
     "returns only the committed %s outcome",
     async (status) => {
       const refresh = issueFactoryOAuthCredential("refresh");
@@ -125,6 +129,106 @@ describe("POST /oauth/token", () => {
       expect(mocked.rpc).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("passes a canonical resource to exact exchange and refresh", async () => {
+    mocked.single.mockResolvedValue({
+      data: { status: "invalid_target", expires_in: null, scopes: null },
+      error: null,
+    });
+    const exchange = await submit(
+      new URLSearchParams({
+        client_id: clientId,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri,
+        code: issueFactoryOAuthCredential("code").credential,
+        code_verifier: verifier,
+        resource,
+      }),
+    );
+    expect(await exchange.json()).toEqual({ error: "invalid_target" });
+    expect(mocked.rpc).toHaveBeenLastCalledWith(
+      "exchange_factory_oauth_code",
+      expect.objectContaining({ p_resource: resource }),
+    );
+
+    const rotate = await submit(
+      new URLSearchParams({
+        client_id: clientId,
+        grant_type: "refresh_token",
+        refresh_token: issueFactoryOAuthCredential("refresh").credential,
+        resource,
+      }),
+    );
+    expect(await rotate.json()).toEqual({ error: "invalid_target" });
+    expect(mocked.rpc).toHaveBeenLastCalledWith(
+      "rotate_factory_oauth_refresh_token",
+      expect.objectContaining({ p_resource: resource }),
+    );
+  });
+
+  it("does not let a malformed or duplicate resource turn a request into an audience-free refresh", async () => {
+    const params = new URLSearchParams({
+      client_id: clientId,
+      grant_type: "refresh_token",
+      refresh_token: issueFactoryOAuthCredential("refresh").credential,
+      resource: resource.replace(origin, "https://untrusted.example.test"),
+    });
+    mocked.single.mockResolvedValue({
+      data: { status: "invalid_target", expires_in: null, scopes: null },
+      error: null,
+    });
+    expect(await (await submit(params)).json()).toEqual({ error: "invalid_target" });
+    params.set("resource", resource);
+    params.append("resource", resource);
+    expect(await (await submit(params)).json()).toEqual({ error: "invalid_target" });
+    expect(mocked.rpc.mock.calls).toHaveLength(2);
+    expect(mocked.rpc.mock.calls.map(([, args]) => args.p_resource)).toEqual(["", ""]);
+  });
+
+  it("rejects resource-bearing requests at a different origin, including scheme, before any RPC", async () => {
+    const params = new URLSearchParams({
+      client_id: clientId,
+      grant_type: "refresh_token",
+      refresh_token: issueFactoryOAuthCredential("refresh").credential,
+      resource,
+    });
+    const downgrade = endpoint.replace("https:", "http:");
+    for (const url of [downgrade, "https://another.example.test/oauth/token"]) {
+      const response = await submit(params, url);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "invalid_target" });
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+    params.set("resource", "");
+    expect(await (await submit(params, downgrade)).json()).toEqual({ error: "invalid_target" });
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", new URL(downgrade).origin);
+    expect(await (await submit(params, downgrade)).json()).toEqual({ error: "invalid_target" });
+    expect(mocked.rpc).not.toHaveBeenCalled();
+  });
+
+  it("accepts the configured loopback issuer and preserves resource-less exchanges", async () => {
+    mocked.single.mockResolvedValue({
+      data: { status: "issued", expires_in: 120, scopes: ["sessions:read"] },
+      error: null,
+    });
+    const loopback = "http://127.0.0.1:3185";
+    const loopbackResource = resource.replace(origin, loopback);
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", loopback);
+    const params = new URLSearchParams({
+      client_id: clientId,
+      grant_type: "refresh_token",
+      refresh_token: issueFactoryOAuthCredential("refresh").credential,
+      resource: loopbackResource,
+    });
+    expect((await submit(params, `${loopback}/oauth/token`)).status).toBe(200);
+    expect(mocked.rpc).toHaveBeenLastCalledWith(
+      "rotate_factory_oauth_refresh_token",
+      expect.objectContaining({ p_resource: loopbackResource }),
+    );
+    params.delete("resource");
+    expect((await submit(params)).status).toBe(200);
+    expect(mocked.rpc).toHaveBeenCalledTimes(2);
+  });
 
   it("does not expose credential-bearing database diagnostics", async () => {
     const refresh = issueFactoryOAuthCredential("refresh");

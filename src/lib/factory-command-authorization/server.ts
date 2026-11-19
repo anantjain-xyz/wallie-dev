@@ -10,7 +10,10 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/database.types";
 
 type Admin = Pick<ReturnType<typeof createSupabaseAdminClient>, "rpc">;
-type AdmissionInput = Database["public"]["Functions"]["admit_factory_command"]["Args"];
+type AdmissionInput = Omit<
+  Database["public"]["Functions"]["admit_factory_command"]["Args"],
+  "p_resource"
+>;
 
 export type FactoryCommandTransactionInput = Readonly<
   AdmissionInput & { p_admission_id: string; p_lease_id: string }
@@ -22,10 +25,21 @@ const requestSchema = z.object({
   factoryId: uuid,
   scope: factoryCommandScopeSchema,
   surface: z.enum(["api", "mcp"]),
+  resource: z.string().url().max(2048).optional(),
   requestHash: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
-type AuthorizationRequest = z.input<typeof requestSchema> & { authorization: string | null };
+type CommandSurface = { surface: "api" } | { surface: "mcp"; resource: string };
+export type FactoryCommandTransport = CommandSurface & {
+  authorization: string | null;
+  signal: AbortSignal;
+};
+
+type AuthorizationRequest = Pick<
+  z.input<typeof requestSchema>,
+  "workspaceId" | "factoryId" | "scope" | "requestHash"
+> &
+  CommandSurface & { authorization: string | null };
 
 const admissionRowSchema = z.discriminatedUnion("status", [
   z.object({
@@ -94,7 +108,7 @@ export type FactoryCommandAuthorization =
 
 const unavailable = Object.freeze({ ok: false, code: "unavailable", status: 503 });
 
-function parseCredential(authorization: string | null) {
+export function parseFactoryCommandCredential(authorization: string | null) {
   const match = authorization?.match(/^Bearer (\S+)$/i);
   if (!match || match[0] !== authorization) return null;
 
@@ -112,11 +126,14 @@ export async function authorizeFactoryCommand(
   request: AuthorizationRequest,
   admin?: Admin,
 ): Promise<FactoryCommandAuthorization> {
-  const credential = parseCredential(request.authorization);
+  const credential = parseFactoryCommandCredential(request.authorization);
   if (!credential) return { ok: false, code: "unauthorized", status: 401 };
   const parsedRequest = requestSchema.safeParse(request);
   if (!parsedRequest.success) return { ok: false, code: "invalid_request", status: 400 };
-  const { workspaceId, factoryId, scope, surface, requestHash } = parsedRequest.data;
+  const { workspaceId, factoryId, scope, surface, resource, requestHash } = parsedRequest.data;
+  if ((surface === "mcp") !== (resource !== undefined)) {
+    return { ok: false, code: "invalid_request", status: 400 };
+  }
   const input: AdmissionInput = {
     p_workspace_id: workspaceId,
     p_factory_id: factoryId,
@@ -131,7 +148,12 @@ export async function authorizeFactoryCommand(
 
   try {
     const client = admin ?? createSupabaseAdminClient();
-    const { data, error } = await client.rpc("admit_factory_command", input).single();
+    const { data, error } = await client
+      .rpc(
+        "admit_factory_command",
+        resource === undefined ? input : { ...input, p_resource: resource },
+      )
+      .single();
     if (error) return unavailable;
     const parsedRow = admissionRowSchema.safeParse(data);
     if (!parsedRow.success) return unavailable;

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { resolveAppOrigin } from "@/lib/app-url";
 import {
   authenticateFactoryOAuthBrowser,
   isSameOriginFactoryOAuthPost,
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
   if (!registeredRedirect.success || data.approved !== allow)
     return errorResponse(500, "server_error");
   const location = factoryOAuthRedirect({
+    issuer: resolveAppOrigin(),
     redirectUri: registeredRedirect.data,
     state: data.state ?? undefined,
     response: code
