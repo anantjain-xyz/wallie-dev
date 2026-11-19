@@ -90,6 +90,7 @@ function flowFreshness(freshness: NonNullable<ReturnType<typeof flowSummary>>["f
     {
       building: "Updating · snapshot may be stale",
       failed: "Update failed · snapshot may be stale",
+      paused: "Paused · snapshot may be stale",
       unavailable: "No projection snapshot",
       ready: "Current snapshot",
     }[freshness.status] ?? freshness.status;

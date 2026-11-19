@@ -64,6 +64,25 @@ export async function seedFactoryAnalytics(baseURL: string | undefined) {
   const viewerEmail = `${workspaceSlug}-viewer@example.test`;
   const users: string[] = [];
 
+  const psqlOptions = [
+    "-XqAt",
+    "--no-password",
+    `--host=${database.hostname.replace(/^\[|\]$/g, "")}`,
+    `--port=${database.port}`,
+    `--username=${decodeURIComponent(database.username)}`,
+    "--dbname=postgres",
+    "--set=ON_ERROR_STOP=1",
+  ];
+  const psqlEnvironment: NodeJS.ProcessEnv = {
+    NODE_ENV: "test",
+    PATH: process.env.PATH,
+    PGPASSWORD: decodeURIComponent(database.password),
+  };
+
+  function runFixtureSql(args: string[]) {
+    return exec("psql", [...psqlOptions, ...args], { env: psqlEnvironment, timeout: 20_000 });
+  }
+
   async function createUser(email: string) {
     const { data, error } = await admin.auth.admin.createUser({ email, email_confirm: true });
     if (error) throw error;
@@ -89,29 +108,11 @@ export async function seedFactoryAnalytics(baseURL: string | undefined) {
       viewer_email: viewerEmail,
       repository_numeric_id: String(randomInt(100_000_000, 1_000_000_000)),
     };
-    const { stdout } = await exec(
-      "psql",
-      [
-        "-XqAt",
-        "--no-password",
-        `--host=${database.hostname.replace(/^\[|\]$/g, "")}`,
-        `--port=${database.port}`,
-        `--username=${decodeURIComponent(database.username)}`,
-        "--dbname=postgres",
-        "--set=ON_ERROR_STOP=1",
-        ...Object.entries(fields).map(([key, value]) => `--set=${key}=${value}`),
-        "--file",
-        resolve(__dirname, "factory-analytics-seed.sql"),
-      ],
-      {
-        env: {
-          NODE_ENV: "test",
-          PATH: process.env.PATH,
-          PGPASSWORD: decodeURIComponent(database.password),
-        },
-        timeout: 20_000,
-      },
-    );
+    const { stdout } = await runFixtureSql([
+      ...Object.entries(fields).map(([key, value]) => `--set=${key}=${value}`),
+      "--file",
+      resolve(__dirname, "factory-analytics-seed.sql"),
+    ]);
     const data = fixture.parse(JSON.parse(stdout.trim()));
 
     return {
@@ -131,6 +132,14 @@ export async function seedFactoryAnalytics(baseURL: string | undefined) {
           current_stage_id: data.stageId,
         });
         if (error) throw error;
+      },
+      async markProjectionFailed() {
+        await runFixtureSql([
+          "--command",
+          `update internal.factory_outcome_projection_watermarks set status = 'failed'
+           where (workspace_id, factory_id, metric_key, metric_revision) =
+             ('${data.workspaceId}', '${data.factoryId}', 'workflow_flow', 1)`,
+        ]);
       },
       async drainProjections() {
         const batch = z.object({ hasMore: z.boolean() });

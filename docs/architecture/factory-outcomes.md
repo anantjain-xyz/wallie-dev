@@ -51,9 +51,21 @@ Replaying a batch is safe. A null cursor means that the bounded scan is complete
   Delivery samples use current verified linkage, so late deployments and
   corrections are reflected on the next read.
 
-Factory managers can page through `enqueue_factory_flow_rebuild` using the
-returned session cursor. The maintenance queue records pending work and the
-watermark records the latest completed factory snapshot.
+Overview reads the same Analytics cohort and links to its evidence. Projection
+health shows the latest successful snapshot, pending work and its age, and
+the status of any rebuild.
+
+| Factory manager action | Effect                                                                                         |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| Pause projection       | Stops processing for the selected factory. Outcome capture and session execution continue.     |
+| Rebuild projection     | Queues a bounded pass over the retained sessions. The rebuild resumes from its saved position. |
+| Resume projection      | Restores processing of pending observations and rebuild work.                                  |
+
+If a batch fails, its partial projection changes roll back. The worker records
+the failure and retries with backoff while healthy factories continue. A rebuild
+uses the retained observations. It leaves authoritative sessions and runs intact.
+Cost, throughput, and revert summaries read their retained source evidence
+independently of the flow projection.
 
 ## GitHub merges
 

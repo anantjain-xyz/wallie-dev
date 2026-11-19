@@ -8,6 +8,7 @@ import {
   defaultsToAllFactories,
   factorySwitchHref,
   isFactoryAggregatePath,
+  isFactoryOutcomePath,
   isFactorySelectorPath,
   isManagedFactoryPath,
   resolveAnalyticsFactory,
@@ -15,7 +16,6 @@ import {
   resolveGovernanceFactorySelection,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
-import { workspaceAnalyticsPath } from "@/lib/routes";
 
 export function FactorySelector({
   factories,
@@ -41,14 +41,13 @@ export function FactorySelector({
         factories,
         requested ?? (defaultsToAllFactories(pathname, workspaceSlug) ? "all" : undefined),
       );
-  const selectedValue =
-    pathname === workspaceAnalyticsPath(workspaceSlug)
-      ? (resolveAnalyticsFactory(factories, requested)?.id ?? "unavailable")
-      : selection.kind === "factory"
-        ? selection.factory.id
-        : selection.kind === "all" && allowAll
-          ? "all"
-          : "unavailable";
+  const selectedValue = isFactoryOutcomePath(pathname, workspaceSlug)
+    ? (resolveAnalyticsFactory(factories, requested)?.id ?? "unavailable")
+    : selection.kind === "factory"
+      ? selection.factory.id
+      : selection.kind === "all" && allowAll
+        ? "all"
+        : "unavailable";
 
   return (
     <label className="min-w-0">

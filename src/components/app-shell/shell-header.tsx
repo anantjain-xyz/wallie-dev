@@ -422,11 +422,12 @@ export function ShellHeader({
       ? withFactoryQuery(item.href, factory)
       : item.id === "agents" ||
           item.id === "analytics" ||
+          item.id === "overview" ||
           item.id === "factory-definition" ||
           isManagedFactoryPath(item.href, workspace.slug)
         ? withFactoryQuery(item.href, scopedFactory)
         : item.href;
-    const skipPrefetch = item.id === "inbox" || item.id === "analytics";
+    const skipPrefetch = item.id === "inbox" || item.id === "analytics" || item.id === "overview";
     return {
       href,
       // From the pipeline, load the real page ahead of the click. The default

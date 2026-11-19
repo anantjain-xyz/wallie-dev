@@ -63,7 +63,7 @@ const flowSummary = z.object({
     unplacedSessions: count,
   }),
   freshness: z.object({
-    status: z.string(),
+    status: z.enum(["ready", "building", "paused", "failed", "unavailable"]),
     lastSuccessAt: timestamp.nullable(),
     sourceSnapshotAt: timestamp.nullable(),
     evaluatedAt: timestamp,
