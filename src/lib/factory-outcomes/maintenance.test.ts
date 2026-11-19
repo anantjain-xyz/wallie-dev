@@ -1,3 +1,5 @@
+import { expect, it, vi } from "vitest";
+
 import { processFactoryFlowProjection } from "./maintenance";
 
 it("processes exactly one bounded batch even if more work remains", async () => {
