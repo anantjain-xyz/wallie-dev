@@ -131,9 +131,9 @@ function resolveEvidenceLinks(links: ReadonlyMap<string, string>) {
   return (tree: unknown) => visit(tree as HtmlNode);
 }
 
-function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
+function styleNode(node: HtmlNode, images: "link" | "text", parent?: HtmlNode, index = -1) {
   for (const [childIndex, child] of (node.children ?? []).entries()) {
-    styleNode(child, node, childIndex);
+    styleNode(child, images, node, childIndex);
   }
 
   if (node.type !== "element" || !node.tagName) return;
@@ -170,6 +170,10 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
   if (node.tagName === "img" && parent?.children && index >= 0) {
     const href = typeof node.properties.src === "string" ? node.properties.src : undefined;
     const alt = typeof node.properties.alt === "string" ? node.properties.alt.trim() : "";
+    if (images === "text") {
+      parent.children[index] = { type: "text", value: alt || "Image" };
+      return;
+    }
     parent.children[index] = {
       children: [{ type: "text", value: `🖼 ${alt || href || "image"}`, position: node.position }],
       properties: {
@@ -262,8 +266,8 @@ function reviewSourcePositions(source: string) {
   return (tree: unknown) => visit(tree as HtmlNode);
 }
 
-function styleMarkdownHtml() {
-  return (tree: unknown) => styleNode(tree as HtmlNode);
+function styleMarkdownHtml(images: "link" | "text" = "link") {
+  return (tree: unknown) => styleNode(tree as HtmlNode, images);
 }
 
 export type RenderedMarkdown = Readonly<{
@@ -271,27 +275,39 @@ export type RenderedMarkdown = Readonly<{
   html: string;
 }>;
 
-/** The only parsing, GFM, sanitization, and styling pipeline for artifact Markdown. */
-export function renderMarkdown(
+/** The only parsing, GFM, sanitization, and styling pipeline for Wallie Markdown. */
+function renderMarkdownBody(
   markdown: string,
-  reviewSource = false,
-  evidenceLinks: ReadonlyMap<string, string> = new Map(),
-): RenderedMarkdown {
+  reviewSource: boolean,
+  evidenceLinks: ReadonlyMap<string, string>,
+  images: "link" | "text",
+): SanitizedMarkdownHtml {
   const processor = unified()
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkRehype)
     .use(resolveEvidenceLinks, evidenceLinks)
     .use(rehypeSanitize)
-    .use(styleMarkdownHtml);
+    .use(styleMarkdownHtml, images);
   if (reviewSource) processor.use(reviewSourcePositions, markdown);
   const rendered = processor.use(rehypeStringify).processSync(markdown);
-  const bodyHtml = String(rendered) as SanitizedMarkdownHtml;
+  return String(rendered) as SanitizedMarkdownHtml;
+}
 
+export function renderMarkdown(
+  markdown: string,
+  reviewSource = false,
+  evidenceLinks: ReadonlyMap<string, string> = new Map(),
+): RenderedMarkdown {
+  const bodyHtml = renderMarkdownBody(markdown, reviewSource, evidenceLinks, "link");
   return {
     bodyHtml,
     html: `<div class="artifact-content">${bodyHtml}</div>`,
   };
+}
+
+export function renderConversationMarkdown(markdown: string): SanitizedMarkdownHtml {
+  return renderMarkdownBody(markdown, false, new Map(), "text");
 }
 
 /** Preserve the artifact API's existing full-document-fragment contract. */

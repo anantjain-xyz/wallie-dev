@@ -3355,6 +3355,166 @@ export type Database = {
           },
         ]
       }
+      session_conversation_messages: {
+        Row: {
+          artifact_id: string | null
+          attempt_count: number | null
+          author_kind: Database["public"]["Enums"]["session_conversation_author_kind"]
+          author_label: string
+          body_md: string
+          body_truncated: boolean
+          created_at: string
+          external_actor_id: string | null
+          external_message_id: string | null
+          factory_id: string
+          feedback_batch_id: string | null
+          kind: Database["public"]["Enums"]["session_conversation_message_kind"]
+          originating_member_id: string | null
+          provenance_version: number
+          receipt_key: string
+          run_id: string | null
+          sequence: number
+          session_id: string
+          source_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          artifact_id?: string | null
+          attempt_count?: number | null
+          author_kind: Database["public"]["Enums"]["session_conversation_author_kind"]
+          author_label: string
+          body_md: string
+          body_truncated?: boolean
+          created_at?: string
+          external_actor_id?: string | null
+          external_message_id?: string | null
+          factory_id: string
+          feedback_batch_id?: string | null
+          kind: Database["public"]["Enums"]["session_conversation_message_kind"]
+          originating_member_id?: string | null
+          provenance_version?: number
+          receipt_key: string
+          run_id?: string | null
+          sequence: number
+          session_id: string
+          source_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          artifact_id?: string | null
+          attempt_count?: number | null
+          author_kind?: Database["public"]["Enums"]["session_conversation_author_kind"]
+          author_label?: string
+          body_md?: string
+          body_truncated?: boolean
+          created_at?: string
+          external_actor_id?: string | null
+          external_message_id?: string | null
+          factory_id?: string
+          feedback_batch_id?: string | null
+          kind?: Database["public"]["Enums"]["session_conversation_message_kind"]
+          originating_member_id?: string | null
+          provenance_version?: number
+          receipt_key?: string
+          run_id?: string | null
+          sequence?: number
+          session_id?: string
+          source_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_conversation_messages_session_id_source_id_fkey"
+            columns: ["session_id", "source_id"]
+            isOneToOne: false
+            referencedRelation: "session_conversation_sources"
+            referencedColumns: ["session_id", "id"]
+          },
+          {
+            foreignKeyName: "session_conversation_messages_session_id_workspace_id_fact_fkey"
+            columns: ["session_id", "workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "session_conversations"
+            referencedColumns: ["session_id", "workspace_id", "factory_id"]
+          },
+        ]
+      }
+      session_conversation_sources: {
+        Row: {
+          created_at: string
+          external_thread_id: string
+          factory_id: string
+          id: string
+          label: string | null
+          provider: string
+          session_id: string
+          source_namespace: string
+          source_url: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          external_thread_id: string
+          factory_id: string
+          id?: string
+          label?: string | null
+          provider: string
+          session_id: string
+          source_namespace: string
+          source_url?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          external_thread_id?: string
+          factory_id?: string
+          id?: string
+          label?: string | null
+          provider?: string
+          session_id?: string
+          source_namespace?: string
+          source_url?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_conversation_sources_session_id_workspace_id_facto_fkey"
+            columns: ["session_id", "workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "session_conversations"
+            referencedColumns: ["session_id", "workspace_id", "factory_id"]
+          },
+        ]
+      }
+      session_conversations: {
+        Row: {
+          factory_id: string
+          last_sequence: number
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          factory_id: string
+          last_sequence?: number
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          factory_id?: string
+          last_sequence?: number
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_conversations_session_id_workspace_id_factory_id_fkey"
+            columns: ["session_id", "workspace_id", "factory_id"]
+            isOneToOne: true
+            referencedRelation: "sessions"
+            referencedColumns: ["id", "workspace_id", "factory_id"]
+          },
+        ]
+      }
       session_factory_admission_inputs: {
         Row: {
           activation_number: number
@@ -6450,6 +6610,23 @@ export type Database = {
         }
         Returns: boolean
       }
+      append_session_conversation_message_once: {
+        Args: {
+          p_actor_member_id: string
+          p_body_md: string
+          p_external_actor_id?: string
+          p_external_message_id?: string
+          p_factory_id: string
+          p_request_id: string
+          p_session_id: string
+          p_source_id?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          replayed: boolean
+          sequence: number
+        }[]
+      }
       apply_github_pull_request_event: {
         Args: {
           source_head_repository_matches?: boolean
@@ -6697,6 +6874,37 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: string
+      }
+      bind_session_conversation_source_once: {
+        Args: {
+          p_actor_member_id: string
+          p_external_thread_id: string
+          p_factory_id: string
+          p_label?: string
+          p_provider: string
+          p_session_id: string
+          p_source_namespace: string
+          p_source_url?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          external_thread_id: string
+          factory_id: string
+          id: string
+          label: string | null
+          provider: string
+          session_id: string
+          source_namespace: string
+          source_url: string | null
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "session_conversation_sources"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       cancel_factory_definition_smoke_test: {
         Args: {
@@ -8651,6 +8859,32 @@ export type Database = {
           tool_revision_id: string
         }[]
       }
+      resolve_session_conversation_source: {
+        Args: {
+          p_external_thread_id: string
+          p_provider: string
+          p_source_namespace: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          external_thread_id: string
+          factory_id: string
+          id: string
+          label: string | null
+          provider: string
+          session_id: string
+          source_namespace: string
+          source_url: string | null
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "session_conversation_sources"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       restart_session_once_with_first_job: {
         Args: {
           agent_model_name: string
@@ -9602,6 +9836,13 @@ export type Database = {
         | "merged"
         | "closed"
         | "not_applicable"
+      session_conversation_author_kind: "user" | "agent" | "system"
+      session_conversation_message_kind:
+        | "message"
+        | "initial_prompt"
+        | "artifact_feedback"
+        | "review_ready"
+        | "system"
       workspace_invitation_status: "pending" | "accepted" | "revoked"
     }
     CompositeTypes: {
@@ -9768,6 +10009,14 @@ export const Constants = {
         "merged",
         "closed",
         "not_applicable",
+      ],
+      session_conversation_author_kind: ["user", "agent", "system"],
+      session_conversation_message_kind: [
+        "message",
+        "initial_prompt",
+        "artifact_feedback",
+        "review_ready",
+        "system",
       ],
       workspace_invitation_status: ["pending", "accepted", "revoked"],
     },
