@@ -4,7 +4,6 @@ import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
 
 import { ClaudeCodeRunner, parseStreamJsonLine } from "./claude-code";
-import { prepareMcpAdapter } from "./mcp-runtime";
 import type { AgentEvent, AgentRunnerStartInput } from "./types";
 
 const anthropicCredential = { secret: "sk-ant-test" };
@@ -12,7 +11,7 @@ const anthropicCredential = { secret: "sk-ant-test" };
 const mcpRevisionId = "11111111-1111-4111-8111-111111111111";
 const mcpToken = "synthetic-claude-mcp-fixture-token";
 
-async function claudeMcpFixture({ bridgeReady = true } = {}) {
+function claudeMcpFixture({ bridgeReady = true } = {}) {
   const runtime: NonNullable<AgentRunnerStartInput["mcp"]> = {
     manifest: {
       agentId: "22222222-2222-4222-8222-222222222222",
@@ -33,14 +32,12 @@ async function claudeMcpFixture({ bridgeReady = true } = {}) {
     },
     loadCredentials: vi.fn(async () => new Map([[mcpRevisionId, mcpToken]])),
   };
-  const expected = await prepareMcpAdapter({
-    runtime,
-    sandbox: new FakeSandbox(),
-    directory: "/tmp/wallie-claude-mcp-projection",
-  });
-  const [server] = expected.servers;
-  const [operation] = server.operations;
-  const tool = `mcp__${server.name}__${operation.name}`;
+  const server = { name: "wallie1" };
+  const tool = `mcp__${server.name}__read_page`;
+  const receipt = {
+    type: "mcp_receipt",
+    servers: [{ slug: "docs", revision: 1, operations: ["read_page"] }],
+  } satisfies AgentEvent;
   const init = {
     type: "system",
     subtype: "init",
@@ -68,7 +65,7 @@ async function claudeMcpFixture({ bridgeReady = true } = {}) {
     }
     return events;
   };
-  return { run, sandbox, expected, init, server, tool, runtime };
+  return { run, sandbox, receipt, init, server, tool, runtime };
 }
 
 async function runClaudeToolRecords(records: unknown[]): Promise<AgentEvent[]> {
@@ -183,7 +180,7 @@ describe("ClaudeCodeRunner", () => {
   });
 
   it("exposes only the approved MCP operations through an isolated Claude invocation", async () => {
-    const { run, sandbox, expected, init, server, tool, runtime } = await claudeMcpFixture();
+    const { run, sandbox, receipt, init, server, tool, runtime } = claudeMcpFixture();
     const events = await run([
       init,
       {
@@ -191,7 +188,7 @@ describe("ClaudeCodeRunner", () => {
         message: { content: [{ type: "tool_use", name: tool, id: "call", input: {} }] },
       },
     ]);
-    expect(events[0]).toEqual(expected.receipt);
+    expect(events[0]).toEqual(receipt);
     expect(events[1]).toMatchObject({ type: "tool_use", tool });
     expect(events.at(-1)).toMatchObject({ type: "completion", taskComplete: true });
     expect(runtime.loadCredentials).toHaveBeenCalledOnce();
@@ -221,7 +218,7 @@ describe("ClaudeCodeRunner", () => {
   it.each(["missing", "disconnected", "extra tool", "bridge unavailable", "unsupported operation"])(
     "fails a scoped invocation for %s without an unverified capability receipt or deliverable",
     async (scenario) => {
-      const { run, init, server, sandbox, expected } = await claudeMcpFixture({
+      const { run, init, server, sandbox, receipt } = claudeMcpFixture({
         bridgeReady: scenario !== "bridge unavailable",
       });
       const events: AgentEvent[] = [];
@@ -244,7 +241,7 @@ describe("ClaudeCodeRunner", () => {
       await expect(run(recordsByScenario[scenario], events)).rejects.toThrow(
         /approved MCP|unsupported MCP/,
       );
-      expect(events).toEqual(scenario === "unsupported operation" ? [expected.receipt] : []);
+      expect(events).toEqual(scenario === "unsupported operation" ? [receipt] : []);
       const secretPaths = [...sandbox.files]
         .filter(([, { data }]) => data.toString().includes(mcpToken))
         .map(([path]) => path);

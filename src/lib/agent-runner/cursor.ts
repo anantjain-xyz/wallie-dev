@@ -1,7 +1,9 @@
 import type { CursorCredential } from "@/lib/cursor/contracts";
+import { unavailableMcpAdapterReason } from "@/lib/factory-mcp/adapter-readiness";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { redactSecrets, shellQuote } from "@/lib/sandbox/command";
 
+import { McpAdapterError } from "./mcp-runtime";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
 import { type AgentOutputSafety, prepareRunnerDirectory } from "./safety";
@@ -66,6 +68,9 @@ export class CursorRunner implements AgentRunner {
     safety: AgentOutputSafety,
     material?: ScopedRunnerMaterial,
   ): AsyncIterable<AgentEvent> {
+    const unavailable = input.mcp && unavailableMcpAdapterReason(this.provider);
+    if (unavailable) throw new McpAdapterError(unavailable);
+
     if (!input.sandbox) throw new Error("CursorRunner requires a sandbox.");
     const sandbox = input.sandbox;
     const directory = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
