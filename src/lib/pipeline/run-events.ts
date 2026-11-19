@@ -235,6 +235,14 @@ function projectEvent(event: AgentEvent, redactKnown: (text: string) => string):
         truncated: text.truncated,
       };
     }
+    case "mcp_receipt": {
+      const scopes = event.servers.map(
+        ({ slug, revision, operations }) =>
+          `${slug} revision ${revision} (${operations.join(", ")})`,
+      );
+      const text = capture(`Verified MCP tool scopes for this attempt. ${scopes.join(". ")}.`);
+      return { kind: "progress", payload: { text: text.excerpt }, truncated: text.truncated };
+    }
     case "tool_use": {
       const tool = capture(event.tool, MAX_LABEL_BYTES);
       const input = captureText(redactKnown(event.input), MAX_TEXT_BYTES, redactRunToolText);

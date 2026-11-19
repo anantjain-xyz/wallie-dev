@@ -25,6 +25,32 @@ function expectExternalSandboxMode(command: string) {
   expect(command).toContain("'--cd' '/vercel/sandbox'");
 }
 
+const mcpToolRevisionId = "00000000-0000-4000-8000-000000000001";
+const mcpBearerFixture = "wallie-synthetic-mcp-bearer-op558";
+const mcpManifest = {
+  agentId: "00000000-0000-4000-8000-000000000002",
+  servers: [
+    {
+      toolRevisionId: mcpToolRevisionId,
+      serverId: "00000000-0000-4000-8000-000000000003",
+      serverSlug: "inventory",
+      revisionNumber: 1,
+      endpoint: "https://inventory.example.test/mcp",
+      operations: ["read_item"],
+      auth: {
+        kind: "bearer",
+        secretBindingId: "00000000-0000-4000-8000-000000000004",
+      },
+    },
+  ],
+} satisfies NonNullable<AgentRunnerStartInput["mcp"]>["manifest"];
+
+async function collectRunnerEvents(events: AsyncIterable<AgentEvent>) {
+  const result: AgentEvent[] = [];
+  for await (const event of events) result.push(event);
+  return result;
+}
+
 function scriptCodexRun(
   sandbox: FakeSandbox,
   messages: string[],
@@ -467,6 +493,114 @@ describe("CodexRunner", () => {
     expect(codexExecArgs("gpt-5.6-sol", "/vercel/sandbox", "max")).toContain(
       'model_reasoning_effort="max"',
     );
+  });
+
+  it("launches with only the approved stdio tools and records verified readiness", async () => {
+    const sandbox = new FakeSandbox();
+    const loadCredential = vi.fn(async () => launchCredentials[0]!);
+    const loadCredentials = vi.fn(async () => new Map([[mcpToolRevisionId, mcpBearerFixture]]));
+    sandbox.scriptExec("wallie-credential", () => {
+      sandbox.files.set(harnessPath(sandbox, "wallie1.mcp.json.ready"), {
+        data: Buffer.from("ready\n"),
+      });
+      sandbox.files.set(harnessPath(sandbox, "final-output.md"), {
+        data: Buffer.from(`Run result returned ${mcpBearerFixture}`),
+      });
+      return [];
+    });
+    const events = await collectRunnerEvents(
+      new CodexRunner({ loadCredential }).start({
+        mcp: { manifest: mcpManifest, loadCredentials },
+        scopedCredential: true,
+        sandbox,
+        sessionId: "mcp-run",
+        prompt: "Check the supplied inventory.",
+      }),
+    );
+
+    expect(loadCredentials).toHaveBeenCalledOnce();
+    expect(loadCredential.mock.invocationCallOrder[0]!).toBeLessThan(
+      loadCredentials.mock.invocationCallOrder[0]!,
+    );
+    const launch = sandbox.calls.find(({ args }) => args.includes("wallie-credential"));
+    expect(launch?.args.slice(-4)).toEqual([
+      "--noprofile",
+      "--norc",
+      "-c",
+      expect.stringContaining("exec codex 'exec'"),
+    ]);
+    expect(launch?.args.at(-1)).toContain(
+      `'mcp_servers={"wallie1"={command="node",args=${JSON.stringify([
+        harnessPath(sandbox, "wallie-mcp.cjs"),
+        harnessPath(sandbox, "wallie1.mcp.json"),
+      ])},enabled_tools=["read_item"],required=true}}'`,
+    );
+    expect(launch?.args.at(-1)).toContain("'--disable' 'apps'");
+    expect(JSON.stringify(launch)).not.toContain("inventory.example.test");
+    expect(JSON.stringify(sandbox.calls)).not.toContain(mcpBearerFixture);
+    expect(JSON.stringify(events)).not.toContain(mcpBearerFixture);
+    const descriptorPath = harnessPath(sandbox, "wallie1.mcp.json");
+    expect(sandbox.files.get(descriptorPath)?.mode).toBe(0o600);
+    expect(sandbox.calls).toContainEqual(
+      expect.objectContaining({
+        cmd: "rm",
+        args: expect.arrayContaining(["-f", "--", descriptorPath]),
+      }),
+    );
+    expect(events).toEqual([
+      {
+        type: "mcp_receipt",
+        servers: [{ slug: "inventory", revision: 1, operations: ["read_item"] }],
+      },
+      expect.objectContaining({
+        type: "completion",
+        finalOutput: "Run result returned [REDACTED]",
+      }),
+    ]);
+  });
+
+  it("fails when the Codex process never verifies the approved tool set", async () => {
+    const sandbox = new FakeSandbox();
+    const loadCredentials = async () => new Map([[mcpToolRevisionId, mcpBearerFixture]]);
+    await expect(
+      collectRunnerEvents(
+        new CodexRunner({ credential: launchCredentials[0]! }).start({
+          mcp: { manifest: mcpManifest, loadCredentials },
+          scopedCredential: true,
+          sandbox,
+          sessionId: "unverified-mcp-run",
+          prompt: "Check the supplied inventory.",
+        }),
+      ),
+    ).rejects.toThrow("An approved MCP server did not expose its complete tool scope");
+
+    expect(sandbox.calls).toContainEqual(
+      expect.objectContaining({
+        cmd: "rm",
+        args: expect.arrayContaining(["--", harnessPath(sandbox, "wallie1.mcp.json")]),
+      }),
+    );
+  });
+
+  it("leaves the Codex process unstarted when the current MCP grant is revoked", async () => {
+    const sandbox = new FakeSandbox();
+    const loadCredentials = async () => {
+      throw new Error("The approved MCP grant is no longer current.");
+    };
+    await expect(
+      collectRunnerEvents(
+        new CodexRunner({ credential: launchCredentials[0]! }).start({
+          mcp: { manifest: mcpManifest, loadCredentials },
+          scopedCredential: true,
+          sandbox,
+          sessionId: "revoked-mcp-run",
+          prompt: "Check the supplied inventory.",
+        }),
+      ),
+    ).rejects.toThrow("The approved MCP grant is no longer current");
+
+    expect(sandbox.calls.some(({ args }) => args.includes("wallie-credential"))).toBe(false);
+    expect(sandbox.files.has(harnessPath(sandbox, "wallie1.mcp.json"))).toBe(false);
   });
 
   it.each([

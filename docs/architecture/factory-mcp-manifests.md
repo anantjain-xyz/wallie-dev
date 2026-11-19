@@ -16,4 +16,10 @@ A factory manager approves a specific HTTPS MCP server revision and its declared
 3. In the factory definition JSON, set `mcpBindings` to objects with `toolRevisionId`, `operations`, and `secretBindingId` for bearer authentication. Pin the implementation agent and grant revision in that definition.
 4. Inspect the compiled manifest in **Factory Definition**. **Run inspector** displays the manifest pinned to the admitted execution.
 
-Definitions with no bindings compile to an empty runtime manifest. Cursor uses a run-local home and checks checkout and ancestor MCP configuration. OpenCode uses a run-local configuration, rejects machine-managed configuration, and carries over the checkout's root instructions. Codex and Claude launch with explicit empty configurations. Adapter translation and credential injection follow in OP-558 and OP-559. A run that requires a nonempty manifest stops before an adapter launches until its integration is available.
+## Run a binding
+
+Codex and Claude Code launch a dedicated stdio adapter for each approved HTTPS endpoint. The adapter confirms the selected tool names against the pinned endpoint, exposes the approved catalog to the CLI, and checks each call before forwarding it. Endpoints must support Streamable HTTP. The adapter accepts JSON or streamed responses and refuses HTTP redirects.
+
+The worker rechecks the exact attempt, grant, revision, and credential bindings before launch. Each adapter process reads its private bootstrap file once and unlinks it before connecting to the endpoint. The runner removes any remaining credential files on completion, failure, or cancellation. The run trace receives an effective scope receipt after startup is verified.
+
+Definitions with no bindings compile to an empty runtime manifest. Cursor uses a run-local home and checks checkout and ancestor MCP configuration. OpenCode uses a run-local configuration, rejects machine-managed configuration, and carries over the checkout's root instructions. Cursor and OpenCode support for nonempty manifests follows in OP-559.

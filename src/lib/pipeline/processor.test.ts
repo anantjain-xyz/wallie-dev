@@ -9,6 +9,7 @@ import { CodexRunner } from "@/lib/agent-runner/codex";
 import { ClaudeCodeRunner } from "@/lib/agent-runner/claude-code";
 import { ScopedCredentialCleanupError } from "@/lib/agent-runner/scoped-credentials";
 import { ScopedRunCredentialUnavailableError } from "@/lib/agent-credentials/scoped-run-credential";
+import { McpCredentialsUnavailableError } from "@/lib/factory-mcp/credentials";
 import type { CreateAgentRunnerOptions } from "@/lib/agent-runner";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import {
@@ -51,6 +52,7 @@ const mocked = vi.hoisted(() => ({
     providerCredentials: {},
   }),
   resolveScopedRunCredential: vi.fn(),
+  resolveFactoryMcpCredentials: vi.fn(),
   markCursorReconnectRequired: vi.fn(),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
@@ -84,6 +86,11 @@ vi.mock("@/lib/validation-evidence/service", () => ({
 vi.mock("@/lib/agent-credentials/scoped-run-credential", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/agent-credentials/scoped-run-credential")>()),
   resolveScopedRunCredential: mocked.resolveScopedRunCredential,
+}));
+
+vi.mock("@/lib/factory-mcp/credentials", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/factory-mcp/credentials")>()),
+  resolveFactoryMcpCredentials: mocked.resolveFactoryMcpCredentials,
 }));
 
 vi.mock("./git-input", () => ({ checkoutPinnedGitInput: mocked.checkoutPinnedGitInput }));
@@ -1095,6 +1102,8 @@ describe("processPipelineJob (generic stage runner)", () => {
     { trigger: "manual_run", scope: "retry_race" },
     { trigger: "manual_run", scope: "bound" },
     { trigger: "manual_run", scope: "mcp_pending" },
+    { trigger: "manual_run", scope: "mcp_approved" },
+    { trigger: "manual_run", scope: "mcp_revoked" },
   ] as const)(
     "honors the compiled authorization for $trigger ($scope credential)",
     async ({ trigger, scope }) => {
@@ -1113,8 +1122,9 @@ describe("processPipelineJob (generic stage runner)", () => {
       const serviceBound = scope !== "human";
       const bindingId = "77900000-0000-4000-8000-000000000009";
       const credentialValue = "scoped-execution-fixture-key-5678";
-      const requiresMcpAdapter = scope === "mcp_pending";
-      const usesBinding = serviceBound && scope !== "unbound" && !requiresMcpAdapter;
+      const unsupportedMcp = scope === "mcp_pending";
+      const hasMcp = unsupportedMcp || scope === "mcp_approved" || scope === "mcp_revoked";
+      const usesBinding = serviceBound && scope !== "unbound" && !unsupportedMcp;
       const retryCleanupFailed = scope === "retry_failed" || scope === "retry_race";
       const cleanupFailed =
         scope === "cleanup_failed" || scope === "scratch_failed" || retryCleanupFailed;
@@ -1122,7 +1132,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       const finishRetryRunner = Promise.withResolvers<void>();
       const retentionUpdateStarted = Promise.withResolvers<void>();
       const finishRetentionUpdate = Promise.withResolvers<void>();
-      if (scope !== "unbound" && !requiresMcpAdapter)
+      if (scope !== "unbound" && !unsupportedMcp)
         mocked.loadRunAgentPrompt.mockResolvedValueOnce(implementationAgent);
       if (usesBinding) {
         const sandbox = new FakeSandbox("scoped-sandbox");
@@ -1147,6 +1157,28 @@ describe("processPipelineJob (generic stage runner)", () => {
         });
         mocked.createAgentRunner.mockImplementationOnce((_, options: CreateAgentRunnerOptions) => {
           if (!options.claudeCode) throw new Error("Missing fixture runner configuration.");
+          if (hasMcp) {
+            return {
+              ...makeRunner([]),
+              async *start(input: AgentRunnerStartInput) {
+                const credential = await options.claudeCode?.loadCredential?.();
+                if (!credential || !input.mcp || !input.scopedCredential) {
+                  throw new Error("The scoped runner inputs are missing.");
+                }
+                await input.mcp.loadCredentials();
+                yield {
+                  type: "mcp_receipt",
+                  servers: [{ slug: "docs", revision: 1, operations: ["read_record"] }],
+                };
+                yield {
+                  type: "completion",
+                  taskComplete: true,
+                  summary: "Done",
+                  finalOutput: "Review changes",
+                };
+              },
+            };
+          }
           if (retryCleanupFailed) {
             return {
               ...makeRunner([]),
@@ -1186,6 +1218,13 @@ describe("processPipelineJob (generic stage runner)", () => {
           mocked.saveRetryCheckpoint.mockRejectedValueOnce(new ScopedCredentialCleanupError());
         }
       }
+      if (scope === "mcp_approved")
+        mocked.resolveFactoryMcpCredentials.mockResolvedValueOnce(new Map());
+      if (scope === "mcp_revoked") {
+        mocked.resolveFactoryMcpCredentials.mockRejectedValueOnce(
+          new McpCredentialsUnavailableError(),
+        );
+      }
       const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
         schemaVersion: 1,
         kind: "serial",
@@ -1202,8 +1241,8 @@ describe("processPipelineJob (generic stage runner)", () => {
             }),
         sandboxProvider: "vercel",
         agent: {
-          provider: "claude-code",
-          model: "claude-sonnet-4-5",
+          provider: unsupportedMcp ? "cursor" : "claude-code",
+          model: unsupportedMcp ? "composer-2" : "claude-sonnet-4-5",
           effort: "max",
           concurrencyLimit: 2,
           stallTimeoutMs: 120000,
@@ -1216,8 +1255,8 @@ describe("processPipelineJob (generic stage runner)", () => {
         executionPolicyRevisionId: serviceBound ? "77900000-0000-4000-8000-000000000008" : null,
         deliveryPolicyRevisionId: null,
         skillIds: [],
-        toolIds: requiresMcpAdapter ? [`${revisionId}/read_record`] : [],
-        ...(requiresMcpAdapter
+        toolIds: hasMcp ? [`${revisionId}/read_record`] : [],
+        ...(hasMcp
           ? {
               mcpManifest: {
                 agentId: implementationAgent.agentId,
@@ -1309,13 +1348,12 @@ describe("processPipelineJob (generic stage runner)", () => {
           vi.useRealTimers();
         }
       })();
-      if (requiresMcpAdapter) {
+      if (unsupportedMcp) {
         expect(result).toMatchObject({ result: "error", runId: "run-1" });
         expect(rpc).toHaveBeenCalledWith(
           "fail_session_job_attempt",
           expect.objectContaining({
-            p_error:
-              "The selected agent adapter does not yet support the pinned MCP tool manifest.",
+            p_error: "The selected agent adapter does not support the pinned MCP tool manifest.",
             p_retry: false,
           }),
         );
@@ -1323,6 +1361,43 @@ describe("processPipelineJob (generic stage runner)", () => {
         expect(mocked.resolveScopedRunCredential).not.toHaveBeenCalled();
         expect(mocked.createAgentRunner).not.toHaveBeenCalled();
         return;
+      }
+      if (scope === "mcp_approved" || scope === "mcp_revoked") {
+        expect(mocked.resolveFactoryMcpCredentials).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            admin,
+            workspaceId: "ws-1",
+            jobId: "job-1",
+            runId: "run-1",
+            attemptCount: job.attempt_count,
+            manifest: expect.objectContaining({ agentId: implementationAgent.agentId }),
+          }),
+        );
+        expect(mocked.resolveFactoryMcpCredentials.mock.invocationCallOrder[0]).toBeGreaterThan(
+          mocked.resolveScopedRunCredential.mock.invocationCallOrder[0]!,
+        );
+        if (scope === "mcp_revoked") {
+          expect(result).toMatchObject({ result: "error", runId: "run-1" });
+          expect(rpc).toHaveBeenCalledWith(
+            "fail_session_job_attempt",
+            expect.objectContaining({
+              p_error:
+                "The pinned MCP tool scopes or credentials are no longer authorized for this attempt.",
+              p_retry: false,
+            }),
+          );
+          expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+          return;
+        }
+        expect(rpc).toHaveBeenCalledWith(
+          "append_agent_run_event",
+          expect.objectContaining({
+            p_kind: "progress",
+            p_payload: {
+              text: "Verified MCP tool scopes for this attempt. docs revision 1 (read_record).",
+            },
+          }),
+        );
       }
       if (usesBinding) {
         expect(mocked.resolveScopedRunCredential).toHaveBeenCalledExactlyOnceWith(

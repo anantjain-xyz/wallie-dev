@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(57);
+select plan(70);
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '55700200-0000-4000-8000-000000000001';
 
@@ -136,6 +136,8 @@ select throws_ok($$select pg_temp.bind_mcp('55700200-9000-4000-8000-000000000003
   'the shared Linear key cannot be delegated to an MCP tool');
 select lives_ok($$select pg_temp.bind_provider('55700200-9000-4000-8000-000000000002')$$,
   'an agent provider can claim its own source');
+create temp table provider_binding as select * from public.factory_secret_bindings
+  where workspace_secret_id = '55700200-9000-4000-8000-000000000002';
 select throws_ok($$select pg_temp.bind_mcp('55700200-9000-4000-8000-000000000002')$$, 'PT409', null,
   'an MCP scope cannot claim a provider source');
 create temp table bearer_binding as select * from pg_temp.bind_mcp();
@@ -165,6 +167,7 @@ create function pg_temp.mcp_definition(
     'toolIds', case when p_include_tools then jsonb_build_array(choice.id::text || '/' || p_operation) else '[]'::jsonb end,
     'executionPolicyRevisionId', '55700200-8000-4000-8000-000000000001',
     'executionGrant', jsonb_build_object('id', grant_v1.id, 'version', grant_v1.version),
+    'credentialBindingId', provider_binding.id,
     'implementationAgent', jsonb_build_object('agentId', agent.id, 'promptRevisionId', agent.revision_id,
       'promptMd', agent.prompt_md, 'promptSha256', agent.prompt_sha256),
     'sandboxProvider', 'e2b', 'agent', jsonb_build_object('provider', 'codex', 'model', 'gpt-5.5'),
@@ -177,7 +180,7 @@ create function pg_temp.mcp_definition(
       'revisionNumber', choice.revision_number, 'endpoint', choice.endpoint, 'operations', jsonb_build_array(p_operation),
       'auth', case when p_public then '{"kind":"none"}'::jsonb
         else jsonb_build_object('kind', 'bearer', 'secretBindingId', bearer_binding.id) end)))) else '{}'::jsonb end
-  from grant_v1 cross join fixture_agent agent cross join choice cross join bearer_binding;
+  from grant_v1 cross join fixture_agent agent cross join choice cross join bearer_binding cross join provider_binding;
 $$;
 
 create function pg_temp.activate_mcp_fixture(p_activation bigint, p_definition jsonb)
@@ -266,8 +269,49 @@ select ok((select run_id is not null from started_run), 'a currently authorized 
 select lives_ok($$select public.pin_session_job_git_input(job_id,1,run_id,
   '55700200-6000-4000-8000-000000000001', 'main', repeat('a',40)) from started_run$$,
   'attempt pin uses its exact worker git input');
+select throws_ok($$select public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',job_id,run_id,1) from started_run$$,
+  '42501', null, 'an active run cannot resolve bearer material before pinning its attempt');
 select ok((select public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
   repeat('a',40),'[]','workerd',7,'high',null) from started_run), 'the worker pins only the admitted scope');
+
+select ok(has_function_privilege('service_role',
+  'public.resolve_factory_run_mcp_credentials(uuid,uuid,uuid,integer)', 'execute')
+  and not has_function_privilege('authenticated',
+    'public.resolve_factory_run_mcp_credentials(uuid,uuid,uuid,integer)', 'execute')
+  and not has_function_privilege('anon',
+    'public.resolve_factory_run_mcp_credentials(uuid,uuid,uuid,integer)', 'execute'),
+  'only service role can call the MCP resolver');
+select ok(not has_table_privilege('authenticated', 'internal.factory_run_mcp_material_pins', 'select')
+  and not has_table_privilege('service_role', 'internal.factory_run_mcp_material_pins', 'select'),
+  'material revision pins are private even to the service-role Data API');
+grant select on started_run, approved_revision, bearer_binding to service_role;
+set local role service_role;
+select results_eq($$select resolved.tool_revision_id,resolved.binding_id,resolved.material_revision,resolved.encrypted_value
+    from started_run cross join lateral public.resolve_factory_run_mcp_credentials(
+      '55700200-1000-4000-8000-000000000001',job_id,run_id,1) resolved$$,
+  $$select approved_revision.id,bearer_binding.id,2::bigint,'synthetic-encryption-version-2'::text
+    from approved_revision cross join bearer_binding$$,
+  'service role receives only the canonical bearer revision and its encrypted material');
+select is((select count(*) from started_run cross join lateral public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',job_id,run_id,1)),
+  1::bigint, 'repeat resolution of the same material in a current attempt is idempotent');
+reset role;
+select throws_ok($$select public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',job_id,run_id,2) from started_run$$,
+  '42501', null, 'the wrong attempt cannot resolve bearer material');
+select throws_ok($$select public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',started_run.job_id,queued_run.run_id,1)
+    from started_run cross join queued_run$$,
+  '42501', null, 'a job cannot borrow another run to resolve bearer material');
+select throws_ok($$select public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000099',job_id,run_id,1) from started_run$$,
+  '42501', null, 'a different workspace cannot resolve bearer material');
+update public.workspace_secrets set encrypted_value = 'synthetic-encryption-version-3'
+  where key = 'TEST_MCP_BEARER';
+select throws_ok($$select public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',job_id,run_id,1) from started_run$$,
+  'PT409', null, 'rotated material cannot replace the revision reserved for a running attempt');
 
 select ok((select (public.revoke_factory_mcp_secret_binding(workspace_id,factory_id,
   '55700200-0000-4000-8000-000000000001',id)).revoked_at is not null from bearer_binding),
@@ -276,6 +320,9 @@ select throws_ok($$select * from pg_temp.admit_mcp('Revoked bearer MCP fixture')
   'revoked bearer reference blocks new session admission');
 select throws_ok($$select pg_temp.start_mcp(session_id,job_id) from queued_run$$, '42501', null,
   'attempt start rechecks the bearer reference after admission');
+select throws_ok($$select public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',job_id,run_id,1) from started_run$$,
+  '42501', null, 'an already pinned attempt cannot resolve a revoked bearer reference');
 select ok((select (public.revoke_factory_mcp_server_revision(workspace_id,factory_id,
   '55700200-0000-4000-8000-000000000001',server_id,id)).revoked_at is not null from approved_revision),
   'endpoint revision revocation preserves the historical decision');
@@ -285,6 +332,27 @@ select throws_ok($$select pg_temp.start_mcp(session_id,job_id) from queued_run$$
   'attempt start rechecks the endpoint revision after admission');
 select pg_temp.activate_mcp_fixture(4, pg_temp.mcp_definition('lookup', true));
 create temp table granted_queue as select * from pg_temp.admit_mcp('Public MCP fixture');
+create temp table public_attempt as
+  select session_id,job_id,pg_temp.start_mcp(session_id,job_id) run_id
+  from pg_temp.admit_mcp('Running public MCP fixture');
+select public.pin_session_job_git_input(job_id,1,run_id,
+  '55700200-6000-4000-8000-000000000001','main',repeat('a',40)) from public_attempt;
+select public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
+  repeat('a',40),'[]','node',7,'high',null) from public_attempt;
+select is((select count(*) from public_attempt cross join lateral public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',job_id,run_id,1)),
+  0::bigint, 'an exact unauthenticated-only manifest passes the authorization check with no bearer material');
+create function pg_temp.resolve_after_provider_revocation(p_job_id uuid, p_run_id uuid) returns void language plpgsql as $$
+begin
+  perform public.resolve_factory_run_credential('55700200-1000-4000-8000-000000000001',p_job_id,p_run_id,1);
+  perform public.revoke_factory_secret_binding(workspace_id,factory_id,
+    '55700200-0000-4000-8000-000000000001',id,version) from provider_binding;
+  perform public.resolve_factory_run_mcp_credentials('55700200-1000-4000-8000-000000000001',p_job_id,p_run_id,1);
+end;
+$$;
+select throws_ok($$select pg_temp.resolve_after_provider_revocation(job_id,run_id) from public_attempt$$,
+  'PT422', 'A current scoped credential binding is required.',
+  'the last credential check catches provider binding revocation even for an unauthenticated MCP scope');
 select ok((select (public.revoke_factory_execution_grant(workspace_id, factory_id,
   '55700200-0000-4000-8000-000000000001', id, version)).revoked_at is not null from grant_v1),
   'the execution grant can revoke an otherwise approved server and operation');
@@ -292,6 +360,9 @@ select throws_ok($$select * from pg_temp.admit_mcp('Revoked execution grant MCP 
   'a revoked grant denies session admission even when the server revision remains approved');
 select throws_ok($$select pg_temp.start_mcp(session_id,job_id) from granted_queue$$, '42501', null,
   'attempt start rechecks the grant even when the server revision remains approved');
+select throws_ok($$select public.resolve_factory_run_mcp_credentials(
+    '55700200-1000-4000-8000-000000000001',job_id,run_id,1) from public_attempt$$,
+  '42501', null, 'the resolver rechecks a revoked grant even when the manifest has no bearer material');
 
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';

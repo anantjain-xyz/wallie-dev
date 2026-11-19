@@ -71,7 +71,7 @@ import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { evaluateSessionPrReadiness } from "@/lib/pipeline/pr-readiness";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { loadRunAgentPrompt } from "@/lib/factory-agents/runtime";
-import { runtimeMcpManifest } from "@/lib/factory-mcp/manifest";
+import { resolveFactoryMcpCredentials } from "@/lib/factory-mcp/credentials";
 import { loadFactorySkillBundle } from "@/lib/factory-skills/runtime";
 import {
   formatSessionAttachmentPromptData,
@@ -132,7 +132,7 @@ class MissingReviewableOutputError extends Error {
 
 class McpAdapterUnavailableError extends Error {
   constructor() {
-    super("The selected agent adapter does not yet support the pinned MCP tool manifest.");
+    super("The selected agent adapter does not support the pinned MCP tool manifest.");
     this.name = "McpAdapterUnavailableError";
   }
 }
@@ -393,7 +393,8 @@ async function runStage(input: {
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
-    if (runtimeMcpManifest(pinned?.mcpManifest).servers.length) {
+    const mcpManifest = pinned?.mcpManifest;
+    if (mcpManifest && provider !== "codex" && provider !== "claude-code") {
       throw new McpAdapterUnavailableError();
     }
 
@@ -815,6 +816,23 @@ async function runStage(input: {
       runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
       ...(scopedBindingId ? { scopedCredential: true } : {}),
+      ...(mcpManifest
+        ? {
+            mcp: {
+              manifest: mcpManifest,
+              loadCredentials: () =>
+                resolveFactoryMcpCredentials({
+                  admin,
+                  workspaceId: session.workspace_id,
+                  jobId: job.id,
+                  runId: credentialRunId,
+                  attemptCount: job.attempt_count,
+                  manifest: mcpManifest,
+                  signal,
+                }),
+            },
+          }
+        : {}),
       secrets: installationToken ? [installationToken] : undefined,
       onCheckpointSensitiveValues: (read) => {
         readCheckpointSensitiveValues = read;
@@ -1066,7 +1084,14 @@ async function runStage(input: {
         !(error instanceof ExecutionBudgetExhaustedError) &&
         !(error instanceof McpAdapterUnavailableError) &&
         !unsafeCredentialCleanup &&
-        !(error instanceof Error && error.name === "ScopedRunCredentialUnavailableError") &&
+        !(
+          error instanceof Error &&
+          [
+            "ScopedRunCredentialUnavailableError",
+            "McpCredentialsUnavailableError",
+            "McpAdapterError",
+          ].includes(error.name)
+        ) &&
         !(
           pinned?.executionGrant &&
           error &&

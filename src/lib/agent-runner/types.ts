@@ -6,6 +6,7 @@
 
 import { RECOMMENDED_AGENT_EFFORT, getRecommendedAgentModel } from "@/lib/agent-config/contracts";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
+import type { FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,10 @@ export type AgentEvent =
   | { type: "usage"; usage: AgentRunUsage; sourceRecoveryRequired?: true }
   | AgentEventCompletion
   | AgentEventError
+  | {
+      type: "mcp_receipt";
+      servers: readonly { slug: string; revision: number; operations: readonly string[] }[];
+    }
   | { type: "capture_gap"; reason: AgentCaptureGap; callId?: string };
 
 // ---------------------------------------------------------------------------
@@ -100,6 +105,11 @@ export interface AgentRunnerStartInput {
   runId?: string;
   /** Delivers a factory API key via private files with bounded cleanup. */
   scopedCredential?: true;
+  /** Exact admitted scopes and a late, attempt-scoped credential reader. */
+  mcp?: {
+    manifest: FactoryMcpManifest;
+    loadCredentials: () => Promise<ReadonlyMap<string, string>>;
+  };
   /**
    * Extra secret values to strip from streamed events before persistence.
    * The sandbox GitHub installation token (`GH_TOKEN`) belongs here so tool

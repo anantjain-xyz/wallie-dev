@@ -5,6 +5,7 @@ import {
   type CodexCredential,
 } from "@/lib/codex/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { prepareMcpAdapter } from "./mcp-runtime";
 import { redactRunSensitiveText, redactRunToolText } from "./redact-sensitive-text";
 import { ToolEventTracker } from "./tool-event-tracker";
 import { AgentOutputSafety, prepareRunnerDirectory } from "./safety";
@@ -67,6 +68,9 @@ export class CodexRunner implements AgentRunner {
     if (!sandbox) {
       throw new Error("CodexRunner requires a sandbox.");
     }
+    if (input.mcp && !material) {
+      throw new Error("Codex MCP requires scoped factory credentials.");
+    }
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
@@ -81,9 +85,11 @@ export class CodexRunner implements AgentRunner {
     if (this.options.loadCredential || this.options.credential?.type !== "codex_access_token") {
       await ensureCodexHome(sandbox, codexHome, safety);
     }
+    const mcp = input.mcp
+      ? await prepareMcpAdapter({ runtime: input.mcp, sandbox, directory, signal: input.signal })
+      : undefined;
 
-    // All nonsecret remote setup precedes the current authorization read.
-    // The next remote operation sends this credential, without another setup await.
+    // All nonsecret sandbox setup precedes the current authorization reads.
     input.signal?.throwIfAborted();
     const credential = this.options.loadCredential
       ? await this.options.loadCredential()
@@ -124,6 +130,7 @@ export class CodexRunner implements AgentRunner {
       promptFile,
       sandbox.repoPath,
       finalOutputFile,
+      mcp?.servers,
     );
 
     const credentialEnv = codexCredentialEnv(credential);
@@ -136,12 +143,16 @@ export class CodexRunner implements AgentRunner {
       },
       signal: input.signal,
     };
+    const launchArgs = mcp
+      ? ["--noprofile", "--norc", "-c", `exec ${shellCmd}`]
+      : ["-lc", shellCmd];
+    if (mcp && material) await mcp.stageCredentials(material, safety);
     const proc = material
-      ? await material.exec("bash", ["-lc", shellCmd], options, {
+      ? await material.exec("bash", launchArgs, options, {
           path: `${directory}/credential.env`,
           values: credentialEnv,
         })
-      : await sandbox.exec("bash", ["-lc", shellCmd], {
+      : await sandbox.exec("bash", launchArgs, {
           ...options,
           env: { ...options.env, ...credentialEnv },
         });
@@ -187,6 +198,7 @@ export class CodexRunner implements AgentRunner {
     const code = await proc.exitCode;
     const stderr = safety.redact(stderrBuf);
     if (code !== 0) errors.push(codexExitErrorMessage(code, stderr));
+    if (mcp && !errors.length) yield await mcp.verifyReady();
 
     yield* codexSessionCompletion(
       sandbox,
@@ -601,9 +613,10 @@ function codexCommandForCredential(
   promptFile: string,
   sandboxRepoPath: string,
   finalOutputFile: string,
+  mcp?: CodexMcpServers,
 ): string {
   if (credential.type !== "codex_access_token") {
-    return codexExecCommand(model, effort, promptFile, sandboxRepoPath, finalOutputFile);
+    return codexExecCommand(model, effort, promptFile, sandboxRepoPath, finalOutputFile, mcp);
   }
 
   const loginCommand = [
@@ -636,11 +649,27 @@ async function persistRefreshedChatGptAuthJson(input: {
   });
 }
 
+type CodexMcpServers = Awaited<ReturnType<typeof prepareMcpAdapter>>["servers"];
+
+function codexMcpConfig(servers: CodexMcpServers) {
+  const entries = servers.map(({ name, command, args, operations }) => {
+    const fields = [
+      `command=${JSON.stringify(command)}`,
+      `args=${JSON.stringify(args)}`,
+      `enabled_tools=${JSON.stringify(operations.map((operation) => operation.name))}`,
+      "required=true",
+    ];
+    return `${JSON.stringify(name)}={${fields.join(",")}}`;
+  });
+  return `mcp_servers={${entries.join(",")}}`;
+}
+
 export function codexExecArgs(
   model: string,
   sandboxRepoPath: string,
   effort: AgentEffort = DEFAULT_CODEX_REASONING_EFFORT,
   finalOutputFile?: string,
+  mcp?: CodexMcpServers,
 ): string[] {
   return [
     "exec",
@@ -653,9 +682,8 @@ export function codexExecArgs(
     "-c",
     `cli_auth_credentials_store="file"`,
     "-c",
-    "mcp_servers={}",
-    "-c",
-    "apps.github.enabled=false",
+    mcp ? codexMcpConfig(mcp) : "mcp_servers={}",
+    ...(mcp ? ["--disable", "apps"] : ["-c", "apps.github.enabled=false"]),
     "--disable",
     "plugins",
     "--disable",
@@ -676,15 +704,16 @@ function codexExecCommand(
   promptFile: string,
   sandboxRepoPath: string,
   finalOutputFile: string,
+  mcp?: CodexMcpServers,
 ): string {
-  return `codex ${codexExecArgs(model, sandboxRepoPath, effort, finalOutputFile).map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+  return `codex ${codexExecArgs(model, sandboxRepoPath, effort, finalOutputFile, mcp).map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
 }
 
 async function requireNoLocalCodexConfig(
   sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>,
   signal?: AbortSignal,
 ) {
-  // Codex merges empty MCP tables with lower layers. Keep its working directory
+  // Codex merges explicit MCP tables with lower layers. Keep its working directory
   // and AGENTS.md discovery, but stop before auth if local config can enter the merge.
   const script = `
 check_config_directory() {
@@ -714,7 +743,7 @@ done`;
   });
   if ((await check.exitCode) !== 0) {
     throw new Error(
-      "Codex cannot start with project or machine Codex configuration when its MCP manifest is empty.",
+      "Codex cannot start with project or machine Codex configuration outside its MCP manifest.",
     );
   }
 }

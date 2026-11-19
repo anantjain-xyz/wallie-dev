@@ -8533,6 +8533,20 @@ export type Database = {
           service_principal_id: string
         }[]
       }
+      resolve_factory_run_mcp_credentials: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          binding_id: string
+          encrypted_value: string
+          material_revision: number
+          tool_revision_id: string
+        }[]
+      }
       restart_session_once_with_first_job: {
         Args: {
           agent_model_name: string

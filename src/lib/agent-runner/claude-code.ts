@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
 import type {
   AgentEvent,
@@ -6,6 +8,7 @@ import type {
   AgentRunner,
   AgentRunnerStartInput,
 } from "./types";
+import { McpAdapterError, prepareMcpAdapter } from "./mcp-runtime";
 import { redactRunSensitiveText } from "./redact-sensitive-text";
 import { type AgentOutputSafety, prepareRunnerDirectory } from "./safety";
 import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-credentials";
@@ -72,12 +75,41 @@ export class ClaudeCodeRunner implements AgentRunner {
     if (!sandbox) {
       throw new Error("ClaudeCodeRunner requires a sandbox.");
     }
+    if (input.mcp && !material) {
+      throw new McpAdapterError("Claude Code MCP requires scoped credential delivery.");
+    }
+    if (input.mcp && input.continueSessionId) {
+      throw new McpAdapterError("Claude Code cannot resume a run with pinned MCP operations.");
+    }
 
     // Vercel Sandbox's runCommand has no stdin support; materialise the prompt
     // as a file and pipe it via bash redirection.
     const directory = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
     const promptFile = `${directory}/prompt.txt`;
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
+
+    const mcp = input.mcp
+      ? await prepareMcpAdapter({
+          runtime: input.mcp,
+          sandbox,
+          directory,
+          signal: input.signal,
+        })
+      : undefined;
+    const serverNames = new Set(mcp?.servers.map(({ name }) => name));
+    const allowedTools = new Set(
+      mcp?.servers.flatMap(({ name, operations }) =>
+        operations.map((operation) => `mcp__${name}__${operation.name}`),
+      ),
+    );
+    const mcpConfig = JSON.stringify({
+      mcpServers: Object.fromEntries(
+        (mcp?.servers ?? []).map(({ name, command, args }) => [
+          name,
+          { type: "stdio", command, args },
+        ]),
+      ),
+    });
 
     const model = this.options.model ?? DEFAULT_CLAUDE_CODE_MODEL;
     const effort = this.options.effort ?? DEFAULT_CLAUDE_CODE_EFFORT;
@@ -93,7 +125,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       "--no-chrome",
       "--strict-mcp-config",
       "--mcp-config",
-      '{"mcpServers":{}}',
+      mcpConfig,
       "--permission-mode",
       "bypassPermissions",
       "--output-format",
@@ -102,11 +134,12 @@ export class ClaudeCodeRunner implements AgentRunner {
       String(this.options.maxTurns ?? DEFAULT_AGENT_RUNNER_CONFIG.maxTurns),
       "--verbose",
     ];
+    if (mcp) cliArgs.push("--setting-sources", "", "--no-session-persistence");
     if (input.continueSessionId) {
       cliArgs.push("--resume", input.continueSessionId);
     }
 
-    const shellCmd = `claude ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+    const shellCmd = `${mcp ? "exec " : ""}claude ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
 
     input.signal?.throwIfAborted();
     const credential = this.options.loadCredential
@@ -115,12 +148,15 @@ export class ClaudeCodeRunner implements AgentRunner {
     if (!credential?.secret) throw new Error("ClaudeCodeRunner requires an Anthropic API key.");
     safety.addSecret(credential.secret);
     input.signal?.throwIfAborted();
+    if (material && mcp) await mcp.stageCredentials(material, safety);
 
     const credentialEnv = { ANTHROPIC_API_KEY: credential.secret };
     const options = {
       cwd: sandbox.repoPath,
       env: {
         CI: "1",
+        ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+        ...(mcp ? { CLAUDE_CONFIG_DIR: `${directory}/claude` } : {}),
         ...WALLIE_GIT_IDENTITY_ENV,
       },
       signal: input.signal,
@@ -140,9 +176,41 @@ export class ClaudeCodeRunner implements AgentRunner {
     let completion: Extract<AgentEvent, { type: "completion" }> | undefined;
     let hadError = false;
     let bufferedUsageForwarded = false;
+    let mcpVerified = !mcp;
     const tools = new ClaudeToolCapture();
-    function* eventsForLine(line: string): Iterable<AgentEvent> {
+    async function* eventsForLine(line: string): AsyncIterable<AgentEvent> {
+      if (mcp && !mcpVerified) {
+        const init = parseClaudeMcpInit(line);
+        if (init) {
+          const connectedServers = init.mcp_servers
+            .filter(({ status }) => status === "connected")
+            .map(({ name }) => name);
+          const mcpTools = init.tools.filter((name) => name.startsWith("mcp__"));
+          if (
+            init.mcp_server_errors?.length ||
+            init.mcp_servers.length !== serverNames.size ||
+            !matchesExpectedNames(connectedServers, serverNames) ||
+            !matchesExpectedNames(mcpTools, allowedTools)
+          ) {
+            throw new McpAdapterError(
+              "Claude Code did not load the exact approved MCP operations.",
+            );
+          }
+          const receipt = await mcp.verifyReady();
+          mcpVerified = true;
+          yield receipt;
+          return;
+        }
+      }
       for (const event of parseStreamJsonLine(line, tools)) {
+        if (
+          mcp &&
+          event.type === "tool_use" &&
+          event.tool.startsWith("mcp__") &&
+          (!mcpVerified || !allowedTools.has(event.tool))
+        ) {
+          throw new McpAdapterError("Claude Code reported an unsupported MCP operation.");
+        }
         // Success is provisional until the process also exits successfully.
         if (event.type === "completion" && event.taskComplete) {
           completion = event;
@@ -219,9 +287,38 @@ export class ClaudeCodeRunner implements AgentRunner {
       return;
     }
     if (hadError) return;
+    if (!mcpVerified) {
+      throw new McpAdapterError("Claude Code did not verify its approved MCP operations.");
+    }
     if (completion) yield completion;
     else yield { type: "error", message: "Claude Code ended without a successful result." };
   }
+}
+
+const claudeMcpInit = z.object({
+  tools: z.array(z.string()),
+  mcp_servers: z.array(z.object({ name: z.string(), status: z.string() })),
+  mcp_server_errors: z.array(z.unknown()).optional(),
+});
+
+function parseClaudeMcpInit(line: string) {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(value) || value.type !== "system" || value.subtype !== "init") return undefined;
+  const parsed = claudeMcpInit.safeParse(value);
+  if (!parsed.success) {
+    throw new McpAdapterError("Claude Code did not verify its approved MCP operations.");
+  }
+  return parsed.data;
+}
+
+function matchesExpectedNames(names: string[], expected: ReadonlySet<string>): boolean {
+  const reported = new Set(names);
+  return names.length === expected.size && [...expected].every((name) => reported.has(name));
 }
 
 class ClaudeToolCapture {
