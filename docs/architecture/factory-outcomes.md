@@ -87,6 +87,24 @@ producing run’s exact manifest for agent, model, harness, and definition.
 - An unlinked PR keeps its request attribution. Unknown remains visible for
   request sources or producing settings whose exact evidence is unavailable.
 
+## Verified reverts
+
+A factory manager can confirm a relationship after Wallie reads the exact
+merged revert PR from GitHub. Both merges must belong to the same repository
+and base branch. A candidate stays unverified and a correction keeps the prior
+receipt. [GitHub’s revert workflow](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/reverting-a-pull-request)
+
+- Revision 1 matures after 30 elapsed days from the original provider merge
+  time. A valid revert within the window counts the original PR once.
+- Managers record reviewed observation intervals for the exact repository and
+  base branch. Only mature, fully covered outcomes contribute to the rate.
+  Verified reverts in incomplete or immature windows remain inspectable.
+- Withdrawing coverage or correcting a relationship updates the current rate.
+  Historical receipts retain what was reviewed and when it was observed.
+
+Managers submit relationship and coverage decisions at
+`POST /api/workspaces/{workspaceId}/factories/{factoryId}/outcome-reverts`.
+
 ## Deployment observers
 
 - A factory manager approves a source through
