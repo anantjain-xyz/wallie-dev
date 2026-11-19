@@ -132,6 +132,22 @@ select is((select to_jsonb(receipt) from batch_targets target cross join lateral
   (select value from batch_receipt),'replay does not require re-resolving unavailable derived execution configuration');
 select is((select count(*) from public.artifact_feedback_batches where session_id=(select session_id from batch_targets where label='main')),
   1::bigint,'network retries persist one batch');
+select results_eq($q$
+  select kind::text, author_kind::text, body_md from public.session_conversation_messages message
+  where message.session_id = (select session_id from batch_targets where label = 'main') order by sequence
+$q$, $expected$values ('initial_prompt'::text, 'user'::text, 'Retain reviewed source'::text),
+  ('review_ready', 'agent', 'An artifact is ready for review.'),
+  ('artifact_feedback', 'user', 'Whole-stage request')$expected$,
+  'session creation, publication and feedback append exactly one ordered message each');
+select ok((select message.run_id = target.run_id and message.attempt_count = 1
+  and message.artifact_id = target.artifact_id from public.session_conversation_messages message
+  join batch_targets target on target.session_id = message.session_id where target.label = 'main' and message.kind = 'review_ready'),
+  'the review-ready message identifies the exact publishing attempt and artifact');
+select ok((select message.feedback_batch_id = batch.id and message.artifact_id = batch.artifact_id
+  and message.originating_member_id = batch.requested_by_member_id from public.session_conversation_messages message
+  join public.artifact_feedback_batches batch on batch.session_id = message.session_id
+  join batch_targets target on target.session_id = message.session_id where target.label = 'main' and message.kind = 'artifact_feedback'),
+  'the feedback message cites the attributable immutable review batch');
 select is((select count(*) from public.agent_jobs where session_id=(select session_id from batch_targets where label='main')
   and status in('queued','started','running')),1::bigint,'network retries enqueue one active revision');
 select is((select count(*) from public.agent_runs where agent_job_id=(select (value->>'job_id')::uuid from batch_receipt)),

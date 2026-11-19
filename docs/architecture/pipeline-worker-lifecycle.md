@@ -278,6 +278,25 @@ request produces a conflict. Browser creation uses default factory admission.
 Existing browser cancels still require an in-progress phase and use the same
 cancellation and cleanup operations.
 
+## Shared conversation
+
+Each session owns one conversation. The initial request, review-ready
+publication, and submitted feedback record messages in the transaction that
+accepts the corresponding work. Messages carry the author, originating member,
+and the exact run, artifact, or source identity when applicable.
+
+- A source alias identifies one provider, integration namespace, and external
+  thread within a workspace. The linked session determines its factory access.
+- Append and bind operations authorize the actor against the owning factory.
+  Repeated deliveries recover the same message or association. Changed input
+  under the same message key fails without creating another message.
+- Appends serialize on the session before assigning a sequence. Older pages read
+  below the first displayed sequence, and reconnects read above the last
+  returned sequence. The reader advances only over messages it has received.
+- The session inspector loads history on demand. A revoked viewer loses access
+  to the messages, source links, and previews. It renders sanitized Markdown and
+  displays image descriptions without fetching external images.
+
 ## Deduplication
 
 Every enqueue producer uses:
