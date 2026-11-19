@@ -205,8 +205,18 @@ describe("OpenCodeRunner", () => {
 
   it("fails closed when the approved MCP server cannot verify its complete tool scope", async () => {
     const sandbox = new FakeSandbox();
-    await expect(
-      collectOpenCode(new OpenCodeRunner({ credential }), {
+    sandbox.scriptExec("sh", [
+      {
+        stream: "stdout",
+        data: JSON.stringify({
+          type: "step_finish",
+          part: { cost: 0.01, tokens: { input: 7, output: 4 } },
+        }),
+      },
+    ]);
+    const events: AgentEvent[] = [];
+    const run = async () => {
+      for await (const event of new OpenCodeRunner({ credential }).start({
         sandbox,
         sessionId: "unverified-mcp",
         prompt: "Read the reference",
@@ -215,11 +225,27 @@ describe("OpenCodeRunner", () => {
           manifest: approvedMcp,
           loadCredentials: async () => new Map([[toolRevisionId, toolBearer]]),
         },
-      }),
-    ).rejects.toMatchObject({
+      }))
+        events.push(event);
+    };
+    await expect(run()).rejects.toMatchObject({
       name: "McpAdapterError",
       message: "An approved MCP server did not expose its complete tool scope.",
     });
+    expect(events).toEqual([
+      {
+        type: "completion",
+        taskComplete: false,
+        summary: "OpenCode session ended unsuccessfully",
+        usage: {
+          inputTokens: 7,
+          outputTokens: 4,
+          provenance: "measured",
+          costUsd: 0.01,
+          costProvenance: "measured",
+        },
+      },
+    ]);
     expect(sandbox.calls).toContainEqual(
       expect.objectContaining({
         cmd: "rm",

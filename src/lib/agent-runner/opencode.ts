@@ -345,15 +345,16 @@ export class OpenCodeRunner implements AgentRunner {
             hasCompleteCost ? costUsd : undefined,
           )
         : undefined;
-    if (code !== 0) {
-      if (finalUsage) {
-        yield {
+    const failedCompletion = finalUsage
+      ? ({
           type: "completion",
           taskComplete: false,
           summary: "OpenCode session ended unsuccessfully",
           usage: finalUsage,
-        };
-      }
+        } satisfies AgentEvent)
+      : undefined;
+    if (code !== 0) {
+      if (failedCompletion) yield failedCompletion;
       yield* deferredErrors;
       const redactedStderr = redactRunSensitiveText(safety.redact(stderrBuf).trim());
       yield {
@@ -368,16 +369,18 @@ export class OpenCodeRunner implements AgentRunner {
     }
 
     if (hadError) {
-      if (finalUsage) {
-        yield {
-          type: "completion",
-          taskComplete: false,
-          summary: "OpenCode session ended unsuccessfully",
-          usage: finalUsage,
-        };
-      }
+      if (failedCompletion) yield failedCompletion;
       yield* deferredErrors;
       return;
+    }
+
+    if (mcp) {
+      try {
+        yield await mcp.verifyReady();
+      } catch (error) {
+        if (failedCompletion) yield failedCompletion;
+        throw error;
+      }
     }
 
     // OpenCode's JSON stream has no run-level result. Only text belonging to
@@ -388,7 +391,6 @@ export class OpenCodeRunner implements AgentRunner {
         ? messageText.get(lastStep.messageId)
         : undefined;
     const finalOutput = finalParts ? [...finalParts.values()].join("\n") : undefined;
-    if (mcp) yield await mcp.verifyReady();
     yield {
       type: "completion",
       taskComplete: true,
