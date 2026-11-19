@@ -41,6 +41,12 @@ const definitionFields = [
     label: "Read-only context repositories",
     read: (value) => value.readContextRepositoryIds ?? [],
   },
+  {
+    label: "External context documents",
+    read: (value) =>
+      value.contextDocuments?.map(({ sourceId, revisionId }) => sourceId + " · " + revisionId) ??
+      [],
+  },
   { label: "Implementation agent", read: (value) => value.implementationAgent?.agentId ?? null },
   {
     label: "Agent prompt revision",

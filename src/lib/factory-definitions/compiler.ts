@@ -47,6 +47,7 @@ export type CompiledFactoryDefinition = Pick<
   | "operatingRulesMd"
   | "executionGrant"
   | "credentialBindingId"
+  | "contextDocuments"
 > & {
   implementationAgent?: FactoryAgentPromptSnapshot;
   pipelineId: string;
@@ -152,6 +153,13 @@ function compileSerialDefinition(
 ): FactoryDefinitionCompileResult {
   const diagnostics: FactoryDefinitionDiagnostic[] = [];
   const { schemaVersion, kind, agent, sandboxProvider, operatingRulesMd } = definition;
+  if (definition.contextDocuments && !definition.executionGrant) {
+    diagnostics.push({
+      path: ["contextDocuments"],
+      code: "invalid_schema",
+      message: "Context documents require an approved service execution grant.",
+    });
+  }
   if (
     definition.credentialBindingId &&
     (!definition.executionGrant || !definition.implementationAgent)
@@ -345,6 +353,7 @@ function compileSerialDefinition(
     repositoryId: normalizeFactoryId(repository.id),
     ...(writableRepositoryIds.length ? { writableRepositoryIds } : {}),
     ...(readContextRepositoryIds.length ? { readContextRepositoryIds } : {}),
+    ...(definition.contextDocuments ? { contextDocuments: definition.contextDocuments } : {}),
     ...(definition.executionGrant ? { executionGrant: definition.executionGrant } : {}),
     ...(definition.credentialBindingId
       ? { credentialBindingId: definition.credentialBindingId }

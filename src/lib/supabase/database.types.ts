@@ -9638,6 +9638,29 @@ export type Database = {
           version: number
         }[]
       }
+      read_factory_run_context_revision: {
+        Args: {
+          p_attempt_count: number
+          p_expected_content_sha256?: string
+          p_job_id: string
+          p_revision_id: string
+          p_run_id: string
+          p_source_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          content: string
+          content_bytes: number
+          content_sha256: string
+          file_path: string
+          installation_id: number
+          repository_full_name: string
+          repository_id: number
+          stale: boolean
+          status: string
+          upstream_revision: string
+        }[]
+      }
       read_factory_scope: {
         Args: { p_actor_user_id: string; p_workspace_id: string }
         Returns: {

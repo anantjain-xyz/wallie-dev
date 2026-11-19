@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 
-import { fetchGitHubContextFile } from "./github-source";
+import { fetchGitHubContextFile, verifyLiveGitHubContextRevision } from "./github-source";
 
 vi.mock("@/features/github/sandbox-token", () => ({
   mintSandboxRepositoryToken: vi.fn(),
@@ -28,6 +28,10 @@ const metadata = {
   tree: { sha: rootTree },
 };
 const docsEntry = { path: "docs", type: "tree", mode: "040000", sha: docsTree };
+const originalRevision = "d".repeat(40);
+const originalRoot = "e".repeat(40);
+const originalDocs = "f".repeat(40);
+const originalContent = "## Private historical notes\nDo not send this text to the caller.\n";
 
 function treeResponse(id: string, entries: unknown[], truncated = false) {
   return Response.json({ sha: id, truncated, tree: entries });
@@ -50,7 +54,34 @@ function mockDirectory() {
     .mockResolvedValueOnce(treeResponse(rootTree, [docsEntry]));
 }
 
-describe("GitHub context source sync", () => {
+function mockHeadFile(content: string) {
+  const entry = regularFileEntry(Buffer.from(content));
+  mockDirectory();
+  fetchMock
+    .mockResolvedValueOnce(treeResponse(docsTree, [entry]))
+    .mockResolvedValueOnce(new Response(content));
+  return entry;
+}
+
+function mockHistoricalDirectory() {
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({ ...metadata, sha: originalRevision, tree: { sha: originalRoot } }),
+    )
+    .mockResolvedValueOnce(treeResponse(originalRoot, [{ ...docsEntry, sha: originalDocs }]));
+}
+
+function sha256(content: string) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+const historicalProofInput = {
+  ...input,
+  upstreamRevision: originalRevision,
+  contentSha256: sha256(originalContent),
+};
+
+describe("GitHub context source", () => {
   beforeEach(() => {
     mintToken.mockReset().mockResolvedValue("read-context-token");
     fetchMock.mockReset();
@@ -246,5 +277,152 @@ describe("GitHub context source sync", () => {
     token.resolve("late-token");
     await token.promise;
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  describe("live verification", () => {
+    it("checks both exact revisions via one scoped credential and returns only the current digest", async () => {
+      const current = "\uFEFF# Updated private notes\n";
+      const headEntry = mockHeadFile(current);
+      const originalEntry = regularFileEntry(Buffer.from(originalContent));
+      mockHistoricalDirectory();
+      fetchMock
+        .mockResolvedValueOnce(treeResponse(originalDocs, [originalEntry]))
+        .mockResolvedValueOnce(new Response(originalContent));
+
+      await expect(verifyLiveGitHubContextRevision(historicalProofInput)).resolves.toEqual({
+        status: "verified",
+        currentContentSha256: sha256(current),
+      });
+      expect(mintToken).toHaveBeenCalledExactlyOnceWith({
+        installationId: 21,
+        repositoryId: 42,
+        repositoryFullName: "org/repo",
+        purpose: "read-context",
+        signal: expect.any(AbortSignal),
+      });
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        `${api}/commits/HEAD`,
+        `${api}/git/commits/${head}`,
+        `${api}/git/trees/${rootTree}`,
+        `${api}/git/trees/${docsTree}`,
+        `${api}/git/blobs/${headEntry.sha}`,
+        `${api}/git/commits/${originalRevision}`,
+        `${api}/git/trees/${originalRoot}`,
+        `${api}/git/trees/${originalDocs}`,
+        `${api}/git/blobs/${originalEntry.sha}`,
+      ]);
+    });
+
+    it("reuses the completed file read when cached commit already equals live HEAD", async () => {
+      mockHeadFile(originalContent);
+      await expect(
+        verifyLiveGitHubContextRevision({ ...historicalProofInput, upstreamRevision: head }),
+      ).resolves.toEqual({
+        status: "verified",
+        currentContentSha256: sha256(originalContent),
+      });
+      expect(mintToken).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    });
+
+    it("rejects a cached digest that differs even when its commit equals live HEAD", async () => {
+      mockHeadFile("Not the retained text.");
+      await expect(
+        verifyLiveGitHubContextRevision({ ...historicalProofInput, upstreamRevision: head }),
+      ).resolves.toEqual({ status: "revision_mismatch" });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    });
+
+    it("does not substitute the HEAD digest for a mismatch at the historical revision", async () => {
+      mockHeadFile(originalContent);
+      mockHistoricalDirectory();
+      const incorrect = "Different historical text.";
+      const entry = regularFileEntry(Buffer.from(incorrect));
+      fetchMock
+        .mockResolvedValueOnce(treeResponse(originalDocs, [entry]))
+        .mockResolvedValueOnce(new Response(incorrect));
+      await expect(verifyLiveGitHubContextRevision(historicalProofInput)).resolves.toEqual({
+        status: "revision_mismatch",
+      });
+    });
+
+    it("rejects a historical file proved missing without substituting the current bytes", async () => {
+      mockHeadFile(originalContent);
+      mockHistoricalDirectory();
+      fetchMock.mockResolvedValueOnce(treeResponse(originalDocs, []));
+      await expect(verifyLiveGitHubContextRevision(historicalProofInput)).resolves.toEqual({
+        status: "revision_mismatch",
+      });
+    });
+
+    it("withholds the historical content when the live tree lacks the file", async () => {
+      mockDirectory();
+      fetchMock.mockResolvedValueOnce(treeResponse(docsTree, []));
+      await expect(verifyLiveGitHubContextRevision(historicalProofInput)).resolves.toEqual({
+        status: "upstream_deleted",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+
+    it.each([
+      [401, "access_revoked"],
+      [403, "access_revoked"],
+      [404, "unavailable"],
+    ])(
+      "fails closed on upstream HTTP %s even after HEAD proved readable",
+      async (status, expected) => {
+        mockHeadFile(originalContent);
+        fetchMock.mockResolvedValueOnce(new Response("private provider detail", { status }));
+        await expect(verifyLiveGitHubContextRevision(historicalProofInput)).resolves.toEqual({
+          status: expected,
+        });
+        expect(fetchMock).toHaveBeenLastCalledWith(
+          `${api}/git/commits/${originalRevision}`,
+          expect.any(Object),
+        );
+      },
+    );
+
+    it("avoids provider requests for a malformed historical identity or pre-aborted caller", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        verifyLiveGitHubContextRevision({ ...historicalProofInput, upstreamRevision: "../HEAD" }),
+      ).resolves.toEqual({ status: "revision_mismatch" });
+      await expect(
+        verifyLiveGitHubContextRevision({ ...historicalProofInput, contentSha256: "invalid" }),
+      ).resolves.toEqual({ status: "revision_mismatch" });
+      await expect(
+        verifyLiveGitHubContextRevision({ ...historicalProofInput, signal: controller.signal }),
+      ).resolves.toEqual({ status: "unavailable" });
+      expect(mintToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("cancels and releases a historical response stream when the caller aborts", async () => {
+      const controller = new AbortController();
+      const timeLimit = vi.spyOn(AbortSignal, "timeout");
+      const cancel = vi.fn();
+      const stream = new ReadableStream<Uint8Array>({ cancel });
+      mockHeadFile(originalContent);
+      fetchMock.mockResolvedValueOnce(new Response(stream));
+      const verifying = verifyLiveGitHubContextRevision({
+        ...historicalProofInput,
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(stream.locked).toBe(true));
+      controller.abort();
+
+      await expect(verifying).resolves.toEqual({ status: "unavailable" });
+      await vi.waitFor(() => expect(stream.locked).toBe(false));
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(timeLimit).toHaveBeenCalledExactlyOnceWith(12_000);
+      const leaseSignal = mintToken.mock.calls[0]?.[0].signal;
+      expect(leaseSignal?.aborted).toBe(true);
+      expect(fetchMock.mock.calls.every(([, options]) => options?.signal === leaseSignal)).toBe(
+        true,
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+    });
   });
 });

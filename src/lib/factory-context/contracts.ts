@@ -54,3 +54,20 @@ export const contextSourceSyncClaimSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("access_revoked") }),
   z.object({ status: z.literal("deleted") }),
 ]);
+
+const canonicalContextId = uuid.transform((value) => value.toLowerCase());
+
+export const contextDocumentReferenceSchema = z.strictObject({
+  sourceId: canonicalContextId,
+  revisionId: canonicalContextId,
+});
+
+export const contextDocumentReferencesSchema = z
+  .array(contextDocumentReferenceSchema)
+  .min(1)
+  .max(8)
+  .refine((refs) => new Set(refs.map(({ sourceId }) => sourceId)).size === refs.length, {
+    message: "Select only one exact revision for each context source.",
+  });
+
+export type ContextDocumentReference = z.infer<typeof contextDocumentReferenceSchema>;

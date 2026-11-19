@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { agentConfigValueSchemas } from "@/lib/agent-config/contracts";
+import { contextDocumentReferencesSchema } from "@/lib/factory-context/contracts";
 import { MAX_FACTORY_SKILL_REVISIONS } from "@/lib/factory-skills/contracts";
 import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import {
@@ -93,6 +94,7 @@ export const serialFactoryDefinitionSchema = z
     repository: referenceSchema,
     writableRepositories: z.array(referenceSchema).optional(),
     readContextRepositories: z.array(referenceSchema).optional(),
+    contextDocuments: contextDocumentReferencesSchema.optional(),
     sandboxProvider: sandboxProviderSchema,
     agent: agentSchema,
     implementationAgent: z
@@ -159,6 +161,7 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
         repositoryId,
         writableRepositoryIds,
         readContextRepositoryIds,
+        contextDocuments,
         mcpManifest,
         toolIds,
       },
@@ -170,6 +173,13 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
           path: ["executionGrant"],
           message:
             "A service execution grant requires one writable repository and an execution policy revision.",
+        });
+      }
+      if (contextDocuments && !executionGrant) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["contextDocuments"],
+          message: "Context documents require an approved service execution grant.",
         });
       }
       if (credentialBindingId && (!executionGrant || !implementationAgent)) {
