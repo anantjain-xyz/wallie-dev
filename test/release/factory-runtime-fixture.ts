@@ -6,14 +6,36 @@ import { z } from "zod";
 
 import { compiledFactoryDefinitionSchema } from "@/lib/factory-definitions/schema";
 import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
+import { runContextInspectionSchema, runContextManifestSchema } from "@/lib/run-context/contracts";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import { encryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database } from "@/lib/supabase/database.types";
+import {
+  browserCaptureReceiptSchema,
+  evaluateBrowserRequirement,
+} from "@/lib/validation-evidence/browser-contract";
+import { validationPlanSchema, type ValidationPlan } from "@/lib/validation-evidence/contracts";
+import { resumeWorkspaceDeletion } from "@/lib/workspaces/deletion";
 
+import {
+  approveM05Memory,
+  correctM05Memory,
+  type createM05ContextProvider,
+  M05_ORIGINAL_DOCUMENT,
+  M05_ORIGINAL_MEMORY,
+  M05_UPDATED_DOCUMENT,
+  M05_UPDATED_MEMORY,
+  registerM05BrowserTools,
+  registerM05ContextRepository,
+  registerM05ContextSource,
+  syncM05ContextRevision,
+} from "./factory-m05-inputs";
 import {
   BASE_SHA,
   FIXTURE_AGENT_EXIT,
   HOSTED_SANDBOX_KEY,
+  QUALIFICATION_COMMAND,
+  TREE_SHA,
   type FactoryRuntimeTransport,
 } from "./factory-runtime-transport";
 
@@ -25,6 +47,7 @@ const replacementModel = "gpt-5.6-astra";
 const humanKey = "synthetic-local-human-key";
 const serviceKey = "synthetic-local-scoped-key";
 const siblingKey = "synthetic-local-sibling-key";
+const fixtureWorkspaceName = "Factory runtime qualification";
 
 const fixtureSchema = z.object({
   url: z
@@ -36,15 +59,54 @@ const fixtureSchema = z.object({
     }),
   serviceKey: z.string().min(1),
   publishableKey: z.string().min(1),
+  m05: z.boolean().default(false),
 });
 
 type Admin = SupabaseClient<Database>;
 type Job = { job_id: string; run_id: string; session_id: string };
+type BrowserTools = Awaited<ReturnType<typeof registerM05BrowserTools>>;
+type ContextRevision = Awaited<ReturnType<typeof syncM05ContextRevision>>;
+type MemoryApproval = Awaited<ReturnType<typeof approveM05Memory>>;
+
+export type FixtureBrowserRun = Pick<BrowserTools, "screenshotScopeId" | "videoScopeId"> & {
+  runId: string;
+  commitSha: string;
+  treeSha: string;
+  mode: "capture" | "reject";
+};
+
+export type FactoryBrowserReviewFixture = {
+  owner: { email: string; password: string };
+  workspaceId: string;
+  workspaceSlug: string;
+  factoryId: string;
+  sessionId: string;
+  sessionNumber: number;
+  artifact: { id: string; stageSlug: string; version: number };
+  run: { id: string; otherRunId: string; commitSha: string; validationTreeSha: string };
+  screenshot: { id: string; sha256: string };
+  recording: { id: string; sha256: string; stepOffsetMs: number };
+  context: { sourceId: string; revisionId: string; sha256: string };
+  memory: { entryId: string; approvedRevisionId: string; sha256: string };
+};
+
+type QualificationInput = {
+  admin: Admin;
+  viewer: Admin;
+  runtime: "node" | "workerd";
+  transport: FactoryRuntimeTransport;
+  execute: (job: Job, browser?: FixtureBrowserRun) => Promise<void>;
+  m05?: {
+    upstream: ReturnType<typeof createM05ContextProvider>;
+    inspectReview?: (fixture: FactoryBrowserReviewFixture) => Promise<void>;
+  };
+};
 
 export function createFactoryRuntimeClients(rawFixture: string) {
   const config = fixtureSchema.parse(JSON.parse(rawFixture));
   const options = { auth: { persistSession: false, autoRefreshToken: false } };
   return {
+    config,
     admin: createClient<Database>(config.url, config.serviceKey, options),
     viewer: createClient<Database>(config.url, config.publishableKey, options),
   };
@@ -101,7 +163,7 @@ async function createWorkspace(admin: Admin, actorId: string, slug: string) {
     admin.rpc("create_workspace", {
       actor_user_id: actorId,
       requested_slug: slug,
-      workspace_name: "Factory runtime qualification",
+      workspace_name: fixtureWorkspaceName,
     }),
     "create workspace",
   );
@@ -241,6 +303,8 @@ async function seedWorkspace(admin: Admin, workspaceId: string, actorId: string,
     siblingId: sibling.id,
     stage,
     pipelineId: pipeline.id,
+    installationId: installation.id,
+    slug,
     repository,
     siblingRepository,
     connectionRevision: connection.connection_revision,
@@ -298,7 +362,11 @@ async function admit(admin: Admin, workspace: Workspace, title: string): Promise
   return job;
 }
 
-async function seedAuthority(admin: Admin, workspace: Workspace) {
+async function seedAuthority(
+  admin: Admin,
+  workspace: Workspace,
+  m05?: { contextRepositoryId: string; tools: BrowserTools },
+) {
   const scope = {
     p_actor_user_id: workspace.actorId,
     p_workspace_id: workspace.workspaceId,
@@ -312,10 +380,11 @@ async function seedAuthority(admin: Admin, workspace: Workspace) {
         p_expected_revision: 0,
         p_requirements: {
           version: 1,
-          maxRepairAttempts: 0,
+          maxRepairAttempts: m05 ? 1 : 0,
           maxExecutionMs: 120000,
           maxTotalTokens: 10000,
-          maxCostUsd: 5,
+          // The synthetic Codex provider reports measured tokens and has no billed spend.
+          maxCostUsd: m05 ? null : 5,
         },
       }),
       "save service budget",
@@ -349,6 +418,7 @@ async function seedAuthority(admin: Admin, workspace: Workspace) {
     ),
   ]);
   function approve(factoryId: string, principalId: string, repositoryId: string) {
+    const qualificationScope = factoryId === workspace.factoryId ? m05 : undefined;
     return admin.rpc("approve_factory_execution_grant", {
       ...scope,
       p_factory_id: factoryId,
@@ -358,8 +428,12 @@ async function seedAuthority(admin: Admin, workspace: Workspace) {
       p_github_repository_id: repositoryId,
       p_expected_version: 0,
       p_expires_at: new Date(Date.now() + 600000).toISOString(),
-      p_read_context_repository_ids: [],
-      p_tool_ids: [],
+      p_read_context_repository_ids: qualificationScope
+        ? [qualificationScope.contextRepositoryId]
+        : [],
+      p_tool_ids: qualificationScope
+        ? [qualificationScope.tools.screenshotScopeId, qualificationScope.tools.videoScopeId]
+        : [],
     });
   }
   const [grant, siblingGrant, prompt, scopedSecret, siblingSecret, siblingAgent] =
@@ -445,6 +519,7 @@ async function activate(
   authority: Authority,
   model: string,
   activation: number,
+  m05?: { context: ContextRevision; tools: BrowserTools },
 ) {
   const bundle = compiledFactoryDefinitionSchema.parse({
     schemaVersion: 1,
@@ -474,7 +549,15 @@ async function activate(
     operatingRulesMd: "Fixture operating rules.",
     operatingRuleStageIds: [],
     skillIds: [],
-    toolIds: [],
+    toolIds: m05 ? [m05.tools.screenshotScopeId, m05.tools.videoScopeId] : [],
+    ...(m05
+      ? {
+          contextDocuments: [
+            { sourceId: m05.context.sourceId, revisionId: m05.context.revisionId },
+          ],
+          mcpManifest: m05.tools.mcpManifest,
+        }
+      : {}),
     stages: [
       {
         ...workspace.stage,
@@ -587,14 +670,458 @@ async function readRunEvidence(admin: Admin, job: Job) {
   return { run, receipt };
 }
 
-export async function qualifyFactoryRuntime(input: {
-  admin: Admin;
-  viewer: Admin;
-  runtime: "node" | "workerd";
-  transport: FactoryRuntimeTransport;
-  execute: (job: Job) => Promise<void>;
-}) {
-  const { admin, viewer, runtime, transport, execute } = input;
+const browserPlan = {
+  version: 2,
+  commands: [
+    {
+      key: "qualification-command",
+      command: QUALIFICATION_COMMAND,
+      timeoutSeconds: 5,
+      reports: [],
+    },
+  ],
+  browser: [
+    {
+      key: "qualification",
+      path: "/qualification",
+      timeoutSeconds: 15,
+      interactions: [{ action: "click", testId: "qualification-action" }],
+      regionTestId: "qualification-region",
+      excludedTestIds: ["private-canary"],
+      evidence: [
+        { kind: "screenshot", required: true },
+        { kind: "video", required: true },
+      ],
+    },
+  ],
+} satisfies ValidationPlan;
+
+async function readFrozenContext(admin: Admin, job: Job) {
+  const row = await checked(
+    admin
+      .from("session_run_context_manifests")
+      .select("origin_run_id,manifest_sha256,manifest")
+      .eq("run_id", job.run_id)
+      .eq("attempt_count", 1)
+      .single(),
+    "read immutable attempt context",
+  );
+  const manifest = runContextManifestSchema.parse(row.manifest);
+  assert.equal(manifest.version, 2);
+  return { ...row, manifest };
+}
+
+function assertSelectedContext(
+  manifest: Awaited<ReturnType<typeof readFrozenContext>>["manifest"],
+  revision: ContextRevision,
+  memory: MemoryApproval,
+) {
+  assert.equal(manifest.documents.length, 1);
+  const [document] = manifest.documents;
+  assert(document.status === "selected");
+  assert.equal(document.sourceId, revision.sourceId);
+  assert.equal(document.revisionId, revision.revisionId);
+  assert.equal(document.contentSha256, revision.contentSha256);
+  assert.equal(document.upstreamRevision, revision.upstreamRevision);
+  assert.equal(manifest.memories.length, 1);
+  const [approval] = manifest.memories;
+  assert(approval.status === "selected");
+  assert.equal(approval.memoryId, memory.memoryId);
+  assert.equal(approval.revisionId, memory.revisionId);
+  assert.equal(approval.approvalId, memory.approvalId);
+  assert.equal(approval.sha256, memory.contentSha256);
+}
+
+async function readMediaOutcome(
+  admin: Admin,
+  job: Job,
+  runtime: QualificationInput["runtime"],
+  mode: FixtureBrowserRun["mode"],
+  originRunId: string,
+) {
+  const [run, evidence, planRow, receipt, assets] = await Promise.all([
+    checked(
+      admin.from("agent_runs").select("status").eq("id", job.run_id).single(),
+      "read completed media run",
+    ),
+    checked(
+      admin
+        .from("session_validation_evidence")
+        .select("attempt_count,commit_sha,validation_tree_sha,records")
+        .eq("run_id", job.run_id)
+        .single(),
+      "read command evidence for media run",
+    ),
+    checked(
+      admin
+        .from("session_validation_plans")
+        .select("run_id,attempt_count,commit_sha,validation_tree_sha,plan")
+        .eq("run_id", job.run_id)
+        .single(),
+      "read the frozen browser validation plan",
+    ),
+    checked(
+      admin
+        .from("session_browser_verification_receipts")
+        .select("records")
+        .eq("run_id", job.run_id)
+        .single(),
+      "read exact browser receipt",
+    ),
+    checked(
+      admin
+        .from("session_browser_verification_assets")
+        .select("id,sha256,content_type")
+        .eq("run_id", job.run_id),
+      "read exact browser assets",
+    ),
+  ]);
+  assert.equal(run.status, "success");
+  const identity = { runId: job.run_id, attemptCount: 1, commitSha: BASE_SHA, treeSha: TREE_SHA };
+  assert.equal(evidence.attempt_count, identity.attemptCount);
+  assert.equal(evidence.commit_sha, identity.commitSha);
+  assert.equal(evidence.validation_tree_sha, identity.treeSha);
+  const recordedIdentity = {
+    runId: planRow.run_id,
+    attemptCount: planRow.attempt_count,
+    commitSha: planRow.commit_sha,
+    treeSha: planRow.validation_tree_sha,
+  };
+  assert.deepEqual(recordedIdentity, identity);
+  const validatedPlan = validationPlanSchema.parse(planRow.plan);
+  assert.equal(validatedPlan.version, 2);
+  assert.deepEqual(validatedPlan.browser, browserPlan.browser);
+  assert(Array.isArray(evidence.records));
+  assert(
+    evidence.records.some(
+      (record) =>
+        record &&
+        typeof record === "object" &&
+        "key" in record &&
+        record.key === "qualification-command" &&
+        record.status === "passed",
+    ),
+  );
+  const receipts = z.array(browserCaptureReceiptSchema).length(2).parse(receipt.records);
+  const screenshot = receipts.find(({ kind }) => kind === "screenshot");
+  const recording = receipts.find(({ kind }) => kind === "video");
+  assert(screenshot?.kind === "screenshot" && recording?.kind === "video");
+  const evidenceForRun = {
+    expectedIdentity: identity,
+    recordedIdentity,
+    plan: validatedPlan.browser,
+    receipts,
+    accessibleAssetDigests: new Map(assets.map((asset) => [asset.id, asset.sha256])),
+  };
+  if (runtime === "workerd" || mode === "reject") {
+    assert.deepEqual(assets, []);
+    for (const item of receipts) {
+      assert.equal(item.status, "unavailable");
+      assert.equal(
+        item.reason,
+        runtime === "workerd" ? "runtime_unavailable" : "isolated_target_unavailable",
+      );
+      assert.equal(
+        evaluateBrowserRequirement(`browser:${item.kind}:qualification`, evidenceForRun),
+        "unavailable",
+      );
+    }
+    return null;
+  }
+  assert.equal(screenshot.status, "captured");
+  assert.equal(recording.status, "captured");
+  assert.deepEqual(recording.manifest.frameOffsetsMs, [0, 500]);
+  assert.equal(assets.length, 2);
+  for (const item of [screenshot, recording]) {
+    assert(
+      assets.some(
+        (asset) =>
+          asset.id === item.manifest.assetId &&
+          asset.sha256 === item.manifest.sha256 &&
+          asset.content_type === item.manifest.contentType,
+      ),
+    );
+    const requirement = `browser:${item.kind}:qualification`;
+    assert.equal(evaluateBrowserRequirement(requirement, evidenceForRun), "passed");
+    for (const expectedIdentity of [
+      { ...identity, runId: originRunId },
+      { ...identity, attemptCount: identity.attemptCount + 1 },
+      { ...identity, commitSha: "0".repeat(40) },
+      { ...identity, treeSha: "0".repeat(40) },
+    ]) {
+      assert.equal(
+        evaluateBrowserRequirement(requirement, { ...evidenceForRun, expectedIdentity }),
+        "stale",
+      );
+    }
+  }
+  return { identity, screenshot: screenshot.manifest, recording: recording.manifest };
+}
+
+async function qualifyM05(
+  input: QualificationInput,
+  workspace: Workspace,
+  authority: Authority,
+  repository: Awaited<ReturnType<typeof registerM05ContextRepository>>,
+  tools: BrowserTools,
+  owner: FactoryBrowserReviewFixture["owner"],
+) {
+  const { admin, viewer, transport, execute, runtime, m05 } = input;
+  assert(m05);
+  const { upstream } = m05;
+  upstream.bind(repository);
+  const sourceId = await registerM05ContextSource(admin, workspace, authority.grant, repository);
+  const original = await syncM05ContextRevision(admin, workspace, sourceId, repository.old);
+  await activate(admin, workspace, authority, pinnedModel, 3, { context: original, tools });
+
+  const producer = await admit(admin, workspace, "Publish a reviewed memory proposal");
+  transport.completeAttempt(producer.run_id, {
+    artifact: "Qualification memory proposal source",
+    memoryProposal: M05_ORIGINAL_MEMORY,
+  });
+  await execute(producer);
+  const produced = await checked(
+    admin.from("agent_jobs").select("status,last_error").eq("id", producer.job_id).single(),
+    "read memory producer outcome",
+  );
+  assert.equal(
+    produced.status,
+    "success",
+    produced.last_error ?? "The memory producer must publish.",
+  );
+  const priorApproval = await approveM05Memory(viewer, admin, workspace, producer.run_id);
+
+  async function prepareRetry(title: string) {
+    const job = await admit(admin, workspace, title);
+    transport.failAttemptAfterUsage(job.run_id);
+    await execute(job);
+    await readRunEvidence(admin, job);
+    const frozen = await readFrozenContext(admin, job);
+    assertSelectedContext(frozen.manifest, original, priorApproval);
+    const prompt = transport.invocations.at(-1)?.prompt;
+    assert(prompt?.includes(M05_ORIGINAL_DOCUMENT.trim()) && prompt?.includes(M05_ORIGINAL_MEMORY));
+    return job;
+  }
+
+  async function enqueueRetry(previous: Job): Promise<Job> {
+    const [retry] = await checked(
+      admin.rpc("enqueue_session_retry_with_checkpoint", {
+        p_session_id: previous.session_id,
+        p_workspace_id: workspace.workspaceId,
+        p_expected_stage_id: workspace.stage.id,
+        p_requested_by_member_id: workspace.memberId,
+        p_retry_run_id: previous.run_id,
+        p_agent_model_provider: agent,
+        p_agent_model_name: pinnedModel,
+        p_run_type: "code",
+      }),
+      "queue real manual retry",
+    );
+    assert(
+      retry?.created && retry.run_id !== previous.run_id,
+      `Manual retry did not create a new run (${JSON.stringify({ retry, previousRunId: previous.run_id })}).`,
+    );
+    return { ...retry, session_id: previous.session_id };
+  }
+
+  async function assertDeniedRetry(previous: Job, reason: RegExp) {
+    const count = transport.invocations.length;
+    const retry = await enqueueRetry(previous);
+    await execute(retry);
+    assert.equal(
+      transport.invocations.length,
+      count,
+      "Ineligible frozen input must stop before agent launch.",
+    );
+    const terminal = await checked(
+      admin.from("agent_jobs").select("status,last_error").eq("id", retry.job_id).single(),
+      "read denied retry",
+    );
+    assert.equal(terminal.status, "error");
+    assert.match(terminal.last_error ?? "", reason);
+    const replacement = await checked(
+      admin.from("session_run_context_manifests").select("run_id").eq("run_id", retry.run_id),
+      "inspect denied attempt context",
+    );
+    assert.deepEqual(replacement, []);
+  }
+
+  function browserRun(job: Job, mode: FixtureBrowserRun["mode"]): FixtureBrowserRun {
+    return {
+      runId: job.run_id,
+      commitSha: BASE_SHA,
+      treeSha: TREE_SHA,
+      screenshotScopeId: tools.screenshotScopeId,
+      videoScopeId: tools.videoScopeId,
+      mode,
+    };
+  }
+
+  const origin = await prepareRetry("Replay frozen context with trusted browser evidence");
+  const toRevoke = await prepareRetry("Reject replay after context access revocation");
+  const toCorrect = await prepareRetry("Reject replay after a reviewed memory correction");
+  assert(
+    transport.sandboxes.every(({ stopped }) => stopped),
+    "Replay starts after the original sandboxes have stopped.",
+  );
+  const originContext = await readFrozenContext(admin, origin);
+  upstream.setHead(repository.new.commit);
+  const updated = await syncM05ContextRevision(admin, workspace, sourceId, repository.new);
+  assert.notEqual(original.contentSha256, updated.contentSha256);
+  const retry = await enqueueRetry(origin);
+  transport.completeAttempt(retry.run_id, {
+    artifact: "Synthetic browser verification after retry",
+    plan: browserPlan,
+  });
+  await execute(retry, browserRun(retry, "capture"));
+  const replay = await readFrozenContext(admin, retry);
+  assert.equal(replay.origin_run_id, origin.run_id);
+  assert.equal(replay.manifest_sha256, originContext.manifest_sha256);
+  assert.deepEqual(replay.manifest, originContext.manifest);
+  const replayPrompt = transport.invocations.at(-1)?.prompt;
+  assert(
+    replayPrompt?.includes(M05_ORIGINAL_DOCUMENT.trim()) &&
+      replayPrompt?.includes(M05_ORIGINAL_MEMORY),
+  );
+  assert(!replayPrompt?.includes(M05_UPDATED_DOCUMENT.trim()));
+  const media = await readMediaOutcome(admin, retry, runtime, "capture", origin.run_id);
+
+  upstream.setAccess("revoked");
+  await assertDeniedRetry(toRevoke, /external document.*access_revoked/i);
+  upstream.setAccess("available");
+  const correction = await correctM05Memory(viewer, workspace, priorApproval, M05_UPDATED_MEMORY);
+  assert.notEqual(correction.contentSha256, priorApproval.contentSha256);
+  await assertDeniedRetry(toCorrect, /recorded factory memory.*no longer eligible/i);
+  await activate(admin, workspace, authority, pinnedModel, 4, { context: updated, tools });
+
+  const fresh = await admit(
+    admin,
+    workspace,
+    "Use corrected memory and reject a malformed browser fixture",
+  );
+  transport.completeAttempt(fresh.run_id, {
+    artifact: "Synthetic browser failure with valid command evidence",
+    plan: browserPlan,
+  });
+  await execute(fresh, browserRun(fresh, "reject"));
+  assertSelectedContext((await readFrozenContext(admin, fresh)).manifest, updated, correction);
+  const freshPrompt = transport.invocations.at(-1)?.prompt;
+  assert(
+    freshPrompt?.includes(M05_UPDATED_DOCUMENT.trim()) && freshPrompt?.includes(M05_UPDATED_MEMORY),
+  );
+  assert(!freshPrompt?.includes(M05_ORIGINAL_MEMORY));
+  await readMediaOutcome(admin, fresh, runtime, "reject", origin.run_id);
+
+  upstream.setAccess("revoked");
+  const freshRevoked = await admit(
+    admin,
+    workspace,
+    "Omit inaccessible context from a fresh request",
+  );
+  await execute(freshRevoked);
+  await readRunEvidence(admin, freshRevoked);
+  const revokedManifest = (await readFrozenContext(admin, freshRevoked)).manifest;
+  assert.deepEqual(revokedManifest.documents, [
+    { sourceId, revisionId: updated.revisionId, status: "unavailable", reason: "access_revoked" },
+  ]);
+  assert.equal(revokedManifest.memories[0]?.revisionId, correction.revisionId);
+  const revokedPrompt = transport.invocations.at(-1)?.prompt;
+  assert(
+    revokedPrompt?.includes(M05_UPDATED_MEMORY) &&
+      !revokedPrompt.includes(M05_UPDATED_DOCUMENT.trim()),
+  );
+
+  const deletedSource = await checked(
+    admin.rpc("delete_factory_context_source", {
+      p_actor_user_id: workspace.actorId,
+      p_factory_id: workspace.factoryId,
+      p_workspace_id: workspace.workspaceId,
+      p_source_id: sourceId,
+    }),
+    "delete the disposable context source",
+  );
+  assert(deletedSource.deleted_at);
+  const afterDeletion = await admit(admin, workspace, "Omit deleted context from a fresh request");
+  await execute(afterDeletion);
+  await readRunEvidence(admin, afterDeletion);
+  const deleted = (await readFrozenContext(admin, afterDeletion)).manifest;
+  assert.deepEqual(deleted.documents, [
+    {
+      sourceId,
+      revisionId: updated.revisionId,
+      status: "unavailable",
+      reason: "source_unavailable",
+    },
+  ]);
+  assert.equal(deleted.memories[0]?.revisionId, correction.revisionId);
+  assert((transport.invocations.at(-1)?.prompt ?? "").includes(M05_UPDATED_MEMORY));
+  assert.deepEqual(await readFrozenContext(admin, origin), originContext);
+  assert(
+    transport.sandboxes.every(({ stopped }) => stopped),
+    "Review starts after sandbox teardown.",
+  );
+
+  const inspection = runContextInspectionSchema.parse(
+    await checked(
+      viewer.rpc("get_run_context_inputs", {
+        target_workspace_id: workspace.workspaceId,
+        target_run_id: retry.run_id,
+        target_attempt_count: 1,
+      }),
+      "review exact historical input after context erasure",
+    ),
+  );
+  assert.equal(inspection.manifestSha256, originContext.manifest_sha256);
+  assert.deepEqual(inspection.manifest, originContext.manifest);
+  assert.equal(inspection.originRunId, origin.run_id);
+  if (runtime === "node") {
+    assert(media && m05.inspectReview);
+    const accepted = await checked(
+      admin
+        .from("sessions")
+        .select("number,current_artifact_id,phase_status")
+        .eq("id", retry.session_id)
+        .single(),
+      "read reviewable media session after teardown",
+    );
+    assert.equal(accepted.phase_status, "awaiting_review");
+    assert(accepted.current_artifact_id);
+    const artifact = await checked(
+      admin
+        .from("session_artifacts")
+        .select("id,stage_slug,version")
+        .eq("id", accepted.current_artifact_id)
+        .single(),
+      "read exact accepted media artifact",
+    );
+    await m05.inspectReview({
+      owner,
+      workspaceId: workspace.workspaceId,
+      workspaceSlug: workspace.slug,
+      factoryId: workspace.factoryId,
+      sessionId: retry.session_id,
+      sessionNumber: accepted.number,
+      artifact: { id: artifact.id, stageSlug: artifact.stage_slug, version: artifact.version },
+      run: {
+        id: retry.run_id,
+        otherRunId: origin.run_id,
+        commitSha: media.identity.commitSha,
+        validationTreeSha: media.identity.treeSha,
+      },
+      screenshot: { id: media.screenshot.assetId, sha256: media.screenshot.sha256 },
+      recording: { id: media.recording.assetId, sha256: media.recording.sha256, stepOffsetMs: 500 },
+      context: { sourceId, revisionId: original.revisionId, sha256: original.contentSha256 },
+      memory: {
+        entryId: priorApproval.memoryId,
+        approvedRevisionId: priorApproval.revisionId,
+        sha256: priorApproval.contentSha256,
+      },
+    });
+  }
+}
+
+export async function qualifyFactoryRuntime(input: QualificationInput) {
+  const { admin, viewer, runtime, transport, execute, m05 } = input;
   // Both real claim RPCs select from the global queue.
   const queue = await admin
     .from("agent_jobs")
@@ -609,11 +1136,13 @@ export async function qualifyFactoryRuntime(input: {
   if (account.error) throw account.error;
   const actorId = account.data.user.id;
   let workspaceId: string | undefined;
+  let workspaceMemberId: string | undefined;
   let restoreReleaseGate: (() => Promise<void>) | undefined;
   try {
     restoreReleaseGate = await openReleaseGate(admin);
     workspaceId = await createWorkspace(admin, actorId, slug);
     const workspace = await seedWorkspace(admin, workspaceId, actorId, slug);
+    workspaceMemberId = workspace.memberId;
     const signedIn = await viewer.auth.signInWithPassword({ email, password });
     if (signedIn.error) throw signedIn.error;
     await recordCapability(admin, workspace, humanModel);
@@ -627,7 +1156,17 @@ export async function qualifyFactoryRuntime(input: {
     assert.equal(transport.invocations[0]?.secret === humanKey, true);
     assert.equal(transport.invocations[0]?.scoped, false);
 
-    const authority = await seedAuthority(admin, workspace);
+    const contextRepository = m05
+      ? await registerM05ContextRepository(admin, workspace)
+      : undefined;
+    const browserTools = m05 ? await registerM05BrowserTools(admin, workspace) : undefined;
+    const authority = await seedAuthority(
+      admin,
+      workspace,
+      contextRepository && browserTools
+        ? { contextRepositoryId: contextRepository.id, tools: browserTools }
+        : undefined,
+    );
     const pinnedRevision = await activate(admin, workspace, authority, pinnedModel, 1);
     const wrongRepository = await admin.rpc("create_session_with_first_job", {
       ...admissionArgs(workspace, "Sibling repository must be rejected"),
@@ -722,6 +1261,17 @@ export async function qualifyFactoryRuntime(input: {
       servicePrincipalId: authority.principal.id,
     });
 
+    assert.equal(transport.sandboxes.length, 2);
+    assert.equal(transport.invocations.length, 2);
+    if (contextRepository && browserTools) {
+      await qualifyM05(input, workspace, authority, contextRepository, browserTools, {
+        email,
+        password,
+      });
+    }
+    const priorSandboxCount = transport.sandboxes.length;
+    const priorInvocationCount = transport.invocations.length;
+
     const revoked = await admit(admin, workspace, "Revoked before claim");
     await checked(
       admin.rpc("revoke_factory_execution_grant", {
@@ -741,6 +1291,10 @@ export async function qualifyFactoryRuntime(input: {
     );
     assert.equal(denied.status, "error");
     assert.match(denied.last_error ?? "", /Execution grant is unavailable/);
+    const credentialReceipts = admin
+      .from("factory_run_credential_receipts")
+      .select("run_id,binding_id")
+      .eq("workspace_id", workspace.workspaceId);
     const [attempts, credentials] = await Promise.all([
       checked(
         admin
@@ -750,21 +1304,32 @@ export async function qualifyFactoryRuntime(input: {
         "lookup denied manifests",
       ),
       checked(
-        admin
-          .from("factory_run_credential_receipts")
-          .select("run_id,binding_id")
-          .eq("workspace_id", workspace.workspaceId),
+        m05 ? credentialReceipts.in("run_id", [pinned.run_id, revoked.run_id]) : credentialReceipts,
         "lookup exact credential receipts",
       ),
     ]);
     assert.deepEqual(attempts, []);
     assert.deepEqual(credentials, [{ run_id: pinned.run_id, binding_id: authority.binding.id }]);
-    assert.equal(transport.sandboxes.length, 2);
-    assert.equal(transport.invocations.length, 2);
+    assert.equal(transport.sandboxes.length, priorSandboxCount);
+    assert.equal(transport.invocations.length, priorInvocationCount);
     assert(transport.sandboxes.every((sandbox) => sandbox.stopped));
+    assert.equal(transport.scopedMaterial.size, 0);
   } finally {
     try {
-      if (workspaceId) {
+      if (m05 && workspaceId && workspaceMemberId) {
+        await checked(
+          admin.rpc("begin_workspace_deletion", {
+            p_workspace_id: workspaceId,
+            p_owner_member_id: workspaceMemberId,
+            p_confirmation: fixtureWorkspaceName,
+          }),
+          "fence disposable workspace and media cleanup",
+        );
+        assert(
+          await resumeWorkspaceDeletion(admin, workspaceId),
+          "Disposable media cleanup did not complete.",
+        );
+      } else if (workspaceId) {
         await checked(
           admin.from("workspaces").delete().eq("id", workspaceId),
           "delete fixture workspace",

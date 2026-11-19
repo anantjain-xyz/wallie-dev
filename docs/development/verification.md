@@ -150,6 +150,40 @@ Hosted enrollment follows the existing
 [worker operations](../deployment/worker-operations.md#controlled-checkpoint-continuity-release)
 for the hosted release control and recovery steps.
 
+### Frozen context and browser evidence
+
+Use an exclusive, disposable local Supabase project with the current migrations
+and an empty worker queue. Install the Playwright Chromium browser and make
+FFmpeg and FFprobe available on `PATH`.
+
+```bash
+pnpm exec playwright install chromium
+pnpm check:factory-runtime --workdir /path/to/disposable-project --m05
+```
+
+- The launcher builds and starts production Wallie on loopback. It runs the real
+  Node worker and native Workerd Workflow sequentially with synthetic repository,
+  sandbox and agent transports.
+- The qualification freezes a synced document and an approved memory. After a
+  source change, retry compares its original manifest and digest. Separate
+  attempts cover revoked document access and corrected memory. A fresh request
+  records its currently eligible inputs.
+- Node captures an exact PNG and WebM using the trusted local browser broker.
+  After sandbox and broker teardown, the authenticated browser checks both
+  same-run receipts, decodes the recording, and seeks to the exact recorded
+  step. Workerd records `runtime_unavailable` for browser capture and retains
+  independent command validation.
+- Capture eligibility binds the run, attempt, commit, validation tree, and plan.
+  Missing, malformed, withheld and wrong-run media cannot satisfy required
+  evidence. An erased session keeps its receipts available while cleanup retries
+  exact private Storage paths.
+
+Screenshots from the authenticated fixture are saved to
+`.wallie/m05-qualification`. Set `WALLIE_FACTORY_MEDIA_PROOF_DIR` to choose a
+different local directory. See
+[browser recording limits](../deployment/worker-operations.md#video-recording-support)
+and [retention and erasure](../architecture/validation-evidence.md#retention-and-erasure).
+
 ### Shared work across browser, API and MCP
 
 Use a disposable Supabase project with the current migrations, a working local
