@@ -36,6 +36,16 @@ export type ParsedOpenCodeLine = {
   usageInvalid?: boolean;
 };
 
+// Sandbox setup writes the approved checkout token to the original home. Bind
+// the GitHub HTTPS helper to that file before OpenCode changes HOME.
+export const openCodeGitCredentialConfig = {
+  GIT_CONFIG_COUNT: "2",
+  GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
+  GIT_CONFIG_VALUE_0: "",
+  GIT_CONFIG_KEY_1: "credential.https://github.com.helper",
+  GIT_CONFIG_VALUE_1: '!git credential-store --file "$WALLIE_GIT_CREDENTIAL_FILE"',
+};
+
 /**
  * OpenCode CLI runner.
  *
@@ -173,11 +183,17 @@ export class OpenCodeRunner implements AgentRunner {
       OPENCODE_PURE: "1",
     };
     const cli = `opencode ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+    const gitAuth = [
+      'WALLIE_GIT_CREDENTIAL_FILE="$HOME/.git-credentials"',
+      ...Object.entries(openCodeGitCredentialConfig).map(([key, value]) =>
+        shellQuote(`${key}=${value}`),
+      ),
+    ].join(" ");
     const launch = mcp
-      ? `exec env -i PATH="$PATH" ${Object.entries(isolatedEnvironment)
+      ? `exec env -i PATH="$PATH" ${gitAuth} ${Object.entries(isolatedEnvironment)
           .map(([key, value]) => shellQuote(`${key}=${value}`))
           .join(" ")} ${cli}`
-      : `export HOME=${shellQuote(root)} TMPDIR=${shellQuote(root)}\n${cli}`;
+      : `export ${gitAuth}\nexport HOME=${shellQuote(root)} TMPDIR=${shellQuote(root)}\n${cli}`;
     const shellCmd = [
       "set -e",
       "unset OPENCODE_TEST_HOME OPENCODE_TEST_MANAGED_CONFIG_DIR",

@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
@@ -5,7 +9,41 @@ import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
 import type { AgentEvent, AgentRunnerStartInput } from "./types";
 
-import { OpenCodeRunner, parseOpenCodeLine } from "./opencode";
+import { OpenCodeRunner, openCodeGitCredentialConfig, parseOpenCodeLine } from "./opencode";
+
+it("keeps the checkout's GitHub credential available through the isolated home", () => {
+  const directory = mkdtempSync(join(tmpdir(), "wallie-opencode-git-"));
+  try {
+    const home = join(directory, "isolated");
+    const file = join(directory, "approved .git-credentials");
+    const key = "synthetic-approved-checkout-token";
+    mkdirSync(home);
+    writeFileSync(file, `https://x-access-token:${key}@github.com\n`, { mode: 0o600 });
+    const credentialForHost = (host: string) =>
+      spawnSync("git", ["credential", "fill"], {
+        encoding: "utf8",
+        cwd: directory,
+        input: `protocol=https\nhost=${host}\n\n`,
+        env: {
+          ...openCodeGitCredentialConfig,
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_TERMINAL_PROMPT: "0",
+          HOME: home,
+          NODE_ENV: "test",
+          PATH: process.env.PATH,
+          WALLIE_GIT_CREDENTIAL_FILE: file,
+        },
+      });
+    const approved = credentialForHost("github.com");
+    expect(approved.status).toBe(0);
+    expect(approved.stdout).toContain(`password=${key}`);
+    const unrelated = credentialForHost("unrelated.example.test");
+    expect(unrelated.status).not.toBe(0);
+    expect(unrelated.stdout).not.toContain(key);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 const credential = { secret: "zen-secret-key-1234567890" };
 const toolRevisionId = "00000000-0000-4000-8000-000000000001";
@@ -107,6 +145,7 @@ describe("OpenCodeRunner", () => {
     expect(loadCredentials).toHaveBeenCalledAfter(loadAuth);
     const launch = sandbox.calls.find(({ cmd }) => cmd === "sh");
     expect(launch?.args[1]).toContain('exec env -i PATH="$PATH"');
+    expect(launch?.args[1]).toContain('WALLIE_GIT_CREDENTIAL_FILE="$HOME/.git-credentials"');
     expect(launch?.args[1]).toContain(
       `'HOME=${harnessPath(sandbox, "prompt.txt").replace(/\/prompt\.txt$/, "")}'`,
     );
@@ -773,6 +812,7 @@ describe("OpenCodeRunner", () => {
     );
     expect(call.args[1]).not.toContain("'--auto'");
     expect(call.args[1]).toContain("for managed_dir in /etc/opencode");
+    expect(call.args[1]).toContain('export WALLIE_GIT_CREDENTIAL_FILE="$HOME/.git-credentials"');
     expect(call.args[1]).toContain(`export HOME='${promptPath.replace(/\/prompt\.txt$/, "")}'`);
     expect(call.args[1]).toContain("unset OPENCODE_TEST_HOME OPENCODE_TEST_MANAGED_CONFIG_DIR");
     expect(call.args[1]).toContain("'--session' 'native-previous'");
