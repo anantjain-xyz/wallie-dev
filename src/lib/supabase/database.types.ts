@@ -1582,6 +1582,7 @@ export type Database = {
           approved_at: string
           approved_by_member_id: string
           budget_payer_member_id: string
+          command_scopes: Database["public"]["Enums"]["factory_command_scope"][]
           execution_policy_revision_id: string
           expires_at: string
           factory_id: string
@@ -1600,6 +1601,7 @@ export type Database = {
           approved_at: string
           approved_by_member_id: string
           budget_payer_member_id: string
+          command_scopes?: Database["public"]["Enums"]["factory_command_scope"][]
           execution_policy_revision_id: string
           expires_at: string
           factory_id: string
@@ -1618,6 +1620,7 @@ export type Database = {
           approved_at?: string
           approved_by_member_id?: string
           budget_payer_member_id?: string
+          command_scopes?: Database["public"]["Enums"]["factory_command_scope"][]
           execution_policy_revision_id?: string
           expires_at?: string
           factory_id?: string
@@ -1639,6 +1642,84 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "service_principals"
             referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_machine_tokens: {
+        Row: {
+          created_at: string
+          created_by_member_id: string
+          execution_grant_id: string
+          execution_grant_version: number
+          expires_at: string | null
+          factory_id: string
+          id: string
+          last_used_at: string | null
+          last_used_scope:
+            | Database["public"]["Enums"]["factory_command_scope"]
+            | null
+          name: string
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          service_principal_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at: string
+          created_by_member_id: string
+          execution_grant_id: string
+          execution_grant_version: number
+          expires_at?: string | null
+          factory_id: string
+          id: string
+          last_used_at?: string | null
+          last_used_scope?:
+            | Database["public"]["Enums"]["factory_command_scope"]
+            | null
+          name: string
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          service_principal_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by_member_id?: string
+          execution_grant_id?: string
+          execution_grant_version?: number
+          expires_at?: string | null
+          factory_id?: string
+          id?: string
+          last_used_at?: string | null
+          last_used_scope?:
+            | Database["public"]["Enums"]["factory_command_scope"]
+            | null
+          name?: string
+          revoked_at?: string | null
+          revoked_by_member_id?: string | null
+          scopes?: Database["public"]["Enums"]["factory_command_scope"][]
+          service_principal_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_machine_tokens_workspace_id_factory_id_service_pri_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "service_principal_id",
+              "execution_grant_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_execution_grants"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "service_principal_id",
+              "id",
+            ]
           },
         ]
       }
@@ -6669,6 +6750,7 @@ export type Database = {
         Args: {
           p_actor_user_id: string
           p_budget_payer_member_id: string
+          p_command_scopes?: Database["public"]["Enums"]["factory_command_scope"][]
           p_execution_policy_revision_id: string
           p_expected_version: number
           p_expires_at: string
@@ -6684,6 +6766,7 @@ export type Database = {
           approved_at: string
           approved_by_member_id: string
           budget_payer_member_id: string
+          command_scopes: Database["public"]["Enums"]["factory_command_scope"][]
           execution_policy_revision_id: string
           expires_at: string
           factory_id: string
@@ -7984,6 +8067,45 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      issue_factory_machine_token: {
+        Args: {
+          p_actor_user_id: string
+          p_digest: string
+          p_expires_at?: string
+          p_factory_id: string
+          p_grant_id: string
+          p_grant_version: number
+          p_name: string
+          p_scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          p_token_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by_member_id: string
+          execution_grant_id: string
+          execution_grant_version: number
+          expires_at: string | null
+          factory_id: string
+          id: string
+          last_used_at: string | null
+          last_used_scope:
+            | Database["public"]["Enums"]["factory_command_scope"]
+            | null
+          name: string
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          service_principal_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_machine_tokens"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       list_artifact_review_comments: {
         Args: {
           p_after_created_at?: string
@@ -8950,6 +9072,7 @@ export type Database = {
           approved_at: string
           approved_by_member_id: string
           budget_payer_member_id: string
+          command_scopes: Database["public"]["Enums"]["factory_command_scope"][]
           execution_policy_revision_id: string
           expires_at: string
           factory_id: string
@@ -8967,6 +9090,40 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_execution_grants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_factory_machine_token: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_grant_id: string
+          p_token_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by_member_id: string
+          execution_grant_id: string
+          execution_grant_version: number
+          expires_at: string | null
+          factory_id: string
+          id: string
+          last_used_at: string | null
+          last_used_scope:
+            | Database["public"]["Enums"]["factory_command_scope"]
+            | null
+          name: string
+          revoked_at: string | null
+          revoked_by_member_id: string | null
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
+          service_principal_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_machine_tokens"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -9821,6 +9978,12 @@ export type Database = {
         | "manual_retry"
         | "assignment"
         | "comment_retry"
+      factory_command_scope:
+        | "sessions:read"
+        | "sessions:create"
+        | "sessions:follow-up"
+        | "sessions:clarify"
+        | "sessions:cancel"
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
       pipeline_phase_status:
@@ -9992,6 +10155,13 @@ export const Constants = {
         "manual_retry",
         "assignment",
         "comment_retry",
+      ],
+      factory_command_scope: [
+        "sessions:read",
+        "sessions:create",
+        "sessions:follow-up",
+        "sessions:clarify",
+        "sessions:cancel",
       ],
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],

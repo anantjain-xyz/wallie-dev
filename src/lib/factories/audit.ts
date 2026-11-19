@@ -27,11 +27,13 @@ export type FactoryAuditEvent = Pick<
   "action" | "actor_member_id" | "created_at" | "detail" | "factory_id" | "subject_member_id"
 > & { id: string };
 
+const executionGrantActions = [
+  "execution_grant.approved",
+  "execution_grant.updated",
+  "execution_grant.revoked",
+];
+const machineTokenActions = ["machine_token.issued", "machine_token.revoked"];
 const resourceFilters = {
-  grant: {
-    actions: ["execution_grant.approved", "execution_grant.updated", "execution_grant.revoked"],
-    key: "id",
-  },
   principal: { actions: ["service_principal.created"], key: "id" },
   binding: {
     actions: ["credential_binding.created", "credential_binding.revoked"],
@@ -42,7 +44,11 @@ const resourceFilters = {
     key: "bindingId",
   },
 };
-const governanceActions = Object.values(resourceFilters).flatMap(({ actions }) => actions);
+const governanceActions = [
+  ...Object.values(resourceFilters).flatMap(({ actions }) => actions),
+  ...executionGrantActions,
+  ...machineTokenActions,
+];
 
 const auditCursorSchema = z
   .object({
@@ -89,6 +95,12 @@ export async function readFactoryAuditPage(
     request = request.filter("id", "eq", source.id);
   } else if (source?.kind === "actor") {
     request = request.eq("actor_member_id", source.id);
+  } else if (source?.kind === "grant") {
+    const grantId = factoryAuditSourceSchema.parse(source).id;
+    request = request.or(
+      `and(action.in.(${executionGrantActions.join(",")}),detail->>id.eq.${grantId}),` +
+        `and(action.in.(${machineTokenActions.join(",")}),detail->>grantId.eq.${grantId})`,
+    );
   } else if (source) {
     const { actions, key } = resourceFilters[source.kind];
     request = request.in("action", actions).eq(`detail->>${key}`, source.id);

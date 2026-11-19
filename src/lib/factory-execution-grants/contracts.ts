@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { factoryCommandScopesSchema } from "@/lib/factory-machine-tokens/contracts";
+
 const uuid = z.string().uuid();
 const expectedVersion = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
@@ -22,6 +24,7 @@ export const createServicePrincipalSchema = z.strictObject({
 
 const grantScope = z.strictObject({
   servicePrincipalId: uuid,
+  commandScopes: factoryCommandScopesSchema.default([]),
   writableRepositoryId: uuid,
   readContextRepositoryIds: z.array(uuid).max(50),
   toolIds: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/)).max(32),

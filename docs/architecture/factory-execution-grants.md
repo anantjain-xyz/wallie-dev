@@ -32,3 +32,11 @@ Credential history shows the bound principal, agent, provider, grant, and
 revocation state. Workspace owners and admins manage saved credentials through
 the shared Factory Definition controls. Open the selected factory’s active
 definition to inspect current admission readiness.
+
+## Machine tokens
+
+A grant can explicitly approve machine commands for reading sessions, creating sessions, sending follow-ups, answering clarifications, or canceling session work. New and existing grants start with an empty command allowlist unless a manager approves one.
+
+Open the grant in **Governance** to create, list, or revoke machine tokens. A token selects one or more of the grant’s approved commands. It belongs to the same workspace, factory, and service principal and stops working when the exact grant version expires, changes, or is revoked. The optional token expiry can shorten that window. Only the issue response contains the credential. The token list records the public ID, lifecycle, approved commands, and most recent successful command. Issuance and revocation appear in factory audit history.
+
+Machine commands must call `internal.require_factory_machine_token` inside their authoritative database transaction before accessing protected data or changing state. Pass the parsed ID and digest from the server-only credential parser. The check locks the factory, credential, and exact grant, and records successful use in the same transaction. Use the returned grant ID and version to apply its resource restrictions to the operation. Machine credentials carry no human review authority.

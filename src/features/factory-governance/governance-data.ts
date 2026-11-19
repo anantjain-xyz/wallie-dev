@@ -18,7 +18,7 @@ import { mcpOperationScopeId } from "@/lib/factory-mcp/manifest";
 const pageSize = 20;
 const principalColumns = "id, name, slug, created_by_member_id, created_at";
 const grantColumns =
-  "id, service_principal_id, github_repository_id, read_context_repository_ids, tool_ids, execution_policy_revision_id, budget_payer_member_id, expires_at, version, approved_by_member_id, approved_at, revoked_at, revoked_by_member_id, revocation_reason";
+  "id, service_principal_id, github_repository_id, read_context_repository_ids, tool_ids, command_scopes, execution_policy_revision_id, budget_payer_member_id, expires_at, version, approved_by_member_id, approved_at, revoked_at, revoked_by_member_id, revocation_reason";
 
 export async function loadGovernanceScope(workspaceSlug: string, factoryQuery?: string | string[]) {
   const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
@@ -82,12 +82,14 @@ export async function loadGovernance(
     afterGrant,
     afterPrincipal,
     afterBinding,
+    afterToken,
     auditCursor,
     source,
   }: {
     afterGrant?: string;
     afterPrincipal?: string;
     afterBinding?: string;
+    afterToken?: string;
     auditCursor?: string;
     source?: FactoryAuditSource;
   },
@@ -111,6 +113,19 @@ export async function loadGovernance(
   const grantPage = grantsQuery()
     .order("id")
     .limit(pageSize + 1);
+  const tokenPage =
+    source?.kind === "grant"
+      ? supabase
+          .from("factory_machine_tokens")
+          .select(
+            "id, name, scopes, created_at, expires_at, revoked_at, last_used_at, last_used_scope, execution_grant_version",
+          )
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factory.id)
+          .eq("execution_grant_id", source.id)
+          .order("id")
+          .limit(pageSize + 1)
+      : null;
   const canApprove = factory.status === "active";
   const currentAuthority = loadCurrentAuthority(scope);
   const selectedBindingId = source?.kind === "binding" ? source.id : null;
@@ -122,6 +137,7 @@ export async function loadGovernance(
     grants,
     selectedPrincipal,
     selectedGrant,
+    tokens,
     credentialPage,
     selectedCredential,
     publishedCredential,
@@ -136,6 +152,7 @@ export async function loadGovernance(
     afterGrant ? grantPage.gt("id", afterGrant) : grantPage,
     source?.kind === "principal" ? principalsQuery().eq("id", source.id).maybeSingle() : null,
     source?.kind === "grant" ? grantsQuery().eq("id", source.id).maybeSingle() : null,
+    tokenPage && (afterToken ? tokenPage.gt("id", afterToken) : tokenPage),
     !source
       ? supabase.rpc("read_factory_credential_ownership", {
           ...credentialScope,
@@ -189,6 +206,7 @@ export async function loadGovernance(
     grants,
     selectedPrincipal,
     selectedGrant,
+    tokens,
     credentialPage,
     selectedCredential,
     publishedCredential,
@@ -234,6 +252,7 @@ export async function loadGovernance(
     selectedBindingId: selected?.id ?? null,
     canApprove,
     grantList,
+    tokenList: resourcePage(tokens?.data ?? [], null),
     principalList,
     memberOptions: (members.data ?? []).map((row) => ({
       id: row.id,

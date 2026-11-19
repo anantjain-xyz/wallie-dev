@@ -13,7 +13,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 type RouteContext = { params: Promise<{ workspaceId: string; factoryId: string }> };
 
 const grantColumns =
-  "id, workspace_id, factory_id, service_principal_id, github_repository_id, read_context_repository_ids, tool_ids, execution_policy_revision_id, budget_payer_member_id, expires_at, version, approved_by_member_id, approved_at, revoked_at, revoked_by_member_id, revocation_reason";
+  "id, workspace_id, factory_id, service_principal_id, github_repository_id, read_context_repository_ids, tool_ids, command_scopes, execution_policy_revision_id, budget_payer_member_id, expires_at, version, approved_by_member_id, approved_at, revoked_at, revoked_by_member_id, revocation_reason";
 
 export async function GET(request: Request, { params }: RouteContext) {
   const context = await resolveFactoryRouteContext(params);
@@ -85,6 +85,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           p_github_repository_id: input.writableRepositoryId,
           p_read_context_repository_ids: input.readContextRepositoryIds,
           p_tool_ids: input.toolIds,
+          ...(input.commandScopes.length ? { p_command_scopes: input.commandScopes } : {}),
           p_execution_policy_revision_id: input.executionPolicyRevisionId,
           p_budget_payer_member_id: input.budgetPayerMemberId,
           p_expires_at: input.expiresAt,
