@@ -23,15 +23,46 @@ import WorkspaceAppLayout from "./layout";
 
 describe("workspace app route group layout", () => {
   it.each([
-    { role: "owner", isDefault: true, status: "active", canManage: true, canStart: true },
-    { role: "member", isDefault: false, status: "active", canManage: false, canStart: false },
-    { role: "admin", isDefault: true, status: "archived", canManage: true, canStart: false },
+    {
+      role: "owner",
+      isDefault: true,
+      status: "active",
+      canManage: true,
+      canStart: true,
+      managesFactory: true,
+    },
+    {
+      role: "member",
+      isDefault: false,
+      status: "active",
+      canManage: false,
+      canStart: false,
+      managesFactory: false,
+    },
+    {
+      role: "member",
+      isDefault: false,
+      status: "active",
+      canManage: false,
+      canStart: false,
+      managesFactory: true,
+    },
+    {
+      role: "admin",
+      isDefault: true,
+      status: "archived",
+      canManage: true,
+      canStart: false,
+      managesFactory: true,
+    },
   ])(
     "wraps workspace pages with the right factory actions for $role/$status",
-    async ({ role, isDefault, status, canManage, canStart }) => {
+    async ({ role, isDefault, status, canManage, canStart, managesFactory }) => {
       const workspace = { id: "workspace-1", name: "Northwind", slug: "northwind" };
       const onboarding = { currentStep: "repository", status: "in_progress" };
-      const factories = [{ id: "factory-1", name: "Northwind", isDefault, status }];
+      const factories = [
+        { id: "factory-1", name: "Northwind", isDefault, status, canManage: managesFactory },
+      ];
       mocked.loadWorkspaceFactoryOptions.mockResolvedValue(factories);
       mocked.loadWorkspaceLayoutContext.mockResolvedValue({
         currentMember: { kind: "human", is_active: true, role },
@@ -47,6 +78,7 @@ describe("workspace app route group layout", () => {
         params: Promise.resolve({ workspaceSlug: "northwind" }),
       })) as ReactElement<{
         canManageFactoryDefinition: boolean;
+        canManageGovernance: boolean;
         canStartDefaultFactorySession: boolean;
         children: string;
         factorySelector: ReactElement;
@@ -61,6 +93,7 @@ describe("workspace app route group layout", () => {
       expect(element.type).toBe(mocked.AppShell);
       expect(element.props).toMatchObject({
         canManageFactoryDefinition: canManage,
+        canManageGovernance: managesFactory,
         canStartDefaultFactorySession: canStart,
         children: "app-page",
         factorySelector: { props: { factories, workspaceSlug: "northwind" } },

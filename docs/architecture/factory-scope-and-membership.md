@@ -66,6 +66,11 @@ scope displays an empty state with the factory selector so the viewer can
 choose their next scope. Switching factories resets stage and pagination
 filters. Session and run detail links keep their existing IDs and URLs.
 
+**Activity** opens across authorized factories. Its session and run totals use
+the same factory and actor filters as their recent rows. Each list has its own
+count and retrieval state. Factory and actor links drill into the same scope.
+Session and run links open the canonical resource.
+
 ## Commands
 
 | Command                                                                | Purpose                                                                                    |

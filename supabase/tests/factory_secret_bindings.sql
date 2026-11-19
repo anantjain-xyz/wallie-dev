@@ -434,5 +434,73 @@ select ok((select not exists (select 1 from public.factory_audit_events event jo
     or event.detail ?| array['value_preview','encrypted_value']))) ,
   'grant audit events never include secret previews or material');
 
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000001';
+insert into public.workspace_secrets(id,workspace_id,key,encrypted_value) values
+  ('55600200-9000-4000-8000-000000000006','55600200-1000-4000-8000-000000000001',
+    'SIBLING_PROVIDER_KEY','synthetic-sibling-material');
+create temp table sibling_binding as
+select binding.id, binding.workspace_id, binding.factory_id
+from foreign_grant g join public.factory_agents a using (workspace_id,factory_id)
+cross join lateral public.create_factory_secret_binding(g.workspace_id,g.factory_id,
+  '55600200-0000-4000-8000-000000000001',g.id,g.version,a.id,'codex',
+  '55600200-9000-4000-8000-000000000006') binding where a.is_default;
+select public.grant_factory_membership(workspace_id,factory_id,'55600200-0000-4000-8000-000000000001',
+  '55600200-2000-4000-8000-000000000002','manager') from foreign_grant;
+
+create temp table ownership_history_sources as
+select gen_random_uuid() as id, 'OWNERSHIP_FIXTURE_' || n as key from generate_series(1,105) n;
+insert into public.workspace_secrets(id,workspace_id,key,encrypted_value)
+select source.id,binding.workspace_id,source.key,'synthetic-ownership-history'
+from binding_v1 binding cross join ownership_history_sources source;
+insert into public.factory_secret_bindings(workspace_id,factory_id,execution_grant_id,service_principal_id,
+  factory_agent_id,agent_provider,workspace_secret_id,created_by_member_id,revoked_by_member_id,revoked_at)
+select binding.workspace_id,binding.factory_id,binding.execution_grant_id,binding.service_principal_id,
+  binding.factory_agent_id,binding.agent_provider,source.id,binding.created_by_member_id,
+  binding.created_by_member_id,statement_timestamp()
+from binding_v1 binding cross join ownership_history_sources source;
+create temp table ordered_ownership_ids as
+select stored.id from public.factory_secret_bindings stored join principal using (workspace_id,factory_id)
+order by stored.id;
+grant select on principal, binding_v1, sibling_binding, ordered_ownership_ids to authenticated;
+
+select ok(has_function_privilege('authenticated','public.read_factory_credential_ownership(uuid,uuid,uuid,uuid,integer)','execute')
+  and not has_function_privilege('anon','public.read_factory_credential_ownership(uuid,uuid,uuid,uuid,integer)','execute')
+  and not has_function_privilege('service_role','public.read_factory_credential_ownership(uuid,uuid,uuid,uuid,integer)','execute'),
+  'the safe ownership read is callable only by authenticated users');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select is((select count(*) from principal p cross join lateral public.read_factory_credential_ownership(p.workspace_id,p.factory_id)),
+  21::bigint, 'ownership reads default to a bounded page');
+select is((select count(*) from principal p cross join lateral public.read_factory_credential_ownership(p.workspace_id,p.factory_id,p_limit => 999)),
+  101::bigint, 'ownership reads cap the database result');
+select results_eq($$select row.id from principal p cross join lateral public.read_factory_credential_ownership(
+  p.workspace_id,p.factory_id,p_after_id => (select id from ordered_ownership_ids order by id limit 1),p_limit => 2) row$$,
+  $$select id from ordered_ownership_ids order by id offset 1 limit 2$$,
+  'credential ownership pages advance by exact ascending UUID');
+select is((select row.status from binding_v1 b cross join lateral public.read_factory_credential_ownership(
+  b.workspace_id,b.factory_id,'ffffffff-ffff-ffff-ffff-ffffffffffff',b.id) row),
+  'revoked', 'an exact ownership link resolves revoked history independently of the page cursor');
+select ok((select not (to_jsonb(row) ?| array['workspace_secret_id','secret_key','encrypted_value','value_preview'])
+  from sibling_binding b cross join lateral public.read_factory_credential_ownership(b.workspace_id,b.factory_id,p_binding_id => b.id) row),
+  'ownership exposes provider status without any underlying secret identifier or material');
+select is_empty($$select row.id from principal p cross join sibling_binding b
+  cross join lateral public.read_factory_credential_ownership(p.workspace_id,p.factory_id,p_binding_id => b.id) row$$,
+  'an exact lookup does not accept a sibling-factory binding ID');
+
+set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000002';
+select is((select row.status from sibling_binding b cross join lateral public.read_factory_credential_ownership(
+  b.workspace_id,b.factory_id,p_binding_id => b.id) row),
+  'ready', 'an exact factory manager can read safe ownership for their factory');
+select throws_ok($$select row.id from binding_v1 b cross join lateral public.read_factory_credential_ownership(
+  b.workspace_id,b.factory_id,p_binding_id => b.id) row$$,
+  '42501', 'Factory manager access is required.', 'an ordinary member cannot read sibling-factory ownership');
+
+set local request.jwt.claim.sub = '55600200-0000-4000-8000-000000000003';
+select throws_ok($$select row.id from sibling_binding b cross join lateral public.read_factory_credential_ownership(
+  b.workspace_id,b.factory_id,p_binding_id => b.id) row$$,
+  '42501', 'Factory manager access is required.', 'another workspace owner cannot inspect known binding IDs');
+
 select * from finish();
 rollback;

@@ -21,3 +21,14 @@ Set `executionGrant` in the factory definition JSON to the grant's `id` and `ver
 `session_factory_admission_inputs` records the invoking actor, credential owner, budget payer, grant version, and policy revision as separate fields. Historical admissions preserve the evidence they originally recorded. Each queued attempt checks the exact grant version and the invoker's current factory access. Expiry, revocation, and changes to that grant block new attempts on the old version.
 
 Grant-backed attempts stop before sandbox provisioning or personal credential lookup until scoped service credentials can be resolved. Human approvals continue to require an authenticated, authorized human.
+
+## Governance
+
+Open **Governance** and choose a factory you manage to create a service
+principal, approve an execution grant, or revoke an existing version. The
+change appears in the factory audit history with its actor and exact resource.
+
+Credential history shows the bound principal, agent, provider, grant, and
+revocation state. Workspace owners and admins manage saved credentials through
+the shared Factory Definition controls. Open the selected factory’s active
+definition to inspect current admission readiness.

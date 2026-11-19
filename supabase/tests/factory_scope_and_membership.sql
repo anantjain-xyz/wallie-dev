@@ -766,5 +766,66 @@ select lives_ok($$insert into public.sessions(
   '55000000-1000-4000-8000-000000000002', '55000000-1100-4000-8000-000000000002'
 )$$, 'workspace owners can start sessions without an explicit factory grant');
 
+select public.create_service_principal(factory.workspace_id, factory.id,
+  case when factory.workspace_id = '55000000-0000-4000-8000-000000000001'
+    then 'b1b2c3d4-0001-4000-8000-000000000001'::uuid
+    else 'b1b2c3d4-0004-4000-8000-000000000004'::uuid end,
+  'Audit reader scope', 'audit-reader-scope')
+from public.factories factory
+where (factory.workspace_id = '55000000-0000-4000-8000-000000000001'
+    and factory.slug in ('default', 'payments'))
+  or (factory.workspace_id = '55000000-0000-4000-8000-000000000002' and factory.is_default);
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = 'b1b2c3d4-0001-4000-8000-000000000001';
+select results_eq($$
+  select scope.slug from public.factory_audit_events event
+  left join scope_fixtures scope on scope.factory_id = event.factory_id
+  where event.action = 'service_principal.created' and event.detail->>'slug' = 'audit-reader-scope'
+  order by scope.slug
+$$, array['default', 'payments']::text[],
+  'a workspace operator reads governance history in both owned factories only');
+
+set local request.jwt.claim.sub = 'b1b2c3d4-0002-4000-8000-000000000002';
+select results_eq($$
+  select scope.slug from public.factory_audit_events event
+  left join scope_fixtures scope on scope.factory_id = event.factory_id
+  where event.action = 'service_principal.created' and event.detail->>'slug' = 'audit-reader-scope'
+$$, array['payments']::text[],
+  'an explicit manager reads only their exact factory governance history');
+
+set local request.jwt.claim.sub = 'b1b2c3d4-0005-4000-8000-000000000005';
+select is_empty($$
+  select event.id from public.factory_audit_events event
+  where event.action = 'service_principal.created' and event.detail->>'slug' = 'audit-reader-scope'
+$$, 'an inactive member cannot read governance history');
+reset role;
+set local role service_role;
+
+select public.grant_factory_membership(
+  '55000000-0000-4000-8000-000000000001',
+  (select factory_id from scope_fixtures where slug = 'payments'),
+  'b1b2c3d4-0001-4000-8000-000000000001', 'c1b2c3d4-1000-4000-8000-000000000003', 'member');
+select public.archive_factory(
+  '55000000-0000-4000-8000-000000000001',
+  (select factory_id from scope_fixtures where slug = 'payments'),
+  'b1b2c3d4-0001-4000-8000-000000000001', 'Audited history fixture');
+
+set local role authenticated;
+set local request.jwt.claim.sub = 'b1b2c3d4-0002-4000-8000-000000000002';
+select is((select count(*) from public.factory_audit_events event
+  where (event.workspace_id, event.factory_id) = ('55000000-0000-4000-8000-000000000001'::uuid,
+    (select factory_id from scope_fixtures where slug = 'payments'))
+    and event.action = 'service_principal.created' and event.detail->>'slug' = 'audit-reader-scope'),
+  1::bigint, 'an exact manager retains governance history after factory archiving');
+
+set local request.jwt.claim.sub = 'b1b2c3d4-0003-4000-8000-000000000003';
+select is_empty($$
+  select event.id from public.factory_audit_events event
+  where event.factory_id = (select factory_id from scope_fixtures where slug = 'payments')
+    and event.action = 'service_principal.created' and event.detail->>'slug' = 'audit-reader-scope'
+$$, 'ordinary factory members cannot read governance history even with exact source scope');
+
 select * from finish();
 rollback;
