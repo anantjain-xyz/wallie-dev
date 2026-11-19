@@ -1,10 +1,8 @@
 import { agentProviderSupportsEffort, modelMatchesProvider } from "@/lib/agent-config/contracts";
-import type { FactoryAgentPromptSnapshot } from "@/lib/factory-agents/contracts";
 import {
   mcpBindingsFromManifest,
   mcpManifestScopeIds,
   type FactoryMcpBindingSource,
-  type FactoryMcpManifest,
 } from "@/lib/factory-mcp/manifest";
 
 import { compileFactoryMcpManifest } from "./mcp-compiler";
@@ -16,8 +14,15 @@ import {
   type FactoryDefinitionCatalog,
   type FactoryReferenceEntry,
 } from "./references";
-import { serialFactoryDefinitionSchema, type SerialFactoryDefinition } from "./schema";
+import {
+  FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+  serialFactoryDefinitionSchema,
+  type CompiledFactoryDefinition,
+  type SerialFactoryDefinition,
+} from "./schema";
 import { parseFactoryDefinitionJson, serializeFactoryDefinition } from "./serialization";
+
+export type { CompiledFactoryDefinition } from "./schema";
 
 export type FactoryDefinitionSource =
   | { kind: "structured"; value: unknown }
@@ -36,31 +41,6 @@ export type FactoryDefinitionDiagnostic = {
     | "duplicate_stage"
     | "unreachable_stage";
   message: string;
-};
-
-export type CompiledFactoryDefinition = Pick<
-  SerialFactoryDefinition,
-  | "schemaVersion"
-  | "kind"
-  | "agent"
-  | "sandboxProvider"
-  | "operatingRulesMd"
-  | "executionGrant"
-  | "credentialBindingId"
-  | "contextDocuments"
-> & {
-  implementationAgent?: FactoryAgentPromptSnapshot;
-  pipelineId: string;
-  repositoryId: string;
-  writableRepositoryIds?: string[];
-  readContextRepositoryIds?: string[];
-  executionPolicyRevisionId: string | null;
-  deliveryPolicyRevisionId: string | null;
-  skillIds: string[];
-  toolIds: string[];
-  mcpManifest?: FactoryMcpManifest;
-  operatingRuleStageIds: string[];
-  stages: (SerialFactoryDefinition["stages"][number] & { previousStageIds: string[] })[];
 };
 
 export type FactoryDefinitionCompileResult =
@@ -88,6 +68,9 @@ export function factoryComponentRevisionsForSource(source: FactoryDefinitionSour
   return {
     agentPromptRevisionId: parsed.definition.implementationAgent,
     skillRevisionIds: parsed.definition.skills,
+    ...(parsed.definition.schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
+      ? { scorerRevisionIds: parsed.definition.scorerRevisionIds }
+      : {}),
     ...mcpCatalogSelections(parsed.definition.mcpBindings, parsed.definition.executionGrant?.id),
   };
 }
@@ -96,6 +79,9 @@ export function factoryComponentRevisionsForBundle(bundle: CompiledFactoryDefini
   return {
     agentPromptRevisionId: bundle?.implementationAgent?.promptRevisionId,
     skillRevisionIds: bundle?.skillIds,
+    ...(bundle?.schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
+      ? { scorerRevisionIds: bundle.scorerRevisionIds }
+      : {}),
     ...mcpCatalogSelections(
       bundle?.mcpManifest ? mcpBindingsFromManifest(bundle.mcpManifest) : undefined,
       bundle?.executionGrant?.id,
@@ -187,6 +173,7 @@ function compileSerialDefinition(
     entries: readonly T[],
     reference: string,
     path: DefinitionPath,
+    missingMessage = `Reference "${reference}" is unavailable in this workspace. Choose an available component.`,
   ): T | null {
     const result = resolveFactoryReference(entries, catalog.workspaceId, reference);
     if (result.ok) return result.entry;
@@ -196,9 +183,7 @@ function compileSerialDefinition(
       message:
         result.code === "ambiguous_reference"
           ? `Reference "${reference}" matches multiple catalog entries. Use a unique stable ID or correct the catalog.`
-          : path[0] === "skills"
-            ? `Skill revision "${reference}" is unavailable in this factory. Choose an active revision.`
-            : `Reference "${reference}" is unavailable in this workspace. Choose an available component.`,
+          : missingMessage,
     });
     return null;
   }
@@ -279,7 +264,12 @@ function compileSerialDefinition(
   const selectedSkills = new Set<string>();
   definition.skills.forEach((reference, index) => {
     const path = ["skills", index];
-    const entry = find(catalog.skills, reference, path);
+    const entry = find(
+      catalog.skills,
+      reference,
+      path,
+      `Skill revision "${reference}" is unavailable in this factory. Choose an active revision.`,
+    );
     if (!entry) return;
     if (!supportsFactoryComponent(entry, agent.provider, sandboxProvider)) {
       diagnostics.push({
@@ -293,6 +283,20 @@ function compileSerialDefinition(
   });
 
   const skillIds = [...selectedSkills].sort();
+  if (schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION) {
+    const factoryId = catalog.factoryId && normalizeFactoryId(catalog.factoryId);
+    const revisions = (catalog.scorerRevisions ?? []).filter(
+      (entry) => normalizeFactoryId(entry.factoryId) === factoryId,
+    );
+    definition.scorerRevisionIds.forEach((id, index) => {
+      find(
+        revisions.filter((entry) => normalizeFactoryId(entry.id) === id),
+        id,
+        ["scorerRevisionIds", index],
+        `Scorer revision "${id}" is unavailable in this factory. Choose a revision from this factory.`,
+      );
+    });
+  }
   const mcpManifest = compileFactoryMcpManifest({
     definition,
     catalog,
@@ -335,7 +339,9 @@ function compileSerialDefinition(
 
   if (diagnostics.length || !pipeline || !repository) return { ok: false, diagnostics };
   const bundle: CompiledFactoryDefinition = {
-    schemaVersion,
+    ...(schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
+      ? { schemaVersion, scorerRevisionIds: [...definition.scorerRevisionIds].sort() }
+      : { schemaVersion }),
     kind,
     agent,
     ...(implementationAgent

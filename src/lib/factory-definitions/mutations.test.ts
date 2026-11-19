@@ -315,6 +315,57 @@ describe("factory definition commands", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    { action: "publish", expectedActivationNumber: 2, draftId },
+    { action: "rollback", expectedActivationNumber: 2, revisionId },
+  ] as const)(
+    "blocks $action when a pinned scorer revision cannot be resolved",
+    async (command) => {
+      const scorerRevisionId = "54200000-0001-4000-8000-000000000013";
+      const candidate = compileFactoryDefinition(
+        {
+          ...source,
+          value: { ...source.value, schemaVersion: 2, scorerRevisionIds: [scorerRevisionId] },
+        },
+        {
+          ...catalog,
+          factoryId,
+          scorerRevisions: [{ id: scorerRevisionId, workspaceId, factoryId }],
+        },
+      );
+      if (!candidate.ok) throw new Error("Scored factory definition failed to compile.");
+      const { admin, fetch } = fixture(({ url }) => {
+        const publishing = command.action === "publish";
+        expect(url.pathname).toMatch(
+          publishing ? /\/factory_definition_drafts$/ : /\/factory_definition_revisions$/,
+        );
+        assertStoredScope(url, publishing ? draftId : revisionId);
+        return Response.json([
+          {
+            definition_json: candidate.definitionJson,
+            canonical_digest: candidate.canonicalDigest,
+          },
+        ]);
+      });
+      await expect(
+        mutateFactoryDefinition({ admin, workspaceId, actorUserId, command }),
+      ).resolves.toMatchObject({
+        ok: false,
+        status: 422,
+        diagnostics: [{ path: ["scorerRevisionIds", 0], code: "missing_reference" }],
+      });
+      expect(mocks.loadCatalog).toHaveBeenCalledWith(
+        admin,
+        expect.objectContaining({
+          workspaceId,
+          factoryId,
+          scorerRevisionIds: [scorerRevisionId],
+        }),
+      );
+      expect(fetch).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("reports a stale rollback head returned by the database command", async () => {
     const { admin } = fixture(({ url, body }) => {
       if (url.pathname.endsWith("/factory_definition_revisions")) return Response.json([stored]);

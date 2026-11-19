@@ -69,3 +69,31 @@ flowchart LR
 People with read access can inspect permitted agent revisions and published
 bindings. Credential controls show reference IDs, ownership, and readiness.
 An archived factory preserves its history and rejects new definition writes.
+
+## Scorer revisions and results
+
+- A scorer has a stable factory-scoped identity. Factory managers append
+  immutable rubric revisions. Each revision records its exact rubric, required
+  evidence kinds, and score rules. Edits check the current revision number.
+- Factory members can read revisions in factories they can access. A published
+  definition pins specific revision IDs, so edits leave historical definitions
+  and their scoring rules intact.
+- Evidence references identify a code diff, artifact, validation report,
+  browser screenshot, or browser recording. A revision requires one or more
+  of these evidence kinds.
+
+| Rule                      | Result                                                                |
+| ------------------------- | --------------------------------------------------------------------- |
+| Boolean                   | The configured value passes. The other value fails.                   |
+| Higher numeric scores     | The pass threshold and above pass. The fail threshold and below fail. |
+| Lower numeric scores      | The pass threshold and below pass. The fail threshold and above fail. |
+| Between thresholds        | Inconclusive with the numeric score.                                  |
+| Required evidence absent  | Inconclusive with the missing evidence kinds.                         |
+| Evidence cannot be judged | Inconclusive with a reason.                                           |
+| Explicit skip             | Skipped with a reason.                                                |
+| Judge or output failure   | Error with a reason.                                                  |
+
+Numeric thresholds must be distinct and within the score range. Values
+outside the range produce an error. Results carry the available evidence
+references. A score appears only for a pass, fail, or between-thresholds
+result.

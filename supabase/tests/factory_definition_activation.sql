@@ -980,10 +980,17 @@ cross join lateral public.create_factory_agent(factory.workspace_id,factory.fact
   'Implementation reviewer','implementation-reviewer','Build the requested changes.') first_revision
 cross join lateral public.save_factory_agent_prompt_revision(factory.workspace_id,factory.factory_id,
   factory.owner_id,first_revision.agent_id,first_revision.revision_number,'Verify the approved plan before editing.') revision;
+create temp table selected_scorer_revision as
+select scorer.* from selected_factory factory
+cross join lateral public.create_factory_scorer(factory.workspace_id,factory.factory_id,factory.owner_id,
+  'Delivery quality','delivery-quality',
+  '{"schemaVersion":1,"rubric":"Pass when the required report confirms delivery.",
+    "requiredEvidence":["validation_report"],"scoring":{"kind":"boolean","passValue":true}}') scorer;
 create temp table selected_factory_draft as
-select draft.* from selected_factory factory cross join selected_agent_revision revision
+select draft.* from selected_factory factory cross join selected_agent_revision revision cross join selected_scorer_revision scorer
 cross join lateral (
   select (pg_temp.factory_activation_bundle('Build')::jsonb || jsonb_build_object(
+    'schemaVersion',2,'scorerRevisionIds',jsonb_build_array(scorer.id),
     'pipelineId','54200000-0003-4000-8000-000000000019',
     'repositoryId','54200000-0006-4000-8000-000000000019',
     'implementationAgent',jsonb_build_object('agentId',revision.agent_id,
@@ -1043,6 +1050,17 @@ select ok((select activation.activation_number=1 and stored.source_draft_id=draf
   from selected_factory_activation activation join public.factory_definition_revisions stored on stored.id=activation.revision_id
   cross join selected_factory_draft draft cross join selected_agent_revision revision),
   'the nondefault factory publishes the same draft and new immutable agent prompt revision');
+create temp table selected_scorer_edit as
+select edited.* from selected_factory factory cross join selected_scorer_revision scorer
+cross join lateral public.save_factory_scorer_revision(factory.workspace_id,factory.factory_id,factory.owner_id,
+  scorer.scorer_id,scorer.revision_number,jsonb_set(scorer.definition,'{rubric}',to_jsonb('Revised delivery rubric.'::text))) edited;
+select ok((select stored.schema_version=2 and stored.definition_json::jsonb->'scorerRevisionIds'=jsonb_build_array(scorer.id)
+    and scorer.definition->>'rubric'='Pass when the required report confirms delivery.'
+    and edited.revision_number=2 and edited.definition->>'rubric'='Revised delivery rubric.'
+  from selected_factory_activation activation join public.factory_definition_revisions stored on stored.id=activation.revision_id
+  join public.factory_scorer_revisions scorer on scorer.id=(stored.definition_json::jsonb->'scorerRevisionIds'->>0)::uuid
+  join selected_scorer_edit edited on edited.scorer_id=scorer.scorer_id),
+  'a version 2 definition retains the exact published scorer revision after a later edit');
 select is((select max(a.activation_number) from public.factory_definition_activations a join factory_activation_scope s using(factory_id)),
   7::bigint, 'the sibling factory activation head does not change');
 

@@ -36,11 +36,13 @@ export type FactoryMcpExecutionGrant = FactoryReferenceEntry & {
 /** A caller supplies the eligible entries without loading secrets or contacting providers. */
 export type FactoryDefinitionCatalog = {
   workspaceId: string;
+  factoryId?: string;
   pipelines: readonly FactoryReferenceEntry[];
   repositories: readonly FactoryReferenceEntry[];
   executionPolicyRevisions: readonly FactoryReferenceEntry[];
   deliveryPolicyRevisions: readonly DeliveryPolicyReference[];
   skills: readonly FactoryComponentReference[];
+  scorerRevisions?: readonly { id: string; workspaceId: string; factoryId: string }[];
   tools: readonly FactoryMcpRevision[];
   mcpSecretBindings?: readonly FactoryMcpSecretBinding[];
   mcpExecutionGrant?: FactoryMcpExecutionGrant;

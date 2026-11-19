@@ -2606,6 +2606,85 @@ export type Database = {
           },
         ]
       }
+      factory_scorer_revisions: {
+        Row: {
+          created_at: string
+          created_by: string
+          definition: Json
+          factory_id: string
+          id: string
+          revision_number: number
+          scorer_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          definition: Json
+          factory_id: string
+          id?: string
+          revision_number: number
+          scorer_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          definition?: Json
+          factory_id?: string
+          id?: string
+          revision_number?: number
+          scorer_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorer_revisions_workspace_id_factory_id_scorer_id_fkey"
+            columns: ["workspace_id", "factory_id", "scorer_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorers"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_scorers: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id?: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          name?: string
+          slug?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorers_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       factory_secret_bindings: {
         Row: {
           agent_provider: string
@@ -8666,6 +8745,32 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_factory_scorer: {
+        Args: {
+          p_actor_user_id: string
+          p_definition: Json
+          p_factory_id: string
+          p_name: string
+          p_slug: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          definition: Json
+          factory_id: string
+          id: string
+          revision_number: number
+          scorer_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_scorer_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       create_factory_secret_binding: {
         Args: {
           p_actor_user_id: string
@@ -11643,6 +11748,32 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      save_factory_scorer_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_definition: Json
+          p_expected_revision: number
+          p_factory_id: string
+          p_scorer_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          definition: Json
+          factory_id: string
+          id: string
+          revision_number: number
+          scorer_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_scorer_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       save_factory_skill_revision: {
         Args: {

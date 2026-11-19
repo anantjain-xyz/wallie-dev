@@ -17,6 +17,7 @@ const toolServerId = "81b90000-0000-4000-8000-000000000008";
 const bindingId = "81b90000-0000-4000-8000-000000000009";
 const grantId = "81b90000-0000-4000-8000-000000000010";
 const principalId = "81b90000-0000-4000-8000-000000000011";
+const scorerRevisionId = "81b90000-0000-4000-8000-000000000012";
 
 function fixtureClient({ installationActive = true } = {}) {
   const requests: URL[] = [];
@@ -47,6 +48,9 @@ function fixtureClient({ installationActive = true } = {}) {
         },
       ],
       factory_skill_revisions: [{ id: skillRevisionId }],
+      factory_scorer_revisions: [
+        { id: scorerRevisionId, workspace_id: workspaceId, factory_id: factoryId },
+      ],
       factory_mcp_server_revisions: [
         {
           id: toolRevisionId,
@@ -129,8 +133,24 @@ describe("factory activation authority inputs", () => {
     );
     expect(catalog.agentPromptRevisions).toEqual([]);
     expect(requests.some((url) => url.pathname.endsWith("/factory_skill_revisions"))).toBe(false);
+    expect(requests.some((url) => url.pathname.endsWith("/factory_scorer_revisions"))).toBe(false);
     expect(members?.searchParams.get("kind")).toBe("eq.human");
     expect(members?.searchParams.get("is_active")).toBe("eq.true");
+  });
+
+  it("loads exact scorer revision IDs and ownership in the selected factory", async () => {
+    const { admin, requests } = fixtureClient();
+    const result = await loadFactoryDefinitionCatalog(admin, {
+      workspaceId,
+      factoryId,
+      scorerRevisionIds: [scorerRevisionId],
+    });
+    const request = requests.find((url) => url.pathname.endsWith("/factory_scorer_revisions"));
+    expect(request?.searchParams.get("select")).toBe("id,workspace_id,factory_id");
+    expect(request?.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+    expect(request?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+    expect(request?.searchParams.get("id")).toBe(`in.(${scorerRevisionId})`);
+    expect(result.scorerRevisions).toEqual([{ id: scorerRevisionId, workspaceId, factoryId }]);
   });
 
   it("loads only eligible IDs from the selected skill revisions in the factory", async () => {
