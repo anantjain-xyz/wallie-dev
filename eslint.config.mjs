@@ -111,6 +111,7 @@ const eslintConfig = defineConfig([
     ".wrangler/**",
     "out/**",
     "build/**",
+    "packages/factory-client/dist/**",
     "coverage/**",
     ".codex/**",
     "test/eslint-fixtures/**",

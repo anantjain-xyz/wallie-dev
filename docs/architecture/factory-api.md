@@ -115,3 +115,59 @@ Pass a session ID to `wallie_review_handoff` when a gate needs a human decision.
 MCP OAuth credentials are scoped to their exact MCP resource. API OAuth and event subscriptions use their own authorization. Factory credential or grant revocation takes effect on subsequent tool calls, including retries.
 
 [MCP Streamable HTTP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) · [MCP Streamable HTTP 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+
+## Typed client and command-line examples
+
+Build the standalone ESM client from the Wallie checkout. The compiled package runs on Node.js 20.3 or newer.
+
+```sh
+pnpm factory:client:build
+pnpm --dir packages/factory-client pack --pack-destination /tmp
+```
+
+Install the resulting local tarball in a client project and import `FactoryClient` from `@wallie/factory-client`. The package derives its request and response types from Wallie’s versioned OpenAPI contract. Run `pnpm factory:client:generate` after changing that contract.
+
+```ts
+import { FactoryClient } from "@wallie/factory-client";
+
+const client = new FactoryClient({
+  baseUrl: wallieOrigin,
+  workspaceId,
+  factoryId,
+  token: apiAccessToken,
+});
+
+const session = await client.getSession(sessionId);
+const reviewUrl = session.review && client.toUrl(session.review.href);
+```
+
+Use a factory machine token or an API OAuth access token with the scope for the operation. The package retries a transport failure once by default with the same endpoint, request body and idempotency key. A received conflict or quota error is returned immediately as a `FactoryApiError` with status, code, and any `retryAfterSeconds`. Keep the original key and intent if you retry again after a disconnect. A new intent needs a new key.
+
+Set `WALLIE_API_ORIGIN`, `WALLIE_WORKSPACE_ID`, `WALLIE_FACTORY_ID`, and `WALLIE_API_TOKEN` in the environment. The executable examples read the credential from the environment.
+
+```sh
+node examples/factory-cli.mjs create --title "Prepare a release" --prompt "Draft release notes" \
+  --agent-id "$AGENT_ID" --repository-id "$REPOSITORY_ID" --idempotency-key "$CREATE_KEY"
+
+node examples/factory-cli.mjs inspect --session-id "$SESSION_ID" --run-id "$RUN_ID"
+
+node examples/factory-cli.mjs follow-up --session-id "$SESSION_ID" --stage-id "$STAGE_ID" \
+  --artifact-id "$ARTIFACT_ID" --artifact-version "$ARTIFACT_VERSION" \
+  --review-revision "$REVIEW_REVISION" --feedback "Include the migration steps" \
+  --idempotency-key "$FOLLOW_UP_KEY"
+
+node examples/factory-cli.mjs cancel --session-id "$SESSION_ID" --expected-run-id "$RUN_ID" \
+  --idempotency-key "$CANCEL_KEY"
+
+node examples/factory-cli.mjs conversation --session-id "$SESSION_ID" --resume-cursor "$RESUME_CURSOR"
+```
+
+Use the IDs from the create receipt and inspection result. Retain the exact artifact and review revision you inspected for follow-up or the exact run ID for cancellation. Pass `resumeCursor` from the last conversation response to resume after it. Machine scopes authorize these commands. Open the exact `review.href` in a signed-in browser when the stage requires a human decision.
+
+Start the event receiver with `WALLIE_WEBHOOK_SIGNING_SECRET` and `WALLIE_EVENT_DIR` in the environment.
+
+```sh
+node examples/factory-event-receiver.mjs
+```
+
+The example listens on loopback port 8789 and receives `POST /wallie/events`. It handles the ownership challenge, verifies the signature over the raw body and records each verified event by its stable ID. A repeated delivery is acknowledged without creating another record. Use an HTTPS endpoint in front of the receiver to register it with Wallie.

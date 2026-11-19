@@ -1,0 +1,21 @@
+{
+  "name": "@wallie/factory-client",
+  "version": "0.1.0",
+  "description": "Typed client for the Wallie factory API",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.3"
+  }
+}
