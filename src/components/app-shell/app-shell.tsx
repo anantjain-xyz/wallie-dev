@@ -7,6 +7,7 @@ import { getWorkspaceNavItems } from "@/lib/routes";
 
 type AppShellProps = {
   canManageFactoryDefinition?: boolean;
+  canManageGovernance?: boolean;
   canStartDefaultFactorySession?: boolean;
   children: ReactNode;
   factorySelector?: ReactNode;
@@ -22,6 +23,7 @@ type AppShellProps = {
 
 export function AppShell({
   canManageFactoryDefinition,
+  canManageGovernance,
   canStartDefaultFactorySession,
   children,
   factorySelector,
@@ -33,7 +35,10 @@ export function AppShell({
   workspace,
   workspaceAvatarUrl,
 }: AppShellProps) {
-  const navItems = getWorkspaceNavItems(workspace.slug, { canManageFactoryDefinition });
+  const navItems = getWorkspaceNavItems(workspace.slug, {
+    canManageFactoryDefinition,
+    canManageGovernance,
+  });
 
   return (
     <div className="min-h-[100svh] min-w-0 bg-canvas" data-app-shell="">

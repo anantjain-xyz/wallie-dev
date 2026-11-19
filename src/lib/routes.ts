@@ -4,7 +4,15 @@ export const workspaceNavSections = ["Work", "Improve", "Configure", "Platform",
 
 export type WorkspaceNavItem = {
   href: string;
-  id: "pipeline" | "sessions" | "runs" | "agents" | "factory-definition" | "settings";
+  id:
+    | "pipeline"
+    | "sessions"
+    | "runs"
+    | "activity"
+    | "agents"
+    | "governance"
+    | "factory-definition"
+    | "settings";
   label: string;
   section: (typeof workspaceNavSections)[number];
 };
@@ -67,6 +75,14 @@ export function workspaceRunDetailPath(workspaceSlug: string, runId: string) {
   return `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`;
 }
 
+export function workspaceActivityPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/activity`, query);
+}
+
+export function workspaceGovernancePath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/governance`, query);
+}
+
 export function workspaceAgentsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/agents`, query);
 }
@@ -101,7 +117,7 @@ export function workspaceFactoryDefinitionPath(
 
 export function getWorkspaceNavItems(
   workspaceSlug: string,
-  { canManageFactoryDefinition = false } = {},
+  { canManageFactoryDefinition = false, canManageGovernance = false } = {},
 ): WorkspaceNavItem[] {
   const items: WorkspaceNavItem[] = [
     { id: "pipeline", href: workspaceBasePath(workspaceSlug), label: "Pipeline", section: "Work" },
@@ -112,6 +128,12 @@ export function getWorkspaceNavItems(
       section: "Work",
     },
     { id: "runs", href: workspaceRunsPath(workspaceSlug), label: "Runs", section: "Work" },
+    {
+      id: "activity",
+      href: workspaceActivityPath(workspaceSlug),
+      label: "Activity",
+      section: "Work",
+    },
     {
       id: "agents",
       href: workspaceAgentsPath(workspaceSlug),
@@ -124,6 +146,14 @@ export function getWorkspaceNavItems(
       id: "factory-definition",
       href: workspaceFactoryDefinitionPath(workspaceSlug),
       label: "Factory definition",
+      section: "Configure",
+    });
+  }
+  if (canManageGovernance) {
+    items.push({
+      id: "governance",
+      href: workspaceGovernancePath(workspaceSlug),
+      label: "Governance",
       section: "Configure",
     });
   }

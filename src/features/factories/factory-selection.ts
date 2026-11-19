@@ -1,6 +1,8 @@
 import {
+  workspaceActivityPath,
   workspaceAgentsPath,
   workspaceBasePath,
+  workspaceGovernancePath,
   workspaceRunsPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
@@ -9,6 +11,7 @@ export const FACTORY_QUERY_PARAM = "factory";
 
 export type FactorySelectionOption = {
   id: string;
+  canManage?: boolean;
   name: string;
   isDefault: boolean;
   status: "active" | "archived";
@@ -24,26 +27,42 @@ export function resolveFactorySelection(
   value: string | string[] | null | undefined,
 ): FactorySelection {
   if (value === "all") return { kind: "all" };
+  const requestedId = typeof value === "string" ? value.toLowerCase() : null;
 
   const match =
     value == null
       ? factories.find((factory) => factory.isDefault)
-      : factories.find((factory) => factory.id === value);
+      : factories.find((factory) => factory.id === requestedId);
   return match ? { kind: "factory", factory: match } : { kind: "unavailable" };
+}
+
+export function resolveGovernanceFactorySelection(
+  factories: readonly FactorySelectionOption[],
+  value: string | string[] | null | undefined,
+): Exclude<FactorySelection, { kind: "all" }> {
+  const managed = factories.filter(({ canManage }) => canManage);
+  const requestedId = typeof value === "string" ? value.toLowerCase() : null;
+  const factory =
+    value == null
+      ? (managed.find(({ isDefault }) => isDefault) ?? managed[0])
+      : managed.find(({ id }) => id === requestedId);
+  return factory ? { kind: "factory", factory } : { kind: "unavailable" };
 }
 
 export function isFactoryAggregatePath(pathname: string, workspaceSlug: string) {
   return (
     pathname === workspaceBasePath(workspaceSlug) ||
     pathname === workspaceSessionsPath(workspaceSlug) ||
-    pathname === workspaceRunsPath(workspaceSlug)
+    pathname === workspaceRunsPath(workspaceSlug) ||
+    pathname === workspaceActivityPath(workspaceSlug)
   );
 }
 
 export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
   return (
     isFactoryAggregatePath(pathname, workspaceSlug) ||
-    pathname === workspaceAgentsPath(workspaceSlug)
+    pathname === workspaceAgentsPath(workspaceSlug) ||
+    pathname === workspaceGovernancePath(workspaceSlug)
   );
 }
 
@@ -64,6 +83,21 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
   const params = new URLSearchParams(search);
   for (const key of ["cursor", "stage", "stageId", "sessionId", "create", "after"])
     params.delete(key);
+  if (pathname.endsWith("/governance")) {
+    for (const key of [
+      "principal",
+      "grant",
+      "binding",
+      "mcpBinding",
+      "event",
+      "actor",
+      "afterGrant",
+      "afterPrincipal",
+      "afterBinding",
+      "beforeAudit",
+    ])
+      params.delete(key);
+  }
   params.set(FACTORY_QUERY_PARAM, value);
   return `${pathname}?${params}`;
 }

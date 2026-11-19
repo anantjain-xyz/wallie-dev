@@ -419,7 +419,7 @@ export function ShellHeader({
     const scopedFactory = factory?.length === 1 && factory[0] === "all" ? undefined : factory;
     const href = isFactoryAggregatePath(item.href, workspace.slug)
       ? withFactoryQuery(item.href, factory)
-      : item.id === "agents" || item.id === "factory-definition"
+      : item.id === "agents" || item.id === "governance" || item.id === "factory-definition"
         ? withFactoryQuery(item.href, scopedFactory)
         : item.href;
     return {

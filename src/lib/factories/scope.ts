@@ -217,26 +217,3 @@ export function factoryErrorStatus(code: string | undefined) {
       return 500;
   }
 }
-
-export type FactoryAuditEvent = Pick<
-  Tables<"factory_audit_events">,
-  "action" | "actor_member_id" | "created_at" | "detail" | "factory_id" | "id" | "subject_member_id"
->;
-
-export async function listFactoryAuditEvents(
-  client: Client,
-  workspaceId: string,
-  factoryId: string,
-  limit = 50,
-): Promise<FactoryAuditEvent[]> {
-  const { data, error } = await client
-    .from("factory_audit_events")
-    .select("id, factory_id, action, actor_member_id, subject_member_id, detail, created_at")
-    .eq("workspace_id", workspaceId)
-    .eq("factory_id", factoryId)
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(Math.min(Math.max(limit, 1), 100));
-  if (error) throw error;
-  return data ?? [];
-}

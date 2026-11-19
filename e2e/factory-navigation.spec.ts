@@ -45,6 +45,7 @@ async function seedFactoryWork(
     isDefault,
     count,
     firstNumber,
+    actorMemberId,
   }: {
     workspaceId: string;
     factoryId: string;
@@ -52,6 +53,7 @@ async function seedFactoryWork(
     isDefault: boolean;
     count: number;
     firstNumber: number;
+    actorMemberId?: string;
   },
 ) {
   const pipeline = isDefault
@@ -103,6 +105,7 @@ async function seedFactoryWork(
           current_stage_id: stage.id,
           number: firstNumber + index,
           title: `${title} session ${index + 1}`,
+          creator_member_id: actorMemberId,
         })),
       )
       .select("id,number,title"),
@@ -125,6 +128,7 @@ async function seedFactoryWork(
         workspace_id: workspaceId,
         session_id: session.id,
         stage_id: stage.id,
+        triggered_by_member_id: actorMemberId,
         model_name: "gpt-5.5",
         model_provider: "codex",
         run_type: "research",
@@ -191,6 +195,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
           workspace_id: workspace.id,
           user_id: memberId,
           email: memberEmail,
+          full_name: "Jamie Sample",
           kind: "human",
           role: "member",
         })
@@ -246,6 +251,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
       title: "Customer tools",
       count: 1,
       firstNumber: 2,
+      actorMemberId: current.id,
     });
     await seedFactoryWork(admin, {
       workspaceId: workspace.id,
@@ -375,6 +381,210 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     if (!visibleSession) throw new Error("Missing the delegated factory session fixture.");
     await page.goto(`${sessionsPath}/${visibleSession.number}`);
     await expect(page.getByRole("heading", { level: 1, name: visibleSession.title })).toBeVisible();
+    await seedFactoryWork(admin, {
+      workspaceId: workspace.id,
+      factoryId: defaultFactory.id,
+      isDefault: true,
+      title: "Older activity",
+      count: 30,
+      firstNumber: 5,
+    });
+    const selectedRun = await read(
+      admin.from("agent_runs").select("id").eq("session_id", visibleSession.id).single(),
+    );
+    const activityPath = `${workspacePath}/activity`;
+    const governancePath = `${workspacePath}/governance`;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto(activityPath);
+    await expect(page.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
+    await expect(factory).toHaveValue("all");
+    await expect(page.getByRole("main").getByText(/Restricted/u)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Governance", exact: true })).toHaveCount(0);
+    // The total reflects all authorized rows even when only a bounded preview is visible.
+    await expect(page.getByRole("main")).toContainText(/32 sessions/i);
+    await expect(page.getByRole("main")).toContainText(/32 runs/i);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await capture(page, info, "06-activity-desktop-light");
+
+    await selectFactory(page, "Customer tools");
+    const main = page.getByRole("main");
+    await expect(
+      main
+        .getByRole("region", { name: "Sessions", exact: true })
+        .getByRole("link", { name: visibleSession.title, exact: true }),
+    ).toHaveAttribute("href", `${sessionsPath}/${visibleSession.number}`);
+    await expect(main.locator(`a[href="${runsPath}/${selectedRun.id}"]`)).toBeVisible();
+    const actor = main.getByRole("link", { name: "Jamie Sample", exact: true }).first();
+    await actor.press("Enter");
+    await expect(page).toHaveURL(new RegExp(`[?&]actor=${current.id}(?:&|$)`));
+    await expect(main.getByText("Older activity", { exact: false })).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await capture(page, info, "07-activity-mobile-dark");
+
+    await page.goto(`${activityPath}?factory=all&actor=${randomUUID()}`);
+    await expect(main.getByText("No sessions in this scope.", { exact: true })).toBeVisible();
+    await expect(main.getByText("No runs in this scope.", { exact: true })).toBeVisible();
+
+    await page.goto(`${activityPath}?factory=${restrictedFactory.id}`);
+    await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
+    await page.goto(`${governancePath}?factory=${visibleFactory.id}`);
+    await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
+
+    await write(
+      admin.rpc("grant_factory_membership", {
+        p_workspace_id: workspace.id,
+        p_factory_id: visibleFactory.id,
+        p_actor_user_id: ownerId,
+        p_member_id: current.id,
+        p_role: "manager",
+      }),
+    );
+    const externalId = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 10), 16);
+    const installation = await read(
+      admin
+        .from("github_installations")
+        .insert({
+          workspace_id: workspace.id,
+          installation_id: externalId,
+          installation_url: `https://github.test/installations/${externalId}`,
+          app_id: 1,
+          target_type: "Organization",
+          target_name: "factory-demo",
+          permissions: { contents: "write", pull_requests: "write" },
+        })
+        .select("id")
+        .single(),
+    );
+    const repository = await read(
+      admin
+        .from("github_repositories")
+        .insert({
+          workspace_id: workspace.id,
+          factory_id: visibleFactory.id,
+          github_installation_id: installation.id,
+          repo_id: externalId,
+          name: "agent-control",
+          full_name: "factory-demo/agent-control",
+          private: true,
+          html_url: "https://github.test/factory-demo/agent-control",
+          default_branch: "main",
+        })
+        .select("id")
+        .single(),
+    );
+    const budget = await read(
+      admin.rpc("save_execution_policy", {
+        p_workspace_id: workspace.id,
+        p_actor_user_id: ownerId,
+        p_expected_revision: 0,
+        p_requirements: {
+          version: 1,
+          maxRepairAttempts: 2,
+          maxExecutionMs: 30000,
+          maxTotalTokens: 1000,
+          maxCostUsd: 1,
+        },
+      }),
+    );
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto(governancePath);
+    await expect(page.getByRole("heading", { name: "Governance", level: 1 })).toBeVisible();
+    await expect(factory).toHaveValue(visibleFactory.id);
+    await expect(factory.locator("option")).toHaveText([visibleFactory.name]);
+    await expect(page.getByRole("link", { name: "Governance", exact: true })).toBeVisible();
+
+    await page.getByRole("textbox", { name: "Principal name", exact: true }).fill("Release runner");
+    await page.getByRole("textbox", { name: "Identifier", exact: true }).fill("release-runner");
+    const principalCreated = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/service-principals") && response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Create service principal" }).click();
+    expect((await principalCreated).status()).toBe(201);
+    const principal = await read(
+      admin.from("service_principals").select("id").eq("factory_id", visibleFactory.id).single(),
+    );
+    await page
+      .getByRole("combobox", { name: "Service principal", exact: true })
+      .selectOption(principal.id);
+    await page
+      .getByRole("combobox", { name: "Writable repository", exact: true })
+      .selectOption(repository.id);
+    await page
+      .getByRole("combobox", { name: "Execution policy", exact: true })
+      .selectOption(budget.id);
+    await page
+      .getByRole("combobox", { name: "Budget payer", exact: true })
+      .selectOption(current.id);
+    await page.getByLabel("Expires at", { exact: true }).fill(
+      await page.evaluate(() => {
+        const expiry = new Date(Date.now() + 2 * 60 * 60 * 1000);
+        const local = new Date(expiry.getTime() - expiry.getTimezoneOffset() * 60_000);
+        return local.toISOString().slice(0, 16);
+      }),
+    );
+    const grantApproved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/execution-grants") && response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Approve grant", exact: true }).click();
+    expect((await grantApproved).status()).toBe(201);
+    const grant = await read(
+      admin
+        .from("factory_execution_grants")
+        .select("id,version,approved_by_member_id")
+        .eq("factory_id", visibleFactory.id)
+        .single(),
+    );
+    expect(grant).toMatchObject({ version: 1, approved_by_member_id: current.id });
+    const grantHref = `${governancePath}?factory=${visibleFactory.id}&grant=${grant.id}`;
+    await page.goto(grantHref);
+    await expect(page.getByRole("button", { name: "Revoke grant", exact: true })).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await capture(page, info, "08-governance-desktop-light");
+    await page.getByRole("button", { name: "Revoke grant", exact: true }).click();
+    const confirm = page.getByRole("alertdialog", { name: "Revoke this execution grant?" });
+    await confirm
+      .getByRole("textbox", { name: "Reason (optional)" })
+      .fill("Rotate the release policy");
+    const grantRevoked = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/execution-grants") && response.request().method() === "POST",
+    );
+    await confirm.getByRole("button", { name: "Revoke grant", exact: true }).click();
+    expect((await grantRevoked).status()).toBe(200);
+    await expect(main.getByText("Revoked", { exact: true }).first()).toBeVisible();
+    const event = await read(
+      admin
+        .from("factory_audit_events")
+        .select("id,actor_member_id")
+        .eq("factory_id", visibleFactory.id)
+        .eq("action", "execution_grant.revoked")
+        .eq("detail->>id", grant.id)
+        .single(),
+    );
+    expect(event.actor_member_id).toBe(current.id);
+    const eventHref = `${governancePath}?factory=${visibleFactory.id}&event=${event.id}`;
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto(eventHref);
+    await expect(
+      main.getByText("Rotate the release policy", { exact: false }).first(),
+    ).toBeVisible();
+    await expect(
+      main.getByRole("link", { name: "Jamie Sample", exact: true }).first(),
+    ).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await capture(page, info, "09-governance-mobile-dark-audit");
+
+    await page.goto(`${governancePath}?factory=${defaultFactory.id}&event=${event.id}`);
+    await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
   } finally {
     if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
     if (memberId) await write(admin.auth.admin.deleteUser(memberId));

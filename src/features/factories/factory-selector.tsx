@@ -9,8 +9,11 @@ import {
   isFactoryAggregatePath,
   isFactorySelectorPath,
   resolveFactorySelection,
+  resolveGovernanceFactorySelection,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
+
+import { workspaceActivityPath, workspaceGovernancePath } from "@/lib/routes";
 
 export function FactorySelector({
   factories,
@@ -27,7 +30,15 @@ export function FactorySelector({
   if (!isFactorySelectorPath(pathname, workspaceSlug)) return null;
   const allowAll = isFactoryAggregatePath(pathname, workspaceSlug);
   const values = search.getAll(FACTORY_QUERY_PARAM);
-  const selection = resolveFactorySelection(factories, values.length > 1 ? values : values[0]);
+  const requested = values.length > 1 ? values : values[0];
+  const governance = pathname === workspaceGovernancePath(workspaceSlug);
+  const options = governance ? factories.filter(({ canManage }) => canManage) : factories;
+  const selection = governance
+    ? resolveGovernanceFactorySelection(factories, requested)
+    : resolveFactorySelection(
+        factories,
+        requested ?? (pathname === workspaceActivityPath(workspaceSlug) ? "all" : undefined),
+      );
   const selectedValue =
     selection.kind === "factory"
       ? selection.factory.id
@@ -54,7 +65,7 @@ export function FactorySelector({
           </option>
         ) : null}
         {allowAll && <option value="all">All factories</option>}
-        {factories.map((factory) => (
+        {options.map((factory) => (
           <option key={factory.id} value={factory.id}>
             {factory.name}
             {factory.status === "archived" ? " (archived)" : ""}

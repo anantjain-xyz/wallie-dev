@@ -26,6 +26,7 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
   return (
     <AppShell
       canManageFactoryDefinition={isWorkspaceOperator(currentMember)}
+      canManageGovernance={factories.some(({ canManage }) => canManage)}
       canStartDefaultFactorySession={factories.some(
         (factory) => factory.isDefault && factory.status === "active",
       )}

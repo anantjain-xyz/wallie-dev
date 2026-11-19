@@ -5,6 +5,7 @@ import {
   isFactoryAggregatePath,
   isFactorySelectorPath,
   resolveFactorySelection,
+  resolveGovernanceFactorySelection,
   withFactoryQuery,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
@@ -45,6 +46,7 @@ describe("factory scope on aggregate routes", () => {
     expect(isFactoryAggregatePath("/w/acme", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/sessions", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/runs", "acme")).toBe(true);
+    expect(isFactoryAggregatePath("/w/acme/activity", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/sessions/42", "acme")).toBe(false);
     expect(isFactoryAggregatePath("/w/acme/runs/c66", "acme")).toBe(false);
     expect(isFactoryAggregatePath("/w/acme/settings", "acme")).toBe(false);
@@ -66,6 +68,27 @@ describe("factory scope on aggregate routes", () => {
     expect(factorySwitchHref("/w/acme/agents", "after=cursor", secondary.id)).toBe(
       "/w/acme/agents?factory=secondary-id",
     );
+  });
+
+  it("offers Governance only for factories the viewer manages and resets resource filters", () => {
+    const managed = { ...secondary, canManage: true };
+    expect(resolveGovernanceFactorySelection([factory, managed], undefined)).toEqual({
+      kind: "factory",
+      factory: managed,
+    });
+    expect(resolveGovernanceFactorySelection([factory, managed], factory.id)).toEqual({
+      kind: "unavailable",
+    });
+    expect(resolveGovernanceFactorySelection([managed], "all")).toEqual({ kind: "unavailable" });
+    expect(isFactorySelectorPath("/w/acme/governance", "acme")).toBe(true);
+    expect(isFactoryAggregatePath("/w/acme/governance", "acme")).toBe(false);
+    expect(
+      factorySwitchHref(
+        "/w/acme/governance",
+        "grant=old&beforeAudit=older&actor=previous",
+        managed.id,
+      ),
+    ).toBe("/w/acme/governance?factory=secondary-id");
   });
 
   it("carries explicit scope including duplicates without changing other query values", () => {
