@@ -95,6 +95,64 @@ returns table(job_id uuid,run_id uuid) language sql as $$
     pg_temp.context_id(4),p_previous,'codex','gpt-5.5','project') queued;
 $$;
 
+-- The memory lifecycle is exercised by its own suite. Seed exact approved
+-- rows here so this suite can exercise the normal locked pin and replay RPC.
+insert into public.factory_memories(id, workspace_id, factory_id, title, source_session_id,
+  source_artifact_id, source_artifact_version, source_run_id, source_attempt_count,
+  source_commit_sha, source_content_sha256)
+select pg_temp.context_id(slot), factory.workspace_id, factory.id, 'Pin memory fixture',
+  pg_temp.context_id(slot + 1), pg_temp.context_id(slot + 2), 1, pg_temp.context_id(slot + 3), 1,
+  repeat('a',40), repeat('b',64)
+from (values (101, pg_temp.context_id(2)), (201, pg_temp.context_id(3))) scope(slot, workspace_id)
+join public.factories factory on factory.workspace_id = scope.workspace_id and factory.is_default;
+insert into public.factory_memory_revisions(id, workspace_id, factory_id, memory_id, revision_number, content_sha256)
+select pg_temp.context_id(slot + 4), memory.workspace_id, memory.factory_id, memory.id, 1,
+  encode(sha256(convert_to('é','UTF8')),'hex')
+from (values (101), (201)) fixture(slot)
+join public.factory_memories memory on memory.id = pg_temp.context_id(slot);
+insert into public.factory_memory_revision_bodies(workspace_id, factory_id, memory_id, revision_id, body_md)
+select revision.workspace_id, revision.factory_id, revision.memory_id, revision.id, 'é'
+from public.factory_memory_revisions revision where id in (pg_temp.context_id(105),pg_temp.context_id(205));
+insert into public.factory_memory_review_events(id,workspace_id,factory_id,memory_id,revision_id,actor_member_id,action)
+select pg_temp.context_id(slot + 5), revision.workspace_id, revision.factory_id, revision.memory_id, revision.id,
+  pg_temp.context_id(4), 'approved'
+from (values (101), (201)) fixture(slot)
+join public.factory_memory_revisions revision on revision.id = pg_temp.context_id(slot + 4);
+update public.factory_memories memory
+set current_revision_id = pg_temp.context_id(slot + 4), current_approval_id = pg_temp.context_id(slot + 5)
+from (values (101), (201)) fixture(slot) where memory.id = pg_temp.context_id(slot);
+
+create function pg_temp.memory_manifest(slot integer) returns jsonb language sql immutable as $$
+  select pg_temp.manifest() || jsonb_build_object(
+    'version',2,'memories',jsonb_build_array(jsonb_build_object('memoryId',pg_temp.context_id(slot),
+      'revisionId',pg_temp.context_id(slot+4),'approvalId',pg_temp.context_id(slot+5),
+      'status','selected','sha256',encode(sha256(convert_to('é','UTF8')),'hex'),'utf8Bytes',2)),
+    'budget',pg_temp.manifest()->'budget' || '{"usedUtf8Bytes":72,"estimatedTokens":72}'::jsonb);
+$$;
+create temp table memory_attempt as select * from pg_temp.initial_attempt('Freeze exact memory');
+select throws_ok($$select pg_temp.pin_context(job_id,run_id,1,pg_temp.memory_manifest(201))
+  from memory_attempt$$,'PT409',null,'memory from a foreign factory cannot enter a run manifest');
+select throws_ok($$select pg_temp.pin_context(job_id,run_id,1,
+  jsonb_set(pg_temp.memory_manifest(101),'{memories,0,sha256}',to_jsonb(repeat('f',64))))
+  from memory_attempt$$,'PT409',null,'memory digest must match exact admitted bytes');
+select throws_ok($$select pg_temp.pin_context(job_id,run_id,1,
+  jsonb_set(pg_temp.memory_manifest(101),'{memories,0,body}','"private"'))
+  from memory_attempt$$,'23514',null,'v2 stores no raw memory body');
+select throws_ok($$select pg_temp.pin_context(job_id,run_id,1,
+  jsonb_set(pg_temp.memory_manifest(101),'{budget,usedUtf8Bytes}','70'))
+  from memory_attempt$$,'23514',null,'selected memory consumes the exact UTF-8 budget');
+create temp table memory_manifest_receipt as select receipt.* from memory_attempt attempt
+cross join lateral pg_temp.pin_context(attempt.job_id,attempt.run_id,1,pg_temp.memory_manifest(101)) receipt;
+select is((select manifest from memory_manifest_receipt),pg_temp.memory_manifest(101),
+  'the locked pin freezes an exact same-factory approved memory revision');
+update public.factory_memories set current_revision_id = null, current_approval_id = null
+where id = pg_temp.context_id(101);
+select throws_ok($$select pg_temp.pin_context(job_id,run_id,1,manifest,run_id)
+  from memory_manifest_receipt$$,'PT409',null,'same-run replay denies a memory invalidated after pinning');
+select ok((select pinned.manifest = retained.manifest and pinned.manifest_sha256 = retained.manifest_sha256
+  from public.session_run_context_manifests pinned join memory_manifest_receipt retained using (run_id)),
+  'memory invalidation preserves historical manifest identity and digest');
+
 create temp table main_attempt as select * from pg_temp.initial_attempt('Freeze one context selection');
 select is((select status from main_attempt attempt cross join lateral pg_temp.context_origin(attempt.job_id,attempt.run_id,1)),
   'fresh','first exact running attempt has no retry origin');

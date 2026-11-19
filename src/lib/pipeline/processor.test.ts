@@ -68,6 +68,7 @@ const mocked = vi.hoisted(() => ({
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
   prepareRunContext: vi.fn().mockResolvedValue({ documents: [], conversation: [] }),
+  stageFactoryMemoryProposal: vi.fn(),
   readRunContextOrigin: vi.fn().mockResolvedValue({ status: "fresh" }),
   validateCheckpoint: vi.fn(async (input: { checkpoint: unknown }) => input.checkpoint),
   readSourceBase: vi.fn().mockResolvedValue("a".repeat(40)),
@@ -89,6 +90,11 @@ vi.mock("@/lib/run-context/server", async (importOriginal) => ({
 
 vi.mock("@/lib/validation-evidence/service", () => ({
   validateCheckpoint: mocked.validateCheckpoint,
+}));
+
+vi.mock("@/lib/factory-memory/proposal", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/factory-memory/proposal")>()),
+  stageFactoryMemoryProposal: mocked.stageFactoryMemoryProposal,
 }));
 
 vi.mock("@/lib/agent-credentials/scoped-run-credential", async (importOriginal) => ({
@@ -133,7 +139,7 @@ vi.mock("./source-delivery", async (importOriginal) => ({
 
 vi.mock("@/lib/prompt-templates", () => ({
   renderStagePrompt: mocked.renderStagePrompt,
-  STAGE_PROMPT_RENDERER_VERSION: 5,
+  STAGE_PROMPT_RENDERER_VERSION: 6,
 }));
 
 vi.mock("@/lib/factory-agents/runtime", () => ({
@@ -1136,6 +1142,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it.each([
     { trigger: "manual_run", scope: "human" },
+    { trigger: "manual_run", scope: "human_proposal_failure" },
     { trigger: "manual_retry", scope: "human" },
     { trigger: "manual_run", scope: "unbound" },
     { trigger: "manual_run", scope: "revoked" },
@@ -1163,7 +1170,45 @@ describe("processPipelineJob (generic stage runner)", () => {
           .update("Original implementation agent {{session.prompt}}")
           .digest("hex"),
       };
-      const serviceBound = scope !== "human";
+      const proposalUnavailable = scope === "human_proposal_failure";
+      const serviceBound = scope !== "human" && !proposalUnavailable;
+      if (proposalUnavailable) {
+        mocked.prepareRunContext.mockResolvedValueOnce({
+          documents: [],
+          conversation: [],
+          memories: [],
+          memoryProposalsEnabled: true,
+        });
+        mocked.stageFactoryMemoryProposal.mockRejectedValueOnce(
+          new Error("Private memory fixture diagnostic"),
+        );
+        mocked.createAgentRunner.mockReturnValueOnce(
+          makeRunner([
+            {
+              type: "tool_use",
+              tool: "Write",
+              callId: "memory-write",
+              input: JSON.stringify({
+                file_path: "/tmp/wallie-memory-proposal-run-1.md",
+                content: "Private memory fixture body",
+              }),
+            },
+            {
+              type: "tool_result",
+              tool: "Write",
+              callId: "memory-write",
+              output: "Private memory fixture body",
+              status: "success",
+            },
+            {
+              type: "completion",
+              taskComplete: true,
+              summary: "Done",
+              finalOutput: "Drafted spec body",
+            },
+          ]),
+        );
+      }
       const bindingId = "77900000-0000-4000-8000-000000000009";
       const credentialValue = "scoped-execution-fixture-key-5678";
       const unsupportedMcp = scope === "mcp_pending";
@@ -1526,6 +1571,16 @@ describe("processPipelineJob (generic stage runner)", () => {
         return;
       }
       expect(result.result).toBe("success");
+      if (proposalUnavailable) {
+        expect(mocked.stageFactoryMemoryProposal).toHaveBeenCalledWith(
+          expect.objectContaining({ runId: "run-1", artifactMarkdown: "Drafted spec body" }),
+        );
+        expect(mocked.publishSessionCheckpoint).toHaveBeenCalledWith(
+          expect.objectContaining({ artifactMarkdown: "Drafted spec body" }),
+        );
+        expect(JSON.stringify(rpc.mock.calls)).not.toContain("Private memory fixture diagnostic");
+        expect(JSON.stringify(rpc.mock.calls)).not.toContain("Private memory fixture body");
+      }
       if (scope === "bound") {
         expect(mocked.captureSourceCheckpoint).toHaveBeenCalledWith(
           expect.objectContaining({ sensitiveValues: expect.arrayContaining([credentialValue]) }),
@@ -2288,7 +2343,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       p_attempt_count: 1,
       p_prompt_sha256: createHash("sha256").update("rendered prompt", "utf8").digest("hex"),
       p_prompt_utf8_bytes: Buffer.byteLength("rendered prompt", "utf8"),
-      p_renderer_version: 5,
+      p_renderer_version: 6,
       p_checkout_sha: "a".repeat(40),
       p_predecessors: [predecessor],
       p_worker_runtime: "node",

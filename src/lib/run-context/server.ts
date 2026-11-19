@@ -3,6 +3,10 @@ import "server-only";
 import { z } from "zod";
 
 import { retrieveFactoryContextDocuments } from "@/lib/factory-context/retrieval";
+import {
+  FACTORY_MEMORY_CONTEXT_LIMIT,
+  factoryMemoryContextRowSchema,
+} from "@/lib/factory-memory/contracts";
 import type { materializeFactoryRepositoryContext } from "@/lib/pipeline/repository-context";
 import type { AttemptPredecessor } from "@/lib/pipeline/stages";
 import { untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
@@ -11,7 +15,7 @@ import type { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/database.types";
 
 import { runContextManifestSchema, type RunContextManifest } from "./contracts";
-import { fingerprintRunContextInput, packRunContext } from "./packing";
+import { factoryMemoryPromptValue, fingerprintRunContextInput, packRunContext } from "./packing";
 
 const maxConversationMessages = 32;
 
@@ -224,6 +228,50 @@ async function restoreDocuments(scope: ContextScope, manifest: RunContextManifes
   return restored.documents;
 }
 
+async function readFactoryMemories(scope: ContextScope, revisionIds?: string[]) {
+  const query = scope.admin.rpc("read_factory_memory_context", {
+    p_workspace_id: scope.workspaceId,
+    p_factory_id: scope.factoryId,
+    ...(revisionIds ? { p_revision_ids: revisionIds } : {}),
+  });
+  const { data, error } = await (scope.signal ? query.abortSignal(scope.signal) : query);
+  const result = z
+    .array(factoryMemoryContextRowSchema)
+    .max(FACTORY_MEMORY_CONTEXT_LIMIT)
+    .safeParse(data);
+  if (error || !result.success) {
+    throw new FrozenRunContextUnavailableError("Factory memory could not be read.");
+  }
+  return result.data;
+}
+
+async function restoreFactoryMemories(scope: ContextScope, manifest: RunContextManifest) {
+  if (manifest.version === 1) return [];
+  const selected = manifest.memories.filter((memory) => memory.status === "selected");
+  if (!selected.length) return [];
+  const rows = await readFactoryMemories(
+    scope,
+    selected.map(({ revisionId }) => revisionId),
+  );
+  const byRevision = new Map(rows.map((row) => [row.revision_id, row]));
+  if (rows.length !== selected.length || byRevision.size !== selected.length) {
+    throw new FrozenRunContextUnavailableError("A recorded factory memory is no longer eligible.");
+  }
+  return selected.map((reference) => {
+    const row = byRevision.get(reference.revisionId);
+    if (
+      !row ||
+      row.memory_id !== reference.memoryId ||
+      row.approval_id !== reference.approvalId ||
+      row.content_sha256 !== reference.sha256 ||
+      !sameFingerprint(row.body_md, reference)
+    ) {
+      throw new FrozenRunContextUnavailableError("A recorded factory memory changed.");
+    }
+    return factoryMemoryPromptValue(row);
+  });
+}
+
 export async function readRunContextOrigin(scope: ContextScope): Promise<RunContextOrigin> {
   scope.signal?.throwIfAborted();
   const read = scope.admin.rpc("read_factory_run_context_origin", attemptArgs(scope));
@@ -281,17 +329,24 @@ export async function prepareRunContext(
         "The original required prompt, feedback or predecessor is missing or changed.",
       );
     }
-    const [documents, conversationMessages] = await Promise.all([
+    const [documents, conversationMessages, memories] = await Promise.all([
       restoreDocuments(scope, manifest),
       restoreConversation(scope, manifest),
+      restoreFactoryMemories(scope, manifest),
     ]);
-    packed = { manifest, documents, conversationMessages };
+    packed = { manifest, documents, conversationMessages, memories };
   } else {
-    const [retrieval, conversation] = await Promise.all([
+    const [retrieval, conversation, memories] = await Promise.all([
       retrieveFactoryContextDocuments({ ...scope, references: input.references }),
       readNewConversation(scope),
+      readFactoryMemories(scope),
     ]);
-    packed = packRunContext({ requiredInputs: input.requiredInputs, retrieval, conversation });
+    packed = packRunContext({
+      requiredInputs: input.requiredInputs,
+      retrieval,
+      conversation,
+      memories,
+    });
   }
 
   scope.signal?.throwIfAborted();
@@ -307,5 +362,10 @@ export async function prepareRunContext(
   const conversation = packed.conversationMessages.map(({ sequence, body }) =>
     untrustedPromptValue(`conversation.message.${sequence}`, body),
   );
-  return { documents: packed.documents, conversation };
+  return {
+    documents: packed.documents,
+    conversation,
+    memories: packed.memories,
+    memoryProposalsEnabled: packed.manifest.version === 2,
+  };
 }

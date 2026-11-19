@@ -75,6 +75,9 @@ type Projection = RunEventBody & { truncated?: boolean };
 type AttemptIdentity = { jobId: string; runId: string; attemptCount: number };
 const MAX_TEXT_BYTES = 7_500;
 const MAX_LABEL_BYTES = 512;
+const PRIVATE_PROPOSAL_TOOL = "Private memory proposal";
+const PRIVATE_PROPOSAL_WITHHELD = "[Private memory proposal content withheld.]";
+const UNMATCHED_TOOL_OUTPUT_WITHHELD = "[Unmatched tool output withheld.]";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
 
@@ -90,6 +93,8 @@ export class RunEventCapture {
   private readonly safety = new AgentOutputSafety([]);
   private readonly toolCallSequences = new Map<string, number>();
   private readonly earlyToolResults = new Set<string>();
+  private readonly privateToolCalls = new Set<string>();
+  private privateFileName: string | undefined;
   private coverage: AdapterCoverage | undefined;
 
   constructor(
@@ -100,6 +105,10 @@ export class RunEventCapture {
 
   addSensitiveValue(value: string): void {
     this.safety.addSecret(value);
+  }
+
+  protectPrivatePath(path: string): void {
+    this.privateFileName = path.slice(path.lastIndexOf("/") + 1);
   }
 
   start(adapter: CaptureAdapter): void {
@@ -131,7 +140,7 @@ export class RunEventCapture {
     }
 
     const redact = (text: string) => this.safety.redact(text);
-    const projected = projectEvent(event, redact);
+    const projected = projectEvent(this.protectToolEvent(event), redact);
     const causationSequence =
       (event.type === "tool_result" || event.type === "capture_gap") && event.callId
         ? this.toolCallSequences.get(event.callId)
@@ -198,6 +207,28 @@ export class RunEventCapture {
       },
       { signal },
     );
+  }
+
+  private protectToolEvent(event: AgentEvent): AgentEvent {
+    const fileName = this.privateFileName;
+    if (!fileName) return event;
+    if (event.type === "tool_use" && event.input.includes(fileName)) {
+      if (event.callId) this.privateToolCalls.add(event.callId);
+      return { ...event, tool: PRIVATE_PROPOSAL_TOOL, input: PRIVATE_PROPOSAL_WITHHELD };
+    }
+    if (event.type !== "tool_result") return event;
+    if (
+      event.output.includes(fileName) ||
+      (event.callId && this.privateToolCalls.has(event.callId))
+    ) {
+      return { ...event, tool: PRIVATE_PROPOSAL_TOOL, output: PRIVATE_PROPOSAL_WITHHELD };
+    }
+    // An adapter can deliver a result without a start or call ID. Its output
+    // cannot be attributed to a safe input while the private file is in use.
+    if (!event.callId || !this.toolCallSequences.has(event.callId)) {
+      return { ...event, tool: "Unmatched tool", output: UNMATCHED_TOOL_OUTPUT_WITHHELD };
+    }
+    return event;
   }
 
   private async append(
