@@ -210,7 +210,7 @@ function makeState(input: { pinned?: boolean; terminal?: "closed" | "merged" } =
       state.epoch.observation_id = observationId(++state.observationSequence);
       return request(response(state.epoch.observation_id));
     }
-    if (name === "finish_session_pr_sync") {
+    if (name === "finish_session_pr_sync" || name === "finish_session_pr_sync_with_merge") {
       state.events.push("finish");
       if (!validClaim(args)) return request(response(false));
       if (!args.p_observation_id || args.p_observation_id !== state.epoch.observation_id)
@@ -530,6 +530,93 @@ it.each(["closed", "merged"] as const)(
     expect(state.operation.status).toBe("terminal");
   },
 );
+
+it.each(["closed", "merged"] as const)(
+  "records only the fresh fenced merge GET when the pre-fence observation was %s",
+  async (priorState) => {
+    const { state, admin, rpc } = makeState({ pinned: true, terminal: priorState });
+    if (priorState === "merged") {
+      state.pr = {
+        ...snapshot("merged"),
+        draft: false,
+        merge: {
+          mergedAt: "2026-11-05T11:00:00Z",
+          mergeCommitSha: expectedHead,
+          sourceHeadSha: expectedHead,
+        },
+      };
+    }
+    const merge = {
+      mergedAt: "2026-11-05T10:30:00Z",
+      mergeCommitSha: "e".repeat(40),
+      sourceHeadSha: desiredHead,
+    };
+    state.afterGet = () => {
+      state.pr = { ...snapshot("merged"), draft: false, headSha: null, merge };
+    };
+    expect(await drainCanonicalPullRequests(admin, { limit: 1 })).toEqual({
+      processed: 1,
+      failed: 0,
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      "finish_session_pr_sync_with_merge",
+      expect.objectContaining({
+        p_observation_id: observationId(1),
+        p_pr_state: "merged",
+        p_pr_head_sha: null,
+        p_merged_at: merge.mergedAt,
+        p_merge_commit_sha: merge.mergeCommitSha,
+        p_merge_source_head_sha: merge.sourceHeadSha,
+        p_observed_head_sha: null,
+        p_observed_fence_sha: null,
+      }),
+    );
+    expect(rpc).not.toHaveBeenCalledWith("finish_session_pr_sync", expect.anything());
+    expect(state.writes).toEqual([]);
+    expect(state.operation.status).toBe("terminal");
+  },
+);
+
+it.each([
+  { name: "an unmerged final GET", final: snapshot("closed") },
+  {
+    name: "an older provider snapshot",
+    final: {
+      ...snapshot("merged"),
+      draft: false,
+      updatedAt: "2026-11-05T11:45:00Z",
+      merge: {
+        mergedAt: "2026-11-05T11:30:00Z",
+        mergeCommitSha: "f".repeat(40),
+        sourceHeadSha: desiredHead,
+      },
+    },
+  },
+])("preserves terminal sync state without recording merge proof from $name", async ({ final }) => {
+  const { state, admin, rpc } = makeState({ pinned: true, terminal: "merged" });
+  state.pr = {
+    ...snapshot("merged"),
+    draft: false,
+    merge: {
+      mergedAt: "2026-11-05T11:00:00Z",
+      mergeCommitSha: "e".repeat(40),
+      sourceHeadSha: expectedHead,
+    },
+  };
+  state.afterGet = () => {
+    state.pr = final;
+  };
+  expect(await drainCanonicalPullRequests(admin, { limit: 1 })).toEqual({
+    processed: 1,
+    failed: 0,
+  });
+  expect(rpc).toHaveBeenCalledWith(
+    "finish_session_pr_sync",
+    expect.objectContaining({ p_pr_state: "merged" }),
+  );
+  expect(rpc).not.toHaveBeenCalledWith("finish_session_pr_sync_with_merge", expect.anything());
+  expect(state.writes).toEqual([]);
+});
 
 it("observes a close immediately before push and leaves both remote refs untouched", async () => {
   const { state, publish } = makeState({ pinned: true });

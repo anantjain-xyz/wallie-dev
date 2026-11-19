@@ -35,3 +35,19 @@ For historical repair, the owner-only
 factory, event type, and fixed exclusive cutoff. Keep the cutoff at or before
 the lifecycle coverage start and pass the returned source ID to the next batch.
 Replaying a batch is safe. A null cursor means that the bounded scan is complete.
+
+## GitHub merges
+
+The canonical PR publisher and GitHub webhook observer record merges from
+their fenced GitHub reads. The repository’s GitHub ID and PR number identify
+one change within a workspace. Each observation keeps GitHub’s merge time,
+provider revision time, and Wallie’s receipt time.
+
+- Throughput uses one current observation per PR. An equal provider timestamp
+  with conflicting merge evidence leaves the PR unresolved until a newer
+  observation settles it.
+- The canonical PR epoch links the session. A run link requires the exact
+  source head and its acknowledged publication fence.
+- A deleted source repository still permits a trusted merge receipt when GitHub
+  returns its source head. The canonical readiness record keeps the unknown
+  live head separate from that retained source evidence.

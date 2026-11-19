@@ -2,13 +2,39 @@ import "server-only";
 
 import { z } from "zod";
 
+const sha = z.string().regex(/^[a-f0-9]{40}$/);
+const timestamp = z.string().datetime({ offset: true });
+const canonicalMergeSchema = z
+  .object({
+    state: z.literal("closed"),
+    draft: z.literal(false),
+    merged: z.literal(true).optional(),
+    merged_at: timestamp,
+    merge_commit_sha: sha,
+    updated_at: timestamp,
+    head: z.object({ sha }),
+  })
+  .refine((pr) => Date.parse(pr.merged_at) <= Date.parse(pr.updated_at))
+  .transform((pr) => ({
+    mergedAt: pr.merged_at,
+    mergeCommitSha: pr.merge_commit_sha,
+    sourceHeadSha: pr.head.sha,
+  }));
+
+/** Use only after the canonical hosted GET has proved the PR identity. */
+export function readCanonicalGitHubMerge(payload: unknown) {
+  const parsed = canonicalMergeSchema.safeParse(payload);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export type CanonicalPullRequest = {
   number: number;
   url: string;
   state: "open" | "closed" | "merged";
   draft: boolean;
-  headSha: string;
+  headSha: string | null;
   updatedAt: string;
+  merge?: z.output<typeof canonicalMergeSchema>;
 };
 
 type ErrorCode =
@@ -52,11 +78,13 @@ const pullRequestSchema = z.object({
   html_url: z.string().url(),
   state: z.enum(["open", "closed"]),
   draft: z.boolean(),
-  merged_at: z.string().datetime({ offset: true }).nullable(),
-  updated_at: z.string().datetime({ offset: true }),
+  merged_at: timestamp.nullable(),
+  merged: z.unknown().optional(),
+  merge_commit_sha: z.unknown().optional(),
+  updated_at: timestamp,
   head: z.object({
     ref: z.string().min(1),
-    sha: z.string().regex(/^[a-f0-9]{40}$/),
+    sha,
     repo: repositorySchema.nullable(),
   }),
   base: z.object({ ref: z.string().min(1), repo: repositorySchema.nullable() }),
@@ -312,13 +340,15 @@ export function createCanonicalPrApi(input: {
       (pr.state === "open" && pr.merged_at !== null)
     )
       throw new CanonicalPrApiError("pr_invalid_response");
+    const merge = readCanonicalGitHubMerge(pr);
     return {
       number: pr.number,
       url: pr.html_url,
       state: pr.merged_at ? "merged" : pr.state,
       draft: pr.draft,
-      headSha: pr.head.sha,
+      headSha: terminalMissingHead ? null : pr.head.sha,
       updatedAt: pr.updated_at,
+      ...(merge ? { merge } : {}),
     };
   };
   const parseOne = (data: unknown) => {

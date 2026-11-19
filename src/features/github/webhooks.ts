@@ -4,6 +4,7 @@ import { verify } from "@octokit/webhooks-methods";
 import { z } from "zod";
 
 import { resolveGitHubAppConfig, resolveGitHubWebhookSecret } from "@/features/github/config";
+import { readCanonicalGitHubMerge } from "@/lib/pipeline/canonical-pr-api";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { syncGitHubRepositoriesForWorkspace } from "@/features/github/service";
 
@@ -35,6 +36,8 @@ const canonicalBranchSchema = z
   );
 const canonicalObservationSchema = pullRequestObservationSchema
   .extend({
+    merged_at: z.unknown().optional(),
+    merge_commit_sha: z.unknown().optional(),
     base: z.object({
       ref: z.string().min(1),
       repo: z.object({ id: z.number().int().positive().safe() }),
@@ -244,7 +247,7 @@ export async function handleGitHubPullRequestEvent(
     ) {
       throw new Error("GitHub returned a different canonical pull request identity.");
     }
-    const { error: finishError } = await admin.rpc("finish_session_pr_observation", {
+    const receipt = {
       p_observation_id: observationId,
       p_pr_url: snapshot.html_url,
       p_pr_state: snapshot.merged ? "merged" : snapshot.state,
@@ -253,7 +256,16 @@ export async function handleGitHubPullRequestEvent(
       // Generated RPC types omit this SQL argument's accepted nullability.
       p_pr_head_sha: headRepositoryMatches ? snapshot.head.sha : null!,
       p_pr_updated_at: snapshot.updated_at,
-    });
+    };
+    const merge = readCanonicalGitHubMerge(snapshot);
+    const { error: finishError } = await (merge
+      ? admin.rpc("finish_session_pr_observation_with_merge", {
+          ...receipt,
+          p_merged_at: merge.mergedAt,
+          p_merge_commit_sha: merge.mergeCommitSha,
+          p_merge_source_head_sha: merge.sourceHeadSha,
+        })
+      : admin.rpc("finish_session_pr_observation", receipt));
     if (finishError) throw finishError;
     return;
   }
