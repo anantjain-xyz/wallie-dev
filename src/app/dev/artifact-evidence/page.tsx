@@ -4,9 +4,12 @@ import { MarkdownContent } from "@/components/shared/markdown-content";
 import { renderMarkdown } from "@/components/shared/markdown-content.server";
 import { isProductionDeploy } from "@/env/deploy";
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
+import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-inspector";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
+const workspaceId = "22222222-2222-4222-8222-222222222222";
 const artifactId = "33333333-3333-4333-8333-333333333333";
+const runId = "58700000-0000-4000-8000-000000000010";
 const now = "2026-11-08T15:00:00.000Z";
 const markdown = `# Build review
 
@@ -34,8 +37,21 @@ The validation report is retained with this artifact. Temporary evidence from ol
 `;
 
 /** Deterministic, non-production preview of the actual artifact review renderer. */
-export default function ArtifactEvidencePreview() {
+export default async function ArtifactEvidencePreview({
+  searchParams,
+}: {
+  searchParams: Promise<{ projection?: string }>;
+}) {
   if (isProductionDeploy()) notFound();
+  if ((await searchParams).projection === "run") {
+    return (
+      <main className="mx-auto max-w-4xl px-4 py-8 sm:px-8">
+        <ArtifactEvidenceInspector
+          source={{ kind: "run", workspaceId, sessionId, runId, artifactId }}
+        />
+      </main>
+    );
+  }
   const evidenceLinks = new Map([
     [
       "wallie-evidence:review/report",
