@@ -11,6 +11,8 @@ import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
+import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
+import { requestFactoryEventDispatch } from "@/lib/factory-event-subscriptions/relay";
 import type { Env } from "../index";
 
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
@@ -32,6 +34,12 @@ vi.mock("@/lib/run-retention/maintenance", () => ({ drainRunRetention: vi.fn() }
 vi.mock("@/lib/factory-oauth/maintenance", () => ({ pruneFactoryOAuthCredentials: vi.fn() }));
 vi.mock("@/lib/factory-command-authorization/maintenance", () => ({
   pruneFactoryCommandAdmissions: vi.fn(),
+}));
+vi.mock("@/lib/factory-event-subscriptions/maintenance", () => ({
+  pruneFactoryEventOutbox: vi.fn(),
+}));
+vi.mock("@/lib/factory-event-subscriptions/relay", () => ({
+  requestFactoryEventDispatch: vi.fn(),
 }));
 vi.mock("@/lib/workspaces/deletion", () => ({ resumePendingWorkspaceDeletions: vi.fn() }));
 vi.mock("@/lib/run-exports/worker", () => ({
@@ -85,10 +93,14 @@ it.each([
       vi.mocked(pruneFactoryOAuthCredentials).mockRejectedValue(
         new Error("temporarily unavailable"),
       );
-    if (commandCleanupFailure)
+    if (commandCleanupFailure) {
       vi.mocked(pruneFactoryCommandAdmissions).mockRejectedValue(
         new Error("temporarily unavailable"),
       );
+      vi.mocked(requestFactoryEventDispatch).mockRejectedValue(
+        new Error("relay temporarily unavailable"),
+      );
+    }
     const inspection = await introspectWorkflowInstance(bindings.MAINTENANCE, id);
     try {
       await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
@@ -110,6 +122,8 @@ it.each([
       expect(drainRunRetention).toHaveBeenCalledExactlyOnceWith(admin);
       expect(pruneFactoryOAuthCredentials).toHaveBeenCalledExactlyOnceWith(admin);
       expect(pruneFactoryCommandAdmissions).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(requestFactoryEventDispatch).toHaveBeenCalledOnce();
+      expect(pruneFactoryEventOutbox).toHaveBeenCalledExactlyOnceWith(admin);
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );

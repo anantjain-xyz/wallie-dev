@@ -81,3 +81,17 @@ Each write takes a UUID in the `Idempotency-Key` header.
 | 422    | The requested agent or factory execution configuration is unavailable.      |
 | 429    | A workspace or principal quota applies. Wait for `Retry-After`.             |
 | 503    | The read service is temporarily unavailable.                                |
+
+## Outbound events
+
+A factory manager can register a receiver in Governance under **Event subscriptions**. Choose an active machine token or OAuth authorization with `sessions:read`. The subscription follows the exact factory, writer repository, service principal, and execution grant version bound to that authorization. Wallie shows the signing secret once when the subscription is created.
+
+Configure the receiver, then choose **Verify endpoint**. Wallie sends an HTTPS POST with JSON fields `type` set to `wallie.subscription.verification` and `challenge` containing a random value. The receiver must reply with a 2xx status and return that value in the `Wallie-Verification` response header. The configured URL must use a public DNS host on port 443. Wallie re-resolves DNS and pins the connection for each request. Redirects are rejected.
+
+For events, the receiver gets JSON with version `1`, stable event ID, event type, occurrence time, workspace, factory, session, and identifiers specific to the event. The receiver gets no conversation text, artifact content, trace data, or credentials. The event ID also appears in `Wallie-Event-Id` and the type in `Wallie-Event-Type`. If a session establishes its writer on the first Git input, creation and the initial start become eligible for delivery once that ownership is verified. The events retain their original occurrence times.
+
+Verify `Wallie-Signature` by parsing `t=<unix-seconds>,v1=<hex>`. Compute HMAC-SHA256 with the signing secret as UTF-8 and the exact bytes of `<timestamp>.<eventId>.<raw HTTP body>`. Check equality in constant time before parsing or applying the body. Check the timestamp against a bounded clock-skew window and deduplicate on the stable event ID before applying side effects. Each retry has a fresh signature and the same event ID.
+
+Use **Inspect deliveries** to see the delivery state, attempt count, HTTP status, and retry time. A timeout or process interruption can leave delivery unconfirmed even when the receiver applied it. Automatic and eligible manual retries are bounded. The current credential and grant must still allow sending after the connection is verified and before Wallie signs or writes the request. A send whose permission was already recorded may settle after revocation. Delivery history is retained for seven days.
+
+The Node daemon sends directly. The native worker invokes the Node sender at `WALLIE_FACTORY_EVENT_DISPATCH_RELAY_URL`, which targets `/api/internal/factory-event-dispatch` on the Wallie application. Set the same dedicated `WALLIE_FACTORY_EVENT_DISPATCH_RELAY_SECRET` on the native worker and Node application. Both runtimes use the same durable delivery claims and authorization checks.

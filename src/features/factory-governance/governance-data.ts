@@ -21,7 +21,7 @@ const grantColumns =
   "id, service_principal_id, github_repository_id, read_context_repository_ids, tool_ids, command_scopes, execution_policy_revision_id, budget_payer_member_id, expires_at, version, approved_by_member_id, approved_at, revoked_at, revoked_by_member_id, revocation_reason";
 
 export async function loadGovernanceScope(workspaceSlug: string, factoryQuery?: string | string[]) {
-  const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
+  const [{ currentMember, supabase, user, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
@@ -32,6 +32,7 @@ export async function loadGovernanceScope(workspaceSlug: string, factoryQuery?: 
     supabase,
     workspaceId: workspace.id,
     workspaceSlug: workspace.slug,
+    actorUserId: user.id,
     isOperator: isWorkspaceOperator(currentMember),
   };
 }

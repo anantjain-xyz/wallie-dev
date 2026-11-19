@@ -25,6 +25,25 @@ export const workerWakeEnvSchema = z.object({
   WALLIE_WORKER_WAKE_SECRET: optional(z.string().min(32)),
 });
 
+export const factoryEventDispatchRelayPath = "/api/internal/factory-event-dispatch";
+
+export const factoryEventDispatchRelayEnvSchema = z.object({
+  WALLIE_FACTORY_EVENT_DISPATCH_RELAY_URL: optional(
+    z.string().refine((value) => {
+      const url = URL.parse(value);
+      return (
+        url?.protocol === "https:" &&
+        !url.username &&
+        !url.password &&
+        !value.includes("?") &&
+        !value.includes("#") &&
+        url.pathname === factoryEventDispatchRelayPath
+      );
+    }, "The event dispatch relay must use its fixed HTTPS endpoint."),
+  ),
+  WALLIE_FACTORY_EVENT_DISPATCH_RELAY_SECRET: optional(z.string().regex(/^[a-zA-Z0-9_-]{43,128}$/)),
+});
+
 export const cloudflareEnvSchema = workerWakeEnvSchema.extend({
   ...workerRunCaptureEnvSchema.shape,
   WALLIE_WORKER_DISPATCH_ENABLED: z.enum(["true", "false"]).default("false"),

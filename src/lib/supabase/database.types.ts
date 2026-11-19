@@ -7262,6 +7262,34 @@ export type Database = {
         }
         Returns: string
       }
+      begin_factory_event_send: {
+        Args: {
+          p_delivery_id: string
+          p_lease_id: string
+          p_subscription_revision: number
+        }
+        Returns: {
+          attempt_id: string
+          event_id: string
+          event_type: Database["public"]["Enums"]["factory_outbound_event_type"]
+          outcome: string
+          payload: Json
+          signing_secret_encrypted: string
+        }[]
+      }
+      begin_factory_event_subscription_verification: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_subscription_id: string
+          p_verification_digest: string
+          p_workspace_id: string
+        }
+        Returns: {
+          endpoint_url: string
+          subscription_revision: number
+        }[]
+      }
       begin_factory_oauth_authorization: {
         Args: {
           p_actor_session_id: string
@@ -7466,6 +7494,15 @@ export type Database = {
           storage_path: string
         }[]
       }
+      claim_factory_event_delivery: {
+        Args: never
+        Returns: {
+          delivery_id: string
+          endpoint_url: string
+          lease_id: string
+          subscription_revision: number
+        }[]
+      }
       claim_github_pr_refresh: {
         Args: { p_workspace_id?: string }
         Returns: Json
@@ -7620,6 +7657,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      confirm_factory_event_subscription: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_subscription_id: string
+          p_verification_digest: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       create_artifact_review_thread: {
         Args: {
           p_anchor: Json
@@ -7771,6 +7818,20 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      create_factory_event_subscription: {
+        Args: {
+          p_actor_user_id: string
+          p_credential_id: string
+          p_credential_kind: Database["public"]["Enums"]["factory_event_subscription_credential_kind"]
+          p_endpoint_url: string
+          p_event_types: Database["public"]["Enums"]["factory_outbound_event_type"][]
+          p_factory_id: string
+          p_name: string
+          p_signing_secret_encrypted: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       create_factory_mcp_secret_binding: {
         Args: {
@@ -8663,6 +8724,65 @@ export type Database = {
           key: string
         }[]
       }
+      list_factory_event_authorizations: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          credential_id: string
+          credential_kind: Database["public"]["Enums"]["factory_event_subscription_credential_kind"]
+          credential_name: string
+          service_principal_id: string
+        }[]
+      }
+      list_factory_event_deliveries: {
+        Args: {
+          p_actor_user_id: string
+          p_before_created_at?: string
+          p_before_id?: string
+          p_factory_id: string
+          p_limit?: number
+          p_subscription_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          attempt_count: number
+          created_at: string
+          delivered_at: string
+          event_id: string
+          event_type: Database["public"]["Enums"]["factory_outbound_event_type"]
+          has_unknown_outcome: boolean
+          id: string
+          last_attempt_at: string
+          last_http_status: number
+          last_outcome: Database["public"]["Enums"]["factory_outbound_delivery_outcome"]
+          next_attempt_at: string
+          retryable: boolean
+          status: Database["public"]["Enums"]["factory_outbound_delivery_status"]
+        }[]
+      }
+      list_factory_event_subscriptions: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          authorized: boolean
+          created_at: string
+          credential_id: string
+          credential_kind: Database["public"]["Enums"]["factory_event_subscription_credential_kind"]
+          endpoint_url: string
+          event_types: Database["public"]["Enums"]["factory_outbound_event_type"][]
+          id: string
+          name: string
+          revoked_at: string
+          status: Database["public"]["Enums"]["factory_event_subscription_status"]
+          verified_at: string
+        }[]
+      }
       list_factory_secret_bindings: {
         Args: {
           p_actor_user_id: string
@@ -9049,6 +9169,14 @@ export type Database = {
         Returns: {
           admissions_deleted: number
           leases_deleted: number
+        }[]
+      }
+      prune_factory_event_outbox: {
+        Args: { p_batch_size?: number }
+        Returns: {
+          deliveries_deleted: number
+          events_deleted: number
+          subscriptions_deleted: number
         }[]
       }
       prune_factory_oauth_credentials: {
@@ -9590,6 +9718,24 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      retry_factory_event_delivery: {
+        Args: {
+          p_actor_user_id: string
+          p_delivery_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      revoke_factory_event_subscription: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_subscription_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       revoke_factory_execution_grant: {
         Args: {
@@ -10237,6 +10383,17 @@ export type Database = {
           updated_at: string
         }[]
       }
+      settle_factory_event_delivery: {
+        Args: {
+          p_attempt_id?: string
+          p_delivery_id: string
+          p_http_status?: number
+          p_lease_id: string
+          p_outcome: Database["public"]["Enums"]["factory_outbound_delivery_outcome"]
+          p_retry_after_seconds?: number
+        }
+        Returns: boolean
+      }
       settle_workspace_resource_operation: {
         Args: { p_operation_id: string; p_transferred: boolean }
         Returns: undefined
@@ -10592,6 +10749,34 @@ export type Database = {
         | "sessions:clarify"
         | "sessions:cancel"
       factory_command_surface: "api" | "mcp"
+      factory_event_subscription_credential_kind:
+        | "machine_token"
+        | "oauth_grant"
+      factory_event_subscription_status: "pending" | "active" | "revoked"
+      factory_outbound_delivery_outcome:
+        | "delivered"
+        | "retryable_failure"
+        | "permanent_failure"
+        | "unknown"
+      factory_outbound_delivery_status:
+        | "queued"
+        | "claimed"
+        | "sending"
+        | "delivered"
+        | "failed"
+        | "unknown"
+        | "revoked"
+      factory_outbound_event_type:
+        | "session.created"
+        | "session.canceled"
+        | "run.started"
+        | "run.completed"
+        | "conversation.message_added"
+        | "review.ready"
+        | "review.approved"
+        | "review.changes_requested"
+        | "review.clarification_requested"
+        | "review.clarification_answered"
       factory_session_mutation_operation:
         | "create"
         | "follow_up"
@@ -10795,6 +10980,38 @@ export const Constants = {
         "sessions:cancel",
       ],
       factory_command_surface: ["api", "mcp"],
+      factory_event_subscription_credential_kind: [
+        "machine_token",
+        "oauth_grant",
+      ],
+      factory_event_subscription_status: ["pending", "active", "revoked"],
+      factory_outbound_delivery_outcome: [
+        "delivered",
+        "retryable_failure",
+        "permanent_failure",
+        "unknown",
+      ],
+      factory_outbound_delivery_status: [
+        "queued",
+        "claimed",
+        "sending",
+        "delivered",
+        "failed",
+        "unknown",
+        "revoked",
+      ],
+      factory_outbound_event_type: [
+        "session.created",
+        "session.canceled",
+        "run.started",
+        "run.completed",
+        "conversation.message_added",
+        "review.ready",
+        "review.approved",
+        "review.changes_requested",
+        "review.clarification_requested",
+        "review.clarification_answered",
+      ],
       factory_session_mutation_operation: [
         "create",
         "follow_up",

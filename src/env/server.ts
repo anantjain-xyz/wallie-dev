@@ -10,7 +10,7 @@ import {
 } from "@/env/client";
 import { deployEnvSchema } from "@/env/deploy";
 import { workerControlEnvSchema } from "@/env/worker";
-import { workerWakeEnvSchema } from "@/env/cloudflare";
+import { factoryEventDispatchRelayEnvSchema, workerWakeEnvSchema } from "@/env/cloudflare";
 
 const requiredEnvStringSchema = z.string().min(1);
 const optionalEnvStringSchema = z.preprocess(
@@ -40,6 +40,7 @@ export const titleGenerationEnvSchema = z.object({
 
 export const serverEnvSchema = z.object({
   ...workerWakeEnvSchema.shape,
+  ...factoryEventDispatchRelayEnvSchema.shape,
   ...deployEnvSchema.shape,
   ...workerControlEnvSchema.shape,
   ...titleGenerationEnvSchema.shape,
@@ -92,6 +93,8 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
   const serverEnv = serverEnvSchema.parse({
     WALLIE_WORKER_WAKE_URL: input.WALLIE_WORKER_WAKE_URL,
     WALLIE_WORKER_WAKE_SECRET: input.WALLIE_WORKER_WAKE_SECRET,
+    WALLIE_FACTORY_EVENT_DISPATCH_RELAY_URL: input.WALLIE_FACTORY_EVENT_DISPATCH_RELAY_URL,
+    WALLIE_FACTORY_EVENT_DISPATCH_RELAY_SECRET: input.WALLIE_FACTORY_EVENT_DISPATCH_RELAY_SECRET,
     WALLIE_DEPLOY_ENV: input.WALLIE_DEPLOY_ENV,
     WORKER_CONTROL_SOCKET: input.WORKER_CONTROL_SOCKET,
     WALLIE_ORDERED_RUN_CAPTURE_ENABLED: input.WALLIE_ORDERED_RUN_CAPTURE_ENABLED,
