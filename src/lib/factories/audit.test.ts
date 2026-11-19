@@ -90,11 +90,6 @@ describe("factory audit query", () => {
   });
 
   it.each([
-    [
-      "grant",
-      "detail->>id",
-      "in.(execution_grant.approved,execution_grant.updated,execution_grant.revoked)",
-    ],
     ["principal", "detail->>id", "in.(service_principal.created)"],
     ["binding", "detail->>bindingId", "in.(credential_binding.created,credential_binding.revoked)"],
     [
@@ -114,6 +109,36 @@ describe("factory audit query", () => {
       expect(requests[0].searchParams.get(field)).toBe(`eq.${sourceId}`);
     },
   );
+
+  it("paginates grant actions and token actions using their own exact grant fields", async () => {
+    const { client, requests } = fixture([
+      [row(eventId), row(previousEventId)],
+      [row(previousEventId)],
+    ]);
+    const query = {
+      source: { kind: "grant", id: sourceId },
+      facet: "governance",
+      limit: 1,
+    } as const;
+    const firstPage = await readFactoryAuditPage(client, workspaceId, factoryId, query);
+    await readFactoryAuditPage(client, workspaceId, factoryId, {
+      ...query,
+      cursor: firstPage.nextCursor ?? undefined,
+    });
+
+    const filter =
+      `(and(action.in.(execution_grant.approved,execution_grant.updated,execution_grant.revoked),detail->>id.eq.${sourceId}),` +
+      `and(action.in.(machine_token.issued,machine_token.revoked),detail->>grantId.eq.${sourceId}))`;
+    for (const { searchParams } of requests) {
+      expect(searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+      expect(searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+    }
+    expect(requests[0].searchParams.getAll("or")).toEqual([filter]);
+    expect(requests[1].searchParams.getAll("or")).toEqual([
+      filter,
+      `(created_at.lt.${createdAt},and(created_at.eq.${createdAt},id.lt.${eventId}))`,
+    ]);
+  });
 
   it("supports exact event and actor links", async () => {
     const { client, requests } = fixture([[], []]);
