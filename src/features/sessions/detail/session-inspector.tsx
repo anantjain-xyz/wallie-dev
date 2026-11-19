@@ -10,6 +10,8 @@ import { SessionConnections } from "@/features/sessions/components/session-conne
 import type { SessionReviewSession } from "@/features/sessions/detail/data";
 import { cn } from "@/lib/utils";
 
+import { SessionConversationPanel, useSessionConversation } from "./session-conversation";
+
 export type SessionInspectorRepository = {
   defaultBranch: string | null;
   fullName: string;
@@ -32,6 +34,8 @@ export function SessionInspector({
 }: SessionInspectorProps) {
   const [inputOpen, setInputOpen] = useState(false);
   const inputId = useId();
+  const conversationId = useId();
+  const conversation = useSessionConversation(session.id);
   const hasInput = Boolean(session.promptMd || session.attachments.length);
 
   return (
@@ -101,6 +105,21 @@ export function SessionInspector({
             />
           </button>
         ) : null}
+        <button
+          type="button"
+          aria-controls={conversationId}
+          aria-expanded={conversation.open}
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent"
+          onClick={conversation.toggle}
+        >
+          Conversation
+          <ChevronDownIcon
+            className={cn(
+              "size-3.5 transition-transform motion-reduce:transition-none",
+              conversation.open && "rotate-180",
+            )}
+          />
+        </button>
       </div>
       {hasInput ? (
         <div id={inputId} hidden={!inputOpen}>
@@ -145,6 +164,16 @@ export function SessionInspector({
           ) : null}
         </div>
       ) : null}
+      <div id={conversationId} hidden={!conversation.open}>
+        {conversation.open ? (
+          <SessionConversationPanel
+            initialNow={initialNow}
+            loadOlder={conversation.loadOlder}
+            retry={conversation.retry}
+            view={conversation.view}
+          />
+        ) : null}
+      </div>
     </section>
   );
 }

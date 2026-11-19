@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   mayContainEvidenceLinks,
+  renderConversationMarkdown,
   renderMarkdownToHtml,
 } from "@/components/shared/markdown-content.server";
 
@@ -234,4 +235,17 @@ describe("mayContainEvidenceLinks", () => {
       expect(mayContainEvidenceLinks(markdown)).toBe(false);
     },
   );
+});
+
+describe("renderConversationMarkdown", () => {
+  it("renders image descriptions without their remote URLs and keeps explicit links", () => {
+    const html = renderConversationMarkdown(
+      "![Release graph](https://tracker.example/pixel.png) [Release notes](https://example.com/notes)",
+    );
+
+    expect(html).toContain("Release graph");
+    expect(html).toContain('href="https://example.com/notes"');
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("tracker.example");
+  });
 });

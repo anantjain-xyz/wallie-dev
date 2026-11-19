@@ -755,6 +755,43 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
     expect(savedBatch.rendered_feedback_text).toContain(submittedInlineFeedback);
     expect(savedBatch.rendered_feedback_text).not.toContain(laterInlineEdit);
     expect(savedBatch.rendered_feedback_text).not.toContain(laterInlineReply);
+
+    const conversation = await checked(
+      admin
+        .from("session_conversation_messages")
+        .select(
+          "sequence, kind, author_kind, originating_member_id, run_id, attempt_count, artifact_id, feedback_batch_id",
+        )
+        .eq("session_id", sessionId)
+        .order("sequence"),
+    );
+    expect(conversation.map((message) => message.sequence)).toEqual(
+      conversation.map((_, index) => index + 1),
+    );
+    expect(conversation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "initial_prompt",
+          author_kind: "user",
+          originating_member_id: ids.memberId,
+        }),
+        expect.objectContaining({
+          kind: "review_ready",
+          author_kind: "agent",
+          run_id: buildResult.runId,
+          attempt_count: expect.any(Number),
+          artifact_id: reviewedArtifact.id,
+        }),
+        expect.objectContaining({
+          kind: "artifact_feedback",
+          author_kind: "user",
+          originating_member_id: ids.memberId,
+          artifact_id: reviewedArtifact.id,
+          feedback_batch_id: savedBatch.id,
+        }),
+      ]),
+    );
+
     expect(savedThread.thread_revision).toBe(thread.revision);
     expect(savedThread.comments).toEqual([
       expect.objectContaining({
