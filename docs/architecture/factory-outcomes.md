@@ -36,6 +36,25 @@ factory, event type, and fixed exclusive cutoff. Keep the cutoff at or before
 the lifecycle coverage start and pass the returned source ID to the next batch.
 Replaying a batch is safe. A null cursor means that the bounded scan is complete.
 
+## Flow and delivery time
+
+- Queue, active, clarification, and review time pair exact job, run, or review
+  evidence. Final approval starts a delivery wait whose end requires a verified
+  merge. Each chronological span contributes to one phase and retains its
+  supporting observation IDs. Unpaired intervals and gaps stay visible.
+- Request-to-merge uses the first proven merge for each request in the cohort.
+  Request-to-deployment uses the first eligible deployment in the selected
+  environment. Their distributions count measured samples separately from
+  requests still missing an endpoint.
+- New session observations enqueue the same reducer used by a full rebuild.
+  The Node and Workerd maintenance cycles each process one bounded batch.
+  Delivery samples use current verified linkage, so late deployments and
+  corrections are reflected on the next read.
+
+Factory managers can page through `enqueue_factory_flow_rebuild` using the
+returned session cursor. The maintenance queue records pending work and the
+watermark records the latest completed factory snapshot.
+
 ## GitHub merges
 
 The canonical PR publisher and GitHub webhook observer record merges from
