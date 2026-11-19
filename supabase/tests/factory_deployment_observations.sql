@@ -157,7 +157,7 @@ select throws_ok($$select pg_temp.deployment_report(114, 2, 'succeeded')$$,
 
 insert into deployment_observed values
   ('untrusted success', pg_temp.deployment_report(115, 1, 'succeeded',
-    p_source => pg_temp.deployment_source('staging'), p_environment => 'staging')),
+    p_source => pg_temp.deployment_source('staging'), p_environment => 'staging', p_sha => repeat('d', 40))),
   ('changed success', pg_temp.deployment_report(116, 3, 'succeeded', p_sha => repeat('d', 40),
     p_provider_time => '2026-01-02T03:00:00Z')),
   ('unknown', pg_temp.deployment_report(117, 1, 'unknown', p_external_id => 'deploy-002',
@@ -186,20 +186,105 @@ select throws_ok($$update internal.factory_deployment_observation_revisions set 
   where workspace_id = pg_temp.deployment_id(4)$$, '23514', 'Factory deployment evidence is immutable.',
   'subsequent observations cannot overwrite evidence');
 
+insert into public.pipelines(id, workspace_id, factory_id, name, is_default) values
+  (pg_temp.deployment_id(40), pg_temp.deployment_id(4), pg_temp.deployment_factory(), 'Linkage fixture', true);
+insert into public.pipeline_stages(id, pipeline_id, workspace_id, position, slug, name, prompt_template_md) values
+  (pg_temp.deployment_id(41), pg_temp.deployment_id(40), pg_temp.deployment_id(4), 1, 'review', 'Review', 'Review the change.');
+insert into public.github_repositories(id, workspace_id, factory_id, github_installation_id, repo_id,
+  name, full_name, private, html_url, default_branch)
+values (pg_temp.deployment_id(23), pg_temp.deployment_id(4), pg_temp.deployment_factory(), pg_temp.deployment_id(21),
+  592002, 'other-deployments', 'fixture/other-deployments', true, 'https://github.test/fixture/other-deployments', 'main');
+
+create function pg_temp.observe_deployment_merge(p_number integer, p_repository_id uuid, p_merge_time timestamptz)
+returns boolean language plpgsql as $$
+declare
+  repository public.github_repositories;
+  session_id uuid := pg_temp.deployment_id(1000 + p_number);
+  epoch_id uuid := pg_temp.deployment_id(2000 + p_number);
+  branch_name text := 'wallie/sessions/' || session_id::text || '/' || epoch_id::text;
+  pr_url text;
+  observation_id uuid;
+begin
+  select * into strict repository from public.github_repositories where id = p_repository_id;
+  pr_url := 'https://github.test/' || repository.full_name || '/pull/' || p_number::text;
+  insert into public.sessions(id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id,
+    current_stage_id, github_repository_id, created_at)
+  values(session_id, repository.workspace_id, repository.factory_id, p_number, 'Deployment linkage session',
+    pg_temp.deployment_id(11), pg_temp.deployment_id(40), pg_temp.deployment_id(41), repository.id,
+    '2026-01-01T00:00:00Z');
+  insert into public.session_git_roots(session_id, workspace_id, repository_id, repository_full_name, base_branch, initial_base_sha)
+  values(session_id, repository.workspace_id, repository.id, repository.full_name, 'main', repeat('a', 40));
+  insert into public.session_pr_epochs(id, session_id, workspace_id, epoch_number, repository_id, repository_full_name,
+    github_repository_id, base_branch, branch_name, fence_branch, pr_number, pr_url, pr_state, is_draft, pr_head_sha)
+  values(epoch_id, session_id, repository.workspace_id, 1, repository.id, repository.full_name, repository.repo_id,
+    'main', branch_name, 'refs/wallie/fences/' || epoch_id::text, p_number, pr_url, 'open', false, repeat('e', 40));
+  observation_id := public.begin_session_pr_observation(repository.workspace_id, repository.id, branch_name, p_number);
+  return public.finish_session_pr_observation_with_merge(
+    observation_id, pr_url, 'merged', false, repeat('e', 40), p_merge_time + interval '1 minute',
+    p_merge_time, repeat('d', 40), repeat('e', 40));
+end;
+$$;
+
+select pg_temp.deployment_report(119, 1, 'succeeded', p_external_id => 'before-merge',
+  p_sha => repeat('d', 40), p_provider_time => '2026-01-01T12:00:00Z');
+select pg_temp.deployment_report(120, 1, 'pending', p_external_id => 'pending-exact',
+  p_sha => repeat('d', 40), p_provider_time => '2026-01-02T03:00:00Z');
+select is((select count(*) from internal.current_factory_linked_deployment_deliveries
+  where workspace_id = pg_temp.deployment_id(4)), 0::bigint,
+  'trusted deployment arriving before merge proof stays unlinked');
+select ok(pg_temp.observe_deployment_merge(201, pg_temp.deployment_id(23), '2026-01-02T01:00:00Z'),
+  'the actual fenced observer accepts the other repository merge');
+select is((select count(*) from internal.current_factory_linked_deployment_deliveries
+  where workspace_id = pg_temp.deployment_id(4)), 0::bigint, 'an identical commit in another repository stays unlinked');
+select ok(pg_temp.observe_deployment_merge(202, pg_temp.deployment_id(22), '2026-01-02T01:00:00Z'),
+  'fenced canonical proof links the exact commit in the approved repository');
+select results_eq(
+  $$select delivery.session_id, delivery.deployment_observation_id, delivery.deployed_at - session.created_at
+    from internal.current_factory_linked_deployment_deliveries delivery
+    join public.sessions session on session.id = delivery.session_id
+    where delivery.workspace_id = pg_temp.deployment_id(4)$$,
+  $$select pg_temp.deployment_id(1202), (result->>'observationId')::uuid, interval '27 hours'
+    from deployment_observed where label = 'changed success'$$,
+  'only an exact authoritative post-merge success contributes source-time delivery duration');
+select ok((select delivery.merge_observation_id = merge.observation_id and delivery.canonical_merge_id = merge.id
+    and delivery.deployed_at < delivery.deployment_observed_at
+  from internal.current_factory_linked_deployment_deliveries delivery
+  join internal.current_factory_canonical_pull_request_merges merge on merge.session_id = delivery.session_id
+  where delivery.workspace_id = pg_temp.deployment_id(4)),
+  'linked delivery retains both exact source observations and the distinct receipt clock');
+
+select pg_temp.deployment_report(123, 4, 'failed', p_sha => repeat('d', 40),
+  p_provider_time => '2026-01-02T04:00:00Z');
+select is((select count(*) from internal.current_factory_linked_deployment_deliveries
+  where workspace_id = pg_temp.deployment_id(4)), 0::bigint,
+  'a newer failed correction retracts the effective successful link');
+select pg_temp.deployment_report(124, 5, 'succeeded', p_sha => repeat('d', 40),
+  p_provider_time => '2026-01-02T05:00:00Z');
+select is((select revision from internal.current_factory_linked_deployment_deliveries
+  where workspace_id = pg_temp.deployment_id(4)), 5, 'a later restored success links its own current revision');
+select ok(pg_temp.observe_deployment_merge(203, pg_temp.deployment_id(22), '2026-01-02T07:00:00Z'),
+  'a second authoritative PR may report the same repository commit');
+select is((select count(*) from internal.current_factory_linked_deployment_deliveries
+  where workspace_id = pg_temp.deployment_id(4)), 0::bigint,
+  'competing canonical matches stay ambiguous before any time filter');
+select ok((select count(*) > 0 from internal.factory_current_deployment_observations
+  where workspace_id = pg_temp.deployment_id(4) and outcome = 'succeeded'),
+  'ambiguous association leaves raw successful reports available');
+
 create temp table deployment_prior_permit as select * from pg_temp.deployment_admit(121);
 select public.revoke_factory_deployment_source(pg_temp.deployment_id(4), pg_temp.deployment_factory(),
   pg_temp.deployment_id(1), pg_temp.deployment_source());
 select throws_ok($$select public.execute_factory_deployment_observation(pg_temp.deployment_id(4), pg_temp.deployment_factory(),
   'machine_token', pg_temp.deployment_id(31), repeat('a',64), pg_temp.deployment_id(121), repeat('b',64), 'api',
-  prior.admission_id, prior.lease_id, pg_temp.deployment_source(), 'production', 'deploy-001', 4, 'succeeded')
+  prior.admission_id, prior.lease_id, pg_temp.deployment_source(), 'production', 'deploy-001', 6, 'succeeded')
   from deployment_prior_permit prior$$,
   'PT403', 'Deployment source or environment is not authorized.', 'revocation denies a previously reserved permit');
 select public.release_factory_command_admission(admission_id, lease_id) from deployment_prior_permit;
-select ok((select outcome = 'succeeded' and revision = 3 from internal.factory_current_deployment_observations
+select ok((select outcome = 'succeeded' and revision = 5 from internal.factory_current_deployment_observations
   where workspace_id = pg_temp.deployment_id(4) and environment = 'production' and external_deployment_id = 'deploy-001'),
   'revocation preserves previously committed history');
 create temp table replacement_source as select pg_temp.approve_deployment_source('production', true) as result;
-select is((pg_temp.deployment_report(122, 4, 'succeeded',
+select is((pg_temp.deployment_report(122, 6, 'succeeded',
   p_source => (select (result->>'sourceId')::uuid from replacement_source))
   ->>'deploymentId'), (select result->>'deploymentId' from deployment_observed where label = 'changed success'),
   'replacement source approval preserves the logical deployment identity');
@@ -207,6 +292,7 @@ select is((pg_temp.deployment_report(122, 4, 'succeeded',
 select ok(not has_table_privilege('authenticated', 'internal.factory_deployment_sources', 'select')
   and not has_table_privilege('service_role', 'internal.factory_deployment_observation_revisions', 'insert')
   and not has_table_privilege('service_role', 'internal.factory_current_deployment_observations', 'select')
+  and not has_table_privilege('service_role', 'internal.current_factory_linked_deployment_deliveries', 'select')
   and not has_function_privilege('authenticated', 'public.approve_factory_deployment_source(uuid,uuid,uuid,uuid,bigint,text,text,text,boolean)', 'execute'),
   'source identities and observations stay behind the privileged boundaries');
 

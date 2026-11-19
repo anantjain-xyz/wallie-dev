@@ -74,10 +74,11 @@ provider revision time, and Wallie’s receipt time.
   Identical retries return the same observation. Changed facts require a
   greater provider revision. The highest revision determines the current
   report even when earlier revisions arrive late.
-- A delivery measurement needs the current successful outcome, an
-  authoritative source timestamp, and an exact canonical source-change
-  match in the same factory and repository. Receipt time records when Wallie
-  learned the fact. An unmatched or unknown commit is unlinked.
+- Delivery timing uses the current successful revision when its exact commit
+  matches one verified canonical merge in the same workspace, factory, and
+  repository. The provider's authoritative deployment time must be at or
+  after the merge. The link carries both observation IDs. Missing or
+  ambiguous links leave the raw report available for inspection.
 - The deployments coverage row records when the ingestion schema was
   installed. Each approved source records the start and end of its authority.
   The completeness of provider reporting remains unknown.
