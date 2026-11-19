@@ -292,6 +292,7 @@ export function MemoryPageView({
                   scope={actionScope}
                   memory={detail.memory}
                   body={detail.body}
+                  expiresAt={detail.revision?.expires_at ?? null}
                   canReview={Boolean(
                     detail.memory.pending_revision_id &&
                     detail.revision?.id === detail.memory.pending_revision_id,

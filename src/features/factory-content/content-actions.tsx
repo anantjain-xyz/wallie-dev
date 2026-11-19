@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent, type Ref } from "react";
 import { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -197,11 +197,22 @@ function expiry(data: FormData) {
   return Number.isFinite(date.valueOf()) ? date.toISOString() : "invalid";
 }
 
-function ExpiryField() {
+function localExpiryValue(instant: string) {
+  const expiry = new Date(instant);
+  const local = new Date(expiry.getTime() - expiry.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function ExpiryField({ inputRef }: { inputRef?: Ref<HTMLInputElement> }) {
   return (
     <label className="block min-w-0 space-y-1.5">
       <span className="type-label">Expiry in your local time</span>
-      <input className="ui-input w-full sm:w-auto" type="datetime-local" name="expiry" />
+      <input
+        ref={inputRef}
+        className="ui-input w-full sm:w-auto"
+        type="datetime-local"
+        name="expiry"
+      />
     </label>
   );
 }
@@ -261,14 +272,23 @@ export function MemoryRevisionActions({
   scope,
   memory,
   body,
+  expiresAt,
   canReview,
 }: {
   scope: Scope;
   memory: MemoryIdentity;
   body: string | null;
+  expiresAt: string | null;
   canReview: boolean;
 }) {
   const action = useContentCommand(scope, "memories");
+  const expiryInput = useCallback(
+    (input: HTMLInputElement | null) => {
+      // A datetime-local control uses the browser timezone. Set its initial value after hydration.
+      if (input && expiresAt) input.defaultValue = localExpiryValue(expiresAt);
+    },
+    [expiresAt],
+  );
   const expected = {
     memoryId: memory.id,
     expectedCurrentRevisionId: memory.current_revision_id,
@@ -277,11 +297,14 @@ export function MemoryRevisionActions({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const expiryValue = data.get("expiry");
+    const unchanged =
+      expiryValue === null || (expiresAt && expiryValue === localExpiryValue(expiresAt));
     const command = factoryMemoryCommandSchema.safeParse({
       action: "correct",
       ...expected,
       body: data.get("body"),
-      expiresAt: expiry(data),
+      expiresAt: unchanged ? (expiresAt ?? undefined) : expiry(data),
     });
     if (!command.success) {
       action.setMessage({
@@ -349,7 +372,7 @@ export function MemoryRevisionActions({
               required
             />
           </label>
-          <ExpiryField />
+          <ExpiryField inputRef={expiryInput} />
           <button className="ui-button" type="submit">
             <ActionButtonLabel
               idle="Save pending revision"
