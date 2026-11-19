@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
 
 import type { SessionPhaseMutationResult } from "@/features/sessions/mutation-contracts";
-import {
-  querySessionPhaseState,
-  resolveSessionPhaseState,
-} from "@/features/sessions/phase-state.server";
-import { cancelSessionWork } from "@/lib/pipeline/cancel";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { cancelSessionCommand, readSessionCommand } from "@/lib/sessions/commands";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -53,22 +49,21 @@ export async function POST(_request: Request, { params }: Params) {
   // Mutations run through the admin client because agent_jobs are service-only
   // under RLS.
   const admin = createSupabaseAdminClient();
-  await cancelSessionWork(admin, {
-    parkPhaseStatus: true,
+  await cancelSessionCommand({
+    admin,
     reason: "Stage canceled by a workspace member.",
     sessionId: sessionRow.id,
     workspaceId: sessionRow.workspace_id,
   });
 
-  const { data, error } = await querySessionPhaseState(admin, sessionRow.id).single();
-  const result = data && !error ? await resolveSessionPhaseState(admin, data) : null;
-
-  if (!result) {
-    return NextResponse.json(
-      { error: error?.message ?? "Could not reconcile the stopped session." },
-      { status: 500 },
-    );
+  const state = await readSessionCommand(admin, sessionRow.id);
+  if (!state.ok) {
+    const error =
+      state.code === "not_found" || state.error === "Session stage not found"
+        ? "Could not reconcile the stopped session."
+        : state.error;
+    return NextResponse.json({ error }, { status: 500 });
   }
 
-  return NextResponse.json<SessionPhaseMutationResult>(result);
+  return NextResponse.json<SessionPhaseMutationResult>(state.result);
 }

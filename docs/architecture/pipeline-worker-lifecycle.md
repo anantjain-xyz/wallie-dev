@@ -8,7 +8,9 @@ transaction.
 ## Canonical owners
 
 - [`src/lib/pipeline/processor.ts`](../../src/lib/pipeline/processor.ts): generic
-  stage execution and approve/reject orchestration.
+  stage execution and approval orchestration.
+- [`src/lib/sessions/`](../../src/lib/sessions/): source-neutral session creation,
+  state reads, cancellation, and review follow-up.
 - [`src/lib/pipeline/stages.ts`](../../src/lib/pipeline/stages.ts): pipeline and
   stage loading plus prior-artifact projection.
 - [`src/lib/pipeline/cancel.ts`](../../src/lib/pipeline/cancel.ts): shared
@@ -257,6 +259,24 @@ old clients fail closed until refreshed. Both actions require `stageId`,
 `artifactId`, and `version` from the artifact displayed to the reviewer. The
 initial detail payload includes that artifact ID; the rejection dialog keeps
 its opening snapshot even if a newer artifact arrives through realtime.
+
+## Session commands
+
+Browser adapters authenticate and rate-limit the caller. Shared commands receive
+that actor or an authorized reader. Database mutations recheck current factory
+access before honoring a scoped request, including receipt replays.
+
+| Command           | Durable result                                                                                                                                                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create or restart | The existing actor and workspace request key resolves to the original session, first job, and first run. The receipt inherits the session's factory and any restart source. The fingerprint covers normalized input before defaults, generated titles, or Linear data. |
+| Review follow-up  | An immutable feedback batch binds the actor and session's factory to the exact stage, artifact, version, review revision, and digest of the submitted feedback intent. Replay returns the same batch, job, and run.                                                    |
+| Cancel with a key | The actor, factory, and request key bind a session and expected run to the exact canceled job and run IDs. The cancellation and its receipt commit together. Sandbox cleanup uses those IDs on every call.                                                             |
+| Read              | The canonical current phase and pinned stage, visible through the authorized reader or a supplied workspace and factory scope.                                                                                                                                         |
+
+Each operation owns its receipt namespace. Changing the intent for an accepted
+request produces a conflict. Browser creation uses default factory admission.
+Existing browser cancels still require an in-progress phase and use the same
+cancellation and cleanup operations.
 
 ## Deduplication
 

@@ -700,6 +700,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       expectedArtifactId: reviewed.current_artifact_id!,
       expectedStageId: reviewed.current_stage_id,
       expectedWorkspaceId: ids.workspaceId,
+      factoryId: reviewed.factory_id,
       feedbackText: "Preserve the original file and revise the feature",
       requestedByMemberId: ids.memberId,
       sessionId,
@@ -710,11 +711,11 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
         selectedThreadIds: [thread.id, secondThread.id],
       },
     };
-    const rejection = await production.handleRejection(rejectInput);
+    const rejection = await production.followUpSessionCommand(rejectInput);
     expect(rejection.success).toBe(true);
     assert(rejection.jobId);
     assert(rejection.feedbackBatchId);
-    const replay = await production.handleRejection(rejectInput);
+    const replay = await production.followUpSessionCommand(rejectInput);
     expect(replay.success).toBe(true);
     expect(replay.jobId).toBe(rejection.jobId);
     expect(replay.feedbackBatchId).toBe(rejection.feedbackBatchId);
@@ -766,7 +767,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       admin.from("artifact_review_threads").select("*").eq("id", thread.id).single(),
     );
     expect(editedThread.revision).toBeGreaterThan(savedThread.thread_revision);
-    const replayAfterEdits = await production.handleRejection(rejectInput);
+    const replayAfterEdits = await production.followUpSessionCommand(rejectInput);
     expect(replayAfterEdits.feedbackBatchId).toBe(rejection.feedbackBatchId);
     expect(replayAfterEdits.jobId).toBe(rejection.jobId);
     const savedInput = await production.loadPinnedSessionJobGitInput({

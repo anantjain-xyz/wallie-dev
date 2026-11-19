@@ -12,7 +12,9 @@ const mocked = vi.hoisted(() => ({
 
 vi.mock("@/lib/pipeline/processor", () => ({
   handleApproval: mocked.handleApproval,
-  handleRejection: mocked.handleRejection,
+}));
+vi.mock("@/lib/sessions/follow-up-command", () => ({
+  followUpSessionCommand: mocked.handleRejection,
 }));
 vi.mock("@/lib/rate-limit", () => ({ enforceRateLimit: mocked.enforceRateLimit }));
 vi.mock("@/lib/supabase/admin", () => ({
@@ -71,6 +73,7 @@ function buildSupabase(
       ? {
           archived_at: null,
           current_stage_id: "stage-product",
+          factory_id: "factory-1",
           id: "sess-1",
           phase_status: "awaiting_review",
           workspace_id: "ws-1",
@@ -246,6 +249,7 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
       expectedArtifactId: ARTIFACT_ID,
       expectedStageId: STAGE_ID,
       expectedWorkspaceId: "ws-1",
+      factoryId: "factory-1",
       feedbackText: "Needs sharper scope.",
       requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",

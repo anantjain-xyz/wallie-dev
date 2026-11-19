@@ -6,7 +6,8 @@ import type {
   SessionMutationErrorResponse,
   SessionPhaseMutationResult,
 } from "@/features/sessions/mutation-contracts";
-import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
+import { handleApproval } from "@/lib/pipeline/processor";
+import { followUpSessionCommand } from "@/lib/sessions/follow-up-command";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { withServerTiming, type ServerTimingCollector } from "@/lib/server-timing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -100,7 +101,7 @@ export async function POST(request: Request, { params }: Params) {
       supabase
         .from("sessions")
         .select(
-          "id, workspace_id, phase_status, current_stage_id, archived_at, execute_pinned_definition, factory_definition_revision_id",
+          "id, workspace_id, factory_id, phase_status, current_stage_id, archived_at, execute_pinned_definition, factory_definition_revision_id",
         )
         .eq("id", sessionId)
         .maybeSingle(),
@@ -207,10 +208,11 @@ export async function POST(request: Request, { params }: Params) {
         return errorResponse("invalid_input", "Feedback is required", 400);
       }
       const result = await timing.segment("mutation", () =>
-        handleRejection({
+        followUpSessionCommand({
           expectedArtifactId: body.artifactId,
           expectedStageId: body.stageId,
           expectedWorkspaceId: sessionRow.workspace_id,
+          factoryId: sessionRow.factory_id,
           feedbackText,
           ...(body.feedbackSubmission ? { feedbackSubmission: body.feedbackSubmission } : {}),
           requestedByMemberId: memberRow.id,
@@ -219,6 +221,8 @@ export async function POST(request: Request, { params }: Params) {
         }),
       );
       if (!result.success) {
+        const scopeError = feedbackScopeError(result.errorCode);
+        if (scopeError) return scopeError;
         if (body.feedbackSubmission) return feedbackSubmissionError(result.errorCode, result.error);
         const code = isStaleVersionError(result.error) ? "stale_version" : "mutation_conflict";
         return errorResponse(code, result.error ?? "Rejection failed", 409);
@@ -242,6 +246,20 @@ export async function POST(request: Request, { params }: Params) {
   });
 }
 
+function feedbackScopeError(code: string | undefined) {
+  if (code === "42501")
+    return errorResponse("forbidden", "Active human workspace membership is required.", 403);
+  if (code === "PT409")
+    return errorResponse(
+      "mutation_conflict",
+      "Factory access is changing. Retry feedback submission.",
+      409,
+    );
+  if (code === "PT404" || code === "P0002")
+    return errorResponse("not_found", "Session not found", 404);
+  return null;
+}
+
 /** Database batch errors use fixed messages, never echoed comment or anchor text. */
 function feedbackSubmissionError(code: string | undefined, message: string | undefined) {
   if (code === "40001" || code === "PT412" || code === "55000")
@@ -256,8 +274,6 @@ function feedbackSubmissionError(code: string | undefined, message: string | und
       "This request was already submitted with different feedback. Refresh the review.",
       409,
     );
-  if (code === "42501")
-    return errorResponse("forbidden", "Active human workspace membership is required.", 403);
   if (code === "22001")
     return errorResponse(
       "invalid_input",

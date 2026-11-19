@@ -299,13 +299,14 @@ export async function configureTransport(input: {
 }
 
 export async function loadProduction() {
-  const [processor, service, checkpoint, canonical] = await Promise.all([
+  const [processor, service, checkpoint, canonical, followUp] = await Promise.all([
     import("@/lib/pipeline/processor"),
     import("@/lib/wallie/service"),
     import("@/lib/pipeline/checkpoint-publication"),
     import("@/lib/pipeline/canonical-pr-publisher"),
+    import("@/lib/sessions/follow-up-command"),
   ]);
-  return { ...processor, ...service, ...checkpoint, ...canonical };
+  return { ...processor, ...service, ...checkpoint, ...canonical, ...followUp };
 }
 
 export async function readManifest(): Promise<Manifest> {

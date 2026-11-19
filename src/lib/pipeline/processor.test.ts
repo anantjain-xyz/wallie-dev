@@ -224,7 +224,8 @@ vi.mock("@octokit/app", () => ({
   }),
 }));
 
-import { handleApproval, handleRejection, processPipelineJob } from "./processor";
+import { followUpSessionCommand } from "@/lib/sessions/follow-up-command";
+import { handleApproval, processPipelineJob } from "./processor";
 
 // ---- fixtures -----------------------------------------------------------
 
@@ -5322,7 +5323,7 @@ describe("handleApproval", () => {
   });
 });
 
-// ---- handleRejection ----------------------------------------------------
+// ---- followUpSessionCommand ----------------------------------------------------
 
 interface ReviewMockOptions {
   rpcResult?: { data: unknown; error: { code?: string; message: string } | null };
@@ -5464,7 +5465,7 @@ function buildReviewMock(opts: ReviewMockOptions = {}) {
   };
 }
 
-describe("handleRejection", () => {
+describe("followUpSessionCommand", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.loadWorkspaceAgentConfig.mockResolvedValue({
@@ -5478,8 +5479,9 @@ describe("handleRejection", () => {
     const { admin, rpc } = buildReviewMock({
       rpcResult: { data: [rejectedSessionRow({ feedback_batch_id: "batch-1" })], error: null },
     });
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5494,9 +5496,10 @@ describe("handleRejection", () => {
       version: 1,
     });
     expect(rpc).toHaveBeenCalledWith(
-      "submit_artifact_feedback_batch",
+      "submit_session_follow_up_once",
       expect.objectContaining({
         p_request_id: "request-1",
+        p_factory_id: "factory-1",
         p_expected_review_revision: 7,
         p_selected_thread_ids: ["thread-1"],
         p_agent_model_name: "gpt-5.5",
@@ -5520,8 +5523,9 @@ describe("handleRejection", () => {
       existingBatchId: "batch-1",
       rpcResult: { data: [rejectedSessionRow({ feedback_batch_id: "batch-1" })], error: null },
     });
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5537,7 +5541,7 @@ describe("handleRejection", () => {
     });
     expect(mocked.loadWorkspaceAgentConfig).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenCalledWith(
-      "submit_artifact_feedback_batch",
+      "submit_session_follow_up_once",
       expect.objectContaining({
         p_agent_model_name: undefined,
         p_agent_model_provider: undefined,
@@ -5551,8 +5555,9 @@ describe("handleRejection", () => {
 
   it("does not treat a failed receipt lookup as permission to enqueue a new batch", async () => {
     const { admin, rpc } = buildReviewMock({ batchLookupError: { message: "Unavailable" } });
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5570,11 +5575,12 @@ describe("handleRejection", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("rejects through the reject_session_stage RPC with the reviewer, version, feedback, and queued-run config", async () => {
+  it("scopes unkeyed feedback to the factory and exact review", async () => {
     const { admin, rpc } = buildReviewMock();
 
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5585,12 +5591,13 @@ describe("handleRejection", () => {
     });
 
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith("reject_session_stage", {
+    expect(rpc).toHaveBeenCalledWith("submit_session_follow_up_once", {
       p_agent_model_name: "gpt-5.5",
       p_agent_model_provider: "codex",
       p_artifact_version: 1,
       p_expected_artifact_id: "artifact-1",
       p_expected_stage_id: "stage-product",
+      p_factory_id: "factory-1",
       p_feedback_text: "tighten the spec",
       p_requested_by_member_id: "mem-reviewer",
       p_run_type: "project",
@@ -5613,8 +5620,9 @@ describe("handleRejection", () => {
   it("stamps the code run mode when the session's pull request resolves to a repository", async () => {
     const { admin, rpc } = buildReviewMock({ sessionPullRequestRepositoryId: "repo-1" });
 
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5626,28 +5634,8 @@ describe("handleRejection", () => {
 
     expect(result.success).toBe(true);
     expect(rpc).toHaveBeenCalledWith(
-      "reject_session_stage",
+      "submit_session_follow_up_once",
       expect.objectContaining({ p_run_type: "code" }),
-    );
-  });
-
-  it("omits the reviewer when no member id is available", async () => {
-    const { admin, rpc } = buildReviewMock();
-
-    await handleRejection({
-      admin,
-      expectedArtifactId: "artifact-1",
-      expectedStageId: "stage-product",
-      expectedWorkspaceId: "ws-1",
-      feedbackText: "needs work",
-      requestedByMemberId: null,
-      sessionId: "sess-1",
-      version: 1,
-    });
-
-    expect(rpc).toHaveBeenCalledWith(
-      "reject_session_stage",
-      expect.objectContaining({ p_requested_by_member_id: undefined }),
     );
   });
 
@@ -5661,8 +5649,9 @@ describe("handleRejection", () => {
       },
     });
 
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5688,8 +5677,9 @@ describe("handleRejection", () => {
       rpcResult: { data: null, error: { code, message } },
     });
 
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5700,14 +5690,15 @@ describe("handleRejection", () => {
     });
 
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ error: message, success: false });
+    expect(result).toEqual({ error: message, errorCode: code, success: false });
   });
 
   it("treats an empty RPC result as a lost race", async () => {
     const { admin } = buildReviewMock({ rpcResult: { data: [], error: null } });
 
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5729,8 +5720,9 @@ describe("handleRejection", () => {
       },
     });
 
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
@@ -5749,8 +5741,9 @@ describe("handleRejection", () => {
     );
     const { admin, rpc } = buildReviewMock();
 
-    const result = await handleRejection({
+    const result = await followUpSessionCommand({
       admin,
+      factoryId: "factory-1",
       expectedArtifactId: "artifact-1",
       expectedStageId: "stage-product",
       expectedWorkspaceId: "ws-1",
