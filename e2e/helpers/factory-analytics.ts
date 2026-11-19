@@ -51,7 +51,7 @@ function loopback(value: string | undefined, protocol: "http:" | "postgresql:") 
   return url;
 }
 
-export async function seedFactoryAnalytics(baseURL: string | undefined) {
+export async function seedFactoryAnalytics(baseURL: string | undefined, windowDays = 7) {
   const app = loopback(baseURL, "http:");
   const api = loopback(process.env.NEXT_PUBLIC_SUPABASE_URL, "http:");
   const database = loopback(process.env.WALLIE_FACTORY_ANALYTICS_DATABASE_URL, "postgresql:");
@@ -83,6 +83,18 @@ export async function seedFactoryAnalytics(baseURL: string | undefined) {
     return exec("psql", [...psqlOptions, ...args], { env: psqlEnvironment, timeout: 20_000 });
   }
 
+  async function runFixtureFile(
+    file: "factory-analytics-seed.sql" | "factory-outcome-release.sql",
+    fields: Record<string, string>,
+  ): Promise<unknown> {
+    const { stdout } = await runFixtureSql([
+      ...Object.entries(fields).map(([key, value]) => `--set=${key}=${value}`),
+      "--file",
+      resolve(__dirname, file),
+    ]);
+    return JSON.parse(stdout.trim());
+  }
+
   async function createUser(email: string) {
     const { data, error } = await admin.auth.admin.createUser({ email, email_confirm: true });
     if (error) throw error;
@@ -107,19 +119,18 @@ export async function seedFactoryAnalytics(baseURL: string | undefined) {
       viewer_id: viewerId,
       viewer_email: viewerEmail,
       repository_numeric_id: String(randomInt(100_000_000, 1_000_000_000)),
+      window_days: String(z.number().int().min(1).max(366).parse(windowDays)),
     };
-    const { stdout } = await runFixtureSql([
-      ...Object.entries(fields).map(([key, value]) => `--set=${key}=${value}`),
-      "--file",
-      resolve(__dirname, "factory-analytics-seed.sql"),
-    ]);
-    const data = fixture.parse(JSON.parse(stdout.trim()));
+    const data = fixture.parse(await runFixtureFile("factory-analytics-seed.sql", fields));
 
     return {
       ...data,
       app: app.origin,
+      ownerId,
+      viewerId,
       ownerEmail,
       viewerEmail,
+      runFixtureFile,
       cleanup,
       async observePendingRequest() {
         const { error } = await admin.from("sessions").insert({

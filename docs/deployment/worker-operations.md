@@ -494,6 +494,32 @@ status, and next attempt time with the receiving system.
 The [shared-work qualification](../development/verification.md#shared-work-across-browser-api-and-mcp)
 exercises these recovery boundaries on a disposable stack.
 
+## Factory outcome projection recovery
+
+Factory managers can pause and rebuild one factory’s flow and delivery
+projection from **Overview**. Sessions and outcome capture continue while
+projection work is paused. Cost, throughput, and revert summaries continue
+to read their authoritative sources.
+
+1. Select the affected factory in **Overview**. Record **Projection snapshot**,
+   **Oldest pending observation**, and **Last projection failure** when present.
+2. Select **Pause projection** to stop processing that factory’s queued
+   observations. Select **Rebuild projection** to queue a bounded replay of its
+   retained facts.
+3. Select **Resume projection**. Leave the existing worker running so its
+   maintenance cycle can drain the backlog and finish the rebuild.
+4. Refresh **Overview**. A successful rebuild shows **Completed** and the
+   projection returns to **Current** when pending work is clear. Open
+   **Analytics** with the same filters and inspect the affected source evidence.
+
+If the projection remains **Failed**, use **Next retry eligible** and the
+worker’s `factory flow projection` maintenance logs to diagnose the failure.
+Failed batches roll back their changes and retry with backoff. Pending facts
+and the last coherent snapshot are retained.
+
+The rebuilt result is limited to eligible retained evidence and known capture
+coverage. Compare the [metric clocks and limitations](../architecture/factory-outcomes.md#reading-analytics).
+
 ## Cancellation and shutdown
 
 User and reconciler cancellation must call the shared cancellation service.

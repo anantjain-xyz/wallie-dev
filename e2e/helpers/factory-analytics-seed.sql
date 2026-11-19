@@ -2,7 +2,8 @@ begin;
 set local request.jwt.claim.role = 'service_role';
 
 create function pg_temp.seed_factory_analytics(
-  owner_user uuid, owner_email text, viewer_user uuid, viewer_email text, fixture_slug text, numeric_repository bigint
+  owner_user uuid, owner_email text, viewer_user uuid, viewer_email text, fixture_slug text,
+  numeric_repository bigint, window_days integer
 ) returns jsonb language plpgsql as $$
 declare
   workspace public.workspaces;
@@ -32,7 +33,7 @@ declare
   merge_sha text := repeat('b', 40);
   today_utc timestamptz := date_trunc('day', now(), 'UTC');
   requested_at timestamptz := today_utc - interval '96 hours' + interval '9 hours';
-  prior_requested_at timestamptz := today_utc - interval '240 hours' + interval '9 hours';
+  prior_requested_at timestamptz := today_utc - (window_days + 3) * interval '24 hours' + interval '9 hours';
   merge_at timestamptz := requested_at + interval '3 hours';
   canonical internal.current_factory_canonical_pull_request_merges;
   request_observation uuid;
@@ -160,8 +161,8 @@ begin
   if (batch->>'hasMore')::boolean then raise exception 'The disposable projection queue did not drain.'; end if;
 
   return jsonb_build_object('workspaceId', workspace.id, 'slug', workspace.slug, 'factoryId', factory.id,
-    'siblingFactoryId', sibling.id, 'from', (today_utc at time zone 'UTC')::date - 7,
-    'to', (today_utc at time zone 'UTC')::date, 'comparisonFrom', (today_utc at time zone 'UTC')::date - 14,
+    'siblingFactoryId', sibling.id, 'from', (today_utc at time zone 'UTC')::date - window_days,
+    'to', (today_utc at time zone 'UTC')::date, 'comparisonFrom', (today_utc at time zone 'UTC')::date - 2 * window_days,
     'deliveredSessionId', delivered, 'deliveredSessionNumber', 71, 'producingRunId', producing_run,
     'failedRunId', failed_run, 'mergeId', canonical.id, 'mergeObservationId', canonical.observation_id,
     'requestObservationId', request_observation, 'deploymentObservationId', deployment->>'observationId',
@@ -170,5 +171,5 @@ end;
 $$;
 
 select pg_temp.seed_factory_analytics(:'owner_id'::uuid, :'owner_email', :'viewer_id'::uuid, :'viewer_email',
-  :'workspace_slug', :'repository_numeric_id'::bigint);
+  :'workspace_slug', :'repository_numeric_id'::bigint, :'window_days'::integer);
 commit;

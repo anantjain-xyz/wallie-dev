@@ -213,3 +213,21 @@ common evidence fields and a JSON column for the complete record.
   1 MiB of stored JSON fail. Shorten the period to export a smaller cohort.
 - Data that arrives after capture affects new snapshots. A snapshot keeps
   its original values and observation IDs until expiry.
+
+## Qualification and coverage limits
+
+- Complete lifecycle coverage begins at the recorded capture boundary.
+  Backfilled facts preserve their exact times. Intervening gaps remain unknown.
+- Deployment reliability depends on approved sources reporting authoritative
+  outcomes and linking their commits to canonical merges. Inspect the receipt
+  and environment behind each measured deployment.
+- Throughput can be grouped by request source, invoking actor, or pinned
+  producing configuration. Time and cost compare selected factory periods.
+- Revert coverage depends on manager-recorded evidence for the full 30-day
+  window. Ambiguous and immature originals remain visible alongside the
+  eligible denominator.
+
+Use the [adversarial cohort qualification](../development/verification.md#factory-outcome-analytics)
+to reproduce the reconciliation and the
+[projection recovery procedure](../deployment/worker-operations.md#factory-outcome-projection-recovery)
+to replay retained evidence safely.
