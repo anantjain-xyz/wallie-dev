@@ -8,10 +8,6 @@ const configuration = z.object({
     .max(512)
     .regex(/^[A-Za-z0-9._~-]+$/),
   WALLIE_BROWSER_FIXTURE_ORIGIN: z.string().max(512).url(),
-  WALLIE_BROWSER_FIXTURE_APPROVAL_SCOPE: z
-    .string()
-    .max(128)
-    .regex(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/[A-Za-z0-9._-]+$/),
 });
 
 function privateFixtureUrl(url: URL): boolean {
@@ -43,6 +39,15 @@ export function readBrowserFixtureEnvironment(env: Record<string, string | undef
     brokerUrl,
     brokerToken: data.WALLIE_BROWSER_FIXTURE_BROKER_TOKEN,
     previewOrigin: preview.origin,
-    approvalScopeId: data.WALLIE_BROWSER_FIXTURE_APPROVAL_SCOPE,
   };
+}
+
+const approvalScopeSchema = z
+  .string()
+  .max(128)
+  .regex(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/[A-Za-z0-9._-]+$/);
+
+export function readBrowserFixtureApprovalScope(value: string | undefined) {
+  const parsed = approvalScopeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

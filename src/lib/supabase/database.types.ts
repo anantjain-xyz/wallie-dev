@@ -3555,8 +3555,13 @@ export type Database = {
         Row: {
           approval_scope_id: string
           browser_session_id: string
+          capture_completed_at: string | null
+          capture_started_at: string | null
           content_type: string
+          duration_ms: number | null
           evidence_key: string
+          frame_offsets_ms: number[] | null
+          height_px: number | null
           id: string
           required: boolean
           run_id: string
@@ -3564,13 +3569,19 @@ export type Database = {
           sha256: string
           size_bytes: number
           storage_path: string
+          width_px: number | null
           workspace_id: string
         }
         Insert: {
           approval_scope_id: string
           browser_session_id: string
+          capture_completed_at?: string | null
+          capture_started_at?: string | null
           content_type: string
+          duration_ms?: number | null
           evidence_key: string
+          frame_offsets_ms?: number[] | null
+          height_px?: number | null
           id: string
           required: boolean
           run_id: string
@@ -3578,13 +3589,19 @@ export type Database = {
           sha256: string
           size_bytes: number
           storage_path: string
+          width_px?: number | null
           workspace_id: string
         }
         Update: {
           approval_scope_id?: string
           browser_session_id?: string
+          capture_completed_at?: string | null
+          capture_started_at?: string | null
           content_type?: string
+          duration_ms?: number | null
           evidence_key?: string
+          frame_offsets_ms?: number[] | null
+          height_px?: number | null
           id?: string
           required?: boolean
           run_id?: string
@@ -3592,6 +3609,7 @@ export type Database = {
           sha256?: string
           size_bytes?: number
           storage_path?: string
+          width_px?: number | null
           workspace_id?: string
         }
         Relationships: [
@@ -7511,6 +7529,16 @@ export type Database = {
         }
         Returns: boolean
       }
+      authorize_session_browser_video: {
+        Args: {
+          p_approval_scope_id: string
+          p_attempt_count: number
+          p_commit_sha: string
+          p_run_id: string
+          p_validation_tree_sha: string
+        }
+        Returns: boolean
+      }
       authorize_session_pr_successor: {
         Args: {
           p_actor_user_id: string
@@ -9774,6 +9802,31 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "session_pr_verification_results"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      record_session_browser_media_verification: {
+        Args: {
+          p_attempt_count: number
+          p_commit_sha: string
+          p_records: Json
+          p_run_id: string
+          p_screenshot_approval_scope_id?: string
+          p_transfers: Json
+          p_validation_tree_sha: string
+          p_video_approval_scope_id?: string
+        }
+        Returns: {
+          created_at: string
+          records: Json
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_browser_verification_receipts"
           isOneToOne: true
           isSetofReturn: false
         }

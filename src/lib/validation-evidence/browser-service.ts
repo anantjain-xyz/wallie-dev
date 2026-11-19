@@ -5,24 +5,25 @@ import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
-import { browserScreenshotPath } from "./browser-assets";
+import { browserScreenshotPath, browserVideoPath } from "./browser-assets";
 import {
   BROWSER_CAPTURE_POLICY,
+  MAX_BROWSER_VIDEO_BYTES,
   browserCaptureReceiptSchema,
-  unavailableBrowserReceipts,
   type BrowserCaptureReceipt,
   type BrowserRunIdentity,
   type BrowserScreenshotRuntime,
   type BrowserVerificationPlan,
+  type BrowserVideoRuntime,
 } from "./browser-contract";
 import { VALIDATION_EVIDENCE_BUCKET } from "./contracts";
 import { sanitizeBrowserScreenshot } from "./screenshot-png";
 
 type AdminClient = SupabaseClient<Database>;
-type CapturedScreenshot = Extract<
-  BrowserCaptureReceipt,
-  { status: "captured"; kind: "screenshot" }
->;
+type CaptureKind = BrowserVerificationPlan[number]["evidence"][number]["kind"];
+type CaptureRequest =
+  | { kind: "screenshot"; runtime: BrowserScreenshotRuntime }
+  | { kind: "video"; runtime: BrowserVideoRuntime };
 
 function browserIdentityArgs(identity: BrowserRunIdentity) {
   return {
@@ -42,26 +43,33 @@ function sameIdentity(actual: BrowserRunIdentity, expected: BrowserRunIdentity) 
   );
 }
 
-type ScreenshotTransfer = { assetId: string; operationId: string };
+function receiptIdentity(check: BrowserVerificationPlan[number], kind: CaptureKind) {
+  return { key: check.key, kind, path: check.path, policy: BROWSER_CAPTURE_POLICY } as const;
+}
 
-async function captureOneScreenshot(input: {
+type BrowserAssetTransfer = { assetId: string; operationId: string };
+
+async function captureOneMedia(input: {
   admin: AdminClient;
   workspaceId: string;
-  runtime: BrowserScreenshotRuntime;
+  request: CaptureRequest;
   identity: BrowserRunIdentity;
   check: BrowserVerificationPlan[number];
   signal?: AbortSignal;
-}): Promise<{ receipt: BrowserCaptureReceipt; transfer?: ScreenshotTransfer }> {
-  const { admin, workspaceId, runtime, identity, check, signal } = input;
-  const base = {
-    key: check.key,
-    kind: "screenshot",
-    path: check.path,
-    policy: BROWSER_CAPTURE_POLICY,
-  } as const;
+}): Promise<{ receipt: BrowserCaptureReceipt; transfer?: BrowserAssetTransfer }> {
+  const { admin, workspaceId, request, identity, check, signal } = input;
+  const base = receiptIdentity(check, request.kind);
   const failed = { ...base, status: "failed", reason: "capture_failed" } as const;
   try {
-    const result = await runtime.captureScreenshot({ identity, check, signal });
+    const captureInput = { identity, check, signal };
+    const capture =
+      request.kind === "screenshot"
+        ? {
+            kind: "screenshot" as const,
+            result: await request.runtime.captureScreenshot(captureInput),
+          }
+        : { kind: "video" as const, result: await request.runtime.captureVideo(captureInput) };
+    const { kind, result } = capture;
     signal?.throwIfAborted();
     if (result.status !== "captured") {
       return { receipt: browserCaptureReceiptSchema.parse({ ...base, ...result }) };
@@ -69,32 +77,51 @@ async function captureOneScreenshot(input: {
     if (result.path !== check.path || !sameIdentity(result.identity, identity)) {
       return { receipt: failed };
     }
-    const bytes = sanitizeBrowserScreenshot(result.bytes);
-    if (!bytes) return { receipt: failed };
     const assetId = randomUUID();
-    const receipt: CapturedScreenshot = {
+    const video = kind === "video" ? result : null;
+    const bytes = video ? video.bytes : sanitizeBrowserScreenshot(result.bytes);
+    if (!bytes) return { receipt: failed };
+    if (video) {
+      const elapsedMs = Date.parse(video.completedAt) - Date.parse(video.startedAt);
+      if (
+        bytes.length < 4 ||
+        bytes.length > MAX_BROWSER_VIDEO_BYTES ||
+        bytes.readUInt32BE(0) !== 0x1a45dfa3 ||
+        video.timeline.frameOffsetsMs.length !== check.interactions.length + 1 ||
+        video.timeline.durationMs > check.timeoutSeconds * 1000 ||
+        elapsedMs < 0 ||
+        elapsedMs > check.timeoutSeconds * 1000
+      ) {
+        return { receipt: failed };
+      }
+    }
+    const contentType = video ? "video/webm" : "image/png";
+    const receipt = browserCaptureReceiptSchema.safeParse({
       ...base,
       status: "captured",
       browserSessionId: result.browserSessionId,
+      ...(video ? { startedAt: video.startedAt, completedAt: video.completedAt } : {}),
       manifest: {
         assetId,
         sha256: createHash("sha256").update(bytes).digest("hex"),
-        contentType: "image/png",
+        contentType,
         sizeBytes: bytes.length,
+        ...video?.timeline,
       },
-    };
-    if (!browserCaptureReceiptSchema.safeParse(receipt).success) return { receipt: failed };
+    });
+    if (!receipt.success) return { receipt: failed };
+    const path = video ? browserVideoPath : browserScreenshotPath;
     const { operationId, error } = await uploadWorkspaceObject(admin, {
       bucket: VALIDATION_EVIDENCE_BUCKET,
       workspaceId,
-      path: browserScreenshotPath(workspaceId, identity.runId, assetId),
+      path: path(workspaceId, identity.runId, assetId),
       bytes,
-      contentType: "image/png",
+      contentType,
       deferTransfer: true,
       signal,
     });
     if (error) return { receipt: failed };
-    return { receipt, transfer: { assetId, operationId } };
+    return { receipt: receipt.data, transfer: { assetId, operationId } };
   } catch {
     signal?.throwIfAborted();
     return { receipt: failed };
@@ -114,6 +141,34 @@ async function recordWithoutMedia(
   return await (signal ? request.abortSignal(signal) : request);
 }
 
+async function captureAvailability(input: {
+  admin: AdminClient;
+  identity: BrowserRunIdentity;
+  approvedToolIds?: readonly string[];
+  request: CaptureRequest | undefined;
+  signal?: AbortSignal;
+}): Promise<"tool_not_approved" | "runtime_unavailable" | null> {
+  const { admin, request, identity, approvedToolIds, signal } = input;
+  if (
+    approvedToolIds?.length === 0 ||
+    (request && !approvedToolIds?.includes(request.runtime.approvalScopeId))
+  ) {
+    return "tool_not_approved";
+  }
+  if (!request) return "runtime_unavailable";
+  const args = {
+    ...browserIdentityArgs(identity),
+    p_approval_scope_id: request.runtime.approvalScopeId,
+  };
+  const authorization =
+    request.kind === "screenshot"
+      ? admin.rpc("authorize_session_browser_screenshot", args)
+      : admin.rpc("authorize_session_browser_video", args);
+  const { data } = await (signal ? authorization.abortSignal(signal) : authorization);
+  signal?.throwIfAborted();
+  return data === true ? null : "tool_not_approved";
+}
+
 /** Record only bounded outcomes for a frozen browser plan, before sandbox teardown. */
 export async function recordBrowserVerification(input: {
   admin: AdminClient;
@@ -122,83 +177,91 @@ export async function recordBrowserVerification(input: {
   identity: BrowserRunIdentity;
   sourceMatches: boolean;
   runtime?: BrowserScreenshotRuntime;
+  videoRuntime?: BrowserVideoRuntime;
   approvedToolIds?: readonly string[];
   signal?: AbortSignal;
 }) {
-  const { admin, identity, plan, runtime, signal } = input;
-  const unavailable = unavailableBrowserReceipts(plan, {
-    status: "unavailable",
-    reason:
-      input.approvedToolIds?.length === 0 ||
-      (runtime && !input.approvedToolIds?.includes(runtime.approvalScopeId))
-        ? "tool_not_approved"
-        : "runtime_unavailable",
-  });
+  const { admin, identity, plan, runtime, videoRuntime, signal } = input;
   if (!input.sourceMatches) {
     await recordWithoutMedia(
       admin,
       identity,
-      unavailable.map((record) => ({
-        key: record.key,
-        kind: record.kind,
-        path: record.path,
-        policy: BROWSER_CAPTURE_POLICY,
-        status: "failed",
-        reason: "source_changed",
-      })),
-      signal,
-    );
-    return;
-  }
-  if (
-    !runtime ||
-    !plan.some((check) => check.evidence.some(({ kind }) => kind === "screenshot")) ||
-    !input.approvedToolIds?.includes(runtime.approvalScopeId)
-  ) {
-    await recordWithoutMedia(admin, identity, unavailable, signal);
-    return;
-  }
-
-  const authorize = admin.rpc("authorize_session_browser_screenshot", {
-    ...browserIdentityArgs(identity),
-    p_approval_scope_id: runtime.approvalScopeId,
-  });
-  const { data: allowed } = await (signal ? authorize.abortSignal(signal) : authorize);
-  signal?.throwIfAborted();
-  if (allowed !== true) {
-    await recordWithoutMedia(
-      admin,
-      identity,
-      unavailableBrowserReceipts(plan, { status: "unavailable", reason: "tool_not_approved" }),
+      plan.flatMap((check) =>
+        check.evidence.map(({ kind }) => ({
+          ...receiptIdentity(check, kind),
+          status: "failed" as const,
+          reason: "source_changed" as const,
+        })),
+      ),
       signal,
     );
     return;
   }
 
-  const records: BrowserCaptureReceipt[] = unavailable.filter((record) => record.kind === "video");
-  const transfers: ScreenshotTransfer[] = [];
+  const requested = new Set(plan.flatMap(({ evidence }) => evidence.map(({ kind }) => kind)));
+  const capabilities: Record<CaptureKind, CaptureRequest | undefined> = {
+    screenshot: runtime ? { kind: "screenshot", runtime } : undefined,
+    video: videoRuntime ? { kind: "video", runtime: videoRuntime } : undefined,
+  };
+  const unavailable = new Map<CaptureKind, Awaited<ReturnType<typeof captureAvailability>>>();
+  for (const kind of requested) {
+    unavailable.set(kind, await captureAvailability({ ...input, request: capabilities[kind] }));
+  }
+  const records: BrowserCaptureReceipt[] = [];
+  const transfers: BrowserAssetTransfer[] = [];
   for (const check of plan) {
-    if (!check.evidence.some(({ kind }) => kind === "screenshot")) continue;
-    const captured = await captureOneScreenshot({ ...input, runtime, check });
-    records.push(captured.receipt);
-    if (captured.transfer) transfers.push(captured.transfer);
+    for (const { kind } of check.evidence) {
+      const request = capabilities[kind];
+      const reason = unavailable.get(kind);
+      if (!request || reason) {
+        records.push({
+          ...receiptIdentity(check, kind),
+          status: "unavailable",
+          reason: reason ?? "runtime_unavailable",
+        });
+        continue;
+      }
+      const captured = await captureOneMedia({ ...input, request, check });
+      records.push(captured.receipt);
+      if (captured.transfer) transfers.push(captured.transfer);
+    }
   }
   if (!transfers.length) {
     await recordWithoutMedia(admin, identity, records, signal);
     return;
   }
 
-  const request = admin.rpc("record_session_browser_screenshot_verification", {
+  const capturedVideo = records.some(
+    (record) => record.status === "captured" && record.kind === "video",
+  );
+  const capturedScreenshot = records.some(
+    (record) => record.status === "captured" && record.kind === "screenshot",
+  );
+  const transferArgs = {
     ...browserIdentityArgs(identity),
-    p_approval_scope_id: runtime.approvalScopeId,
     p_records: records,
     p_transfers: transfers,
-  });
+  };
+  const request = capturedVideo
+    ? admin.rpc("record_session_browser_media_verification", {
+        ...transferArgs,
+        ...(capturedScreenshot && runtime
+          ? { p_screenshot_approval_scope_id: runtime.approvalScopeId }
+          : {}),
+        ...(videoRuntime ? { p_video_approval_scope_id: videoRuntime.approvalScopeId } : {}),
+      })
+    : runtime
+      ? admin.rpc("record_session_browser_screenshot_verification", {
+          ...transferArgs,
+          p_approval_scope_id: runtime.approvalScopeId,
+        })
+      : null;
+  if (!request) return;
   const { error } = await (signal ? request.abortSignal(signal) : request);
   signal?.throwIfAborted();
   if (error) {
     // The server may have committed before the response failed. Leave the
-    // reservations to the normal recovery fence and never remove bytes here.
+    // reservations to the normal recovery fence without removing any bytes here.
     await recordWithoutMedia(
       admin,
       identity,

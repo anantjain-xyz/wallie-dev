@@ -1,6 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { BrowserScreenshotRuntime } from "@/lib/validation-evidence/browser-contract";
+import type {
+  BrowserScreenshotRuntime,
+  BrowserVideoRuntime,
+} from "@/lib/validation-evidence/browser-contract";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import type { WorkerConfig } from "./config";
@@ -16,6 +19,7 @@ export interface SchedulerOptions {
   /** Sleep helper; injectable for tests. */
   delay?: (ms: number) => Promise<void>;
   browserRuntime?: BrowserScreenshotRuntime;
+  browserVideoRuntime?: BrowserVideoRuntime;
 }
 
 export interface Scheduler {
@@ -63,6 +67,7 @@ export function createScheduler(
     const promise = runClaimedJob(admin, job, {
       timeoutMs: config.jobTimeoutMs,
       ...(options.browserRuntime ? { browserRuntime: options.browserRuntime } : {}),
+      ...(options.browserVideoRuntime ? { browserVideoRuntime: options.browserVideoRuntime } : {}),
     })
       .catch((error) => {
         // runClaimedJob is designed never to reject; guard anyway so an

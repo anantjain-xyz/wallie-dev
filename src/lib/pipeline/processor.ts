@@ -15,7 +15,10 @@ import {
 } from "@/lib/agent-credentials/scoped-run-credential";
 import { wakeWorker } from "@/lib/worker/wake";
 import { validateCheckpoint } from "@/lib/validation-evidence/service";
-import type { BrowserScreenshotRuntime } from "@/lib/validation-evidence/browser-contract";
+import type {
+  BrowserScreenshotRuntime,
+  BrowserVideoRuntime,
+} from "@/lib/validation-evidence/browser-contract";
 import { prepareValidationPlan, validationPlanInstructions } from "@/lib/validation-evidence/plan";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -166,6 +169,7 @@ export async function processPipelineJob(input: {
   signal?: AbortSignal;
   workerRuntime?: AttemptWorkerRuntime;
   browserRuntime?: BrowserScreenshotRuntime;
+  browserVideoRuntime?: BrowserVideoRuntime;
 }): Promise<ProcessPipelineJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
   throwIfAborted(input.signal);
@@ -213,6 +217,7 @@ export async function processPipelineJob(input: {
     pinned,
     workerRuntime: input.workerRuntime,
     browserRuntime: input.browserRuntime,
+    browserVideoRuntime: input.browserVideoRuntime,
   });
 }
 
@@ -234,6 +239,7 @@ async function runStage(input: {
   pinned: PinnedFactoryExecution | null;
   workerRuntime?: AttemptWorkerRuntime;
   browserRuntime?: BrowserScreenshotRuntime;
+  browserVideoRuntime?: BrowserVideoRuntime;
 }): Promise<ProcessPipelineJobResult> {
   const { admin, job, session, stage, pinned, captureOrderedEvents = true } = input;
   const specificationStage = session.specification_stage_id === stage.id;
@@ -1027,6 +1033,7 @@ async function runStage(input: {
               : {}),
             admin,
             browserRuntime: input.browserRuntime,
+            browserVideoRuntime: input.browserVideoRuntime,
             workspaceId: session.workspace_id,
             pipelineId: stage.pipelineId,
             runId,

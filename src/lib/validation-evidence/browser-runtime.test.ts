@@ -1,6 +1,11 @@
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { chromium } from "playwright-core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -10,7 +15,7 @@ import {
   browserRunIdentitySchema,
   type BrowserVerificationPlan,
 } from "./browser-contract";
-import { createBrowserScreenshotRuntime } from "./browser-runtime";
+import { createBrowserScreenshotRuntime, createBrowserVideoRuntime } from "./browser-runtime";
 
 const identity = {
   runId: "58400000-0000-4000-8000-000000000001",
@@ -19,6 +24,13 @@ const identity = {
   treeSha: "b".repeat(40),
 };
 const scopeId = "58400000-0000-4000-8000-000000000002/capture";
+const videoScopeId = "58400000-0000-4000-8000-000000000004/record_video";
+const ffmpeg =
+  process.env.WALLIE_BROWSER_FFMPEG_PATH ??
+  (existsSync("/usr/bin/ffmpeg") ? "/usr/bin/ffmpeg" : "/opt/homebrew/bin/ffmpeg");
+const ffprobe =
+  process.env.WALLIE_BROWSER_FFPROBE_PATH ??
+  (existsSync("/usr/bin/ffprobe") ? "/usr/bin/ffprobe" : "/opt/homebrew/bin/ffprobe");
 const brokerToken = "synthetic-fixture-broker-token-only";
 const baseCheck: BrowserVerificationPlan[number] = {
   key: "fixture",
@@ -47,10 +59,12 @@ async function startFixture({
   getDocument = () => "<main data-testid='approved-region'>Example</main>",
   reply = (target) => target,
   mediaType = "text/html; charset=utf-8",
+  ffmpegPath = ffmpeg,
 }: {
   getDocument?: (path: string) => string;
   reply?: (target: TargetReply) => TargetReply;
   mediaType?: string;
+  ffmpegPath?: string;
 } = {}) {
   const brokerRequests: Array<{ authorization?: string; body: FixtureRequest }> = [];
   const previewRequests: Array<{ path: string; authorization?: string; cookie?: string }> = [];
@@ -85,17 +99,27 @@ async function startFixture({
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Fixture listener missing.");
   origin = `http://127.0.0.1:${address.port}`;
-  const runtime = createBrowserScreenshotRuntime({
+  const environment = {
     WALLIE_BROWSER_FIXTURE_BROKER_URL: origin + "/broker",
     WALLIE_BROWSER_FIXTURE_BROKER_TOKEN: brokerToken,
     WALLIE_BROWSER_FIXTURE_ORIGIN: origin,
     WALLIE_BROWSER_FIXTURE_APPROVAL_SCOPE: scopeId,
-  });
-  if (!runtime) throw new Error("Fixture runtime is not configured.");
+  };
+  const runtime = createBrowserScreenshotRuntime(environment);
+  const videoEnvironment = {
+    ...environment,
+    WALLIE_BROWSER_VIDEO_APPROVAL_SCOPE: videoScopeId,
+    WALLIE_BROWSER_FFMPEG_PATH: ffmpegPath,
+    WALLIE_BROWSER_FFPROBE_PATH: ffprobe,
+  };
+  const videoRuntime = createBrowserVideoRuntime(videoEnvironment);
+  if (!runtime || !videoRuntime) throw new Error("Fixture runtime is not configured.");
   return {
     brokerRequests,
     previewRequests,
     runtime,
+    videoRuntime,
+    videoEnvironment,
     async stop() {
       const closed = new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
@@ -326,6 +350,203 @@ describe.skipIf(!realBrowserAvailable)("real isolated Chromium capture", () => {
       expect(result.status).toBe("failed");
       expect(fixture.previewRequests.map(({ path }) => path)).toEqual([baseCheck.path]);
     } finally {
+      await fixture.stop();
+    }
+  }, 15_000);
+});
+
+const videoCheck: BrowserVerificationPlan[number] = {
+  ...baseCheck,
+  evidence: [{ kind: "video", required: true }],
+  interactions: [
+    { action: "click", testId: "toggle" },
+    { action: "expectVisible", testId: "updated" },
+  ],
+  excludedTestIds: ["private-example"],
+};
+const realVideoAvailable =
+  process.env.WALLIE_REQUIRE_BROWSER_VIDEO_TESTS === "1" ||
+  (realBrowserAvailable && existsSync(ffmpeg) && existsSync(ffprobe));
+
+function decodeFrames(bytes: Buffer, width: number, height: number, count: number) {
+  const frameSize = width * height * 3;
+  const decoded = execFileSync(
+    ffmpeg,
+    ["-v", "error", "-i", "pipe:0", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+    { input: bytes, maxBuffer: frameSize * count + 1 },
+  );
+  expect(decoded.length).toBe(frameSize * count);
+  return Array.from({ length: count }, (_, index) =>
+    decoded.subarray(index * frameSize, (index + 1) * frameSize),
+  );
+}
+
+function containsColor(frame: Buffer, color: [number, number, number]) {
+  for (let index = 0; index < frame.length; index += 3) {
+    if (color.every((channel, offset) => Math.abs(channel - frame[index + offset]) <= 18)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+describe.skipIf(!realVideoAvailable)("real isolated WebM recording", () => {
+  it("verifies every decoded frame and keeps a new session free of prior storage", async () => {
+    const changingSecrets = firstDocument.replace(
+      "document.querySelector('strong').hidden = false;",
+      `document.querySelector('strong').hidden = false;
+        document.querySelector('[data-wallie-credential]').style.left = '55px';
+        document.querySelector('[data-wallie-private]').style.top = '100px';
+        document.querySelector('[data-wallie-private]').style.background = 'rgb(255,70,10)';`,
+    );
+    const fixture = await startFixture({
+      getDocument: (path) => (path === baseCheck.path ? changingSecrets : secondDocument),
+    });
+    try {
+      const first = await fixture.videoRuntime.captureVideo({ identity, check: videoCheck });
+      const second = await fixture.videoRuntime.captureVideo({
+        identity,
+        check: { ...videoCheck, path: "/fixtures/second", interactions: [], excludedTestIds: [] },
+      });
+      expect(first).toMatchObject({
+        status: "captured",
+        identity,
+        timeline: { widthPx: 240, heightPx: 150, frameOffsetsMs: [0, 500, 1000], durationMs: 1500 },
+      });
+      expect(second).toMatchObject({
+        status: "captured",
+        timeline: { widthPx: 240, heightPx: 150, frameOffsetsMs: [0], durationMs: 500 },
+      });
+      if (first.status !== "captured" || second.status !== "captured") {
+        throw new Error("Expected two complete isolated clips.");
+      }
+      expect(first.browserSessionId).not.toBe(second.browserSessionId);
+      expect(Date.parse(first.completedAt)).toBeGreaterThanOrEqual(Date.parse(first.startedAt));
+      const frames = decodeFrames(first.bytes, 240, 150, 3);
+      const fresh = decodeFrames(second.bytes, 240, 150, 1)[0];
+      expect(containsColor(frames[0], [12, 100, 180])).toBe(true);
+      for (const frame of frames.slice(1)) {
+        expect(containsColor(frame, [16, 120, 80])).toBe(true);
+      }
+      for (const frame of frames) {
+        for (const excluded of [
+          [255, 0, 255],
+          [251, 9, 22],
+          [245, 211, 1],
+          [3, 255, 7],
+          [255, 70, 10],
+        ] as const) {
+          expect(containsColor(frame, [...excluded])).toBe(false);
+        }
+      }
+      expect(containsColor(fresh, [85, 28, 77])).toBe(true);
+      expect(containsColor(fresh, [255, 54, 10])).toBe(false);
+      expect(fixture.videoRuntime.approvalScopeId).toBe(videoScopeId);
+      expect(
+        fixture.previewRequests.every(({ authorization, cookie }) => !authorization && !cookie),
+      ).toBe(true);
+    } finally {
+      await fixture.stop();
+    }
+  }, 30_000);
+
+  it("captures an isolated clip when the Node worker loads TypeScript", async () => {
+    const fixture = await startFixture({ getDocument: () => firstDocument });
+    try {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          "--import",
+          "./scripts/register-server-only.mjs",
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "-e",
+          `const mod = await import("./src/lib/validation-evidence/browser-runtime.ts");
+           const createRuntime = mod.createBrowserVideoRuntime ?? mod.default?.createBrowserVideoRuntime;
+           const result = await createRuntime().captureVideo(JSON.parse(process.argv[1]));
+           console.log(JSON.stringify({ status: result.status, timeline: result.timeline }));`,
+          JSON.stringify({ identity, check: videoCheck }),
+        ],
+        { env: { ...process.env, ...fixture.videoEnvironment }, timeout: 15_000 },
+      );
+      expect(JSON.parse(stdout)).toEqual({
+        status: "captured",
+        timeline: { widthPx: 240, heightPx: 150, frameOffsetsMs: [0, 500, 1000], durationMs: 1500 },
+      });
+    } finally {
+      await fixture.stop();
+    }
+  }, 20_000);
+
+  it("discards the whole recording when an interaction makes a later frame unsafe", async () => {
+    const fixture = await startFixture({
+      getDocument: () => `<main data-testid="approved-region" style="${region}">
+        <button data-testid="hide" onclick="this.parentNode.setAttribute('data-wallie-private','')">Hide</button>
+      </main>`,
+    });
+    try {
+      await expect(
+        fixture.videoRuntime.captureVideo({
+          identity,
+          check: {
+            ...videoCheck,
+            interactions: [{ action: "click", testId: "hide" }],
+            excludedTestIds: [],
+          },
+        }),
+      ).resolves.toEqual({ status: "failed", reason: "policy_excluded" });
+    } finally {
+      await fixture.stop();
+    }
+  }, 15_000);
+
+  it("discards the whole recording when a successful encoder leaves truncated output", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "wallie-truncated-webm-test-"));
+    try {
+      const ffmpegPath = join(directory, "truncate-output.cjs");
+      await writeFile(
+        ffmpegPath,
+        `#!${process.execPath}
+const { spawnSync } = require("node:child_process");
+const { truncateSync } = require("node:fs");
+const args = process.argv.slice(2);
+const result = spawnSync(${JSON.stringify(ffmpeg)}, args, { stdio: "inherit" });
+if (result.status !== 0) process.exit(result.status ?? 1);
+truncateSync(args.at(-1), 64);
+`,
+        { mode: 0o700 },
+      );
+      const fixture = await startFixture({ getDocument: () => firstDocument, ffmpegPath });
+      try {
+        await expect(
+          fixture.videoRuntime.captureVideo({ identity, check: videoCheck }),
+        ).resolves.toEqual({ status: "failed", reason: "capture_failed" });
+      } finally {
+        await fixture.stop();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("never finishes a cancelled workflow", async () => {
+    const fixture = await startFixture({ getDocument: () => firstDocument });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1_000);
+    try {
+      await expect(
+        fixture.videoRuntime.captureVideo({
+          identity,
+          check: {
+            ...videoCheck,
+            interactions: [{ action: "expectVisible", testId: "never-visible" }],
+          },
+          signal: controller.signal,
+        }),
+      ).resolves.toEqual({ status: "failed", reason: "capture_failed" });
+    } finally {
+      clearTimeout(timer);
       await fixture.stop();
     }
   }, 15_000);

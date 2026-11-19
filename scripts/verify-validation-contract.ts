@@ -125,7 +125,10 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
         "browser-screenshot-runtime": {
           "runs-on": "ubuntu-22.04",
           "timeout-minutes": 10,
-          env: { WALLIE_REQUIRE_BROWSER_CAPTURE_TESTS: "1" },
+          env: {
+            WALLIE_REQUIRE_BROWSER_CAPTURE_TESTS: "1",
+            WALLIE_REQUIRE_BROWSER_VIDEO_TESTS: "1",
+          },
           steps: [
             ...setupSteps,
             {
@@ -133,7 +136,11 @@ const expectedWorkflows: readonly ExpectedWorkflow[] = [
               run: "pnpm exec playwright-core install --with-deps chromium",
             },
             {
-              name: "Verify screenshot capture with real Chromium",
+              name: "Install FFmpeg",
+              run: "sudo apt-get update && sudo apt-get install --yes ffmpeg",
+            },
+            {
+              name: "Verify browser evidence with Chromium and FFmpeg",
               run: "pnpm test src/lib/validation-evidence/browser-runtime.test.ts",
             },
           ],

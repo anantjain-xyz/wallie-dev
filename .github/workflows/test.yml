@@ -43,6 +43,7 @@ jobs:
     timeout-minutes: 10
     env:
       WALLIE_REQUIRE_BROWSER_CAPTURE_TESTS: "1"
+      WALLIE_REQUIRE_BROWSER_VIDEO_TESTS: "1"
 
     steps:
       - name: Check out repository
@@ -65,7 +66,10 @@ jobs:
       - name: Install Chromium
         run: pnpm exec playwright-core install --with-deps chromium
 
-      - name: Verify screenshot capture with real Chromium
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+
+      - name: Verify browser evidence with Chromium and FFmpeg
         run: pnpm test src/lib/validation-evidence/browser-runtime.test.ts
 
   route-budgets:

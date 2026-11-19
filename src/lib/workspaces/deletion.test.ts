@@ -297,6 +297,10 @@ describe("durable workspace deletion", () => {
       bucket: "session-validation-evidence",
       path: `${workspaceId}/11111111-1111-4111-8111-111111111111/browser/22222222-2222-4222-8222-222222222222.png`,
     },
+    {
+      bucket: "session-validation-evidence",
+      path: `${workspaceId}/11111111-1111-4111-8111-111111111111/browser/22222222-2222-4222-8222-222222222222.webm`,
+    },
   ])("upload recovery in $bucket", ({ bucket, path }) => {
     it.each(["abandoned", "transferred"] as const)(
       "reconciles a stale upload reservation when the object was %s",

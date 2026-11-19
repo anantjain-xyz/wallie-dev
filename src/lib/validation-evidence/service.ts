@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
-import type { BrowserScreenshotRuntime } from "./browser-contract";
+import type { BrowserScreenshotRuntime, BrowserVideoRuntime } from "./browser-contract";
 import { recordBrowserVerification } from "./browser-service";
 import type { captureValidationEvidence } from "./capture";
 import { VALIDATION_EVIDENCE_BUCKET } from "./contracts";
@@ -136,6 +136,7 @@ export async function validateCheckpoint(input: {
   pinnedDeliveryPolicyRevisionId?: string | null;
   approvedToolIds?: readonly string[];
   browserRuntime?: BrowserScreenshotRuntime;
+  browserVideoRuntime?: BrowserVideoRuntime;
   runId: string;
   sandbox: import("@/lib/sandbox/types").SandboxHandle;
   checkpoint: import("@/lib/pipeline/source-checkpoint").SourceCheckpoint;
@@ -220,7 +221,7 @@ export async function validateCheckpoint(input: {
   if (browser) {
     try {
       let sourceMatches = checkpoint.headSha === browser.identity.commitSha;
-      if (sourceMatches && input.browserRuntime) {
+      if (sourceMatches && (input.browserRuntime || input.browserVideoRuntime)) {
         try {
           const identity = await readValidationIdentity(input.sandbox, input.signal);
           sourceMatches =
@@ -238,6 +239,7 @@ export async function validateCheckpoint(input: {
         ...browser,
         sourceMatches,
         runtime: input.browserRuntime,
+        videoRuntime: input.browserVideoRuntime,
         approvedToolIds: input.approvedToolIds,
         signal: input.signal,
       });

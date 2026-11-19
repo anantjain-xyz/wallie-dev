@@ -9,8 +9,9 @@ import {
 } from "@/lib/delivery-policy/contracts";
 import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import {
-  BROWSER_ASSET_FIELDS,
+  BROWSER_VIDEO_ASSET_FIELDS,
   readPrivateBrowserScreenshot,
+  readPrivateBrowserVideo,
 } from "@/lib/validation-evidence/browser-assets";
 import {
   browserCaptureReceiptSchema,
@@ -558,41 +559,63 @@ async function readBrowserEvidence({
   const accessibleAssetDigests = new Map<string, string>();
   const required = new Set(requiredKeys);
   const requirements = receipts.data.flatMap((receipt) =>
-    receipt.status === "captured" &&
-    receipt.kind === "screenshot" &&
-    required.has(`browser:screenshot:${receipt.key}`)
-      ? [receipt.manifest]
+    receipt.status === "captured" && required.has(`browser:${receipt.kind}:${receipt.key}`)
+      ? [receipt]
       : [],
   );
   if (checkpoint.output_sha === plan.commit_sha && requirements.length) {
     const { data: assets } = await admin
       .from("session_browser_verification_assets")
-      .select(BROWSER_ASSET_FIELDS)
+      .select(BROWSER_VIDEO_ASSET_FIELDS)
       .eq("workspace_id", workspaceId)
       .eq("session_id", sessionId)
       .eq("run_id", checkpoint.run_id)
       .in(
         "id",
-        requirements.map(({ assetId }) => assetId),
+        requirements.map(({ manifest }) => manifest.assetId),
       );
     const byId = new Map((assets ?? []).map((asset) => [asset.id, asset]));
-    await Promise.all(
-      requirements.map(async (manifest) => {
-        const asset = byId.get(manifest.assetId);
-        if (!asset || asset.sha256 !== manifest.sha256 || asset.size_bytes !== manifest.sizeBytes) {
-          return;
-        }
-        const result = await readPrivateBrowserScreenshot({
-          supabase: admin,
-          workspaceId,
-          sessionId,
-          runId: checkpoint.run_id,
-          asset,
-          signal: AbortSignal.timeout(ASSET_READ_TIMEOUT_MS),
-        });
-        if (result.status === "available") accessibleAssetDigests.set(asset.id, asset.sha256);
-      }),
-    );
+    for (let offset = 0; offset < requirements.length; offset += ASSET_READ_CONCURRENCY) {
+      await Promise.all(
+        requirements.slice(offset, offset + ASSET_READ_CONCURRENCY).map(async (receipt) => {
+          const { manifest } = receipt;
+          const asset = byId.get(manifest.assetId);
+          if (
+            !asset ||
+            asset.sha256 !== manifest.sha256 ||
+            asset.size_bytes !== manifest.sizeBytes
+          ) {
+            return;
+          }
+          if (
+            receipt.kind === "video" &&
+            (asset.duration_ms !== receipt.manifest.durationMs ||
+              asset.width_px !== receipt.manifest.widthPx ||
+              asset.height_px !== receipt.manifest.heightPx ||
+              !asset.frame_offsets_ms ||
+              asset.frame_offsets_ms.length !== receipt.manifest.frameOffsetsMs.length ||
+              asset.frame_offsets_ms.some(
+                (time, index) => time !== receipt.manifest.frameOffsetsMs[index],
+              ) ||
+              Date.parse(asset.capture_started_at ?? "") !== Date.parse(receipt.startedAt) ||
+              Date.parse(asset.capture_completed_at ?? "") !== Date.parse(receipt.completedAt))
+          ) {
+            return;
+          }
+          const read =
+            receipt.kind === "video" ? readPrivateBrowserVideo : readPrivateBrowserScreenshot;
+          const result = await read({
+            supabase: admin,
+            workspaceId,
+            sessionId,
+            runId: checkpoint.run_id,
+            asset,
+            signal: AbortSignal.timeout(ASSET_READ_TIMEOUT_MS),
+          });
+          if (result.status === "available") accessibleAssetDigests.set(asset.id, asset.sha256);
+        }),
+      );
+    }
   }
 
   return {

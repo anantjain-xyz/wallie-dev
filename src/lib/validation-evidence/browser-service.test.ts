@@ -11,6 +11,7 @@ const workspaceId = "10000000-0000-4000-8000-000000000001";
 const runId = "10000000-0000-4000-8000-000000000002";
 const browserSessionId = "10000000-0000-4000-8000-000000000003";
 const scope = "10000000-0000-4000-8000-000000000004/capture";
+const videoScope = "10000000-0000-4000-8000-000000000004/record_video";
 const operationId = "10000000-0000-4000-8000-000000000005";
 const screenshot = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQVDIGAACuAGcVHqFfAAAAAElFTkSuQmCC",
@@ -52,7 +53,7 @@ function fixtures(overrides?: {
   settlementFails?: boolean;
 }) {
   const rpc = vi.fn(async (name: string) => ({
-    data: name === "authorize_session_browser_screenshot" ? (overrides?.current ?? true) : null,
+    data: name.startsWith("authorize_session_browser_") ? (overrides?.current ?? true) : null,
     error:
       name === "record_session_browser_screenshot_verification" && overrides?.settlementFails
         ? { code: "PT409" }
@@ -199,6 +200,117 @@ describe("exact screenshot retention", () => {
         p_records: expect.arrayContaining([
           expect.objectContaining({
             kind: "screenshot",
+            status: "failed",
+            reason: "capture_failed",
+          }),
+        ]),
+      }),
+    );
+  });
+});
+
+const videoResult = {
+  ...result,
+  bytes: Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+  startedAt: "2026-11-19T17:00:00.000Z",
+  completedAt: "2026-11-19T17:00:00.375Z",
+  timeline: { durationMs: 500, widthPx: 240, heightPx: 160, frameOffsetsMs: [0] },
+};
+
+describe("exact video retention", () => {
+  it("settles two independently approved media reservations in one receipt", async () => {
+    const { rpc, input } = fixtures();
+    const videoOperationId = "10000000-0000-4000-8000-000000000006";
+    upload.mockResolvedValueOnce({ operationId, error: null });
+    upload.mockResolvedValueOnce({ operationId: videoOperationId, error: null });
+    await recordBrowserVerification({
+      ...input,
+      approvedToolIds: [scope, videoScope],
+      videoRuntime: {
+        approvalScopeId: videoScope,
+        captureVideo: vi.fn().mockResolvedValue(videoResult),
+      },
+    });
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "authorize_session_browser_screenshot",
+      "authorize_session_browser_video",
+      "record_session_browser_media_verification",
+    ]);
+    expect(rpc).toHaveBeenNthCalledWith(
+      2,
+      "authorize_session_browser_video",
+      expect.objectContaining({
+        p_approval_scope_id: videoScope,
+        p_run_id: runId,
+        p_attempt_count: identity.attemptCount,
+      }),
+    );
+    const [imageUpload, videoUpload] = upload.mock.calls.map(([, args]) => args);
+    const imageAsset = imageUpload.path
+      .split("/")
+      .at(-1)
+      .replace(/\.png$/, "");
+    const videoAsset = videoUpload.path
+      .split("/")
+      .at(-1)
+      .replace(/\.webm$/, "");
+    expect(videoUpload).toMatchObject({
+      workspaceId,
+      path: `${workspaceId}/${runId}/browser/${videoAsset}.webm`,
+      contentType: "video/webm",
+      bytes: videoResult.bytes,
+      deferTransfer: true,
+    });
+    expect(rpc).toHaveBeenLastCalledWith(
+      "record_session_browser_media_verification",
+      expect.objectContaining({
+        p_screenshot_approval_scope_id: scope,
+        p_video_approval_scope_id: videoScope,
+        p_transfers: [
+          { assetId: imageAsset, operationId },
+          { assetId: videoAsset, operationId: videoOperationId },
+        ],
+        p_records: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "video",
+            status: "captured",
+            startedAt: videoResult.startedAt,
+            completedAt: videoResult.completedAt,
+            manifest: {
+              assetId: videoAsset,
+              contentType: "video/webm",
+              sizeBytes: videoResult.bytes.length,
+              sha256: createHash("sha256").update(videoResult.bytes).digest("hex"),
+              ...videoResult.timeline,
+            },
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it.each([
+    { ...videoResult, identity: { ...identity, attemptCount: 4 } },
+    { ...videoResult, bytes: Buffer.from("truncated") },
+    { ...videoResult, timeline: { ...videoResult.timeline, frameOffsetsMs: [] } },
+  ])("retains no video when the workflow result cannot be verified", async (capture) => {
+    const { rpc, input } = fixtures();
+    await recordBrowserVerification({
+      ...input,
+      runtime: undefined,
+      approvedToolIds: [videoScope],
+      videoRuntime: {
+        approvalScopeId: videoScope,
+        captureVideo: vi.fn().mockResolvedValue(capture),
+      },
+    });
+    expect(upload).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenLastCalledWith(
+      "record_session_browser_verification",
+      expect.objectContaining({
+        p_records: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "video",
             status: "failed",
             reason: "capture_failed",
           }),
