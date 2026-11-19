@@ -270,6 +270,55 @@ function styleMarkdownHtml(images: "link" | "text" = "link") {
   return (tree: unknown) => styleNode(tree as HtmlNode, images);
 }
 
+type MarkdownOutputPolicy = {
+  text: (value: string) => string;
+  link: (href: string) => string | null;
+};
+
+const markdownTextBlocks = new Set([
+  "p",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "th",
+  "td",
+  "code",
+]);
+
+function restrictMarkdownOutput(policy: MarkdownOutputPolicy) {
+  function visit(node: HtmlNode) {
+    if (node.type === "text" && node.value) node.value = policy.text(node.value);
+    if (node.type === "element") {
+      // Inline formatting can split a credential assignment across text nodes.
+      // If redaction changes a block, keep its safe text and discard its inline markup.
+      if (node.tagName && markdownTextBlocks.has(node.tagName)) {
+        const text = textContent(node);
+        const redacted = policy.text(text);
+        if (redacted !== text) node.children = [{ type: "text", value: redacted }];
+      }
+      const original = node.properties;
+      node.properties = {};
+      if (node.tagName === "a") {
+        const href = typeof original?.href === "string" ? policy.link(original.href) : null;
+        if (href) node.properties = { href, rel: ["noopener", "noreferrer", "nofollow"] };
+        else node.tagName = "span";
+      }
+      if (node.tagName === "ol" && typeof original?.start === "number") {
+        node.properties.start = original.start;
+      }
+      if (node.tagName === "input" && original?.type === "checkbox") {
+        node.properties = { type: "checkbox", disabled: true, checked: original.checked === true };
+      }
+    }
+    for (const child of node.children ?? []) visit(child);
+  }
+  return (tree: unknown) => visit(tree as HtmlNode);
+}
+
 export type RenderedMarkdown = Readonly<{
   bodyHtml: SanitizedMarkdownHtml;
   html: string;
@@ -281,6 +330,7 @@ function renderMarkdownBody(
   reviewSource: boolean,
   evidenceLinks: ReadonlyMap<string, string>,
   images: "link" | "text",
+  outputPolicy?: MarkdownOutputPolicy,
 ): SanitizedMarkdownHtml {
   const processor = unified()
     .use(remarkParse)
@@ -289,6 +339,7 @@ function renderMarkdownBody(
     .use(resolveEvidenceLinks, evidenceLinks)
     .use(rehypeSanitize)
     .use(styleMarkdownHtml, images);
+  if (outputPolicy) processor.use(restrictMarkdownOutput, outputPolicy);
   if (reviewSource) processor.use(reviewSourcePositions, markdown);
   const rendered = processor.use(rehypeStringify).processSync(markdown);
   return String(rendered) as SanitizedMarkdownHtml;
@@ -306,8 +357,11 @@ export function renderMarkdown(
   };
 }
 
-export function renderConversationMarkdown(markdown: string): SanitizedMarkdownHtml {
-  return renderMarkdownBody(markdown, false, new Map(), "text");
+export function renderConversationMarkdown(
+  markdown: string,
+  outputPolicy?: MarkdownOutputPolicy,
+): SanitizedMarkdownHtml {
+  return renderMarkdownBody(markdown, false, new Map(), "text", outputPolicy);
 }
 
 /** Preserve the artifact API's existing full-document-fragment contract. */
