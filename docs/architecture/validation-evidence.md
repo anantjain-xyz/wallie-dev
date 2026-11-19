@@ -274,6 +274,13 @@ signed URLs. Objects remain accessible after sandbox teardown and follow the
 workspace deletion lifecycle. An inaccessible required asset cannot satisfy a
 delivery requirement.
 
+The Review Workbench and Run Inspector share a **Browser screenshots**
+disclosure. It loads metadata for the exact artifact's producing run or the
+displayed run. **View screenshot** fetches the verified private PNG on demand.
+The commit, tree, attempt, check, timestamp and digest remain visible when a
+recorded image becomes unavailable. A screenshot link points to that receipt
+on the same artifact or run, and opening it never fetches the PNG automatically.
+
 ## Artifact evidence links
 
 Final Markdown can reference retained reports with an evidence identity:

@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { browserCaptureReceiptSchema } from "@/lib/validation-evidence/browser-contract";
+import { loadArtifactEvidenceCheckpoint } from "@/lib/validation-evidence/artifact-links";
+import {
+  browserEvidenceSelection,
+  browserScreenshotDownloadPath,
+} from "@/features/wallie/browser-screenshot-evidence-contracts";
 
 import {
   loadReviewContext,
@@ -12,31 +17,53 @@ export const preferredRegion = "home";
 type RouteContext = { params: Promise<{ sessionId: string }> };
 
 /** These are recorded observations, not a readiness decision. */
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(request: Request, { params }: RouteContext) {
   try {
     const { sessionId } = reviewSessionParamsSchema.parse(await params);
+    const selection = browserEvidenceSelection(request.url);
     const { session, supabase } = await loadReviewContext(sessionId);
+    const checkpoint = selection.artifactId
+      ? await loadArtifactEvidenceCheckpoint({
+          supabase,
+          sessionId: session.id,
+          workspaceId: session.workspace_id,
+          artifactId: selection.artifactId,
+        })
+      : null;
+    if (
+      selection.artifactId &&
+      (!checkpoint || (selection.runId && selection.runId !== checkpoint.runId))
+    ) {
+      return reviewJson({ error: "Evidence is unavailable for this artifact." }, 409);
+    }
+    const exactRunId = checkpoint?.runId ?? selection.runId;
+    const commandQuery = supabase
+      .from("session_validation_evidence")
+      .select(
+        "run_id, workspace_id, session_id, job_id, attempt_count, repository_id, repository_full_name, commit_sha, validation_tree_sha, records, created_at",
+      )
+      .eq("session_id", session.id)
+      .eq("workspace_id", session.workspace_id);
+    const browserQuery = supabase
+      .from("session_browser_verification_receipts")
+      .select(
+        "run_id, records, created_at, plan:session_validation_plans!inner(attempt_count, commit_sha, validation_tree_sha)",
+      )
+      .eq("session_id", session.id)
+      .eq("workspace_id", session.workspace_id);
+    if (exactRunId) {
+      commandQuery.eq("run_id", exactRunId);
+      browserQuery.eq("run_id", exactRunId);
+    }
     const [commands, browser] = await Promise.all([
-      supabase
-        .from("session_validation_evidence")
-        .select(
-          "run_id, workspace_id, session_id, job_id, attempt_count, repository_id, repository_full_name, commit_sha, validation_tree_sha, records, created_at",
-        )
-        .eq("session_id", session.id)
-        .eq("workspace_id", session.workspace_id)
+      commandQuery
         .order("created_at", { ascending: false })
         .order("run_id", { ascending: false })
-        .limit(10),
-      supabase
-        .from("session_browser_verification_receipts")
-        .select(
-          "run_id, records, created_at, plan:session_validation_plans!inner(attempt_count, commit_sha, validation_tree_sha)",
-        )
-        .eq("session_id", session.id)
-        .eq("workspace_id", session.workspace_id)
+        .limit(exactRunId ? 1 : 10),
+      browserQuery
         .order("created_at", { ascending: false })
         .order("run_id", { ascending: false })
-        .limit(10),
+        .limit(exactRunId ? 1 : 10),
     ]);
     const { data: evidence, error } = commands;
     if (error) throw error;
@@ -52,14 +79,20 @@ export async function GET(_request: Request, { params }: RouteContext) {
             commitSha: plan.commit_sha,
             treeSha: plan.validation_tree_sha,
             createdAt: created_at,
-            records: parsed.data.map((record) =>
-              record.status === "captured" && record.kind === "screenshot"
-                ? {
-                    ...record,
-                    downloadUrl: `/api/sessions/${session.id}/validation-evidence/browser-assets/${record.manifest.assetId}`,
-                  }
-                : record,
-            ),
+            records: parsed.data.map((record) => {
+              if (record.status !== "captured" || record.kind !== "screenshot") return record;
+              if (checkpoint && plan.commit_sha !== checkpoint.commitSha) {
+                const { key, kind, path, policy } = record;
+                return { key, kind, path, policy, status: "failed", reason: "source_changed" };
+              }
+              return {
+                ...record,
+                downloadUrl: browserScreenshotDownloadPath(session.id, record.manifest.assetId, {
+                  runId: exactRunId,
+                  artifactId: selection.artifactId,
+                }),
+              };
+            }),
           },
         ];
       },

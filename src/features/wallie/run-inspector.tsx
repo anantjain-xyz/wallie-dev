@@ -379,6 +379,7 @@ export function RunInspector({
             kind: "run",
             workspaceId,
             runId: run.id,
+            sessionId: run.sessionId,
             artifactId: artifact.kind === "available" ? artifact.id : null,
           }}
         />

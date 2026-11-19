@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { exactBrowserScreenshotEvidenceSchema } from "@/features/wallie/browser-screenshot-evidence-contracts";
 
 const mocks = vi.hoisted(() => ({
   user: vi.fn(),
@@ -109,8 +110,8 @@ function from(table: string) {
   };
 }
 
-const list = (id = sessionId) =>
-  GET(new Request("https://wallie.test/evidence"), {
+const list = (id = sessionId, query = "") =>
+  GET(new Request(`https://wallie.test/evidence${query}`), {
     params: Promise.resolve({ sessionId: id }),
   });
 const download = (ids: { sessionId?: string; assetId?: string } = {}, artifact?: string) =>
@@ -123,8 +124,8 @@ const download = (ids: { sessionId?: string; assetId?: string } = {}, artifact?:
     },
   );
 
-const downloadScreenshot = (id = screenshotId) =>
-  downloadBrowserAsset(new Request("https://wallie.test/evidence/browser-asset"), {
+const downloadScreenshot = (id = screenshotId, query = "") =>
+  downloadBrowserAsset(new Request(`https://wallie.test/evidence/browser-asset${query}`), {
     params: Promise.resolve({ sessionId, assetId: id }),
   });
 
@@ -155,6 +156,9 @@ beforeEach(() => {
     session_validation_assets: [{ ...asset }],
     session_browser_verification_assets: [{ ...screenshot }],
     session_browser_verification_receipts: [],
+    session_validation_plans: [
+      { run_id: runId, workspace_id: workspaceId, session_id: sessionId, commit_sha: commitSha },
+    ],
     session_git_checkpoints: [
       {
         artifact_id: artifactId,
@@ -411,6 +415,118 @@ describe("validation evidence asset downloads", () => {
 });
 
 describe("private screenshot evidence", () => {
+  function capturedReceipt() {
+    return {
+      run_id: runId,
+      session_id: sessionId,
+      workspace_id: workspaceId,
+      created_at: "2026-11-19T08:00:00Z",
+      plan: { attempt_count: 2, commit_sha: commitSha, validation_tree_sha: "b".repeat(40) },
+      records: [
+        {
+          key: "checkout",
+          kind: "screenshot",
+          path: "/fixture",
+          policy: "isolated-fixture-v1",
+          status: "captured",
+          browserSessionId: artifactId,
+          manifest: {
+            assetId: screenshotId,
+            sha256: screenshot.sha256,
+            sizeBytes: screenshot.size_bytes,
+            contentType: "image/png",
+          },
+        },
+      ],
+    };
+  }
+
+  it("finds the producing screenshot receipt even when newer runs filled the session limit", async () => {
+    const receipt = capturedReceipt();
+    rows.session_validation_evidence = [];
+    rows.session_browser_verification_receipts = [
+      ...Array.from({ length: 10 }, (_, index) => ({
+        ...receipt,
+        run_id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
+      })),
+      receipt,
+    ];
+    const scoped = await list(sessionId, `?artifactId=${artifactId}`);
+    expect(scoped.status).toBe(200);
+    const serialized = await scoped.json();
+    expect(serialized).toMatchObject({
+      browserEvidence: [
+        {
+          runId,
+          commitSha,
+          records: [
+            {
+              downloadUrl: `/api/sessions/${sessionId}/validation-evidence/browser-assets/${screenshotId}?runId=${runId}&artifactId=${artifactId}`,
+            },
+          ],
+        },
+      ],
+    });
+    expect(
+      exactBrowserScreenshotEvidenceSchema.parse(serialized).browserEvidence[0]?.records,
+    ).toEqual(receipt.records);
+    expect(calls).toContainEqual({
+      table: "session_browser_verification_receipts",
+      op: "eq",
+      args: ["run_id", runId],
+    });
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("rejects inconsistent provenance selectors before reading screenshot bytes", async () => {
+    const otherRunId = "77777777-7777-4777-8777-777777777777";
+    const query = `?runId=${otherRunId}&artifactId=${artifactId}`;
+    expect((await list(sessionId, query)).status).toBe(409);
+    expect((await downloadScreenshot(screenshotId, query)).status).toBe(409);
+    expect((await downloadScreenshot(screenshotId, `?runId=${otherRunId}`)).status).toBe(404);
+    expect((await downloadScreenshot(screenshotId, "?runId=invalid")).status).toBe(400);
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("preserves stale provenance while withholding a different-commit screenshot", async () => {
+    const receipt = capturedReceipt();
+    const different = "c".repeat(40);
+    receipt.plan.commit_sha = different;
+    rows.session_browser_verification_receipts = [receipt];
+    rows.session_validation_plans[0].commit_sha = different;
+    const query = `?artifactId=${artifactId}`;
+    const result = await (await list(sessionId, query)).json();
+    expect(result.browserEvidence).toEqual([
+      expect.objectContaining({
+        commitSha: different,
+        records: [
+          {
+            key: "checkout",
+            kind: "screenshot",
+            path: "/fixture",
+            policy: "isolated-fixture-v1",
+            status: "failed",
+            reason: "source_changed",
+          },
+        ],
+      }),
+    ]);
+    expect((await downloadScreenshot(screenshotId, query)).status).toBe(409);
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("authorizes an exact artifact-owned PNG independently of command evidence", async () => {
+    rows.session_validation_evidence = [];
+    mocks.readStream.mockResolvedValueOnce({ data: new Blob([png]).stream(), error: null });
+    const response = await downloadScreenshot(
+      screenshotId,
+      `?runId=${runId}&artifactId=${artifactId}`,
+    );
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
+    expect(mocks.download).toHaveBeenCalledOnce();
+  });
+
   it("lists exact outcomes and authenticated image links without command evidence or provider metadata", async () => {
     rows.session_validation_evidence = [];
     rows.session_browser_verification_receipts = [
