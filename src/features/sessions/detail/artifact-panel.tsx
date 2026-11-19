@@ -27,7 +27,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { InlineArtifactReview } from "@/features/sessions/review/inline-artifact-review";
 import type { ReviewSessionReadOnlyReason } from "@/features/sessions/review/comment-access";
-import { SCREENSHOT_EVIDENCE_PARAM } from "@/features/wallie/browser-screenshot-evidence-contracts";
+import { SCREENSHOT_EVIDENCE_PARAM } from "@/features/wallie/browser-evidence-contracts";
 import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-inspector";
 
 export type DisplayedArtifactIdentity = Pick<

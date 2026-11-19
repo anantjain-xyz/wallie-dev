@@ -11,7 +11,7 @@ import {
   readPrivateBrowserScreenshot,
 } from "@/lib/validation-evidence/browser-assets";
 import { loadArtifactEvidenceCheckpoint } from "@/lib/validation-evidence/artifact-links";
-import { browserEvidenceSelection } from "@/features/wallie/browser-screenshot-evidence-contracts";
+import { browserEvidenceSelection } from "@/features/wallie/browser-evidence-contracts";
 
 export const preferredRegion = "home";
 type RouteContext = { params: Promise<{ sessionId: string; assetId: string }> };
