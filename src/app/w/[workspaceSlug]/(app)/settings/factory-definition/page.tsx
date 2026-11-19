@@ -28,6 +28,7 @@ export default async function FactoryDefinitionPage({
   searchParams: Promise<{
     factory?: string | string[];
     implementationAgent?: string | string[];
+    scorerRevision?: string | string[];
     revision?: string | string[];
     draft?: string | string[];
     test?: string | string[];
@@ -41,7 +42,7 @@ export default async function FactoryDefinitionPage({
   if (!isWorkspaceOperator(currentMember)) {
     notFound();
   }
-  const { factory: factoryQuery, implementationAgent, ...target } = query;
+  const { factory: factoryQuery, implementationAgent, scorerRevision, ...target } = query;
   const factoryId = idSchema.optional().safeParse(factoryQuery);
   if (!factoryId.success) return <FactoryUnavailable title="Factory definition" />;
   const selection = selectionSchema.safeParse(target);
@@ -50,9 +51,10 @@ export default async function FactoryDefinitionPage({
   if (!factory) return <FactoryUnavailable title="Factory definition" />;
 
   const prompt = idSchema.safeParse(implementationAgent);
+  const requestedScorer = selection.success ? undefined : idSchema.safeParse(scorerRevision).data;
   const [repositories, referenceOptions, { data: agent, error: agentError }] = await Promise.all([
     loadFactoryDefinitionRepositories(supabase, workspace.id, factory.id),
-    loadFactoryEditorReferenceOptions(supabase, workspace.id, factory.id),
+    loadFactoryEditorReferenceOptions(supabase, workspace.id, factory.id, requestedScorer),
     prompt.success && !selection.success
       ? supabase
           .from("factory_agent_prompt_revisions")
@@ -65,13 +67,21 @@ export default async function FactoryDefinitionPage({
   ]);
   if (agentError) throw agentError;
   if (implementationAgent !== undefined && !agent && !selection.success) notFound();
+  if (
+    scorerRevision !== undefined &&
+    !selection.success &&
+    !referenceOptions.scorers.some(({ id }) => id === requestedScorer)
+  ) {
+    notFound();
+  }
 
   return (
     <FactoryDefinitionEditor
-      key={`${factory.id}:${agent?.id ?? ""}`}
+      key={`${factory.id}:${agent?.id ?? ""}:${requestedScorer ?? ""}`}
       factoryId={factoryId.data}
       factoryName={factory.name}
       initialAgent={agent ? { agentId: agent.agent_id, promptRevisionId: agent.id } : undefined}
+      initialScorerRevisionId={requestedScorer}
       referenceOptions={referenceOptions}
       repositories={repositories
         .map(({ id, full_name }) => ({ id, fullName: full_name, isArchived: false }))

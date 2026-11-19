@@ -97,6 +97,14 @@ describe("factory scope on aggregate routes", () => {
     },
   );
 
+  it("keeps scorer list navigation scoped without carrying over revision and pagination IDs", () => {
+    expect(isFactorySelectorPath("/w/acme/scorers", "acme")).toBe(true);
+    expect(isFactorySelectorPath("/w/acme/scorers/1", "acme")).toBe(false);
+    expect(
+      factorySwitchHref("/w/acme/scorers", "after=cursor&revision=previous", secondary.id),
+    ).toBe("/w/acme/scorers?factory=secondary-id");
+  });
+
   it("offers Governance only for factories the viewer manages and resets resource filters", () => {
     const managed = { ...secondary, canManage: true };
     expect(resolveGovernanceFactorySelection([factory, managed], undefined)).toEqual({

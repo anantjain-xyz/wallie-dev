@@ -9,6 +9,7 @@ import {
   workspaceMemoryPath,
   workspaceOverviewPath,
   workspaceRunsPath,
+  workspaceScorersPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
 
@@ -101,6 +102,7 @@ export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
   return (
     isFactoryAggregatePath(pathname, workspaceSlug) ||
     pathname === workspaceAgentsPath(workspaceSlug) ||
+    pathname === workspaceScorersPath(workspaceSlug) ||
     isFactoryOutcomePath(pathname, workspaceSlug) ||
     isManagedFactoryPath(pathname, workspaceSlug)
   );
@@ -126,6 +128,7 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
   if (pathname.endsWith("/analytics") || pathname.endsWith("/overview")) {
     for (const key of ["metric", "period", "facet", "bucket"]) params.delete(key);
   }
+  if (pathname.endsWith("/scorers")) params.delete("revision");
   if (pathname.endsWith("/governance")) {
     for (const key of [
       "principal",

@@ -59,6 +59,7 @@ const navIconPaths = {
   governance: "M8 2.5 13 4.5v3.2c0 3-2 4.9-5 6-3-1.1-5-3-5-6V4.5zM6 8l1.4 1.4L10 6.8",
   agents:
     "M4 13v-1.5A3.5 3.5 0 0 1 7.5 8h1a3.5 3.5 0 0 1 3.5 3.5V13zM10 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z",
+  scorers: "M3 4h2m-2 4h2m-2 4h2m2-8h6M7 8h6m-6 4h3",
   "factory-definition": "M4 2.5h5l3 3v8H4zM9 2.5v3h3M6 8.5h4m-4 2h4",
   settings: "M3 4.5h10m-10 7h10M6 3v3m4 4v3",
 } satisfies Record<WorkspaceNavItem["id"], string>;
