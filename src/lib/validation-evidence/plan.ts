@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readSandboxBoundedTextFile } from "@/lib/sandbox/bounded-text-file";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SandboxHandle } from "@/lib/sandbox/types";
 import { readValidationIdentity, redactValidationCommand, redactValidationText } from "./capture";
@@ -33,43 +34,22 @@ export async function prepareValidationPlan(sandbox: SandboxHandle, runId: strin
   });
 }
 
-const READ_PLAN = String.raw`
-const fs = require('node:fs');
-try {
-  const fd = fs.openSync(process.argv[1], fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-  try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > 65536) throw new Error();
-    const buffer = Buffer.alloc(65537);
-    const count = fs.readSync(fd, buffer, 0, buffer.length, 0);
-    if (count > 65536 || count !== stat.size) throw new Error();
-    const text = new (require('node:util').TextDecoder)('utf-8', {fatal:true}).decode(buffer.subarray(0,count));
-    process.stdout.write(text);
-  } finally { fs.closeSync(fd); }
-} catch { process.exitCode = 1; }
-`;
-
 export async function readValidationPlan(input: {
   sandbox: SandboxHandle;
   runId: string;
   secrets: readonly string[];
   signal?: AbortSignal;
 }): Promise<ValidationPlan> {
-  input.signal?.throwIfAborted();
-  const process = await input.sandbox.exec(
-    "node",
-    ["-e", READ_PLAN, validationPlanPath(input.runId)],
-    {
-      signal: input.signal,
-    },
-  );
-  const [output, code] = await Promise.all([process.output(), process.exitCode]);
-  input.signal?.throwIfAborted();
-  if (code !== 0 || Buffer.byteLength(output.stdout) > MAX_PLAN_BYTES)
-    throw new Error("Validation plan is unavailable or exceeds its limit.");
+  const text = await readSandboxBoundedTextFile({
+    sandbox: input.sandbox,
+    path: validationPlanPath(input.runId),
+    maxBytes: MAX_PLAN_BYTES,
+    signal: input.signal,
+  });
+  if (text === null) throw new Error("Validation plan is unavailable or exceeds its limit.");
   let value: unknown;
   try {
-    value = JSON.parse(output.stdout);
+    value = JSON.parse(text);
   } catch {
     throw new Error("Validation plan is invalid.");
   }

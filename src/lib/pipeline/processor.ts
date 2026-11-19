@@ -76,6 +76,11 @@ import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/pipeline/cancel";
 import { evaluateSessionPrReadiness } from "@/lib/pipeline/pr-readiness";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { loadRunAgentPrompt } from "@/lib/factory-agents/runtime";
+import {
+  factoryMemoryProposalInstructions,
+  factoryMemoryProposalPath,
+  stageFactoryMemoryProposal,
+} from "@/lib/factory-memory/proposal";
 import { resolveFactoryMcpCredentials } from "@/lib/factory-mcp/credentials";
 import { loadFactorySkillBundle } from "@/lib/factory-skills/runtime";
 import {
@@ -677,6 +682,9 @@ async function runStage(input: {
           }),
         })
       : undefined;
+    if (context?.memoryProposalsEnabled) {
+      runEvents.protectPrivatePath(factoryMemoryProposalPath(runId));
+    }
     if (!specificationStage) await prepareValidationPlan(sandbox, runId);
     throwIfAborted(signal);
     const workerDeadlineMs =
@@ -726,6 +734,10 @@ async function runStage(input: {
         ),
         externalContextDocuments: context?.documents,
         frozenConversation: context?.conversation,
+        factoryMemories: context?.memories,
+        memoryProposalInstructions: context?.memoryProposalsEnabled
+          ? factoryMemoryProposalInstructions(runId)
+          : undefined,
         readContext: readContext.length
           ? untrustedPromptValue(
               "repo.readContext",
@@ -1078,6 +1090,17 @@ async function runStage(input: {
             ...(scopedBindingId ? { scopedCredential: true } : {}),
             signal,
           });
+      if (context?.memoryProposalsEnabled) {
+        await stageFactoryMemoryProposal({
+          ...runContextScope,
+          sandbox,
+          artifactMarkdown,
+          secrets: sensitiveValues(),
+        }).catch(() => {
+          signal?.throwIfAborted();
+          console.warn("Could not save the optional factory memory proposal.", { runId });
+        });
+      }
       const prepared = await prepareSourceDelivery({
         admin,
         baseBranch: gitInput.base_branch,

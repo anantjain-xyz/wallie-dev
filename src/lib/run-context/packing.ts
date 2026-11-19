@@ -3,7 +3,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import type { retrieveFactoryContextDocuments } from "@/lib/factory-context/retrieval";
-import type { UntrustedPromptValue } from "@/lib/pipeline/prompt-safety";
+import type { FactoryMemoryContextRow } from "@/lib/factory-memory/contracts";
+import { untrustedPromptValue, type UntrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 
 import {
   DEFAULT_RUN_CONTEXT_LIMITS,
@@ -15,6 +16,7 @@ import {
   type RunContextDocumentReceipt,
   type RunContextLimits,
   type RunContextManifest,
+  type RunContextMemoryReceipt,
 } from "./contracts";
 
 export function fingerprintRunContextInput(body: string) {
@@ -22,6 +24,13 @@ export function fingerprintRunContextInput(body: string) {
     sha256: createHash("sha256").update(body, "utf8").digest("hex"),
     utf8Bytes: Buffer.byteLength(body, "utf8"),
   };
+}
+
+export function factoryMemoryPromptValue(memory: FactoryMemoryContextRow) {
+  return untrustedPromptValue(
+    `context.memory.${memory.memory_id}.${memory.revision_id}`,
+    memory.body_md,
+  );
 }
 
 export class RunContextRequiredInputTooLargeError extends Error {
@@ -34,17 +43,20 @@ export class RunContextRequiredInputTooLargeError extends Error {
 export function packRunContext(input: {
   requiredInputs: readonly { key: string; body: string }[];
   retrieval: Awaited<ReturnType<typeof retrieveFactoryContextDocuments>>;
+  memories?: readonly FactoryMemoryContextRow[];
   conversation: RunContextConversationInput;
   limits?: RunContextLimits;
 }): {
   manifest: RunContextManifest;
   documents: UntrustedPromptValue[];
+  memories: UntrustedPromptValue[];
   conversationMessages: RunContextConversationInput["messages"];
 } {
   const limits = runContextLimitsSchema.parse(input.limits ?? DEFAULT_RUN_CONTEXT_LIMITS);
   const requiredInputs = runContextRequiredInputsSchema.parse(input.requiredInputs);
   const conversation = runContextConversationInputSchema.parse(input.conversation);
   const documents: UntrustedPromptValue[] = [];
+  const memories: UntrustedPromptValue[] = [];
   const conversationMessages: RunContextConversationInput["messages"] = [];
   // Estimate one token per UTF-8 byte for the bounded input payload. The
   // separate caps make both limits explicit without a model-specific tokenizer.
@@ -88,6 +100,20 @@ export function packRunContext(input: {
     throw new Error("Selected run context documents do not match the ordered retrieval receipts.");
   }
 
+  const memoryReceipts = input.memories?.map((memory): RunContextMemoryReceipt => {
+    const { memory_id: memoryId, revision_id: revisionId, approval_id: approvalId } = memory;
+    const value = factoryMemoryPromptValue(memory);
+    const fingerprint = fingerprintRunContextInput(value.value);
+    if (fingerprint.sha256 !== memory.content_sha256) {
+      throw new Error("An approved factory memory does not match its recorded digest.");
+    }
+    if (!reserve(fingerprint.utf8Bytes)) {
+      return { memoryId, revisionId, status: "excluded", reason: "context_budget" };
+    }
+    memories.push(value);
+    return { memoryId, revisionId, status: "selected", approvalId, ...fingerprint };
+  });
+
   const messages = [...conversation.messages]
     .sort((left, right) => left.sequence - right.sequence)
     .map((message) => {
@@ -101,7 +127,7 @@ export function packRunContext(input: {
     });
 
   const manifest = runContextManifestSchema.parse({
-    version: 1,
+    ...(memoryReceipts ? { version: 2, memories: memoryReceipts } : { version: 1 }),
     required,
     documents: documentReceipts,
     conversation: {
@@ -111,5 +137,5 @@ export function packRunContext(input: {
     },
     budget: { ...limits, usedUtf8Bytes, estimatedTokens: usedUtf8Bytes },
   });
-  return { manifest, documents, conversationMessages };
+  return { manifest, documents, memories, conversationMessages };
 }

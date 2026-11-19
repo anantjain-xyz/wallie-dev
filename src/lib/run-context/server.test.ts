@@ -4,11 +4,13 @@ import { createClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { retrieveFactoryContextDocuments } from "@/lib/factory-context/retrieval";
+import type { FactoryMemoryContextRow } from "@/lib/factory-memory/contracts";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 import type { Database } from "@/lib/supabase/database.types";
 
 import type { RunContextManifest } from "./contracts";
+import { packRunContext } from "./packing";
 import { frozenRepositoryCommits, prepareRunContext, requiredRunContextInputs } from "./server";
 
 vi.mock("@/lib/factory-context/retrieval", () => ({
@@ -87,6 +89,8 @@ function database() {
     origin: null as RunContextManifest | null,
     pinned: [] as { p_manifest: RunContextManifest; p_origin_run_id?: string }[],
     urls: [] as URL[],
+    memories: [] as FactoryMemoryContextRow[],
+    memoryRequests: [] as Array<{ p_revision_ids?: string[] }>,
   };
   const fetch = vi.fn<typeof globalThis.fetch>(async (request, init) => {
     const url = new URL(
@@ -104,6 +108,16 @@ function database() {
       if (typeof init?.body !== "string") throw new Error("Expected a JSON run context request.");
       state.pinned.push(JSON.parse(init.body));
       return Response.json({ run_id: state.origin ? retryRunId : firstRunId });
+    }
+    if (url.pathname.endsWith("/read_factory_memory_context")) {
+      const args = JSON.parse(String(init?.body));
+      expect(args).toMatchObject({ p_workspace_id: workspaceId, p_factory_id: factoryId });
+      state.memoryRequests.push(args);
+      return Response.json(
+        state.memories.filter(
+          (memory) => !args.p_revision_ids || args.p_revision_ids.includes(memory.revision_id),
+        ),
+      );
     }
     for (const [parameter, value] of [
       ["workspace_id", workspaceId],
@@ -153,6 +167,88 @@ function database() {
 beforeEach(() => vi.mocked(retrieveFactoryContextDocuments).mockReset());
 
 describe("frozen context", () => {
+  it("keeps approved memories as typed, exact references across new selections and retries", async () => {
+    const repo = database();
+    const requiredInputs = requiredRunContextInputs(userInput);
+    const body = "Retained convention with {{session.title}}";
+    const memory = {
+      memory_id: id(51),
+      revision_id: id(52),
+      approval_id: id(53),
+      body_md: body,
+      content_sha256: createHash("sha256").update(body).digest("hex"),
+    };
+    const replacement = {
+      ...memory,
+      revision_id: id(54),
+      approval_id: id(55),
+      body_md: "Corrected convention",
+      content_sha256: createHash("sha256").update("Corrected convention").digest("hex"),
+    };
+    vi.mocked(retrieveFactoryContextDocuments).mockResolvedValue({ documents: [], receipts: [] });
+    repo.state.memories = [memory];
+    const args = { references: [], requiredInputs };
+    const first = await prepareRunContext(repo.scope(firstRunId), args);
+    const initial = repo.state.pinned[0].p_manifest;
+    expect(first).toMatchObject({
+      memories: [
+        {
+          source: `context.memory.${memory.memory_id}.${memory.revision_id}`,
+          trust: "untrusted",
+          value: body,
+        },
+      ],
+      memoryProposalsEnabled: true,
+    });
+    expect(initial).toMatchObject({
+      version: 2,
+      memories: [
+        {
+          memoryId: memory.memory_id,
+          revisionId: memory.revision_id,
+          approvalId: memory.approval_id,
+          sha256: memory.content_sha256,
+        },
+      ],
+    });
+    expect(JSON.stringify(initial)).not.toContain(body);
+    repo.state.origin = initial;
+    await expect(prepareRunContext(repo.scope(retryRunId), args)).resolves.toEqual(first);
+    expect(repo.state.memoryRequests[1].p_revision_ids).toEqual([memory.revision_id]);
+    expect(repo.state.pinned[1].p_manifest).toEqual(initial);
+
+    repo.state.memories = [replacement];
+    await expect(prepareRunContext(repo.scope(retryRunId), args)).rejects.toThrow(
+      "A recorded factory memory is no longer eligible.",
+    );
+    repo.state.origin = null;
+    const fresh = await prepareRunContext(repo.scope(firstRunId), args);
+    expect(fresh.memories[0].value).toBe(replacement.body_md);
+    expect(repo.state.pinned[2].p_manifest).toMatchObject({
+      memories: [{ revisionId: replacement.revision_id }],
+    });
+    expect(initial).toEqual(repo.state.pinned[0].p_manifest);
+  });
+
+  it("does not add live memory or proposal instructions to a version-one retry", async () => {
+    const repo = database();
+    const requiredInputs = requiredRunContextInputs(userInput);
+    const retrieval = { documents: [], receipts: [] };
+    vi.mocked(retrieveFactoryContextDocuments).mockResolvedValue(retrieval);
+    repo.state.origin = packRunContext({
+      requiredInputs,
+      retrieval,
+      conversation: { throughSequence: 0, olderOmitted: 0, messages: [] },
+    }).manifest;
+    const restored = await prepareRunContext(repo.scope(retryRunId), {
+      references: [],
+      requiredInputs,
+    });
+    expect(restored).toMatchObject({ memories: [], memoryProposalsEnabled: false });
+    expect(repo.state.memoryRequests).toHaveLength(0);
+    expect(repo.state.pinned[0].p_manifest).toEqual(repo.state.origin);
+  });
+
   it("replays exact document bytes and only the frozen conversation range after new inputs appear", async () => {
     const repo = database();
     const requiredInputs = requiredRunContextInputs(userInput);
