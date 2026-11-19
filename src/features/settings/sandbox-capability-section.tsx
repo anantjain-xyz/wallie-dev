@@ -23,6 +23,7 @@ export type CapabilityRepository = Pick<
 type DefinitionTarget = { id: string; kind: "draft" | "revision"; repositoryId: string };
 
 type SandboxCapabilitySectionProps = {
+  definitionEndpoint?: string;
   definitionTarget?: DefinitionTarget;
   canManage: boolean;
   initialCheck: SettingsPageData["latestSandboxCapabilityCheck"];
@@ -85,6 +86,7 @@ export function markSandboxCapabilityCheckPollingFailed(
 export function SandboxCapabilitySection({
   canManage,
   definitionTarget,
+  definitionEndpoint,
   initialCheck,
   onCheckChange,
   onDefinitionRepositoryChange,
@@ -108,7 +110,9 @@ export function SandboxCapabilitySection({
   );
   const [loadedCheck, setCheck] = useState(initialCheck);
   const [loadedTargetQuery, setLoadedTargetQuery] = useState<string | null>(null);
-  const endpoint = `/api/workspaces/${workspaceId}/${definitionTarget ? "factory-definition/" : ""}${definitionTarget ? "capability-check" : "sandbox-capability-check"}`;
+  const endpoint = definitionTarget
+    ? (definitionEndpoint ?? `/api/workspaces/${workspaceId}/factory-definition/capability-check`)
+    : `/api/workspaces/${workspaceId}/sandbox-capability-check`;
   const targetQuery = definitionTarget
     ? new URLSearchParams({
         [definitionTarget.kind === "draft" ? "draftId" : "revisionId"]: definitionTarget.id,

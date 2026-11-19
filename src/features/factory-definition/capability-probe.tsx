@@ -12,7 +12,7 @@ type FactoryCapabilityProbeProps = Pick<
   | "sandboxConnected"
   | "setFlashMessage"
   | "workspaceId"
-> & { target: FactoryEditorDocument };
+> & { definitionEndpoint: string; target: FactoryEditorDocument };
 
 export function FactoryCapabilityProbe({
   repositories,

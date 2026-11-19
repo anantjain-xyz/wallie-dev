@@ -1,4 +1,9 @@
-import { workspaceBasePath, workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
+import {
+  workspaceAgentsPath,
+  workspaceBasePath,
+  workspaceRunsPath,
+  workspaceSessionsPath,
+} from "@/lib/routes";
 
 export const FACTORY_QUERY_PARAM = "factory";
 
@@ -35,6 +40,13 @@ export function isFactoryAggregatePath(pathname: string, workspaceSlug: string) 
   );
 }
 
+export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
+  return (
+    isFactoryAggregatePath(pathname, workspaceSlug) ||
+    pathname === workspaceAgentsPath(workspaceSlug)
+  );
+}
+
 export function withFactoryQuery(
   href: string,
   value: string | readonly string[] | null | undefined,
@@ -50,7 +62,8 @@ export function withFactoryQuery(
 
 export function factorySwitchHref(pathname: string, search: string, value: string) {
   const params = new URLSearchParams(search);
-  for (const key of ["cursor", "stage", "stageId", "sessionId", "create"]) params.delete(key);
+  for (const key of ["cursor", "stage", "stageId", "sessionId", "create", "after"])
+    params.delete(key);
   params.set(FACTORY_QUERY_PARAM, value);
   return `${pathname}?${params}`;
 }

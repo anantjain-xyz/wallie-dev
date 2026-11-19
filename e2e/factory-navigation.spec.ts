@@ -257,6 +257,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     });
 
     const workspacePath = `/w/${workspace.slug}`;
+    const agentsPath = `${workspacePath}/agents`;
     const sessionsPath = `${workspacePath}/sessions`;
     const runsPath = `${workspacePath}/runs`;
     const defaultLink = page.getByRole("link", { name: /Open session #\d+: Default session 1/ });
@@ -289,6 +290,28 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     expect(switchedQuery.has("stage")).toBe(false);
     expect(switchedQuery.get("q")).toBe("session");
     expect(switchedQuery.get("sort")).toBe("oldest");
+    await page.getByRole("link", { name: "Agents", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Agents", exact: true, level: 1 }),
+    ).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("factory")).toBe(visibleFactory.id);
+    await expect(factory.locator("option")).toHaveText([defaultFactory.name, visibleFactory.name]);
+    await expect(page.getByRole("link", { name: "New agent" })).toHaveCount(0);
+    const agents = page.getByRole("region", { name: "Factory agents" });
+    const secondaryAgentHref = await agents.getByRole("link").getAttribute("href");
+    if (!secondaryAgentHref) throw new Error("Missing the delegated factory agent.");
+    expect(new URL(secondaryAgentHref, app).searchParams.get("factory")).toBe(visibleFactory.id);
+    await capture(page, info, "05-agents-desktop-light");
+    const wrongFactory = new URL(secondaryAgentHref, app);
+    wrongFactory.searchParams.set("factory", defaultFactory.id);
+    const wrongScope = await page.goto(wrongFactory.href);
+    expect(wrongScope?.status()).toBe(404);
+    await page.goto(`${agentsPath}?factory=${restrictedFactory.id}`);
+    await expect(
+      page.getByRole("heading", { name: "Factory unavailable", exact: true }),
+    ).toBeVisible();
+    await expect(agents).toHaveCount(0);
+    await page.goto(`${sessionsPath}?factory=${visibleFactory.id}`);
     await selectFactory(page, "All factories");
     const ledger = page.getByRole("table", { name: "Sessions", exact: true });
     await expect(ledger.getByRole("row")).toHaveCount(3);
@@ -324,7 +347,9 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(`${workspacePath}?factory=${visibleFactory.id}`);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await expect(page.getByText("Customer tools session 1", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Customer tools session 1", { exact: true }).filter({ visible: true }),
+    ).toBeVisible();
     await expect(page.getByText("Default session 1", { exact: true })).toHaveCount(0);
     await expect(factory.locator("option")).toHaveText([
       "All factories",

@@ -4,7 +4,7 @@ export const workspaceNavSections = ["Work", "Improve", "Configure", "Platform",
 
 export type WorkspaceNavItem = {
   href: string;
-  id: "pipeline" | "sessions" | "runs" | "factory-definition" | "settings";
+  id: "pipeline" | "sessions" | "runs" | "agents" | "factory-definition" | "settings";
   label: string;
   section: (typeof workspaceNavSections)[number];
 };
@@ -67,13 +67,34 @@ export function workspaceRunDetailPath(workspaceSlug: string, runId: string) {
   return `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`;
 }
 
+export function workspaceAgentsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/agents`, query);
+}
+
+export function workspaceAgentDetailPath(
+  workspaceSlug: string,
+  agentId: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(
+    `${workspaceAgentsPath(workspaceSlug)}/${encodeURIComponent(agentId)}`,
+    query,
+  );
+}
+
 export function workspaceSettingsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
 export function workspaceFactoryDefinitionPath(
   workspaceSlug: string,
-  query?: ({ revision: string } | { draft: string }) & { test?: string },
+  query?: {
+    factory?: string;
+    implementationAgent?: string;
+    revision?: string;
+    draft?: string;
+    test?: string;
+  },
 ) {
   return withSearchParams(`${workspaceSettingsPath(workspaceSlug)}/factory-definition`, query);
 }
@@ -91,6 +112,12 @@ export function getWorkspaceNavItems(
       section: "Work",
     },
     { id: "runs", href: workspaceRunsPath(workspaceSlug), label: "Runs", section: "Work" },
+    {
+      id: "agents",
+      href: workspaceAgentsPath(workspaceSlug),
+      label: "Agents",
+      section: "Configure",
+    },
   ];
   if (canManageFactoryDefinition) {
     items.push({

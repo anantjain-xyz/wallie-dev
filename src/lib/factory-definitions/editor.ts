@@ -27,7 +27,8 @@ import {
 import { loadSettingsBaseline } from "./settings-baseline";
 import {
   selectCurrentFactoryActivation,
-  selectDefaultFactory,
+  selectFactory,
+  selectFactoryBaselinePipeline,
   selectStoredFactoryDefinition,
   type FactoryDefinitionTarget,
 } from "./storage";
@@ -35,8 +36,12 @@ import { factoryDefinitionFromBundle, readCompiledFactoryDefinition } from "./st
 
 type Client = SupabaseClient<Database>;
 
-async function loadEditorHead(client: Client, workspaceId: string) {
-  const { data: factory, error: factoryError } = await selectDefaultFactory(client, workspaceId);
+async function loadEditorHead(client: Client, workspaceId: string, factoryId?: string) {
+  const { data: factory, error: factoryError } = await selectFactory(
+    client,
+    workspaceId,
+    factoryId,
+  );
   if (factoryError) throw factoryError;
   if (!factory) return null;
 
@@ -54,7 +59,7 @@ async function loadEditorHead(client: Client, workspaceId: string) {
     activationNumber,
   );
   if (draftError) throw draftError;
-  return { factoryId: factory.id, activation, activationNumber, draft };
+  return { factory, activation, activationNumber, draft };
 }
 
 function editorDocument(
@@ -100,20 +105,24 @@ export async function loadFactoryEditorDocument(
   client: Client,
   workspaceId: string,
   target: FactoryDefinitionTarget,
+  factoryId?: string,
 ): Promise<FactoryEditorDocument | null> {
-  const { data: factory, error } = await selectDefaultFactory(client, workspaceId);
+  const { data: factory, error } = await selectFactory(client, workspaceId, factoryId);
   if (error) throw error;
   if (!factory) return null;
   return readEditorDocument(client, workspaceId, factory.id, target);
 }
 
-async function loadEditorBaseline(client: Client, workspaceId: string, factoryId: string) {
-  const { data: pipeline, error } = await client
-    .from("pipelines")
-    .select("id, operating_rules_md")
-    .eq("workspace_id", workspaceId)
-    .eq("is_default", true)
-    .maybeSingle();
+async function loadEditorBaseline(
+  client: Client,
+  workspaceId: string,
+  factory: { id: string; is_default: boolean },
+) {
+  const { data: pipeline, error } = await selectFactoryBaselinePipeline(
+    client,
+    workspaceId,
+    factory,
+  );
   if (error) throw error;
   if (!pipeline) return null;
 
@@ -124,7 +133,7 @@ async function loadEditorBaseline(client: Client, workspaceId: string, factoryId
     pipeline.id,
     stages,
     pipeline.operating_rules_md,
-    factoryId,
+    factory,
   );
   if (!bundle) return null;
 
@@ -136,18 +145,19 @@ async function loadEditorBaseline(client: Client, workspaceId: string, factoryId
 export async function loadFactoryEditorSnapshot(
   client: Client,
   workspaceId: string,
+  factoryId?: string,
 ): Promise<FactoryEditorSnapshot | null> {
-  const head = await loadEditorHead(client, workspaceId);
+  const head = await loadEditorHead(client, workspaceId, factoryId);
   if (!head) return null;
-  const { activation, activationNumber, draft, factoryId } = head;
+  const { activation, activationNumber, draft, factory } = head;
   const [published, baseline, sandbox] = await Promise.all([
     activation
-      ? readEditorDocument(client, workspaceId, factoryId, {
+      ? readEditorDocument(client, workspaceId, factory.id, {
           kind: "revision",
           id: activation.revision_id,
         })
       : null,
-    !activation && !draft ? loadEditorBaseline(client, workspaceId, factoryId) : null,
+    !activation && !draft ? loadEditorBaseline(client, workspaceId, factory) : null,
     loadWorkspaceSandboxOverview(client, workspaceId),
   ]);
   // If the workspace is deleted during the load, the observed activation can no longer be resolved.
@@ -167,8 +177,9 @@ export async function previewFactoryEditorDefinition(
   client: Client,
   workspaceId: string,
   request: FactoryEditorPreviewRequest,
+  factoryId?: string,
 ): Promise<{ ok: true; content: FactoryEditorContent } | FactoryDefinitionMutationFailure> {
-  const head = await loadEditorHead(client, workspaceId);
+  const head = await loadEditorHead(client, workspaceId, factoryId);
   if (!head) return mutationError({ code: "P0002" });
   if (
     head.activationNumber !== request.expectedActivationNumber ||
@@ -182,7 +193,7 @@ export async function previewFactoryEditorDefinition(
 
   const catalog = await loadFactoryDefinitionCatalog(client, {
     workspaceId,
-    factoryId: head.factoryId,
+    factoryId: head.factory.id,
     ...factoryComponentRevisionsForSource(request.source),
   });
   const compiled = compileFactoryDefinition(

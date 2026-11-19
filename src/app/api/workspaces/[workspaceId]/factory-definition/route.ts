@@ -2,17 +2,20 @@ import { z } from "zod";
 
 import { mutateFactoryDefinition } from "@/lib/factory-definitions/mutations";
 import {
+  factoryDefinitionRouteParamsSchema,
+  type FactoryDefinitionRouteContext,
+} from "@/lib/factory-definitions/route-params";
+import {
   factoryDefinitionExpectedActivationSchema,
   factoryDefinitionSourceSchema,
 } from "@/lib/factory-definitions/schema";
 import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
+import { selectFactory } from "@/lib/factory-definitions/storage";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/database.types";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
-type RouteContext = { params: Promise<{ workspaceId: string }> };
 const headers = { "Cache-Control": "private, no-store" };
-const workspaceIdSchema = z.string().uuid();
 const positiveDecimal = z
   .string()
   .regex(/^[1-9]\d*$/)
@@ -70,25 +73,29 @@ function errorResponse(error: string, status: number) {
   return Response.json({ error }, { status, headers });
 }
 
-export async function GET(request: Request, { params }: RouteContext) {
-  const workspaceId = workspaceIdSchema.safeParse((await params).workspaceId);
+export async function GET(request: Request, { params }: FactoryDefinitionRouteContext) {
+  const scope = factoryDefinitionRouteParamsSchema.safeParse(await params);
   const query = historyQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
-  if (!workspaceId.success || !query.success) {
+  if (!scope.success || !query.success) {
     return errorResponse("Invalid factory activation history request.", 400);
   }
 
   try {
-    const access = await requireWorkspaceAccessById(workspaceId.data);
+    const { workspaceId, factoryId } = scope.data;
+    const access = await requireWorkspaceAccessById(workspaceId);
     if (!access.ok) return errorResponse(access.error, access.status);
     const { supabase, workspace } = access.context;
-    const { data: factory, error: factoryError } = await supabase
-      .from("factories")
-      .select("id")
-      .eq("workspace_id", workspace.id)
-      .eq("is_default", true)
-      .maybeSingle();
+    const { data: factory, error: factoryError } = await selectFactory(
+      supabase,
+      workspace.id,
+      factoryId,
+    );
     if (factoryError) throw factoryError;
-    if (!factory) return errorResponse("Default factory not found.", 404);
+    if (!factory)
+      return errorResponse(
+        factoryId ? "Selected factory unavailable." : "Default factory not found.",
+        404,
+      );
 
     const scopedActivations = () =>
       supabase
@@ -135,12 +142,13 @@ export async function GET(request: Request, { params }: RouteContext) {
   }
 }
 
-export async function POST(request: Request, { params }: RouteContext) {
-  const workspaceId = workspaceIdSchema.safeParse((await params).workspaceId);
-  if (!workspaceId.success) return errorResponse("Invalid workspace id.", 400);
+export async function POST(request: Request, { params }: FactoryDefinitionRouteContext) {
+  const scope = factoryDefinitionRouteParamsSchema.safeParse(await params);
+  if (!scope.success) return errorResponse("Invalid factory definition scope.", 400);
 
   try {
-    const access = await requireWorkspaceAccessById(workspaceId.data, { requireManager: true });
+    const { workspaceId, factoryId } = scope.data;
+    const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });
     if (!access.ok) return errorResponse(access.error, access.status);
 
     const body = parseFactoryDefinitionJson(await request.text().catch(() => ""));
@@ -151,6 +159,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const result = await mutateFactoryDefinition({
       admin: createSupabaseAdminClient(),
       workspaceId: access.context.workspace.id,
+      ...(factoryId ? { factoryId } : {}),
       actorUserId: access.context.user.id,
       command: command.data,
     });

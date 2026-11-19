@@ -11,10 +11,12 @@ import {
 } from "@/lib/factory-definitions/candidate-smoke-contracts";
 import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { workspaceIdParamsSchema } from "@/lib/workspaces";
+import {
+  factoryDefinitionRouteParamsSchema,
+  type FactoryDefinitionRouteContext,
+} from "@/lib/factory-definitions/route-params";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
-type RouteContext = { params: Promise<{ workspaceId: string }> };
 const headers = { "Cache-Control": "private, no-store" };
 
 export const maxDuration = 180;
@@ -23,8 +25,8 @@ function respond(body: unknown, status = 200) {
   return Response.json(body, { headers, status });
 }
 
-export async function GET(request: Request, { params }: RouteContext) {
-  const workspace = workspaceIdParamsSchema.safeParse(await params);
+export async function GET(request: Request, { params }: FactoryDefinitionRouteContext) {
+  const workspace = factoryDefinitionRouteParamsSchema.safeParse(await params);
   const query = new URL(request.url).searchParams;
   const selection = candidateSmokeHistoryQuerySchema.safeParse(Object.fromEntries(query));
   if (!workspace.success || !selection.success || query.size !== 3) {
@@ -40,7 +42,11 @@ export async function GET(request: Request, { params }: RouteContext) {
     });
     if (!access.ok) return respond({ error: access.error }, access.status);
 
-    const scope = { workspaceId: access.context.workspace.id, ...selection.data };
+    const scope = {
+      workspaceId: access.context.workspace.id,
+      ...(workspace.data.factoryId ? { factoryId: workspace.data.factoryId } : {}),
+      ...selection.data,
+    };
     const [history, read] = await Promise.all([
       listFactoryDefinitionSmokeTests({ client: access.context.supabase, ...scope }),
       readFactoryDefinitionSmokeEligibility({
@@ -57,8 +63,8 @@ export async function GET(request: Request, { params }: RouteContext) {
   }
 }
 
-export async function POST(request: Request, { params }: RouteContext) {
-  const workspace = workspaceIdParamsSchema.safeParse(await params);
+export async function POST(request: Request, { params }: FactoryDefinitionRouteContext) {
+  const workspace = factoryDefinitionRouteParamsSchema.safeParse(await params);
   if (!workspace.success) return respond({ error: "Invalid workspace id." }, 400);
 
   try {
@@ -80,6 +86,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const result = await startFactoryDefinitionSmokeTest({
       admin: createSupabaseAdminClient(),
       workspaceId: access.context.workspace.id,
+      ...(workspace.data.factoryId ? { factoryId: workspace.data.factoryId } : {}),
       actorUserId: access.context.user.id,
       command: command.data,
     });

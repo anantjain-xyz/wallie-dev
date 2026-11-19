@@ -4,9 +4,10 @@ import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execut
 import type { FactoryEditorExecutionProfileResponse } from "@/lib/factory-definitions/execution-profile-contracts";
 import { checkFactoryProfileCredentialReadiness } from "@/lib/factory-definitions/execution-profile-readiness";
 import {
-  selectDefaultFactory,
-  selectStoredFactoryDefinition,
-} from "@/lib/factory-definitions/storage";
+  factoryDefinitionRouteParamsSchema,
+  type FactoryDefinitionRouteContext,
+} from "@/lib/factory-definitions/route-params";
+import { selectFactory, selectStoredFactoryDefinition } from "@/lib/factory-definitions/storage";
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import {
   assertCurrentSandboxCapabilityCheck,
@@ -92,11 +93,8 @@ async function checkSandboxReadiness({
   }
 }
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ workspaceId: string }> },
-) {
-  const workspace = idSchema.safeParse((await params).workspaceId);
+export async function GET(request: Request, { params }: FactoryDefinitionRouteContext) {
+  const workspace = factoryDefinitionRouteParamsSchema.safeParse(await params);
   const search = new URL(request.url).searchParams;
   const target = targetQuery.safeParse(Object.fromEntries(search));
   if (!workspace.success || search.size !== 1 || !target.success) {
@@ -104,13 +102,16 @@ export async function GET(
   }
 
   try {
-    const access = await requireWorkspaceAccessById(workspace.data, { requireManager: true });
+    const access = await requireWorkspaceAccessById(workspace.data.workspaceId, {
+      requireManager: true,
+    });
     if (!access.ok) return respond({ error: access.error }, access.status);
     const { currentMember, supabase, workspace: authorized } = access.context;
     const workspaceId = authorized.id;
-    const { data: factory, error: factoryError } = await selectDefaultFactory(
+    const { data: factory, error: factoryError } = await selectFactory(
       supabase,
       workspaceId,
+      workspace.data.factoryId,
     );
     if (factoryError) throw factoryError;
     if (!factory) return respond({ error: "Factory unavailable." }, 404);

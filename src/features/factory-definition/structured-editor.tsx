@@ -18,9 +18,12 @@ import {
   stallTimeoutMinutesToMs,
   stallTimeoutMsToMinutes,
 } from "@/lib/agent-config/contracts";
+import type { FactoryEditorReferenceOptions } from "@/lib/factory-definitions/editor-reference-options";
 import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
+import { MAX_MCP_BINDINGS } from "@/lib/factory-mcp/manifest";
 import { SANDBOX_PROVIDERS, sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 
+type ToolBinding = NonNullable<SerialFactoryDefinition["mcpBindings"]>[number];
 type Stage = SerialFactoryDefinition["stages"][number];
 
 const sandboxLabels = {
@@ -79,6 +82,7 @@ function Field({ children, label }: { children: ReactNode; label: string }) {
 function TextField({
   id,
   label,
+  list,
   maxLength,
   onChange,
   placeholder,
@@ -86,6 +90,7 @@ function TextField({
 }: {
   id?: string;
   label: string;
+  list?: string;
   maxLength?: number;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -96,6 +101,7 @@ function TextField({
       <input
         className="ui-input"
         id={id}
+        list={list}
         maxLength={maxLength}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -150,18 +156,23 @@ function ReferenceList({
 export function StructuredFactoryDefinitionEditor({
   disabled,
   onChange,
+  referenceOptions,
   repositories,
   value,
 }: {
   disabled?: boolean;
   onChange: (value: SerialFactoryDefinition) => void;
+  referenceOptions?: FactoryEditorReferenceOptions;
   repositories: Parameters<typeof FactoryRepositoryBindingsEditor>[0]["repositories"];
   value: SerialFactoryDefinition;
 }) {
   const editorId = useId();
   const focusNext = useRef<string>(null);
   const [stageAnnouncement, setStageAnnouncement] = useState("");
-  const { agent, stages } = value;
+  const { agent, stages, mcpBindings = [], executionGrant } = value;
+  const skillOptions = referenceOptions?.skills.filter(({ id }) => !value.skills.includes(id));
+  const toolOptions = referenceOptions?.tools ?? [];
+  const toolListId = `${editorId}-tool-revisions`;
   const stageKeys = new Set<string>();
 
   useLayoutEffect(() => {
@@ -176,6 +187,15 @@ export function StructuredFactoryDefinitionEditor({
     next: SerialFactoryDefinition[K],
   ) {
     onChange({ ...value, [key]: next });
+  }
+
+  function updateTool(index: number, patch: Partial<ToolBinding>) {
+    update(
+      "mcpBindings",
+      mcpBindings.map((binding, currentIndex) =>
+        currentIndex === index ? { ...binding, ...patch } : binding,
+      ),
+    );
   }
 
   function updateAgent(patch: Partial<SerialFactoryDefinition["agent"]>) {
@@ -281,13 +301,146 @@ export function StructuredFactoryDefinitionEditor({
               Agent instructions are fixed text. Template variables stay literal.
             </p>
           </div>
-          <ReferenceList
-            description="One skill revision ID per line."
-            label="Skills"
-            onChange={(next) => update("skills", next)}
-            values={value.skills}
-          />
+          <div className="space-y-3">
+            <ReferenceList
+              description="One skill revision ID per line."
+              label="Skills"
+              onChange={(next) => update("skills", next)}
+              values={value.skills}
+            />
+            {skillOptions?.length ? (
+              <Field label="Add a skill revision">
+                <select
+                  className="ui-select"
+                  onChange={(event) => {
+                    if (event.target.value) update("skills", [...value.skills, event.target.value]);
+                  }}
+                  value=""
+                >
+                  <option value="">Choose a skill revision</option>
+                  {skillOptions.map(({ id, label }) => (
+                    <option key={id} value={id}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
+          </div>
         </div>
+      </section>
+
+      <section
+        aria-labelledby={`${editorId}-tools`}
+        className="min-w-0 space-y-4 border-t border-border pt-6"
+      >
+        <h3 className="type-section-title text-foreground" id={`${editorId}-tools`}>
+          Tool bindings
+        </h3>
+        <datalist id={toolListId}>
+          {toolOptions.map(({ id, label }) => (
+            <option key={id} label={label} value={id} />
+          ))}
+        </datalist>
+        {mcpBindings.length ? (
+          <ol className="space-y-4">
+            {mcpBindings.map((binding, index) => (
+              <li className="min-w-0 space-y-4 rounded-md border border-border p-4" key={index}>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <TextField
+                    label={`Tool revision ${index + 1}`}
+                    list={toolListId}
+                    onChange={(toolRevisionId) => updateTool(index, { toolRevisionId })}
+                    placeholder="Approved MCP revision ID"
+                    value={binding.toolRevisionId}
+                  />
+                  <TextField
+                    label="MCP secret binding"
+                    onChange={(value) => updateTool(index, { secretBindingId: value || undefined })}
+                    placeholder="Optional binding ID"
+                    value={binding.secretBindingId ?? ""}
+                  />
+                </div>
+                <ReferenceList
+                  description={
+                    toolOptions
+                      .find(({ id }) => id === binding.toolRevisionId)
+                      ?.operations.join(", ") || "One approved operation name per line."
+                  }
+                  label="Allowed operations"
+                  onChange={(operations) => updateTool(index, { operations })}
+                  values={binding.operations}
+                />
+                <button
+                  aria-label={`Remove tool binding ${index + 1}`}
+                  className="ui-button"
+                  onClick={() => {
+                    const remaining = mcpBindings.filter((_, position) => position !== index);
+                    update("mcpBindings", remaining.length ? remaining : undefined);
+                  }}
+                  type="button"
+                >
+                  Remove binding
+                </button>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        <button
+          className="ui-button"
+          disabled={mcpBindings.length >= MAX_MCP_BINDINGS}
+          onClick={() =>
+            update("mcpBindings", [...mcpBindings, { toolRevisionId: "", operations: [] }])
+          }
+          type="button"
+        >
+          Add tool binding
+        </button>
+      </section>
+
+      <section
+        aria-labelledby={`${editorId}-authority`}
+        className="min-w-0 space-y-4 border-t border-border pt-6"
+      >
+        <h3 className="type-section-title text-foreground" id={`${editorId}-authority`}>
+          Execution authority
+        </h3>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextField
+            label="Execution grant"
+            onChange={(id) =>
+              onChange({
+                ...value,
+                credentialBindingId: undefined,
+                executionGrant: id ? { id, version: executionGrant?.version ?? 1 } : undefined,
+              })
+            }
+            placeholder="Optional approved grant ID"
+            value={executionGrant?.id ?? ""}
+          />
+          {executionGrant ? (
+            <Field label="Grant version">
+              <input
+                className="ui-input"
+                min={1}
+                onChange={(event) =>
+                  onChange({
+                    ...value,
+                    credentialBindingId: undefined,
+                    executionGrant: { ...executionGrant, version: event.target.valueAsNumber },
+                  })
+                }
+                required
+                type="number"
+                value={Number.isFinite(executionGrant.version) ? executionGrant.version : ""}
+              />
+            </Field>
+          ) : null}
+        </div>
+        <p className="type-annotation text-muted">
+          Save the grant in the draft to attach its service credential. Secret values stay in
+          Settings.
+        </p>
       </section>
 
       <section

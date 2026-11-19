@@ -32,6 +32,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import {
   FACTORY_QUERY_PARAM,
   isFactoryAggregatePath,
+  isFactorySelectorPath,
   withFactoryQuery,
 } from "@/features/factories/factory-selection";
 import {
@@ -415,9 +416,12 @@ export function ShellHeader({
   }
 
   function navLinkProps(item: WorkspaceNavItem, mobile = false) {
+    const scopedFactory = factory?.length === 1 && factory[0] === "all" ? undefined : factory;
     const href = isFactoryAggregatePath(item.href, workspace.slug)
       ? withFactoryQuery(item.href, factory)
-      : item.href;
+      : item.id === "agents" || item.id === "factory-definition"
+        ? withFactoryQuery(item.href, scopedFactory)
+        : item.href;
     return {
       href,
       // From the pipeline, load the real page ahead of the click. The default
@@ -544,7 +548,7 @@ export function ShellHeader({
               <ThemeToggle />
               <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
             </div>
-            {factorySelector && isFactoryAggregatePath(pathname, workspace.slug) ? (
+            {factorySelector && isFactorySelectorPath(pathname, workspace.slug) ? (
               <div className="min-w-0 basis-full pb-1 sm:basis-auto sm:pb-0">{factorySelector}</div>
             ) : null}
           </div>

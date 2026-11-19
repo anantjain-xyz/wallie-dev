@@ -8,19 +8,24 @@ import {
   candidateSmokeIdSchema,
 } from "@/lib/factory-definitions/candidate-smoke-contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { workspaceIdParamsSchema } from "@/lib/workspaces";
+import {
+  factoryDefinitionRouteParamsSchema,
+  type FactoryDefinitionRouteContext,
+} from "@/lib/factory-definitions/route-params";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
-type RouteContext = { params: Promise<{ workspaceId: string; testId: string }> };
+type FactoryCandidateRouteContext = {
+  params: Promise<Awaited<FactoryDefinitionRouteContext["params"]> & { testId: string }>;
+};
 const headers = { "Cache-Control": "private, no-store" };
 
 function respond(body: unknown, status = 200) {
   return Response.json(body, { headers, status });
 }
 
-export async function GET(request: Request, { params }: RouteContext) {
+export async function GET(request: Request, { params }: FactoryCandidateRouteContext) {
   const routeParams = await params;
-  const workspace = workspaceIdParamsSchema.safeParse(routeParams);
+  const workspace = factoryDefinitionRouteParamsSchema.safeParse(routeParams);
   const testId = candidateSmokeIdSchema.safeParse(routeParams.testId);
   const search = new URL(request.url).searchParams;
   const query = candidateSmokeHistoryQuerySchema.safeParse(Object.fromEntries(search));
@@ -37,6 +42,7 @@ export async function GET(request: Request, { params }: RouteContext) {
     const result = await readFactoryDefinitionSmokeTest({
       client: access.context.supabase,
       workspaceId: access.context.workspace.id,
+      ...(workspace.data.factoryId ? { factoryId: workspace.data.factoryId } : {}),
       testId: testId.data,
       ...query.data,
     });
@@ -48,9 +54,9 @@ export async function GET(request: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(request: Request, { params }: RouteContext) {
+export async function DELETE(request: Request, { params }: FactoryCandidateRouteContext) {
   const routeParams = await params;
-  const workspace = workspaceIdParamsSchema.safeParse(routeParams);
+  const workspace = factoryDefinitionRouteParamsSchema.safeParse(routeParams);
   const testId = candidateSmokeIdSchema.safeParse(routeParams.testId);
   const search = new URL(request.url).searchParams;
   const query = candidateSmokeCancelQuerySchema.safeParse(Object.fromEntries(search));
@@ -70,6 +76,7 @@ export async function DELETE(request: Request, { params }: RouteContext) {
     const result = await cancelFactoryDefinitionSmokeTest({
       admin: createSupabaseAdminClient(),
       workspaceId: access.context.workspace.id,
+      ...(workspace.data.factoryId ? { factoryId: workspace.data.factoryId } : {}),
       actorUserId: access.context.user.id,
       testId: testId.data,
       digest: query.data.digest,

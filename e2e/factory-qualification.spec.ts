@@ -155,7 +155,7 @@ async function substituteCandidateExecution({
   // Run the real reservation and receipt writes, substituting the hosted provider result.
   // The editor's eligibility, evidence reads, publish, rollback and admission stay real.
   await page.route(
-    `**/api/workspaces/${workspaceId}/factory-definition/candidate-tests`,
+    `**/api/workspaces/${workspaceId}/{factory-definition,factories/${factory.id}/definition}/candidate-tests`,
     async (route) => {
       if (route.request().method() !== "POST") return route.continue();
       const command = candidateSmokeStartSchema.parse(route.request().postDataJSON());
@@ -449,6 +449,7 @@ async function recordSkillPromptManifest(
 }
 
 test("qualifies definition edit, test, publish, run admission and rollback", async ({
+  browser,
   page,
   baseURL,
 }, testInfo) => {
@@ -471,10 +472,12 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
   });
   const slug = `factory-qualification-${randomUUID().slice(0, 8)}`;
   const email = `${slug}@example.test`;
+  const readerEmail = `${slug}-reader@example.test`;
   const account = await admin.auth.admin.createUser({ email, email_confirm: true });
   if (account.error) throw account.error;
   const user = account.data.user;
   let workspaceId: string | undefined;
+  let readerId: string | undefined;
   try {
     const workspace = await checked(
       admin.rpc("create_workspace", {
@@ -509,19 +512,53 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     );
     expect(createSkill.status(), await createSkill.text()).toBe(201);
     const skillRevision = skillRevisionResponseSchema.parse(await createSkill.json()).revision;
-    const createAgent = await page.request.post(agentsPath, {
-      data: {
-        name: "Implementation reviewer",
-        slug: "implementation-reviewer",
-        promptMd: "Review the assigned stage. {{session.prompt}} stays literal.",
-      },
-    });
+    await page.getByRole("link", { name: "Agents", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+    await page.getByLabel("Agent name", { exact: true }).fill("Implementation reviewer");
+    await page.getByLabel("Identifier", { exact: true }).fill("implementation-reviewer");
+    const agentPrompt = page.getByRole("textbox", { name: "Implementation prompt", exact: true });
+    await agentPrompt.fill("Review the assigned stage. {{session.prompt}} stays literal.");
+    const [createAgent] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url() === `${app}${agentsPath}` && response.request().method() === "POST",
+      ),
+      page.getByRole("button", { name: "Create agent", exact: true }).click(),
+    ]);
     expect(createAgent.status(), await createAgent.text()).toBe(201);
     const firstAgentPrompt = agentRevisionResponseSchema.parse(await createAgent.json()).revision;
+    const agentPage = `/w/${workspace.slug}/agents/${firstAgentPrompt.agent_id}?factory=${factory.id}`;
+    await expect(
+      page.getByRole("heading", { name: "Prompt revision 1", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("pre")).toContainText(firstAgentPrompt.prompt_md);
+    await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
     const promptInput = page.getByRole("textbox", { name: "Implementation agent prompt revision" });
-    await promptInput.fill(firstAgentPrompt.id);
-    await page.getByRole("textbox", { name: "Skills", exact: true }).fill(skillRevision.id);
-    await page.getByRole("button", { name: "Save draft" }).click();
+    await expect(promptInput).toHaveValue(firstAgentPrompt.id);
+    const skillPicker = page.getByRole("combobox", { name: "Add a skill revision", exact: true });
+    await expect(
+      skillPicker.getByRole("option", { name: `${skillName} · Revision 1` }),
+    ).toHaveCount(1);
+    await skillPicker.selectOption(skillRevision.id);
+    await expect(page.getByRole("textbox", { name: "Skills", exact: true })).toHaveValue(
+      skillRevision.id,
+    );
+    await page.getByRole("button", { name: "Validate and preview", exact: true }).click();
+    await expect(
+      page.getByText("Definition is valid. Review its semantic changes.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.locator("#semantic-diff").getByText(firstAgentPrompt.id, { exact: true }),
+    ).toBeVisible();
+    const capabilityPath = `/api/workspaces/${workspace.id}/factories/${factory.id}/definition/capability-check`;
+    const [capabilityRead] = await Promise.all([
+      page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.pathname === capabilityPath && url.searchParams.has("draftId");
+      }),
+      page.getByRole("button", { name: "Save draft" }).click(),
+    ]);
+    expect(capabilityRead.ok()).toBe(true);
     await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
     await expect(promptInput).toHaveValue(firstAgentPrompt.id);
     await page.evaluate(() => window.scrollTo(0, 0));
@@ -560,20 +597,36 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       );
     const original = (await activation(1)).revision_id;
 
-    const savePrompt = await page.request.post(
-      `${agentsPath}/${firstAgentPrompt.agent_id}/prompt-revisions`,
-      {
-        data: {
-          expectedRevisionNumber: firstAgentPrompt.revision_number,
-          promptMd: "Updated candidate instructions. {{attempt.feedback}} stays literal.",
-        },
-      },
-    );
+    await page.goto(agentPage);
+    const published = page.locator("#published-bindings");
+    await expect(published.getByText(firstModel, { exact: true })).toBeVisible();
+    await expect(published.getByText(`${skillName} · v1`, { exact: true })).toBeVisible();
+    await expect(
+      published.getByText("factory-qualification/fixture", { exact: true }),
+    ).toBeVisible();
+    await expect(agentPrompt).toHaveValue(firstAgentPrompt.prompt_md);
+    await agentPrompt.fill("Updated candidate instructions. {{attempt.feedback}} stays literal.");
+    const revisionsPath = `${agentsPath}/${firstAgentPrompt.agent_id}/prompt-revisions`;
+    const [savePrompt] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url() === `${app}${revisionsPath}` && response.request().method() === "POST",
+      ),
+      page.getByRole("button", { name: "Save prompt revision", exact: true }).click(),
+    ]);
     expect(savePrompt.status(), await savePrompt.text()).toBe(201);
     const secondAgentPrompt = agentRevisionResponseSchema.parse(await savePrompt.json()).revision;
-    await page.getByRole("button", { name: "Structured", exact: true }).click();
-    await expect(promptInput).toHaveValue(firstAgentPrompt.id);
-    await promptInput.fill(secondAgentPrompt.id);
+    await expect(
+      page.getByRole("heading", { name: "Prompt revision 2", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("pre")).toContainText(secondAgentPrompt.prompt_md);
+    await expect(published.getByText(firstModel, { exact: true })).toBeVisible();
+    await expect(published.getByRole("link", { name: "View published prompt" })).toHaveAttribute(
+      "href",
+      `${agentPage}&revision=${firstAgentPrompt.id}#prompt-revision`,
+    );
+    await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
+    await expect(promptInput).toHaveValue(secondAgentPrompt.id);
     const secondStage = await editAndSave(page, secondModel, true);
     expect(secondStage.id).not.toBe(firstStage.id);
     const effectiveProfile = page.locator("#execution-profile");
@@ -593,6 +646,79 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await expect(effectiveProfile.getByText("Ready", { exact: true })).toHaveCount(2);
     await effectiveProfile.screenshot({
       path: testInfo.outputPath("07-effective-execution-profile.png"),
+    });
+
+    const reader = await admin.auth.admin.createUser({ email: readerEmail, email_confirm: true });
+    if (reader.error) throw reader.error;
+    readerId = reader.data.user.id;
+    const member = await checked(
+      admin
+        .from("workspace_members")
+        .insert({
+          workspace_id: workspace.id,
+          user_id: readerId,
+          email: readerEmail,
+          role: "member",
+          kind: "human",
+        })
+        .select("id")
+        .single(),
+    );
+    await checked(
+      admin.rpc("grant_factory_membership", {
+        p_workspace_id: workspace.id,
+        p_actor_user_id: user.id,
+        p_factory_id: factory.id,
+        p_member_id: member.id,
+        p_role: "member",
+      }),
+    );
+    const readerContext = await browser.newContext({
+      baseURL: app,
+      viewport: { width: 390, height: 844 },
+      colorScheme: "dark",
+    });
+    try {
+      const readerPage = await readerContext.newPage();
+      await signInViaMagicLink(readerPage, agentPage, { baseURL: app, email: readerEmail });
+      await expect(
+        readerPage.getByRole("heading", { name: "Implementation reviewer", exact: true }),
+      ).toBeVisible();
+      const readerBindings = readerPage.locator("#published-bindings");
+      await expect(readerBindings.getByText(secondModel, { exact: true })).toBeVisible();
+      await expect(readerBindings.getByText(`${skillName} · v1`, { exact: true })).toBeVisible();
+      await expect(readerPage.getByRole("link", { name: "Configure bindings" })).toHaveCount(0);
+      await expect(readerPage.getByRole("link", { name: "Review readiness" })).toHaveCount(0);
+      await expect(readerPage.getByRole("button", { name: "Save prompt revision" })).toHaveCount(0);
+      await expect(readerPage.getByText("unused-local-fixture", { exact: true })).toHaveCount(0);
+      const denied = await readerPage.request.post(revisionsPath, {
+        data: {
+          expectedRevisionNumber: 2,
+          promptMd: "This reader cannot update the prompt.",
+        },
+      });
+      expect(denied.status()).toBe(403);
+      if (await readerPage.getByRole("button", { name: "Switch to dark mode" }).isVisible()) {
+        await readerPage.getByRole("button", { name: "Switch to dark mode" }).click();
+      }
+      await expect(readerPage.locator("html")).toHaveAttribute("data-theme", "dark");
+      expect(
+        await readerPage.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+      ).toBeLessThanOrEqual(1);
+      await readerPage.screenshot({
+        path: testInfo.outputPath("11-agent-detail-mobile-dark.png"),
+        fullPage: true,
+      });
+    } finally {
+      await readerContext.close();
+    }
+
+    await page.goto(agentPage);
+    await expect(published.getByText(secondModel, { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Configure bindings" })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("10-agent-detail-desktop-light.png"),
+      fullPage: true,
     });
 
     const title = "Qualify the new factory activation";
@@ -698,5 +824,9 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     if (workspaceId) await checked(admin.from("workspaces").delete().eq("id", workspaceId));
     const deleted = await admin.auth.admin.deleteUser(user.id);
     if (deleted.error) throw deleted.error;
+    if (readerId) {
+      const deletedReader = await admin.auth.admin.deleteUser(readerId);
+      if (deletedReader.error) throw deletedReader.error;
+    }
   }
 });

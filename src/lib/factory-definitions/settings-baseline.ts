@@ -2,10 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import {
-  loadSessionRepositoryOptionsWithPrimary,
-  resolveDefaultSessionRepositoryId,
-} from "@/features/sessions/repository-options";
+import { resolveDefaultSessionRepositoryId } from "@/features/sessions/repository-options";
 import {
   agentProviderSupportsEffort,
   getRecommendedAgentModel,
@@ -17,6 +14,7 @@ import { mapStageRow } from "@/lib/pipeline/stages";
 import { loadWorkspaceSandboxSettings } from "@/lib/sandbox-connections/server";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
+import { loadFactoryDefinitionRepositories } from "./authority";
 import type { CompiledFactoryDefinition } from "./compiler";
 import { FACTORY_DEFINITION_SCHEMA_VERSION } from "./schema";
 import { factorySettingsAgentSchema } from "./settings-contracts";
@@ -30,40 +28,43 @@ export async function loadSettingsBaseline(
   pipelineId: string,
   stageRows: Tables<"pipeline_stages">[],
   operatingRulesMd: string,
-  factoryId: string,
+  factory: { id: string; is_default: boolean },
 ): Promise<CompiledFactoryDefinition | null> {
-  const [installation, repositories, onboarding] = await Promise.all([
-    client
-      .from("github_installations")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("suspended", false)
-      .maybeSingle(),
-    loadSessionRepositoryOptionsWithPrimary({ supabase: client, workspaceId }),
-    client
-      .from("workspace_onboarding")
-      .select("selected_github_repository_id")
-      .eq("workspace_id", workspaceId)
-      .maybeSingle(),
+  const stages = stageRows.filter(({ archived_at }) => !archived_at);
+  if (!stages.length) return null;
+  const [repositories, profile, onboarding] = await Promise.all([
+    loadFactoryDefinitionRepositories(client, workspaceId, factory.id),
+    factory.is_default
+      ? client
+          .from("workspace_repository_profiles")
+          .select("github_repository_id")
+          .eq("workspace_id", workspaceId)
+          .eq("is_primary", true)
+          .maybeSingle()
+      : null,
+    factory.is_default
+      ? client
+          .from("workspace_onboarding")
+          .select("selected_github_repository_id")
+          .eq("workspace_id", workspaceId)
+          .maybeSingle()
+      : null,
   ]);
-  if (installation.error) throw installation.error;
-  if (onboarding.error) throw onboarding.error;
-  if (!installation.data) return null;
+  if (profile?.error) throw profile.error;
+  if (onboarding?.error) throw onboarding.error;
   const repositoryId = resolveDefaultSessionRepositoryId({
-    ...repositories,
-    selectedGithubRepositoryId: onboarding.data?.selected_github_repository_id ?? null,
+    primaryGithubRepositoryId: profile?.data?.github_repository_id ?? null,
+    selectedGithubRepositoryId: onboarding?.data?.selected_github_repository_id ?? null,
+    repositoryOptions: repositories
+      .map(({ id, full_name: fullName }) => ({ id, fullName }))
+      .sort(
+        (left, right) =>
+          left.fullName.localeCompare(right.fullName) || left.id.localeCompare(right.id),
+      ),
   });
   if (!repositoryId) return null;
 
-  const [repository, execution, delivery, sandbox, agent, implementationAgent] = await Promise.all([
-    client
-      .from("github_repositories")
-      .select("id")
-      .eq("id", repositoryId)
-      .eq("workspace_id", workspaceId)
-      .eq("github_installation_id", installation.data.id)
-      .eq("is_archived", false)
-      .maybeSingle(),
+  const [execution, delivery, sandbox, agent, implementationAgent] = await Promise.all([
     client
       .from("execution_policies")
       .select("current_revision_id")
@@ -81,17 +82,15 @@ export async function loadSettingsBaseline(
       .from("factory_agent_prompt_revisions")
       .select("id, agent_id, prompt_md, prompt_sha256, factory_agents!inner(is_default)")
       .eq("workspace_id", workspaceId)
-      .eq("factory_id", factoryId)
+      .eq("factory_id", factory.id)
       .eq("factory_agents.is_default", true)
       .eq("revision_number", 1)
       .single(),
   ]);
-  if (repository.error) throw repository.error;
   if (execution.error) throw execution.error;
   if (delivery.error) throw delivery.error;
   if (agent.error) throw agent.error;
   if (implementationAgent.error) throw implementationAgent.error;
-  if (!repository.data) return null;
 
   const config = {
     ...defaults,
@@ -116,9 +115,10 @@ export async function loadSettingsBaseline(
     skillIds: [],
     toolIds: [],
     operatingRuleStageIds: [],
-    stages: stageRows
-      .filter(({ archived_at }) => !archived_at)
-      .map((row) => ({ ...factoryStageDefinition(mapStageRow(row)), previousStageIds: [] })),
+    stages: stages.map((row) => ({
+      ...factoryStageDefinition(mapStageRow(row)),
+      previousStageIds: [],
+    })),
     agent: factorySettingsAgentSchema.parse({
       provider,
       model:

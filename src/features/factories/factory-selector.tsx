@@ -7,6 +7,7 @@ import {
   FACTORY_QUERY_PARAM,
   factorySwitchHref,
   isFactoryAggregatePath,
+  isFactorySelectorPath,
   resolveFactorySelection,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
@@ -23,10 +24,16 @@ export function FactorySelector({
   const search = useSearchParams();
   const [pending, startTransition] = useTransition();
 
-  if (!isFactoryAggregatePath(pathname, workspaceSlug)) return null;
+  if (!isFactorySelectorPath(pathname, workspaceSlug)) return null;
+  const allowAll = isFactoryAggregatePath(pathname, workspaceSlug);
   const values = search.getAll(FACTORY_QUERY_PARAM);
   const selection = resolveFactorySelection(factories, values.length > 1 ? values : values[0]);
-  const selectedValue = selection.kind === "factory" ? selection.factory.id : selection.kind;
+  const selectedValue =
+    selection.kind === "factory"
+      ? selection.factory.id
+      : selection.kind === "all" && allowAll
+        ? "all"
+        : "unavailable";
 
   return (
     <label className="min-w-0">
@@ -41,12 +48,12 @@ export function FactorySelector({
         }}
         value={selectedValue}
       >
-        {selection.kind === "unavailable" ? (
+        {selectedValue === "unavailable" ? (
           <option disabled value="unavailable">
             Factory unavailable
           </option>
         ) : null}
-        <option value="all">All factories</option>
+        {allowAll && <option value="all">All factories</option>}
         {factories.map((factory) => (
           <option key={factory.id} value={factory.id}>
             {factory.name}

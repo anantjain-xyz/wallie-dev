@@ -31,7 +31,7 @@ import {
 } from "./mutations";
 import { catalogForStoredFactoryDefinition } from "./settings-persistence";
 import {
-  selectDefaultFactory,
+  selectFactory,
   selectStoredFactoryDefinition,
   type FactoryDefinitionTarget,
 } from "./storage";
@@ -43,7 +43,7 @@ import {
 type Client = SupabaseClient<Database>;
 type Failure = FactoryDefinitionMutationFailure;
 type SmokeTestRow = Tables<"factory_definition_smoke_tests">;
-type Scope = { workspaceId: string; admin: Client };
+type Scope = { workspaceId: string; factoryId?: string; admin: Client };
 type FinalResult = {
   status: Exclude<CandidateSmokeTest["status"], "running">;
   evidence: NonNullable<CandidateSmokeTest["evidence"]>;
@@ -90,6 +90,7 @@ function summarizeSmokeTest(
 type SmokeTestSelection = {
   client: Client;
   workspaceId: string;
+  factoryId?: string;
   target: FactoryDefinitionTarget;
   digest: string;
 };
@@ -97,13 +98,21 @@ type SmokeTestSelection = {
 export async function listFactoryDefinitionSmokeTests({
   client,
   workspaceId,
+  factoryId,
   target,
   digest,
 }: SmokeTestSelection): Promise<Failure | { ok: true; tests: CandidateSmokeTest[] }> {
+  const { data: factory, error: factoryError } = await selectFactory(
+    client,
+    workspaceId,
+    factoryId,
+  );
+  if (factoryError || !factory) return smokeTestError(factoryError ?? { code: "P0002" });
   const { data, error } = await client
     .from("factory_definition_smoke_tests")
     .select(testSummaryColumns)
     .eq("workspace_id", workspaceId)
+    .eq("factory_id", factory.id)
     .eq("target_kind", target.kind)
     .eq("target_id", target.id)
     .eq("definition_digest", digest)
@@ -117,16 +126,24 @@ export async function listFactoryDefinitionSmokeTests({
 export async function readFactoryDefinitionSmokeTest({
   client,
   workspaceId,
+  factoryId,
   target,
   digest,
   testId,
 }: SmokeTestSelection & { testId: string }): Promise<
   Failure | { ok: true; test: CandidateSmokeTest }
 > {
+  const { data: factory, error: factoryError } = await selectFactory(
+    client,
+    workspaceId,
+    factoryId,
+  );
+  if (factoryError || !factory) return smokeTestError(factoryError ?? { code: "P0002" });
   const { data, error } = await client
     .from("factory_definition_smoke_tests")
     .select(`${testSummaryColumns},evidence`)
     .eq("workspace_id", workspaceId)
+    .eq("factory_id", factory.id)
     .eq("id", testId)
     .eq("target_kind", target.kind)
     .eq("target_id", target.id)
@@ -140,6 +157,7 @@ export async function readFactoryDefinitionSmokeTest({
 export async function readFactoryDefinitionSmokeEligibility({
   admin,
   workspaceId,
+  factoryId,
   actorUserId,
   target,
   digest,
@@ -148,7 +166,7 @@ export async function readFactoryDefinitionSmokeEligibility({
   target: FactoryDefinitionTarget;
   digest: string;
 }): Promise<Failure | { ok: true; eligibility: CandidateSmokeEligibility }> {
-  const { data: factory, error: factoryError } = await selectDefaultFactory(admin, workspaceId);
+  const { data: factory, error: factoryError } = await selectFactory(admin, workspaceId, factoryId);
   if (factoryError || !factory) return smokeTestError(factoryError ?? { code: "P0002" });
 
   const { data: stored, error: storedError } = await selectStoredFactoryDefinition(
@@ -193,13 +211,14 @@ export async function readFactoryDefinitionSmokeEligibility({
 export async function startFactoryDefinitionSmokeTest({
   admin,
   workspaceId,
+  factoryId,
   actorUserId,
   command,
 }: Scope & {
   actorUserId: string;
   command: CandidateSmokeStart;
 }): Promise<Failure | { ok: true; test: CandidateSmokeTest; run: (() => Promise<void>) | null }> {
-  const { data: factory, error: factoryError } = await selectDefaultFactory(admin, workspaceId);
+  const { data: factory, error: factoryError } = await selectFactory(admin, workspaceId, factoryId);
   if (factoryError) return smokeTestError(factoryError);
   if (!factory) return smokeTestError({ code: "P0002" });
 
@@ -258,6 +277,7 @@ export async function startFactoryDefinitionSmokeTest({
 export async function cancelFactoryDefinitionSmokeTest({
   admin,
   workspaceId,
+  factoryId,
   actorUserId,
   testId,
   digest,
@@ -266,6 +286,16 @@ export async function cancelFactoryDefinitionSmokeTest({
   testId: string;
   digest: string;
 }): Promise<Failure | { ok: true; test: CandidateSmokeTest }> {
+  const { data: factory, error: factoryError } = await selectFactory(admin, workspaceId, factoryId);
+  if (factoryError || !factory) return smokeTestError(factoryError ?? { code: "P0002" });
+  const { data: target, error: targetError } = await admin
+    .from("factory_definition_smoke_tests")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factory.id)
+    .eq("id", testId)
+    .maybeSingle();
+  if (targetError || !target) return smokeTestError(targetError ?? { code: "P0002" });
   const { data: canceled, error } = await admin.rpc("cancel_factory_definition_smoke_test", {
     p_workspace_id: workspaceId,
     p_test_id: testId,
@@ -285,7 +315,7 @@ function smokeTestError(error: { code: string; message?: string } | null): Failu
 }
 
 async function smokeTestIsRunning(
-  { admin, workspaceId }: Scope,
+  { admin, workspaceId, factoryId }: Scope & { factoryId: string },
   testId: string,
   signal: AbortSignal,
 ) {
@@ -293,6 +323,7 @@ async function smokeTestIsRunning(
     .from("factory_definition_smoke_tests")
     .select("id")
     .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
     .eq("id", testId)
     .eq("status", "running")
     .gt("lease_expires_at", new Date().toISOString())
@@ -303,7 +334,7 @@ async function smokeTestIsRunning(
 }
 
 async function monitorSmokeTest(
-  scope: Scope,
+  scope: Scope & { factoryId: string },
   testId: string,
   lifecycle: AbortController,
   done: AbortSignal,
@@ -330,7 +361,7 @@ async function completeCandidateSmoke({
   bundle: CompiledFactoryDefinition;
   reserved: SmokeTestRow;
 }) {
-  const scope = { admin, workspaceId };
+  const scope = { admin, workspaceId, factoryId: reserved.factory_id };
   const profile = bundle.sandboxProvider;
   const done = new AbortController();
   const lifecycle = new AbortController();

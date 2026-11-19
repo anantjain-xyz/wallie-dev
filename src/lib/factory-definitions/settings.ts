@@ -35,7 +35,11 @@ import {
   readFactorySettingsMetadata,
   saveSettingsFactoryDraft,
 } from "./settings-persistence";
-import { selectCurrentFactoryActivation, selectDefaultFactory } from "./storage";
+import {
+  selectCurrentFactoryActivation,
+  selectFactory,
+  selectFactoryBaselinePipeline,
+} from "./storage";
 import {
   factoryDefinitionFromBundle,
   factoryStageDefinition,
@@ -58,12 +62,17 @@ function readRecord(row: {
   return { id: row.id, digest: row.canonical_digest, definitionJson: row.definition_json, bundle };
 }
 
-async function loadSettingsContext(client: Client, workspaceId: string, includeDraft: boolean) {
-  const factory = await selectDefaultFactory(client, workspaceId);
+async function loadSettingsContext(
+  client: Client,
+  workspaceId: string,
+  includeDraft: boolean,
+  factoryId?: string,
+) {
+  const factory = await selectFactory(client, workspaceId, factoryId);
   if (factory.error) throw factory.error;
   if (!factory.data) return null;
-  const factoryId = factory.data.id;
-  const activation = await selectCurrentFactoryActivation(client, workspaceId, factoryId);
+  const selectedFactoryId = factory.data.id;
+  const activation = await selectCurrentFactoryActivation(client, workspaceId, selectedFactoryId);
   if (activation.error) throw activation.error;
   const activationNumber = activation.data?.activation_number ?? 0;
 
@@ -73,10 +82,10 @@ async function loadSettingsContext(client: Client, workspaceId: string, includeD
         .from("factory_definition_revisions")
         .select("id, definition_json, canonical_digest, source_draft_id")
         .eq("workspace_id", workspaceId)
-        .eq("factory_id", factoryId)
+        .eq("factory_id", selectedFactoryId)
         .eq("id", activation.data.revision_id)
         .single(),
-    includeDraft && latestFactoryDraft(client, workspaceId, factoryId, activationNumber),
+    includeDraft && latestFactoryDraft(client, workspaceId, selectedFactoryId, activationNumber),
   ]);
   if (activeRow && activeRow.error) throw activeRow.error;
   if (draftRow && draftRow.error) throw draftRow.error;
@@ -86,21 +95,22 @@ async function loadSettingsContext(client: Client, workspaceId: string, includeD
 
   const source = draft ?? published;
   const sourceDraftId = activeRow && activeRow.data ? activeRow.data.source_draft_id : null;
-  const pipelineQuery = client
-    .from("pipelines")
-    .select("id, name, is_default, operating_rules_md")
-    .eq("workspace_id", workspaceId);
   const [pipelineRow, publishedMetadata] = await Promise.all([
-    (source
-      ? pipelineQuery.eq("id", source.bundle.pipelineId)
-      : pipelineQuery.eq("is_default", true)
-    ).maybeSingle(),
+    source
+      ? client
+          .from("pipelines")
+          .select("id, name, is_default, operating_rules_md")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", selectedFactoryId)
+          .eq("id", source.bundle.pipelineId)
+          .maybeSingle()
+      : selectFactoryBaselinePipeline(client, workspaceId, factory.data),
     includeDraft && sourceDraftId && !draft
       ? client
           .from("factory_definition_drafts")
           .select("settings_metadata")
           .eq("workspace_id", workspaceId)
-          .eq("factory_id", factoryId)
+          .eq("factory_id", selectedFactoryId)
           .eq("id", sourceDraftId)
           .maybeSingle()
       : null,
@@ -119,7 +129,7 @@ async function loadSettingsContext(client: Client, workspaceId: string, includeD
       pipeline.id,
       stageRows,
       pipeline.operating_rules_md,
-      factoryId,
+      factory.data,
     ));
   if (!bundle) return null;
 
@@ -138,7 +148,7 @@ async function loadSettingsContext(client: Client, workspaceId: string, includeD
   const activeStageIds = new Set(bundle.stages.map(({ id }) => id));
 
   return {
-    factoryId,
+    factoryId: selectedFactoryId,
     activationNumber,
     draft,
     published,
@@ -277,15 +287,17 @@ function applySettingsPatch(context: SettingsContext, patch: FactorySettingsPatc
 export async function mutateFactorySettings({
   client,
   workspaceId,
+  factoryId,
   actorUserId,
   command,
 }: {
   client: Client;
   workspaceId: string;
+  factoryId?: string;
   actorUserId: string;
   command: FactorySettingsCommand;
 }): Promise<FactoryDefinitionMutationFailure | { ok: true; snapshot: FactorySettingsSnapshot }> {
-  const context = await loadSettingsContext(client, workspaceId, true);
+  const context = await loadSettingsContext(client, workspaceId, true, factoryId);
   if (!context) return mutationError({ code: "P0002" });
   const draftId = command.action === "save" ? command.expectedDraftId : command.draftId;
   if (

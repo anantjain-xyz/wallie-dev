@@ -957,6 +957,113 @@ select is((select (public.save_delivery_policy(s.workspace_id,'54200000-0003-400
   from factory_activation_scope s cross join factory_settings_legacy legacy cross join factory_settings_fixture fixture),
   (select delivery_revision+2 from factory_settings_legacy),'an immediate delivery policy save advances over factory history');
 
+-- The selected factory uses the same draft, probe, smoke and publish flow.
+create temp table selected_factory as
+select factory.id as factory_id, scope.workspace_id, scope.owner_id, scope.member_user_id
+from factory_activation_scope scope
+cross join lateral public.create_factory(scope.workspace_id,scope.owner_id,'Agent candidate factory','agent-candidate') factory;
+insert into public.pipelines(id,workspace_id,factory_id,name,is_default)
+select '54200000-0003-4000-8000-000000000019',workspace_id,factory_id,'Agent candidate pipeline',false
+from selected_factory;
+insert into public.pipeline_stages(id,pipeline_id,workspace_id,position,slug,name)
+select '54200000-0004-4000-8000-000000000019','54200000-0003-4000-8000-000000000019',
+  workspace_id,1,'build','Build' from selected_factory;
+insert into public.github_repositories(id,workspace_id,factory_id,github_installation_id,repo_id,
+  name,full_name,private,html_url,default_branch)
+select '54200000-0006-4000-8000-000000000019',workspace_id,factory_id,
+  '54200000-0005-4000-8000-000000000001',54200019,'agent-candidate','fixture/agent-candidate',true,
+  'https://github.com/fixture/agent-candidate','main' from selected_factory;
+
+create temp table selected_agent_revision as
+select revision.* from selected_factory factory
+cross join lateral public.create_factory_agent(factory.workspace_id,factory.factory_id,factory.owner_id,
+  'Implementation reviewer','implementation-reviewer','Build the requested changes.') first_revision
+cross join lateral public.save_factory_agent_prompt_revision(factory.workspace_id,factory.factory_id,
+  factory.owner_id,first_revision.agent_id,first_revision.revision_number,'Verify the approved plan before editing.') revision;
+create temp table selected_factory_draft as
+select draft.* from selected_factory factory cross join selected_agent_revision revision
+cross join lateral (
+  select (pg_temp.factory_activation_bundle('Build')::jsonb || jsonb_build_object(
+    'pipelineId','54200000-0003-4000-8000-000000000019',
+    'repositoryId','54200000-0006-4000-8000-000000000019',
+    'implementationAgent',jsonb_build_object('agentId',revision.agent_id,
+      'promptRevisionId',revision.id,'promptMd',revision.prompt_md,'promptSha256',revision.prompt_sha256),
+    'stages',jsonb_build_array(jsonb_build_object('id','54200000-0004-4000-8000-000000000019',
+      'slug','build','name','Build','description','','promptTemplateMd','Build {{session.title}}.',
+      'anyoneCanApprove',true,'previousStageIds','[]'::jsonb,'approverMemberIds','[]'::jsonb))
+  ))::text as definition
+) body
+cross join lateral public.save_factory_definition_draft(factory.workspace_id,factory.factory_id,factory.owner_id,
+  0,body.definition,encode(sha256(convert_to(body.definition,'UTF8')),'hex')) draft;
+
+select (public.grant_factory_membership(workspace_id,factory_id,owner_id,
+  '54200000-0002-4000-8000-000000000002','member')).id from selected_factory;
+select throws_ok($$select public.start_factory_definition_capability_check(factory.workspace_id,
+    '54200000-0006-4000-8000-000000000019',factory.member_user_id,'e2b','codex','gpt-5',draft.canonical_digest)
+  from selected_factory factory cross join selected_factory_draft draft$$,
+  '42501', null, 'a factory member cannot reserve a probe without workspace-manager authority');
+select throws_ok($$select public.start_factory_definition_capability_check(factory.workspace_id,
+    '54200000-0006-4000-8000-000000000001',factory.owner_id,'e2b','codex','gpt-5',draft.canonical_digest)
+  from selected_factory factory cross join selected_factory_draft draft$$,
+  'P0002', null, 'a sibling repository cannot qualify a digest from the selected factory');
+select throws_ok($$select public.read_factory_candidate_activation_eligibility(sibling.workspace_id,sibling.factory_id,
+    sibling.owner_id,'draft',draft.id,draft.canonical_digest,array['e2b'],pg_temp.factory_activation_probes())
+  from factory_activation_scope sibling cross join selected_factory_draft draft$$,
+  'P0002', null, 'another factory cannot read eligibility for the selected draft');
+
+create temp table selected_factory_check as
+select check_row.* from selected_factory factory cross join selected_factory_draft draft
+cross join lateral public.start_factory_definition_capability_check(factory.workspace_id,
+  '54200000-0006-4000-8000-000000000019',factory.owner_id,'e2b','codex','gpt-5',draft.canonical_digest) check_row;
+select ok((select check_row.status='running' and check_row.factory_definition_digest=draft.canonical_digest
+    and check_row.github_repository_id='54200000-0006-4000-8000-000000000019'
+    and check_row.sandbox_connection_revision=connection.connection_revision
+  from selected_factory_check check_row join public.workspace_e2b_sandbox_connections connection using(workspace_id)
+  cross join selected_factory_draft draft), 'a nondefault factory reserves a probe for its exact digest, repo and connection');
+update public.sandbox_capability_checks set status='success',capabilities=(
+  select jsonb_object_agg(probe,jsonb_build_object('ok',true,'detail',null))
+  from unnest(pg_temp.factory_activation_probes()) as probe
+) where id=(select id from selected_factory_check);
+create temp table selected_factory_smoke as
+select smoke.* from selected_factory factory cross join selected_factory_draft draft
+cross join lateral public.start_factory_definition_smoke_test(factory.workspace_id,factory.factory_id,factory.owner_id,
+  0,'draft',draft.id,draft.canonical_digest,array['e2b'],pg_temp.factory_activation_probes()) smoke;
+select ok(pg_temp.factory_smoke_finish(id),'the selected draft can complete a passing smoke test') from selected_factory_smoke;
+select is((select public.read_factory_candidate_activation_eligibility(factory.workspace_id,factory.factory_id,
+    factory.owner_id,'draft',draft.id,draft.canonical_digest,array['e2b'],pg_temp.factory_activation_probes())
+  from selected_factory factory cross join selected_factory_draft draft),
+  (select jsonb_build_object('eligible',true,'reason',null,'activationNumber',0,'testId',id,'canTest',true)
+    from selected_factory_smoke), 'the selected factory reports current eligibility and its exact smoke receipt');
+create temp table selected_factory_activation as
+select activation.* from selected_factory factory cross join selected_factory_draft draft
+cross join lateral public.publish_factory_definition_draft(factory.workspace_id,factory.factory_id,factory.owner_id,
+  0,draft.id,array['e2b'],pg_temp.factory_activation_probes()) activation;
+select ok((select activation.activation_number=1 and stored.source_draft_id=draft.id
+    and stored.definition_json::jsonb #>> '{implementationAgent,promptRevisionId}'=revision.id::text
+  from selected_factory_activation activation join public.factory_definition_revisions stored on stored.id=activation.revision_id
+  cross join selected_factory_draft draft cross join selected_agent_revision revision),
+  'the nondefault factory publishes the same draft and new immutable agent prompt revision');
+select is((select max(a.activation_number) from public.factory_definition_activations a join factory_activation_scope s using(factory_id)),
+  7::bigint, 'the sibling factory activation head does not change');
+
+grant select on selected_agent_revision to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000002';
+select is((select count(*) from public.factory_agent_prompt_revisions revision join selected_agent_revision selected using(id)),
+  1::bigint, 'a read-only member can inspect the agent prompt they can access');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select (public.archive_factory(workspace_id,factory_id,owner_id)).status from selected_factory;
+select throws_ok($$select public.start_factory_definition_capability_check(factory.workspace_id,
+    '54200000-0006-4000-8000-000000000019',factory.owner_id,'e2b','codex','gpt-5',draft.canonical_digest)
+  from selected_factory factory cross join selected_factory_draft draft$$,
+  'P0002', null, 'archiving the factory prevents a new candidate probe');
+select throws_ok($$select public.save_factory_definition_draft(factory.workspace_id,factory.factory_id,
+    factory.owner_id,1,draft.definition_json,draft.canonical_digest)
+  from selected_factory factory cross join selected_factory_draft draft$$,
+  'P0002', 'Factory is unavailable.', 'the shared definition write lock rejects an archived factory');
+
 select extensions.dblink_disconnect('factory_writer');
 select extensions.dblink_disconnect('factory_contender');
 select extensions.dblink_disconnect('factory_admitter');
