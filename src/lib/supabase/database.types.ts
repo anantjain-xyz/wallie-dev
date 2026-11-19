@@ -9147,6 +9147,31 @@ export type Database = {
           status: string
         }[]
       }
+      read_factory_session_command: {
+        Args: {
+          p_admission_id: string
+          p_artifact_id?: string
+          p_before_created_at?: string
+          p_before_id?: string
+          p_before_session_number?: number
+          p_conversation_direction?: string
+          p_conversation_sequence?: number
+          p_credential_digest: string
+          p_credential_id: string
+          p_credential_kind: Database["public"]["Enums"]["factory_command_credential_kind"]
+          p_factory_id: string
+          p_lease_id: string
+          p_limit?: number
+          p_operation: Database["public"]["Enums"]["factory_session_read_operation"]
+          p_request_hash: string
+          p_request_id: string
+          p_run_id?: string
+          p_session_id?: string
+          p_surface: Database["public"]["Enums"]["factory_command_surface"]
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_run_export_page: {
         Args: { p_export_id: string; p_lease_token: string; p_limit?: number }
         Returns: {
@@ -10525,6 +10550,13 @@ export type Database = {
         | "sessions:clarify"
         | "sessions:cancel"
       factory_command_surface: "api" | "mcp"
+      factory_session_read_operation:
+        | "sessions"
+        | "session"
+        | "conversation"
+        | "runs"
+        | "run"
+        | "artifact"
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
       pipeline_phase_status:
@@ -10716,6 +10748,14 @@ export const Constants = {
         "sessions:cancel",
       ],
       factory_command_surface: ["api", "mcp"],
+      factory_session_read_operation: [
+        "sessions",
+        "session",
+        "conversation",
+        "runs",
+        "run",
+        "artifact",
+      ],
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],
       pipeline_phase_status: [
