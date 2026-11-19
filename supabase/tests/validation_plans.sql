@@ -76,18 +76,68 @@ create temp table superseded_run as select * from pg_temp.evidence_fixture('Supe
 update public.agent_jobs set attempt_count=2 where id=(select job_id from superseded_run);
 select is(pg_temp.failure_state($$select public.pin_session_validation_plan((select run_id from superseded_run),repeat('b',40),repeat('c',40),(select value from plan))$$),'PT409','a superseded attempt cannot pin a plan');
 
-grant select on first_run,plan to authenticated,service_role;
+create temp table visual_run as select * from pg_temp.evidence_fixture('Browser verification plan');
+create temp table visual_plan as
+  select value||'{"version":2,"browser":[{"key":"inbox","path":"/fixtures/inbox","timeoutSeconds":20,
+    "interactions":[{"action":"expectVisible","testId":"inbox"}],"regionTestId":"inbox",
+    "excludedTestIds":["account-menu"],"evidence":[{"kind":"screenshot","required":true}]}]}'::jsonb as value from plan;
+create temp table visual_receipt as
+  select '[{"key":"inbox","kind":"screenshot","path":"/fixtures/inbox","policy":"isolated-fixture-v1",
+    "status":"unavailable","reason":"runtime_unavailable"}]'::jsonb as value;
+select is(pg_temp.failure_state($$select public.pin_session_validation_plan((select run_id from visual_run),repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_plan),'{browser,0,path}','"//example.test/"'))$$),'23514','browser navigation is scoped to a local path');
+select is(pg_temp.failure_state($$select public.pin_session_validation_plan((select run_id from visual_run),repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_plan),'{browser,0,interactions}','[{"action":"executeScript","script":"true"}]'))$$),'23514','browser plans cannot execute arbitrary scripts');
+select is(pg_temp.failure_state($$select public.pin_session_validation_plan((select run_id from visual_run),repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_plan),'{browser,0,interactions}','[{"other":"expectVisible","testId":"inbox"}]'))$$),'23514','unknown browser action fields cannot substitute for planned instructions');
+select is(pg_temp.failure_state($$select public.pin_session_validation_plan((select run_id from visual_run),repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_plan),'{browser,0,evidence,0,passed}','true'))$$),'23514','a visual intent carries no success claim');
+select is((public.pin_session_validation_plan((select run_id from visual_run),repeat('b',40),repeat('c',40),(select value from visual_plan))).plan,
+  (select value from visual_plan),'browser intent and text commands freeze together on one run');
+select is(pg_temp.failure_state($$select public.pin_session_validation_plan((select run_id from visual_run),repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_plan),'{browser,0,path}','"/other"'))$$),'PT409','a retry cannot retarget the frozen browser plan');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from second_run),1,repeat('b',40),repeat('c',40),
+  (select value from visual_receipt))$$),'23514','another run cannot borrow browser verification');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from visual_run),2,repeat('b',40),repeat('c',40),
+  (select value from visual_receipt))$$),'23514','browser verification cannot move to another attempt');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from visual_run),1,repeat('d',40),repeat('c',40),
+  (select value from visual_receipt))$$),'23514','browser verification cannot move to another commit');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from visual_run),1,repeat('b',40),repeat('d',40),
+  (select value from visual_receipt))$$),'23514','browser verification cannot move to another validation tree');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from visual_run),1,repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_receipt),'{0,path}','"/other"'))$$),'23514','a receipt cannot attest to an unplanned target');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from visual_run),1,repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_receipt),'{0,kind}','"video"'))$$),'23514','a receipt cannot attest to an unplanned media kind');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from visual_run),1,repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_receipt),'{0,status}','"captured"'))$$),'23514','the contract-only writer cannot assert positive browser capture');
+create temp table browser_recorded as select * from public.record_session_browser_verification(
+  (select run_id from visual_run),1,repeat('b',40),repeat('c',40),(select value from visual_receipt));
+select is((select records from browser_recorded),(select value from visual_receipt),'the exact worker records durable unavailability');
+select is((public.record_session_browser_verification((select run_id from visual_run),1,repeat('b',40),repeat('c',40),
+  (select value from visual_receipt))).created_at,(select created_at from browser_recorded),'an exact retry reuses the immutable receipt');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from visual_run),1,repeat('b',40),repeat('c',40),
+  jsonb_set((select value from visual_receipt),'{0,reason}','"tool_not_approved"'))$$),'PT409','a recorded browser outcome cannot be replaced');
+select is(pg_temp.failure_state($$update public.session_browser_verification_receipts set records='[]'$$),'23514','privileged updates cannot rewrite browser history');
+select is((public.record_session_validation_evidence((select run_id from visual_run),repeat('b',40),repeat('c',40),
+  pg_temp.command_receipt())).records->0->>'status','passed','unsupported visual capture leaves the exact text receipt passing');
+
+grant select on first_run,plan,visual_run,visual_receipt to authenticated,service_role;
 set local role authenticated;
 set local request.jwt.claim.role='authenticated';
 set local request.jwt.claim.sub='a1b2c3d4-0001-4000-8000-000000000001';
 select is((select count(*) from public.session_validation_plans where run_id=(select run_id from first_run)),1::bigint,'workspace members can inspect run plans');
 select is(pg_temp.failure_state($$select public.pin_session_validation_plan((select run_id from first_run),repeat('b',40),repeat('c',40),(select value from plan))$$),'42501','browser clients cannot pin plans');
+select is((select count(*) from public.session_browser_verification_receipts where run_id=(select run_id from visual_run)),
+  1::bigint,'authorized members can read the exact browser receipt');
+select is(pg_temp.failure_state($$select public.record_session_browser_verification((select run_id from visual_run),1,repeat('b',40),repeat('c',40),
+  (select value from visual_receipt))$$),'42501','browser users cannot write trusted verification receipts');
 select is(pg_temp.failure_state($$update public.session_validation_plans set plan='{}'$$),'42501','browser clients cannot modify plans');
 reset role;
 insert into auth.users(id,email) values('50900000-0000-4000-8000-000000000002','validation-plan-outsider@example.test');
 set local role authenticated;
 set local request.jwt.claim.sub='50900000-0000-4000-8000-000000000002';
 select is((select count(*) from public.session_validation_plans),0::bigint,'other workspaces cannot read plans');
+select is((select count(*) from public.session_browser_verification_receipts),0::bigint,'other workspaces cannot read browser receipts');
 reset role;
 set local role service_role;
 select is(pg_temp.failure_state($$insert into public.session_validation_plans select * from public.session_validation_plans limit 1$$),'42501','service writes must use the fenced RPC');
@@ -98,5 +148,7 @@ reset role;
 set local request.jwt.claim.role='service_role';
 select lives_ok($$delete from public.sessions where id=(select session_id from first_run)$$,'owning-session deletion cascades immutable plans');
 select is((select count(*) from public.session_validation_plans where run_id=(select run_id from first_run)),0::bigint,'deleted sessions retain no plan rows');
+select lives_ok($$delete from public.sessions where id=(select session_id from visual_run)$$,'owning-session deletion cascades browser receipts');
+select is((select count(*) from public.session_browser_verification_receipts),0::bigint,'deleted sessions retain no browser receipt');
 select * from finish();
 rollback;

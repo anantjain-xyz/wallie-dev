@@ -122,7 +122,7 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
       data: { run_id: runId, commit_sha: sha, validation_tree_sha: treeSha, plan },
       error: null,
     }));
-    const pinned = await pinValidationPlan({
+    const { plan: pinned } = await pinValidationPlan({
       admin: { rpc } as never,
       sandbox,
       runId,
@@ -209,7 +209,7 @@ describe("trusted validation capture", { timeout: 20_000 }, () => {
         error: null,
       };
     });
-    const plan = await pinValidationPlan({
+    const { plan } = await pinValidationPlan({
       admin: { rpc } as never,
       sandbox,
       runId,

@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
+import { unavailableBrowserReceipts } from "./browser-contract";
 import type { captureValidationEvidence } from "./capture";
 import { pinValidationPlan } from "./plan";
 
@@ -131,6 +132,7 @@ export async function validateCheckpoint(input: {
   workspaceId: string;
   pipelineId: string;
   pinnedDeliveryPolicyRevisionId?: string | null;
+  approvedToolIds?: readonly string[];
   runId: string;
   sandbox: import("@/lib/sandbox/types").SandboxHandle;
   checkpoint: import("@/lib/pipeline/source-checkpoint").SourceCheckpoint;
@@ -151,11 +153,32 @@ export async function validateCheckpoint(input: {
       ))
     )
       return input.checkpoint;
-    const plan = await pinValidationPlan({ ...input, commitSha: input.checkpoint.headSha });
+    const pinned = await pinValidationPlan({ ...input, commitSha: input.checkpoint.headSha });
+    if ("browserIdentity" in pinned) {
+      const identity = pinned.browserIdentity;
+      try {
+        // Until an isolated capture runtime is installed, only an unavailable
+        // outcome is recorded. Its failure must not discard text evidence.
+        const request = input.admin.rpc("record_session_browser_verification", {
+          p_run_id: identity.runId,
+          p_attempt_count: identity.attemptCount,
+          p_commit_sha: identity.commitSha,
+          p_validation_tree_sha: identity.treeSha,
+          p_records: unavailableBrowserReceipts(pinned.plan.browser, {
+            status: "unavailable",
+            reason:
+              input.approvedToolIds?.length === 0 ? "tool_not_approved" : "runtime_unavailable",
+          }),
+        });
+        await (input.signal ? request.abortSignal(input.signal) : request);
+      } catch {
+        input.signal?.throwIfAborted();
+      }
+    }
     evidence = await captureValidationEvidence({
       sandbox: input.sandbox,
       commitSha: input.checkpoint.headSha,
-      plan,
+      plan: pinned.plan,
       secrets: input.secrets,
       signal: input.signal,
     });

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import type { Tables } from "@/lib/supabase/database.types";
+import { BROWSER_CAPTURE_POLICY } from "@/lib/validation-evidence/browser-contract";
 
 import {
   evaluatePrReadiness,
@@ -929,6 +930,62 @@ describe("review readiness details", () => {
     expect(details?.refresh).toMatchObject({ status: "current", canRefresh: true });
     expect(details?.artifactBlockingCount).toBe(0);
     expect(details?.artifactBlockingTarget).toBeNull();
+  });
+
+  it("shows exact browser unavailability while leaving text requirements passing", async () => {
+    const browserKey = "browser:screenshot:inbox";
+    const check = {
+      key: "inbox",
+      path: "/fixtures/inbox",
+      timeoutSeconds: 20,
+      interactions: [],
+      regionTestId: "inbox-demo",
+      excludedTestIds: [],
+      evidence: [
+        { kind: "screenshot", required: true },
+        { kind: "video", required: false },
+      ],
+    };
+    const records = check.evidence.map(({ kind }) => ({
+      key: check.key,
+      kind,
+      path: check.path,
+      policy: BROWSER_CAPTURE_POLICY,
+      status: "unavailable",
+      reason: "runtime_unavailable",
+    }));
+    function admin(requiredEvidence: string[]) {
+      return buildServiceAdminClient(
+        serviceTables({
+          delivery_policy_revisions: queryableTable({
+            ...policyRevisionRow,
+            requirements: { ...requirements, requiredEvidence },
+          }),
+          session_validation_plans: queryableTable({
+            ...validationPlan,
+            plan: { version: 2, commands: [], browser: [check] },
+          }),
+          session_browser_verification_receipts: queryableTable({ records }),
+        }),
+        vi.fn(),
+      );
+    }
+
+    const required = await loadSessionPrReadinessDetails(
+      admin(["tests", browserKey]) as never,
+      "sess-1",
+    );
+    expect(required?.evaluation.state).toBe("blocked");
+    expect(required?.evaluation.blockers).toEqual([
+      { code: "evidence_unavailable", requirement: browserKey },
+    ]);
+    expect(required?.evidence?.required).toEqual([
+      { key: "tests", status: "passed" },
+      { key: browserKey, status: "unavailable" },
+    ]);
+
+    const textOnly = await loadSessionPrReadinessDetails(admin(["tests"]) as never, "sess-1");
+    expect(textOnly?.evaluation.state).toBe("ready");
   });
 
   it.each(["plan", "deleted-stage"])(
