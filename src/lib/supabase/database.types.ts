@@ -8925,6 +8925,15 @@ export type Database = {
         Args: { p_limit?: number; p_workspace_id?: string }
         Returns: number
       }
+      enqueue_factory_flow_rebuild: {
+        Args: {
+          p_after_session_id?: string
+          p_factory_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       enqueue_github_pr_refresh_event: {
         Args: {
           p_base_branch?: string
@@ -9294,6 +9303,16 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      get_factory_flow_summary: {
+        Args: {
+          p_environment?: string
+          p_factory_id: string
+          p_from: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       get_factory_inbox: {
         Args: {
@@ -9755,6 +9774,21 @@ export type Database = {
           verified_at: string
         }[]
       }
+      list_factory_flow_evidence: {
+        Args: {
+          p_cursor_at?: string
+          p_cursor_end_at?: string
+          p_cursor_session_id?: string
+          p_environment?: string
+          p_factory_id: string
+          p_from: string
+          p_limit?: number
+          p_metric_key: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_secret_bindings: {
         Args: {
           p_actor_user_id: string
@@ -10162,6 +10196,10 @@ export type Database = {
           p_title: string
         }
         Returns: boolean
+      }
+      process_factory_flow_projection: {
+        Args: { p_limit?: number }
+        Returns: Json
       }
       propose_factory_memory: {
         Args: {

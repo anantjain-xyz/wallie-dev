@@ -50,13 +50,19 @@ vi.mock("@/lib/run-exports/worker", () => ({
 beforeEach(() => vi.resetAllMocks());
 
 it.each([
-  [false, false, false, false],
-  [true, false, false, false],
-  [false, true, false, false],
-  [true, true, true, true],
+  [false, false, false, false, false],
+  [true, false, false, false, false],
+  [false, true, false, false, false],
+  [true, true, true, true, true],
 ])(
-  "runs verification, readiness and independent cleanup (GitHub fails=%s, readiness fails=%s, OAuth cleanup fails=%s, command cleanup fails=%s)",
-  async (githubFailure, readinessFailure, oauthCleanupFailure, commandCleanupFailure) => {
+  "runs verification, readiness and independent maintenance (GitHub fails=%s, readiness fails=%s, OAuth cleanup fails=%s, command cleanup fails=%s, flow projection fails=%s)",
+  async (
+    githubFailure,
+    readinessFailure,
+    oauthCleanupFailure,
+    commandCleanupFailure,
+    projectionFailure,
+  ) => {
     const bindings = env as unknown as Env;
     const id = `maintenance-${crypto.randomUUID()}`;
     const query = {
@@ -69,7 +75,15 @@ it.each([
         return Promise.resolve({ data: [], count: 0, error: null }).then(resolve);
       },
     };
-    const admin = { from: () => query };
+    const rpc = vi.fn().mockReturnValue({
+      abortSignal: () =>
+        Promise.resolve(
+          projectionFailure
+            ? { data: null, error: { message: "Projection temporarily unavailable" } }
+            : { data: { processed: 25, hasMore: true }, error: null },
+        ),
+    });
+    const admin = { from: () => query, rpc };
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin as never);
     if (githubFailure)
       vi.mocked(reconcileGitHubPrVerification).mockRejectedValue(
@@ -124,10 +138,16 @@ it.each([
       expect(pruneFactoryCommandAdmissions).toHaveBeenCalledExactlyOnceWith(admin);
       expect(requestFactoryEventDispatch).toHaveBeenCalledOnce();
       expect(pruneFactoryEventOutbox).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(rpc).toHaveBeenCalledExactlyOnceWith("process_factory_flow_projection", {
+        p_limit: 25,
+      });
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );
       expect(drainRunExports).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(rpc.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(drainRunExports).mock.invocationCallOrder[0],
+      );
       expect(cleanupRunExports).toHaveBeenCalledExactlyOnceWith(admin);
     } finally {
       await inspection.dispose();

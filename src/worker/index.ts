@@ -10,6 +10,7 @@ import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
+import { processFactoryFlowProjection } from "@/lib/factory-outcomes/maintenance";
 import { drainFactoryEventDeliveries } from "@/lib/factory-event-subscriptions/dispatch";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import {
@@ -192,6 +193,7 @@ async function main() {
     );
 
     let deliveringFactoryEvents = false;
+    let projectingFactoryFlow = false;
     maintenanceTimers.push(
       setInterval(() => {
         if (!deliveringFactoryEvents) {
@@ -201,6 +203,16 @@ async function main() {
               await drainFactoryEventDeliveries(admin);
             } finally {
               deliveringFactoryEvents = false;
+            }
+          });
+        }
+        if (!projectingFactoryFlow) {
+          projectingFactoryFlow = true;
+          timerTasks.run("factory flow projection", async () => {
+            try {
+              await processFactoryFlowProjection(admin);
+            } finally {
+              projectingFactoryFlow = false;
             }
           });
         }
