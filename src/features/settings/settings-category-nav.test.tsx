@@ -174,6 +174,21 @@ describe("SettingsCategoryNav hash routing", () => {
     }
   });
 
+  it("links ordinary members to personal connected clients in Workspace settings", () => {
+    searchParams = new URLSearchParams("category=workspace");
+    const { getByRole } = render(
+      <SettingsCategoryNav activeCategory="workspace" canManage={false} workspaceSlug="acme" />,
+    );
+    expect(getByRole("link", { name: "Connected clients" })).toHaveAttribute(
+      "href",
+      "#connected-clients",
+    );
+    expect(resolveSettingsHashRoute("#connected-clients")).toEqual({
+      anchor: "connected-clients",
+      category: "workspace",
+    });
+  });
+
   it("hides Run history and Maintenance for ordinary members", () => {
     searchParams = new URLSearchParams("category=advanced");
     const { queryByRole } = render(

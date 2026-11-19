@@ -21,7 +21,18 @@ import {
   type GovernanceData,
   type GovernanceScope,
 } from "@/features/factory-governance/governance-data";
-import { governanceSourceQuery } from "@/features/factory-governance/governance-resource-link";
+import {
+  ConnectedOAuthClients,
+  RegisteredOAuthClients,
+} from "@/features/factory-governance/governance-oauth";
+import {
+  loadOAuthClientData,
+  type GovernanceOAuthData,
+} from "@/features/factory-governance/governance-oauth-data";
+import {
+  GovernanceResourcePages,
+  governanceSourceQuery,
+} from "@/features/factory-governance/governance-resource-link";
 import {
   CredentialCard,
   GrantCard,
@@ -50,6 +61,8 @@ const filters = z.object({
   afterPrincipal: z.string().uuid().optional(),
   afterToken: z.string().uuid().optional(),
   beforeAudit: factoryAuditCursorTokenSchema.optional(),
+  afterOAuthClient: z.string().uuid().optional(),
+  afterOAuthGrant: z.string().uuid().optional(),
 });
 
 type Filters = z.output<typeof filters>;
@@ -68,32 +81,6 @@ function Unavailable({ href, text }: { href: string; text: string }) {
         </Link>
       </div>
     </PageContainer>
-  );
-}
-
-function ResourcePages({
-  href,
-  next,
-  previous,
-}: {
-  href: string;
-  next?: string | null;
-  previous: boolean;
-}) {
-  if (!previous && !next) return null;
-  return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {previous && (
-        <Link className="ui-button" href={href}>
-          First page
-        </Link>
-      )}
-      {next && (
-        <Link className="ui-button" href={next}>
-          Next page
-        </Link>
-      )}
-    </div>
   );
 }
 
@@ -182,7 +169,7 @@ function GovernanceResources({
                   tokens={data.tokenList.entries}
                   workspaceId={scope.workspaceId}
                 />
-                <ResourcePages
+                <GovernanceResourcePages
                   href={`${workspaceGovernancePath(workspaceSlug, {
                     factory: factory.id,
                     grant: source.id,
@@ -268,7 +255,7 @@ function GovernanceResources({
         ) : (
           <p className="type-secondary text-muted">No service principals on this page.</p>
         )}
-        <ResourcePages
+        <GovernanceResourcePages
           href={`${filterHref("afterPrincipal")}#service-principals`}
           next={
             principalList.next &&
@@ -292,7 +279,7 @@ function GovernanceResources({
         ) : (
           <p className="type-secondary text-muted">No execution grants on this page.</p>
         )}
-        <ResourcePages
+        <GovernanceResourcePages
           href={`${filterHref("afterGrant")}#execution-grants`}
           next={grantList.next && `${filterHref("afterGrant", grantList.next)}#execution-grants`}
           previous={Boolean(query.afterGrant)}
@@ -314,7 +301,7 @@ function GovernanceResources({
         ) : (
           <p className="type-secondary text-muted">No service credential bindings on this page.</p>
         )}
-        <ResourcePages
+        <GovernanceResourcePages
           href={`${filterHref("afterBinding")}#credential-ownership`}
           next={nextBinding && `${filterHref("afterBinding", nextBinding)}#credential-ownership`}
           previous={Boolean(query.afterBinding)}
@@ -354,10 +341,20 @@ export default async function GovernancePage({
     return <Unavailable href={historyHref} text="This governance page link is unavailable." />;
   }
 
-  const { beforeAudit, ...pages } = parsed.data;
+  const { beforeAudit, afterOAuthClient, afterOAuthGrant, ...pages } = parsed.data;
   let data: GovernanceData;
+  let oauth: GovernanceOAuthData | null;
   try {
-    data = await loadGovernance(scope, { ...pages, auditCursor: beforeAudit, source: source.data });
+    [data, oauth] = await Promise.all([
+      loadGovernance(scope, { ...pages, auditCursor: beforeAudit, source: source.data }),
+      !source.data
+        ? loadOAuthClientData(scope, {
+            afterOAuthClient,
+            afterOAuthGrant,
+            isOperator: scope.isOperator,
+          })
+        : null,
+    ]);
   } catch (error) {
     if (error instanceof FactoryAuditCursorError) {
       return (
@@ -371,6 +368,9 @@ export default async function GovernancePage({
       <Unavailable href={historyHref} text="Governance records are temporarily unavailable." />
     );
   }
+
+  const oauthPage = (key: "afterOAuthClient" | "afterOAuthGrant", anchor: string, value?: string) =>
+    `${workspaceGovernancePath(workspaceSlug, { factory: factory.id, ...pages, beforeAudit, afterOAuthClient, afterOAuthGrant, [key]: value })}#${anchor}`;
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
@@ -388,6 +388,39 @@ export default async function GovernancePage({
       />
       <div className="space-y-8">
         <GovernanceResources data={data} filters={parsed.data} scope={scope} source={source.data} />
+        {oauth && scope.isOperator && (
+          <RegisteredOAuthClients
+            data={oauth}
+            workspaceId={scope.workspaceId}
+            navigation={
+              <GovernanceResourcePages
+                href={oauthPage("afterOAuthClient", "oauth-clients")}
+                next={
+                  oauth.nextClient &&
+                  oauthPage("afterOAuthClient", "oauth-clients", oauth.nextClient)
+                }
+                previous={Boolean(afterOAuthClient)}
+              />
+            }
+          />
+        )}
+        {oauth && (
+          <ConnectedOAuthClients
+            data={oauth}
+            memberOptions={data.memberOptions}
+            workspaceId={scope.workspaceId}
+            navigation={
+              <GovernanceResourcePages
+                href={oauthPage("afterOAuthGrant", "connected-clients")}
+                next={
+                  oauth.nextGrant &&
+                  oauthPage("afterOAuthGrant", "connected-clients", oauth.nextGrant)
+                }
+                previous={Boolean(afterOAuthGrant)}
+              />
+            }
+          />
+        )}
         <GovernanceAudit cursor={beforeAudit} data={data} scope={scope} source={source.data} />
       </div>
     </PageContainer>
