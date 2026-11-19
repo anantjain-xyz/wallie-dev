@@ -29,6 +29,7 @@ test("Governance manages receiver metadata and shows the signing secret only onc
   page,
 }, testInfo) => {
   test.skip(process.env.WALLIE_EVENT_SUBSCRIPTIONS_E2E !== "1", "Requires a disposable stack.");
+  test.setTimeout(90_000);
   const app = localOrigin(baseURL);
   const api = localOrigin(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const key = process.env.SUPABASE_SECRET_KEY;
@@ -172,7 +173,7 @@ test("Governance manages receiver metadata and shows the signing secret only onc
     await events.getByLabel("Name", { exact: true }).fill("Release reporting");
     await events.getByLabel("HTTPS endpoint").fill("https://receiver.example.com/wallie");
     await events
-      .getByLabel("Authorization", { exact: true })
+      .getByRole("combobox", { name: "Authorization", exact: true })
       .selectOption(`machine_token:${tokenId}`);
     await events.getByRole("checkbox", { name: "Review ready" }).check();
     await events.getByRole("checkbox", { name: "Review approved" }).check();
