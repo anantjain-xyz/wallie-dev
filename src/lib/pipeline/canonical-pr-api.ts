@@ -127,7 +127,10 @@ const creationSchema = z.object({
   draft: z.boolean().optional(),
 });
 
-async function readJson(response: Response, signal: AbortSignal): Promise<unknown> {
+export async function readCanonicalGitHubJson(
+  response: Response,
+  signal: AbortSignal,
+): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length"));
   if (declaredLength > MAX_RESPONSE_BYTES) {
     void response.body?.cancel().catch(() => undefined);
@@ -271,7 +274,9 @@ export function createCanonicalPrApi(input: {
             let safe = creating && [401, 403, 404].includes(response.status);
             if (creating && response.status === 422) {
               try {
-                safe = isDefinitiveValidationRejection(await readJson(response, signal));
+                safe = isDefinitiveValidationRejection(
+                  await readCanonicalGitHubJson(response, signal),
+                );
               } catch {
                 safe = false;
               }
@@ -285,7 +290,7 @@ export function createCanonicalPrApi(input: {
               { retryCreationSafe: safe, status: response.status },
             );
           }
-          const data = await readJson(response, signal);
+          const data = await readCanonicalGitHubJson(response, signal);
           signal.throwIfAborted();
           return {
             data,

@@ -9332,6 +9332,24 @@ export type Database = {
         }
         Returns: Json
       }
+      get_factory_revert_summary: {
+        Args: {
+          p_factory_id: string
+          p_from: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_factory_revert_target: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_original_merge_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_throughput_breakdown: {
         Args: {
           p_dimension?: string
@@ -9832,6 +9850,19 @@ export type Database = {
           p_from: string
           p_limit?: number
           p_metric_key: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      list_factory_revert_evidence: {
+        Args: {
+          p_cursor_at?: string
+          p_cursor_merge_id?: string
+          p_factory_id: string
+          p_from: string
+          p_limit?: number
+          p_status?: string
           p_to: string
           p_workspace_id: string
         }
@@ -10543,6 +10574,19 @@ export type Database = {
           run_id: string
           source_asset_id: string
         }[]
+      }
+      record_factory_revert_coverage: {
+        Args: {
+          p_actor_user_id: string
+          p_base_branch: string
+          p_factory_id: string
+          p_from: string
+          p_repository_id: string
+          p_request_id: string
+          p_through: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       record_pr_verification_observation: {
         Args: {
@@ -11537,6 +11581,21 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      save_factory_revert_relationship: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision: number
+          p_factory_id: string
+          p_original_merge_id: string
+          p_original_observation_id?: string
+          p_proof?: Json
+          p_request_id: string
+          p_revert_pr_number: number
+          p_status: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       save_factory_skill_revision: {
         Args: {
           p_actor_user_id: string
@@ -12053,6 +12112,15 @@ export type Database = {
           saved_full_name: string
           superseded_avatar_path: string
         }[]
+      }
+      withdraw_factory_revert_coverage: {
+        Args: {
+          p_actor_user_id: string
+          p_coverage_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       write_artifact_review_comment: {
         Args: {
