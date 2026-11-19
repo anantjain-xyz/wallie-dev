@@ -21,6 +21,7 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createArtifactSourceAnchor } from "@/features/sessions/review/source-anchor";
 import { loadRunTranscript } from "@/features/wallie/run-transcript";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import { STAGE_PROMPT_RENDERER_VERSION } from "@/lib/prompt-templates";
 import {
   adminClient,
   checked,
@@ -598,7 +599,7 @@ it("preserves reviewed source and one PR across stages, rejection, pause, recove
       definition_provenance: "legacy",
       definition_revision_id: null,
       worker_runtime: "node",
-      renderer_version: 4,
+      renderer_version: STAGE_PROMPT_RENDERER_VERSION,
       prompt_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       credential_owner_member_id: ids.memberId,
       predecessors: [
