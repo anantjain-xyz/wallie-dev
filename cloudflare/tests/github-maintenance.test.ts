@@ -75,14 +75,16 @@ it.each([
         return Promise.resolve({ data: [], count: 0, error: null }).then(resolve);
       },
     };
-    const rpc = vi.fn().mockReturnValue({
+    const rpc = vi.fn((name: string) => ({
       abortSignal: () =>
         Promise.resolve(
-          projectionFailure
-            ? { data: null, error: { message: "Projection temporarily unavailable" } }
-            : { data: { processed: 25, hasMore: true }, error: null },
+          name === "prune_factory_analytics_exports"
+            ? { data: 1, error: null }
+            : projectionFailure
+              ? { data: null, error: { message: "Projection temporarily unavailable" } }
+              : { data: { processed: 25, hasMore: true }, error: null },
         ),
-    });
+    }));
     const admin = { from: () => query, rpc };
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin as never);
     if (githubFailure)
@@ -138,9 +140,10 @@ it.each([
       expect(pruneFactoryCommandAdmissions).toHaveBeenCalledExactlyOnceWith(admin);
       expect(requestFactoryEventDispatch).toHaveBeenCalledOnce();
       expect(pruneFactoryEventOutbox).toHaveBeenCalledExactlyOnceWith(admin);
-      expect(rpc).toHaveBeenCalledExactlyOnceWith("process_factory_flow_projection", {
+      expect(rpc).toHaveBeenNthCalledWith(1, "process_factory_flow_projection", {
         p_limit: 25,
       });
+      expect(rpc).toHaveBeenNthCalledWith(2, "prune_factory_analytics_exports", { p_limit: 100 });
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );
