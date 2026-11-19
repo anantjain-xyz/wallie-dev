@@ -13,6 +13,7 @@ import type {
   FactoryEditorSnapshot,
 } from "@/lib/factory-definitions/editor-contracts";
 import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
+import { mcpManifestScopeIds, type FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
 import type { FactorySecretBindingResponse } from "@/lib/factory-secret-bindings/contracts";
 
 const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -118,6 +119,53 @@ function document(
 
 const published = document(5, "revision", source);
 const draft = document(6, "draft", source);
+
+it("shows the empty MCP configuration for a definition without bindings", async () => {
+  setup();
+  expect(await screen.findByRole("heading", { name: "MCP tool manifest" })).toBeVisible();
+  expect(screen.getByText("Empty MCP manifest. Add bindings in JSON source.")).toBeVisible();
+});
+
+it("inspects the exact saved MCP revision and operations with its opaque secret binding", async () => {
+  const manifest: FactoryMcpManifest = {
+    agentId: id(30),
+    servers: [
+      {
+        serverId: id(70),
+        serverSlug: "inventory",
+        toolRevisionId: id(71),
+        revisionNumber: 3,
+        endpoint: "https://approved.example.test/mcp",
+        operations: ["read_item"],
+        auth: { kind: "bearer", secretBindingId: id(72) },
+      },
+    ],
+  };
+  const saved = document(6, "draft", {
+    ...source,
+    implementationAgent: id(73),
+    executionPolicy: id(74),
+    executionGrant: { id: id(75), version: 1 },
+    mcpBindings: [{ toolRevisionId: id(71), operations: ["read_item"], secretBindingId: id(72) }],
+  });
+  setup({
+    initialDraft: {
+      ...saved,
+      bundle: {
+        ...saved.bundle,
+        mcpManifest: manifest,
+        toolIds: mcpManifestScopeIds(manifest.servers),
+      },
+    },
+    credentials: { binding: null, availableBinding: null, grantMatches: true, eligibleSecrets: [] },
+  });
+  const servers = await screen.findByRole("list", { name: "Approved MCP servers" });
+  expect(within(servers).getByRole("heading", { name: "inventory · Revision 3" })).toBeVisible();
+  expect(within(servers).getByText("read_item")).toBeVisible();
+  expect(within(servers).getByText(id(72))).toBeVisible();
+  expect(within(servers).queryByRole("link")).toBeNull();
+});
+
 const previous = document(7, "revision", {
   ...source,
   sandboxProvider: "e2b",

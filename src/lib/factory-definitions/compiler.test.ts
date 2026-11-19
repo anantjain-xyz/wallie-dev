@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
+import { runtimeMcpManifest } from "@/lib/factory-mcp/manifest";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
-import { compileFactoryDefinition, factoryComponentRevisionsForSource } from "./compiler";
+import {
+  compileFactoryDefinition,
+  factoryComponentRevisionsForBundle,
+  factoryComponentRevisionsForSource,
+} from "./compiler";
 import type { FactoryDefinitionCatalog } from "./references";
 import { compiledFactoryDefinitionSchema, type SerialFactoryDefinitionInput } from "./schema";
 import { factoryWritableRepositoryIds } from "./repository-bindings";
@@ -24,6 +29,13 @@ const otherApproverId = "c5410000-0000-4000-8000-000000000011";
 const agentId = "c5410000-0000-4000-8000-000000000012";
 const promptRevisionId = "c5410000-0000-4000-8000-000000000013";
 const docsRepositoryId = "c5410000-0000-4000-8000-000000000014";
+const grantId = "c5410000-0000-4000-8000-000000000020";
+const servicePrincipalId = "c5410000-0000-4000-8000-000000000021";
+const docsMcpRevisionId = "ca410000-0000-4000-8000-000000000022";
+const buildMcpRevisionId = "c5410000-0000-4000-8000-000000000023";
+const docsMcpServerId = "c5410000-0000-4000-8000-000000000024";
+const buildMcpServerId = "c5410000-0000-4000-8000-000000000025";
+const mcpBindingId = "ba410000-0000-4000-8000-000000000026";
 
 const catalog: FactoryDefinitionCatalog = {
   workspaceId,
@@ -37,9 +49,7 @@ const catalog: FactoryDefinitionCatalog = {
     { id: "review@1", workspaceId, aliases: ["Review"] },
     { id: "proof@2", workspaceId, aliases: ["Proof"], sandboxProviders: ["vercel"] },
   ],
-  tools: [
-    { id: "workspace-files@1", workspaceId, aliases: ["Files"], agentProviders: ["claude-code"] },
-  ],
+  tools: [],
   approvers: [
     { id: approverId, workspaceId },
     { id: otherApproverId, workspaceId },
@@ -67,7 +77,7 @@ function candidate(): SerialFactoryDefinitionInput {
     executionPolicy: "Spend guard",
     deliveryPolicy: "PR policy",
     skills: ["Review", "Proof"],
-    tools: ["Files"],
+    tools: [],
     stages: [
       {
         id: firstStageId,
@@ -91,7 +101,232 @@ function compile(value: unknown, references: FactoryDefinitionCatalog = catalog)
   return compileFactoryDefinition({ kind: "structured", value }, references);
 }
 
+function mcpFixture() {
+  const input = {
+    ...candidate(),
+    implementationAgent: promptRevisionId,
+    executionGrant: { id: grantId, version: 3 },
+    mcpBindings: [
+      { toolRevisionId: buildMcpRevisionId, operations: ["list"] },
+      {
+        toolRevisionId: docsMcpRevisionId.toUpperCase(),
+        operations: ["search", "Read"],
+        secretBindingId: mcpBindingId.toUpperCase(),
+      },
+    ],
+  };
+  const references: FactoryDefinitionCatalog = {
+    ...catalog,
+    agentPromptRevisions: [
+      {
+        id: promptRevisionId,
+        workspaceId,
+        agentId,
+        promptRevisionId,
+        promptMd: "",
+        promptSha256: createHash("sha256").update("").digest("hex"),
+      },
+    ],
+    tools: [
+      {
+        id: docsMcpRevisionId,
+        workspaceId,
+        serverId: docsMcpServerId,
+        serverSlug: "reference-docs",
+        endpoint: "https://docs.example.test/mcp",
+        revisionNumber: 2,
+        authKind: "bearer",
+        operations: ["Read", "archive", "search"],
+      },
+      {
+        id: buildMcpRevisionId,
+        workspaceId,
+        serverId: buildMcpServerId,
+        serverSlug: "build-catalog",
+        endpoint: "https://builds.example.test/mcp",
+        revisionNumber: 1,
+        authKind: "none",
+        operations: ["list"],
+      },
+    ],
+    mcpSecretBindings: [
+      {
+        id: mcpBindingId,
+        workspaceId,
+        grantId,
+        agentId,
+        servicePrincipalId,
+        toolRevisionId: docsMcpRevisionId,
+      },
+    ],
+    mcpExecutionGrant: {
+      id: grantId,
+      workspaceId,
+      servicePrincipalId,
+      version: 3,
+      toolIds: [
+        `${docsMcpRevisionId}/Read`,
+        `${docsMcpRevisionId}/search`,
+        `${buildMcpRevisionId}/list`,
+      ],
+    },
+  };
+  return { input, references };
+}
+
 describe("compileFactoryDefinition", () => {
+  it("keeps the default runtime MCP list explicitly empty without changing the canonical digest", () => {
+    const original = compile(candidate());
+    expect(original.ok).toBe(true);
+    if (!original.ok) return;
+    expect(compile({ ...candidate(), mcpBindings: [] })).toEqual(original);
+    expect(original.bundle).not.toHaveProperty("mcpManifest");
+    expect(runtimeMcpManifest(original.bundle.mcpManifest)).toEqual({ servers: [] });
+    expect(
+      compiledFactoryDefinitionSchema.safeParse({ ...original.bundle, toolIds: ["unbound"] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("pins the exact reviewed operations and opaque MCP secret reference in canonical order", () => {
+    const { input, references } = mcpFixture();
+    const compiled = compile(input, references);
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+    expect(runtimeMcpManifest(compiled.bundle.mcpManifest)).toEqual({
+      agentId,
+      servers: [
+        {
+          toolRevisionId: buildMcpRevisionId,
+          serverId: buildMcpServerId,
+          serverSlug: "build-catalog",
+          revisionNumber: 1,
+          endpoint: "https://builds.example.test/mcp",
+          operations: ["list"],
+          auth: { kind: "none" },
+        },
+        {
+          toolRevisionId: docsMcpRevisionId,
+          serverId: docsMcpServerId,
+          serverSlug: "reference-docs",
+          revisionNumber: 2,
+          endpoint: "https://docs.example.test/mcp",
+          operations: ["Read", "search"],
+          auth: { kind: "bearer", secretBindingId: mcpBindingId },
+        },
+      ],
+    });
+    const reviewedToolIds = [
+      `${buildMcpRevisionId}/list`,
+      `${docsMcpRevisionId}/Read`,
+      `${docsMcpRevisionId}/search`,
+    ];
+    expect(compiled.bundle.toolIds).toEqual(reviewedToolIds);
+    expect(
+      compiledFactoryDefinitionSchema.safeParse({ ...compiled.bundle, toolIds: [] }).success,
+    ).toBe(false);
+    expect(compiled.definitionJson).not.toContain("workspace_secret_id");
+    const mcpSelection = {
+      mcpToolRevisionIds: [buildMcpRevisionId, docsMcpRevisionId],
+      mcpSecretBindingIds: [mcpBindingId],
+      mcpExecutionGrantId: grantId,
+    };
+    expect(factoryComponentRevisionsForBundle(compiled.bundle)).toMatchObject(mcpSelection);
+    expect(factoryComponentRevisionsForSource({ kind: "structured", value: input })).toMatchObject(
+      mcpSelection,
+    );
+    expect(compile(factoryDefinitionFromBundle(compiled.bundle), references)).toEqual(compiled);
+    expect(
+      recompileStoredFactoryDefinition(
+        compiled.definitionJson,
+        compiled.canonicalDigest,
+        references,
+      ),
+    ).toEqual(compiled);
+    expect(compile({ ...input, mcpBindings: input.mcpBindings.toReversed() }, references)).toEqual(
+      compiled,
+    );
+    expect(
+      recompileStoredFactoryDefinition(compiled.definitionJson, compiled.canonicalDigest, {
+        ...references,
+        tools: references.tools.filter(({ id }) => id !== docsMcpRevisionId),
+      }),
+    ).toMatchObject({ ok: false });
+    expect(
+      recompileStoredFactoryDefinition(compiled.definitionJson, compiled.canonicalDigest, {
+        ...references,
+        tools: references.tools.map((revision) =>
+          revision.id === docsMcpRevisionId
+            ? { ...revision, endpoint: "https://elsewhere.example.test/mcp" }
+            : revision,
+        ),
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("rejects operations outside the grant and rejects a stale grant version", () => {
+    const { input, references } = mcpFixture();
+    expect(
+      compile({ ...input, executionGrant: { id: grantId, version: 2 } }, references),
+    ).toMatchObject({ ok: false, diagnostics: [{ path: ["executionGrant"] }] });
+    expect(
+      compile(
+        {
+          ...input,
+          mcpBindings: [{ ...input.mcpBindings[1], operations: ["archive"] }],
+        },
+        references,
+      ),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [{ path: ["mcpBindings", 0, "operations"] }],
+    });
+    expect(
+      compile({ ...input, mcpBindings: [...input.mcpBindings, input.mcpBindings[0]] }, references),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [{ path: ["mcpBindings", 2, "toolRevisionId"] }],
+    });
+  });
+
+  it("checks the exact secret purpose and rejects raw per-tool credentials", () => {
+    const { input, references } = mcpFixture();
+    const foreignBinding = {
+      id: mcpBindingId,
+      workspaceId,
+      grantId,
+      servicePrincipalId,
+      agentId,
+      toolRevisionId: buildMcpRevisionId,
+    };
+    expect(compile(input, { ...references, mcpSecretBindings: [foreignBinding] })).toMatchObject({
+      ok: false,
+      diagnostics: [{ path: ["mcpBindings", 1, "secretBindingId"] }],
+    });
+    expect(
+      compile(
+        {
+          ...input,
+          credentialBindingId: mcpBindingId,
+          mcpBindings: [{ ...input.mcpBindings[1], secretBindingId: undefined }],
+        },
+        references,
+      ),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [{ path: ["mcpBindings", 0, "secretBindingId"] }],
+    });
+    expect(
+      compile(
+        {
+          ...input,
+          mcpBindings: [{ ...input.mcpBindings[1], token: "synthetic-secret" }],
+        },
+        references,
+      ),
+    ).toMatchObject({ ok: false });
+  });
+
   it("pins the exact execution grant and preserves it when reopening a saved definition", () => {
     const id = "c5410000-0000-4000-8000-000000000015";
     const result = compile({
@@ -364,7 +599,6 @@ describe("compileFactoryDefinition", () => {
       deliveryPolicy: deliveryPolicyId,
       agent: { ...input.agent, provider: "claude-code" },
       skills: ["proof@2", "review@1", "Review"],
-      tools: ["workspace-files@1"],
       stages: input.stages.map(({ id, approverMemberIds, ...stage }) => ({
         ...stage,
         id: id.toUpperCase(),
@@ -387,7 +621,7 @@ describe("compileFactoryDefinition", () => {
       executionPolicyRevisionId: executionPolicyId,
       deliveryPolicyRevisionId: deliveryPolicyId,
       skillIds: ["proof@2", "review@1"],
-      toolIds: ["workspace-files@1"],
+      toolIds: [],
       operatingRuleStageIds: [firstStageId],
       stages: [
         { id: firstStageId, name: "Découvrir les risques", previousStageIds: [] },
@@ -448,6 +682,7 @@ describe("compileFactoryDefinition", () => {
         ...input,
         sandboxProvider: "e2b",
         agent: { ...input.agent, provider: "cursor", model: "opencode/gpt-model" },
+        tools: ["Files"],
         stages: [input.stages[0], { ...input.stages[1], approverMemberIds: [otherApproverId] }],
       },
       {
@@ -481,7 +716,7 @@ describe("compileFactoryDefinition", () => {
         { path: ["agent", "model"], code: "unsupported_capability", message: expect.any(String) },
         { path: ["agent", "effort"], code: "unsupported_capability", message: expect.any(String) },
         { path: ["skills", 1], code: "unsupported_capability", message: expect.any(String) },
-        { path: ["tools", 0], code: "unsupported_capability", message: expect.any(String) },
+        { path: ["tools"], code: "unsupported_capability", message: expect.any(String) },
         {
           path: ["stages", 1, "approverMemberIds", 0],
           code: "missing_reference",

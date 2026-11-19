@@ -1639,6 +1639,171 @@ export type Database = {
           },
         ]
       }
+      factory_mcp_secret_bindings: {
+        Row: {
+          created_at: string
+          created_by: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          service_principal_id: string
+          tool_revision_id: string
+          workspace_id: string
+          workspace_secret_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          service_principal_id: string
+          tool_revision_id: string
+          workspace_id: string
+          workspace_secret_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          execution_grant_id?: string
+          factory_agent_id?: string
+          factory_id?: string
+          id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          service_principal_id?: string
+          tool_revision_id?: string
+          workspace_id?: string
+          workspace_secret_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_mcp_secret_bindings_execution_grant_id_fkey"
+            columns: ["execution_grant_id"]
+            isOneToOne: false
+            referencedRelation: "factory_execution_grants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_mcp_secret_bindings_workspace_id_factory_id_factor_fkey"
+            columns: ["workspace_id", "factory_id", "factory_agent_id"]
+            isOneToOne: false
+            referencedRelation: "factory_agents"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_mcp_secret_bindings_workspace_id_factory_id_servic_fkey"
+            columns: ["workspace_id", "factory_id", "service_principal_id"]
+            isOneToOne: false
+            referencedRelation: "service_principals"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_mcp_secret_bindings_workspace_id_factory_id_tool_r_fkey"
+            columns: ["workspace_id", "factory_id", "tool_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_mcp_server_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_mcp_server_revisions: {
+        Row: {
+          auth_kind: string
+          created_at: string
+          created_by: string
+          endpoint: string
+          factory_id: string
+          id: string
+          operation_names: string[]
+          revision_number: number
+          revoked_at: string | null
+          revoked_by: string | null
+          server_id: string
+          workspace_id: string
+        }
+        Insert: {
+          auth_kind: string
+          created_at?: string
+          created_by: string
+          endpoint: string
+          factory_id: string
+          id?: string
+          operation_names: string[]
+          revision_number: number
+          revoked_at?: string | null
+          revoked_by?: string | null
+          server_id: string
+          workspace_id: string
+        }
+        Update: {
+          auth_kind?: string
+          created_at?: string
+          created_by?: string
+          endpoint?: string
+          factory_id?: string
+          id?: string
+          operation_names?: string[]
+          revision_number?: number
+          revoked_at?: string | null
+          revoked_by?: string | null
+          server_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_mcp_server_revisions_workspace_id_factory_id_serve_fkey"
+            columns: ["workspace_id", "factory_id", "server_id"]
+            isOneToOne: false
+            referencedRelation: "factory_mcp_servers"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_mcp_servers: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id?: string
+          name: string
+          slug: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          name?: string
+          slug?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_mcp_servers_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       factory_members: {
         Row: {
           factory_id: string
@@ -6889,6 +7054,70 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_factory_mcp_secret_binding: {
+        Args: {
+          p_actor_user_id: string
+          p_execution_grant_id: string
+          p_execution_grant_version: number
+          p_factory_agent_id: string
+          p_factory_id: string
+          p_tool_revision_id: string
+          p_workspace_id: string
+          p_workspace_secret_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          service_principal_id: string
+          tool_revision_id: string
+          workspace_id: string
+          workspace_secret_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_mcp_secret_bindings"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      create_factory_mcp_server: {
+        Args: {
+          p_actor_user_id: string
+          p_auth_kind: string
+          p_endpoint: string
+          p_factory_id: string
+          p_name: string
+          p_operation_names: string[]
+          p_slug: string
+          p_workspace_id: string
+        }
+        Returns: {
+          auth_kind: string
+          created_at: string
+          created_by: string
+          endpoint: string
+          factory_id: string
+          id: string
+          operation_names: string[]
+          revision_number: number
+          revoked_at: string | null
+          revoked_by: string | null
+          server_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_mcp_server_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       create_factory_secret_binding: {
         Args: {
           p_actor_user_id: string
@@ -7343,6 +7572,14 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      get_run_mcp_manifest: {
+        Args: {
+          target_attempt_count?: number
+          target_run_id: string
+          target_workspace_id: string
+        }
+        Returns: Json
       }
       get_run_skill_revisions: {
         Args: {
@@ -8382,6 +8619,63 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      revoke_factory_mcp_secret_binding: {
+        Args: {
+          p_actor_user_id: string
+          p_binding_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          execution_grant_id: string
+          factory_agent_id: string
+          factory_id: string
+          id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          service_principal_id: string
+          tool_revision_id: string
+          workspace_id: string
+          workspace_secret_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_mcp_secret_bindings"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_factory_mcp_server_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_revision_id: string
+          p_server_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          auth_kind: string
+          created_at: string
+          created_by: string
+          endpoint: string
+          factory_id: string
+          id: string
+          operation_names: string[]
+          revision_number: number
+          revoked_at: string | null
+          revoked_by: string | null
+          server_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_mcp_server_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       revoke_factory_membership: {
         Args: {
           p_actor_user_id: string
@@ -8612,6 +8906,38 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_definition_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_factory_mcp_server_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_auth_kind: string
+          p_endpoint: string
+          p_expected_revision_number: number
+          p_factory_id: string
+          p_operation_names: string[]
+          p_server_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          auth_kind: string
+          created_at: string
+          created_by: string
+          endpoint: string
+          factory_id: string
+          id: string
+          operation_names: string[]
+          revision_number: number
+          revoked_at: string | null
+          revoked_by: string | null
+          server_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_mcp_server_revisions"
           isOneToOne: true
           isSetofReturn: false
         }

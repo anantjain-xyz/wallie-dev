@@ -1094,6 +1094,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     { trigger: "manual_run", scope: "retry_failed" },
     { trigger: "manual_run", scope: "retry_race" },
     { trigger: "manual_run", scope: "bound" },
+    { trigger: "manual_run", scope: "mcp_pending" },
   ] as const)(
     "honors the compiled authorization for $trigger ($scope credential)",
     async ({ trigger, scope }) => {
@@ -1112,7 +1113,8 @@ describe("processPipelineJob (generic stage runner)", () => {
       const serviceBound = scope !== "human";
       const bindingId = "77900000-0000-4000-8000-000000000009";
       const credentialValue = "scoped-execution-fixture-key-5678";
-      const usesBinding = serviceBound && scope !== "unbound";
+      const requiresMcpAdapter = scope === "mcp_pending";
+      const usesBinding = serviceBound && scope !== "unbound" && !requiresMcpAdapter;
       const retryCleanupFailed = scope === "retry_failed" || scope === "retry_race";
       const cleanupFailed =
         scope === "cleanup_failed" || scope === "scratch_failed" || retryCleanupFailed;
@@ -1120,7 +1122,8 @@ describe("processPipelineJob (generic stage runner)", () => {
       const finishRetryRunner = Promise.withResolvers<void>();
       const retentionUpdateStarted = Promise.withResolvers<void>();
       const finishRetentionUpdate = Promise.withResolvers<void>();
-      if (scope !== "unbound") mocked.loadRunAgentPrompt.mockResolvedValueOnce(implementationAgent);
+      if (scope !== "unbound" && !requiresMcpAdapter)
+        mocked.loadRunAgentPrompt.mockResolvedValueOnce(implementationAgent);
       if (usesBinding) {
         const sandbox = new FakeSandbox("scoped-sandbox");
         vi.spyOn(sandbox, "stop");
@@ -1213,7 +1216,25 @@ describe("processPipelineJob (generic stage runner)", () => {
         executionPolicyRevisionId: serviceBound ? "77900000-0000-4000-8000-000000000008" : null,
         deliveryPolicyRevisionId: null,
         skillIds: [],
-        toolIds: [],
+        toolIds: requiresMcpAdapter ? [`${revisionId}/read_record`] : [],
+        ...(requiresMcpAdapter
+          ? {
+              mcpManifest: {
+                agentId: implementationAgent.agentId,
+                servers: [
+                  {
+                    toolRevisionId: revisionId,
+                    serverId: repositoryId,
+                    serverSlug: "docs",
+                    revisionNumber: 1,
+                    endpoint: "https://docs.example.test/mcp",
+                    operations: ["read_record"],
+                    auth: { kind: "none" },
+                  },
+                ],
+              },
+            }
+          : {}),
         stages: [
           {
             id: stageId,
@@ -1288,6 +1309,21 @@ describe("processPipelineJob (generic stage runner)", () => {
           vi.useRealTimers();
         }
       })();
+      if (requiresMcpAdapter) {
+        expect(result).toMatchObject({ result: "error", runId: "run-1" });
+        expect(rpc).toHaveBeenCalledWith(
+          "fail_session_job_attempt",
+          expect.objectContaining({
+            p_error:
+              "The selected agent adapter does not yet support the pinned MCP tool manifest.",
+            p_retry: false,
+          }),
+        );
+        expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+        expect(mocked.resolveScopedRunCredential).not.toHaveBeenCalled();
+        expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+        return;
+      }
       if (usesBinding) {
         expect(mocked.resolveScopedRunCredential).toHaveBeenCalledExactlyOnceWith(
           expect.objectContaining({
@@ -3786,12 +3822,16 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect([...sandbox.files.values()].map((file) => file.data.toString())).toEqual([
       '{"version":1,"commands":[]}',
       "rendered prompt",
+      ...(testCase.provider === "opencode" ? ['{"mcp":{}}\n'] : []),
     ]);
     expect(
       sandbox.calls.every(
         (call) =>
           (call.cmd === "mkdir" && call.args[0] === "-m" && call.args[1] === "700") ||
-          (call.cmd === "bash" && call.args[1]?.startsWith("mkdir -p ")),
+          (call.cmd === "bash" && call.args[1]?.startsWith("mkdir -p ")) ||
+          (testCase.provider === "codex" &&
+            call.cmd === "sh" &&
+            call.args[2] === "wallie-codex-config"),
       ),
     ).toBe(true);
     expect([...sandbox.files.keys()].every((path) => path.startsWith("/tmp/wallie-"))).toBe(true);

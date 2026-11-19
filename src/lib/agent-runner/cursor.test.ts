@@ -1,10 +1,14 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentEvent } from "./types";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import { harnessPath, runnerCalls } from "./test-helpers";
 
-import { CursorRunner, parseCursorStreamJsonLine } from "./cursor";
+import { CursorRunner, cursorEmptyMcpCheck, parseCursorStreamJsonLine } from "./cursor";
 
 const credential = {
   expiresAt: "2026-11-27T00:00:00.000Z",
@@ -14,6 +18,38 @@ const credential = {
 };
 
 describe("CursorRunner", () => {
+  it("rejects ancestor and nested checkout MCP config before launching the CLI", () => {
+    const root = mkdtempSync(join(tmpdir(), "wallie-cursor-mcp-"));
+    try {
+      const directory = join(root, "project", "checkout");
+      mkdirSync(directory, { recursive: true });
+      expect(spawnSync("git", ["init", "-q", directory]).status).toBe(0);
+      mkdirSync(join(root, "project", ".cursor"));
+      const config = join(root, "project", ".cursor", "mcp.json");
+      writeFileSync(config, JSON.stringify({ mcpServers: {} }));
+      const probe = () =>
+        spawnSync(process.execPath, ["-e", cursorEmptyMcpCheck], {
+          cwd: directory,
+          encoding: "utf8",
+        });
+      expect(probe().status).toBe(0);
+      writeFileSync(
+        config,
+        JSON.stringify({ mcpServers: { example: { url: "https://example.test" } } }),
+      );
+      const result = probe();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("requires an empty Cursor MCP configuration");
+      expect(result.stderr).not.toContain("example.test");
+      rmSync(config);
+      const nested = join(directory, "package", ".cursor");
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(join(nested, "mcp.json"), '{"mcpServers":{"unapproved":{}}}');
+      expect(probe().status).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it("runs cursor-agent in the external sandbox with the user credential", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec("bash", [
@@ -44,6 +80,12 @@ describe("CursorRunner", () => {
     expect(await sandbox.readFile(harnessPath(sandbox, "prompt.txt"))).toBe("Implement this");
     expect(runnerCalls(sandbox)[0]?.args[1]).toContain("'--model' 'composer-2'");
     expect(runnerCalls(sandbox)[0]?.args[1]).toContain("'--resume' 'previous'");
+    expect(runnerCalls(sandbox)[0]?.args[1]).toContain(
+      `export HOME='${harnessPath(sandbox, "prompt.txt").replace(/\/prompt\.txt$/, "")}'`,
+    );
+    expect(runnerCalls(sandbox)[0]?.args[1]).toContain(
+      `CURSOR_CONFIG_DIR='${harnessPath(sandbox, ".cursor")}'`,
+    );
     expect(runnerCalls(sandbox)[0]?.opts.env).toMatchObject({
       CI: "1",
       CURSOR_API_KEY: "cursor-key",

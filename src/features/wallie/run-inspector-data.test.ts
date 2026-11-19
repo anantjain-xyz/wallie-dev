@@ -6,6 +6,7 @@ import {
   loadRunInspectorArtifact,
   loadRunInspectorCredential,
   loadRunInspectorData,
+  loadRunInspectorMcpManifest,
   loadRunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
 import { RunTranscriptResetError } from "@/features/wallie/run-transcript";
@@ -65,16 +66,19 @@ function fixture({
   artifact = true,
   revisions = null,
   credential = false,
+  mcp = null,
   failure,
 }: {
   checkpoint?: boolean;
   artifact?: boolean;
   revisions?: unknown;
   credential?: boolean;
+  mcp?: unknown;
   failure?: string;
 } = {}) {
   const requests: URL[] = [];
   const skillRequests: unknown[] = [];
+  const mcpRequests: unknown[] = [];
   const supabase = createClient<Database>("https://database.example.test", "test-key", {
     auth: { persistSession: false, autoRefreshToken: false },
     global: {
@@ -89,6 +93,10 @@ function fixture({
           return table === failure
             ? Response.json({ message: "private database error" }, { status: 403 })
             : Response.json(revisions);
+        }
+        if (table === "get_run_mcp_manifest") {
+          mcpRequests.push(JSON.parse(String(init?.body)));
+          return Response.json(mcp);
         }
         const data =
           table === "factory_run_credential_receipts"
@@ -115,11 +123,47 @@ function fixture({
   return {
     requests,
     skillRequests,
+    mcpRequests,
     input: { supabase, workspaceId, workspaceSlug: "wallie", run },
   };
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+it("exposes only the exact planned MCP manifest and rejects material-bearing payloads", async () => {
+  const payload = {
+    kind: "planned",
+    manifest: {
+      agentId: run.sessionId,
+      servers: [
+        {
+          serverId: run.id,
+          serverSlug: "docs",
+          toolRevisionId: artifactId,
+          revisionNumber: 2,
+          endpoint: "https://tools.example.test/mcp",
+          operations: ["read_page"],
+          auth: { kind: "bearer", secretBindingId: receipt.binding_id },
+        },
+      ],
+    },
+  };
+  const allowed = fixture({ mcp: payload });
+  expect(
+    await loadRunInspectorMcpManifest({
+      ...allowed.input,
+      run: { ...run, attemptCount: null },
+    }),
+  ).toEqual(payload);
+  expect(allowed.requests[0]?.pathname).toBe("/rest/v1/rpc/get_run_mcp_manifest");
+  expect(allowed.mcpRequests[0]).toEqual({
+    target_workspace_id: workspaceId,
+    target_run_id: run.id,
+  });
+  const malformed = fixture({ mcp: { ...payload, credentialValue: "synthetic-unsafe-material" } });
+  expect(await loadRunInspectorMcpManifest(malformed.input)).toBeNull();
+  expect(malformed.mcpRequests[0]).toMatchObject({ target_attempt_count: run.attemptCount });
+});
 
 describe("exact-attempt credential provenance", () => {
   it("reads only safe metadata for the exact session, run and attempt", async () => {

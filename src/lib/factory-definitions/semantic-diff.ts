@@ -58,7 +58,17 @@ const definitionFields = [
   { label: "Service credential binding", read: (value) => value.credentialBindingId ?? null },
   { label: "Delivery policy revision", read: (value) => value.deliveryPolicyRevisionId },
   { label: "Skills", read: (value) => value.skillIds },
-  { label: "Tools", read: (value) => value.toolIds },
+  {
+    label: "MCP bindings",
+    read: (value) =>
+      value.mcpManifest?.servers.map((server) => {
+        const target = `${server.serverSlug} v${server.revisionNumber} · ${server.endpoint}`;
+        const operations = server.operations.join(", ");
+        return server.auth.kind === "bearer"
+          ? `${target} · ${operations} · Binding ${server.auth.secretBindingId}`
+          : `${target} · ${operations}`;
+      }) ?? [],
+  },
   { label: "Operating rules", read: (value) => value.operatingRulesMd, multiline: true },
   { label: "Operating rule stage references", read: (value) => value.operatingRuleStageIds },
 ] satisfies readonly DiffField<CompiledFactoryDefinition>[];

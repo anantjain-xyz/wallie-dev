@@ -70,6 +70,7 @@ export class CodexRunner implements AgentRunner {
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
+    await requireNoLocalCodexConfig(sandbox, input.signal);
     const directory = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
     const promptFile = `${directory}/prompt.txt`;
     const finalOutputFile = `${directory}/final-output.md`;
@@ -655,6 +656,10 @@ export function codexExecArgs(
     "mcp_servers={}",
     "-c",
     "apps.github.enabled=false",
+    "--disable",
+    "plugins",
+    "--disable",
+    "skill_mcp_dependency_install",
     "--ignore-user-config",
     CODEX_EXTERNAL_SANDBOX_FLAG,
     "--cd",
@@ -673,6 +678,45 @@ function codexExecCommand(
   finalOutputFile: string,
 ): string {
   return `codex ${codexExecArgs(model, sandboxRepoPath, effort, finalOutputFile).map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+}
+
+async function requireNoLocalCodexConfig(
+  sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>,
+  signal?: AbortSignal,
+) {
+  // Codex merges empty MCP tables with lower layers. Keep its working directory
+  // and AGENTS.md discovery, but stop before auth if local config can enter the merge.
+  const script = `
+check_config_directory() {
+  config_dir=$1
+  shift
+  if [ -e "$config_dir" ] || [ -L "$config_dir" ]; then
+    [ -d "$config_dir" ] && [ -x "$config_dir" ] || return 1
+  fi
+  for config_name do
+    if [ -e "$config_dir/$config_name" ] || [ -L "$config_dir/$config_name" ]; then
+      return 1
+    fi
+  done
+}
+[ -x "\${1%/*}" ] && check_config_directory "$1" config.toml managed_config.toml requirements.toml || exit 1
+directory=$(pwd -P) || exit 1
+while :; do
+  [ -x "$directory" ] && check_config_directory "\${directory%/}/.codex" config.toml || exit 1
+  [ "$directory" = / ] && break
+  directory=\${directory%/*}
+  directory=\${directory:-/}
+done`;
+  signal?.throwIfAborted();
+  const check = await sandbox.exec("sh", ["-c", script, "wallie-codex-config", "/etc/codex"], {
+    cwd: sandbox.repoPath,
+    signal,
+  });
+  if ((await check.exitCode) !== 0) {
+    throw new Error(
+      "Codex cannot start with project or machine Codex configuration when its MCP manifest is empty.",
+    );
+  }
 }
 
 async function* codexSessionCompletion(

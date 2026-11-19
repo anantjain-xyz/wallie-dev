@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { mcpBindingsFromManifest } from "@/lib/factory-mcp/manifest";
+
 import {
   compileFactoryDefinition,
   type CompiledFactoryDefinition,
@@ -73,7 +75,7 @@ export function factoryDefinitionFromBundle(
     executionPolicyRevisionId,
     deliveryPolicyRevisionId,
     skillIds,
-    toolIds,
+    mcpManifest,
     stages,
   } = bundle;
   return {
@@ -92,7 +94,8 @@ export function factoryDefinitionFromBundle(
     executionPolicy: executionPolicyRevisionId,
     deliveryPolicy: deliveryPolicyRevisionId,
     skills: skillIds,
-    tools: toolIds,
+    tools: [],
+    ...(mcpManifest ? { mcpBindings: mcpBindingsFromManifest(mcpManifest) } : {}),
     stages: stages.map(factoryStageDefinition),
   };
 }

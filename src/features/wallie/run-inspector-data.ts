@@ -11,6 +11,7 @@ import {
 import { runCatalogItemParamsSchema } from "@/features/wallie/run-catalog-contracts";
 import { loadRunTranscript, RunTranscriptResetError } from "@/features/wallie/run-transcript";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
+import { factoryMcpManifestSchema } from "@/lib/factory-mcp/manifest";
 import { workspaceSessionDetailPath } from "@/lib/routes";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -50,6 +51,31 @@ export type RunInspectorCredential = {
   servicePrincipalId: string;
   resolvedAt: string;
 };
+
+const runMcpManifestSchema = z
+  .object({
+    kind: z.enum(["planned", "pinned"]),
+    manifest: factoryMcpManifestSchema,
+  })
+  .strict();
+
+export type RunInspectorMcpManifest = z.infer<typeof runMcpManifestSchema>;
+
+export async function loadRunInspectorMcpManifest(input: {
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  workspaceId: string;
+  run: Pick<WorkspaceRunCatalogItem, "id" | "attemptCount">;
+}): Promise<RunInspectorMcpManifest | null> {
+  const { supabase, workspaceId, run } = input;
+  const { data, error } = await supabase.rpc("get_run_mcp_manifest", {
+    target_workspace_id: workspaceId,
+    target_run_id: run.id,
+    ...(run.attemptCount === null ? {} : { target_attempt_count: run.attemptCount }),
+  });
+  if (error || !data) return null;
+  const parsed = runMcpManifestSchema.safeParse(data);
+  return parsed.success ? parsed.data : null;
+}
 
 export async function loadRunInspectorCredential(input: {
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -160,10 +186,11 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     run = await loadRun();
     if (!run) notFound();
   }
-  const [artifact, skills, credential] = await Promise.all([
+  const [artifact, skills, credential, mcp] = await Promise.all([
     loadRunInspectorArtifact({ ...context, run }),
     loadRunInspectorSkills({ ...context, run }),
     loadRunInspectorCredential({ ...context, run }),
+    loadRunInspectorMcpManifest({ ...context, run }),
   ]);
   return {
     workspaceId: workspace.id,
@@ -172,6 +199,7 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     artifact,
     skills,
     credential,
+    mcp,
     transcript,
   };
 }

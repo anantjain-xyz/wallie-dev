@@ -23,7 +23,7 @@ import {
   acquireCandidateSmokeUtility,
   runCandidateSmokeExecution,
 } from "./candidate-smoke-execution";
-import type { CompiledFactoryDefinition } from "./compiler";
+import { factoryComponentRevisionsForBundle, type CompiledFactoryDefinition } from "./compiler";
 import {
   invalidDefinition,
   mutationError,
@@ -222,8 +222,7 @@ export async function startFactoryDefinitionSmokeTest({
   const catalog = await loadFactoryDefinitionCatalog(admin, {
     workspaceId,
     factoryId: factory.id,
-    agentPromptRevisionId: bundle?.implementationAgent?.promptRevisionId,
-    skillRevisionIds: bundle?.skillIds,
+    ...factoryComponentRevisionsForBundle(bundle),
   });
   const compiled = recompileStoredFactoryDefinition(
     stored.definition_json,

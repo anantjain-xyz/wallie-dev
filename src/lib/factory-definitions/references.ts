@@ -1,5 +1,6 @@
 import type { AgentProvider, SandboxProvider } from "@/lib/sandbox/types";
 import type { FactoryAgentPromptSnapshot } from "@/lib/factory-agents/contracts";
+import type { FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
 
 export type FactoryReferenceEntry = {
   id: string;
@@ -14,6 +15,24 @@ type FactoryComponentReference = FactoryReferenceEntry & {
   sandboxProviders?: readonly SandboxProvider[];
 };
 
+export type FactoryMcpRevision = FactoryReferenceEntry &
+  Omit<FactoryMcpManifest["servers"][number], "toolRevisionId" | "auth"> & {
+    authKind: FactoryMcpManifest["servers"][number]["auth"]["kind"];
+  };
+
+export type FactoryMcpSecretBinding = FactoryReferenceEntry & {
+  grantId: string;
+  servicePrincipalId: string;
+  agentId: string;
+  toolRevisionId: string;
+};
+
+export type FactoryMcpExecutionGrant = FactoryReferenceEntry & {
+  version: number;
+  servicePrincipalId: string;
+  toolIds: readonly string[];
+};
+
 /** A caller supplies the eligible entries without loading secrets or contacting providers. */
 export type FactoryDefinitionCatalog = {
   workspaceId: string;
@@ -22,7 +41,9 @@ export type FactoryDefinitionCatalog = {
   executionPolicyRevisions: readonly FactoryReferenceEntry[];
   deliveryPolicyRevisions: readonly DeliveryPolicyReference[];
   skills: readonly FactoryComponentReference[];
-  tools: readonly FactoryComponentReference[];
+  tools: readonly FactoryMcpRevision[];
+  mcpSecretBindings?: readonly FactoryMcpSecretBinding[];
+  mcpExecutionGrant?: FactoryMcpExecutionGrant;
   approvers: readonly FactoryReferenceEntry[];
   sandboxProviders: readonly SandboxProvider[];
   agentPromptRevisions?: readonly (FactoryReferenceEntry & FactoryAgentPromptSnapshot)[];

@@ -1,6 +1,13 @@
 import { agentProviderSupportsEffort, modelMatchesProvider } from "@/lib/agent-config/contracts";
 import type { FactoryAgentPromptSnapshot } from "@/lib/factory-agents/contracts";
+import {
+  mcpBindingsFromManifest,
+  mcpManifestScopeIds,
+  type FactoryMcpBindingSource,
+  type FactoryMcpManifest,
+} from "@/lib/factory-mcp/manifest";
 
+import { compileFactoryMcpManifest } from "./mcp-compiler";
 import { inspectFactoryPromptReferences } from "./prompt-references";
 import {
   normalizeFactoryId,
@@ -50,6 +57,7 @@ export type CompiledFactoryDefinition = Pick<
   deliveryPolicyRevisionId: string | null;
   skillIds: string[];
   toolIds: string[];
+  mcpManifest?: FactoryMcpManifest;
   operatingRuleStageIds: string[];
   stages: (SerialFactoryDefinition["stages"][number] & { previousStageIds: string[] })[];
 };
@@ -79,6 +87,32 @@ export function factoryComponentRevisionsForSource(source: FactoryDefinitionSour
   return {
     agentPromptRevisionId: parsed.definition.implementationAgent,
     skillRevisionIds: parsed.definition.skills,
+    ...mcpCatalogSelections(parsed.definition.mcpBindings, parsed.definition.executionGrant?.id),
+  };
+}
+
+export function factoryComponentRevisionsForBundle(bundle: CompiledFactoryDefinition | null) {
+  return {
+    agentPromptRevisionId: bundle?.implementationAgent?.promptRevisionId,
+    skillRevisionIds: bundle?.skillIds,
+    ...mcpCatalogSelections(
+      bundle?.mcpManifest ? mcpBindingsFromManifest(bundle.mcpManifest) : undefined,
+      bundle?.executionGrant?.id,
+    ),
+  };
+}
+
+function mcpCatalogSelections(
+  bindings: readonly FactoryMcpBindingSource[] | undefined,
+  grantId: string | undefined,
+) {
+  if (!bindings?.length) return {};
+  return {
+    mcpToolRevisionIds: bindings.map(({ toolRevisionId }) => toolRevisionId),
+    mcpSecretBindingIds: bindings.flatMap(({ secretBindingId }) =>
+      secretBindingId ? [secretBindingId] : [],
+    ),
+    mcpExecutionGrantId: grantId,
   };
 }
 
@@ -234,27 +268,30 @@ function compileSerialDefinition(
     });
   }
 
-  function componentIds(kind: "skills" | "tools"): string[] {
-    const ids = new Set<string>();
-    definition[kind].forEach((reference, index) => {
-      const path = [kind, index];
-      const entry = find(catalog[kind], reference, path);
-      if (!entry) return;
-      if (!supportsFactoryComponent(entry, agent.provider, sandboxProvider)) {
-        diagnostics.push({
-          path,
-          code: "unsupported_capability",
-          message: `"${reference}" is unavailable for ${agent.provider} on ${sandboxProvider}.`,
-        });
-        return;
-      }
-      ids.add(normalizeFactoryId(entry.id));
-    });
-    return [...ids].sort();
-  }
+  const selectedSkills = new Set<string>();
+  definition.skills.forEach((reference, index) => {
+    const path = ["skills", index];
+    const entry = find(catalog.skills, reference, path);
+    if (!entry) return;
+    if (!supportsFactoryComponent(entry, agent.provider, sandboxProvider)) {
+      diagnostics.push({
+        path,
+        code: "unsupported_capability",
+        message: `"${reference}" is unavailable for ${agent.provider} on ${sandboxProvider}.`,
+      });
+      return;
+    }
+    selectedSkills.add(normalizeFactoryId(entry.id));
+  });
 
-  const skillIds = componentIds("skills");
-  const toolIds = componentIds("tools");
+  const skillIds = [...selectedSkills].sort();
+  const mcpManifest = compileFactoryMcpManifest({
+    definition,
+    catalog,
+    agentId: implementationAgent ? normalizeFactoryId(implementationAgent.agentId) : undefined,
+    diagnostics,
+  });
+  const toolIds = mcpManifestScopeIds(mcpManifest?.servers ?? []);
   const duplicates = duplicateStageDiagnostics(definition.stages);
   diagnostics.push(...duplicates);
 
@@ -316,6 +353,7 @@ function compileSerialDefinition(
     deliveryPolicyRevisionId: deliveryPolicy ? normalizeFactoryId(deliveryPolicy.id) : null,
     skillIds,
     toolIds,
+    ...(mcpManifest ? { mcpManifest } : {}),
     operatingRulesMd,
     operatingRuleStageIds,
     stages,

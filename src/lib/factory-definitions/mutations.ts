@@ -7,6 +7,7 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { factoryActivationRequirements, loadFactoryDefinitionCatalog } from "./authority";
 import {
   compileFactoryDefinition,
+  factoryComponentRevisionsForBundle,
   factoryComponentRevisionsForSource,
   type FactoryDefinitionDiagnostic,
   type FactoryDefinitionSource,
@@ -175,8 +176,7 @@ export async function mutateFactoryDefinition({
     const catalog = await loadFactoryDefinitionCatalog(admin, {
       workspaceId,
       factoryId: factory.id,
-      agentPromptRevisionId: bundle?.implementationAgent?.promptRevisionId,
-      skillRevisionIds: bundle?.skillIds,
+      ...factoryComponentRevisionsForBundle(bundle),
     });
     const compiled = recompileStoredFactoryDefinition(
       stored.definition_json,

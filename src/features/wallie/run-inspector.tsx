@@ -15,6 +15,7 @@ import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type {
   RunInspectorArtifact,
   RunInspectorCredential,
+  RunInspectorMcpManifest,
   RunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
 import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs-list-state";
@@ -24,6 +25,7 @@ export function RunInspector({
   run,
   artifact,
   credential,
+  mcp,
   skills,
   workspaceId,
   workspaceSlug,
@@ -33,6 +35,7 @@ export function RunInspector({
   run: WorkspaceRunCatalogItem;
   artifact: RunInspectorArtifact;
   credential?: RunInspectorCredential | null;
+  mcp?: RunInspectorMcpManifest | null;
   skills: RunInspectorSkills;
   workspaceId: string;
   workspaceSlug: string;
@@ -210,6 +213,38 @@ export function RunInspector({
         </PageSection>
 
         <RunSkillRevisions skills={skills} />
+
+        {mcp && (
+          <PageSection
+            title={mcp.kind === "planned" ? "Planned MCP manifest" : "Pinned MCP manifest"}
+          >
+            <ul className="divide-y divide-border rounded-md border border-border">
+              {mcp.manifest.servers.map((server) => (
+                <li key={server.serverId} className="space-y-2 p-4">
+                  <p className="font-medium">
+                    {server.serverSlug} · Revision {server.revisionNumber}
+                  </p>
+                  <MetadataList>
+                    <MetadataItem
+                      label="Approved operations"
+                      value={server.operations.join(", ")}
+                    />
+                    <MetadataItem
+                      label="Endpoint"
+                      value={<span className="break-all">{server.endpoint}</span>}
+                    />
+                    {server.auth.kind === "bearer" && (
+                      <MetadataItem
+                        label="Credential binding"
+                        value={<span className="break-all">{server.auth.secretBindingId}</span>}
+                      />
+                    )}
+                  </MetadataList>
+                </li>
+              ))}
+            </ul>
+          </PageSection>
+        )}
 
         <ArtifactEvidenceInspector
           source={{
