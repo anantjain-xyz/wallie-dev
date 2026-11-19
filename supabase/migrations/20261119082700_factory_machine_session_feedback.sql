@@ -436,6 +436,15 @@ declare
   prior jsonb;
   successor record;
 begin
+  -- Preserve the scoped not-found result without taking the session lock
+  -- before the factory and member fences. The transition checks it again.
+  if not exists (
+    select 1 from public.sessions session
+    where (session.workspace_id, session.factory_id, session.id) = (p_workspace_id, p_factory_id, p_session_id)
+  ) then
+    raise exception 'Session not found.' using errcode = 'P0002';
+  end if;
+
   -- Thread selection is a human review operation and keeps its own exact
   -- batch receipt. Only whole-stage commands share the versioned identity.
   if p_request_id is not null and p_expected_review_revision is not null
