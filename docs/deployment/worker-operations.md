@@ -387,6 +387,30 @@ flowchart LR
 - Legacy sandbox IDs without matching credentials or receipts remain pending. An operator must verify the original provider account and restore its matching encrypted credentials and recorded revision under controlled database maintenance before retrying cleanup. The deletion fence intentionally prevents ordinary settings edits; never fabricate receipts or erase ownership to bypass it.
 - During rollout, apply the migration and deploy compatible web/worker versions, then drain older processes before requesting deletion. Older in-flight acquisitions have no reservation record.
 
+### Outbound factory delivery
+
+Open **Governance → Event subscriptions → Inspect deliveries** for the affected
+factory and subscription. Compare the stable event ID, current state, last HTTP
+status, and next attempt time with the receiving system.
+
+- For a queued retry, let the daemon or configured native relay claim the next
+  attempt. A worker restart recovers expired leases. A send interrupted after its
+  permit was recorded may appear as **Delivery unconfirmed**.
+- Before retrying an unconfirmed send, use the event ID to check whether the
+  receiver already applied it. The configured receiver should deduplicate on
+  that ID across retries. Select **Retry delivery** when the history shows that
+  the attempt is eligible.
+- To stop future delivery, revoke the subscription or its backing credential.
+  An already permitted send may finish settling. Configure a new subscription
+  and verify its destination if the bound authorization needs replacing.
+- If a browser loses connectivity, reopen or refresh Inbox after reconnect.
+  Inspect the exact review artifact before acting. After a machine client
+  reconnects, resume with its last conversation cursor and repeat an unconfirmed
+  command using its original key and intent.
+
+The [shared-work qualification](../development/verification.md#shared-work-across-browser-api-and-mcp)
+exercises these recovery boundaries on a disposable stack.
+
 ## Cancellation and shutdown
 
 User and reconciler cancellation must call the shared cancellation service.
