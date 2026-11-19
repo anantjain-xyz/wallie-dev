@@ -57,7 +57,7 @@ export async function cancelSessionCommand(input: CancelSessionInput) {
   }
 
   const digest = createHash("sha256")
-    .update(JSON.stringify([sessionId, command.expectedRunId]))
+    .update(JSON.stringify([sessionId.toLowerCase(), command.expectedRunId.toLowerCase()]))
     .digest("hex");
   const { data, error } = await admin
     .rpc("cancel_session_command_once", {

@@ -39,7 +39,7 @@ export async function followUpSessionCommand(input: {
     expectedReviewRevision: number;
     selectedThreadIds: string[];
   };
-  requestedByMemberId: string | null;
+  requestedByMemberId: string;
   sessionId: string;
   version: number;
 }): Promise<PipelinePhaseActionResult> {
@@ -47,13 +47,6 @@ export async function followUpSessionCommand(input: {
 
   let hasReceipt = false;
   if (input.feedbackSubmission) {
-    if (!input.requestedByMemberId) {
-      return {
-        error: "Active human workspace membership is required.",
-        errorCode: "42501",
-        success: false,
-      };
-    }
     // Match the database request namespace so retries and conflicts both reach
     // the authoritative receipt check even when configuration has changed.
     const { data: receipt, error: receiptError } = await admin
@@ -86,31 +79,27 @@ export async function followUpSessionCommand(input: {
   // session wedged with a bumped rejection count and nothing queued, and a
   // concurrent approval serializes behind the row lock instead of racing the
   // final phase write.
-  const argumentsForRejection = {
+  const submission = input.feedbackSubmission;
+  const { data, error } = await admin.rpc("submit_session_follow_up_once", {
     p_agent_model_name: runConfig?.modelName,
     p_agent_model_provider: runConfig?.modelProvider,
     p_artifact_version: input.version,
     p_expected_artifact_id: input.expectedArtifactId,
     p_expected_stage_id: input.expectedStageId,
+    p_factory_id: input.factoryId,
     p_feedback_text: input.feedbackText,
-    p_requested_by_member_id: input.requestedByMemberId ?? undefined,
+    p_requested_by_member_id: input.requestedByMemberId,
     p_run_type: runConfig?.runType,
     p_session_id: input.sessionId,
     p_workspace_id: input.expectedWorkspaceId,
-  };
-  const { data, error } = input.feedbackSubmission
-    ? await admin.rpc("submit_session_follow_up_once", {
-        ...argumentsForRejection,
-        p_factory_id: input.factoryId,
-        p_request_id: input.feedbackSubmission.requestId,
-        p_expected_review_revision: input.feedbackSubmission.expectedReviewRevision,
-        p_selected_thread_ids: input.feedbackSubmission.selectedThreadIds,
-      })
-    : await admin.rpc("reject_session_stage", {
-        ...argumentsForRejection,
-        p_agent_model_name: runConfig!.modelName,
-        p_agent_model_provider: runConfig!.modelProvider,
-      });
+    ...(submission
+      ? {
+          p_request_id: submission.requestId,
+          p_expected_review_revision: submission.expectedReviewRevision,
+          p_selected_thread_ids: submission.selectedThreadIds,
+        }
+      : {}),
+  });
 
   if (error) {
     // The RPC raises with the reviewer-facing message for every guard
@@ -118,7 +107,7 @@ export async function followUpSessionCommand(input: {
     // review.", "Version mismatch: a newer version exists."); surface it as-is.
     return {
       error: error.message,
-      ...(input.feedbackSubmission ? { errorCode: error.code } : {}),
+      errorCode: error.code,
       success: false,
     };
   }
@@ -134,9 +123,7 @@ export async function followUpSessionCommand(input: {
   if (row.job_id) await wakeWorker();
   return {
     jobId: row.job_id,
-    ...(input.feedbackSubmission &&
-    "feedback_batch_id" in row &&
-    typeof row.feedback_batch_id === "string"
+    ...(typeof row.feedback_batch_id === "string"
       ? { feedbackBatchId: row.feedback_batch_id, revisionRunId: row.run_id }
       : {}),
     session: {

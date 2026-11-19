@@ -221,6 +221,8 @@ export async function POST(request: Request, { params }: Params) {
         }),
       );
       if (!result.success) {
+        const scopeError = feedbackScopeError(result.errorCode);
+        if (scopeError) return scopeError;
         if (body.feedbackSubmission) return feedbackSubmissionError(result.errorCode, result.error);
         const code = isStaleVersionError(result.error) ? "stale_version" : "mutation_conflict";
         return errorResponse(code, result.error ?? "Rejection failed", 409);
@@ -244,6 +246,20 @@ export async function POST(request: Request, { params }: Params) {
   });
 }
 
+function feedbackScopeError(code: string | undefined) {
+  if (code === "42501")
+    return errorResponse("forbidden", "Active human workspace membership is required.", 403);
+  if (code === "PT409")
+    return errorResponse(
+      "mutation_conflict",
+      "Factory access is changing. Retry feedback submission.",
+      409,
+    );
+  if (code === "PT404" || code === "P0002")
+    return errorResponse("not_found", "Session not found", 404);
+  return null;
+}
+
 /** Database batch errors use fixed messages, never echoed comment or anchor text. */
 function feedbackSubmissionError(code: string | undefined, message: string | undefined) {
   if (code === "40001" || code === "PT412" || code === "55000")
@@ -258,16 +274,6 @@ function feedbackSubmissionError(code: string | undefined, message: string | und
       "This request was already submitted with different feedback. Refresh the review.",
       409,
     );
-  if (code === "42501")
-    return errorResponse("forbidden", "Active human workspace membership is required.", 403);
-  if (code === "PT409")
-    return errorResponse(
-      "mutation_conflict",
-      "Factory access is changing. Retry feedback submission.",
-      409,
-    );
-  if (code === "PT404" || code === "P0002")
-    return errorResponse("not_found", "Session not found", 404);
   if (code === "22001")
     return errorResponse(
       "invalid_input",

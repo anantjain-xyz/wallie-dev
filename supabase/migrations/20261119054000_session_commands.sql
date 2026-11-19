@@ -127,8 +127,9 @@ alter table public.artifact_feedback_batches add column request_hash text genera
 
 create function public.submit_session_follow_up_once(
   p_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_artifact_version integer,
-  p_expected_stage_id uuid, p_expected_artifact_id uuid, p_expected_review_revision bigint,
-  p_request_id uuid, p_selected_thread_ids uuid[], p_feedback_text text,
+  p_expected_stage_id uuid, p_expected_artifact_id uuid, p_feedback_text text,
+  p_expected_review_revision bigint default null, p_request_id uuid default null,
+  p_selected_thread_ids uuid[] default null,
   p_agent_model_provider text default null, p_agent_model_name text default null,
   p_run_type text default null, p_requested_by_member_id uuid default null
 ) returns table(
@@ -142,6 +143,16 @@ begin
   for no key update;
   if not found then raise exception 'Session not found.' using errcode = 'P0002'; end if;
   perform internal.assert_session_command_access(p_workspace_id, p_factory_id, p_requested_by_member_id);
+
+  if p_expected_review_revision is null and p_request_id is null and p_selected_thread_ids is null then
+    return query select rejected.*, null::uuid
+    from public.reject_session_stage(
+      p_session_id, p_workspace_id, p_artifact_version, p_feedback_text, p_agent_model_provider,
+      p_agent_model_name, p_expected_stage_id, p_expected_artifact_id,
+      coalesce(p_run_type, 'project'), p_requested_by_member_id) rejected;
+    return;
+  end if;
+
   -- The existing transaction compares canonical input, locks the reviewed
   -- artifact revision, and records the new job/run with its immutable batch.
   return query select * from public.submit_artifact_feedback_batch(
@@ -151,10 +162,10 @@ begin
 end;
 $$;
 revoke all on function public.submit_session_follow_up_once(
-  uuid, uuid, uuid, integer, uuid, uuid, bigint, uuid, uuid[], text, text, text, text, uuid
+  uuid, uuid, uuid, integer, uuid, uuid, text, bigint, uuid, uuid[], text, text, text, uuid
 ) from public, anon, authenticated, service_role;
 grant execute on function public.submit_session_follow_up_once(
-  uuid, uuid, uuid, integer, uuid, uuid, bigint, uuid, uuid[], text, text, text, text, uuid
+  uuid, uuid, uuid, integer, uuid, uuid, text, bigint, uuid, uuid[], text, text, text, uuid
 ) to service_role;
 
 create table internal.session_cancellation_requests (

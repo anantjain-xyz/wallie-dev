@@ -6,7 +6,7 @@ set local request.jwt.claim.role = 'service_role';
 select ok(
   not has_function_privilege('anon', 'public.find_session_creation_command(uuid,uuid,uuid,text,uuid,uuid)', 'EXECUTE')
   and not has_function_privilege('authenticated', 'public.cancel_session_command_once(uuid,uuid,uuid,uuid,uuid,text,uuid)', 'EXECUTE')
-  and not has_function_privilege('authenticated', 'public.submit_session_follow_up_once(uuid,uuid,uuid,integer,uuid,uuid,bigint,uuid,uuid[],text,text,text,text,uuid)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'public.submit_session_follow_up_once(uuid,uuid,uuid,integer,uuid,uuid,text,bigint,uuid,uuid[],text,text,text,uuid)', 'EXECUTE')
   and has_function_privilege('service_role', 'public.cancel_session_command_once(uuid,uuid,uuid,uuid,uuid,text,uuid)', 'EXECUTE')
   and not has_table_privilege('service_role', 'internal.session_cancellation_requests', 'SELECT'),
   'command entry points require the trusted service and cancellation receipts stay private');

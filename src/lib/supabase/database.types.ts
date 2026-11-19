@@ -9405,14 +9405,14 @@ export type Database = {
           p_agent_model_provider?: string
           p_artifact_version: number
           p_expected_artifact_id: string
-          p_expected_review_revision: number
+          p_expected_review_revision?: number
           p_expected_stage_id: string
           p_factory_id: string
           p_feedback_text: string
-          p_request_id: string
+          p_request_id?: string
           p_requested_by_member_id?: string
           p_run_type?: string
-          p_selected_thread_ids: string[]
+          p_selected_thread_ids?: string[]
           p_session_id: string
           p_workspace_id: string
         }
