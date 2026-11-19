@@ -14,6 +14,7 @@ import {
   CreateServicePrincipal,
 } from "@/features/factory-governance/governance-actions";
 import { GrantMachineTokens } from "@/features/factory-governance/governance-machine-tokens";
+import { GovernanceEventSubscriptions } from "@/features/factory-governance/governance-event-subscriptions";
 import { GovernanceAudit } from "@/features/factory-governance/governance-audit";
 import {
   loadGovernance,
@@ -44,6 +45,7 @@ import {
   factoryAuditSourceSchema,
   type FactoryAuditSource,
 } from "@/lib/factories/audit-contracts";
+import { loadFactoryEventSubscriptionSettings } from "@/lib/factory-event-subscriptions/management";
 import { workspaceGovernancePath } from "@/lib/routes";
 
 const sourceKinds = {
@@ -344,8 +346,9 @@ export default async function GovernancePage({
   const { beforeAudit, afterOAuthClient, afterOAuthGrant, ...pages } = parsed.data;
   let data: GovernanceData;
   let oauth: GovernanceOAuthData | null;
+  let subscriptions: Awaited<ReturnType<typeof loadFactoryEventSubscriptionSettings>> | null;
   try {
-    [data, oauth] = await Promise.all([
+    [data, oauth, subscriptions] = await Promise.all([
       loadGovernance(scope, { ...pages, auditCursor: beforeAudit, source: source.data }),
       !source.data
         ? loadOAuthClientData(scope, {
@@ -353,6 +356,13 @@ export default async function GovernancePage({
             afterOAuthGrant,
             isOperator: scope.isOperator,
           })
+        : null,
+      !source.data
+        ? loadFactoryEventSubscriptionSettings({
+            workspaceId: scope.workspaceId,
+            factoryId: factory.id,
+            actorUserId: scope.actorUserId,
+          }).catch(() => null)
         : null,
     ]);
   } catch (error) {
@@ -419,6 +429,13 @@ export default async function GovernancePage({
                 previous={Boolean(afterOAuthGrant)}
               />
             }
+          />
+        )}
+        {!source.data && (
+          <GovernanceEventSubscriptions
+            key={factory.id}
+            data={subscriptions}
+            endpoint={`/api/workspaces/${scope.workspaceId}/factories/${factory.id}/event-subscriptions`}
           />
         )}
         <GovernanceAudit cursor={beforeAudit} data={data} scope={scope} source={source.data} />

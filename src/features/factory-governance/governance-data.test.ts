@@ -68,6 +68,7 @@ it("uses a scoped server cursor and resolves selected and published bindings ind
 
   const governance = {
     workspaceId,
+    actorUserId: fixtureId(2005),
     workspaceSlug: "wallie",
     supabase,
     factory: {

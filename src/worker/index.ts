@@ -10,6 +10,8 @@ import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
+import { drainFactoryEventDeliveries } from "@/lib/factory-event-subscriptions/dispatch";
+import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
@@ -183,8 +185,20 @@ async function main() {
       }, config.reconcileIntervalMs),
     );
 
+    let deliveringFactoryEvents = false;
     maintenanceTimers.push(
       setInterval(() => {
+        if (!deliveringFactoryEvents) {
+          deliveringFactoryEvents = true;
+          timerTasks.run("factory event delivery", async () => {
+            try {
+              await drainFactoryEventDeliveries(admin);
+            } finally {
+              deliveringFactoryEvents = false;
+            }
+          });
+        }
+        timerTasks.run("factory event outbox cleanup", () => pruneFactoryEventOutbox(admin));
         timerTasks.run("run retention", async () => {
           const result = await drainRunRetention(admin);
           if (Object.values(result).some((count) => count > 0)) {
