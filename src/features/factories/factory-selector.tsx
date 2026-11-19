@@ -5,6 +5,7 @@ import { useTransition } from "react";
 
 import {
   FACTORY_QUERY_PARAM,
+  defaultsToAllFactories,
   factorySwitchHref,
   isFactoryAggregatePath,
   isFactorySelectorPath,
@@ -13,7 +14,7 @@ import {
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
 
-import { workspaceActivityPath, workspaceGovernancePath } from "@/lib/routes";
+import { workspaceGovernancePath } from "@/lib/routes";
 
 export function FactorySelector({
   factories,
@@ -37,7 +38,7 @@ export function FactorySelector({
     ? resolveGovernanceFactorySelection(factories, requested)
     : resolveFactorySelection(
         factories,
-        requested ?? (pathname === workspaceActivityPath(workspaceSlug) ? "all" : undefined),
+        requested ?? (defaultsToAllFactories(pathname, workspaceSlug) ? "all" : undefined),
       );
   const selectedValue =
     selection.kind === "factory"

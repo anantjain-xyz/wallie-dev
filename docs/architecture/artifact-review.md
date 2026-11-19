@@ -70,3 +70,9 @@ Review/history APIs use the authenticated RLS client, scoped by workspace/sessio
 - `supabase test db --local supabase/tests/artifact_review_threads.sql`
 - `pnpm db:types:check`
 - `pnpm check`
+
+## Inbox
+
+The Inbox shows reviews and specification questions that the signed-in member can act on. The factory selector defaults to all factories the member can access. Both item counts and pages come from the same permission-scoped read of the current artifact. A pending specification question replaces its approval item until the answer is recorded.
+
+Each item opens its exact artifact, stage, version, review revision, and optional question in the existing workbench. Workbench writes check that target and the current human authority again. Inbox refreshes from the database after relevant realtime changes and reconnects, and periodically while visible to account for changes to factory access.

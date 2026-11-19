@@ -427,9 +427,14 @@ export function ShellHeader({
       // From the pipeline, load the real page ahead of the click. The default
       // stops at loading.tsx, and prefetching every page from every page
       // competes with opening a session.
-      prefetch: item !== activeNavItem && pathname === pipelineHref ? true : undefined,
+      prefetch:
+        item.id === "inbox"
+          ? false
+          : item !== activeNavItem && pathname === pipelineHref
+            ? true
+            : undefined,
       onClick: (event: MouseEvent<HTMLAnchorElement>) => handleNavClick(event, item, mobile),
-      ...navPrefetchHandlers(href),
+      ...(item.id === "inbox" ? {} : navPrefetchHandlers(href)),
     };
   }
 

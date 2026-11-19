@@ -3,6 +3,7 @@ import {
   workspaceAgentsPath,
   workspaceBasePath,
   workspaceGovernancePath,
+  workspaceInboxPath,
   workspaceRunsPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
@@ -54,7 +55,15 @@ export function isFactoryAggregatePath(pathname: string, workspaceSlug: string) 
     pathname === workspaceBasePath(workspaceSlug) ||
     pathname === workspaceSessionsPath(workspaceSlug) ||
     pathname === workspaceRunsPath(workspaceSlug) ||
+    pathname === workspaceInboxPath(workspaceSlug) ||
     pathname === workspaceActivityPath(workspaceSlug)
+  );
+}
+
+export function defaultsToAllFactories(pathname: string, workspaceSlug: string) {
+  return (
+    pathname === workspaceActivityPath(workspaceSlug) ||
+    pathname === workspaceInboxPath(workspaceSlug)
   );
 }
 
