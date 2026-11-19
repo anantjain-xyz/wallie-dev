@@ -543,6 +543,51 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
         .single(),
     );
     expect(grant).toMatchObject({ version: 1, approved_by_member_id: current.id });
+
+    const fixtureSecretKey = "FACTORY_GOVERNANCE_FIXTURE_CREDENTIAL";
+    const fixtureCiphertext = "unreadable-fixture-ciphertext";
+    const sourceSecret = await read(
+      admin
+        .from("workspace_secrets")
+        .insert({
+          workspace_id: workspace.id,
+          key: fixtureSecretKey,
+          encrypted_value: fixtureCiphertext,
+        })
+        .select("id")
+        .single(),
+    );
+    const assignedAgent = await read(
+      admin
+        .from("factory_agents")
+        .select("id")
+        .eq("factory_id", visibleFactory.id)
+        .eq("is_default", true)
+        .single(),
+    );
+    const credential = await read(
+      admin.rpc("create_factory_secret_binding", {
+        p_workspace_id: workspace.id,
+        p_factory_id: visibleFactory.id,
+        p_actor_user_id: ownerId,
+        p_execution_grant_id: grant.id,
+        p_execution_grant_version: grant.version,
+        p_factory_agent_id: assignedAgent.id,
+        p_agent_provider: "codex",
+        p_workspace_secret_id: sourceSecret.id,
+      }),
+    );
+    const credentialHref = `${governancePath}?factory=${visibleFactory.id}&binding=${credential.id}`;
+    await page.goto(credentialHref);
+    const ownership = main.locator("#credential-ownership");
+    await expect(ownership.getByText(credential.id, { exact: true })).toBeVisible();
+    await expect(
+      ownership.getByRole("link", { name: "Release runner", exact: true }),
+    ).toBeVisible();
+    await expect(main).not.toContainText(fixtureSecretKey);
+    await expect(main).not.toContainText(fixtureCiphertext);
+    await expect(main).not.toContainText(sourceSecret.id);
+
     const grantHref = `${governancePath}?factory=${visibleFactory.id}&grant=${grant.id}`;
     await page.goto(grantHref);
     await expect(page.getByRole("button", { name: "Revoke grant", exact: true })).toBeVisible();

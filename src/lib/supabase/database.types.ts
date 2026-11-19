@@ -8281,6 +8281,29 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_credential_ownership: {
+        Args: {
+          p_after_id?: string
+          p_binding_id?: string
+          p_factory_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: {
+          agent_provider: string
+          created_at: string
+          execution_grant_id: string
+          factory_agent_id: string
+          id: string
+          material_revision: number
+          open_code_provider_id: string
+          revoked_at: string
+          rotated_at: string
+          service_principal_id: string
+          status: string
+          version: number
+        }[]
+      }
       read_factory_scope: {
         Args: { p_actor_user_id: string; p_workspace_id: string }
         Returns: {

@@ -14,7 +14,6 @@ import {
 } from "@/lib/factory-definitions/storage";
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import { mcpOperationScopeId } from "@/lib/factory-mcp/manifest";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const pageSize = 20;
 const principalColumns = "id, name, slug, created_by_member_id, created_at";
@@ -22,7 +21,7 @@ const grantColumns =
   "id, service_principal_id, github_repository_id, read_context_repository_ids, tool_ids, execution_policy_revision_id, budget_payer_member_id, expires_at, version, approved_by_member_id, approved_at, revoked_at, revoked_by_member_id, revocation_reason";
 
 export async function loadGovernanceScope(workspaceSlug: string, factoryQuery?: string | string[]) {
-  const [{ currentMember, supabase, user, workspace }, factories] = await Promise.all([
+  const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
@@ -31,7 +30,6 @@ export async function loadGovernanceScope(workspaceSlug: string, factoryQuery?: 
   return {
     factory: selection.factory,
     supabase,
-    userId: user.id,
     workspaceId: workspace.id,
     workspaceSlug: workspace.slug,
     isOperator: isWorkspaceOperator(currentMember),
@@ -94,7 +92,7 @@ export async function loadGovernance(
     source?: FactoryAuditSource;
   },
 ) {
-  const { factory, supabase, userId, workspaceId } = scope;
+  const { factory, supabase, workspaceId } = scope;
   const principalsQuery = () =>
     supabase
       .from("service_principals")
@@ -114,12 +112,19 @@ export async function loadGovernance(
     .order("id")
     .limit(pageSize + 1);
   const canApprove = factory.status === "active";
+  const currentAuthority = loadCurrentAuthority(scope);
+  const selectedBindingId = source?.kind === "binding" ? source.id : null;
+  const credentialScope = { p_workspace_id: workspaceId, p_factory_id: factory.id };
+  const readCredential = (id: string) =>
+    supabase.rpc("read_factory_credential_ownership", { ...credentialScope, p_binding_id: id });
   const [
     principals,
     grants,
     selectedPrincipal,
     selectedGrant,
-    credentials,
+    credentialPage,
+    selectedCredential,
+    publishedCredential,
     members,
     repositories,
     policies,
@@ -131,11 +136,19 @@ export async function loadGovernance(
     afterGrant ? grantPage.gt("id", afterGrant) : grantPage,
     source?.kind === "principal" ? principalsQuery().eq("id", source.id).maybeSingle() : null,
     source?.kind === "grant" ? grantsQuery().eq("id", source.id).maybeSingle() : null,
-    createSupabaseAdminClient().rpc("list_factory_secret_bindings", {
-      p_workspace_id: workspaceId,
-      p_factory_id: factory.id,
-      p_actor_user_id: userId,
-    }),
+    !source
+      ? supabase.rpc("read_factory_credential_ownership", {
+          ...credentialScope,
+          ...(afterBinding ? { p_after_id: afterBinding } : {}),
+          p_limit: pageSize + 1,
+        })
+      : null,
+    selectedBindingId ? readCredential(selectedBindingId) : null,
+    !source
+      ? currentAuthority.then((authority) =>
+          authority?.bindingId ? readCredential(authority.bindingId) : null,
+        )
+      : null,
     supabase
       .from("workspace_members")
       .select("id, full_name, email, is_active")
@@ -163,7 +176,7 @@ export async function loadGovernance(
           .order("id")
           .limit(100)
       : null,
-    loadCurrentAuthority(scope),
+    currentAuthority,
     readFactoryAuditPage(supabase, workspaceId, factory.id, {
       cursor: auditCursor,
       facet: "governance",
@@ -176,7 +189,9 @@ export async function loadGovernance(
     grants,
     selectedPrincipal,
     selectedGrant,
-    credentials,
+    credentialPage,
+    selectedCredential,
+    publishedCredential,
     members,
     policies,
     tools,
@@ -184,20 +199,14 @@ export async function loadGovernance(
     if (response?.error) throw response.error;
   }
 
-  const activeCredential = credentials.data?.find(({ id }) => id === authority?.bindingId);
-  const selectedCredential =
-    source?.kind === "binding" ? credentials.data?.find(({ id }) => id === source.id) : undefined;
-  const credentialSource = credentials.data ?? [];
-  const afterIndex = afterBinding
-    ? credentialSource.findIndex(({ id }) => id === afterBinding)
-    : -1;
-  const credentialRows = credentialSource.slice(afterIndex + 1, afterIndex + 1 + pageSize);
-  const nextBinding =
-    credentialSource.length > afterIndex + 1 + pageSize
-      ? (credentialRows.at(-1)?.id ?? null)
-      : null;
-  for (const item of [activeCredential, selectedCredential]) {
-    if (item && !credentialRows.some(({ id }) => id === item.id)) credentialRows.unshift(item);
+  const selected = selectedCredential?.data?.[0] ?? null;
+  const published = publishedCredential?.data?.[0] ?? null;
+  const { entries: credentialRows, next: nextBinding } = resourcePage(
+    credentialPage?.data ?? [],
+    selected,
+  );
+  if (published && !credentialRows.some(({ id }) => id === published.id)) {
+    credentialRows.unshift(published);
   }
   const bindings = credentialRows.map((row) => ({
     id: row.id,
@@ -222,7 +231,7 @@ export async function loadGovernance(
     authority,
     bindings,
     nextBinding,
-    selectedBindingId: selectedCredential?.id ?? null,
+    selectedBindingId: selected?.id ?? null,
     canApprove,
     grantList,
     principalList,

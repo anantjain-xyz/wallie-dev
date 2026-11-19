@@ -165,7 +165,7 @@ function GovernanceResources({
         );
       case "binding":
         return (
-          <PageSection title="Credential ownership">
+          <PageSection anchorId="credential-ownership" title="Credential ownership">
             {selectedBinding ? (
               <div className="ui-sheet">
                 <CredentialCard credential={selectedBinding} data={data} focused scope={scope} />
