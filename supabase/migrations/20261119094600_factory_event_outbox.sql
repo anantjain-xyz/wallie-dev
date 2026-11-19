@@ -82,9 +82,14 @@ create function internal.emit_factory_outbound_event(
   p_workspace_id uuid,p_session_id uuid,p_type public.factory_outbound_event_type,p_anchor text,
   p_run_id uuid default null,p_attempt_count integer default null,p_stage_id uuid default null,p_artifact_id uuid default null,
   p_artifact_version integer default null,p_message_sequence integer default null,p_run_status public.agent_run_status default null,
-  p_clarification_id uuid default null
+  p_clarification_id uuid default null,p_occurred_at timestamptz default null
 ) returns void language plpgsql set search_path='' as $$
-declare target internal.factory_session_read_owners; event_id uuid:=gen_random_uuid(); now_at timestamptz:=clock_timestamp(); recipients uuid[];
+declare
+  target internal.factory_session_read_owners;
+  event_id uuid:=gen_random_uuid();
+  now_at timestamptz:=clock_timestamp();
+  occurred_at timestamptz:=coalesce(p_occurred_at,now_at);
+  recipients uuid[];
 begin
   select owner.* into target from internal.factory_session_read_owners owner
   where (owner.workspace_id,owner.id)=(p_workspace_id,p_session_id);
@@ -93,12 +98,13 @@ begin
   where (subscription.workspace_id,subscription.factory_id,subscription.writer_repository_id)=
     (target.workspace_id,target.factory_id,target.github_repository_id)
     and subscription.status='active' and p_type=any(subscription.event_types)
+    and subscription.verified_at<=occurred_at
     and internal.factory_event_subscription_has_authority(subscription);
   if recipients is null then return; end if;
 
   insert into internal.factory_outbound_events(id,workspace_id,factory_id,writer_repository_id,session_id,event_type,anchor,occurred_at,payload)
-  values (event_id,target.workspace_id,target.factory_id,target.github_repository_id,target.id,p_type,p_anchor,now_at,
-    jsonb_strip_nulls(jsonb_build_object('version',1,'eventId',event_id,'type',p_type,'occurredAt',now_at,
+  values (event_id,target.workspace_id,target.factory_id,target.github_repository_id,target.id,p_type,p_anchor,occurred_at,
+    jsonb_strip_nulls(jsonb_build_object('version',1,'eventId',event_id,'type',p_type,'occurredAt',occurred_at,
       'workspaceId',target.workspace_id,'factoryId',target.factory_id,'sessionId',target.id,'sessionNumber',target.number,
       'runId',p_run_id,'attemptCount',p_attempt_count,'stageId',p_stage_id,'artifactId',p_artifact_id,
       'artifactVersion',p_artifact_version,'messageSequence',p_message_sequence,'runStatus',p_run_status,
@@ -114,11 +120,41 @@ $$;
 
 create function internal.capture_factory_outbound_event()
 returns trigger language plpgsql security definer set search_path='' as $$
-declare stage_id uuid; artifact_version integer; review_ready boolean:=false;
+declare
+  stage_id uuid;
+  artifact_version integer;
+  session_created_at timestamptz;
+  started_run public.agent_runs;
+  review_ready boolean:=false;
 begin
   case tg_table_name
     when 'sessions' then
       perform internal.emit_factory_outbound_event(new.workspace_id,new.id,'session.created',new.id::text);
+    when 'session_git_roots' then
+      -- Legacy sessions become eligible only after an immutable writer is known.
+      select session.created_at into session_created_at from public.sessions session
+      where (session.workspace_id,session.id,session.github_repository_id)=(new.workspace_id,new.session_id,new.repository_id)
+        and not session.execute_pinned_definition;
+      if found then
+        perform internal.emit_factory_outbound_event(new.workspace_id,new.session_id,'session.created',new.session_id::text,
+          p_occurred_at=>session_created_at);
+      end if;
+    when 'session_job_git_inputs' then
+      -- The lineage guard locks the session, job and exact running attempt before
+      -- binding the input. Starts after the root already use the normal trigger.
+      select run.* into started_run from public.agent_runs run
+      join public.session_git_roots root on (root.workspace_id,root.session_id,root.repository_id)=
+        (run.workspace_id,run.session_id,new.repository_id)
+      join public.sessions session on (session.workspace_id,session.id,session.github_repository_id)=
+        (root.workspace_id,root.session_id,root.repository_id)
+      where (run.workspace_id,run.session_id,run.agent_job_id,run.id,run.attempt_count)=
+        (new.workspace_id,new.session_id,new.job_id,new.pinned_run_id,new.pinned_attempt_count)
+        and not session.execute_pinned_definition and run.status='running' and run.started_at<=root.created_at;
+      if found then
+        perform internal.emit_factory_outbound_event(new.workspace_id,new.session_id,'run.started',
+          started_run.id::text || ':' || started_run.attempt_count::text,started_run.id,started_run.attempt_count,
+          started_run.stage_id,p_run_status=>started_run.status,p_occurred_at=>started_run.started_at);
+      end if;
     when 'session_mutation_receipts' then
       if new.operation='cancel' then
         perform internal.emit_factory_outbound_event(new.workspace_id,new.session_id,'session.canceled',new.id::text);
@@ -173,6 +209,10 @@ $$;
 
 create trigger capture_factory_session_created after insert on public.sessions
   for each row execute function internal.capture_factory_outbound_event();
+create trigger capture_factory_rooted_session_created after insert on public.session_git_roots
+  for each row execute function internal.capture_factory_outbound_event();
+create trigger capture_factory_rooted_run_started after insert or update of pinned_run_id on public.session_job_git_inputs
+  for each row when (new.pinned_run_id is not null) execute function internal.capture_factory_outbound_event();
 create trigger capture_factory_session_canceled after insert on internal.session_mutation_receipts
   for each row execute function internal.capture_factory_outbound_event();
 create trigger capture_factory_browser_session_canceled after insert on internal.session_cancellation_requests
@@ -481,7 +521,7 @@ $$;
 create index factory_event_subscriptions_retention_idx
   on internal.factory_event_subscriptions(revoked_at,id) where status='revoked';
 
-revoke all on function internal.emit_factory_outbound_event(uuid,uuid,public.factory_outbound_event_type,text,uuid,integer,uuid,uuid,integer,integer,public.agent_run_status,uuid),
+revoke all on function internal.emit_factory_outbound_event(uuid,uuid,public.factory_outbound_event_type,text,uuid,integer,uuid,uuid,integer,integer,public.agent_run_status,uuid,timestamptz),
   internal.capture_factory_outbound_event(),
   internal.settle_locked_factory_event_attempt(internal.factory_outbound_deliveries,public.factory_outbound_delivery_outcome,integer,integer,boolean),
   internal.lock_factory_outbound_authority(internal.factory_event_subscriptions),

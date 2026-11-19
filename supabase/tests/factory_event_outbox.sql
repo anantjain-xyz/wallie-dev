@@ -223,6 +223,66 @@ select is((select count(distinct delivery.event_id) from internal.factory_outbou
 -- immutable IDs and sequence/status metadata are selected by these hooks.
 create temp table original_release as select * from internal.git_continuity_release_control;
 select public.set_git_continuity_release(true,revision,'Outbound lifecycle fixture') from original_release where not enabled;
+commit;
+
+begin;
+-- The legacy start precedes its first exact Git root and job input. Subscriptions
+-- from the earlier transaction are active at the original event timestamps.
+insert into public.sessions(id,workspace_id,factory_id,number,title,prompt_md,pipeline_id,current_stage_id,
+  creator_member_id,github_repository_id,phase_status,execute_pinned_definition)
+values (pg_temp.outbox_id(60),pg_temp.outbox_id(3),pg_temp.outbox_factory(),60,'Legacy root creation','never-project-private-prompt',
+  pg_temp.outbox_id(10),pg_temp.outbox_id(11),pg_temp.outbox_id(4),pg_temp.outbox_id(21),'in_progress',false);
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,requested_by_member_id,trigger_type,status,attempt_count,
+  git_continuity_release_revision)
+values (pg_temp.outbox_id(61),pg_temp.outbox_id(3),pg_temp.outbox_id(60),pg_temp.outbox_id(11),pg_temp.outbox_id(4),
+  'manual_run','running',1,(select revision from public.get_git_continuity_release_state()));
+create temp table legacy_outbox_run as select public.start_session_job_attempt(pg_temp.outbox_id(61),1,pg_temp.outbox_id(11),0,
+  'codex','gpt-5.5','code','wallie/event-outbox-legacy') id;
+select ok((select id is not null from legacy_outbox_run),'the legacy run starts before the first Git input');
+select is((select count(*) from internal.factory_outbound_events where session_id=pg_temp.outbox_id(60)),0::bigint,
+  'a Git-backed legacy session and its running attempt enqueue nothing before writer ownership is proven');
+
+create temp table late_legacy_subscription as select public.create_factory_event_subscription(pg_temp.outbox_id(3),
+  pg_temp.outbox_factory(),pg_temp.outbox_id(1),'Late subscription','https://events.example.test/late','machine_token',pg_temp.outbox_id(31),
+  '{session.created,run.started}','synthetic-encrypted-late-signer') id;
+select ok(pg_temp.verify_outbox_subscription(id),'another destination can activate after the original lifecycle events')
+from late_legacy_subscription;
+select ok(exists(select 1 from legacy_outbox_run run cross join lateral public.pin_session_job_git_input(
+  pg_temp.outbox_id(61),1,run.id,pg_temp.outbox_id(21),'main',repeat('a',40))),
+  'pinning the exact attempt establishes immutable writer ownership for the legacy session');
+select results_eq($q$select event.event_type::text,event.anchor,event.occurred_at from internal.factory_outbound_events event
+  where event.session_id=pg_temp.outbox_id(60) order by 1$q$,
+  $q$select 'run.started',run.id::text||':1',run.started_at from public.agent_runs run where run.id=(select id from legacy_outbox_run)
+  union all select 'session.created',session.id::text,session.created_at from public.sessions session where session.id=pg_temp.outbox_id(60)
+  order by 1$q$,'writer establishment emits both original occurrences using their normal canonical anchors');
+select is((select count(*) from internal.factory_outbound_deliveries delivery
+  join internal.factory_outbound_events event on event.id=delivery.event_id where event.session_id=pg_temp.outbox_id(60)),
+  3::bigint,'both delayed occurrences fan out exactly once to matching destinations active at those timestamps');
+select ok(not exists(select 1 from internal.factory_outbound_deliveries delivery
+  where delivery.subscription_id=(select id from late_legacy_subscription)),
+  'an endpoint verified after the original events receives no delayed historical delivery');
+select ok(not exists(select 1 from internal.factory_outbound_deliveries delivery
+  join internal.factory_outbound_events event on event.id=delivery.event_id where event.session_id=pg_temp.outbox_id(60)
+    and (delivery.created_at<=event.occurred_at or delivery.deadline_at<>delivery.created_at+interval '24 hours')),
+  'delayed deliveries have a full delivery window from enqueue time');
+
+select count(*) from legacy_outbox_run run cross join lateral public.pin_session_job_git_input(
+  pg_temp.outbox_id(61),1,run.id,pg_temp.outbox_id(21),'main',repeat('a',40));
+update public.agent_jobs set attempt_count=2 where id=pg_temp.outbox_id(61);
+create temp table legacy_outbox_retry as select public.start_session_job_attempt(pg_temp.outbox_id(61),2,pg_temp.outbox_id(11),0,
+  'codex','gpt-5.5','code','wallie/event-outbox-legacy') id;
+select count(*) from legacy_outbox_retry run cross join lateral public.pin_session_job_git_input(
+  pg_temp.outbox_id(61),2,run.id,pg_temp.outbox_id(21),'main',repeat('a',40));
+select results_eq($q$select event.anchor from internal.factory_outbound_events event where event.session_id=pg_temp.outbox_id(60)
+  and event.event_type in ('session.created','run.started') order by 1$q$,
+  $q$select anchor from (select pg_temp.outbox_id(60)::text anchor union all select id::text||':1' from legacy_outbox_run
+    union all select id::text||':2' from legacy_outbox_retry) expected order by 1$q$,
+  'repeated pinning preserves both original IDs and the next ordinary start adds only its own event');
+select is((select count(*) from internal.factory_outbound_deliveries delivery where delivery.subscription_id=
+  (select id from late_legacy_subscription)),1::bigint,'the late destination receives the subsequent ordinary run start');
+select public.revoke_factory_event_subscription(pg_temp.outbox_id(3),pg_temp.outbox_factory(),pg_temp.outbox_id(1),id)
+from late_legacy_subscription;
+
 create function pg_temp.publish_outbox_session(p_job uuid,p_markdown text) returns uuid language plpgsql as $$
 declare started uuid; claim uuid;
 begin
