@@ -1343,6 +1343,137 @@ export type Database = {
           },
         ]
       }
+      factory_context_source_revisions: {
+        Row: {
+          content: string
+          content_bytes: number | null
+          content_sha256: string | null
+          created_at: string
+          factory_id: string
+          id: string
+          media_type: string
+          source_id: string
+          upstream_revision: string
+          upstream_updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          content: string
+          content_bytes?: number | null
+          content_sha256?: string | null
+          created_at?: string
+          factory_id: string
+          id?: string
+          media_type: string
+          source_id: string
+          upstream_revision: string
+          upstream_updated_at: string
+          workspace_id: string
+        }
+        Update: {
+          content?: string
+          content_bytes?: number | null
+          content_sha256?: string | null
+          created_at?: string
+          factory_id?: string
+          id?: string
+          media_type?: string
+          source_id?: string
+          upstream_revision?: string
+          upstream_updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_context_source_revisi_workspace_id_factory_id_sour_fkey"
+            columns: ["workspace_id", "factory_id", "source_id"]
+            isOneToOne: false
+            referencedRelation: "factory_context_sources"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_context_sources: {
+        Row: {
+          created_at: string
+          current_revision_id: string | null
+          deleted_at: string | null
+          factory_id: string
+          file_path: string
+          github_installation_id: string
+          grant_id: string
+          grant_version: number
+          id: string
+          last_successful_sync_at: string | null
+          last_sync_attempt_at: string | null
+          repository_id: string
+          status: string
+          sync_lease_expires_at: string | null
+          sync_lease_id: string | null
+          upstream_repository_id: number
+          upstream_revision: string | null
+          upstream_updated_at: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_revision_id?: string | null
+          deleted_at?: string | null
+          factory_id: string
+          file_path: string
+          github_installation_id: string
+          grant_id: string
+          grant_version: number
+          id?: string
+          last_successful_sync_at?: string | null
+          last_sync_attempt_at?: string | null
+          repository_id: string
+          status?: string
+          sync_lease_expires_at?: string | null
+          sync_lease_id?: string | null
+          upstream_repository_id: number
+          upstream_revision?: string | null
+          upstream_updated_at?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          current_revision_id?: string | null
+          deleted_at?: string | null
+          factory_id?: string
+          file_path?: string
+          github_installation_id?: string
+          grant_id?: string
+          grant_version?: number
+          id?: string
+          last_successful_sync_at?: string | null
+          last_sync_attempt_at?: string | null
+          repository_id?: string
+          status?: string
+          sync_lease_expires_at?: string | null
+          sync_lease_id?: string | null
+          upstream_repository_id?: number
+          upstream_revision?: string | null
+          upstream_updated_at?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_context_sources_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_context_sources_workspace_id_factory_id_id_current_fkey"
+            columns: ["workspace_id", "factory_id", "id", "current_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_context_source_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "source_id", "id"]
+          },
+        ]
+      }
       factory_definition_activations: {
         Row: {
           activation_number: number
@@ -7570,6 +7701,22 @@ export type Database = {
           storage_path: string
         }[]
       }
+      claim_factory_context_source_sync: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_source_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          file_path: string
+          installation_id: number
+          lease_id: string
+          repository_full_name: string
+          repository_id: number
+          status: string
+        }[]
+      }
       claim_factory_event_delivery: {
         Args: never
         Returns: {
@@ -8209,6 +8356,41 @@ export type Database = {
       defer_session_job_for_continuity_release: {
         Args: { p_attempt_count: number; p_job_id: string }
         Returns: boolean
+      }
+      delete_factory_context_source: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_source_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          current_revision_id: string | null
+          deleted_at: string | null
+          factory_id: string
+          file_path: string
+          github_installation_id: string
+          grant_id: string
+          grant_version: number
+          id: string
+          last_successful_sync_at: string | null
+          last_sync_attempt_at: string | null
+          repository_id: string
+          status: string
+          sync_lease_expires_at: string | null
+          sync_lease_id: string | null
+          upstream_repository_id: number
+          upstream_revision: string | null
+          upstream_updated_at: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_context_sources"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       enqueue_due_github_pr_refreshes: {
         Args: { p_limit?: number; p_workspace_id?: string }
@@ -9617,6 +9799,44 @@ export type Database = {
         Args: { p_operation_id: string; p_resource_id: string }
         Returns: boolean
       }
+      register_factory_context_source: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_file_path: string
+          p_grant_id: string
+          p_grant_version: number
+          p_repository_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          current_revision_id: string | null
+          deleted_at: string | null
+          factory_id: string
+          file_path: string
+          github_installation_id: string
+          grant_id: string
+          grant_version: number
+          id: string
+          last_successful_sync_at: string | null
+          last_sync_attempt_at: string | null
+          repository_id: string
+          status: string
+          sync_lease_expires_at: string | null
+          sync_lease_id: string | null
+          upstream_repository_id: number
+          upstream_revision: string | null
+          upstream_updated_at: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_context_sources"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       register_factory_oauth_client: {
         Args: {
           p_actor_user_id: string
@@ -10496,6 +10716,46 @@ export type Database = {
           revision: number
           updated_at: string
         }[]
+      }
+      settle_factory_context_source_sync: {
+        Args: {
+          p_actor_user_id: string
+          p_content?: string
+          p_factory_id: string
+          p_lease_id: string
+          p_source_id: string
+          p_status: string
+          p_upstream_revision?: string
+          p_upstream_updated_at?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          current_revision_id: string | null
+          deleted_at: string | null
+          factory_id: string
+          file_path: string
+          github_installation_id: string
+          grant_id: string
+          grant_version: number
+          id: string
+          last_successful_sync_at: string | null
+          last_sync_attempt_at: string | null
+          repository_id: string
+          status: string
+          sync_lease_expires_at: string | null
+          sync_lease_id: string | null
+          upstream_repository_id: number
+          upstream_revision: string | null
+          upstream_updated_at: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_context_sources"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       settle_factory_event_delivery: {
         Args: {
