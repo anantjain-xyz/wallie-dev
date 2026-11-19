@@ -291,6 +291,70 @@ select ok(not has_table_privilege('authenticated','public.session_run_context_ma
   and not has_table_privilege('service_role','public.session_run_context_manifests','INSERT')
   and not has_function_privilege('authenticated','public.read_factory_run_context_origin(uuid,uuid,uuid,integer)','EXECUTE'),
   'context history and provenance RPCs are service-only and cannot be forged directly');
+-- An unexpected stored shape must fail closed rather than leaking raw text.
+create temp table invalid_inspection_attempt as select * from pg_temp.initial_attempt('Invalid inspection history');
+insert into public.session_run_context_manifests(run_id, workspace_id, session_id, job_id, attempt_count, manifest, manifest_sha256)
+select run_id, pg_temp.context_id(2), session_id, job_id, 1,
+  jsonb_set(pg_temp.manifest(), '{documents,0,body}', '"private raw text"'), repeat('f',64) from invalid_inspection_attempt;
+insert into auth.users(id,email) values
+  (pg_temp.context_id(31),'frozen-context-viewer@example.test'),
+  (pg_temp.context_id(32),'frozen-context-outsider@example.test'),
+  (pg_temp.context_id(33),'frozen-context-sibling@example.test');
+insert into public.workspace_members(id,workspace_id,user_id,kind,role) values
+  (pg_temp.context_id(41),pg_temp.context_id(2),pg_temp.context_id(31),'human','member'),
+  (pg_temp.context_id(42),pg_temp.context_id(3),pg_temp.context_id(32),'human','owner'),
+  (pg_temp.context_id(43),pg_temp.context_id(2),pg_temp.context_id(33),'human','member');
+select public.grant_factory_membership(workspace_id,id,pg_temp.context_id(1),pg_temp.context_id(41),'member') from context_factory;
+select public.grant_factory_membership(workspace_id,id,pg_temp.context_id(1),pg_temp.context_id(43),'member')
+from public.create_factory(pg_temp.context_id(2),pg_temp.context_id(1),'Sibling inspection factory','sibling-inspection-factory');
+select public.revoke_factory_membership(workspace_id,id,pg_temp.context_id(1),pg_temp.context_id(43))
+from context_factory;
+grant select on frozen, frozen_replay, memory_manifest_receipt, invalid_inspection_attempt to authenticated;
+select ok(has_function_privilege('authenticated','public.get_run_context_inputs(uuid,uuid,integer)','EXECUTE')
+  and not has_function_privilege('anon','public.get_run_context_inputs(uuid,uuid,integer)','EXECUTE')
+  and not has_function_privilege('service_role','public.get_run_context_inputs(uuid,uuid,integer)','EXECUTE'),
+  'safe run inspection is exposed only to an authenticated human');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '58000000-0000-4000-8000-000000000001';
+select ok((select readback.value->>'canManage' = 'true'
+    and readback.value->>'factoryId' is not null and readback.value->>'originRunId' = exact.origin_run_id::text
+    and readback.value->>'manifestSha256' = exact.manifest_sha256 and readback.value->'manifest' = exact.manifest
+  from frozen_replay exact cross join lateral (
+    select public.get_run_context_inputs(exact.workspace_id, exact.run_id, exact.attempt_count) as value
+  ) readback), 'the manager sees the original pinned attempt, origin, digest and exact source path');
+select is((select public.get_run_context_inputs(workspace_id,run_id,2) from frozen),
+  null::jsonb,'attempt mismatch cannot inspect the original run or another attempt');
+select is((select public.get_run_context_inputs(pg_temp.context_id(3),run_id,attempt_count) from frozen),
+  null::jsonb,'workspace mismatch returns no run inspection');
+select is((select public.get_run_context_inputs(pg_temp.context_id(2),run_id,1) from invalid_inspection_attempt),
+  null::jsonb,'unexpected history carrying raw bodies is withheld even from a manager');
+set local request.jwt.claim.sub = '58000000-0000-4000-8000-000000000031';
+select ok((select readback.value->>'canManage' = 'false' and readback.value->>'originRunId' = exact.origin_run_id::text
+    and readback.value->>'manifestSha256' = exact.manifest_sha256
+    and not (readback.value#>'{manifest,documents,0}' ? 'filePath')
+    and readback.value#>>'{manifest,documents,0,revisionId}' = pg_temp.context_id(21)::text
+    and readback.value#>>'{manifest,documents,0,contentSha256}' = repeat('b',64)
+    and readback.value#>>'{manifest,documents,1,reason}' = 'context_budget'
+    and readback.value#>'{manifest,conversation}' = exact.manifest->'conversation'
+  from frozen_replay exact cross join lateral (
+    select public.get_run_context_inputs(exact.workspace_id, exact.run_id, exact.attempt_count) as value
+  ) readback), 'a normal factory reviewer sees safe exact receipts and omissions but no private path');
+select ok((select readback.value#>'{manifest,memories}' = exact.manifest->'memories'
+    and readback.value#>>'{manifest,memories,0,approvalId}' = pg_temp.context_id(106)::text
+    and not (readback.value#>'{manifest,memories,0}' ? 'body')
+  from memory_manifest_receipt exact cross join lateral (
+    select public.get_run_context_inputs(exact.workspace_id, exact.run_id, exact.attempt_count) as value
+  ) readback), 'the v2 viewer sees a historical approval ID and digest after memory supersession');
+set local request.jwt.claim.sub = '58000000-0000-4000-8000-000000000032';
+select is((select public.get_run_context_inputs(workspace_id,run_id,attempt_count) from frozen),
+  null::jsonb,'a foreign workspace manager cannot inspect a run');
+set local request.jwt.claim.sub = '58000000-0000-4000-8000-000000000033';
+select is((select public.get_run_context_inputs(workspace_id,run_id,attempt_count) from frozen),
+  null::jsonb,'a sibling factory member cannot inspect this factory run');
+reset role;
+set local request.jwt.claim.role = 'service_role';
 select public.revoke_factory_execution_grant(workspace_id,factory_id,pg_temp.context_id(1),id,version,'Revoked fixture') from context_grant;
 select throws_ok($$select * from explicit_chain active cross join lateral pg_temp.context_origin(active.job_id,active.run_id,1)$$,
   '42501',null,'a current grant is checked again before any replay');

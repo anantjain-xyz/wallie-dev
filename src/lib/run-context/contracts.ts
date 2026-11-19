@@ -174,6 +174,45 @@ export const runContextManifestSchema = z
   });
 
 export type RunContextLimits = z.infer<typeof runContextLimitsSchema>;
+const [selectedDocument, excludedDocument, unavailableDocument] =
+  runContextDocumentReceiptSchema.options;
+const inspectionManifestFields = {
+  ...manifestFields,
+  documents: z
+    .array(
+      z.discriminatedUnion("status", [
+        selectedDocument.partial({ filePath: true }),
+        excludedDocument,
+        unavailableDocument,
+      ]),
+    )
+    .max(8),
+};
+
+export const runContextInspectionSchema = z
+  .strictObject({
+    factoryId: z.string().uuid(),
+    canManage: z.boolean(),
+    originRunId: z.string().uuid().nullable(),
+    manifestSha256: sha256,
+    createdAt: z.string().datetime({ offset: true }),
+    manifest: z.discriminatedUnion("version", [
+      z.strictObject({ ...inspectionManifestFields, version: z.literal(1) }),
+      z.strictObject({
+        ...inspectionManifestFields,
+        version: z.literal(2),
+        memories: z.array(runContextMemoryReceiptSchema).max(FACTORY_MEMORY_CONTEXT_LIMIT),
+      }),
+    ]),
+  })
+  .refine(
+    ({ canManage, manifest }) =>
+      canManage ||
+      manifest.documents.every(
+        (document) => document.status !== "selected" || document.filePath === undefined,
+      ),
+  );
+
 export type RunContextManifest = z.infer<typeof runContextManifestSchema>;
 export type RunContextDocumentReceipt = z.infer<typeof runContextDocumentReceiptSchema>;
 export type RunContextMemoryReceipt = z.infer<typeof runContextMemoryReceiptSchema>;

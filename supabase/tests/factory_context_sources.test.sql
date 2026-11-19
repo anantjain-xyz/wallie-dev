@@ -221,6 +221,45 @@ select is((pg_temp.settle_source((select lease_id from restored_claim), 'synced'
   repeat('d', 40), '2026-01-04T01:00:00Z')).current_revision_id, (select current_revision_id from changed_success),
   'a verified restoration reuses the immutable revision of the same body');
 
+grant select on fixture_scopes, fixture_sources, fixture_grants to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '57800000-0000-4000-8000-000000000002';
+select results_eq($$
+    select option.grant_id, option.grant_version, option.repository_id, option.repository_full_name
+    from fixture_scopes scope cross join lateral public.list_factory_context_repository_options(scope.workspace_id, scope.factory_id) option
+    where scope.slot = 1
+  $$, $$
+    select grant_row.id, grant_row.version, scope.repository_id, 'fixture/context-1'::text
+    from fixture_scopes scope join fixture_grants grant_row using (slot) where scope.slot = 1
+  $$, 'repository options return only current explicit read-context scope, not the writable repository');
+select is((select count(*) from fixture_scopes scope join fixture_grants grant_row using (slot)
+    cross join lateral public.list_factory_context_repository_options(scope.workspace_id, scope.factory_id,
+      grant_row.id, scope.repository_id, 1) option where scope.slot = 1),
+  0::bigint, 'the stable grant and repository cursor does not repeat a listed option');
+select throws_ok($$select option.* from fixture_scopes scope
+  cross join lateral public.list_factory_context_repository_options(scope.workspace_id, scope.factory_id, gen_random_uuid()) option
+  where scope.slot = 1$$, '22023', null, 'a repository option cursor requires both parts');
+select results_eq($$
+    select access.source_id, access.status
+    from fixture_scopes scope cross join lateral public.list_factory_context_source_access(scope.workspace_id, scope.factory_id,
+      array[pg_temp.source_id(1, 'docs/remove.txt'), pg_temp.source_id(2), pg_temp.source_id()]) access where scope.slot = 1
+  $$, $$
+    select source_id, status from (values
+      (pg_temp.source_id(1, 'docs/remove.txt'), 'unavailable'), (pg_temp.source_id(), 'available')
+    ) requested(source_id, status)
+  $$, 'batched status keeps caller order, shows pending honestly, and omits other factories');
+select throws_ok($$select access.* from fixture_scopes scope
+  cross join lateral public.list_factory_context_source_access(scope.workspace_id, scope.factory_id,
+    array[pg_temp.source_id(), pg_temp.source_id()]) access where scope.slot = 1$$,
+  '22023', null, 'duplicate status IDs cannot enlarge a result');
+select throws_ok($$select access.* from fixture_scopes scope
+  cross join lateral public.list_factory_context_source_access(scope.workspace_id, scope.factory_id,
+    (select array_agg(gen_random_uuid()) from generate_series(1,101))) access where scope.slot = 1$$,
+  '22023', null, 'status batching does not accept more than 100 IDs');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+
 create temp table removable_claim as select * from pg_temp.claim_source(1, pg_temp.source_id(1, 'docs/remove.txt'));
 select is((pg_temp.settle_source((select lease_id from removable_claim), 'synced',
   'Plain text', repeat('d', 40), '2026-01-04T01:00:00Z', pg_temp.source_id(1, 'docs/remove.txt'))).status,
@@ -243,10 +282,44 @@ select throws_ok($$select pg_temp.settle_source((select lease_id from removed_cl
   'Late result', repeat('d', 40), '2026-01-04T01:00:00Z', pg_temp.source_id(1, 'docs/remove.txt'))$$,
   'PT409', null, 'a fetch that began before operator removal cannot publish');
 
+-- A previously denied provider read can recover without changing source identity.
+create temp table provider_denial_claim as select * from pg_temp.claim_source();
+select is((pg_temp.settle_source((select lease_id from provider_denial_claim), 'access_revoked')).status,
+  'access_revoked', 'the prior provider denial remains visible in the stored source observation');
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '57800000-0000-4000-8000-000000000002';
+select is((select access.status from fixture_scopes scope cross join lateral public.list_factory_context_source_access(
+    scope.workspace_id, scope.factory_id, array[pg_temp.source_id()]) access where scope.slot = 1),
+  'unavailable', 'a live local grant allows retrying a provider denial without claiming content is available');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+create temp table provider_recovery_claim as select * from pg_temp.claim_source();
+select is((pg_temp.settle_source((select lease_id from provider_recovery_claim), 'synced', '# Revised reference',
+  repeat('d', 40), '2026-01-04T01:00:00Z')).current_revision_id, (select current_revision_id from changed_success),
+  'a provider retry restores the same verified immutable revision');
+
 create temp table revoked_claim as select * from pg_temp.claim_source();
 select public.revoke_factory_execution_grant(scope.workspace_id, scope.factory_id, scope.owner_id,
   execution_grant.id, execution_grant.version, 'Context import revoked')
 from fixture_scopes scope join fixture_grants execution_grant using (slot) where scope.slot = 1;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '57800000-0000-4000-8000-000000000002';
+select is((select count(*) from fixture_scopes scope
+  cross join lateral public.list_factory_context_repository_options(scope.workspace_id, scope.factory_id) option where scope.slot = 1),
+  0::bigint, 'revoked repository grants stop being selectable immediately');
+select results_eq($$
+    select access.source_id, access.status
+    from fixture_scopes scope cross join lateral public.list_factory_context_source_access(scope.workspace_id, scope.factory_id,
+      array[pg_temp.source_id(), pg_temp.source_id(1, 'docs/remove.txt')]) access where scope.slot = 1
+  $$, $$
+    select source_id, status from (values
+      (pg_temp.source_id(), 'access_revoked'), (pg_temp.source_id(1, 'docs/remove.txt'), 'deleted')
+    ) requested(source_id, status)
+  $$, 'live revocation overrides the cached healthy sync and preserves explicit local deletion');
+reset role;
+set local request.jwt.claim.role = 'service_role';
 create temp table revoked_result as select * from pg_temp.settle_source((select lease_id from revoked_claim), 'synced',
   'Revoked during provider request', repeat('e', 40), '2026-01-05T01:00:00Z');
 select ok((select status = 'access_revoked' and current_revision_id is null from revoked_result),
@@ -271,11 +344,12 @@ select ok((select status = 'access_revoked' and current_revision_id is null from
 select ok(not has_table_privilege('anon', 'public.factory_context_source_revisions', 'SELECT')
   and not has_table_privilege('authenticated', 'public.factory_context_source_revisions', 'SELECT')
   and not has_column_privilege('authenticated', 'public.factory_context_source_revisions', 'content', 'SELECT')
+  and has_column_privilege('authenticated', 'public.factory_context_source_revisions', 'content_sha256', 'SELECT')
   and has_table_privilege('service_role', 'public.factory_context_source_revisions', 'SELECT')
   and not has_table_privilege('service_role', 'public.factory_context_source_revisions', 'INSERT')
   and not has_table_privilege('service_role', 'public.factory_context_source_revisions', 'UPDATE')
   and not has_table_privilege('service_role', 'public.factory_context_source_revisions', 'DELETE'),
-  'private content revisions are readable only through the trusted service and cannot be edited directly');
+  'revision bodies remain service-only and read-only while scoped metadata gets a separate column grant');
 select ok(has_column_privilege('authenticated', 'public.factory_context_sources', 'file_path', 'SELECT')
   and not has_column_privilege('authenticated', 'public.factory_context_sources', 'sync_lease_id', 'SELECT'),
   'a factory manager can read source metadata without access to the sync lease');
@@ -291,9 +365,24 @@ set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = '57800000-0000-4000-8000-000000000002';
 select is((select count(id) from public.factory_context_sources where file_path = 'docs/reference.md'), 1::bigint,
   'a delegated manager sees only their own factory source even when file paths match');
+select is((select count(id) from public.factory_context_source_revisions where source_id = pg_temp.source_id()), 2::bigint,
+  'a manager can inspect historical revision identities after live grant revocation');
+select is((select count(id) from public.factory_context_source_revisions where source_id = pg_temp.source_id(2)), 0::bigint,
+  'a manager cannot inspect a sibling factory revision even after learning its ID');
+select throws_ok($$select content from public.factory_context_source_revisions where source_id = pg_temp.source_id()$$,
+  '42501', null, 'a manager can never read a context revision body from its table');
 set local request.jwt.claim.sub = '57800000-0000-4000-8000-000000000003';
 select is((select count(id) from public.factory_context_sources where file_path = 'docs/reference.md'), 0::bigint,
   'ordinary workspace members cannot read source metadata');
+select is((select count(id) from public.factory_context_source_revisions), 0::bigint,
+  'ordinary members cannot inspect even body-free revision rows');
+select throws_ok($$select option.* from fixture_scopes scope
+  cross join lateral public.list_factory_context_repository_options(scope.workspace_id, scope.factory_id) option where scope.slot = 1$$,
+  '42501', null, 'ordinary members cannot list current repository options');
+select throws_ok($$select access.* from fixture_scopes scope
+  cross join lateral public.list_factory_context_source_access(scope.workspace_id, scope.factory_id,
+    array[pg_temp.source_id()]) access where scope.slot = 1$$,
+  '42501', null, 'ordinary members cannot inspect current source connection status');
 set local request.jwt.claim.sub = '57800000-0000-4000-8000-000000000004';
 select is((select count(id) from public.factory_context_sources where file_path = 'docs/reference.md'
   and workspace_id = '57800000-0001-4000-8000-000000000001'), 0::bigint,

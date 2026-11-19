@@ -108,3 +108,23 @@ describe("factory scope on aggregate routes", () => {
     );
   });
 });
+
+it("switches Context and Memory to the selected factory and clears scoped history", () => {
+  expect(isFactorySelectorPath("/w/acme/context", "acme")).toBe(true);
+  expect(isFactorySelectorPath("/w/acme/memory", "acme")).toBe(true);
+  expect(isFactoryAggregatePath("/w/acme/memory", "acme")).toBe(false);
+  expect(
+    factorySwitchHref(
+      "/w/acme/context",
+      "factory=old&source=s&revision=r&grantAfter=g&repoAfter=p",
+      "new-factory",
+    ),
+  ).toBe("/w/acme/context?factory=new-factory");
+  expect(
+    factorySwitchHref(
+      "/w/acme/memory",
+      "factory=old&memory=m&revision=r&decision=d&proposal=a&version=2",
+      "new-factory",
+    ),
+  ).toBe("/w/acme/memory?factory=new-factory");
+});

@@ -9,12 +9,11 @@ import {
   factorySwitchHref,
   isFactoryAggregatePath,
   isFactorySelectorPath,
+  isManagedFactoryPath,
   resolveFactorySelection,
   resolveGovernanceFactorySelection,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
-
-import { workspaceGovernancePath } from "@/lib/routes";
 
 export function FactorySelector({
   factories,
@@ -32,9 +31,9 @@ export function FactorySelector({
   const allowAll = isFactoryAggregatePath(pathname, workspaceSlug);
   const values = search.getAll(FACTORY_QUERY_PARAM);
   const requested = values.length > 1 ? values : values[0];
-  const governance = pathname === workspaceGovernancePath(workspaceSlug);
-  const options = governance ? factories.filter(({ canManage }) => canManage) : factories;
-  const selection = governance
+  const managed = isManagedFactoryPath(pathname, workspaceSlug);
+  const options = managed ? factories.filter(({ canManage }) => canManage) : factories;
+  const selection = managed
     ? resolveGovernanceFactorySelection(factories, requested)
     : resolveFactorySelection(
         factories,
