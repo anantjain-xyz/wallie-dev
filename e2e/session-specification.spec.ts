@@ -310,6 +310,23 @@ async function publish(
   return runId;
 }
 
+function exactReviewPath(
+  workspaceSlug: string,
+  sessionNumber: number,
+  stage: { id: string; slug: string },
+  target: { artifactId: string; artifactVersion: number; reviewRevision: number },
+  clarificationId?: string,
+) {
+  return workspaceSessionDetailPath(workspaceSlug, sessionNumber, {
+    artifactStage: stage.slug,
+    artifactId: target.artifactId,
+    artifactVersion: target.artifactVersion,
+    reviewStageId: stage.id,
+    reviewRevision: target.reviewRevision,
+    clarificationId,
+  });
+}
+
 test("answers an exact specification once and advances only after the revised approval", async ({
   browser,
   page,
@@ -440,6 +457,8 @@ test("answers an exact specification once and advances only after the revised ap
     );
     const pending = snapshot.clarification;
     if (!pending) throw new Error("The first version did not publish a clarification.");
+    const firstReviewPath = exactReviewPath(slug, session.number, specStage, pending);
+    const pendingReviewPath = exactReviewPath(slug, session.number, specStage, pending, pending.id);
     const staleApprove = await page.request.post(`/api/sessions/${session.id}/phase-action`, {
       data: {
         action: "approve",
@@ -458,8 +477,30 @@ test("answers an exact specification once and advances only after the revised ap
     });
     try {
       const phone = await mobile.newPage();
-      await signInViaMagicLink(phone, detail, { baseURL: app, email });
+      await phone.goto(pendingReviewPath);
+      await phone.waitForURL((url) => url.pathname === "/login");
+      await expect(phone.getByRole("heading", { name: "Sign in to Wallie" })).toBeVisible();
+      const returnPath = new URL(phone.url()).searchParams.get("next");
+      if (!returnPath) throw new Error("The sign-in page lost its exact review target.");
+      await expect(phone.locator('input[name="next"]')).toHaveValue(returnPath);
+      expect(new URL(returnPath, app).pathname).toBe(detail);
+      expect(Object.fromEntries(new URL(returnPath, app).searchParams)).toEqual(
+        Object.fromEntries(new URL(pendingReviewPath, app).searchParams),
+      );
+      await phone.screenshot({
+        path: testInfo.outputPath("06-exact-review-sign-in-mobile.png"),
+        fullPage: true,
+      });
+      await signInViaMagicLink(phone, returnPath, { baseURL: app, email });
+      await expect(phone.getByText(question, { exact: true })).toBeVisible();
       await expect(phone.getByRole("textbox", { name: "Your answer" })).toBeEnabled();
+      expect(Object.fromEntries(new URL(phone.url()).searchParams)).toMatchObject({
+        artifactId: pending.artifactId,
+        artifactVersion: String(pending.artifactVersion),
+        reviewStageId: specStage.id,
+        reviewRevision: String(pending.reviewRevision),
+        clarificationId: pending.id,
+      });
       expect(
         await phone.evaluate(() => document.documentElement.scrollWidth - innerWidth),
       ).toBeLessThanOrEqual(1);
@@ -471,16 +512,48 @@ test("answers an exact specification once and advances only after the revised ap
       await mobile.close();
     }
 
-    await clarification.getByRole("textbox", { name: "Your answer" }).fill(answer);
+    await page.goto(pendingReviewPath);
+    const answerField = clarification.getByRole("textbox", { name: "Your answer" });
+    const submitAnswer = clarification.getByRole("button", { name: "Submit answer", exact: true });
+    await expect(answerField).toBeEnabled();
+    await answerField.fill(answer);
+    await expect(submitAnswer).toBeEnabled();
+
+    await test.step("A linked clarification keeps its draft during a focus recheck", async () => {
+      const refresh = Promise.withResolvers<void>();
+      await page.route(
+        `**${endpoint}`,
+        async (route) => {
+          await refresh.promise;
+          await route.continue();
+        },
+        { times: 1 },
+      );
+      try {
+        const recheck = page.waitForRequest(
+          (request) => new URL(request.url()).pathname === endpoint && request.method() === "GET",
+        );
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await recheck;
+        await expect(answerField).toHaveValue(answer);
+        await expect(submitAnswer).toBeDisabled();
+      } finally {
+        refresh.resolve();
+      }
+      await expect(submitAnswer).toBeEnabled();
+      await expect(answerField).toHaveValue(answer);
+    });
+
     const submission = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === endpoint && response.request().method() === "POST",
     );
-    await clarification.getByRole("button", { name: "Submit answer", exact: true }).click();
+    await submitAnswer.click();
     const submitted = await submission;
     expect(submitted.status(), await submitted.text()).toBe(200);
     const receipt = specificationAnswerReceiptSchema.parse(await submitted.json());
     const original: SpecificationAnswer = submitted.request().postDataJSON();
+    expect(original.answer).toBe(answer);
     expect(receipt).toMatchObject({
       clarificationId: pending.id,
       executionExhausted: false,
@@ -520,7 +593,7 @@ test("answers an exact specification once and advances only after the revised ap
       data: { ...original, requestId: randomUUID() },
     });
     expect(late.status()).toBe(409);
-    await page.reload();
+    await page.goto(detail);
     await expect(specification.getByText(revision)).toBeVisible();
     await expect(page.getByRole("button", { name: "Approve stage" })).toBeEnabled();
 
@@ -549,7 +622,87 @@ test("answers an exact specification once and advances only after the revised ap
     await specification.getByRole("button", { name: /Version 2/ }).click();
     await expect(specification.getByText(revision)).toBeVisible();
 
-    await page.getByRole("button", { name: "Approve stage" }).click();
+    const revised = await row(
+      admin
+        .from("sessions")
+        .select("current_artifact_id, current_artifact_version, artifact_review_revision")
+        .eq("id", session.id)
+        .single(),
+    );
+    if (!revised.current_artifact_id) throw new Error("The revised artifact is missing.");
+    const revisedReviewPath = exactReviewPath(slug, session.number, specStage, {
+      artifactId: revised.current_artifact_id,
+      artifactVersion: revised.current_artifact_version,
+      reviewRevision: revised.artifact_review_revision,
+    });
+
+    await page.goto(firstReviewPath);
+    await expect(page.getByText("This review link is no longer current.")).toBeVisible();
+    await expect(specification.getByText(draft)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Request changes" })).toHaveCount(0);
+    const openCurrentReview = page.getByRole("link", { name: "Open current review" });
+    await expect(openCurrentReview).toHaveAttribute("href", detail);
+    await page.screenshot({
+      path: testInfo.outputPath("07-exact-review-historical-desktop.png"),
+      fullPage: true,
+    });
+    const phaseActionPath = `/api/sessions/${session.id}/phase-action`;
+    const staleArtifact = await page.request.post(phaseActionPath, {
+      data: {
+        action: "approve",
+        stageId: specStage.id,
+        artifactId: pending.artifactId,
+        version: pending.artifactVersion,
+        expectedReviewRevision: pending.reviewRevision,
+      },
+    });
+    expect(staleArtifact.status()).toBe(409);
+    await openCurrentReview.click();
+    await expect(page).toHaveURL(app + detail);
+    await expect(specification.getByText(revision)).toBeVisible();
+
+    const wrongArtifact = await page.request.get(
+      `/api/sessions/${session.id}/artifacts?stage=${specStage.slug}&artifactId=${randomUUID()}`,
+    );
+    expect(wrongArtifact.status()).toBe(404);
+    await page.goto(
+      exactReviewPath(slug, session.number, specStage, {
+        artifactId: pending.artifactId,
+        artifactVersion: revised.current_artifact_version,
+        reviewRevision: revised.artifact_review_revision,
+      }),
+    );
+    await expect(page.getByRole("heading", { name: "This page isn’t available" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+    await page.screenshot({
+      path: testInfo.outputPath("09-exact-review-unavailable-desktop.png"),
+      fullPage: true,
+    });
+
+    await page.goto(revisedReviewPath);
+    await expect(specification.getByText(revision)).toBeVisible();
+    const approve = page.getByRole("button", { name: "Approve stage" });
+    await expect(approve).toBeEnabled();
+    await page.screenshot({
+      path: testInfo.outputPath("08-exact-review-current-desktop.png"),
+      fullPage: true,
+    });
+    const decision = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === phaseActionPath &&
+        response.request().method() === "POST",
+    );
+    await approve.click();
+    const accepted = await decision;
+    expect(accepted.status(), await accepted.text()).toBe(200);
+    expect(accepted.request().postDataJSON()).toMatchObject({
+      action: "approve",
+      stageId: specStage.id,
+      artifactId: revised.current_artifact_id,
+      version: revised.current_artifact_version,
+      expectedReviewRevision: revised.artifact_review_revision,
+    });
     await expect
       .poll(
         async () =>
@@ -563,11 +716,11 @@ test("answers an exact specification once and advances only after the revised ap
     const approval = await row(
       admin
         .from("session_stage_approval_receipts")
-        .select("artifact_version")
+        .select("artifact_id, artifact_version")
         .eq("session_id", session.id)
         .single(),
     );
-    expect(approval.artifact_version).toBe(2);
+    expect(approval).toEqual({ artifact_id: revised.current_artifact_id, artifact_version: 2 });
 
     const deliveryRun = await row(
       admin
@@ -589,7 +742,7 @@ test("answers an exact specification once and advances only after the revised ap
         }
       });
     });
-    await page.reload();
+    await page.goto(detail);
     const stop = page.getByRole("button", { name: "Stop run", exact: true });
     await expect(stop).toBeEnabled();
     const cancelPath = `/api/sessions/${session.id}/cancel`;

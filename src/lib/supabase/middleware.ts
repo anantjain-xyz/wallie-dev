@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { SESSION_REVIEW_RETURN_HEADER } from "@/lib/sessions/review-link";
 import {
   getSupabaseAuthFlowCookieNames,
   getSupabaseSessionCookieNames,
@@ -21,10 +22,17 @@ function clearSupabaseAuthCookies(request: NextRequest, response: NextResponse) 
   });
 }
 
-export async function updateSupabaseSession(request: NextRequest) {
-  let response = NextResponse.next({
-    request,
-  });
+export async function updateSupabaseSession(request: NextRequest, reviewReturnPath?: string) {
+  function continueWithRequest() {
+    if (!reviewReturnPath && !request.headers.has(SESSION_REVIEW_RETURN_HEADER)) {
+      return NextResponse.next({ request });
+    }
+    const forwarded = new Headers(request.headers);
+    forwarded.delete(SESSION_REVIEW_RETURN_HEADER);
+    if (reviewReturnPath) forwarded.set(SESSION_REVIEW_RETURN_HEADER, reviewReturnPath);
+    return NextResponse.next({ request: { headers: forwarded } });
+  }
+  let response = continueWithRequest();
   const { publishableKey, url } = resolveSupabasePublicConfig(process.env);
   const sessionCookieNames = getSupabaseSessionCookieNames(request.cookies.getAll());
 
@@ -38,9 +46,7 @@ export async function updateSupabaseSession(request: NextRequest) {
         return request.cookies.getAll();
       },
       setAll(cookiesToSet) {
-        response = NextResponse.next({
-          request,
-        });
+        response = continueWithRequest();
 
         cookiesToSet.forEach(({ name, options, value }) => {
           request.cookies.set(name, value);

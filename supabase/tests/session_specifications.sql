@@ -150,6 +150,10 @@ select throws_ok($q$select * from first_question question cross join lateral pub
   question.session_id,question.workspace_id,question.stage_id,question.artifact_id,question.artifact_version,
   pg_temp.spec_id(3),'codex','gpt-5.5','code',0)$q$, 'PT423',
   'Answer the open specification clarification before approving.', 'exact approval cannot skip the pending human question');
+select throws_ok($q$select * from first_question question cross join lateral public.approve_session_stage(
+  question.session_id,question.workspace_id,question.stage_id,question.artifact_id,question.artifact_version,
+  pg_temp.spec_id(3),'codex','gpt-5.5','code',1)$q$, 'PT412',
+  'Review changed. Refresh the review before approving.', 'a stale review revision cannot act on the same pending question');
 insert into auth.users(id,email) values (pg_temp.spec_id(4),'spec-reviewer@example.test');
 insert into public.workspace_members(id,workspace_id,user_id,kind,role)
 values (pg_temp.spec_id(5),pg_temp.spec_id(2),pg_temp.spec_id(4),'human','member');
