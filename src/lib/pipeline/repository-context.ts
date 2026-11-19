@@ -5,19 +5,42 @@ import type { SandboxHandle } from "@/lib/sandbox/types";
 import type { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
+const commitShaSchema = /^[a-f0-9]{40}$/;
+
+export type FactoryRepositoryContextSnapshot = {
+  repositoryId: string;
+  upstreamRepositoryId: number;
+  fullName: string;
+  commitSha: string;
+  snapshotPath: string;
+};
 
 export async function materializeFactoryRepositoryContext(input: {
   admin: AdminClient;
+  expectedCommits?: ReadonlyMap<string, string>;
   factoryId: string;
   repositoryIds: readonly string[];
   sandbox: SandboxHandle;
   signal?: AbortSignal;
   workspaceId: string;
-}): Promise<string[]> {
-  const { admin, workspaceId, factoryId, signal, sandbox } = input;
-  const snapshots: string[] = [];
+}): Promise<FactoryRepositoryContextSnapshot[]> {
+  const { admin, expectedCommits, workspaceId, factoryId, signal, sandbox } = input;
+  if (expectedCommits) {
+    const repositories = new Set(input.repositoryIds);
+    if (
+      expectedCommits.size !== repositories.size ||
+      [...expectedCommits].some(
+        ([id, commit]) => !repositories.has(id) || !commitShaSchema.test(commit),
+      )
+    ) {
+      throw new Error("The frozen read-context repository identities do not match this attempt.");
+    }
+  }
+
+  const snapshots: FactoryRepositoryContextSnapshot[] = [];
   for (const repositoryId of input.repositoryIds) {
     signal?.throwIfAborted();
+    const expectedCommit = expectedCommits?.get(repositoryId);
     try {
       const query = admin
         .from("github_repositories")
@@ -40,12 +63,13 @@ export async function materializeFactoryRepositoryContext(input: {
         repositoryFullName: repository.full_name,
         repositoryId: repository.repo_id,
         purpose: "read-context",
+        ...(signal ? { signal } : {}),
       });
       signal?.throwIfAborted();
       // Look up the commit by numeric ID. A public repository that reuses a
       // stale owner/name must not supply a different context tree.
       const response = await fetch(
-        `https://api.github.com/repositories/${repository.repo_id}/commits/HEAD`,
+        `https://api.github.com/repositories/${repository.repo_id}/commits/${expectedCommit ?? "HEAD"}`,
         {
           redirect: "error",
           headers: {
@@ -58,7 +82,11 @@ export async function materializeFactoryRepositoryContext(input: {
       );
       if (!response.ok) throw new Error("Repository commit is unavailable.");
       const { sha } = (await response.json()) as { sha?: unknown };
-      if (typeof sha !== "string" || !/^[a-f0-9]{40}$/.test(sha)) {
+      if (
+        typeof sha !== "string" ||
+        !commitShaSchema.test(sha) ||
+        (expectedCommit !== undefined && sha !== expectedCommit)
+      ) {
         throw new Error("Repository commit is invalid.");
       }
       const remote = `https://github.com/${repository.full_name}.git`;
@@ -84,12 +112,20 @@ export async function materializeFactoryRepositoryContext(input: {
       signal?.throwIfAborted();
       const snapshot = /^\/tmp\/wallie-read-context\.[a-zA-Z0-9]+\/files$/.exec(stdout.trim());
       if (exitCode !== 0 || !snapshot) throw new Error("Repository snapshot could not be read.");
-      snapshots.push(`${repository.full_name} at ${sha} → ${snapshot[0]}`);
+      snapshots.push({
+        repositoryId,
+        upstreamRepositoryId: repository.repo_id,
+        fullName: repository.full_name,
+        commitSha: sha,
+        snapshotPath: snapshot[0],
+      });
     } catch {
       signal?.throwIfAborted();
       // Provider errors may contain command arguments or credentials.
       throw new Error(
-        "A factory read-context repository is unavailable. Restore its GitHub access before retrying.",
+        expectedCommit
+          ? "The frozen factory read-context repository commit is unavailable. Restore the exact GitHub commit before retrying."
+          : "A factory read-context repository is unavailable. Restore its GitHub access before retrying.",
       );
     }
   }

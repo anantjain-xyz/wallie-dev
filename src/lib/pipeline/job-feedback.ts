@@ -9,7 +9,7 @@ export async function loadJobFeedback(
   job: Pick<Tables<"agent_jobs">, "id" | "session_id" | "workspace_id">,
   stageId: string,
   options?: { exactOnly: true },
-): Promise<string | null> {
+): Promise<{ key: string; body: string } | null> {
   const { data: input, error: inputError } = await admin
     .from("artifact_feedback_batch_jobs")
     .select("batch_id")
@@ -29,7 +29,7 @@ export async function loadJobFeedback(
       .maybeSingle();
     if (error) throw error;
     if (!batch) throw new Error("The job's immutable feedback generation is unavailable.");
-    return batch.rendered_feedback_text;
+    return { key: "feedback/batch/" + input.batch_id, body: batch.rendered_feedback_text };
   }
 
   if (options?.exactOnly) return null;
@@ -37,12 +37,17 @@ export async function loadJobFeedback(
   // Existing whole-stage callers keep their established feedback record.
   const { data, error } = await admin
     .from("session_artifact_feedback")
-    .select("feedback_text")
+    .select("id, target_version, feedback_text")
     .eq("session_id", job.session_id)
     .eq("stage_id", stageId)
     .order("target_version", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  return data?.feedback_text ?? null;
+  return data
+    ? {
+        key: ["feedback", "artifact", data.id, data.target_version].join("/"),
+        body: data.feedback_text,
+      }
+    : null;
 }

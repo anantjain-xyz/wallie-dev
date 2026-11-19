@@ -15,11 +15,13 @@ export type TrustedPromptSource =
   | "wallie.buildGitPublicationPolicy"
   | "wallie.readContextInstructions"
   | "wallie.externalContextInstructions"
+  | "wallie.frozenConversationInstructions"
   | "wallie.retryCheckpointInstructions"
   | "wallie.specificationStagePolicy";
 
 export type UntrustedPromptSource =
   | "attempt.feedback"
+  | `conversation.message.${number}`
   | `artifact.previousStages.${string}`
   | "repo.defaultBranch"
   | "repo.fullName"
