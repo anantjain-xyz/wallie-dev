@@ -37,6 +37,10 @@ const buildMcpRevisionId = "c5410000-0000-4000-8000-000000000023";
 const docsMcpServerId = "c5410000-0000-4000-8000-000000000024";
 const buildMcpServerId = "c5410000-0000-4000-8000-000000000025";
 const mcpBindingId = "ba410000-0000-4000-8000-000000000026";
+const factoryId = "c5410000-0000-4000-8000-000000000027";
+const otherFactoryId = "c5410000-0000-4000-8000-000000000028";
+const scorerRevisionId = "c5410000-0000-4000-8000-000000000029";
+const laterScorerRevisionId = "c5410000-0000-4000-8000-000000000030";
 
 const catalog: FactoryDefinitionCatalog = {
   workspaceId,
@@ -697,6 +701,92 @@ describe("compileFactoryDefinition", () => {
     expect(a.canonicalDigest).not.toBe(b.canonicalDigest);
   });
 
+  it("pins version 2 scorer revisions in canonical order and round-trips stored bytes", () => {
+    const revisions = [scorerRevisionId, laterScorerRevisionId];
+    const references = {
+      ...catalog,
+      factoryId,
+      scorerRevisions: revisions.map((id) => ({ id, workspaceId, factoryId })),
+    };
+    const source = {
+      ...candidate(),
+      schemaVersion: 2,
+      scorerRevisionIds: [laterScorerRevisionId, scorerRevisionId.toUpperCase()],
+    };
+    const compiled = compile(source, references);
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+    expect(compiled.bundle).toMatchObject({ schemaVersion: 2, scorerRevisionIds: revisions });
+    expect(compile({ ...source, scorerRevisionIds: revisions }, references)).toEqual(compiled);
+    expect(factoryComponentRevisionsForSource({ kind: "structured", value: source })).toMatchObject(
+      { scorerRevisionIds: revisions.toReversed() },
+    );
+    expect(factoryComponentRevisionsForBundle(compiled.bundle)).toMatchObject({
+      scorerRevisionIds: revisions,
+    });
+    expect(
+      recompileStoredFactoryDefinition(
+        compiled.definitionJson,
+        compiled.canonicalDigest,
+        references,
+      ),
+    ).toEqual(compiled);
+    expect(
+      compiledFactoryDefinitionSchema.safeParse({
+        ...compiled.bundle,
+        scorerRevisionIds: revisions.toReversed(),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("checks the scorer revision shape and schema version before resolving anything", () => {
+    const old = candidate();
+    const next = { ...old, schemaVersion: 2 };
+    expect(compile(old)).toMatchObject({ ok: true });
+    expect(compile({ ...next, scorerRevisionIds: [] })).toMatchObject({ ok: true });
+    for (const test of [
+      { value: { ...old, scorerRevisionIds: [] }, path: ["scorerRevisionIds"] },
+      { value: next, path: ["scorerRevisionIds"] },
+      { value: { ...next, scorerRevisionIds: ["current"] }, path: ["scorerRevisionIds", 0] },
+      {
+        value: { ...next, scorerRevisionIds: [scorerRevisionId, scorerRevisionId.toUpperCase()] },
+        path: ["scorerRevisionIds", 1],
+      },
+      {
+        value: {
+          ...next,
+          scorerRevisionIds: Array.from(
+            { length: 33 },
+            (_, i) => "c5410000-0000-4000-8000-" + String(i).padStart(12, "0"),
+          ),
+        },
+        path: ["scorerRevisionIds"],
+      },
+    ]) {
+      expect(compile(test.value)).toMatchObject({
+        ok: false,
+        diagnostics: [{ path: test.path, code: "invalid_schema" }],
+      });
+    }
+  });
+
+  it("cannot bind a scorer revision from another factory or workspace, or use an alias", () => {
+    const source = { ...candidate(), schemaVersion: 2, scorerRevisionIds: [scorerRevisionId] };
+    const references = {
+      ...catalog,
+      factoryId,
+      scorerRevisions: [
+        { id: scorerRevisionId, workspaceId, factoryId: otherFactoryId },
+        { id: scorerRevisionId, workspaceId: otherWorkspaceId, factoryId },
+        { id: laterScorerRevisionId, workspaceId, factoryId, aliases: [scorerRevisionId] },
+      ],
+    };
+    expect(compile(source, references)).toMatchObject({
+      ok: false,
+      diagnostics: [{ path: ["scorerRevisionIds", 0], code: "missing_reference" }],
+    });
+  });
+
   it("does not put catalog aliases, authority, or operational readiness in the definition identity", () => {
     const input = {
       ...candidate(),
@@ -856,20 +946,25 @@ describe("compileFactoryDefinition", () => {
         },
       ]),
     });
-    expect(compile({ ...input, schemaVersion: 2, graph: {} })).toMatchObject({
+    expect(compile({ ...input, schemaVersion: 3 })).toMatchObject({
       ok: false,
-      diagnostics: expect.arrayContaining([
+      diagnostics: [
         {
           path: ["schemaVersion"],
           code: "invalid_schema",
-          message: expect.stringContaining("version 1"),
+          message: expect.stringContaining("version 1 or 2"),
         },
+      ],
+    });
+    expect(compile({ ...input, graph: {} })).toMatchObject({
+      ok: false,
+      diagnostics: [
         {
           path: ["graph"],
           code: "invalid_schema",
           message: expect.stringContaining("unsupported field"),
         },
-      ]),
+      ],
     });
     expect(
       compile({ ...input, agent: { ...input.agent, provider: "constructor", apiKey: "fixture" } }),

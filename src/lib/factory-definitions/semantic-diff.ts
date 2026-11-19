@@ -1,4 +1,5 @@
 import type { CompiledFactoryDefinition } from "./compiler";
+import { FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION } from "./schema";
 
 type Stage = CompiledFactoryDefinition["stages"][number];
 type Agent = CompiledFactoryDefinition["agent"];
@@ -64,6 +65,13 @@ const definitionFields = [
   { label: "Service credential binding", read: (value) => value.credentialBindingId ?? null },
   { label: "Delivery policy revision", read: (value) => value.deliveryPolicyRevisionId },
   { label: "Skills", read: (value) => value.skillIds },
+  {
+    label: "Scorers",
+    read: (value) =>
+      value.schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
+        ? value.scorerRevisionIds
+        : [],
+  },
   {
     label: "MCP bindings",
     read: (value) =>

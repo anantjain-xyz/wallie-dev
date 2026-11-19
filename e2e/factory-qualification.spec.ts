@@ -409,7 +409,7 @@ async function editAndSave(
   page: Page,
   model: string,
   reorder: boolean,
-  bindings?: Partial<SerialFactoryDefinition>,
+  bindings?: Partial<Omit<SerialFactoryDefinition, "schemaVersion">>,
   beforeSave?: (source: SerialFactoryDefinition) => Promise<void>,
 ) {
   await page.getByRole("button", { name: "JSON source" }).click();

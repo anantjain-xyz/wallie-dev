@@ -21,6 +21,8 @@ import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 import { isFactoryDefinitionText } from "./text";
 
 export const FACTORY_DEFINITION_SCHEMA_VERSION = 1;
+export const FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION = 2;
+const maxScorerRevisions = 32;
 export const factoryDefinitionExpectedActivationSchema = z
   .number()
   .int()
@@ -80,11 +82,8 @@ const stageSchema = z
   })
   .strict();
 
-export const serialFactoryDefinitionSchema = z
+const serialDefinitionFields = z
   .object({
-    schemaVersion: z.literal(FACTORY_DEFINITION_SCHEMA_VERSION, {
-      errorMap: () => ({ message: "Use factory definition schema version 1." }),
-    }),
     kind: z.literal("serial", {
       errorMap: () => ({
         message: "Use a serial definition. Other workflow kinds are unavailable.",
@@ -120,11 +119,47 @@ export const serialFactoryDefinitionSchema = z
   })
   .strict();
 
+const stableUuid = z.string().uuid();
+const scorerRevisionIdsSchema = z
+  .array(stableUuid.transform((id) => id.toLowerCase()))
+  .max(maxScorerRevisions)
+  .superRefine((ids, context) => {
+    const seen = new Set<string>();
+    ids.forEach((id, index) => {
+      if (seen.has(id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: "Use each scorer revision only once.",
+        });
+      }
+      seen.add(id);
+    });
+  });
+
+export const serialFactoryDefinitionSchema = z.discriminatedUnion(
+  "schemaVersion",
+  [
+    serialDefinitionFields.extend({ schemaVersion: z.literal(FACTORY_DEFINITION_SCHEMA_VERSION) }),
+    serialDefinitionFields.extend({
+      schemaVersion: z.literal(FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION),
+      scorerRevisionIds: scorerRevisionIdsSchema,
+    }),
+  ],
+  {
+    errorMap: (issue, context) => ({
+      message:
+        issue.code === "invalid_union_discriminator"
+          ? "Use factory definition schema version 1 or 2."
+          : context.defaultError,
+    }),
+  },
+);
+
 export type SerialFactoryDefinitionInput = z.input<typeof serialFactoryDefinitionSchema>;
 export type SerialFactoryDefinition = z.output<typeof serialFactoryDefinitionSchema>;
 
-const stableUuid = z.string().uuid();
-export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
+const compiledDefinitionFields = serialDefinitionFields
   .omit({
     pipeline: true,
     repository: true,
@@ -150,7 +185,27 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
     mcpManifest: factoryMcpManifestSchema.optional(),
     operatingRuleStageIds: z.array(stableUuid),
     stages: z.array(stageSchema.extend({ previousStageIds: z.array(stableUuid) })).min(1),
-  })
+  });
+
+export const compiledFactoryDefinitionSchema = z
+  .discriminatedUnion("schemaVersion", [
+    compiledDefinitionFields.extend({
+      schemaVersion: z.literal(FACTORY_DEFINITION_SCHEMA_VERSION),
+    }),
+    compiledDefinitionFields.extend({
+      schemaVersion: z.literal(FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION),
+      scorerRevisionIds: z
+        .array(stableUuid)
+        .max(maxScorerRevisions)
+        .refine(
+          (ids) =>
+            ids.every(
+              (id, index) => id === id.toLowerCase() && (index === 0 || ids[index - 1] < id),
+            ),
+          "Use unique lowercase scorer revision IDs in ascending order.",
+        ),
+    }),
+  ])
   .superRefine(
     (
       {
@@ -230,3 +285,5 @@ export const compiledFactoryDefinitionSchema = serialFactoryDefinitionSchema
       }
     },
   );
+
+export type CompiledFactoryDefinition = z.output<typeof compiledFactoryDefinitionSchema>;

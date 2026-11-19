@@ -12,7 +12,10 @@ import type {
   FactoryEditorDocument,
   FactoryEditorSnapshot,
 } from "@/lib/factory-definitions/editor-contracts";
-import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
+import {
+  FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+  type SerialFactoryDefinition,
+} from "@/lib/factory-definitions/schema";
 import { mcpManifestScopeIds, type FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
 import type { FactorySecretBindingResponse } from "@/lib/factory-secret-bindings/contracts";
 
@@ -89,7 +92,9 @@ function document(
       agent,
       sandboxProvider,
       operatingRulesMd,
-      schemaVersion,
+      ...(schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
+        ? { schemaVersion, scorerRevisionIds: source.scorerRevisionIds }
+        : { schemaVersion }),
       kind: workflowKind,
       pipelineId: pipeline,
       repositoryId: repository,
@@ -476,13 +481,21 @@ it("uses the upstream provider from the saved OpenCode model for service credent
   expect(query.get("openCodeProviderId")).toBe("openrouter");
 });
 
-it("round-trips source edits through the compiler and publishes the exact saved draft", async () => {
+it("round-trips source edits with scorer pins and publishes the exact saved draft", async () => {
   const { requests, completeTest } = setup();
+  const scorerRevisionIds = [id(76)];
   await screen.findByRole("textbox", { name: "Model" });
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "JSON source" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Definition JSON" }), {
-    target: { value: JSON.stringify({ ...source, agent: { ...source.agent, model: "gpt-5.6" } }) },
+    target: {
+      value: JSON.stringify({
+        ...source,
+        schemaVersion: FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+        scorerRevisionIds,
+        agent: { ...source.agent, model: "gpt-5.6" },
+      }),
+    },
   });
   expect(screen.getByRole("button", { name: "Publish draft" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Structured" }));
@@ -500,7 +513,14 @@ it("round-trips source edits through the compiler and publishes the exact saved 
     path: endpoint,
     body: {
       action: "draft",
-      source: { kind: "structured", value: { agent: { model: "gpt-5.6" } } },
+      source: {
+        kind: "structured",
+        value: {
+          schemaVersion: FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+          scorerRevisionIds,
+          agent: { model: "gpt-5.6" },
+        },
+      },
     },
   });
   expect(screen.getByRole("button", { name: "Publish draft" })).toBeDisabled();

@@ -65,12 +65,14 @@ export async function loadFactoryDefinitionCatalog(
     factoryId,
     agentPromptRevisionId,
     skillRevisionIds,
+    scorerRevisionIds,
     ...mcpSelection
   }: FactoryMcpCatalogSelection & {
     workspaceId: string;
     factoryId: string;
     agentPromptRevisionId?: string;
     skillRevisionIds?: readonly string[];
+    scorerRevisionIds?: readonly string[];
   },
 ): Promise<FactoryDefinitionCatalog> {
   const [
@@ -81,6 +83,7 @@ export async function loadFactoryDefinitionCatalog(
     approvers,
     agentPrompts,
     skillRevisions,
+    scorerRevisions,
     mcpCatalog,
   ] = await Promise.all([
     collectCatalogRows((from, to) =>
@@ -121,10 +124,12 @@ export async function loadFactoryDefinitionCatalog(
     ),
     loadSelectedAgentPromptRevision(admin, workspaceId, factoryId, agentPromptRevisionId),
     loadSelectedSkillRevisions(admin, workspaceId, factoryId, skillRevisionIds ?? []),
+    loadSelectedScorerRevisions(admin, workspaceId, factoryId, scorerRevisionIds ?? []),
     loadFactoryMcpCatalog(admin, { workspaceId, factoryId, ...mcpSelection }),
   ]);
   return {
     workspaceId,
+    factoryId,
     pipelines: pipelines.map(({ id, name }) => ({ id, workspaceId, aliases: [name] })),
     repositories: repositories.map(({ id, full_name }) => ({
       id,
@@ -149,6 +154,11 @@ export async function loadFactoryDefinitionCatalog(
       }),
     })),
     skills: skillRevisions.map(({ id }) => ({ id, workspaceId })),
+    scorerRevisions: scorerRevisions.map(({ id, workspace_id, factory_id }) => ({
+      id,
+      workspaceId: workspace_id,
+      factoryId: factory_id,
+    })),
     ...mcpCatalog,
     sandboxProviders: getEnabledSandboxProviders(),
   };
@@ -176,6 +186,23 @@ async function loadSelectedSkillRevisions(
     .eq("factory_id", factoryId)
     .is("revoked_at", null)
     .in("id", ids);
+  if (error) throw error;
+  return data;
+}
+
+async function loadSelectedScorerRevisions(
+  admin: AdminClient,
+  workspaceId: string,
+  factoryId: string,
+  revisionIds: readonly string[],
+) {
+  if (revisionIds.length === 0) return [];
+  const { data, error } = await admin
+    .from("factory_scorer_revisions")
+    .select("id, workspace_id, factory_id")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
+    .in("id", revisionIds);
   if (error) throw error;
   return data;
 }

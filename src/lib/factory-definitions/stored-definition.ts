@@ -8,7 +8,11 @@ import {
   type FactoryDefinitionCompileResult,
 } from "./compiler";
 import type { FactoryDefinitionCatalog } from "./references";
-import { compiledFactoryDefinitionSchema, type SerialFactoryDefinition } from "./schema";
+import {
+  FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
+  compiledFactoryDefinitionSchema,
+  type SerialFactoryDefinition,
+} from "./schema";
 import { parseFactoryDefinitionJson } from "./serialization";
 
 /** Check stored semantics against a fresh catalog without accepting changed identities. */
@@ -80,7 +84,9 @@ export function factoryDefinitionFromBundle(
     stages,
   } = bundle;
   return {
-    schemaVersion,
+    ...(schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
+      ? { schemaVersion, scorerRevisionIds: bundle.scorerRevisionIds }
+      : { schemaVersion }),
     kind,
     sandboxProvider,
     agent,

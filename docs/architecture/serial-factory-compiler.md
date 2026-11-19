@@ -1,6 +1,6 @@
 # Serial factory definition compiler
 
-`compileFactoryDefinition` turns a structured value or JSON file into a serial workflow bundle. Both inputs use the same version 1 schema and validation. Stage order comes from the `stages` array. Keep a stage's UUID when renaming or moving it.
+`compileFactoryDefinition` turns a structured value or JSON file into a serial workflow bundle. Both inputs support schema versions 1 and 2. Stage order comes from the `stages` array. Keep a stage's UUID when renaming or moving it.
 
 ## Input and component resolution
 
@@ -70,6 +70,13 @@ manager-authored instructions use the trusted prompt boundary. Repository
 snapshots retain their declared source and enter through the untrusted boundary.
 Retries use their original revision IDs after an edit or revocation. The run
 inspector reads the exact revisions from the execution manifest.
+
+Version 2 adds a required `scorerRevisionIds` array with up to 32 immutable
+revision UUIDs from the same factory. An empty array opts out of scoring.
+Compilation normalizes and sorts the UUIDs and rejects duplicates or
+unavailable revisions. Draft storage and activation enforce the same scope.
+Version 1 definitions omit the field and retain their original canonical
+bytes. See [Scorer revisions and results](factory-definition-records.md#scorer-revisions-and-results).
 
 ## Stage order and prompt references
 
