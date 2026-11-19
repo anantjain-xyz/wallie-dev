@@ -24,8 +24,15 @@ const consentSchema = z.object({
   authorization_id: z.string().uuid(),
   client_name: z.string().min(1),
   workspace_name: z.string().min(1),
-  scopes: factoryCommandScopesSchema.refine((scopes) => scopes.length > 0),
-  factories: z.array(z.object({ factory_id: z.string().uuid(), name: z.string().min(1) })).min(1),
+  factories: z
+    .array(
+      z.object({
+        factory_id: z.string().uuid(),
+        name: z.string().min(1),
+        scopes: factoryCommandScopesSchema.refine((scopes) => scopes.length > 0),
+      }),
+    )
+    .min(1),
 });
 
 function Unavailable() {
@@ -83,7 +90,7 @@ export default async function FactoryOAuthAuthorizePage({
   const consent = consentSchema.safeParse(data);
   if (!consent.success) return <Unavailable />;
 
-  const { authorization_id, client_name, workspace_name, factories, scopes } = consent.data;
+  const { authorization_id, client_name, workspace_name, factories } = consent.data;
   return (
     <PageContainer className="max-w-xl">
       <PageHeader title="Authorize client" />
@@ -103,29 +110,24 @@ export default async function FactoryOAuthAuthorizePage({
           <legend className="type-label text-foreground">Factories</legend>
           <p className="type-secondary text-muted">Choose the factories this client can access.</p>
           {factories.map((factory) => (
-            <label
-              className="flex items-start gap-2 text-sm text-foreground [overflow-wrap:anywhere]"
-              key={factory.factory_id}
-            >
-              <input
-                className="mt-0.5"
-                defaultChecked={factories.length === 1}
-                name="factoryIds"
-                type="checkbox"
-                value={factory.factory_id}
-              />
-              {factory.name}
-            </label>
+            <div className="min-w-0 space-y-1" key={factory.factory_id}>
+              <label className="flex items-start gap-2 text-sm text-foreground [overflow-wrap:anywhere]">
+                <input
+                  aria-describedby={`scopes-${factory.factory_id}`}
+                  className="mt-0.5"
+                  defaultChecked={factories.length === 1}
+                  name="factoryIds"
+                  type="checkbox"
+                  value={factory.factory_id}
+                />
+                {factory.name}
+              </label>
+              <p className="type-secondary pl-5 text-muted" id={`scopes-${factory.factory_id}`}>
+                {factory.scopes.map((scope) => factoryCommandLabels[scope]).join(", ")}
+              </p>
+            </div>
           ))}
         </fieldset>
-        <div className="space-y-2">
-          <h2 className="type-label text-foreground">Command scopes</h2>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-foreground">
-            {scopes.map((scope) => (
-              <li key={scope}>{factoryCommandLabels[scope]}</li>
-            ))}
-          </ul>
-        </div>
         <div className="flex flex-wrap justify-end gap-2">
           <button className="ui-button" name="decision" type="submit" value="deny">
             Deny

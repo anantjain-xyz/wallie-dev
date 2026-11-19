@@ -46,6 +46,8 @@ create table public.factory_oauth_grants (
 );
 create index factory_oauth_grants_client_idx on public.factory_oauth_grants (workspace_id, client_id);
 create index factory_oauth_grants_member_idx on public.factory_oauth_grants (workspace_id, consenting_member_id);
+create index factory_oauth_grants_expiry_idx on public.factory_oauth_grants (expires_at, id);
+create index factory_oauth_grants_revoked_idx on public.factory_oauth_grants (revoked_at, id) where revoked_at is not null;
 
 create table public.factory_oauth_grant_bindings (
   grant_id uuid not null,
@@ -54,6 +56,7 @@ create table public.factory_oauth_grant_bindings (
   service_principal_id uuid not null,
   execution_grant_id uuid not null,
   execution_grant_version bigint not null check (execution_grant_version between 1 and 9007199254740991),
+  scopes public.factory_command_scope[] not null check (cardinality(scopes) between 1 and 5),
   primary key (grant_id, factory_id),
   foreign key (workspace_id, grant_id) references public.factory_oauth_grants(workspace_id, id) on delete cascade,
   foreign key (workspace_id, factory_id, service_principal_id, execution_grant_id)
@@ -61,6 +64,9 @@ create table public.factory_oauth_grant_bindings (
 );
 create index factory_oauth_grant_bindings_execution_idx on public.factory_oauth_grant_bindings
   (workspace_id, factory_id, service_principal_id, execution_grant_id);
+
+create type internal.factory_oauth_factory_offer as (factory_id uuid, scopes public.factory_command_scope[]);
+revoke all on type internal.factory_oauth_factory_offer from public, anon, authenticated, service_role;
 
 create table internal.factory_oauth_authorizations (
   id uuid primary key default gen_random_uuid(),
@@ -72,7 +78,7 @@ create table internal.factory_oauth_authorizations (
   pkce_challenge text not null check (pkce_challenge ~ '^[A-Za-z0-9_-]{43}$'),
   state text,
   scopes public.factory_command_scope[] not null,
-  offered_factory_ids uuid[] not null,
+  offered_factories internal.factory_oauth_factory_offer[] not null,
   consented_factory_ids uuid[],
   expires_at timestamptz not null,
   decided_at timestamptz,
@@ -85,6 +91,8 @@ create table internal.factory_oauth_authorizations (
   check ((code_id is null) = (consented_factory_ids is null))
 );
 create index factory_oauth_authorizations_client_idx on internal.factory_oauth_authorizations (workspace_id, client_id);
+create index factory_oauth_authorizations_expiry_idx on internal.factory_oauth_authorizations
+  (coalesce(code_expires_at, expires_at), id);
 
 create table internal.factory_oauth_token_pairs (
   access_token_id uuid primary key,
@@ -214,7 +222,7 @@ $$;
 create function internal.require_factory_oauth_binding(
   p_workspace_id uuid, p_factory_id uuid, p_principal_id uuid, p_grant_id uuid, p_grant_version bigint,
   p_member_id uuid, p_scopes public.factory_command_scope[]
-) returns timestamptz language plpgsql set search_path = '' as $$
+) returns public.factory_execution_grants language plpgsql set search_path = '' as $$
 declare approved public.factory_execution_grants;
 begin
   approved := internal.require_factory_machine_grant(p_workspace_id, p_factory_id, p_grant_id, p_grant_version);
@@ -224,7 +232,7 @@ begin
   if approved.service_principal_id <> p_principal_id or (p_scopes <@ approved.command_scopes) is not true then
     raise exception 'OAuth factory authority is unavailable.' using errcode = '42501';
   end if;
-  return approved.expires_at;
+  return approved;
 end;
 $$;
 
@@ -299,7 +307,9 @@ declare
   client public.factory_oauth_clients;
   actor public.workspace_members;
   binding record;
-  offered_ids uuid[] := '{}';
+  approved public.factory_execution_grants;
+  effective_scopes public.factory_command_scope[];
+  offers internal.factory_oauth_factory_offer[] := '{}';
   offered_factories jsonb := '[]';
   request_row internal.factory_oauth_authorizations;
 begin
@@ -323,24 +333,28 @@ begin
     where pinned.client_id = client.id order by pinned.factory_id
   loop
     begin
-      perform internal.require_factory_oauth_binding(client.workspace_id, binding.factory_id, binding.service_principal_id,
-        binding.execution_grant_id, binding.execution_grant_version, actor.id, p_requested_scopes);
-      offered_ids := array_append(offered_ids, binding.factory_id);
+      approved := internal.require_factory_oauth_binding(client.workspace_id, binding.factory_id, binding.service_principal_id,
+        binding.execution_grant_id, binding.execution_grant_version, actor.id, '{}');
+      effective_scopes := array(select requested from unnest(p_requested_scopes) requested
+        where requested = any(approved.command_scopes));
+      if cardinality(effective_scopes) = 0 then continue; end if;
+      offers := array_append(offers, row(binding.factory_id, effective_scopes)::internal.factory_oauth_factory_offer);
       offered_factories := offered_factories || jsonb_build_array(jsonb_build_object(
         'factory_id', binding.factory_id, 'name', binding.name, 'service_principal_id', binding.service_principal_id,
-        'execution_grant_id', binding.execution_grant_id, 'execution_grant_version', binding.execution_grant_version));
+        'execution_grant_id', binding.execution_grant_id, 'execution_grant_version', binding.execution_grant_version,
+        'scopes', effective_scopes));
     exception when insufficient_privilege or sqlstate 'P0011' then
       continue;
     end;
   end loop;
-  if cardinality(offered_ids) = 0 then
+  if cardinality(offers) = 0 then
     raise exception 'No registered factory authorizes this request.' using errcode = '42501';
   end if;
   insert into internal.factory_oauth_authorizations (
     workspace_id, client_id, consenting_member_id, browser_session_id, redirect_uri, pkce_challenge,
-    state, scopes, offered_factory_ids, expires_at
+    state, scopes, offered_factories, expires_at
   ) values (client.workspace_id, client.id, actor.id, p_actor_session_id, p_redirect_uri, p_code_challenge,
-    p_state, p_requested_scopes, offered_ids, clock_timestamp() + interval '10 minutes') returning * into request_row;
+    p_state, p_requested_scopes, offers, clock_timestamp() + interval '10 minutes') returning * into request_row;
   return query select request_row.id, client.name, client.workspace_id, workspace.name,
     request_row.scopes, offered_factories, request_row.expires_at
   from public.workspaces workspace where workspace.id = client.workspace_id;
@@ -356,7 +370,8 @@ declare
   request_row internal.factory_oauth_authorizations;
   client public.factory_oauth_clients;
   actor public.workspace_members;
-  binding public.factory_oauth_client_bindings;
+  binding record;
+  checked_factories integer := 0;
 begin
   select * into request_row from internal.factory_oauth_authorizations where id = p_authorization_id;
   if not found then raise exception 'OAuth authorization is unavailable.' using errcode = '42501'; end if;
@@ -375,17 +390,19 @@ begin
   if p_allow then
     if array_ndims(p_factory_ids) is distinct from 1 or cardinality(p_factory_ids) not between 1 and 20
       or cardinality(p_factory_ids) <> (select count(distinct id) from unnest(p_factory_ids) id)
-      or not (p_factory_ids <@ request_row.offered_factory_ids)
+      or not (p_factory_ids <@ array(select offer.factory_id from unnest(request_row.offered_factories) offer))
       or p_code_id is null or p_code_digest is null or p_code_digest !~ '^[a-f0-9]{64}$' then
       raise exception 'Consent must select offered factories and a valid authorization code.' using errcode = '22023';
     end if;
-    for binding in select * from public.factory_oauth_client_bindings pinned
+    for binding in select pinned.*, offer.scopes from public.factory_oauth_client_bindings pinned
+      join unnest(request_row.offered_factories) offer on offer.factory_id = pinned.factory_id
       where pinned.client_id = client.id and pinned.factory_id = any(p_factory_ids) order by pinned.factory_id
     loop
       perform internal.require_factory_oauth_binding(binding.workspace_id, binding.factory_id, binding.service_principal_id,
-        binding.execution_grant_id, binding.execution_grant_version, actor.id, request_row.scopes);
+        binding.execution_grant_id, binding.execution_grant_version, actor.id, binding.scopes);
+      checked_factories := checked_factories + 1;
     end loop;
-    if request_row.expires_at <= clock_timestamp() then
+    if checked_factories <> cardinality(p_factory_ids) or request_row.expires_at <= clock_timestamp() then
       raise exception 'OAuth authorization is unavailable.' using errcode = '42501';
     end if;
   end if;
@@ -404,7 +421,7 @@ create function internal.audit_factory_oauth_grant(
   insert into public.factory_audit_events(workspace_id, factory_id, actor_member_id, action, detail)
   select binding.workspace_id, binding.factory_id, p_actor_member_id, p_action,
     jsonb_build_object('clientId', p_grant.client_id, 'oauthGrantId', p_grant.id, 'grantId', binding.execution_grant_id,
-      'grantVersion', binding.execution_grant_version, 'scopes', p_grant.scopes, 'reason', p_grant.revocation_reason)
+      'grantVersion', binding.execution_grant_version, 'scopes', binding.scopes, 'reason', p_grant.revocation_reason)
   from public.factory_oauth_grant_bindings binding where binding.grant_id = p_grant.id;
 $$;
 
@@ -493,7 +510,9 @@ language plpgsql security definer set search_path = '' as $$
 declare
   request_row internal.factory_oauth_authorizations;
   client public.factory_oauth_clients;
-  binding public.factory_oauth_client_bindings;
+  binding record;
+  approved public.factory_execution_grants;
+  effective_scopes public.factory_command_scope[] := '{}';
   consent public.factory_oauth_grants;
   granted_at timestamptz;
   expiry timestamptz := clock_timestamp() + interval '90 days';
@@ -514,12 +533,15 @@ begin
   if not found or request_row.code_consumed_at is not null or request_row.code_expires_at <= clock_timestamp() then
     raise exception 'Invalid OAuth grant.' using errcode = '42501';
   end if;
-  for binding in select * from public.factory_oauth_client_bindings pinned
+  for binding in select pinned.*, offer.scopes from public.factory_oauth_client_bindings pinned
+    join unnest(request_row.offered_factories) offer on offer.factory_id = pinned.factory_id
     where pinned.client_id = client.id and pinned.factory_id = any(request_row.consented_factory_ids) order by pinned.factory_id
   loop
-    expiry := least(expiry, internal.require_factory_oauth_binding(binding.workspace_id, binding.factory_id,
+    approved := internal.require_factory_oauth_binding(binding.workspace_id, binding.factory_id,
       binding.service_principal_id, binding.execution_grant_id, binding.execution_grant_version,
-      request_row.consenting_member_id, request_row.scopes));
+      request_row.consenting_member_id, binding.scopes);
+    expiry := least(expiry, approved.expires_at);
+    effective_scopes := effective_scopes || binding.scopes;
     granted_factories := granted_factories + 1;
   end loop;
   granted_at := clock_timestamp();
@@ -527,13 +549,16 @@ begin
     or request_row.code_expires_at <= granted_at or expiry <= granted_at then
     raise exception 'Invalid OAuth grant.' using errcode = '42501';
   end if;
+  effective_scopes := array(select requested from unnest(request_row.scopes) requested
+    where requested = any(effective_scopes));
   insert into public.factory_oauth_grants (client_id, workspace_id, consenting_member_id, scopes, created_at, expires_at)
-  values (client.id, client.workspace_id, request_row.consenting_member_id, request_row.scopes, granted_at, expiry)
+  values (client.id, client.workspace_id, request_row.consenting_member_id, effective_scopes, granted_at, expiry)
   returning * into consent;
   insert into public.factory_oauth_grant_bindings (
-    grant_id, workspace_id, factory_id, service_principal_id, execution_grant_id, execution_grant_version
+    grant_id, workspace_id, factory_id, service_principal_id, execution_grant_id, execution_grant_version, scopes
   ) select consent.id, pinned.workspace_id, pinned.factory_id, pinned.service_principal_id, pinned.execution_grant_id,
-    pinned.execution_grant_version from public.factory_oauth_client_bindings pinned
+    pinned.execution_grant_version, offer.scopes from public.factory_oauth_client_bindings pinned
+  join unnest(request_row.offered_factories) offer on offer.factory_id = pinned.factory_id
   where pinned.client_id = client.id and pinned.factory_id = any(request_row.consented_factory_ids);
   ttl := internal.issue_factory_oauth_token_pair(consent, consent.scopes,
     p_access_token_id, p_access_token_digest, p_refresh_token_id, p_refresh_token_digest);
@@ -597,7 +622,7 @@ begin
     where pinned.grant_id = consent.id order by pinned.factory_id
   loop
     perform internal.require_factory_oauth_binding(binding.workspace_id, binding.factory_id, binding.service_principal_id,
-      binding.execution_grant_id, binding.execution_grant_version, consent.consenting_member_id, consent.scopes);
+      binding.execution_grant_id, binding.execution_grant_version, consent.consenting_member_id, binding.scopes);
   end loop;
   if token.refresh_expires_at <= clock_timestamp() or consent.expires_at <= clock_timestamp() then
     raise exception 'Invalid OAuth grant.' using errcode = '42501';
@@ -640,7 +665,9 @@ begin
   end if;
   select * into binding from public.factory_oauth_grant_bindings pinned
   where (pinned.workspace_id, pinned.factory_id, pinned.grant_id) = (p_workspace_id, p_factory_id, consent.id);
-  if not found then raise exception 'OAuth token is unavailable.' using errcode = '42501'; end if;
+  if not found or not (p_scope = any(binding.scopes)) then
+    raise exception 'OAuth token is unavailable.' using errcode = '42501';
+  end if;
   perform internal.require_factory_oauth_binding(binding.workspace_id, binding.factory_id, binding.service_principal_id,
     binding.execution_grant_id, binding.execution_grant_version, consent.consenting_member_id, array[p_scope]);
   if token.access_expires_at <= clock_timestamp() or consent.expires_at <= clock_timestamp() then
@@ -661,6 +688,37 @@ language sql security definer set search_path = '' as $$
   from internal.require_factory_oauth_access_token(p_workspace_id, p_factory_id, p_access_token_id, p_access_token_digest, p_scope) binding;
 $$;
 
+create function public.prune_factory_oauth_credentials(p_batch_size integer default 200)
+returns table(authorizations_deleted integer, token_pairs_deleted integer)
+language plpgsql security definer set search_path = '' as $$
+declare
+  batch_size integer := least(greatest(coalesce(p_batch_size, 200), 1), 500);
+  cutoff timestamptz := clock_timestamp();
+begin
+  with expired as (
+    select request.id from internal.factory_oauth_authorizations request
+    where coalesce(request.code_expires_at, request.expires_at) <= cutoff
+    order by coalesce(request.code_expires_at, request.expires_at), request.id
+    limit batch_size for update skip locked
+  )
+  delete from internal.factory_oauth_authorizations request using expired where request.id = expired.id;
+  get diagnostics authorizations_deleted = row_count;
+
+  -- Spent refresh credentials are evidence of reuse for as long as the family
+  -- can issue access. Only delete pairs whose grant is irreversibly terminal.
+  with terminal as (
+    select pair.access_token_id from public.factory_oauth_grants consent
+    join internal.factory_oauth_token_pairs pair on pair.grant_id = consent.id
+    where consent.revoked_at is not null or consent.expires_at <= cutoff
+    order by consent.expires_at, pair.access_token_id
+    limit batch_size for update of pair skip locked
+  )
+  delete from internal.factory_oauth_token_pairs pair using terminal where pair.access_token_id = terminal.access_token_id;
+  get diagnostics token_pairs_deleted = row_count;
+  return next;
+end;
+$$;
+
 revoke all on function
   internal.audit_factory_oauth_grant(public.factory_oauth_grants, text, uuid),
   internal.revoke_factory_oauth_grant(public.factory_oauth_grants, text, uuid),
@@ -672,7 +730,8 @@ revoke all on function
   public.revoke_factory_oauth_grant(uuid, uuid, uuid), public.revoke_factory_oauth_client(uuid, uuid, uuid),
   public.exchange_factory_oauth_code(uuid, text, uuid, text, text, uuid, text, uuid, text),
   public.rotate_factory_oauth_refresh_token(uuid, uuid, text, uuid, text, uuid, text, public.factory_command_scope[]),
-  public.authorize_factory_oauth_access_token(uuid, uuid, uuid, text, public.factory_command_scope)
+  public.authorize_factory_oauth_access_token(uuid, uuid, uuid, text, public.factory_command_scope),
+  public.prune_factory_oauth_credentials(integer)
   from public, anon, authenticated, service_role;
 grant execute on function
   public.register_factory_oauth_client(uuid, uuid, text, text[], public.factory_command_scope[], jsonb),
@@ -681,5 +740,6 @@ grant execute on function
   public.revoke_factory_oauth_grant(uuid, uuid, uuid), public.revoke_factory_oauth_client(uuid, uuid, uuid),
   public.exchange_factory_oauth_code(uuid, text, uuid, text, text, uuid, text, uuid, text),
   public.rotate_factory_oauth_refresh_token(uuid, uuid, text, uuid, text, uuid, text, public.factory_command_scope[]),
-  public.authorize_factory_oauth_access_token(uuid, uuid, uuid, text, public.factory_command_scope)
+  public.authorize_factory_oauth_access_token(uuid, uuid, uuid, text, public.factory_command_scope),
+  public.prune_factory_oauth_credentials(integer)
   to service_role;

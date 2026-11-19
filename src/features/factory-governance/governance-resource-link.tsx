@@ -50,3 +50,29 @@ const auditTime = new Intl.DateTimeFormat(undefined, {
 export function GovernanceTime({ value }: { value: string }) {
   return <time dateTime={value}>{auditTime.format(new Date(value))} UTC</time>;
 }
+
+export function GovernanceResourcePages({
+  href,
+  next,
+  previous,
+}: {
+  href: string;
+  next?: string | null;
+  previous: boolean;
+}) {
+  if (!previous && !next) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {previous && (
+        <Link className="ui-button" href={href}>
+          First page
+        </Link>
+      )}
+      {next && (
+        <Link className="ui-button" href={next}>
+          Next page
+        </Link>
+      )}
+    </div>
+  );
+}

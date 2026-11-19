@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type BrowserContext } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
@@ -40,6 +40,7 @@ function sha256(value: string, encoding: "hex" | "base64url") {
 
 test("registers a client, consents with PKCE, rotates credentials and disconnects", async ({
   page,
+  browser,
   baseURL,
 }, testInfo) => {
   test.skip(process.env.WALLIE_OAUTH_E2E !== "1", "Requires disposable local Supabase.");
@@ -59,6 +60,8 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
   if (account.error) throw account.error;
   const user = account.data.user;
   let workspaceId: string | undefined;
+  let memberContext: BrowserContext | undefined;
+  let consentingUserId: string | undefined;
   const callbackReferrers: (string | undefined)[] = [];
   const listener = createServer((request, response) => {
     callbackReferrers.push(request.headers.referer);
@@ -184,6 +187,35 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
       }),
     );
 
+    const consentingEmail = `${slug}-member@example.test`;
+    const consentingAccount = await admin.auth.admin.createUser({
+      email: consentingEmail,
+      email_confirm: true,
+    });
+    if (consentingAccount.error) throw consentingAccount.error;
+    consentingUserId = consentingAccount.data.user.id;
+    const consentingMember = await checked(
+      admin
+        .from("workspace_members")
+        .insert({
+          workspace_id: workspace.id,
+          user_id: consentingUserId,
+          email: consentingEmail,
+          full_name: "Release collaborator",
+          kind: "human",
+          role: "member",
+        })
+        .select("id")
+        .single(),
+    );
+    await checked(
+      admin.rpc("grant_factory_membership", {
+        ...scope,
+        p_member_id: consentingMember.id,
+        p_role: "member",
+      }),
+    );
+
     const governance = `/w/${workspace.slug}/governance`;
     await signInViaMagicLink(page, governance, { baseURL: app, email });
     const clients = page.locator("#oauth-clients");
@@ -205,6 +237,12 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
       fullPage: true,
     });
 
+    memberContext = await browser.newContext({ baseURL: app });
+    const memberPage = await memberContext.newPage();
+    await signInViaMagicLink(memberPage, `/w/${workspace.slug}/sessions`, {
+      baseURL: app,
+      email: consentingEmail,
+    });
     async function consent(capture: boolean) {
       const verifier = randomBytes(32).toString("base64url");
       const state = randomUUID();
@@ -217,23 +255,23 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
         code_challenge_method: "S256",
         state,
       });
-      await page.goto(`/oauth/authorize?${query}`);
-      await expect(page.getByText(clientName, { exact: true })).toBeVisible();
-      await expect(page.getByText("Read sessions", { exact: true })).toBeVisible();
-      await page.getByRole("checkbox", { name: factory.name, exact: true }).check();
+      await memberPage.goto(`/oauth/authorize?${query}`);
+      await expect(memberPage.getByText(clientName, { exact: true })).toBeVisible();
+      await expect(memberPage.getByText("Read sessions", { exact: true }).first()).toBeVisible();
+      await memberPage.getByRole("checkbox", { name: factory.name, exact: true }).check();
       if (capture) {
-        await page.screenshot({
+        await memberPage.screenshot({
           path: testInfo.outputPath("02-oauth-consent.png"),
           fullPage: true,
         });
       }
-      const decision = page.waitForResponse(
+      const decision = memberPage.waitForResponse(
         (response) =>
           response.request().method() === "POST" &&
           new URL(response.url()).pathname === "/oauth/authorize/decision",
         { timeout: 10_000 },
       );
-      await page
+      await memberPage
         .getByRole("button", { name: "Allow access", exact: true })
         .click({ timeout: 10_000 });
       expect(
@@ -241,7 +279,7 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
         "Consent POST must redirect to the registered callback",
       ).toBe(303);
 
-      await page.waitForURL(
+      await memberPage.waitForURL(
         (url) => url.origin === callback.origin && url.pathname === callback.pathname,
         { timeout: 10_000, waitUntil: "domcontentloaded" },
       );
@@ -249,7 +287,7 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
         callbackReferrers.at(-1) === undefined,
         "Callback does not receive the consent referrer",
       ).toBe(true);
-      const result = new URL(page.url()).searchParams;
+      const result = new URL(memberPage.url()).searchParams;
       expect(result.get("state")).toBe(state);
       const code = result.get("code");
       if (!code) throw new Error("OAuth callback did not receive an authorization code.");
@@ -257,7 +295,7 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
     }
 
     const token = (form: Record<string, string>) =>
-      page.request.post(`${app}/oauth/token`, { form: { client_id: clientId, ...form } });
+      memberPage.request.post(`${app}/oauth/token`, { form: { client_id: clientId, ...form } });
     const exchange = ({ code, verifier }: Awaited<ReturnType<typeof consent>>) =>
       token({
         grant_type: "authorization_code",
@@ -314,16 +352,22 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
       execution_grant_id: grant.id,
       execution_grant_version: grant.version,
     });
-    await page.goto(governance);
-    const connections = page.locator("#connected-clients");
+    await memberPage.goto(`/w/${workspace.slug}/sessions`);
+    await memberPage.getByRole("link", { name: "Settings", exact: true }).click();
+    await memberPage
+      .getByRole("navigation", { name: "Settings categories" })
+      .locator(`a[href="/w/${workspace.slug}/settings?category=workspace"]`)
+      .click();
+    await memberPage.getByRole("link", { name: "Connected clients", exact: true }).click();
+    const connections = memberPage.locator("#connected-clients");
     await expect(connections.getByText(clientName, { exact: true }).first()).toBeVisible();
-    await page.screenshot({
+    await memberPage.screenshot({
       path: testInfo.outputPath("03-oauth-connection.png"),
       fullPage: true,
     });
     await connections.getByRole("button", { name: "Disconnect client", exact: true }).click();
-    const dialog = page.getByRole("alertdialog");
-    const disconnected = page.waitForResponse(
+    const dialog = memberPage.getByRole("alertdialog");
+    const disconnected = memberPage.waitForResponse(
       (response) =>
         response.request().method() === "POST" && response.url().endsWith("/oauth-clients"),
       { timeout: 10_000 },
@@ -333,14 +377,19 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
     await expect(dialog).toHaveCount(0);
     await expect(connections.getByRole("button", { name: "Disconnect client" })).toHaveCount(0);
     expect((await readScope(active.access_token)).data).toBeNull();
-    await page.screenshot({
+    await memberPage.screenshot({
       path: testInfo.outputPath("04-oauth-disconnected.png"),
       fullPage: true,
     });
   } finally {
+    await memberContext?.close();
     if (listener.listening) await once(listener.close(), "close");
     if (workspaceId) await checked(admin.from("workspaces").delete().eq("id", workspaceId));
     const deleted = await admin.auth.admin.deleteUser(user.id);
     if (deleted.error) throw deleted.error;
+    if (consentingUserId) {
+      const memberDelete = await admin.auth.admin.deleteUser(consentingUserId);
+      if (memberDelete.error) throw memberDelete.error;
+    }
   }
 });

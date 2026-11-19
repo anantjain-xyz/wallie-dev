@@ -26,10 +26,13 @@ import {
   RegisteredOAuthClients,
 } from "@/features/factory-governance/governance-oauth";
 import {
-  loadGovernanceOAuth,
+  loadOAuthClientData,
   type GovernanceOAuthData,
 } from "@/features/factory-governance/governance-oauth-data";
-import { governanceSourceQuery } from "@/features/factory-governance/governance-resource-link";
+import {
+  GovernanceResourcePages,
+  governanceSourceQuery,
+} from "@/features/factory-governance/governance-resource-link";
 import {
   CredentialCard,
   GrantCard,
@@ -78,32 +81,6 @@ function Unavailable({ href, text }: { href: string; text: string }) {
         </Link>
       </div>
     </PageContainer>
-  );
-}
-
-function ResourcePages({
-  href,
-  next,
-  previous,
-}: {
-  href: string;
-  next?: string | null;
-  previous: boolean;
-}) {
-  if (!previous && !next) return null;
-  return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {previous && (
-        <Link className="ui-button" href={href}>
-          First page
-        </Link>
-      )}
-      {next && (
-        <Link className="ui-button" href={next}>
-          Next page
-        </Link>
-      )}
-    </div>
   );
 }
 
@@ -192,7 +169,7 @@ function GovernanceResources({
                   tokens={data.tokenList.entries}
                   workspaceId={scope.workspaceId}
                 />
-                <ResourcePages
+                <GovernanceResourcePages
                   href={`${workspaceGovernancePath(workspaceSlug, {
                     factory: factory.id,
                     grant: source.id,
@@ -278,7 +255,7 @@ function GovernanceResources({
         ) : (
           <p className="type-secondary text-muted">No service principals on this page.</p>
         )}
-        <ResourcePages
+        <GovernanceResourcePages
           href={`${filterHref("afterPrincipal")}#service-principals`}
           next={
             principalList.next &&
@@ -302,7 +279,7 @@ function GovernanceResources({
         ) : (
           <p className="type-secondary text-muted">No execution grants on this page.</p>
         )}
-        <ResourcePages
+        <GovernanceResourcePages
           href={`${filterHref("afterGrant")}#execution-grants`}
           next={grantList.next && `${filterHref("afterGrant", grantList.next)}#execution-grants`}
           previous={Boolean(query.afterGrant)}
@@ -324,7 +301,7 @@ function GovernanceResources({
         ) : (
           <p className="type-secondary text-muted">No service credential bindings on this page.</p>
         )}
-        <ResourcePages
+        <GovernanceResourcePages
           href={`${filterHref("afterBinding")}#credential-ownership`}
           next={nextBinding && `${filterHref("afterBinding", nextBinding)}#credential-ownership`}
           previous={Boolean(query.afterBinding)}
@@ -370,7 +347,13 @@ export default async function GovernancePage({
   try {
     [data, oauth] = await Promise.all([
       loadGovernance(scope, { ...pages, auditCursor: beforeAudit, source: source.data }),
-      !source.data ? loadGovernanceOAuth(scope, { afterOAuthClient, afterOAuthGrant }) : null,
+      !source.data
+        ? loadOAuthClientData(scope, {
+            afterOAuthClient,
+            afterOAuthGrant,
+            isOperator: scope.isOperator,
+          })
+        : null,
     ]);
   } catch (error) {
     if (error instanceof FactoryAuditCursorError) {
@@ -410,7 +393,7 @@ export default async function GovernancePage({
             data={oauth}
             workspaceId={scope.workspaceId}
             navigation={
-              <ResourcePages
+              <GovernanceResourcePages
                 href={oauthPage("afterOAuthClient", "oauth-clients")}
                 next={
                   oauth.nextClient &&
@@ -427,7 +410,7 @@ export default async function GovernancePage({
             memberOptions={data.memberOptions}
             workspaceId={scope.workspaceId}
             navigation={
-              <ResourcePages
+              <GovernanceResourcePages
                 href={oauthPage("afterOAuthGrant", "connected-clients")}
                 next={
                   oauth.nextGrant &&

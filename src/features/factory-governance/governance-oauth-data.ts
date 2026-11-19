@@ -4,11 +4,18 @@ import type { GovernanceScope } from "@/features/factory-governance/governance-d
 
 const pageSize = 20;
 
-export async function loadGovernanceOAuth(
-  scope: GovernanceScope,
-  { afterOAuthClient, afterOAuthGrant }: { afterOAuthClient?: string; afterOAuthGrant?: string },
+type OAuthDataQuery = {
+  afterOAuthClient?: string;
+  afterOAuthGrant?: string;
+} & (
+  | { isOperator: boolean; consentingMemberId?: never }
+  | { consentingMemberId: string; isOperator?: never }
+);
+
+export async function loadOAuthClientData(
+  { supabase, workspaceId }: Pick<GovernanceScope, "supabase" | "workspaceId">,
+  { afterOAuthClient, afterOAuthGrant, consentingMemberId, isOperator }: OAuthDataQuery,
 ) {
-  const { supabase, workspaceId, isOperator } = scope;
   const asOf = new Date().toISOString();
   const clientQuery = supabase
     .from("factory_oauth_clients")
@@ -16,12 +23,13 @@ export async function loadGovernanceOAuth(
     .eq("workspace_id", workspaceId)
     .order("id")
     .limit(pageSize + 1);
-  const grantQuery = supabase
+  let grantQuery = supabase
     .from("factory_oauth_grants")
-    .select("id, client_id, consenting_member_id, scopes, created_at, expires_at, revoked_at")
+    .select("id, client_id, consenting_member_id, created_at, expires_at, revoked_at")
     .eq("workspace_id", workspaceId)
     .order("id")
     .limit(pageSize + 1);
+  if (consentingMemberId) grantQuery = grantQuery.eq("consenting_member_id", consentingMemberId);
   const [clients, grants, factories, executionGrants] = await Promise.all([
     !isOperator ? null : afterOAuthClient ? clientQuery.gt("id", afterOAuthClient) : clientQuery,
     afterOAuthGrant ? grantQuery.gt("id", afterOAuthGrant) : grantQuery,
@@ -63,7 +71,7 @@ export async function loadGovernanceOAuth(
     grantRows.length
       ? supabase
           .from("factory_oauth_grant_bindings")
-          .select("grant_id, factory_id")
+          .select("grant_id, factory_id, scopes")
           .eq("workspace_id", workspaceId)
           .in(
             "grant_id",
@@ -99,7 +107,11 @@ export async function loadGovernanceOAuth(
       client: linkedClients?.data?.find((client) => client.id === grant.client_id),
       factories: (grantBindings?.data ?? [])
         .filter((binding) => binding.grant_id === grant.id)
-        .map((binding) => factoryName(binding.factory_id)),
+        .map((binding) => ({
+          id: binding.factory_id,
+          name: factoryName(binding.factory_id),
+          scopes: binding.scopes,
+        })),
     })),
     nextClient: (clients?.data?.length ?? 0) > pageSize ? clientRows.at(-1)?.id : undefined,
     nextGrant: (grants.data?.length ?? 0) > pageSize ? grantRows.at(-1)?.id : undefined,
@@ -118,4 +130,4 @@ export async function loadGovernanceOAuth(
   };
 }
 
-export type GovernanceOAuthData = Awaited<ReturnType<typeof loadGovernanceOAuth>>;
+export type GovernanceOAuthData = Awaited<ReturnType<typeof loadOAuthClientData>>;

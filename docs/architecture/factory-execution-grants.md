@@ -46,17 +46,23 @@ Machine commands must call `internal.require_factory_machine_token` inside their
 In **Governance**, register a client with its exact callback URIs, allowed
 commands, and one approved execution grant per factory. The operator selects
 which factories the client can request. Each authorization records the
-consenting human and the selected factories and scopes.
+consenting human and the selected factories and scopes. Each displayed factory
+contributes the requested commands its approved grant covers.
 
 | Operation  | Authority                                                                                                                                                                 |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Authorize  | `/oauth/authorize` checks the registered callback and S256 challenge. The consent decision uses the signed-in browser session and the selected factories’ current grants. |
 | Exchange   | `POST /oauth/token` accepts the authorization code, verifier, client ID, and exact callback. It consumes the code once.                                                   |
 | Refresh    | Submit the current refresh token to `/oauth/token`. A successful rotation replaces it. Reuse of an authenticated spent token revokes the connection and its credentials.  |
-| Disconnect | Revoke the connection from **Connected clients** or revoke the registration from **OAuth clients** in Governance.                                                         |
+| Disconnect | Disconnect your own connection in **Workspace Settings → Connected clients**. Operators revoke registrations in **Governance → OAuth clients**.                           |
 
 Use `internal.require_factory_oauth_access_token` in the protected command’s
 database transaction. It checks the connection, command scope, current human
 factory access, and exact grant version. Record the service principal and the
 consenting member separately. Artifact approval uses Wallie’s human review
 flow.
+
+Scheduled maintenance removes expired consent requests and credentials from
+revoked or expired connections. It retains spent refresh credentials while the
+connection is live so replay can still be detected. Grant and audit history
+remain available.

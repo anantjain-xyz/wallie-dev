@@ -81,7 +81,7 @@ export function ConnectedOAuthClients({
   memberOptions,
   navigation,
   workspaceId,
-}: ResourceProps & { memberOptions: Array<{ id: string; label: string }> }) {
+}: ResourceProps & { memberOptions?: Array<{ id: string; label: string }> }) {
   return (
     <PageSection anchorId="connected-clients" title="Connected clients">
       {data.connected.length ? (
@@ -113,20 +113,33 @@ export function ConnectedOAuthClients({
                     value={<span className="[overflow-wrap:anywhere]">{grant.id}</span>}
                   />
                   <MetadataItem
-                    label="Factories"
-                    value={grant.factories.join(", ") || "No current factory access"}
-                  />
-                  <MetadataItem
-                    label="Authorized by"
+                    label="Factories and scopes"
                     value={
-                      memberOptions.find(({ id }) => id === grant.consenting_member_id)?.label ??
-                      "Unavailable"
+                      grant.factories.length ? (
+                        <ul className="space-y-1">
+                          {grant.factories.map((factory) => (
+                            <li key={factory.id} className="[overflow-wrap:anywhere]">
+                              {factory.name} ·{" "}
+                              {factory.scopes
+                                .map((scope) => factoryCommandLabels[scope])
+                                .join(", ")}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        "No current factory access"
+                      )
                     }
                   />
-                  <MetadataItem
-                    label="Scopes"
-                    value={grant.scopes.map((scope) => factoryCommandLabels[scope]).join(", ")}
-                  />
+                  {memberOptions && (
+                    <MetadataItem
+                      label="Authorized by"
+                      value={
+                        memberOptions.find(({ id }) => id === grant.consenting_member_id)?.label ??
+                        "Unavailable"
+                      }
+                    />
+                  )}
                   <MetadataItem
                     label="Connected"
                     value={<GovernanceTime value={grant.created_at} />}

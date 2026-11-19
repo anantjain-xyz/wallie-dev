@@ -44,7 +44,8 @@ join public.execution_policies policy on policy.workspace_id = principal.workspa
 cross join lateral public.approve_factory_execution_grant(
   pg_temp.oauth_id(4), principal.factory_id, pg_temp.oauth_id(1), principal.id, repository.id, '{}', '{}',
   policy.current_revision_id, pg_temp.oauth_id(11), clock_timestamp() + interval '1 hour', 0, null,
-  '{sessions:read,sessions:cancel}'::public.factory_command_scope[]
+  case when principal.factory_id = pg_temp.default_factory() then '{sessions:read}'::public.factory_command_scope[]
+    else '{sessions:cancel}'::public.factory_command_scope[] end
 ) approved
 where principal.workspace_id = pg_temp.oauth_id(4);
 create function pg_temp.register_oauth(
@@ -72,7 +73,7 @@ select throws_ok($q$select pg_temp.register_oauth(array['http://not-local.exampl
   '22023', null, 'plaintext redirects require an exact numeric loopback address');
 select throws_ok($q$select pg_temp.register_oauth(actor_slot => 2)$q$,
   '42501', 'Workspace manager required.', 'an ordinary member cannot register delegated factory authority');
-select throws_ok($q$select pg_temp.register_oauth(scopes => '{sessions:read,sessions:create}')$q$,
+select throws_ok($q$select pg_temp.register_oauth(scopes => '{sessions:read,sessions:cancel,sessions:create}')$q$,
   '42501', 'Registered commands must be covered by approved factory grants.', 'registered scopes cannot exceed approved execution grants');
 create temp table oauth_client as select (pg_temp.register_oauth()).*;
 select is((select count(distinct service_principal_id) from public.factory_oauth_client_bindings
@@ -98,6 +99,10 @@ select throws_ok($q$select * from pg_temp.begin_oauth(p_challenge => 'plain')$q$
 create temp table oauth_consent as select * from pg_temp.begin_oauth();
 select ok((select jsonb_array_length(factories) = 2 and workspace_name = 'OAuth fixture' from oauth_consent),
   'consent displays the workspace and both currently authorized factories');
+select ok((select factories @> jsonb_build_array(
+  jsonb_build_object('factory_id', pg_temp.default_factory(), 'scopes', jsonb_build_array('sessions:read')),
+  jsonb_build_object('factory_id', pg_temp.oauth_id(13), 'scopes', jsonb_build_array('sessions:cancel')))
+  from oauth_consent), 'consent offers each factory’s exact intersection of requested and approved scopes');
 
 create function pg_temp.accept_oauth(p_browser_slot integer default 8, p_factories uuid[] default null,
   p_code_slot integer default 30, p_authorization_id uuid default null)
@@ -145,14 +150,22 @@ create temp table oauth_grant as select * from public.factory_oauth_grants where
 select is((select count(*) from oauth_grant), 1::bigint, 'exactly one grant commits for one code');
 select is((select count(distinct service_principal_id) from public.factory_oauth_grant_bindings where grant_id = (select id from oauth_grant)),
   2::bigint, 'the grant preserves each factory’s exact principal');
+select results_eq($q$select scopes from public.factory_oauth_grant_bindings
+  where grant_id = (select id from oauth_grant) order by scopes$q$,
+  $v$values ('{sessions:read}'::public.factory_command_scope[]), ('{sessions:cancel}'::public.factory_command_scope[])$v$,
+  'the grant durably pins the approved command scopes of both factories');
 
 create function pg_temp.use_oauth(p_slot integer, p_scope public.factory_command_scope default 'sessions:read',
   p_factory uuid default pg_temp.default_factory()) returns boolean language sql as $$
   select exists (select 1 from public.authorize_factory_oauth_access_token(pg_temp.oauth_id(4), p_factory,
     pg_temp.oauth_id(p_slot), repeat('a',64), p_scope));
 $$;
-select ok(pg_temp.use_oauth(31) and pg_temp.use_oauth(31, p_factory => pg_temp.oauth_id(13)),
-  'the issued access token authorizes the approved scope in both selected factories');
+select ok(pg_temp.use_oauth(31) and pg_temp.use_oauth(31, 'sessions:cancel', pg_temp.oauth_id(13)),
+  'one grant authorizes the approved command in each selected factory');
+select throws_ok($q$select pg_temp.use_oauth(31, 'sessions:cancel')$q$,
+  '42501', null, 'the cancel scope of a sibling factory does not extend the read-only factory');
+select throws_ok($q$select pg_temp.use_oauth(31, 'sessions:read', pg_temp.oauth_id(13))$q$,
+  '42501', null, 'the read scope of the default factory does not extend the cancel-only factory');
 select throws_ok($q$select pg_temp.use_oauth(31, 'sessions:create')$q$,
   '42501', null, 'an access token cannot invoke a command outside consent');
 
@@ -165,6 +178,20 @@ $$;
 select is((select status from pg_temp.rotate_oauth(32, 41, '{sessions:create}')), 'invalid_scope', 'refresh cannot broaden original consent');
 select is((select scopes from pg_temp.rotate_oauth(32, 41, '{sessions:read}')), '{sessions:read}'::public.factory_command_scope[],
   'refresh may narrow access scopes and rotates access and refresh credentials');
+create temp table expired_pending_oauth as select * from pg_temp.begin_oauth();
+update internal.factory_oauth_authorizations set expires_at = clock_timestamp() - interval '1 second'
+where id = (select authorization_id from expired_pending_oauth);
+update internal.factory_oauth_authorizations set code_expires_at = clock_timestamp() - interval '1 second'
+where code_id = pg_temp.oauth_id(30);
+select results_eq('select * from public.prune_factory_oauth_credentials(1)', 'values (1, 0)',
+  'the pruner bounds its authorization batch and leaves all credentials in a live family');
+select results_eq('select * from public.prune_factory_oauth_credentials(200)', 'values (2, 0)',
+  'the pruner removes expired pending, unredeemed and consumed code rows');
+select ok(not has_function_privilege('authenticated', 'public.prune_factory_oauth_credentials(integer)', 'execute')
+  and has_function_privilege('service_role', 'public.prune_factory_oauth_credentials(integer)', 'execute'),
+  'credential pruning is service-only');
+select is((select count(*) from internal.factory_oauth_token_pairs where grant_id = (select id from oauth_grant)),
+  2::bigint, 'both the active and spent credential pairs remain available for live-family replay checks');
 select throws_ok($q$select pg_temp.use_oauth(31)$q$, '42501', null, 'old access credential is invalidated by rotation');
 select throws_ok($q$select pg_temp.use_oauth(41, 'sessions:cancel')$q$, '42501', null, 'the replacement access token respects narrowed scopes');
 select is((select status from pg_temp.rotate_oauth(32, 51, p_digest => repeat('e',64))), 'invalid_grant',
@@ -180,10 +207,21 @@ select is((select status from pg_temp.rotate_oauth(42, 51)), 'invalid_grant', 'v
 select is((select count(*) from public.factory_audit_events where action = 'oauth_grant.revoked'
   and detail->>'oauthGrantId' = (select id::text from oauth_grant) and detail->>'reason' = 'refresh_reuse'),
   2::bigint, 'a replay writes one revocation audit event per affected factory');
+select results_eq('select * from public.prune_factory_oauth_credentials(1)', 'values (0, 1)',
+  'the pruner bounds the token-pair batch for revoked families');
+select results_eq('select * from public.prune_factory_oauth_credentials(200)', 'values (0, 1)',
+  'the remaining revoked-family credential is pruned without its grant history');
+select is((select revocation_reason from public.factory_oauth_grants where id = (select id from oauth_grant)),
+  'refresh_reuse', 'cleanup retains the revoked family’s audit metadata');
 
 create temp table disconnected_consent as select * from pg_temp.begin_oauth();
-select * from pg_temp.accept_oauth(p_code_slot => 60, p_authorization_id => (select authorization_id from disconnected_consent));
-select is((select status from pg_temp.exchange_oauth(61, 60)), 'issued', 'fresh interactive consent can connect again after a security revocation');
+select * from pg_temp.accept_oauth(p_code_slot => 60, p_factories => array[pg_temp.default_factory()],
+  p_authorization_id => (select authorization_id from disconnected_consent));
+select results_eq('select status, scopes from pg_temp.exchange_oauth(61, 60)',
+  $v$values ('issued'::text, '{sessions:read}'::public.factory_command_scope[])$v$,
+  'consenting only to the read-only factory downscopes the issued token to its offered union');
+select is((select status from pg_temp.rotate_oauth(62, 63, '{sessions:cancel}')), 'invalid_scope',
+  'refresh cannot restore a registered scope that consent excluded');
 select public.revoke_factory_oauth_grant(pg_temp.oauth_id(4), pg_temp.oauth_id(2),
   (select grant_id from internal.factory_oauth_token_pairs where access_token_id = pg_temp.oauth_id(61)));
 select throws_ok($q$select pg_temp.use_oauth(61)$q$, '42501', null, 'consenting actor can disconnect an existing grant');
@@ -193,9 +231,21 @@ create temp table removed_consent as select * from pg_temp.begin_oauth();
 select * from pg_temp.accept_oauth(p_code_slot => 70, p_authorization_id => (select authorization_id from removed_consent));
 select is((select status from pg_temp.exchange_oauth(71, 70)), 'issued', 'valid prior membership authorizes the initial factory grant');
 select public.revoke_factory_membership(pg_temp.oauth_id(4), pg_temp.oauth_id(13), pg_temp.oauth_id(1), pg_temp.oauth_id(12));
-select throws_ok($q$select pg_temp.use_oauth(71, p_factory => pg_temp.oauth_id(13))$q$,
+select throws_ok($q$select pg_temp.use_oauth(71, 'sessions:cancel', pg_temp.oauth_id(13))$q$,
   '42501', null, 'removed factory access immediately fences access credentials');
 select is((select status from pg_temp.rotate_oauth(72, 81)), 'invalid_grant', 'refresh cannot restore a removed factory');
+create temp table already_expired_consent as select * from pg_temp.begin_oauth();
+select * from pg_temp.accept_oauth(p_code_slot => 82, p_factories => array[pg_temp.default_factory()],
+  p_authorization_id => (select authorization_id from already_expired_consent));
+select is((select status from pg_temp.exchange_oauth(83, 82)), 'issued', 'an additional live family can be independently consented');
+create temp table expired_family as select grant_id from internal.factory_oauth_token_pairs where access_token_id = pg_temp.oauth_id(83);
+update public.factory_oauth_grants set created_at = clock_timestamp() - interval '1 hour',
+  expires_at = clock_timestamp() - interval '1 second' where id = (select grant_id from expired_family);
+select results_eq('select * from public.prune_factory_oauth_credentials(200)', 'values (0, 2)',
+  'cleanup prunes expired and disconnected pairs without deleting a live unrelated pair');
+select ok(exists (select 1 from public.factory_oauth_grants where id = (select grant_id from expired_family))
+  and exists (select 1 from internal.factory_oauth_token_pairs where access_token_id = pg_temp.oauth_id(71)),
+  'cleanup preserves expired grant history and unrelated active credentials');
 select public.revoke_factory_oauth_client(pg_temp.oauth_id(4), pg_temp.oauth_id(1), (select id from oauth_client));
 select throws_ok($q$select pg_temp.use_oauth(71)$q$, '42501', null, 'revoking a registered client invalidates all of its grants');
 select throws_ok($q$select * from pg_temp.begin_oauth()$q$, '42501', null, 'revoking a registration stops new authorization');

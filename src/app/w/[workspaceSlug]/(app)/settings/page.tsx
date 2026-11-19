@@ -1,3 +1,6 @@
+import { z } from "zod";
+
+import { PersonalOAuthConnections } from "@/features/settings/personal-oauth-connections";
 import { loadSettingsPageData } from "@/features/settings/data";
 import { parseSettingsCategory } from "@/features/settings/settings-categories";
 import { SettingsServerShell } from "@/features/settings/settings-server-shell";
@@ -10,6 +13,7 @@ type SettingsPageProps = {
     github?: string;
     codex_connect?: string;
     category?: string | string[];
+    afterOAuthGrant?: string | string[];
   }>;
 };
 
@@ -18,12 +22,21 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
   const resolvedSearchParams = await searchParams;
   const category = parseSettingsCategory(resolvedSearchParams.category);
   const data = await loadSettingsPageData(workspaceSlug, category);
+  const afterOAuthGrant = z.string().uuid().safeParse(resolvedSearchParams.afterOAuthGrant).data;
   const initialData = await data.initialData;
 
   return (
     <SettingsServerShell
       category={category}
       initialData={initialData}
+      personalConnections={
+        category === "workspace" ? (
+          <PersonalOAuthConnections
+            afterOAuthGrant={afterOAuthGrant}
+            workspaceSlug={workspaceSlug}
+          />
+        ) : undefined
+      }
       searchState={{
         githubStatus: resolvedSearchParams.github ?? null,
         codexStatus: resolvedSearchParams.codex_connect ?? null,

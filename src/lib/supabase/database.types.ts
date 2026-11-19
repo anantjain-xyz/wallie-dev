@@ -2058,6 +2058,7 @@ export type Database = {
           execution_grant_version: number
           factory_id: string
           grant_id: string
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
           service_principal_id: string
           workspace_id: string
         }
@@ -2066,6 +2067,7 @@ export type Database = {
           execution_grant_version: number
           factory_id: string
           grant_id: string
+          scopes: Database["public"]["Enums"]["factory_command_scope"][]
           service_principal_id: string
           workspace_id: string
         }
@@ -2074,6 +2076,7 @@ export type Database = {
           execution_grant_version?: number
           factory_id?: string
           grant_id?: string
+          scopes?: Database["public"]["Enums"]["factory_command_scope"][]
           service_principal_id?: string
           workspace_id?: string
         }
@@ -8639,6 +8642,13 @@ export type Database = {
           p_title: string
         }
         Returns: boolean
+      }
+      prune_factory_oauth_credentials: {
+        Args: { p_batch_size?: number }
+        Returns: {
+          authorizations_deleted: number
+          token_pairs_deleted: number
+        }[]
       }
       publish_factory_definition_draft: {
         Args: {
