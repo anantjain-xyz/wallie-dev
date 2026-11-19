@@ -6951,6 +6951,33 @@ export type Database = {
         }
         Returns: Json
       }
+      admit_factory_command: {
+        Args: {
+          p_credential_digest: string
+          p_credential_id: string
+          p_credential_kind: Database["public"]["Enums"]["factory_command_credential_kind"]
+          p_factory_id: string
+          p_request_hash: string
+          p_request_id: string
+          p_scope: Database["public"]["Enums"]["factory_command_scope"]
+          p_surface: Database["public"]["Enums"]["factory_command_surface"]
+          p_workspace_id: string
+        }
+        Returns: {
+          admission_id: string
+          consenting_member_id: string
+          execution_grant_id: string
+          execution_grant_version: number
+          factory_id: string
+          lease_expires_at: string
+          lease_id: string
+          retry_after_seconds: number
+          scope: Database["public"]["Enums"]["factory_command_scope"]
+          service_principal_id: string
+          status: Database["public"]["Enums"]["factory_command_admission_status"]
+          workspace_id: string
+        }[]
+      }
       adopt_session_checkpoint_publication: {
         Args: {
           p_claim_id: string
@@ -7564,6 +7591,19 @@ export type Database = {
       complete_session_job_attempt: {
         Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
         Returns: boolean
+      }
+      configure_factory_command_quotas: {
+        Args: {
+          p_actor_user_id: string
+          p_lease_seconds?: number
+          p_principal_concurrency_limit: number
+          p_principal_rate_limit: number
+          p_window_seconds?: number
+          p_workspace_concurrency_limit: number
+          p_workspace_id: string
+          p_workspace_rate_limit: number
+        }
+        Returns: undefined
       }
       create_artifact_review_thread: {
         Args: {
@@ -8962,6 +9002,13 @@ export type Database = {
         }
         Returns: boolean
       }
+      prune_factory_command_admissions: {
+        Args: { p_batch_size?: number }
+        Returns: {
+          admissions_deleted: number
+          leases_deleted: number
+        }[]
+      }
       prune_factory_oauth_credentials: {
         Args: { p_batch_size?: number }
         Returns: {
@@ -9314,6 +9361,10 @@ export type Database = {
           session_id: string
           workspace_id: string
         }[]
+      }
+      release_factory_command_admission: {
+        Args: { p_admission_id: string; p_lease_id: string }
+        Returns: boolean
       }
       release_run_export: {
         Args: { p_export_id: string; p_lease_token: string }
@@ -10458,12 +10509,22 @@ export type Database = {
         | "manual_retry"
         | "assignment"
         | "comment_retry"
+      factory_command_admission_status:
+        | "admitted"
+        | "unauthorized"
+        | "forbidden"
+        | "rate_limited"
+        | "concurrency_limited"
+        | "request_conflict"
+        | "already_admitted"
+      factory_command_credential_kind: "machine_token" | "oauth_access_token"
       factory_command_scope:
         | "sessions:read"
         | "sessions:create"
         | "sessions:follow-up"
         | "sessions:clarify"
         | "sessions:cancel"
+      factory_command_surface: "api" | "mcp"
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
       pipeline_phase_status:
@@ -10637,6 +10698,16 @@ export const Constants = {
         "assignment",
         "comment_retry",
       ],
+      factory_command_admission_status: [
+        "admitted",
+        "unauthorized",
+        "forbidden",
+        "rate_limited",
+        "concurrency_limited",
+        "request_conflict",
+        "already_admitted",
+      ],
+      factory_command_credential_kind: ["machine_token", "oauth_access_token"],
       factory_command_scope: [
         "sessions:read",
         "sessions:create",
@@ -10644,6 +10715,7 @@ export const Constants = {
         "sessions:clarify",
         "sessions:cancel",
       ],
+      factory_command_surface: ["api", "mcp"],
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],
       pipeline_phase_status: [

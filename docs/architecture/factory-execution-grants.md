@@ -39,7 +39,7 @@ A grant can explicitly approve machine commands for reading sessions, creating s
 
 Open the grant in **Governance** to create, list, or revoke machine tokens. A token selects one or more of the grant’s approved commands. It belongs to the same workspace, factory, and service principal and stops working when the exact grant version expires, changes, or is revoked. The optional token expiry can shorten that window. Only the issue response contains the credential. The token list records the public ID, lifecycle, approved commands, and most recent successful command. Issuance and revocation appear in factory audit history.
 
-Machine commands must call `internal.require_factory_machine_token` inside their authoritative database transaction before accessing protected data or changing state. Pass the parsed ID and digest from the server-only credential parser. The check locks the factory, credential, and exact grant, and records successful use in the same transaction. Use the returned grant ID and version to apply its resource restrictions to the operation. Machine credentials carry no human review authority.
+Machine tokens use the shared [command admission](#programmable-command-admission) boundary. Apply the exact grant’s resource restrictions to the operation.
 
 ## OAuth clients
 
@@ -56,13 +56,44 @@ contributes the requested commands its approved grant covers.
 | Refresh    | Submit the current refresh token to `/oauth/token`. A successful rotation replaces it. Reuse of an authenticated spent token revokes the connection and its credentials.  |
 | Disconnect | Disconnect your own connection in **Workspace Settings → Connected clients**. Operators revoke registrations in **Governance → OAuth clients**.                           |
 
-Use `internal.require_factory_oauth_access_token` in the protected command’s
-database transaction. It checks the connection, command scope, current human
-factory access, and exact grant version. Record the service principal and the
-consenting member separately. Artifact approval uses Wallie’s human review
-flow.
+OAuth access tokens use the same command admission boundary. It checks the
+connection, command scope, current human factory access, and exact grant
+version. The actor record preserves the service principal and the consenting
+member separately.
 
 Scheduled maintenance removes expired consent requests and credentials from
 revoked or expired connections. It retains spent refresh credentials while the
 connection is live so replay can still be detected. Grant and audit history
 remain available.
+
+## Programmable command admission
+
+API and MCP requests share durable rolling windows and concurrency caps at the
+workspace and service principal levels. A principal’s tokens and OAuth
+connections share its allowance. Postgres serializes admission within the
+workspace and determines the retry delay from the active window or lease.
+Releasing a lease frees concurrency and preserves the rate-window charge. The
+default rolling window is 60 seconds, with 120 requests and 12 concurrent leases
+per workspace, and 60 requests and four concurrent leases per principal. Leases
+expire after 60 seconds by default. A workspace owner or admin can set limits
+through the service-only `configure_factory_command_quotas` operation.
+
+1. Call `authorizeFactoryCommand` with the exact workspace, factory, command
+   scope, surface, and SHA-256 hash of the canonical request. The receipt names
+   the admitted principal and grant version without exposing its credential.
+2. In the protected database transaction, call `internal.require_factory_command`
+   before reading data or mutating state. It locks the exact lease and checks
+   the live credential and grant again. Apply the returned grant’s resource
+   restrictions to the operation.
+3. Record successful use with `internal.record_factory_command_use` in the same
+   transaction. Release the lease when processing finishes. An expired lease
+   can be reclaimed once its transaction finishes.
+
+Permission failures happen before protected data access. An admission denial
+reports the quota type and retry delay. Mutation idempotency belongs to the
+shared session command, independently of each request’s quota admission.
+Artifact approval continues through Wallie’s human-authorized review flow.
+
+Scheduled maintenance in both worker runtimes prunes expired leases and
+retains admission and successful-use receipts for seven days. A lease held by
+an active database transaction remains protected until that transaction ends.

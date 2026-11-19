@@ -9,6 +9,7 @@ import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
 import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
+import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
@@ -194,6 +195,12 @@ async function main() {
           const result = await pruneFactoryOAuthCredentials(admin);
           if (result.authorizationsDeleted > 0 || result.tokenPairsDeleted > 0) {
             console.log("[worker] OAuth credential cleanup results", result);
+          }
+        });
+        timerTasks.run("factory command cleanup", async () => {
+          const result = await pruneFactoryCommandAdmissions(admin);
+          if (result.admissionsDeleted > 0 || result.leasesDeleted > 0) {
+            console.log("[worker] factory command cleanup results", result);
           }
         });
       }, config.reconcileIntervalMs),
