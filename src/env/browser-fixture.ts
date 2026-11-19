@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+
 import { z } from "zod";
 
 const configuration = z.object({
@@ -50,4 +52,19 @@ const approvalScopeSchema = z
 export function readBrowserFixtureApprovalScope(value: string | undefined) {
   const parsed = approvalScopeSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+const encoderPathSchema = z.string().max(4096).refine(isAbsolute);
+const browserVideoEncoderSchema = z.object({
+  WALLIE_BROWSER_FFMPEG_PATH: encoderPathSchema,
+  WALLIE_BROWSER_FFPROBE_PATH: encoderPathSchema,
+});
+
+export function readBrowserVideoEncoderPaths(env: Record<string, string | undefined>) {
+  const parsed = browserVideoEncoderSchema.safeParse(env);
+  if (!parsed.success) return null;
+  return {
+    ffmpeg: parsed.data.WALLIE_BROWSER_FFMPEG_PATH,
+    ffprobe: parsed.data.WALLIE_BROWSER_FFPROBE_PATH,
+  };
 }

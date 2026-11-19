@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   readBrowserFixtureApprovalScope,
   readBrowserFixtureEnvironment,
+  readBrowserVideoEncoderPaths,
 } from "@/env/browser-fixture";
 
 import {
@@ -27,11 +28,7 @@ import {
   type BrowserFixtureConfiguration,
 } from "./browser-fixture-target";
 
-import {
-  browserVideoEncoderPaths,
-  encodeBrowserVideo,
-  hasBrowserVideoEncoder,
-} from "./browser-video-encoder";
+import { encodeBrowserVideo, hasBrowserVideoEncoder } from "./browser-video-encoder";
 import { sanitizeBrowserScreenshot } from "./screenshot-png";
 
 const viewport = BROWSER_CAPTURE_DIMENSIONS;
@@ -283,7 +280,7 @@ async function captureClippedRegion({
 
 type CaptureRequest =
   | { kind: "screenshot" }
-  | { kind: "video"; encoder: NonNullable<ReturnType<typeof browserVideoEncoderPaths>> };
+  | { kind: "video"; encoder: NonNullable<ReturnType<typeof readBrowserVideoEncoderPaths>> };
 
 async function captureBrowserMedia(
   configuration: BrowserFixtureConfiguration,
@@ -468,7 +465,7 @@ export function createBrowserVideoRuntime(
 ): BrowserVideoRuntime | null {
   const configuration = readBrowserFixtureEnvironment(env);
   const approvalScopeId = readBrowserFixtureApprovalScope(env.WALLIE_BROWSER_VIDEO_APPROVAL_SCOPE);
-  const encoder = browserVideoEncoderPaths(env);
+  const encoder = readBrowserVideoEncoderPaths(env);
   if (!configuration || !approvalScopeId?.endsWith("/record_video") || !encoder) return null;
   return {
     approvalScopeId,

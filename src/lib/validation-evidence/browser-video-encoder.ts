@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 
 import { z } from "zod";
 
@@ -69,13 +69,6 @@ function runBinary(
     child.stdin?.on("error", () => {});
     child.stdin?.end(options.input);
   });
-}
-
-export function browserVideoEncoderPaths(env: Record<string, string | undefined>) {
-  const ffmpeg = env.WALLIE_BROWSER_FFMPEG_PATH;
-  const ffprobe = env.WALLIE_BROWSER_FFPROBE_PATH;
-  if (!ffmpeg || !ffprobe || !isAbsolute(ffmpeg) || !isAbsolute(ffprobe)) return null;
-  return { ffmpeg, ffprobe };
 }
 
 export async function hasBrowserVideoEncoder(paths: { ffmpeg: string; ffprobe: string }) {
