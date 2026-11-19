@@ -209,7 +209,7 @@ describe("optimistic session interactions", () => {
     window.localStorage.clear();
   });
 
-  it("does not expose Stop while a delayed approval is still pending", async () => {
+  it("withholds Stop while approval is pending or the new run identity is unavailable", async () => {
     let releaseResponse!: () => void;
     mocked.fetch.mockImplementation(
       () =>
@@ -271,7 +271,7 @@ describe("optimistic session interactions", () => {
     await act(async () => releaseResponse());
     await waitFor(() =>
       expect((screen.getByRole("button", { name: "Stop run" }) as HTMLButtonElement).disabled).toBe(
-        false,
+        true,
       ),
     );
   });
@@ -345,6 +345,7 @@ describe("optimistic session interactions", () => {
   });
 
   it("reconciles the artifact version when Stop races run completion", async () => {
+    const displayedRunId = "57100000-0000-4000-8000-000000000004";
     mocked.fetch.mockResolvedValue(
       Response.json({
         archivedAt: null,
@@ -376,12 +377,26 @@ describe("optimistic session interactions", () => {
         initialData: data,
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
+        latestRun: {
+          id: displayedRunId,
+          stageId: data.session.currentStageId,
+          status: "running",
+          createdAt: data.session.createdAt,
+          updatedAt: data.session.updatedAt,
+        },
       }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
 
     await waitFor(() => expect(screen.getByText("Artifact ready")).toBeTruthy());
+    const stopRequest = mocked.fetch.mock.calls.find(
+      ([url]) => url === `/api/sessions/${session.id}/cancel`,
+    );
+    expect(JSON.parse(stopRequest?.[1].body)).toEqual({
+      expectedRunId: displayedRunId,
+      requestId: expect.any(String),
+    });
     expect(screen.getByRole("button", { name: "Plan: Awaiting review" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
   });

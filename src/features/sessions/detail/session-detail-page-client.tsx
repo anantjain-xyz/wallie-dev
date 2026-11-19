@@ -231,6 +231,11 @@ function SessionDetailContent({
   const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
   const [latestRun, setLatestRun] = useState(initialLatestRun);
   const currentRun = useStageExecution(session.id, latestRun);
+  const stoppableRunId =
+    currentRun && currentRun.stageId === session.currentStageId ? currentRun.id : null;
+  const stopIntent = useRef<{ sessionId: string; expectedRunId: string; requestId: string } | null>(
+    null,
+  );
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [phaseActionError, setPhaseActionError] = useState<string | null>(null);
   const [stopPending, setStopPending] = useState(false);
@@ -993,7 +998,14 @@ function SessionDetailContent({
   }
 
   async function handleStopRun() {
-    if (archivePending !== null || phaseActionPending !== null || stopPending) return;
+    if (archivePending !== null || phaseActionPending !== null || stopPending || !stoppableRunId)
+      return;
+    const previousIntent = stopIntent.current;
+    const intent =
+      previousIntent?.sessionId === session.id && previousIntent.expectedRunId === stoppableRunId
+        ? previousIntent
+        : { sessionId: session.id, expectedRunId: stoppableRunId, requestId: crypto.randomUUID() };
+    stopIntent.current = intent;
     setStopPending(true);
     const optimisticPatch: SessionMutationPatch = { phaseStatus: "rejected" };
     const previousPatch: SessionMutationPatch = {
@@ -1009,6 +1021,10 @@ function SessionDetailContent({
           const response = await fetch(`/api/sessions/${session.id}/cancel`, {
             headers: { "Content-Type": "application/json" },
             method: "POST",
+            body: JSON.stringify({
+              requestId: intent.requestId,
+              expectedRunId: intent.expectedRunId,
+            }),
           });
           const body = (await response.json().catch(() => null)) as
             | (Partial<SessionPhaseMutationResult> & { error?: string })
@@ -1025,6 +1041,7 @@ function SessionDetailContent({
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
           ),
       });
+      if (stopIntent.current === intent) stopIntent.current = null;
     } catch (error) {
       pushToast({
         description: error instanceof Error ? error.message : "Could not stop the run.",
@@ -1250,7 +1267,7 @@ function SessionDetailContent({
       <button
         type="button"
         className="ui-button text-danger"
-        disabled={stopPending || archivePending !== null}
+        disabled={stopPending || archivePending !== null || !stoppableRunId}
         onClick={() => void handleStopRun()}
       >
         <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />

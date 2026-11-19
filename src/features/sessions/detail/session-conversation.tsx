@@ -129,6 +129,7 @@ export function useSessionConversation(sessionId: string) {
 
 const authorKinds = {
   agent: "Agent",
+  service: "Service principal",
   system: "System",
   user: "User",
 } satisfies Record<SessionConversationMessage["kind"], string>;
