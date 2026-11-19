@@ -94,13 +94,18 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Could not stop the run." }, { status: 500 });
   }
 
-  const state = await readSessionCommand(admin, sessionRow.id);
+  const state = await readSessionCommand(supabase, sessionRow.id, {
+    workspaceId: sessionRow.workspace_id,
+    factoryId: sessionRow.factory_id,
+  });
   if (!state.ok) {
-    const error =
-      state.code === "not_found" || state.error === "Session stage not found"
-        ? "Could not reconcile the stopped session."
-        : state.error;
-    return NextResponse.json({ error }, { status: 500 });
+    if (state.code === "not_found") {
+      return NextResponse.json({ error: "Session not found." }, { status: 404 });
+    }
+    return NextResponse.json(
+      { error: "Could not reconcile the stopped session." },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json<SessionPhaseMutationResult>(state.result);

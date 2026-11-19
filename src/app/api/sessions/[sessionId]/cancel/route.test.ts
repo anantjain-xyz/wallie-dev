@@ -49,58 +49,61 @@ function request(body: unknown = intent) {
   });
 }
 
-function buildServerClient() {
+function buildServerClient(resultPhaseStatus = "rejected", canReadPhase = () => true) {
+  const phaseFilter = vi.fn();
+  const readPhase = vi.fn(async () => ({
+    data: canReadPhase()
+      ? {
+          ...session,
+          archived_at: null,
+          current_artifact_id: "artifact-current",
+          current_artifact_version: 2,
+          currentStage: {
+            description: "Build work",
+            id: "stage-build",
+            name: "Build",
+            position: 1,
+            slug: "build",
+          },
+          current_stage_id: "stage-build",
+          phase_status: resultPhaseStatus,
+          rejection_count: 1,
+          updated_at: "2026-07-17T12:00:00.000Z",
+        }
+      : null,
+    error: null,
+  }));
   return {
+    phaseFilter,
+    readPhase,
     from: (table: string) => {
+      let phaseRead = false;
       const query = {
-        select: () => query,
-        eq: () => query,
-        maybeSingle: async () => ({
-          data: table === "sessions" ? session : { id: memberId },
-          error: null,
-        }),
+        select: (fields: string) => {
+          phaseRead = table === "sessions" && fields.includes("phase_status");
+          return query;
+        },
+        eq: (column: string, value: string) => {
+          if (phaseRead) phaseFilter(column, value);
+          return query;
+        },
+        maybeSingle: async () =>
+          phaseRead
+            ? readPhase()
+            : { data: table === "sessions" ? session : { id: memberId }, error: null },
       };
       return query;
     },
   };
 }
 
-function buildAdminClient(resultPhaseStatus: string) {
-  return {
-    rpc: mocked.cancelOnce,
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({
-            data: {
-              archived_at: null,
-              current_artifact_id: "artifact-current",
-              current_artifact_version: 2,
-              currentStage: {
-                description: "Build work",
-                id: "stage-build",
-                name: "Build",
-                position: 1,
-                slug: "build",
-              },
-              current_stage_id: "stage-build",
-              id: session.id,
-              phase_status: resultPhaseStatus,
-              rejection_count: 1,
-              updated_at: "2026-07-17T12:00:00.000Z",
-            },
-            error: null,
-          }),
-        }),
-      }),
-    }),
-  };
-}
+const admin = { rpc: mocked.cancelOnce, from: vi.fn() };
 
 describe("POST /api/sessions/[sessionId]/cancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.createSupabaseServerClient.mockResolvedValue(buildServerClient());
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
     mocked.enforceRateLimit.mockResolvedValue({ response: null, result: {} });
     mocked.cancelOnce.mockReturnValue({ single: async () => ({ data: receipt, error: null }) });
@@ -109,7 +112,8 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
   });
 
   it("preserves the compiled stage label after stopping a pinned session", async () => {
-    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminClient("rejected"));
+    const reader = buildServerClient();
+    mocked.createSupabaseServerClient.mockResolvedValue(reader);
     mocked.loadPinnedFactoryExecution.mockResolvedValue({
       stages: [
         { id: "stage-plan" },
@@ -123,6 +127,7 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
     });
     const response = await POST(request(), context);
     expect(response.status).toBe(200);
+    expect(mocked.loadPinnedFactoryExecution).toHaveBeenCalledWith(reader, expect.anything());
     await expect(response.json()).resolves.toMatchObject({
       currentStageId: "stage-build",
       currentStage: {
@@ -136,7 +141,8 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
   });
 
   it("returns the post-cancel row instead of a hardcoded rejected phase", async () => {
-    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminClient("awaiting_review"));
+    const reader = buildServerClient("awaiting_review");
+    mocked.createSupabaseServerClient.mockResolvedValue(reader);
 
     const response = await POST(request(), context);
 
@@ -150,10 +156,16 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
       target_session_id: session.id,
       target_workspace_id: session.workspace_id,
     });
-    expect(mocked.cleanupSessionWorkReceipt).toHaveBeenCalledWith(expect.anything(), {
+    expect(mocked.cleanupSessionWorkReceipt).toHaveBeenCalledWith(admin, {
       receipt,
       workspaceId: session.workspace_id,
     });
+    expect(reader.phaseFilter.mock.calls).toEqual([
+      ["id", session.id],
+      ["workspace_id", session.workspace_id],
+      ["factory_id", session.factory_id],
+    ]);
+    expect(admin.from).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
       archivedAt: null,
       currentArtifactId: "artifact-current",
@@ -173,8 +185,25 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
     });
   });
 
+  it("returns no phase or artifact metadata when access is lost during cleanup", async () => {
+    let phaseVisible = true;
+    const reader = buildServerClient("awaiting_review", () => phaseVisible);
+    mocked.createSupabaseServerClient.mockResolvedValue(reader);
+    mocked.cleanupSessionWorkReceipt.mockImplementationOnce(async () => {
+      phaseVisible = false;
+    });
+
+    const response = await POST(request(), context);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Session not found." });
+    expect(reader.readPhase).toHaveBeenCalledTimes(1);
+    expect(mocked.loadPinnedFactoryExecution).not.toHaveBeenCalled();
+    expect(admin.from).not.toHaveBeenCalled();
+  });
+
   it("replays the exact cancellation even after the session has advanced", async () => {
-    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminClient("awaiting_review"));
+    mocked.createSupabaseServerClient.mockResolvedValue(buildServerClient("awaiting_review"));
     const replay = { ...receipt, replayed: true };
     mocked.cancelOnce.mockReturnValue({ single: async () => ({ data: replay, error: null }) });
 
@@ -187,7 +216,6 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
   });
 
   it("rejects stale generations and stops before provider cleanup", async () => {
-    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminClient("in_progress"));
     mocked.cancelOnce.mockReturnValue({
       single: async () => ({ data: null, error: { code: "P0003", message: "Private detail" } }),
     });

@@ -727,9 +727,19 @@ create or replace function public.find_session_creation_command(
   target_factory_id uuid default null, source_session_id uuid default null, draft_specification boolean default false
 ) returns table(session_id uuid, session_number integer, workspace_slug text, job_id uuid, run_id uuid)
 language plpgsql security definer set search_path = '' as $$
-declare accepted record; admitted public.sessions;
+declare accepted record; admitted public.sessions; receipt_factory_id uuid;
 begin
   if draft_specification is null then raise exception 'Invalid specification drafting option.' using errcode = '22023'; end if;
+  -- The original receipt lookup takes member access before returning. Fence
+  -- the immutable receipt factory first, including standalone browser replay.
+  select session.factory_id into receipt_factory_id
+  from internal.session_creation_requests request
+  join public.sessions session on (session.workspace_id, session.id) = (request.workspace_id, request.session_id)
+  where (request.workspace_id, request.creator_member_id, request.request_id) =
+    (target_workspace_id, find_session_creation_command.creator_member_id, target_request_id);
+  if found then
+    perform internal.assert_session_mutation_human_access(target_workspace_id, receipt_factory_id, creator_member_id);
+  end if;
   select * into accepted from internal.find_session_creation_command(
     target_workspace_id, creator_member_id, target_request_id, target_request_hash, target_factory_id, source_session_id);
   if not found then return; end if;
@@ -784,7 +794,7 @@ begin
   where factory.workspace_id = target_workspace_id
     and case when target_factory_id is null then factory.is_default else factory.id = target_factory_id end;
   if not found then raise exception 'The active factory changed.' using errcode = 'P0003'; end if;
-  perform internal.assert_session_command_access(target_workspace_id, actual_factory_id, creator_member_id);
+  perform internal.assert_session_mutation_human_access(target_workspace_id, actual_factory_id, creator_member_id);
   perform internal.lock_session_mutation_key(target_workspace_id, actual_factory_id, 'create', target_request_id);
 
   -- Retain browser-only attachments, restart and per-member request handles.
@@ -834,6 +844,13 @@ begin
         'agentId', agent_id, 'repositoryId', repository_id, 'draftSpecification', draft_specification);
       prior := internal.find_session_mutation_receipt(operation_actor, 'create', target_request_id, intent);
       if prior is not null then
+        -- Bind the compatible browser request for early replay before the
+        -- application consults a later activation. The common receipt and
+        -- its original actor retain their first-write provenance.
+        insert into internal.session_creation_requests(workspace_id, creator_member_id, request_id, request_hash,
+          session_id, job_id, run_id)
+        values (target_workspace_id, creator_member_id, target_request_id, target_request_hash,
+          (prior->>'sessionId')::uuid, (prior->>'jobId')::uuid, (prior->>'runId')::uuid);
         return query select (prior->>'sessionId')::uuid, (prior->>'sessionNumber')::integer, prior->>'workspaceSlug',
           (prior->>'jobId')::uuid, (prior->>'runId')::uuid;
         return;

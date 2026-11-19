@@ -341,6 +341,52 @@ describe("POST /api/sessions", () => {
     expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
+  it("recovers a browser retry of an API-first creation after the active revision changes", async () => {
+    const pinned = {
+      repositoryId: REPOSITORY_ID,
+      canonicalDigest: "a".repeat(64),
+      factoryId: FACTORY_ID,
+    };
+    const original = {
+      jobId: "api-job",
+      number: 42,
+      runId: "api-run",
+      sessionId: "api-session",
+      workspaceSlug: "acme",
+    };
+    const body = {
+      factoryDefinitionDigest: pinned.canonicalDigest,
+      githubRepositoryId: REPOSITORY_ID,
+      promptMd: "Use the approved execution grant.",
+      requestId: ATTACHMENT_ID,
+      title: "Original request",
+      workspaceId: WORKSPACE_ID,
+    };
+    mocked.loadActiveFactoryExecution.mockResolvedValue(pinned);
+    mocked.findSessionCreationRequest.mockResolvedValueOnce(null).mockResolvedValueOnce(original);
+    mocked.createSessionWithFirstJob.mockResolvedValueOnce(original);
+
+    const lost = await POST(makeRequest(body));
+    expect(lost.status).toBe(201);
+    mocked.loadActiveFactoryExecution.mockResolvedValue({
+      ...pinned,
+      canonicalDigest: "b".repeat(64),
+    });
+    const retry = await POST(makeRequest(body));
+
+    expect(retry.status).toBe(201);
+    await expect(retry.json()).resolves.toMatchObject({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+      processScheduled: true,
+    });
+    expect(mocked.findSessionCreationRequest.mock.calls[1][0].creationRequest).toEqual(
+      mocked.createSessionWithFirstJob.mock.calls[0][0].creationRequest,
+    );
+    expect(mocked.loadActiveFactoryExecution).toHaveBeenCalledTimes(1);
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledTimes(1);
+  });
+
   it("preflights a deliberate restart against the current factory revision", async () => {
     const pinned = {
       repositoryId: REPOSITORY_ID,

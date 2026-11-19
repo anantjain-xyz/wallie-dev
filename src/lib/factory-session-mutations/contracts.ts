@@ -71,7 +71,7 @@ export const factoryMutationReceiptSchema = z.object({
   receiptId: uuid,
   sessionId: uuid,
   sessionNumber: positiveDatabaseInt,
-  workspaceSlug: z.string().min(1).max(63),
+  workspaceSlug: z.string().min(1),
   phaseStatus: z.enum(Constants.public.Enums.pipeline_phase_status),
   jobId: uuid.nullable().optional(),
   runId: uuid.nullable().optional(),

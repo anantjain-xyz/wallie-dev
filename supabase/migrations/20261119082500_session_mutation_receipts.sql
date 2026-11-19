@@ -69,6 +69,25 @@ begin
 end;
 $$;
 
+create function internal.assert_session_mutation_human_access(
+  p_workspace_id uuid, p_factory_id uuid, p_member_id uuid
+) returns void language plpgsql set search_path = '' as $$
+begin
+  -- Membership revocation locks the factory before its factory_members row.
+  -- Hold the same workspace and factory fences before taking member access.
+  perform 1 from public.workspaces workspace
+  where workspace.id = p_workspace_id and workspace.deletion_requested_at is null
+  for share;
+  if not found then raise exception 'Session not found.' using errcode = 'PT404'; end if;
+  perform 1 from public.factories factory
+  where (factory.workspace_id, factory.id) = (p_workspace_id, p_factory_id)
+  for share;
+  if not found then raise exception 'Session not found.' using errcode = 'PT404'; end if;
+  -- Active-factory requirements still belong to the operation or live grant.
+  perform internal.assert_factory_grant_invoker(p_workspace_id, p_factory_id, p_member_id);
+end;
+$$;
+
 create function internal.assert_session_mutation_actor(
   p_actor internal.session_mutation_actor, p_operation public.factory_session_mutation_operation
 ) returns void language plpgsql set search_path = '' as $$
@@ -81,7 +100,7 @@ begin
     if p_actor.service_principal_id is not null or p_actor.admission_id is not null or p_actor.consenting_member_id is not null then
       raise exception 'The session request actor is invalid.' using errcode = '42501';
     end if;
-    perform internal.assert_session_command_access(p_actor.workspace_id, p_actor.factory_id, p_actor.member_id);
+    perform internal.assert_session_mutation_human_access(p_actor.workspace_id, p_actor.factory_id, p_actor.member_id);
   elsif not exists (
     select 1 from internal.factory_command_admissions admission
     join internal.factory_command_leases lease on lease.admission_id = admission.id
@@ -110,7 +129,7 @@ create function internal.session_mutation_human_actor(
 ) returns internal.session_mutation_actor language plpgsql set search_path = '' as $$
 declare target public.sessions; admitted public.session_factory_admission_inputs;
 begin
-  perform internal.assert_session_command_access(p_workspace_id, p_factory_id, p_member_id);
+  perform internal.assert_session_mutation_human_access(p_workspace_id, p_factory_id, p_member_id);
   select * into target from public.sessions session
   where (session.id, session.workspace_id, session.factory_id) = (p_session_id, p_workspace_id, p_factory_id);
   if not found then raise exception 'Session not found.' using errcode = 'PT404'; end if;
@@ -205,6 +224,7 @@ $$;
 revoke all on function
   internal.session_mutation_scope(public.factory_session_mutation_operation),
   internal.lock_session_mutation_key(uuid, uuid, public.factory_session_mutation_operation, uuid),
+  internal.assert_session_mutation_human_access(uuid, uuid, uuid),
   internal.assert_session_mutation_actor(internal.session_mutation_actor, public.factory_session_mutation_operation),
   internal.session_mutation_human_actor(uuid, uuid, uuid, uuid),
   internal.lock_machine_session_mutation_target(internal.session_mutation_actor, uuid),

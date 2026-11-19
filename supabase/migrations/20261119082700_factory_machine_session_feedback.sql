@@ -462,11 +462,15 @@ begin
     end if;
   end if;
 
+  -- Thread-only and unkeyed submissions can also enqueue grant-backed work.
+  -- Establish the same factory-before-member fence even without a shared key.
+  if intent is null then
+    perform internal.assert_session_mutation_human_access(p_workspace_id, p_factory_id, p_requested_by_member_id);
+  end if;
   select session.* into reviewed from public.sessions session
   where (session.workspace_id, session.factory_id, session.id) = (p_workspace_id, p_factory_id, p_session_id)
   for no key update;
   if not found then raise exception 'Session not found.' using errcode = 'P0002'; end if;
-  perform internal.assert_session_command_access(p_workspace_id, p_factory_id, p_requested_by_member_id);
   if p_expected_review_revision is null and p_request_id is null and p_selected_thread_ids is null then
     if reviewed.current_stage_id = reviewed.specification_stage_id then
       raise exception 'Specification feedback requires an exact review receipt.' using errcode = '22023';

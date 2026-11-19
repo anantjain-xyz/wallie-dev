@@ -155,6 +155,25 @@ it("returns the same durable create receipt when an exact retry receives a fresh
   );
 });
 
+it("returns a committed receipt for a workspace slug generated from a long name", async () => {
+  const workspaceSlug = `long-workspace-${"1234567890".repeat(6)}-2`;
+  const { admin, request } = fixture(
+    admission("sessions:create"),
+    Response.json({ ...result, workspaceSlug, replayed: true }),
+    Response.json(true),
+  );
+
+  const response = await handleFactoryMutation("create", request(createBody), scope, admin);
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({
+    receiptId,
+    replayed: true,
+    workspaceSlug,
+    canonicalUrl: `/w/${workspaceSlug}/sessions/12`,
+  });
+});
+
 it.each([
   {
     operation: "follow_up",

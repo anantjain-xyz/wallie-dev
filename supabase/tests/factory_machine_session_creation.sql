@@ -245,6 +245,18 @@ select is((select count(*) from public.agent_run_messages message join browser_f
   'browser first and machine replay also record one cancellation diagnostic');
 
 select pg_temp.activate_creation(2,false);
+select results_eq($q$select session_id,job_id,run_id from public.find_session_creation_command(
+    pg_temp.creation_id(2),pg_temp.creation_id(3),pg_temp.creation_id(101),repeat('c',64),
+    pg_temp.creation_factory_id(),draft_specification=>true)$q$,
+  $q$select (receipt->>'sessionId')::uuid,(receipt->>'jobId')::uuid,(receipt->>'runId')::uuid from original_machine_create$q$,
+  'an API-first browser replay can recover the original receipt before consulting a changed activation');
+select throws_ok($q$select * from public.find_session_creation_command(
+    pg_temp.creation_id(2),pg_temp.creation_id(3),pg_temp.creation_id(101),repeat('d',64),
+    pg_temp.creation_factory_id(),draft_specification=>true)$q$,'P0005',null,
+  'browser replay alias still requires the original browser request fingerprint');
+select ok((select actor_member_id is null and actor_service_principal_id=(select id from creation_principal)
+  from internal.session_mutation_receipts where operation='create' and request_id=pg_temp.creation_id(101)),
+  'binding the browser replay alias preserves the original machine receipt actor');
 select throws_ok($q$select pg_temp.machine_create(103)$q$, 'PT422', null,
   'new machine work never falls back to personal credentials when activation changes');
 select results_eq($q$select * from pg_temp.browser_create(102)$q$, 'select * from original_browser_create',
