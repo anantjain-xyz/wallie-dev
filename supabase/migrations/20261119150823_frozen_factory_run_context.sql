@@ -341,6 +341,27 @@ begin
   where (pinned.run_id, pinned.workspace_id, pinned.session_id, pinned.job_id, pinned.attempt_count) =
     (origin.id, origin.workspace_id, origin.session_id, origin.agent_job_id, origin.attempt_count);
   if not found then
+    -- The exact manual target can support a first selection after a startup
+    -- failure, provided no attempt of its original job reached dispatch.
+    -- A user retry without an authoritative binding cannot become a fresh
+    -- generation just because somebody subsequently retries its failed run.
+    if retry_ref is not null and origin.status in ('error','canceled')
+      and exists (
+        select 1 from public.agent_jobs source_job where source_job.id = origin.agent_job_id
+          and (source_job.trigger_type <> 'manual_retry' or source_job.requested_by_member_id is null)
+      )
+      and not exists (
+        select 1 from internal.session_context_manual_retry_origins binding where binding.job_id = origin.agent_job_id
+      )
+      and not exists (
+        select 1 from public.session_run_context_manifests existing where existing.job_id = origin.agent_job_id
+      )
+      and not exists (
+        select 1 from public.session_attempt_manifests dispatched where dispatched.job_id = origin.agent_job_id
+      ) then
+      return query select 'fresh'::text, null::uuid, null::jsonb;
+      return;
+    end if;
     -- Legacy dispatched input cannot be inferred from current documents or messages.
     return query select 'missing'::text, null::uuid, null::jsonb;
     return;

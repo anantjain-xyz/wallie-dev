@@ -182,14 +182,34 @@ create temp table missing_chain as select retry.* from dispatched_legacy first c
 select is((select status from missing_chain active cross join lateral pg_temp.context_origin(active.job_id,active.run_id,1)),
   'missing','a manual retry chain cannot turn earlier missing dispatched evidence into fresh context');
 
+create temp table manual_startup_failure as select * from pg_temp.initial_attempt('Initial sandbox could not acquire');
+select is((select public.fail_session_job_attempt(job_id,1,'Sandbox never dispatched',false,8,run_id)
+  from manual_startup_failure),'error','the startup-only first job can become terminal');
+create temp table manual_first_freeze as select retry.* from manual_startup_failure past cross join lateral
+  pg_temp.explicit_retry(past.session_id,past.run_id) retry;
+select ok((select receipt.status='fresh' and receipt.origin_run_id is null and receipt.manifest is null
+  from manual_first_freeze active cross join lateral pg_temp.context_origin(active.job_id,active.run_id,1) receipt),
+  'operator Retry after a failed initial startup can make its first context selection');
+select ok((select (pg_temp.pin_context(job_id,run_id,1,pg_temp.manifest())).origin_run_id is null
+  from manual_first_freeze),'the first real freeze has no historical context origin');
+
 create temp table startup_only as select * from pg_temp.initial_attempt('Never dispatched and safe to freeze next');
 select is((select public.fail_session_job_attempt(job_id,1,'Acquisition never completed',true,8,run_id) from startup_only),
   'queued','a first startup-only failure is eligible to retry');
 create temp table startup_next as select job_id,pg_temp.start_attempt(job_id,2) as run_id from startup_only;
 select is((select status from startup_next active cross join lateral pg_temp.context_origin(active.job_id,active.run_id,2)),
   'fresh','no context or dispatch existed, so automatic retry may make its first selection');
+select public.pin_session_job_git_input(job_id,2,run_id,pg_temp.context_id(8),'main',repeat('c',40)) from startup_next;
+select ok(public.pin_session_attempt_manifest(job_id,run_id,2,repeat('b',64),24,3,repeat('c',40),'[]','node',7,'high',null),
+  'a later attempt of the startup-only job eventually reaches dispatch') from startup_next;
 select is((select public.fail_session_job_attempt(job_id,2,'Unowned generation terminal',false,8,run_id) from startup_next),
   'error','a later producer can enqueue for the rejected stage');
+create temp table retry_old_startup as select retry.* from startup_only past cross join lateral
+  pg_temp.explicit_retry(past.session_id,past.run_id) retry;
+select is((select status from retry_old_startup active cross join lateral pg_temp.context_origin(active.job_id,active.run_id,1)),
+  'missing','selecting old startup history cannot bypass later dispatch of the same original job');
+select is((select public.fail_session_job_attempt(job_id,1,'Exact original context unavailable',false,8,run_id) from retry_old_startup),
+  'error','a missing old-startup retry leaves the stage eligible for a separate system generation');
 create temp table linear_reroute as select queued.job_id,pg_temp.start_attempt(queued.job_id,1) as run_id
 from startup_only first cross join lateral public.enqueue_session_job_with_run(first.session_id,pg_temp.context_id(2),
   pg_temp.context_id(6),null,'manual_retry','codex','gpt-5.5','project') queued;
@@ -202,6 +222,12 @@ from startup_only first cross join lateral public.enqueue_session_job_with_run(f
   pg_temp.context_id(6),pg_temp.context_id(4),'manual_retry','codex','gpt-5.5','project') queued;
 select is((select status from unbound_manual active cross join lateral pg_temp.context_origin(active.job_id,active.run_id,1)),
   'missing','an authenticated manual retry without an exact binding cannot choose live inputs');
+select is((select public.fail_session_job_attempt(job_id,1,'Unbound manual context',false,8,run_id) from unbound_manual),
+  'error','a user can attempt another Retry after the unbound run fails');
+create temp table retry_unbound_manual as select retry.* from startup_only first cross join unbound_manual past cross join lateral
+  pg_temp.explicit_retry(first.session_id,past.run_id) retry;
+select is((select status from retry_unbound_manual active cross join lateral pg_temp.context_origin(active.job_id,active.run_id,1)),
+  'missing','retrying an unbound manual run still cannot choose fresh context');
 
 select ok(not has_table_privilege('authenticated','public.session_run_context_manifests','SELECT')
   and not has_table_privilege('service_role','public.session_run_context_manifests','INSERT')
