@@ -50,6 +50,14 @@ export function isBrowserScreenshotHash(hash: string) {
   );
 }
 
+const browserScreenshotResponseRecordSchema = z.preprocess((record) => {
+  if (typeof record !== "object" || record === null || !("downloadUrl" in record)) return record;
+  // The API includes a link for download clients. The inspector builds its own exact URL.
+  const fields: Record<string, unknown> = { ...record };
+  delete fields.downloadUrl;
+  return fields;
+}, browserCaptureReceiptSchema);
+
 export const exactBrowserScreenshotEvidenceSchema = z.object({
   browserEvidence: z
     .array(
@@ -59,7 +67,7 @@ export const exactBrowserScreenshotEvidenceSchema = z.object({
         commitSha: sha,
         treeSha: sha,
         createdAt: z.string().datetime({ offset: true }),
-        records: z.array(browserCaptureReceiptSchema).max(10),
+        records: z.array(browserScreenshotResponseRecordSchema).max(10),
       }),
     )
     .max(1),

@@ -47,6 +47,7 @@ for (const profile of ["desktop", "mobile"] as const) {
       status: "captured",
       browserSessionId: "58400000-0000-4000-8000-000000000013",
       manifest: { assetId, contentType: "image/png", sha256: digest, sizeBytes: png.length },
+      downloadUrl: `${imagePath}${assetId}?runId=${runId}&artifactId=${artifactId}`,
     });
     await page.route(
       (url) => url.pathname === metadataPath,

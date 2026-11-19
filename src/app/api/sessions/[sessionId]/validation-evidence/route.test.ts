@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { exactBrowserScreenshotEvidenceSchema } from "@/features/wallie/browser-screenshot-evidence-contracts";
 
 const mocks = vi.hoisted(() => ({
   user: vi.fn(),
@@ -452,7 +453,8 @@ describe("private screenshot evidence", () => {
     ];
     const scoped = await list(sessionId, `?artifactId=${artifactId}`);
     expect(scoped.status).toBe(200);
-    expect(await scoped.json()).toMatchObject({
+    const serialized = await scoped.json();
+    expect(serialized).toMatchObject({
       browserEvidence: [
         {
           runId,
@@ -465,6 +467,9 @@ describe("private screenshot evidence", () => {
         },
       ],
     });
+    expect(
+      exactBrowserScreenshotEvidenceSchema.parse(serialized).browserEvidence[0]?.records,
+    ).toEqual(receipt.records);
     expect(calls).toContainEqual({
       table: "session_browser_verification_receipts",
       op: "eq",
