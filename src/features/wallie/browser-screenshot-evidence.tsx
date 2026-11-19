@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { TimeDisplay } from "@/components/shared/time-display";
 import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
@@ -9,13 +9,12 @@ import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
 import {
   browserScreenshotAnchor,
   browserScreenshotDownloadPath,
-  browserScreenshotEvidencePath,
-  exactBrowserScreenshotEvidenceSchema,
   isBrowserScreenshotHash,
   type BrowserEvidenceSelection,
-  type BrowserScreenshotEvidence,
+  type BrowserEvidenceReceipt,
   type BrowserScreenshotRecord,
-} from "./browser-screenshot-evidence-contracts";
+} from "./browser-evidence-contracts";
+import { useBrowserEvidence, useBrowserEvidenceHash } from "./browser-evidence-client";
 
 const reasonLabels = {
   runtime_unavailable: "The trusted capture runtime was unavailable.",
@@ -26,13 +25,8 @@ const reasonLabels = {
   source_changed: "The capture does not match the accepted source revision.",
 };
 
-function subscribeToHash(change: () => void) {
-  window.addEventListener("hashchange", change);
-  return () => window.removeEventListener("hashchange", change);
-}
-
 function isScreenshot(
-  record: BrowserScreenshotEvidence["records"][number],
+  record: BrowserEvidenceReceipt["records"][number],
 ): record is BrowserScreenshotRecord {
   return record.kind === "screenshot";
 }
@@ -44,44 +38,12 @@ export function BrowserScreenshotInspector({
   artifactLinkQuery,
 }: BrowserEvidenceSelection & { sessionId: string; artifactLinkQuery?: string }) {
   const sectionId = useId();
-  const hash = useSyncExternalStore(
-    subscribeToHash,
-    () => window.location.hash,
-    () => "",
-  );
+  const hash = useBrowserEvidenceHash();
   const [open, setOpen] = useState(false);
   const [dismissedHash, setDismissedHash] = useState("");
-  const [request, setRequest] = useState(0);
-  const [result, setResult] = useState<BrowserScreenshotEvidence[] | "unavailable" | null>(null);
   const anchorOpen = hash !== dismissedHash && isBrowserScreenshotHash(hash);
   const expanded = open || anchorOpen;
-
-  useEffect(() => {
-    if (!expanded) return;
-    const controller = new AbortController();
-    void (async () => {
-      try {
-        const response = await fetch(
-          browserScreenshotEvidencePath(sessionId, { runId, artifactId }),
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          },
-        );
-        if (!response.ok) throw new Error("Evidence request failed.");
-        const { browserEvidence } = exactBrowserScreenshotEvidenceSchema.parse(
-          await response.json(),
-        );
-        if (runId && browserEvidence.some((item) => item.runId !== runId)) {
-          throw new Error("Evidence belongs to a different run.");
-        }
-        if (!controller.signal.aborted) setResult(browserEvidence);
-      } catch {
-        if (!controller.signal.aborted) setResult("unavailable");
-      }
-    })();
-    return () => controller.abort();
-  }, [artifactId, expanded, request, runId, sessionId]);
+  const { result, reset, retry } = useBrowserEvidence({ sessionId, runId, artifactId, expanded });
 
   useEffect(() => {
     if (anchorOpen && result && result !== "unavailable") {
@@ -101,7 +63,7 @@ export function BrowserScreenshotInspector({
         onClick={() => {
           setOpen(!expanded);
           if (expanded) setDismissedHash(hash);
-          setResult(null);
+          reset();
         }}
       >
         Browser screenshots
@@ -117,14 +79,7 @@ export function BrowserScreenshotInspector({
             <p role="status" className="text-sm text-muted">
               Screenshot evidence is unavailable.
             </p>
-            <button
-              type="button"
-              className="ui-button min-h-11"
-              onClick={() => {
-                setResult(null);
-                setRequest((value) => value + 1);
-              }}
-            >
+            <button type="button" className="ui-button min-h-11" onClick={retry}>
               Retry evidence lookup
             </button>
           </div>
@@ -164,7 +119,7 @@ function ScreenshotRecord({
   artifactLinkQuery,
 }: {
   record: BrowserScreenshotRecord;
-  evidence: BrowserScreenshotEvidence;
+  evidence: BrowserEvidenceReceipt;
   sessionId: string;
   artifactId?: string;
   artifactLinkQuery?: string;

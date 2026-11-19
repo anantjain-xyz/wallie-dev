@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { exactBrowserScreenshotEvidenceSchema } from "@/features/wallie/browser-screenshot-evidence-contracts";
+import { exactBrowserEvidenceSchema } from "@/features/wallie/browser-evidence-contracts";
 
 const mocks = vi.hoisted(() => ({
   user: vi.fn(),
@@ -14,6 +14,7 @@ vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: mocks.serv
 import { GET } from "./route";
 import { GET as downloadAsset } from "./assets/[assetId]/route";
 import { GET as downloadBrowserAsset } from "./browser-assets/[assetId]/route";
+import { GET as downloadBrowserVideo } from "./browser-videos/[assetId]/route";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
 const workspaceId = "22222222-2222-4222-8222-222222222222";
@@ -467,9 +468,9 @@ describe("private screenshot evidence", () => {
         },
       ],
     });
-    expect(
-      exactBrowserScreenshotEvidenceSchema.parse(serialized).browserEvidence[0]?.records,
-    ).toEqual(receipt.records);
+    expect(exactBrowserEvidenceSchema.parse(serialized).browserEvidence[0]?.records).toEqual(
+      receipt.records,
+    );
     expect(calls).toContainEqual({
       table: "session_browser_verification_receipts",
       op: "eq",
@@ -604,5 +605,173 @@ describe("private screenshot evidence", () => {
 
     rows.session_browser_verification_assets[0]!.session_id = sessionId;
     expect((await downloadScreenshot()).status).toBe(409);
+  });
+});
+
+describe("exact browser recording evidence", () => {
+  const videoId = "33333333-3333-4333-8333-333333333336";
+  const otherRun = "77777777-7777-4777-8777-777777777777";
+  const startedAt = "2026-11-19T08:00:00.000Z";
+  const completedAt = "2026-11-19T08:00:01.500Z";
+  const bytes = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const manifest = {
+    assetId: videoId,
+    sha256,
+    sizeBytes: bytes.length,
+    contentType: "video/webm",
+    durationMs: 1500,
+    frameOffsetsMs: [0, 500, 1000],
+    widthPx: 128,
+    heightPx: 72,
+  };
+  const check = {
+    key: "checkout",
+    path: "/fixture",
+    timeoutSeconds: 5,
+    interactions: [
+      { action: "click", testId: "open-review" },
+      { action: "expectVisible", testId: "review-confirmed" },
+    ],
+    regionTestId: "view",
+    excludedTestIds: [],
+    evidence: [{ kind: "video", required: true }],
+  };
+  const identity = {
+    key: check.key,
+    kind: "video",
+    path: check.path,
+    policy: "isolated-fixture-v1",
+  };
+  const record = {
+    ...identity,
+    status: "captured",
+    browserSessionId: artifactId,
+    startedAt,
+    completedAt,
+    manifest,
+  };
+  const path = `${workspaceId}/${runId}/browser/${videoId}.webm`;
+  const query = `?artifactId=${artifactId}&runId=${runId}`;
+  const readVideo = (selection = query) =>
+    downloadBrowserVideo(new Request(`https://wallie.test/video${selection}`), {
+      params: Promise.resolve({ sessionId, assetId: videoId }),
+    });
+
+  beforeEach(() => {
+    rows.session_validation_evidence = [];
+    rows.session_browser_verification_receipts = [
+      {
+        run_id: runId,
+        session_id: sessionId,
+        workspace_id: workspaceId,
+        created_at: completedAt,
+        plan: {
+          attempt_count: 2,
+          commit_sha: commitSha,
+          validation_tree_sha: "b".repeat(40),
+          browser_plan: [check],
+        },
+        records: [record],
+      },
+    ];
+    rows.session_browser_verification_assets.push({
+      id: videoId,
+      run_id: runId,
+      workspace_id: workspaceId,
+      session_id: sessionId,
+      storage_path: path,
+      sha256,
+      content_type: "video/webm",
+      size_bytes: bytes.length,
+      duration_ms: manifest.durationMs,
+      frame_offsets_ms: manifest.frameOffsetsMs,
+      width_px: manifest.widthPx,
+      height_px: manifest.heightPx,
+      capture_started_at: startedAt,
+      capture_completed_at: completedAt,
+    });
+    mocks.readStream.mockResolvedValue({ data: new Blob([bytes]).stream(), error: null });
+  });
+
+  it("maps frozen capture steps to the retained offsets without releasing private media metadata", async () => {
+    const response = await list(sessionId, query);
+    expect(response.status).toBe(200);
+    const parsed = exactBrowserEvidenceSchema.parse(await response.json());
+    expect(parsed.browserEvidence[0]).toMatchObject({
+      runId,
+      records: [record],
+      videoFindings: [
+        {
+          assetId: videoId,
+          steps: [
+            { action: "entry", offsetMs: 0 },
+            { action: "click", testId: "open-review", offsetMs: 500 },
+            { action: "expectVisible", testId: "review-confirmed", offsetMs: 1000 },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(parsed)).not.toContain("storage_path");
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("reports an incomplete capture when its otherwise valid timeline cannot cover the frozen plan", async () => {
+    rows.session_browser_verification_receipts[0]!.records = [
+      {
+        ...record,
+        manifest: { ...manifest, durationMs: 1000, frameOffsetsMs: [0, 500] },
+      },
+    ];
+    const response = await list(sessionId, query);
+    expect(await response.json()).toMatchObject({
+      browserEvidence: [
+        {
+          runId,
+          records: [{ ...identity, status: "failed", reason: "capture_failed" }],
+        },
+      ],
+    });
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("does not release bytes after logout, membership revocation, or exact run/source mismatch", async () => {
+    mocks.user.mockResolvedValueOnce(null);
+    expect((await readVideo()).status).toBe(401);
+    const members = rows.workspace_members;
+    rows.workspace_members = [];
+    expect((await readVideo()).status).toBe(403);
+    rows.workspace_members = members;
+    expect((await readVideo(`?runId=${otherRun}`)).status).toBe(404);
+    expect((await readVideo(`?artifactId=${artifactId}&runId=${otherRun}`)).status).toBe(409);
+    rows.session_validation_plans[0]!.commit_sha = "c".repeat(40);
+    expect((await readVideo()).status).toBe(409);
+    expect(mocks.download).not.toHaveBeenCalled();
+
+    rows.session_git_checkpoints[0]!.output_sha = "c".repeat(40);
+    const response = await list(sessionId, query);
+    expect(await response.json()).toMatchObject({
+      browserEvidence: [
+        {
+          runId,
+          records: [{ ...identity, status: "failed", reason: "source_changed" }],
+        },
+      ],
+    });
+  });
+
+  it("returns verified WebM privately and reports missing or incomplete stored data as unavailable", async () => {
+    const available = await readVideo();
+    expect(available.status).toBe(200);
+    expect(available.headers.get("Content-Type")).toBe("video/webm");
+    expect(available.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(Buffer.from(await available.arrayBuffer())).toEqual(bytes);
+    expect(mocks.download).toHaveBeenCalledWith(path, {}, expect.any(Object));
+
+    mocks.readStream.mockResolvedValueOnce({ data: null, error: { status: 404 } });
+    expect((await readVideo()).status).toBe(409);
+    rows.session_browser_verification_assets[1]!.frame_offsets_ms = [0, 1000];
+    expect((await readVideo()).status).toBe(409);
+    expect(mocks.download).toHaveBeenCalledTimes(2);
   });
 });

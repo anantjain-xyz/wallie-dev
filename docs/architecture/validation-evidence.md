@@ -281,6 +281,17 @@ The commit, tree, attempt, check, timestamp and digest remain visible when a
 recorded image becomes unavailable. A screenshot link points to that receipt
 on the same artifact or run, and opening it never fetches the PNG automatically.
 
+The **Browser recordings** disclosure loads the exact run receipt.
+**Load recording** and
+recorded-step links fetch the verified WebM through the authorized same-origin
+route. A step link pins the artifact version or run, recording asset and exact
+recorded offset. It opens the player paused at that frame. The initial frame is
+at zero and subsequent offsets correspond to the frozen plan interactions.
+
+The player keeps the WebM in a revocable browser object URL and releases it
+when closed or when the inspector changes. Missing or inaccessible bytes leave
+the capture provenance visible. An incomplete capture has no playable clip.
+
 ## Artifact evidence links
 
 Final Markdown can reference retained reports with an evidence identity:
