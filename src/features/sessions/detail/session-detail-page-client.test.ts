@@ -276,6 +276,62 @@ describe("SessionDetailPageClient", () => {
     expect(request.mock.calls.some(([url]) => String(url).endsWith("/phase-action"))).toBe(false);
   });
 
+  it("keeps the exact clarification draft while its current status is being checked", async () => {
+    const { artifact, data, target } = exactReviewFixture({
+      clarificationId: "55555555-5555-4555-8555-555555555555",
+    });
+    data.session.specificationStageId = target.stageId;
+    const specification = {
+      stageId: target.stageId,
+      artifactId: artifact.id,
+      artifactVersion: artifact.version,
+      reviewable: true,
+      clarification: {
+        id: target.clarificationId,
+        artifactId: artifact.id,
+        artifactVersion: artifact.version,
+        reviewRevision: target.reviewRevision,
+        question: "Which region should launch first?",
+        status: "pending",
+        executionExhausted: false,
+      },
+    };
+    let readSpecification = Promise.resolve(Response.json(specification));
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/artifacts?")) return Response.json({ artifact });
+      if (url.endsWith("/specification") && init?.method !== "POST") return readSpecification;
+      return Response.json({});
+    });
+    renderExactReview(data, target);
+
+    const input = await screen.findByRole("textbox", { name: "Your answer" });
+    await waitFor(() => expect(input).toBeEnabled());
+    const submit = screen.getByRole("button", { name: "Submit answer" });
+    fireEvent.change(input, { target: { value: "Launch in Europe first." } });
+    expect(submit).toBeEnabled();
+
+    const inFlight = Promise.withResolvers<Response>();
+    readSpecification = inFlight.promise;
+    fireEvent.focus(window);
+    expect(screen.getByRole("textbox", { name: "Your answer" })).toBe(input);
+    expect(input).toHaveValue("Launch in Europe first.");
+    expect(input).toBeDisabled();
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(request.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
+
+    inFlight.resolve(Response.json(specification));
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(input).toHaveValue("Launch in Europe first.");
+
+    readSpecification = Promise.resolve(new Response(null, { status: 403 }));
+    fireEvent.focus(window);
+    expect(await screen.findByText("Could not verify this review link.")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Your answer" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Submit answer" })).toBeNull();
+  });
+
   it("does not replace the anchored specification question with a newer question", async () => {
     const { artifact, data, target } = exactReviewFixture({
       clarificationId: "55555555-5555-4555-8555-555555555555",

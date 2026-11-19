@@ -512,16 +512,48 @@ test("answers an exact specification once and advances only after the revised ap
       await mobile.close();
     }
 
-    await clarification.getByRole("textbox", { name: "Your answer" }).fill(answer);
+    await page.goto(pendingReviewPath);
+    const answerField = clarification.getByRole("textbox", { name: "Your answer" });
+    const submitAnswer = clarification.getByRole("button", { name: "Submit answer", exact: true });
+    await expect(answerField).toBeEnabled();
+    await answerField.fill(answer);
+    await expect(submitAnswer).toBeEnabled();
+
+    await test.step("A linked clarification keeps its draft during a focus recheck", async () => {
+      const refresh = Promise.withResolvers<void>();
+      await page.route(
+        `**${endpoint}`,
+        async (route) => {
+          await refresh.promise;
+          await route.continue();
+        },
+        { times: 1 },
+      );
+      try {
+        const recheck = page.waitForRequest(
+          (request) => new URL(request.url()).pathname === endpoint && request.method() === "GET",
+        );
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await recheck;
+        await expect(answerField).toHaveValue(answer);
+        await expect(submitAnswer).toBeDisabled();
+      } finally {
+        refresh.resolve();
+      }
+      await expect(submitAnswer).toBeEnabled();
+      await expect(answerField).toHaveValue(answer);
+    });
+
     const submission = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === endpoint && response.request().method() === "POST",
     );
-    await clarification.getByRole("button", { name: "Submit answer", exact: true }).click();
+    await submitAnswer.click();
     const submitted = await submission;
     expect(submitted.status(), await submitted.text()).toBe(200);
     const receipt = specificationAnswerReceiptSchema.parse(await submitted.json());
     const original: SpecificationAnswer = submitted.request().postDataJSON();
+    expect(original.answer).toBe(answer);
     expect(receipt).toMatchObject({
       clarificationId: pending.id,
       executionExhausted: false,
@@ -561,7 +593,7 @@ test("answers an exact specification once and advances only after the revised ap
       data: { ...original, requestId: randomUUID() },
     });
     expect(late.status()).toBe(409);
-    await page.reload();
+    await page.goto(detail);
     await expect(specification.getByText(revision)).toBeVisible();
     await expect(page.getByRole("button", { name: "Approve stage" })).toBeEnabled();
 

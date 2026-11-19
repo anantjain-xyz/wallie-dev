@@ -201,13 +201,15 @@ function exactReviewStatus(
   if (target.clarificationId) {
     if (!specification) return "stale";
     const { clarification, status, reviewable } = specification.view;
-    if (status !== "ready") return status;
-    return reviewable &&
+    const matchesTarget =
       clarification?.id === target.clarificationId &&
+      clarification.artifactId === target.artifactId &&
+      clarification.artifactVersion === target.artifactVersion &&
       clarification.status === "pending" &&
-      clarification.reviewRevision === target.reviewRevision
-      ? "clarification"
-      : "stale";
+      clarification.reviewRevision === target.reviewRevision;
+    if (status === "checking") return matchesTarget ? "checking_clarification" : "checking";
+    if (status === "error") return "error";
+    return matchesTarget && reviewable ? "clarification" : "stale";
   }
 
   if (specification && !specification.canReview) {
@@ -1392,7 +1394,7 @@ function SessionDetailContent({
           <p role="status" className="text-muted">
             {exactReviewState === "stale"
               ? "This review link is no longer current."
-              : exactReviewState === "checking"
+              : exactReviewState === "checking" || exactReviewState === "checking_clarification"
                 ? "Checking this review link…"
                 : exactReviewState === "error"
                   ? "Could not verify this review link."
@@ -1436,6 +1438,7 @@ function SessionDetailContent({
         }
         reviewControls={
           exactReviewState === "clarification" ||
+          exactReviewState === "checking_clarification" ||
           (!exactTarget &&
             ((selectedStageIsSpecification && specificationExhausted) ||
               (stageFocus === "artifact" &&
@@ -1445,7 +1448,11 @@ function SessionDetailContent({
                 !phaseActionPending &&
                 !specification.canReview))) ? (
             <SessionSpecificationControl
-              canAnswer={Boolean(reviewArtifact) && !actionPending}
+              canAnswer={
+                Boolean(reviewArtifact) &&
+                !actionPending &&
+                (!exactTarget || exactReviewState === "clarification")
+              }
               onAccepted={(receipt, artifactId) => {
                 if (receipt.feedbackBatchId) {
                   publishArtifactFeedbackSubmission({
