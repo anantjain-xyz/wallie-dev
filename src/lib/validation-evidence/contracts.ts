@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { browserVerificationPlanSchema } from "./browser-contract";
+
 const evidenceKey = z
   .string()
   .min(1)
@@ -23,24 +25,25 @@ const reportSchema = z
   })
   .strict();
 
+const commands = z
+  .array(
+    z
+      .object({
+        key: evidenceKey,
+        command: z.string().min(1).max(4096),
+        timeoutSeconds: z.number().int().min(1).max(300),
+        reports: z.array(reportSchema).max(10).default([]),
+      })
+      .strict(),
+  )
+  .max(20);
+
 /** Execution instructions frozen on one run, never an assertion that checks passed. */
 export const validationPlanSchema = z
-  .object({
-    version: z.literal(1),
-    commands: z
-      .array(
-        z
-          .object({
-            key: evidenceKey,
-            command: z.string().min(1).max(4096),
-            timeoutSeconds: z.number().int().min(1).max(300),
-            reports: z.array(reportSchema).max(10).default([]),
-          })
-          .strict(),
-      )
-      .max(20),
-  })
-  .strict()
+  .discriminatedUnion("version", [
+    z.strictObject({ version: z.literal(1), commands }),
+    z.strictObject({ version: z.literal(2), commands, browser: browserVerificationPlanSchema }),
+  ])
   .superRefine((config, context) => {
     const keys = config.commands.map((command) => command.key);
     const assetKeys = config.commands.flatMap((command) => [

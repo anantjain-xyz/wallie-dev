@@ -8,7 +8,16 @@ import {
   type DeliveryRequirements,
 } from "@/lib/delivery-policy/contracts";
 import { loadPinnedFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
-import type { ValidationEvidenceRecord } from "@/lib/validation-evidence/contracts";
+import {
+  browserCaptureReceiptSchema,
+  browserRunIdentitySchema,
+  isBrowserEvidenceRequirement,
+  type BrowserVerificationEvidence,
+} from "@/lib/validation-evidence/browser-contract";
+import {
+  validationPlanSchema,
+  type ValidationEvidenceRecord,
+} from "@/lib/validation-evidence/contracts";
 import { evaluateValidationEvidence } from "@/lib/validation-evidence/evaluate";
 import { readPrivateValidationAsset } from "@/lib/validation-evidence/private-asset";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -182,6 +191,7 @@ export type PrReadinessEvaluatorInput = {
     records: StoredEvidenceRecord[];
     accessibleAssetKeys: ReadonlySet<string>;
   } | null;
+  browserEvidence?: BrowserVerificationEvidence | null;
   blockingFeedbackCount: number;
 };
 
@@ -346,6 +356,7 @@ export function evaluatePrReadiness(input: PrReadinessEvaluatorInput): PrReadine
       treeSha: input.evidence?.validationTreeSha ?? "",
       records,
       accessibleAssetKeys: input.evidence?.accessibleAssetKeys ?? new Set<string>(),
+      browserEvidence: input.browserEvidence,
     });
     for (const result of results) {
       if (result.status !== "passed")
@@ -502,6 +513,55 @@ function sameRunEvidenceIdentity(actual: RunEvidenceIdentity, expected: RunEvide
     actual.attempt_count === expected.attempt_count &&
     actual.repository_id === expected.repository_id
   );
+}
+
+async function readBrowserEvidence({
+  admin,
+  workspaceId,
+  sessionId,
+  checkpoint,
+  plan,
+}: {
+  admin: AdminClient;
+  workspaceId: string;
+  sessionId: string;
+  checkpoint: RunEvidenceIdentity & { output_sha: string };
+  plan: RunEvidenceIdentity & { commit_sha: string; validation_tree_sha: string; plan: Json };
+}): Promise<BrowserVerificationEvidence | null> {
+  const parsed = validationPlanSchema.safeParse(plan.plan);
+  if (!parsed.success || parsed.data.version !== 2) return null;
+  const recordedIdentity = browserRunIdentitySchema.safeParse({
+    runId: plan.run_id,
+    attemptCount: plan.attempt_count,
+    commitSha: plan.commit_sha,
+    treeSha: plan.validation_tree_sha,
+  });
+  if (!recordedIdentity.success) return null;
+
+  const { data, error } = await admin
+    .from("session_browser_verification_receipts")
+    .select("records")
+    .eq("workspace_id", workspaceId)
+    .eq("session_id", sessionId)
+    .eq("run_id", checkpoint.run_id)
+    .maybeSingle();
+  if (error || !data) return null;
+  const receipts = z.array(browserCaptureReceiptSchema).max(10).safeParse(data.records);
+  if (!receipts.success) return null;
+
+  return {
+    expectedIdentity: {
+      runId: checkpoint.run_id,
+      attemptCount: checkpoint.attempt_count,
+      commitSha: checkpoint.output_sha,
+      treeSha: plan.validation_tree_sha,
+    },
+    recordedIdentity: recordedIdentity.data,
+    plan: parsed.data.browser,
+    receipts: receipts.data,
+    // This contract-only increment has no authorized capture/asset reader.
+    accessibleAssetDigests: new Map(),
+  };
 }
 
 async function readRequiredEvidenceAssets({
@@ -742,7 +802,7 @@ async function loadEvaluatorInput(
           ? admin
               .from("session_validation_plans")
               .select(
-                "workspace_id, session_id, run_id, job_id, attempt_count, repository_id, commit_sha, validation_tree_sha",
+                "workspace_id, session_id, run_id, job_id, attempt_count, repository_id, commit_sha, validation_tree_sha, plan",
               )
               .eq("run_id", checkpoint.run_id)
               .maybeSingle()
@@ -802,6 +862,20 @@ async function loadEvaluatorInput(
       });
     }
   }
+
+  const browserEvidence =
+    checkpoint &&
+    plan &&
+    sameRunEvidenceIdentity(plan, checkpoint) &&
+    policy.requirements.requiredEvidence.some(isBrowserEvidenceRequirement)
+      ? await readBrowserEvidence({
+          admin,
+          workspaceId: policy.workspace_id,
+          sessionId,
+          checkpoint,
+          plan,
+        })
+      : null;
 
   const githubObservation =
     githubResult.data && githubResult.data.source === "github" ? githubResult.data : null;
@@ -893,6 +967,7 @@ async function loadEvaluatorInput(
               accessibleAssetKeys,
             }
           : null,
+      browserEvidence,
       blockingFeedbackCount: blockingResult.count ?? 0,
     },
     session: { archived_at: session.archived_at ?? null },
@@ -1286,6 +1361,7 @@ export async function loadSessionPrReadinessDetails(
     treeSha: loaded.evidenceRow?.validation_tree_sha ?? "",
     records: loaded.input.evidence?.records ?? [],
     accessibleAssetKeys: loaded.accessibleAssetKeys,
+    browserEvidence: loaded.input.browserEvidence,
   });
   const evidence = {
     runId: loaded.evidenceRow?.run_id ?? null,

@@ -76,6 +76,83 @@ restriction keeps the bytes actually executed distinguishable from Git's
 normalized or filtered representation. A blocked source capture retains the
 sandbox for recovery rather than publishing a checkpoint that omits those bytes.
 
+## Browser verification plans
+
+Version 2 adds a `browser` array to the same frozen run plan. Command
+validation is unchanged. A browser check requests a bounded interaction
+and private evidence from a particular preview path:
+
+```json
+{
+  "version": 2,
+  "commands": [],
+  "browser": [
+    {
+      "key": "inbox",
+      "path": "/fixtures/inbox",
+      "timeoutSeconds": 15,
+      "interactions": [
+        { "action": "expectVisible", "testId": "inbox-demo" },
+        { "action": "click", "testId": "inbox-filter" }
+      ],
+      "regionTestId": "inbox-demo",
+      "excludedTestIds": ["account-menu"],
+      "evidence": [
+        { "kind": "screenshot", "required": true },
+        { "kind": "video", "required": false }
+      ]
+    }
+  ]
+}
+```
+
+The plan may contain up to five checks. Each check allows up to 30 seconds,
+12 interactions, 12 additional exclusions, and one request per media kind.
+The trusted runtime resolves the target for the run's app preview. An intent
+cannot supply an origin, external navigation, script, form value, output path,
+or saved browser profile. Use a delivery policy evidence key such as
+`browser:screenshot:inbox` to require that exact visual check for PR readiness.
+A missing, stale, unavailable, or failed required visual check blocks delivery.
+Unrequested or optional captures do not affect an otherwise passing
+requirement. A text report or command receipt cannot satisfy a visual key.
+
+### Isolation and capture policy
+
+The `isolated-fixture-v1` policy admits only a Wallie-controlled capture adapter
+for the current run's verified fixture preview. The adapter must establish its
+own tool approval and capture readiness. An agent-installed browser or a
+provider smoke check alone cannot establish this.
+
+- Create a fresh browser session and context with no inherited credentials,
+  profile, storage state, cookies, or prior origin data. Restrict navigation
+  and requests to the isolated preview. Keep the repository's agent process
+  and output files outside the capture trust boundary.
+- Capture only the single approved region on a synthetic fixture page. Deny
+  credential-bearing, private, excluded, or unverified regions by default.
+  A plan can impose additional exclusions but cannot weaken the policy.
+- Apply the policy before capturing any pixels and for every retained video
+  frame. Withhold the capture if the region or its rendered contents cannot be
+  established, including obscured content and overlapping exclusions. Sanitize
+  image or video metadata before computing a digest or retaining the media.
+- Record only bounded, fixed failure outcomes. Never persist provider
+  exception text, URLs with credentials, browser profiles, opaque agent
+  attachments, or full unreviewed frames as trusted receipts.
+
+The worker records visual outcomes separately from command evidence. Each
+receipt inherits its immutable workspace, session, run, job attempt, repository,
+commit, and validation tree from the frozen plan. The receipt also records the
+planned check, path, evidence kind, and capture policy. A successful capture
+contract requires an isolated browser session identity and a private asset
+manifest with verified content type, byte size, and SHA-256. A verified
+private read must match that digest before a visual requirement can pass.
+
+The contract-only worker records **unavailable** for requested browser evidence
+while it lacks an isolated capture adapter. A pinned factory with no approved
+tool operations records `tool_not_approved`; other runs report
+`runtime_unavailable`. An unrelated tool approval cannot authorize recording.
+The worker continues running the command plan. Subsequent screenshot
+and video capture changes supply the trusted adapter and private asset reader.
+
 ## Commit and tree identity
 
 After a successful agent completion, Wallie captures the intended code checkpoint

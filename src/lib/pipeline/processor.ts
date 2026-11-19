@@ -1015,7 +1015,12 @@ async function runStage(input: {
       const checkpoint: SourceCheckpoint = specificationStage
         ? { kind: "unchanged", baseSha: sourceBase, headSha: sourceBase }
         : await validateCheckpoint({
-            ...(pinned ? { pinnedDeliveryPolicyRevisionId: pinned.deliveryPolicyRevisionId } : {}),
+            ...(pinned
+              ? {
+                  pinnedDeliveryPolicyRevisionId: pinned.deliveryPolicyRevisionId,
+                  approvedToolIds: pinned.toolIds,
+                }
+              : {}),
             admin,
             workspaceId: session.workspace_id,
             pipelineId: stage.pipelineId,
