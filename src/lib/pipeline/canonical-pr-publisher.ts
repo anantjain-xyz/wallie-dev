@@ -71,25 +71,34 @@ export async function publishCanonicalPullRequest(
       throw new Error("Canonical PR observation could not be reserved.");
     const prior = pr;
     const current = await api.get(pr.number);
+    const merge =
+      Date.parse(current.updatedAt) >= Date.parse(prior.updatedAt) ? current.merge : undefined;
     // Once terminal state has been observed, external reopening does not grant
-    // this epoch permission to publish again.
-    pr = prior.state === "open" ? current : prior;
+    // this epoch permission to publish again. A fresh merge can settle it.
+    pr = prior.state === "open" || merge ? current : prior;
     await assertClaim();
-    const { data, error } = await admin
-      .rpc("finish_session_pr_sync", {
-        p_operation_id: operation.id,
-        p_claim_id: operation.claim_id!,
-        p_observed_head_sha: headSha!,
-        p_observed_fence_sha: fenceSha!,
-        p_pr_number: pr.number,
-        p_pr_url: pr.url,
-        p_pr_state: pr.state,
-        p_is_draft: pr.draft,
-        p_pr_head_sha: pr.headSha,
-        p_pr_updated_at: pr.updatedAt,
-        p_observation_id: observationId,
-      })
-      .abortSignal(signal);
+    const receipt = {
+      p_operation_id: operation.id,
+      p_claim_id: operation.claim_id!,
+      p_observed_head_sha: headSha!,
+      p_observed_fence_sha: fenceSha!,
+      p_pr_number: pr.number,
+      p_pr_url: pr.url,
+      p_pr_state: pr.state,
+      p_is_draft: pr.draft,
+      p_pr_head_sha: pr.headSha!,
+      p_pr_updated_at: pr.updatedAt,
+      p_observation_id: observationId,
+    };
+    const completion = merge
+      ? admin.rpc("finish_session_pr_sync_with_merge", {
+          ...receipt,
+          p_merged_at: merge.mergedAt,
+          p_merge_commit_sha: merge.mergeCommitSha,
+          p_merge_source_head_sha: merge.sourceHeadSha,
+        })
+      : admin.rpc("finish_session_pr_sync", receipt);
+    const { data, error } = await completion.abortSignal(signal);
     if (error || !data) throw new Error("Canonical PR receipt could not be accepted.");
   };
   if (pr && pr.state !== "open") {
