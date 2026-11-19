@@ -205,6 +205,19 @@ select ok((select jsonb_array_length(result->'items') = 1 and result->'nextCurso
   from (select public.list_factory_flow_evidence(pg_temp.flow_id(4), included,
     pg_temp.flow_time(0), pg_temp.flow_time(200), 'workflow_flow', p_limit => 1) result from flow_scopes) page),
   'authorized workflow drilldown returns a bounded page with a continuation cursor');
+select ok((select jsonb_array_length(result->'items') = 1
+  and result #>> '{items,0,phase}' = 'active'
+  and (select bool_and(fact->>'runId' = pg_temp.flow_id(301)::text)
+    and jsonb_agg(fact->'id' order by fact->>'id') = result #> '{items,0,observationIds}'
+    from jsonb_array_elements(result #> '{items,0,observations}') fact)
+  from (select public.list_factory_flow_evidence(pg_temp.flow_id(4), included,
+    pg_temp.flow_time(0), pg_temp.flow_time(200), 'workflow_flow', p_limit => 1, p_facet => 'active') result
+    from flow_scopes) page),
+  'active duration applies its facet before the page limit and admits only the exact retained source facts');
+select throws_ok($$select public.list_factory_flow_evidence(pg_temp.flow_id(4), included,
+  pg_temp.flow_time(0), pg_temp.flow_time(200), 'workflow_flow', p_facet => 'measured') from flow_scopes$$,
+  '22023', null, 'flow evidence refuses a duration status as a phase filter');
+
 select ok((select (result #>> '{flow,unknown,seconds}')::numeric = 5
   and (result #>> '{flow,queued,seconds}')::numeric = 5
   from (select public.get_factory_flow_summary(pg_temp.flow_id(4), included,
@@ -314,6 +327,13 @@ select results_eq(
       pg_temp.flow_time(140), pg_temp.flow_time(200), 'request_to_deployment', 'production')->'items') item$$,
   $$select request_id, merge_id, deployment_id from flow_expected_measurement$$,
   'deployment drilldown retains the exact request, canonical merge and deployment receipts');
+select ok((select jsonb_array_length(result->'items') = 1
+  and result #>> '{items,0,sessionId}' = pg_temp.flow_id(102)::text
+  and result #>> '{items,0,status}' = 'measured' and result->'nextCursor' = 'null'::jsonb
+  from (select public.list_factory_flow_evidence(pg_temp.flow_id(4), included,
+    pg_temp.flow_time(0), pg_temp.flow_time(200), 'request_to_deployment', 'production', p_limit => 1,
+    p_facet => 'measured') result from flow_scopes) page),
+  'the delivery percentile cohort skips earlier unmeasured rows before pagination');
 
 reset role;
 set local request.jwt.claim.role = 'service_role';

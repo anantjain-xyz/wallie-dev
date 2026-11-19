@@ -166,3 +166,23 @@ selected by GitHub merge time in the half-open period `[from, to)`.
 - `get_factory_cost_summary` reads the current scope. The
   `list_factory_cost_contributions` cursor reads its retained run IDs and
   exact merge observation IDs. A correction can change current membership.
+
+## Reading Analytics
+
+Analytics uses one authorized factory and UTC dates. The end date is
+exclusive. The previous-period comparison applies the same filters to the
+immediately preceding period of equal length.
+
+| View                                      | How Analytics selects its cohort                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| Workflow flow                             | Closed intervals overlapping the period, clipped at both boundaries                  |
+| Request to merge or deployment            | Requests admitted during the period. Deployment can filter by environment.           |
+| Delivery cost, PR throughput, and reverts | Canonical PR merge time. Each metric applies its own verified evidence rules.        |
+| Operating cost                            | Attempt start time for the numerator and canonical PR merge time for the denominator |
+
+The chart and corresponding table open the same evidence. Phase, sample
+status, attribution, and revert filters apply before pagination. Cost ratios
+link separately to the contributing attempts and the exact observed merges.
+Projection freshness and capture boundaries are reported with the results.
+Pending inputs, a missing denominator, and an immature revert window have
+separate states from a measured zero.

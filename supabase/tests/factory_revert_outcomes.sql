@@ -225,6 +225,15 @@ select ok((select jsonb_array_length(result->'items') = 1
   and result->'nextCursor' = 'null'::jsonb from (select pg_temp.revert_evidence('ambiguous', 1) result) page),
   'status-specific evidence paging shows the actual unresolved original');
 
+select ok((select jsonb_array_length(result->'items') = (pg_temp.revert_summary()->>'revertedCoveredCount')::integer
+  and result #>> '{items,0,hasVerifiedRevert}' = 'true' and result #>> '{items,0,status}' = 'covered'
+  and result #>> '{items,0,originalMergeId}' = pg_temp.revert_merge_id('confirmed')::text
+  and result->'nextCursor' = 'null'::jsonb
+  from (select public.list_factory_revert_evidence(pg_temp.revert_id(4), pg_temp.revert_factory(),
+    pg_temp.revert_time(50), pg_temp.revert_time(1), p_status => 'covered',
+    p_limit => 1, p_has_verified_revert => true) result) page),
+  'revert numerator evidence selects verified originals inside the same mature-covered cohort before paging');
+
 reset role;
 set local request.jwt.claim.role = 'service_role';
 select public.withdraw_factory_revert_coverage(pg_temp.revert_id(4), pg_temp.revert_factory(), pg_temp.revert_id(1),

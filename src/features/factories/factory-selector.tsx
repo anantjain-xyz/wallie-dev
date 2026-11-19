@@ -10,10 +10,12 @@ import {
   isFactoryAggregatePath,
   isFactorySelectorPath,
   isManagedFactoryPath,
+  resolveAnalyticsFactory,
   resolveFactorySelection,
   resolveGovernanceFactorySelection,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
+import { workspaceAnalyticsPath } from "@/lib/routes";
 
 export function FactorySelector({
   factories,
@@ -40,11 +42,13 @@ export function FactorySelector({
         requested ?? (defaultsToAllFactories(pathname, workspaceSlug) ? "all" : undefined),
       );
   const selectedValue =
-    selection.kind === "factory"
-      ? selection.factory.id
-      : selection.kind === "all" && allowAll
-        ? "all"
-        : "unavailable";
+    pathname === workspaceAnalyticsPath(workspaceSlug)
+      ? (resolveAnalyticsFactory(factories, requested)?.id ?? "unavailable")
+      : selection.kind === "factory"
+        ? selection.factory.id
+        : selection.kind === "all" && allowAll
+          ? "all"
+          : "unavailable";
 
   return (
     <label className="min-w-0">

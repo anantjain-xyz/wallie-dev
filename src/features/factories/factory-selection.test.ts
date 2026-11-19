@@ -80,6 +80,19 @@ describe("factory scope on aggregate routes", () => {
     );
   });
 
+  it("preserves Analytics controls and clears scoped evidence when changing the factory", () => {
+    expect(isFactorySelectorPath("/w/acme/analytics", "acme")).toBe(true);
+    expect(isFactoryAggregatePath("/w/acme/analytics", "acme")).toBe(false);
+    const navigation = factorySwitchHref(
+      "/w/acme/analytics",
+      "factory=old&from=2026-05-01&to=2026-05-31&compare=previous&dimension=model&environment=staging&metric=throughput&period=compare&bucket=old&cursor=old&facet=old",
+      secondary.id,
+    );
+    expect(navigation).toBe(
+      "/w/acme/analytics?factory=secondary-id&from=2026-05-01&to=2026-05-31&compare=previous&dimension=model&environment=staging",
+    );
+  });
+
   it("offers Governance only for factories the viewer manages and resets resource filters", () => {
     const managed = { ...secondary, canManage: true };
     expect(resolveGovernanceFactorySelection([factory, managed], undefined)).toEqual({
