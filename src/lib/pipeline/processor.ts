@@ -45,7 +45,6 @@ import {
   loadPinnedSessionPrompt,
   type PinnedFactoryExecution,
 } from "@/lib/factory-definitions/runtime-definition";
-import { retrieveFactoryContextDocuments } from "@/lib/factory-context/retrieval";
 import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
 import {
   AGENT_PROVIDERS,
@@ -86,6 +85,14 @@ import {
   SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS,
 } from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
+import { RunContextRequiredInputTooLargeError } from "@/lib/run-context/packing";
+import {
+  FrozenRunContextUnavailableError,
+  frozenRepositoryCommits,
+  prepareRunContext,
+  readRunContextOrigin,
+  requiredRunContextInputs,
+} from "@/lib/run-context/server";
 import { loadJobFeedback } from "./job-feedback";
 import { loadSpecificationPromptContext } from "./specification-context";
 import { pinSessionAttemptManifest, type AttemptWorkerRuntime } from "./attempt-manifest";
@@ -332,7 +339,6 @@ async function runStage(input: {
     const [
       config,
       predecessorInputs,
-      preloadedFeedback,
       operatingRulesMd,
       sessionPrompt,
       sessionAttachments,
@@ -342,7 +348,6 @@ async function runStage(input: {
     ] = await Promise.all([
       pinned?.agent ?? loadWorkspaceAgentConfig(admin, session.workspace_id),
       loadAttemptPredecessors(admin, session.id),
-      specificationStage ? null : loadJobFeedback(admin, job, stage.id),
       pinned?.operatingRulesMd ?? loadPipelineOperatingRules(admin, stage.pipelineId),
       pinned
         ? loadPinnedSessionPrompt(admin, session)
@@ -432,7 +437,7 @@ async function runStage(input: {
     }
 
     // Starting a manual retry can bind it to the original immutable feedback batch.
-    const [agentPrompt, skillInstructions, attemptFeedback] = await Promise.all([
+    const [agentPrompt, skillInstructions, feedbackInput] = await Promise.all([
       loadRunAgentPrompt(admin, {
         workspaceId: session.workspace_id,
         factoryId: session.factory_id,
@@ -446,12 +451,11 @@ async function runStage(input: {
         skillRevisionIds: pinned?.skillIds ?? [],
         signal,
       }),
-      specificationStage
-        ? loadJobFeedback(admin, job, stage.id, { exactOnly: true })
-        : preloadedFeedback,
+      loadJobFeedback(admin, job, stage.id, specificationStage ? { exactOnly: true } : undefined),
     ]);
     throwIfAborted(signal);
 
+    const attemptFeedback = feedbackInput?.body ?? null;
     const runEvents = new RunEventCapture(
       admin,
       { jobId: job.id, runId, attemptCount: job.attempt_count },
@@ -639,23 +643,40 @@ async function runStage(input: {
       sandbox,
       sessionAttachments,
     );
+    const runContextScope = {
+      admin,
+      workspaceId: session.workspace_id,
+      factoryId: session.factory_id,
+      sessionId: session.id,
+      jobId: job.id,
+      runId,
+      attemptCount: job.attempt_count,
+      signal,
+    };
+    const contextOrigin = pinned ? await readRunContextOrigin(runContextScope) : undefined;
     const readContext = await materializeFactoryRepositoryContext({
       admin,
       factoryId: session.factory_id,
       repositoryIds: pinned?.readContextRepositoryIds ?? [],
+      expectedCommits: frozenRepositoryCommits(contextOrigin),
       sandbox,
       signal,
       workspaceId: session.workspace_id,
     });
-    const externalContext = await retrieveFactoryContextDocuments({
-      admin,
-      workspaceId: session.workspace_id,
-      jobId: job.id,
-      runId,
-      attemptCount: job.attempt_count,
-      references: pinned?.contextDocuments ?? [],
-      signal,
-    });
+    const context = pinned
+      ? await prepareRunContext(runContextScope, {
+          origin: contextOrigin,
+          references: pinned.contextDocuments ?? [],
+          requiredInputs: requiredRunContextInputs({
+            sessionPrompt,
+            feedback: feedbackInput,
+            predecessors: predecessorInputs.predecessors,
+            predecessorText: predecessorInputs.promptArtifacts,
+            repositoryContexts: readContext,
+            specification,
+          }),
+        })
+      : undefined;
     if (!specificationStage) await prepareValidationPlan(sandbox, runId);
     throwIfAborted(signal);
     const workerDeadlineMs =
@@ -703,9 +724,17 @@ async function runStage(input: {
           "repo.defaultBranch",
           pinned ? gitInput.base_branch : (github.repo.default_branch ?? "main"),
         ),
-        externalContextDocuments: externalContext.documents,
+        externalContextDocuments: context?.documents,
+        frozenConversation: context?.conversation,
         readContext: readContext.length
-          ? untrustedPromptValue("repo.readContext", readContext.join("\n"))
+          ? untrustedPromptValue(
+              "repo.readContext",
+              readContext
+                .map(({ fullName, commitSha, snapshotPath }) =>
+                  [fullName, "at", commitSha, "→", snapshotPath].join(" "),
+                )
+                .join("\n"),
+            )
           : undefined,
         operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
         retryCheckpointInstructions: checkpointInstructions.length
@@ -1162,6 +1191,8 @@ async function runStage(input: {
         !(error instanceof SourcePreservationError) &&
         !(error instanceof ExecutionBudgetExhaustedError) &&
         !(error instanceof FactoryExecutionProfileUnavailableError) &&
+        !(error instanceof FrozenRunContextUnavailableError) &&
+        !(error instanceof RunContextRequiredInputTooLargeError) &&
         !unsafeCredentialCleanup &&
         !(
           error instanceof Error &&
