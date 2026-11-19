@@ -4,6 +4,8 @@ import type {
   loadAnalyticsPeriods,
 } from "@/features/factory-analytics/analytics-data";
 import { AnalyticsEvidence } from "@/features/factory-analytics/analytics-view-evidence";
+import { type AnalyticsExportFilters } from "@/features/factory-analytics/analytics-export-contracts";
+import { AnalyticsExportControls } from "@/features/factory-analytics/analytics-export-controls";
 import { AnalyticsMetrics } from "@/features/factory-analytics/analytics-view-metrics";
 import type { AnalyticsQuery } from "@/features/factory-analytics/analytics-query";
 import {
@@ -15,12 +17,14 @@ import type { FactorySelectionOption } from "@/features/factories/factory-select
 import { workspaceAnalyticsPath } from "@/lib/routes";
 
 export function AnalyticsView({
+  workspaceId,
   workspaceSlug,
   factory,
   query,
   periods,
   evidence,
 }: {
+  workspaceId: string;
   workspaceSlug: string;
   factory: FactorySelectionOption;
   query: AnalyticsQuery;
@@ -48,6 +52,13 @@ export function AnalyticsView({
         )
         .find(({ key }) => key === bucket)?.label
     : undefined;
+  const exportFilters: AnalyticsExportFilters = {
+    from: query.from.slice(0, 10),
+    to: query.to.slice(0, 10),
+    compare: query.comparison ? "previous" : undefined,
+    dimension: query.dimension,
+    environment: query.environment ?? undefined,
+  };
 
   return (
     <PageContainer>
@@ -115,6 +126,12 @@ export function AnalyticsView({
         {windowLabel(query)}. Dates include the start and exclude the end.
         {query.comparison ? ` Previous period ${windowLabel(query.comparison)}.` : ""}
       </p>
+      <AnalyticsExportControls
+        factoryId={factory.id}
+        filters={exportFilters}
+        key={JSON.stringify([workspaceId, factory.id, exportFilters])}
+        workspaceId={workspaceId}
+      />
 
       {query.evidence && (
         <AnalyticsEvidence

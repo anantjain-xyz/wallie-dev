@@ -54,6 +54,7 @@ export default async function AnalyticsPage({
   ]);
   return (
     <AnalyticsView
+      workspaceId={workspace.id}
       workspaceSlug={workspace.slug}
       factory={factory}
       query={query}

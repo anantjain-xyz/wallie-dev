@@ -8571,6 +8571,19 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_factory_analytics_export: {
+        Args: {
+          p_compare_previous?: boolean
+          p_dimension?: string
+          p_environment?: string
+          p_factory_id: string
+          p_from: string
+          p_request_id: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       create_factory_event_subscription: {
         Args: {
           p_actor_user_id: string
@@ -10345,6 +10358,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      prune_factory_analytics_exports: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       prune_factory_command_admissions: {
         Args: { p_batch_size?: number }
         Returns: {
@@ -10450,6 +10467,14 @@ export type Database = {
       purge_expired_run_transcripts: {
         Args: { p_entry_limit?: number; p_run_limit?: number }
         Returns: number
+      }
+      read_factory_analytics_export: {
+        Args: {
+          p_export_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       read_factory_candidate_activation_eligibility: {
         Args: {

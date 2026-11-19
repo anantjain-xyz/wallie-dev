@@ -10,6 +10,8 @@ const projectionBatch = z.object({
   processed: z.number().int().min(0).max(batchSize),
   hasMore: z.boolean(),
 });
+const exportPruningLimit = 100;
+const prunedExportCount = z.number().int().min(0).max(exportPruningLimit);
 
 export async function processFactoryFlowProjection(admin: Admin) {
   const { data, error } = await admin
@@ -18,4 +20,14 @@ export async function processFactoryFlowProjection(admin: Admin) {
   const result = projectionBatch.safeParse(data);
   if (error || !result.success) throw new Error("Could not process factory flow projections.");
   return result.data;
+}
+
+export async function pruneFactoryAnalyticsExports(admin: Admin) {
+  const { data, error } = await admin
+    .rpc("prune_factory_analytics_exports", { p_limit: exportPruningLimit })
+    .abortSignal(AbortSignal.timeout(15_000));
+  const count = prunedExportCount.safeParse(data);
+  if (error || !count.success)
+    throw new Error("Could not prune expired factory analytics exports.");
+  return count.data;
 }
