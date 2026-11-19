@@ -247,11 +247,13 @@ create temp table previous_profile as select jsonb_build_object(
   'provider','codex','model','gpt-5.5','effort','high','maxTurns',7,
   'sandboxProvider','e2b','sandboxConnectionRevision','55600200-aa00-4000-8000-000000000001',
   'workerRuntime','workerd','definitionRevisionId',owner.factory_definition_revision_id,
+  'factoryId',principal.factory_id,'agentId',fixture_agent.id,'promptRevisionId',fixture_agent.revision_id,
+  'invokingMemberId',owner.creator_member_id,'triggeredByMemberId',owner.creator_member_id,
   'authority',jsonb_build_object('kind','service','grantId',grant_v1.id,'grantVersion',1,
     'bindingId',binding_v1.id,'servicePrincipalId',principal.id)
 ) profile
 from previous_run join public.sessions owner on owner.id=previous_run.session_id
-cross join grant_v1 cross join binding_v1 cross join principal;
+cross join grant_v1 cross join binding_v1 cross join principal cross join fixture_agent;
 grant select on previous_profile to authenticated;
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';

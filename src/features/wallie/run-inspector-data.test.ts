@@ -151,6 +151,11 @@ it("loads the recorded profile only for the exact attempt and rejects unexpected
     sandboxConnectionRevision: artifactId,
     workerRuntime: "workerd",
     definitionRevisionId: artifactId,
+    factoryId: workspaceId,
+    agentId: run.id,
+    promptRevisionId: artifactId,
+    invokingMemberId: run.sessionId,
+    triggeredByMemberId: null,
     authority: { kind: "human", memberId: run.sessionId },
   };
   const valid = fixture({ executionProfile: profile });

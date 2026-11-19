@@ -105,6 +105,11 @@ describe("RunInspector", () => {
         sandboxConnectionRevision: artifact.id,
         workerRuntime: "workerd",
         definitionRevisionId: artifact.id,
+        factoryId: workspaceId,
+        agentId: run.id,
+        promptRevisionId: artifact.id,
+        invokingMemberId: run.sessionId,
+        triggeredByMemberId: null,
         authority: { kind: "human", memberId: workspaceId },
       },
     });
@@ -112,6 +117,12 @@ describe("RunInspector", () => {
     expect(screen.getByText("claude-sonnet-4-5")).toBeTruthy();
     expect(screen.getByText("Workerd")).toBeTruthy();
     expect(screen.getByText(`Member · ${workspaceId}`)).toBeTruthy();
+    expect(screen.getByRole("link", { name: run.id }).getAttribute("href")).toBe(
+      `/w/wallie/agents/${run.id}?factory=${workspaceId}&revision=${artifact.id}`,
+    );
+    expect(screen.getByRole("link", { name: run.sessionId }).getAttribute("href")).toBe(
+      `/w/wallie/activity?factory=${workspaceId}&actor=${run.sessionId}`,
+    );
     expect(screen.queryByText(/current-catalog-model/)).toBeNull();
   });
   it("shows the durable attempt, source session and exact accepted artifact link", () => {
