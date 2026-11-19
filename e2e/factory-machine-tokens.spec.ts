@@ -1,8 +1,9 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { randomBytes, randomInt, randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 
+import type { readFactoryAuditPage } from "@/lib/factories/audit";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
@@ -137,26 +138,52 @@ test("Governance shows a scoped machine token once and keeps only revocable meta
         p_slug: "release-integration",
       }),
     );
-    const grant = await checked(
-      admin.rpc("approve_factory_execution_grant", {
-        p_workspace_id: workspace.id,
-        p_factory_id: factory.id,
-        p_actor_user_id: user.id,
-        p_service_principal_id: principal.id,
-        p_github_repository_id: repository.id,
-        p_read_context_repository_ids: [],
-        p_tool_ids: [],
-        p_command_scopes: ["sessions:read", "sessions:cancel"],
-        p_execution_policy_revision_id: policy.id,
-        p_budget_payer_member_id: member.id,
-        p_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-        p_expected_version: 0,
+    const scope = {
+      p_workspace_id: workspace.id,
+      p_factory_id: factory.id,
+      p_actor_user_id: user.id,
+    };
+    const grantInput = {
+      ...scope,
+      p_service_principal_id: principal.id,
+      p_github_repository_id: repository.id,
+      p_read_context_repository_ids: [],
+      p_tool_ids: [],
+      p_command_scopes: ["sessions:read", "sessions:cancel"],
+      p_execution_policy_revision_id: policy.id,
+      p_budget_payer_member_id: member.id,
+      p_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      p_expected_version: 0,
+    } satisfies Database["public"]["Functions"]["approve_factory_execution_grant"]["Args"];
+    const grant = await checked(admin.rpc("approve_factory_execution_grant", grantInput));
+    const otherGrant = await checked(admin.rpc("approve_factory_execution_grant", grantInput));
+    // The other token's ID deliberately equals the displayed grant's ID.
+    await checked(
+      admin.rpc("issue_factory_machine_token", {
+        ...scope,
+        p_grant_id: otherGrant.id,
+        p_grant_version: otherGrant.version,
+        p_token_id: grant.id,
+        p_digest: randomBytes(32).toString("hex"),
+        p_name: "Other grant token",
+        p_scopes: ["sessions:read"],
+      }),
+    );
+    await checked(
+      admin.rpc("revoke_factory_machine_token", {
+        ...scope,
+        p_grant_id: otherGrant.id,
+        p_token_id: grant.id,
       }),
     );
     const governance = `/w/${workspace.slug}/governance?factory=${factory.id}&grant=${grant.id}`;
     await signInViaMagicLink(page, governance, { baseURL: app, email });
     await page.goto(governance);
     const tokens = page.locator("#machine-tokens");
+    const audit = page.locator("#governance-audit");
+    await expect(audit.getByRole("link", { name: "Grant approved", exact: true })).toHaveCount(1);
+    await expect(audit.getByRole("link", { name: "Machine token issued" })).toHaveCount(0);
+    await expect(audit.getByRole("link", { name: "Machine token revoked" })).toHaveCount(0);
     await expect(tokens.getByText("No machine tokens on this page.")).toBeVisible();
     await expect(tokens.getByRole("checkbox", { name: "Create sessions" })).toHaveCount(0);
     await tokens.getByLabel("Token name").fill("Release status reader");
@@ -186,6 +213,7 @@ test("Governance shows a scoped machine token once and keeps only revocable meta
     expect((await secret.textContent())?.startsWith("wallie_mt_")).toBe(true);
     const listed = tokens.getByRole("article").filter({ hasText: "Release status reader" });
     await expect(listed).toBeVisible();
+    await expect(audit.getByRole("link", { name: "Machine token issued" })).toHaveCount(1);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({
       fullPage: true,
@@ -223,6 +251,32 @@ test("Governance shows a scoped machine token once and keeps only revocable meta
     await confirmation.getByRole("button", { name: "Revoke token" }).click();
     await expect(listed.getByText("Revoked", { exact: true })).toBeVisible();
     await expect(listed.getByRole("button", { name: "Revoke token" })).toHaveCount(0);
+    await expect(audit.getByRole("link", { name: "Machine token revoked" })).toHaveCount(1);
+
+    const auditEndpoint = `/api/workspaces/${workspace.id}/factories/${factory.id}/audit`;
+    const params = new URLSearchParams({
+      sourceKind: "grant",
+      sourceId: grant.id,
+      facet: "governance",
+      limit: "1",
+    });
+    for (const action of [
+      "machine_token.revoked",
+      "machine_token.issued",
+      "execution_grant.approved",
+    ]) {
+      const response = await page.request.get(`${auditEndpoint}?${params}`);
+      expect(response.ok()).toBe(true);
+      const { events, nextCursor } = (await response.json()) as Awaited<
+        ReturnType<typeof readFactoryAuditPage>
+      >;
+      expect(events.map((event) => event.action)).toEqual([action]);
+      if (action === "execution_grant.approved") expect(nextCursor).toBeNull();
+      else {
+        expect(nextCursor).toEqual(expect.any(String));
+        params.set("cursor", nextCursor ?? "");
+      }
+    }
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({
       fullPage: true,
