@@ -142,10 +142,18 @@ language sql stable set search_path = '' as $$
       and fact.source_kind = 'github_canonical_pull_request' and fact.source_key = merge.observation_id::text
     where (merge.workspace_id, merge.factory_id, merge.session_id) =
       (approval.workspace_id, approval.factory_id, approval.session_id)
-      and merge.status = 'observed' and merge.merged_at between approval.occurred_at and statement_timestamp()
+      and merge.status = 'observed'
+      and merge.merged_at >= approval.occurred_at and merge.merged_at <= merge.observed_at
     order by merge.merged_at, merge.id limit 1
   ) endpoint on true
   where approval.event_type = 'review.approved' and approval.status = 'approved'
+    and not exists (
+      select 1 from internal.current_factory_canonical_pull_request_merges delivered
+      where (delivered.workspace_id, delivered.factory_id, delivered.session_id) =
+        (approval.workspace_id, approval.factory_id, approval.session_id)
+        and delivered.status = 'observed'
+        and delivered.merged_at <= approval.occurred_at and delivered.merged_at <= delivered.observed_at
+    )
 $$;
 revoke all on function internal.factory_flow_observed_intervals(uuid) from public, anon, authenticated, service_role;
 

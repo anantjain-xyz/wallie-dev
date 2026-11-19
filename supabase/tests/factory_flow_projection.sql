@@ -210,6 +210,11 @@ select ok((select (result #>> '{flow,unknown,seconds}')::numeric = 5
   from (select public.get_factory_flow_summary(pg_temp.flow_id(4), included,
     pg_temp.flow_time(5), pg_temp.flow_time(15)) result from flow_scopes) clip),
   'a report window clips segment contributions at both boundaries');
+set local request.jwt.claim.sub = '59300000-0000-4000-8000-000000000001';
+select throws_ok($$select public.get_factory_flow_summary(pg_temp.flow_id(4), pg_temp.flow_id(999),
+  pg_temp.flow_time(0), pg_temp.flow_time(200))$$, 'PT404', null,
+  'a workspace owner cannot resolve a nonexistent factory in their own workspace');
+set local request.jwt.claim.sub = '59300000-0000-4000-8000-000000000002';
 
 reset role;
 set local request.jwt.claim.role = 'service_role';
@@ -249,6 +254,8 @@ select ok((select public.finish_session_pr_observation_with_merge(
   pr_url, 'merged', false, repeat('b', 40), pg_temp.flow_time(176), pg_temp.flow_time(175),
   repeat('c', 40), repeat('b', 40))
   from public.session_pr_epochs where id = pg_temp.flow_id(710)), 'the canonical observer commits the exact source merge');
+select pg_temp.observe_flow('review.approved', 'approval_receipt', 603, 182,
+  p_session_slot => 102, p_artifact_slot => 403, p_status => 'approved');
 
 create temp table flow_execution_policy as select * from public.save_execution_policy(
   pg_temp.flow_id(4), pg_temp.flow_id(1), 0,
@@ -276,6 +283,8 @@ from flow_reporter_permit permit cross join flow_reporter_source source;
 select public.release_factory_command_admission(admission_id, lease_id) from flow_reporter_permit;
 
 select public.process_factory_flow_projection(25);
+select ok((select not ('delivery' = any(open_phases)) from internal.factory_flow_projection_sessions
+  where session_id = pg_temp.flow_id(102)), 'final approval after an already verified merge does not reopen delivery wait');
 create temp table flow_expected_measurement as
 select fact.id as request_id, merge.observation_id as merge_id, (receipt.result->>'observationId')::uuid as deployment_id
 from internal.factory_outcome_observations fact
@@ -309,9 +318,10 @@ select results_eq(
 reset role;
 set local request.jwt.claim.role = 'service_role';
 
-insert into public.sessions(id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id, created_at)
+insert into public.sessions(id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id,
+  github_repository_id, created_at)
 values (pg_temp.flow_id(103), pg_temp.flow_id(4), pg_temp.flow_factory(), 103, 'Deferred queue cancellation',
-  pg_temp.flow_id(11), pg_temp.flow_id(20), pg_temp.flow_id(21), pg_temp.flow_time(210));
+  pg_temp.flow_id(11), pg_temp.flow_id(20), pg_temp.flow_id(21), pg_temp.flow_id(31), pg_temp.flow_time(210));
 select pg_temp.observe_flow('job.queued', 'job', 204, 220, p_session_slot => 103,
   p_job_slot => 204, p_attempt => 1, p_status => 'queued');
 select pg_temp.observe_flow('job.queued', 'job', 204, 230, p_session_slot => 103,
@@ -330,5 +340,25 @@ select ok((select not ('queued' = any(open_phases))
     where session_id = pg_temp.flow_id(103) and phase = 'active'),
   'canceling before the next claim leaves no open queue or fabricated active duration');
 
+insert into public.session_git_roots(session_id, workspace_id, repository_id, repository_full_name, base_branch, initial_base_sha)
+values (pg_temp.flow_id(103), pg_temp.flow_id(4), pg_temp.flow_id(31), 'fixture/flow', 'main', repeat('a', 40));
+insert into public.session_pr_epochs(id, session_id, workspace_id, epoch_number, repository_id, repository_full_name,
+  github_repository_id, base_branch, branch_name, fence_branch, pr_number, pr_url, pr_state, is_draft, pr_head_sha)
+values (pg_temp.flow_id(711), pg_temp.flow_id(103), pg_temp.flow_id(4), 1, pg_temp.flow_id(31), 'fixture/flow',
+  593001, 'main', 'wallie/sessions/' || pg_temp.flow_id(103)::text || '/' || pg_temp.flow_id(711)::text,
+  'refs/wallie/fences/' || pg_temp.flow_id(711)::text, 2, 'https://github.test/fixture/flow/pull/2', 'open', false, repeat('e', 40));
+select public.finish_session_pr_observation(
+  public.begin_session_pr_observation(workspace_id, repository_id, branch_name, pr_number),
+  pr_url, 'merged', false, repeat('e', 40), pg_temp.flow_time(249))
+from public.session_pr_epochs where id = pg_temp.flow_id(711);
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+select ok((select (result #>> '{merge,unknown}')::integer = 1 and (result #>> '{merge,censored}')::integer = 0
+  and (result #>> '{deployment,unknown}')::integer = 1 and (result #>> '{deployment,censored}')::integer = 0
+  from (select public.get_factory_flow_summary(pg_temp.flow_id(4), included,
+    pg_temp.flow_time(210), pg_temp.flow_time(250)) result from flow_scopes) metrics),
+  'known terminal merge state with no exact endpoint leaves merge and deploy timing unknown');
+
+reset role;
 select * from finish();
 rollback;

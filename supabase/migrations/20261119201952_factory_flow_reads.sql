@@ -2,7 +2,12 @@ create function internal.require_factory_flow_window(
   p_workspace_id uuid, p_factory_id uuid, p_from timestamptz, p_to timestamptz, p_environment text
 ) returns void language plpgsql stable set search_path = '' as $$
 begin
-  if not internal.can_access_factory(p_workspace_id, p_factory_id) then
+  if not internal.can_access_factory(p_workspace_id, p_factory_id) or not exists (
+    select 1 from public.factories factory
+    join public.workspaces workspace on workspace.id = factory.workspace_id
+    where (factory.workspace_id, factory.id) = (p_workspace_id, p_factory_id)
+      and workspace.deletion_requested_at is null
+  ) then
     raise exception 'Factory not found.' using errcode = 'PT404';
   end if;
   if p_from is null or p_to is null or not isfinite(p_from) or not isfinite(p_to)
@@ -45,7 +50,8 @@ create function internal.factory_flow_delivery_samples(
     select distinct on (request.session_id) request.session_id,
       source.deployment_id, source.deployment_observation_id, source.environment,
       source.deployed_at, source.canonical_merge_id, source.merge_observation_id,
-      (source.merged_at >= request.requested_at and source.deployed_at <= statement_timestamp()) as eligible
+      (source.merged_at >= request.requested_at and source.merged_at <= source.merge_observed_at
+        and source.deployed_at <= source.deployment_observed_at) as eligible
     from internal.current_factory_linked_deployment_deliveries source
     join cohort request on request.session_id = source.session_id
     where (source.workspace_id, source.factory_id) = (p_workspace_id, p_factory_id)
@@ -54,14 +60,15 @@ create function internal.factory_flow_delivery_samples(
   )
   select request.session_id, request.requested_at, request.request_observation_id,
     case when merge.eligible then 'measured'
-      when merge.id is not null then 'unknown'
+      when merge.id is not null or terminal_epoch.present then 'unknown'
       when coverage.lifecycle_from is not null and coverage.pull_requests_from is not null
         and request.requested_at >= greatest(coverage.lifecycle_from, coverage.pull_requests_from)
         and request.requested_at <= statement_timestamp() then 'censored'
       else 'unknown' end as merge_status,
     case when merge.eligible then merge.merged_at end, merge.id, merge.observation_id,
     case when deployment.eligible then 'measured'
-      when deployment.deployment_id is not null or (merge.id is not null and not merge.eligible)
+      when deployment.deployment_id is not null
+        or ((merge.id is not null or terminal_epoch.present) and merge.eligible is distinct from true)
         then 'unknown'
       when coverage.lifecycle_from is not null and coverage.pull_requests_from is not null
         and coverage.deployments_from is not null
@@ -77,13 +84,19 @@ create function internal.factory_flow_delivery_samples(
   left join lateral (
     select source.id, source.observation_id, source.merged_at,
       coalesce(source.status = 'observed' and source.merged_at >= request.requested_at
-        and source.merged_at <= statement_timestamp(), false) as eligible
+        and source.merged_at <= source.observed_at, false) as eligible
     from internal.current_factory_canonical_pull_request_merges source
     where (source.workspace_id, source.factory_id, source.session_id) =
       (p_workspace_id, p_factory_id, request.session_id)
     order by eligible desc, source.merged_at nulls last, source.id
     limit 1
   ) merge on true
+  left join lateral (
+    select true as present from public.session_pr_epochs epoch
+    where (epoch.workspace_id, epoch.session_id) = (p_workspace_id, request.session_id)
+      and epoch.pr_state = 'merged'
+    limit 1
+  ) terminal_epoch on true
   left join delivery_ends deployment on deployment.session_id = request.session_id
 $$;
 revoke all on function internal.factory_flow_delivery_samples(
