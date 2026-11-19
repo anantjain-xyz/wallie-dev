@@ -536,7 +536,11 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
     const promptInput = page.getByRole("textbox", { name: "Implementation agent prompt revision" });
     await expect(promptInput).toHaveValue(firstAgentPrompt.id);
-    await page.getByLabel("Add a skill revision", { exact: true }).selectOption(skillRevision.id);
+    const skillPicker = page.getByRole("combobox", { name: "Add a skill revision", exact: true });
+    await expect(
+      skillPicker.getByRole("option", { name: `${skillName} · Revision 1` }),
+    ).toHaveCount(1);
+    await skillPicker.selectOption(skillRevision.id);
     await expect(page.getByRole("textbox", { name: "Skills", exact: true })).toHaveValue(
       skillRevision.id,
     );
