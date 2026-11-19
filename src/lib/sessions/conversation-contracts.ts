@@ -7,6 +7,7 @@ export type SessionConversationMessage = {
   kind: Enums<"session_conversation_author_kind">;
   authorLabel: string;
   bodyHtml: SanitizedMarkdownHtml;
+  bodyTruncated: boolean;
 };
 
 export type SessionConversationSource = {

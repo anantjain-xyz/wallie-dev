@@ -231,6 +231,9 @@ export function SessionConversationPanel({
                 html={message.bodyHtml}
                 className="min-w-0 text-sm [overflow-wrap:anywhere]"
               />
+              {message.bodyTruncated ? (
+                <p className="text-xs text-muted">Read the full prompt under Original request.</p>
+              ) : null}
             </li>
           ))}
         </ol>

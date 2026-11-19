@@ -89,7 +89,7 @@ export async function readSessionConversation(input: {
   const forward = input.window?.direction === "after";
   let messagesQuery = input.reader
     .from("session_conversation_messages")
-    .select("sequence, created_at, author_kind, author_label, body_md")
+    .select("sequence, created_at, author_kind, author_label, body_md, body_truncated")
     .eq("workspace_id", scope.workspaceId)
     .eq("factory_id", scope.factoryId)
     .eq("session_id", scope.sessionId)
@@ -133,6 +133,7 @@ export async function readSessionConversation(input: {
       kind: row.author_kind,
       authorLabel: row.author_label,
       bodyMarkdown: row.body_md,
+      bodyTruncated: row.body_truncated,
     })),
     sources: (sources.data ?? []).map((row) => ({
       id: row.id,

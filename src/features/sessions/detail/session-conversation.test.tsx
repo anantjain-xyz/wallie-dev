@@ -39,6 +39,7 @@ function message(sequence: number, kind: SessionConversationMessage["kind"] = "u
   return {
     authorLabel: { user: "Ada", agent: "Release agent", system: "Wallie" }[kind],
     bodyHtml: `<p>Message ${sequence}</p>`,
+    bodyTruncated: false,
     createdAt: now,
     kind,
     sequence,
@@ -86,6 +87,15 @@ afterEach(() => {
 });
 
 describe("session conversation", () => {
+  it("points to the original request when the conversation contains a prompt excerpt", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(page([{ ...message(1), bodyTruncated: true }], "cursor1")),
+    );
+    fireEvent.click(mount());
+    expect(await screen.findByText("Read the full prompt under Original request.")).toBeVisible();
+  });
+
   it("loads on disclosure, pages backward, and drains newer pages when reopened", async () => {
     const fetcher = vi
       .fn()
