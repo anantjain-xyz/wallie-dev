@@ -5256,6 +5256,78 @@ export type Database = {
           },
         ]
       }
+      session_run_context_manifests: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          job_id: string
+          manifest: Json
+          manifest_sha256: string
+          origin_run_id: string | null
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count: number
+          created_at?: string
+          job_id: string
+          manifest: Json
+          manifest_sha256: string
+          origin_run_id?: string | null
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          job_id?: string
+          manifest?: Json
+          manifest_sha256?: string
+          origin_run_id?: string | null
+          run_id?: string
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_run_context_manifests_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_run_context_manifests_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
+            foreignKeyName: "session_run_context_manifests_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_run_context_manifests_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_run_context_manifests_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_selected_stages: {
         Row: {
           created_at: string
@@ -9382,6 +9454,33 @@ export type Database = {
           credential_version: number
         }[]
       }
+      pin_factory_run_context: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_manifest: Json
+          p_origin_run_id?: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          attempt_count: number
+          created_at: string
+          job_id: string
+          manifest: Json
+          manifest_sha256: string
+          origin_run_id: string | null
+          run_id: string
+          session_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "session_run_context_manifests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       pin_session_attempt_manifest: {
         Args: {
           p_agent_effort?: string
@@ -9636,6 +9735,19 @@ export type Database = {
           service_principal_id: string
           status: string
           version: number
+        }[]
+      }
+      read_factory_run_context_origin: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          manifest: Json
+          origin_run_id: string
+          status: string
         }[]
       }
       read_factory_run_context_revision: {

@@ -24,13 +24,21 @@ New enrolled sessions execute their compiled revision. The stage order, names, p
 - The creation form shows the writable repository choices and stages. It starts with the factory default and confirms the chosen repository and displayed revision digest under the admission lock. If the default is unavailable, choose another writable repository explicitly.
 - An explicit restart is a new `POST /api/sessions` request using `restartOfSessionId` and a fresh `requestId`. Send the desired input and attachments with the new request. It records the source session and starts fresh work under the current revision. When the request cites the same Linear issue, the source session retains its routing and the new session carries the issue link as context.
 
+## Frozen run context
+
+Each pinned factory attempt records a service-only `session_run_context_manifests` row before the agent starts. It has the owned run and attempt identity, a digest of the canonical manifest, and the exact origin when replaying. The manifest stores identities, digests, byte counts and inclusion or omission receipts, including exact read-context repository commits. Text remains in its owning source, conversation, feedback batch or artifact.
+
+Packing reserves the required title, original prompt, applicable feedback and exact predecessor artifacts first. It then considers selected external revisions in definition order, followed by up to 32 earlier messages in conversation sequence order. The input budgets are 128 KiB and 32,768 conservatively estimated tokens. Each UTF-8 byte of context content counts as one estimated token. The manifest records excluded messages, omitted older messages and unavailable sources. A required input that cannot fit stops the attempt and names its provenance key.
+
+A retry restores the exact manifest selected by its job lineage. Current access is checked before reading private revisions. Wallie verifies the retained conversation messages and the exact required inputs against their recorded digests. If an input is missing, inaccessible, or changed, the retry reports that dependency and stops before launching the agent. New conversation messages, replacement source revisions, and other artifact versions cannot change a frozen attempt.
+
 ## Repository bindings
 
-| Purpose                       | Execution behavior                                                                                                                                                                                        |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Default writable repository   | Used when a new session leaves the selection empty.                                                                                                                                                       |
-| Alternate writable repository | Select one at creation. The admission receipt, Git checkpoint lineage, and canonical PR carry that same repository.                                                                                       |
-| Read-context repository       | The worker fetches the default branch's exact commit with a token restricted to that repository and `contents: read`. The attempt prompt records the snapshot SHA and path outside the writable checkout. |
+| Purpose                       | Execution behavior                                                                                                                                                                                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default writable repository   | Used when a new session leaves the selection empty.                                                                                                                                                                                                      |
+| Alternate writable repository | Select one at creation. The admission receipt, Git checkpoint lineage, and canonical PR carry that same repository.                                                                                                                                      |
+| Read-context repository       | The worker pins the default branch's exact commit for a fresh attempt and restores the recorded commit on retry. A repository-scoped token has `contents: read`. The attempt prompt records the snapshot SHA and its path outside the writable checkout. |
 
 - Retry and stage transitions keep the admitted writable repository. Disconnecting that repository blocks execution while the original identity remains in the receipt.
 - Restart without a repository override keeps the original writable repository if the current definition still permits it. Selecting another writable repository explicitly starts new Git lineage.
