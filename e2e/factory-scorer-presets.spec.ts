@@ -3,6 +3,8 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
 
+test.use({ actionTimeout: 10_000 });
+
 async function capture(page: Page, info: TestInfo, name: string) {
   await page.evaluate(() => document.fonts.ready);
   await page.evaluate(() => {
@@ -50,6 +52,15 @@ test("an operator copies, edits, and publishes a scorer preset", async ({
     const original = await rubric.inputValue();
     expect(original).toContain("meaningful regression coverage");
     await capture(page, info, "01-scorer-preset-desktop-light");
+
+    await page.getByLabel("Scorer name", { exact: true }).fill("Unsaved draft");
+    await rubric.fill("Unsaved rubric change.");
+    const scale = page.getByRole("combobox", { name: "Score scale", exact: true });
+    await scale.selectOption("numeric");
+    await page.getByRole("button", { name: "Restore preset", exact: true }).click();
+    await expect(page.getByLabel("Scorer name", { exact: true })).toHaveValue(redundantPreset);
+    await expect(rubric).toHaveValue(original);
+    await expect(scale).toHaveValue("boolean");
 
     await page.getByLabel("Scorer name", { exact: true }).fill("Invoice regression coverage");
     await page.getByLabel("Identifier", { exact: true }).fill("invoice-regression");

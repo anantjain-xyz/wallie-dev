@@ -163,6 +163,10 @@ export function ScorerForm({
       onChange={() => {
         if (!conflict) setMessage(null);
       }}
+      onReset={() => {
+        setScale(initial?.scoring.kind ?? "boolean");
+        setMessage(null);
+      }}
       onSubmit={submit}
     >
       <InlineActionMessage message={message} />
@@ -279,6 +283,11 @@ export function ScorerForm({
           </div>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
+          {preset ? (
+            <button className="ui-button" type="reset">
+              Restore preset
+            </button>
+          ) : null}
           <button
             className="ui-button"
             disabled={conflict}

@@ -30,7 +30,7 @@ type CalibrationCase = {
       expected: "pass" | "fail";
       score: boolean;
       explanation: string;
-      citedChanges: readonly string[];
+      citedLines: readonly string[];
       proof: { tests: string[]; testOnBase: string; baseExit: 0 | 1 };
     }
   | { expected: "inconclusive"; score: null; explanation: string }
@@ -45,7 +45,12 @@ test("the last slot is exclusive", () => {
   assert.equal(canReserveSlot(1, 1), false);
 });
 `;
-const duplicateTest = `import assert from "node:assert/strict";
+const duplicateTest = `${saturationTest}
+test("a full queue refuses another claim", () => {
+  assert.equal(canReserveSlot(1, 1), false);
+});
+`;
+const testWithUnusedScaffold = `import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,7 +60,7 @@ import { canReserveSlot } from "./capacity.mjs";
 const unusedFixture = mkdtempSync(join(tmpdir(), "slot-scaffold-"));
 after(() => rmSync(unusedFixture, { recursive: true, force: true }));
 
-test("a full queue refuses another claim", () => {
+test("the last slot is exclusive", () => {
   assert.equal(canReserveSlot(1, 1), false);
 });
 `;
@@ -69,30 +74,41 @@ const reviewedCorpus: CalibrationCase[] = [
     score: true,
     explanation:
       "The boundary assertion directly covers the saturation behavior this change fixes.",
-    citedChanges: ["active < limit", "assert.equal(canReserveSlot(1, 1), false)"],
+    citedLines: [`+${capacity.trimEnd()}`, "+  assert.equal(canReserveSlot(1, 1), false);"],
     proof: { tests: ["capacity.test.mjs"], testOnBase: "capacity.test.mjs", baseExit: 1 },
   },
   {
-    name: "flags a duplicate capacity assertion and setup unrelated to the changed label",
+    name: "flags a duplicate capacity assertion when the existing coverage is visible in the diff",
+    base: { "capacity.mjs": capacity, "capacity.test.mjs": saturationTest },
+    changes: { "capacity.test.mjs": duplicateTest },
+    expected: "fail",
+    score: false,
+    explanation: "The test added below the existing case repeats its exact capacity assertion.",
+    citedLines: [
+      "   assert.equal(canReserveSlot(1, 1), false);",
+      "+  assert.equal(canReserveSlot(1, 1), false);",
+    ],
+    proof: { tests: ["capacity.test.mjs"], testOnBase: "capacity.test.mjs", baseExit: 0 },
+  },
+  {
+    name: "flags unused scaffolding in an otherwise useful regression test",
     base: {
-      "capacity.mjs": capacity,
-      "capacity.test.mjs": saturationTest,
-      "status.mjs": 'export const waitingLabel = "Queued";\n',
+      "capacity.mjs": capacity.replace("active < limit", "active <= limit"),
     },
     changes: {
-      "status.mjs": 'export const waitingLabel = "Waiting";\n',
-      "duplicate.test.mjs": duplicateTest,
+      "capacity.mjs": capacity,
+      "capacity.test.mjs": testWithUnusedScaffold,
     },
     expected: "fail",
     score: false,
     explanation:
-      "The new suite repeats the existing capacity assertion. Its temporary fixture is unused and neither assertion exercises the changed status label.",
-    citedChanges: ["const unusedFixture =", "assert.equal(canReserveSlot(1, 1), false)"],
-    proof: {
-      tests: ["capacity.test.mjs", "duplicate.test.mjs"],
-      testOnBase: "duplicate.test.mjs",
-      baseExit: 0,
-    },
+      "The boundary test covers a real regression. Its temporary directory is only created and removed, and the assertion never uses it.",
+    citedLines: [
+      '+const unusedFixture = mkdtempSync(join(tmpdir(), "slot-scaffold-"));',
+      "+after(() => rmSync(unusedFixture, { recursive: true, force: true }));",
+      "+  assert.equal(canReserveSlot(1, 1), false);",
+    ],
+    proof: { tests: ["capacity.test.mjs"], testOnBase: "capacity.test.mjs", baseExit: 1 },
   },
   {
     name: "abstains when a snapshot delta provides no evidence of what it verifies",
@@ -211,7 +227,7 @@ function proveBaseAndCandidate(directory: string, inputSha: string, fixture: Cal
   expect(runTests(directory, tests).status).toBe(0);
   git(directory, "-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", inputSha);
   for (const path of tests) {
-    if (path !== testOnBase) expect(runTests(directory, [path]).status).toBe(0);
+    if (Object.hasOwn(fixture.base, path)) expect(runTests(directory, [path]).status).toBe(0);
   }
   writeFiles(directory, { [testOnBase]: fixture.changes[testOnBase] });
   const baseline = runTests(directory, [testOnBase]);
@@ -241,10 +257,8 @@ it.each(reviewedCorpus)("$name", async (fixture) => {
     // Keep human-reviewed expectations independent of the outbound judge call.
     // The provider fixture proves the verdict and citation contract locally.
     const lines = diff.text.split("\n");
-    const markers = fixture.expected === "inconclusive" ? [] : fixture.citedChanges;
-    const numbered = markers.map(
-      (text) => lines.findIndex((line) => line.startsWith("+") && line.includes(text)) + 1,
-    );
+    const markers = fixture.expected === "inconclusive" ? [] : fixture.citedLines;
+    const numbered = markers.map((line) => lines.indexOf(line) + 1);
     expect(numbered.every((line) => line > 0)).toBe(true);
     const citations = numbered.length
       ? [{ ...reference, start: Math.min(...numbered), end: Math.max(...numbered) }]

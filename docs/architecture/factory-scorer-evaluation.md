@@ -126,7 +126,8 @@ underlying evidence is no longer readable.
 
 Factory managers can copy a shipped version from **Scorers → New scorer**.
 The copy fills the draft name, identifier, rubric, evidence requirements, and
-passing value. Edit the draft and publish it as a factory scorer, then bind
+passing value. Select **Restore preset** to revert the current draft to those
+values. Edit the draft and publish it as a factory scorer, then bind
 its exact revision through the factory definition. A new copy starts from
 the shipped version each time.
 
