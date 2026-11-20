@@ -119,9 +119,18 @@ it("issues an exact one-shot permit before invoking the judge and records a type
     status: "pass",
     score: { kind: "boolean", value: true },
   } as const;
+  const explanation = "The relevant change was verified.";
+  const locations = [{ reference: candidate.evidence[0], location: { kind: "whole" } }] as const;
   vi.mocked(runFactoryJudge).mockResolvedValue({
     result: candidate,
-    judge: { model: "vendor/model", provider: "Vendor", requestId: "synthetic-request" },
+    explanation,
+    locations: [...locations],
+    judge: {
+      model: "vendor/model",
+      provider: "Vendor",
+      requestId: "synthetic-request",
+      usage: { inputTokens: 19, outputTokens: 8, costUsd: 0 },
+    },
   });
   await expect(runClaimedFactoryJudge(admin, claim, "node")).resolves.toBe(true);
   expect(requests.map(({ rpc }) => rpc)).toEqual([
@@ -154,10 +163,55 @@ it("issues an exact one-shot permit before invoking the judge and records a type
     p_candidate_result: candidate,
     p_provider_model: "vendor/model",
     p_provider_request_id: "synthetic-request",
+    p_explanation: explanation,
+    p_evidence_locations: locations,
+    p_input_tokens: 19,
+    p_output_tokens: 8,
+    p_token_provenance: "measured",
+    p_cost_usd: 0,
+    p_cost_provenance: "measured",
   });
   expect(JSON.stringify(requests)).not.toContain("Result summary");
   expect(JSON.stringify(requests)).not.toContain(exampleKey);
 });
+
+it.each([
+  { usage: { inputTokens: 19, costUsd: 0.0003 }, costUsd: 0.0003 },
+  { usage: { inputTokens: 19 } },
+  {
+    usage: {
+      inputTokens: Number.MAX_SAFE_INTEGER,
+      outputTokens: 0,
+      costUsd: Number.MAX_SAFE_INTEGER,
+    },
+  },
+])(
+  "records known cost independently of incomplete token telemetry on invalid output %#",
+  async ({ usage, costUsd }) => {
+    const { admin, claim, requests } = fixture();
+    vi.mocked(runFactoryJudge).mockResolvedValue({
+      result: {
+        schemaVersion: 1,
+        evidence: [{ kind: "artifact", id: artifactId }],
+        status: "error",
+        reason: "invalid_output",
+      },
+      judge: { model: "vendor/model", usage },
+    });
+    await expect(runClaimedFactoryJudge(admin, claim, "node")).resolves.toBe(true);
+    const result = requests.at(-1)?.body;
+    expect(result).toMatchObject({ p_status: "invalid_output" });
+    expect(result).not.toHaveProperty("p_input_tokens");
+    expect(result).not.toHaveProperty("p_output_tokens");
+    expect(result).not.toHaveProperty("p_token_provenance");
+    if (costUsd !== undefined) {
+      expect(result).toMatchObject({ p_cost_usd: costUsd, p_cost_provenance: "measured" });
+    } else {
+      expect(result).not.toHaveProperty("p_cost_usd");
+      expect(result).not.toHaveProperty("p_cost_provenance");
+    }
+  },
+);
 
 it("records evidence withholding discovered after preparation without sending it", async () => {
   const { admin, claim, requests } = fixture("missing_evidence");

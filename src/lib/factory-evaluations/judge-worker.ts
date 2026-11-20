@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { isCostUsd, normalizeMeasuredUsage } from "@/lib/agent-runner/usage";
 import { factoryScorerDefinitionSchema } from "@/lib/factory-scorers/contracts";
 import type { FactoryScorerResult } from "@/lib/factory-scorers/result";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
@@ -27,6 +28,8 @@ type PreflightFailure =
 const maxClaims = 4;
 const maxEvaluationMs = 55_000;
 const rpcTimeoutMs = 5_000;
+// A job can record up to six attempts. Its total still fits the API's number range.
+const maxAttemptUsage = Math.floor(Number.MAX_SAFE_INTEGER / 6);
 
 function claimIdentity(claim: FactoryJudgeClaim) {
   return {
@@ -51,8 +54,11 @@ async function finish(
   identity: ReturnType<typeof claimIdentity>,
   outcome: PreflightFailure | "provider_unavailable" | FactoryJudgeOutcome,
 ) {
-  const candidate = typeof outcome === "string" ? undefined : outcome.result;
-  const judge = typeof outcome === "string" ? undefined : outcome.judge;
+  const evaluation = typeof outcome === "string" ? undefined : outcome;
+  const candidate = evaluation?.result;
+  const judge = evaluation?.judge;
+  const tokens = normalizeMeasuredUsage(judge?.usage?.inputTokens, judge?.usage?.outputTokens);
+  const costUsd = judge?.usage?.costUsd;
   let status: string = typeof outcome === "string" ? outcome : "completed";
   if (candidate?.status === "error") status = candidate.reason;
   if (
@@ -69,6 +75,18 @@ async function finish(
       ...(judge?.model ? { p_provider_model: judge.model } : {}),
       ...(judge?.provider ? { p_provider_name: judge.provider } : {}),
       ...(judge?.requestId ? { p_provider_request_id: judge.requestId } : {}),
+      ...(evaluation?.explanation ? { p_explanation: evaluation.explanation } : {}),
+      ...(evaluation?.locations ? { p_evidence_locations: evaluation.locations } : {}),
+      ...(tokens && tokens.inputTokens <= maxAttemptUsage && tokens.outputTokens <= maxAttemptUsage
+        ? {
+            p_input_tokens: tokens.inputTokens,
+            p_output_tokens: tokens.outputTokens,
+            p_token_provenance: "measured",
+          }
+        : {}),
+      ...(isCostUsd(costUsd) && costUsd <= maxAttemptUsage
+        ? { p_cost_usd: costUsd, p_cost_provenance: "measured" }
+        : {}),
     })
     .abortSignal(AbortSignal.timeout(rpcTimeoutMs));
   if (error) throw new Error("Could not finish the factory judge attempt.");
