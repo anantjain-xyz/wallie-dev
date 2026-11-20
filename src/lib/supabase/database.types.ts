@@ -1862,6 +1862,129 @@ export type Database = {
           },
         ]
       }
+      factory_evaluation_receipts: {
+        Row: {
+          adapter_runtime: string | null
+          attempt_id: string
+          attempt_number: number
+          attempt_outcome: string
+          claimed_at: string
+          cost_provenance: string
+          cost_usd: number | null
+          estimation_revision: string | null
+          evidence_digest: string | null
+          evidence_locations: Json | null
+          explanation: string | null
+          factory_id: string
+          finished_at: string
+          input_tokens: number | null
+          job_id: string
+          latency_ms: number
+          output_tokens: number | null
+          profile_revision_id: string | null
+          provider_model: string | null
+          provider_name: string | null
+          provider_request_id: string | null
+          reason: string | null
+          result: Json | null
+          run_id: string
+          sample_receipt_id: string
+          scorer_revision_id: string
+          session_id: string
+          started_at: string | null
+          status: string
+          target_commit_sha: string
+          token_provenance: string
+          worker_runtime: string | null
+          workspace_id: string
+        }
+        Insert: {
+          adapter_runtime?: string | null
+          attempt_id: string
+          attempt_number: number
+          attempt_outcome: string
+          claimed_at: string
+          cost_provenance?: string
+          cost_usd?: number | null
+          estimation_revision?: string | null
+          evidence_digest?: string | null
+          evidence_locations?: Json | null
+          explanation?: string | null
+          factory_id: string
+          finished_at: string
+          input_tokens?: number | null
+          job_id: string
+          latency_ms: number
+          output_tokens?: number | null
+          profile_revision_id?: string | null
+          provider_model?: string | null
+          provider_name?: string | null
+          provider_request_id?: string | null
+          reason?: string | null
+          result?: Json | null
+          run_id: string
+          sample_receipt_id: string
+          scorer_revision_id: string
+          session_id: string
+          started_at?: string | null
+          status: string
+          target_commit_sha: string
+          token_provenance?: string
+          worker_runtime?: string | null
+          workspace_id: string
+        }
+        Update: {
+          adapter_runtime?: string | null
+          attempt_id?: string
+          attempt_number?: number
+          attempt_outcome?: string
+          claimed_at?: string
+          cost_provenance?: string
+          cost_usd?: number | null
+          estimation_revision?: string | null
+          evidence_digest?: string | null
+          evidence_locations?: Json | null
+          explanation?: string | null
+          factory_id?: string
+          finished_at?: string
+          input_tokens?: number | null
+          job_id?: string
+          latency_ms?: number
+          output_tokens?: number | null
+          profile_revision_id?: string | null
+          provider_model?: string | null
+          provider_name?: string | null
+          provider_request_id?: string | null
+          reason?: string | null
+          result?: Json | null
+          run_id?: string
+          sample_receipt_id?: string
+          scorer_revision_id?: string
+          session_id?: string
+          started_at?: string | null
+          status?: string
+          target_commit_sha?: string
+          token_provenance?: string
+          worker_runtime?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_evaluation_receipts_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: true
+            referencedRelation: "factory_evaluation_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_evaluation_receipts_job_id_workspace_id_factory_id_fkey"
+            columns: ["job_id", "workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factory_evaluation_jobs"
+            referencedColumns: ["id", "workspace_id", "factory_id"]
+          },
+        ]
+      }
       factory_execution_grants: {
         Row: {
           approved_at: string
@@ -9850,13 +9973,21 @@ export type Database = {
         Args: {
           p_attempt_id: string
           p_candidate_result?: Json
+          p_cost_provenance?: string
+          p_cost_usd?: number
+          p_estimation_revision?: string
+          p_evidence_locations?: Json
+          p_explanation?: string
           p_factory_id: string
+          p_input_tokens?: number
           p_job_id: string
           p_lease_id: string
+          p_output_tokens?: number
           p_provider_model?: string
           p_provider_name?: string
           p_provider_request_id?: string
           p_status: string
+          p_token_provenance?: string
           p_workspace_id: string
         }
         Returns: boolean
@@ -10528,6 +10659,18 @@ export type Database = {
           p_from: string
           p_limit?: number
           p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      list_factory_evaluation_receipts: {
+        Args: {
+          p_actor_user_id: string
+          p_before_attempt_id?: string
+          p_before_finished_at?: string
+          p_factory_id: string
+          p_job_id?: string
+          p_limit?: number
           p_workspace_id: string
         }
         Returns: Json

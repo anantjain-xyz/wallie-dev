@@ -587,13 +587,21 @@ create function pg_temp.begin_judge(p_slot text, p_profile_id uuid) returns json
   from evaluation_claims claim where claim.slot = p_slot;
 $$;
 
-create function pg_temp.finish_judge(p_slot text, p_status text, p_result jsonb default null)
+create function pg_temp.finish_judge(p_slot text, p_status text, p_result jsonb default null,
+  p_input_tokens bigint default null, p_output_tokens bigint default null, p_token_provenance text default 'unavailable',
+  p_cost_usd numeric default null, p_cost_provenance text default 'unavailable', p_estimation_revision text default null)
 returns boolean language sql as $$
   select public.finish_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id, claim.attempt_id,
     claim.lease_id, p_status, p_result,
     case when p_status = 'completed' then 'openai/gpt-4.1-mini' end,
     case when p_status = 'completed' then 'OpenAI' end,
-    case when p_status = 'completed' then 'fixture-request-id' end)
+    case when p_status = 'completed' then 'fixture-request-id' end,
+    p_explanation => case when p_status = 'completed' then 'The exact retained evidence supports the rubric.' end,
+    p_evidence_locations => case when p_status = 'completed' then jsonb_build_array(jsonb_build_object(
+      'reference', p_result->'evidence'->0, 'location', '{"kind":"whole"}'::jsonb)) end,
+    p_input_tokens => p_input_tokens, p_output_tokens => p_output_tokens,
+    p_token_provenance => p_token_provenance, p_cost_usd => p_cost_usd, p_cost_provenance => p_cost_provenance,
+    p_estimation_revision => p_estimation_revision)
   from evaluation_claims claim where claim.slot = p_slot;
 $$;
 
@@ -647,9 +655,16 @@ select throws_ok($$select public.finish_factory_judge_invocation(claim.workspace
     claim.attempt_id, claim.lease_id, 'completed', outcome.result, 'openai/gpt-4.1', 'OpenAI', 'fixture-request-id')
   from evaluation_claims claim cross join judge_pass outcome where claim.slot = 'judge-report'$$,
   '22023', null, 'a different observed provider model cannot settle as the approved judge');
-select is((select pg_temp.finish_judge('judge-report', 'completed', result) from judge_pass), true,
+select throws_ok($$select public.finish_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id,
+    claim.attempt_id, claim.lease_id, 'completed', outcome.result, 'openai/gpt-4.1-mini', 'OpenAI', 'fixture-request-id',
+    p_evidence_locations => jsonb_build_array(jsonb_build_object(
+      'reference', (outcome.result->'evidence'->0) - 'id', 'location', '{"kind":"whole"}'::jsonb)))
+  from evaluation_claims claim cross join judge_pass outcome where claim.slot = 'judge-report'$$,
+  '22023', 'Invalid evaluation receipt metadata.',
+  'a citation specifying only a sampled kind cannot adopt a result without its exact evidence ID');
+select is((select pg_temp.finish_judge('judge-report', 'completed', result, 18, 9, 'measured', 0, 'measured') from judge_pass), true,
   'a schema-valid verdict settles the exact judge invocation');
-select is((select pg_temp.finish_judge('judge-report', 'completed', result) from judge_pass), false,
+select is((select pg_temp.finish_judge('judge-report', 'completed', result, 99, 99, 'measured', 0.5, 'measured') from judge_pass), false,
   'a settled invocation cannot overwrite its result with a late replay');
 select ok((select trace.profile_revision_id = profile.id and trace.evidence_digest = repeat('d', 64)
     and trace.worker_runtime = 'node' and trace.adapter_runtime is not null
@@ -661,6 +676,38 @@ select ok((select trace.profile_revision_id = profile.id and trace.evidence_dige
   from evaluation_claims claim join public.factory_judge_invocations trace on trace.attempt_id = claim.attempt_id
   cross join approved_judge profile cross join judge_pass outcome where claim.slot = 'judge-report'),
   'the completed invocation records exact model, runtime, evidence digest and verdict without private source or key bytes');
+
+create temp table first_evaluation_receipt as
+select receipt.* from evaluation_claims claim
+join public.factory_evaluation_receipts receipt on receipt.attempt_id = claim.attempt_id
+where claim.slot = 'judge-report';
+select ok((select receipt.status = 'pass' and receipt.reason is null and receipt.attempt_outcome = 'succeeded'
+    and (receipt.workspace_id, receipt.factory_id, receipt.session_id, receipt.job_id, receipt.run_id,
+      receipt.scorer_revision_id, receipt.sample_receipt_id, receipt.target_commit_sha, receipt.attempt_number) =
+      (claim.workspace_id, claim.factory_id, claim.session_id, claim.job_id, claim.run_id,
+      claim.scorer_revision_id, claim.sample_receipt_id, claim.target_commit_sha, claim.attempt_number)
+    and receipt.profile_revision_id = profile.id and receipt.evidence_digest = repeat('d', 64)
+    and receipt.result = outcome.result and receipt.latency_ms >= 0
+    and receipt.explanation = 'The exact retained evidence supports the rubric.'
+    and receipt.evidence_locations->0->'reference' = outcome.result->'evidence'->0
+    and receipt.input_tokens = 18 and receipt.output_tokens = 9 and receipt.token_provenance = 'measured'
+    and receipt.cost_usd = 0 and receipt.cost_provenance = 'measured' and receipt.estimation_revision is null
+  from first_evaluation_receipt receipt join evaluation_claims claim on claim.attempt_id = receipt.attempt_id
+  cross join approved_judge profile cross join judge_pass outcome),
+  'exact receipt adoption retains the original verdict, provenance, latency and genuinely measured zero cost');
+select is((select count(*) from public.factory_evaluation_receipts receipt
+  join first_evaluation_receipt original on receipt.attempt_id = original.attempt_id), 1::bigint,
+  'replayed completion with higher spend cannot add another receipt');
+select throws_ok($$update public.factory_evaluation_receipts set cost_usd = 0.5
+  where attempt_id = (select attempt_id from first_evaluation_receipt)$$,
+  '23514', null, 'terminal evaluation usage cannot be rewritten directly');
+
+select results_eq($$select claim.slot, receipt.status, receipt.reason, receipt.cost_usd, receipt.cost_provenance
+    from evaluation_claims claim join public.factory_evaluation_receipts receipt on receipt.attempt_id = claim.attempt_id
+    where claim.slot in ('initial', 'canceled') order by claim.slot$$,
+  $$values ('canceled', 'skipped', 'canceled', null::numeric, 'unavailable'),
+    ('initial', 'error', 'lease_expired', null::numeric, 'unavailable')$$,
+  'cancellation and recovery without a provider invocation each retain their exact unavailable cost');
 
 insert into sample_runs values ('judge-erased', pg_temp.accept_sample_run('Judge erasure fixture', true));
 select (pg_temp.record_sample('primary', 'missing', 'judge-erased')).id;
@@ -730,6 +777,144 @@ select ok((select payload->>'status' = 'profile_unavailable' and not (payload ? 
   'an approval revoked after prepare cannot authorize a new provider request');
 select is(pg_temp.finish_judge('judge-revoked', 'profile_unavailable'), true,
   'an unavailable profile settles as an explicit non-passing invocation');
+
+-- Leave the first judgment in place while its configured resources move on.
+select public.cancel_factory_evaluation_job(claim.workspace_id, claim.factory_id, pg_temp.sampling_id(1), claim.job_id)
+from evaluation_claims claim where claim.slot = 'judge-revoked';
+create temp table rotated_judge as select * from pg_temp.configure_judge(3);
+create temp table revised_rubric as
+select new.* from first_evaluation_receipt prior join public.factory_scorer_revisions scorer on scorer.id = prior.scorer_revision_id
+cross join lateral public.save_factory_scorer_revision(prior.workspace_id, prior.factory_id, pg_temp.sampling_id(1),
+  scorer.scorer_id, scorer.revision_number, jsonb_set(scorer.definition, '{rubric}', to_jsonb('Use the updated rubric.'::text))) new;
+select ok((select prior.profile_revision_id <> profile.id and prior.scorer_revision_id <> scorer.id
+    and scorer.revision_number = 2 and profile.revision = 4
+    and to_jsonb(receipt) = to_jsonb(prior)
+  from first_evaluation_receipt prior join public.factory_evaluation_receipts receipt on receipt.attempt_id = prior.attempt_id
+  cross join rotated_judge profile cross join revised_rubric scorer),
+  'profile and rubric edits cannot reinterpret the original immutable judgment or its evidence identities');
+select ok((select run.input_tokens is null and run.output_tokens is null and run.total_cost_usd is null
+  and run.token_provenance = 'unavailable' and run.cost_provenance = 'unavailable'
+  from first_evaluation_receipt receipt join public.agent_runs run on run.id = receipt.run_id),
+  'evaluator usage stays separate from the production attempt that supplied the evidence');
+
+insert into sample_runs values ('judge-expired', pg_temp.accept_sample_run('Started evaluator lease loss fixture'));
+select (pg_temp.record_sample('primary', 'evaluation-replay', 'judge-expired')).id;
+insert into evaluation_claims select 'judge-expired', claim.* from public.claim_factory_judge_job() claim;
+select is(pg_temp.begin_judge('judge-expired', rotated_judge.id)->>'status', 'authorized',
+  'the lost worker held a real provider permit before its lease elapsed') from rotated_judge;
+alter table public.factory_evaluation_attempts disable trigger factory_evaluation_attempts_immutable;
+with expired as (select clock_timestamp() - interval '1 second' as lease_at)
+update public.factory_evaluation_attempts attempt set lease_expires_at = expired.lease_at,
+  claimed_at = expired.lease_at - interval '90 seconds' from expired
+where attempt.id = (select attempt_id from evaluation_claims where slot = 'judge-expired');
+alter table public.factory_evaluation_attempts enable trigger factory_evaluation_attempts_immutable;
+select ok((select attempts_recovered = 1 and jobs_requeued = 1 from public.maintain_factory_evaluation_queue(10)),
+  'recovery finalizes the abandoned invocation before requeuing the evaluation');
+update public.factory_evaluation_jobs set available_at = clock_timestamp()
+where id = (select job_id from evaluation_claims where slot = 'judge-expired');
+insert into evaluation_claims select 'judge-estimated', claim.* from public.claim_factory_judge_job() claim;
+select is(pg_temp.begin_judge('judge-estimated', rotated_judge.id)->>'status', 'authorized',
+  'the replacement receives a distinct provider permit for the same evaluation') from rotated_judge;
+select is(pg_temp.finish_judge('judge-expired', 'provider_unavailable', null, 500, 500, 'measured', 1, 'measured'), false,
+  'late usage from an expired invocation cannot charge the current claim or rewrite its own receipt');
+select throws_ok($$select pg_temp.finish_judge('judge-estimated', 'provider_unavailable', null,
+    22, 4, 'estimated', 0.003, 'estimated')$$, '22023', null,
+  'estimated usage without an estimation revision is refused atomically');
+select throws_ok($$select pg_temp.finish_judge('judge-estimated', 'provider_unavailable', p_cost_usd => 0)$$,
+  '22023', null, 'an unavailable cost cannot be written as zero');
+select is(pg_temp.finish_judge('judge-estimated', 'provider_unavailable', null,
+    22, 4, 'estimated', 0.003, 'estimated', 'fixture-pricing-v1'), true,
+  'the current worker records versioned estimated usage even when the provider failed');
+select ok((select receipt.status = 'error' and receipt.reason = 'provider_unavailable'
+    and receipt.input_tokens = 22 and receipt.output_tokens = 4 and receipt.token_provenance = 'estimated'
+    and receipt.cost_usd = 0.003 and receipt.cost_provenance = 'estimated'
+    and receipt.estimation_revision = 'fixture-pricing-v1' and receipt.profile_revision_id = profile.id
+    and receipt.attempt_number = 2 and receipt.latency_ms >= 0
+  from evaluation_claims claim join public.factory_evaluation_receipts receipt on receipt.attempt_id = claim.attempt_id
+  cross join rotated_judge profile where claim.slot = 'judge-estimated'), 'a failed estimate is retained under the replacement attempt');
+select ok((select receipt.status = 'error' and receipt.reason = 'lease_expired'
+    and receipt.attempt_number = 1 and receipt.evidence_digest = repeat('d', 64) and receipt.profile_revision_id = profile.id
+    and receipt.input_tokens is null and receipt.output_tokens is null and receipt.token_provenance = 'unavailable'
+    and receipt.cost_usd is null and receipt.cost_provenance = 'unavailable'
+  from evaluation_claims claim join public.factory_evaluation_receipts receipt on receipt.attempt_id = claim.attempt_id
+  cross join rotated_judge profile where claim.slot = 'judge-expired'), 'lease recovery preserves identity with unavailable usage');
+
+create function pg_temp.evaluation_job(p_slot text) returns uuid language sql stable as $$
+  select claim.job_id from evaluation_claims claim where claim.slot = p_slot;
+$$;
+create function pg_temp.list_evaluation_receipts(p_scope text, p_job_id uuid default null,
+  p_actor uuid default pg_temp.sampling_id(1), p_limit integer default 25,
+  p_before_finished_at timestamptz default null, p_before_attempt_id uuid default null) returns jsonb language sql as $$
+  select public.list_factory_evaluation_receipts(scope.workspace_id, scope.factory_id, p_actor, p_job_id,
+    p_limit, p_before_finished_at, p_before_attempt_id)
+  from sample_scope scope where scope.key = p_scope;
+$$;
+select ok(not has_table_privilege('authenticated', 'public.factory_evaluation_receipts', 'SELECT')
+  and not has_function_privilege('authenticated',
+    'public.list_factory_evaluation_receipts(uuid,uuid,uuid,uuid,integer,timestamptz,uuid)', 'EXECUTE'),
+  'the raw immutable receipts and explicit actor read RPC are private');
+update public.workspace_members set role = 'member' where id = pg_temp.sampling_id(22);
+create temp table visible_judgment as
+select pg_temp.list_evaluation_receipts('primary', pg_temp.evaluation_job('judge-report'), pg_temp.sampling_id(2)) as payload;
+select ok((select payload#>'{usage,cost_usd}' = '0'::jsonb and payload#>'{usage,cost_unavailable_count}' = '0'::jsonb
+    and payload#>'{usage,input_tokens}' = '18'::jsonb and payload#>'{usage,output_tokens}' = '9'::jsonb
+    and payload#>>'{receipts,0,evidence_availability}' = 'available'
+    and payload#>>'{receipts,0,explanation}' = 'The exact retained evidence supports the rubric.'
+  from visible_judgment), 'an ordinary authorized reader sees the measured zero, exact counts and retained explanation');
+select ok((select payload#>'{usage,cost_usd}' = 'null'::jsonb and payload#>'{usage,cost_unavailable_count}' = '1'::jsonb
+    and payload#>'{usage,cost_estimated_count}' = '1'::jsonb and payload#>'{usage,attempt_count}' = '2'::jsonb
+    and payload#>'{usage,input_tokens}' = 'null'::jsonb
+  from (select pg_temp.list_evaluation_receipts('primary', pg_temp.evaluation_job('judge-estimated')) as payload) summary),
+  'one unknown attempt keeps exact job totals unavailable even when another attempt has estimates');
+select ok((select payload#>'{usage,cost_usd}' = 'null'::jsonb and payload#>'{usage,cost_unavailable_count}' = '1'::jsonb
+  from (select pg_temp.list_evaluation_receipts('primary', pg_temp.evaluation_job('judge-canceled')) as payload) canceled),
+  'an entirely unavailable cost cannot appear as numeric zero');
+create temp table evaluation_first_page as
+select pg_temp.list_evaluation_receipts('primary', pg_temp.evaluation_job('judge-estimated'), p_limit => 1) as payload;
+select ok((select payload#>>'{receipts,0,attempt_number}' = '2'
+    and payload->>'next_attempt_id' = payload#>>'{receipts,0,attempt_id}'
+    and payload#>'{usage,attempt_count}' = '2'::jsonb from evaluation_first_page),
+  'a bounded read returns the latest receipt with the exact continuation and full job usage');
+select ok((select page.payload#>>'{receipts,0,attempt_number}' = '1' and page.payload->>'next_attempt_id' is null
+    and page.payload->'usage' = first.payload->'usage'
+  from evaluation_first_page first cross join lateral (
+    select pg_temp.list_evaluation_receipts('primary', pg_temp.evaluation_job('judge-estimated'), p_limit => 1,
+      p_before_finished_at => (first.payload->>'next_finished_at')::timestamptz,
+      p_before_attempt_id => (first.payload->>'next_attempt_id')::uuid) as payload
+  ) page), 'the continuation returns the remaining expired attempt without changing the usage summary');
+select throws_ok($$select pg_temp.list_evaluation_receipts('primary', p_actor => pg_temp.sampling_id(3))$$,
+  'P0002', null, 'a foreign workspace owner cannot read evaluation receipts');
+select throws_ok($$select pg_temp.list_evaluation_receipts('sibling', p_actor => pg_temp.sampling_id(2))$$,
+  'P0002', null, 'workspace membership alone cannot expose a restricted sibling factory');
+select is(pg_temp.list_evaluation_receipts('sibling', pg_temp.evaluation_job('judge-report'))->'receipts', '[]'::jsonb,
+  'a known job ID cannot be rebound to another accessible factory');
+
+-- Erasure withholds private explanation and evidence from reads without
+-- mutating the immutable result or usage ledger.
+update public.sessions session set archived_at = clock_timestamp()
+from first_evaluation_receipt receipt where session.id = receipt.session_id;
+truncate judge_erasure_target;
+insert into judge_erasure_target
+select session.workspace_id, session.factory_id, session.id, session.archived_at
+from first_evaluation_receipt receipt join public.sessions session on session.id = receipt.session_id;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000001';
+select public.erase_session_retained_content(target.workspace_id, target.factory_id, target.id, target.archived_at)
+from judge_erasure_target target;
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+select ok((select payload#>>'{receipts,0,evidence_availability}' = 'withheld'
+    and payload#>>'{receipts,0,explanation}' is null and payload#>>'{receipts,0,evidence_locations,0}' is null
+    and payload#>>'{receipts,0,result,evidence,0}' is null and payload#>>'{receipts,0,evidence_digest}' is null
+    and payload#>'{receipts,0,score}' = '{"kind":"boolean","value":true}'::jsonb
+    and payload#>'{usage,cost_usd}' = '0'::jsonb
+  from (select pg_temp.list_evaluation_receipts('primary', pg_temp.evaluation_job('judge-report')) as payload) after_erasure),
+  'current erasure hides explanation and evidence locations while leaving score and usage metadata readable');
+select ok((select to_jsonb(receipt) = to_jsonb(original)
+  from first_evaluation_receipt original join public.factory_evaluation_receipts receipt on receipt.attempt_id = original.attempt_id),
+  'a retention-aware read does not rewrite earlier judgments');
 
 -- Model a historical receipt selected for admission as its workspace retires.
 insert into sample_runs values ('retiring-receipt', pg_temp.accept_sample_run('Retiring workspace receipt fixture'));

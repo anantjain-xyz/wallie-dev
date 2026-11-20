@@ -94,3 +94,30 @@ or answer produces an explicit non-passing state. The invocation records
 the model, worker runtime, evidence digest, and typed candidate result.
 Temporary evidence outages use the queue's retry limit. Cancellation and
 lease expiry close the owning invocation without adopting a candidate.
+
+## Evaluation receipts
+
+Wallie records one immutable receipt when an evaluation attempt settles.
+The receipt pins the job, attempt, target commit, scorer revision, and
+original sample. An authorized invocation also pins the judge profile and
+the digest of the evidence the worker prepared. A worker can settle only
+the exact current attempt before its lease expires. Duplicate or late
+completion cannot add another receipt or change the recorded result.
+
+| Usage provenance | When Wallie records it                                       |
+| ---------------- | ------------------------------------------------------------ |
+| Measured         | The provider reports the paired token counts or billed cost. |
+| Estimated        | A trusted writer supplies the estimate and its revision.     |
+| Unavailable      | The attempt completes without that measurement or estimate.  |
+
+Tokens and cost each have their own provenance. An unavailable amount stays
+null and leaves its job total unavailable. A recorded zero remains a known
+amount. Cancellation and lease recovery keep the attempt's timing and
+identity even when usage is unavailable. Production execution budgets use
+their existing usage records.
+
+Authorized factory readers can open the bounded attempt history at
+`GET /api/workspaces/[workspaceId]/factories/[factoryId]/evaluations/[evaluationId]`.
+Use the evaluation job ID in the path. Wallie checks the run's current
+visibility and withholds explanations and evidence locations when the
+underlying evidence is no longer readable.
