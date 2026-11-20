@@ -120,6 +120,7 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     await firstCase.check();
     await page.getByRole("button", { name: "Publish calibration set", exact: true }).click();
     await page.getByRole("link", { name: calibrationName, exact: true }).click();
+    await expect(page).toHaveURL(/calibrationSet=/);
     const historical = new URL(page.url());
     historical.searchParams.set("revision", data.revisions[0]);
     await page.goto(historical.toString());
