@@ -10,6 +10,11 @@ import {
   loadScorerPageScope,
   readScorerRevisionOwner,
 } from "@/features/factory-scorers/scorer-pages-data";
+import {
+  factoryScorerPresetKey,
+  factoryScorerPresets,
+  readFactoryScorerPreset,
+} from "@/lib/factory-scorers/presets";
 import { listFactoryScorers } from "@/lib/factory-scorers/service";
 import { workspaceScorerDetailPath, workspaceScorersPath } from "@/lib/routes";
 
@@ -27,6 +32,7 @@ export default async function ScorersPage({
     factory?: string | string[];
     after?: string | string[];
     revision?: string | string[];
+    preset?: string | string[];
   }>;
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
@@ -50,6 +56,9 @@ export default async function ScorersPage({
 
   const after = uuid.optional().safeParse(query.after);
   if (!after.success) notFound();
+  const preset = canEdit ? readFactoryScorerPreset(query.preset) : undefined;
+  const presetKey = preset ? factoryScorerPresetKey(preset) : undefined;
+  const draftQuery = { ...factoryQuery, after: after.data };
   const { scorers, nextAfterId } = await listFactoryScorers(supabase, {
     workspaceId,
     factoryId: factory.id,
@@ -122,10 +131,51 @@ export default async function ScorersPage({
             statusBadge={<Status label="Draft" value="not_started" />}
             title="Draft rubric"
           >
+            <div className="ui-sheet mb-4 space-y-3 p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="type-label text-foreground" id="scorer-presets">
+                  Scorer presets
+                </h3>
+                {preset ? (
+                  <Link
+                    className="type-secondary underline underline-offset-4"
+                    href={`${workspaceScorersPath(workspaceSlug, draftQuery)}#new-scorer`}
+                  >
+                    Start with a blank draft
+                  </Link>
+                ) : null}
+              </div>
+              <ul aria-labelledby="scorer-presets" className="grid gap-2 sm:grid-cols-2">
+                {Object.values(factoryScorerPresets).map((option) => {
+                  const key = factoryScorerPresetKey(option);
+                  const selected = presetKey === key;
+                  return (
+                    <li
+                      className={`min-w-0 rounded-md border p-3 ${selected ? "border-accent/60 bg-accent/5" : "border-border"}`}
+                      key={key}
+                    >
+                      <Link
+                        aria-current={selected ? "true" : undefined}
+                        className="type-secondary font-medium text-foreground underline-offset-4 hover:text-accent hover:underline"
+                        href={`${workspaceScorersPath(workspaceSlug, { ...draftQuery, preset: key })}#new-scorer`}
+                      >
+                        {option.name}
+                      </Link>
+                      <p className="type-annotation mt-1 text-muted">{option.description}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+              {preset ? (
+                <p className="type-secondary text-muted">
+                  Editing a copy of {preset.name} · Version {preset.version}
+                </p>
+              ) : null}
+            </div>
             <ScorerForm
-              draft={{ kind: "create" }}
+              draft={{ kind: "create", preset }}
               factoryId={factory.id}
-              key={factory.id}
+              key={`${factory.id}:${presetKey ?? "blank"}`}
               workspaceId={workspaceId}
               workspaceSlug={workspaceSlug}
             />
