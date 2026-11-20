@@ -63,6 +63,21 @@ export const scorerPauseSchema = z.object({
 });
 export type ScorerPause = z.output<typeof scorerPauseSchema>;
 
+export const scorerPauseHistorySchema = scorerPauseSchema.extend({
+  history: z
+    .array(
+      z.object({
+        revision: positiveRevision,
+        paused: z.boolean(),
+        actor_name: z.string().nullable(),
+        created_at: timestamp,
+      }),
+    )
+    .max(20),
+  next_before_pause_revision: positiveRevision.nullable(),
+});
+export type ScorerPauseHistory = z.output<typeof scorerPauseHistorySchema>;
+
 const adjudicationFields = {
   id,
   attempt_id: id,
@@ -72,12 +87,14 @@ const adjudicationFields = {
   created_at: timestamp,
 };
 export const scorerAdjudicationSchema = z.object(adjudicationFields);
+export type ScorerAdjudication = z.output<typeof scorerAdjudicationSchema>;
 export const evaluationReviewSchema = z.object({
   can_adjudicate: z.boolean(),
   adjudications: z.array(scorerAdjudicationSchema).max(20),
   has_more: z.boolean(),
   next_before_created_at: timestamp.nullable(),
   next_before_adjudication_id: id.nullable(),
+  selected_adjudication: scorerAdjudicationSchema.nullable(),
 });
 export type EvaluationReview = z.output<typeof evaluationReviewSchema>;
 

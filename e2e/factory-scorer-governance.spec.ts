@@ -138,9 +138,32 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     const health = page.locator("#scorer-health");
     await expect(health.getByText("Evaluator errors / settled")).toBeVisible();
     await expect(health.getByText("0 / 3 (0%)", { exact: true })).toBeVisible();
-    await capture(page, info, "02-scorer-health-and-calibration-desktop-light");
     await page.getByRole("button", { name: "Resume scorer", exact: true }).click();
     await expect(page.getByRole("button", { name: "Pause scorer", exact: true })).toBeVisible();
+    await page.getByText("Pause history", { exact: true }).click();
+    await expect(health.getByText("Paused", { exact: true })).toBeVisible();
+    await expect(health.getByText("Resumed", { exact: true })).toBeVisible();
+    await capture(page, info, "02-scorer-health-and-calibration-desktop-light");
+
+    await history.getByText("Inspect calibration cases", { exact: true }).first().click();
+    const savedCase = history.getByRole("link", { name: "Open case 1", exact: true }).first();
+    await expect(savedCase).toHaveAttribute(
+      "href",
+      new RegExp(
+        `evaluationAttempt=${attemptId}&evaluationAdjudication=([0-9a-f-]+)#adjudication-\\1$`,
+      ),
+    );
+    await savedCase.click();
+    await expect(page).toHaveURL(/evaluationAdjudication=/);
+    const savedId = z.uuid().parse(new URL(page.url()).searchParams.get("evaluationAdjudication"));
+    const savedRecord = page.locator(`#adjudication-${savedId}`);
+    await expect(
+      savedRecord.getByRole("heading", { name: "Saved adjudication", exact: true }),
+    ).toBeVisible();
+    await expect(savedRecord.getByText(note, { exact: true })).toBeVisible();
+    await expect(
+      savedRecord.getByRole("link", { name: "Pinned rubric · Revision 1", exact: true }),
+    ).toHaveAttribute("href", new RegExp(`revision=${data.revisions[0]}`));
 
     const reader = await browser.newPage({ viewport: { width: 1440, height: 960 } });
     try {
@@ -149,6 +172,8 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
         email: fixture.viewerEmail,
       });
       await expect(reader.getByText(revisedCalibrationName, { exact: true }).first()).toBeVisible();
+      await reader.getByText("Pause history", { exact: true }).click();
+      await expect(reader.getByText("Resumed", { exact: true })).toBeVisible();
       await expect(reader.getByRole("button", { name: "Pause scorer", exact: true })).toHaveCount(
         0,
       );

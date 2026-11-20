@@ -169,15 +169,16 @@ end;
 $$;
 
 create function public.read_factory_evaluation_review(
-  p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_attempt_id uuid,
-  p_before_created_at timestamptz default null, p_before_adjudication_id uuid default null
+  p_workspace_id uuid, p_factory_id uuid, p_attempt_id uuid,
+  p_before_created_at timestamptz default null, p_before_adjudication_id uuid default null,
+  p_selected_adjudication_id uuid default null
 ) returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   actor public.workspace_members;
   receipt public.factory_evaluation_receipts;
   response jsonb;
 begin
-  perform internal.require_factory_scorer_review_scope(p_workspace_id, p_factory_id, p_actor_user_id);
+  perform internal.require_factory_score_read(p_workspace_id, p_factory_id);
   receipt := internal.read_factory_evaluation_review_receipt(p_workspace_id, p_factory_id, p_attempt_id);
   if receipt.attempt_id is null then raise exception 'Evaluation attempt is unavailable.' using errcode = 'P0002'; end if;
   if (p_before_created_at is null) <> (p_before_adjudication_id is null)
@@ -186,7 +187,7 @@ begin
   end if;
   select * into actor from public.workspace_members member
   where (member.workspace_id, member.user_id, member.kind, member.is_active) =
-    (p_workspace_id, p_actor_user_id, 'human', true);
+    (p_workspace_id, auth.uid(), 'human', true);
 
   with page as materialized (
     select review as item, review.id, review.created_at
@@ -203,6 +204,10 @@ begin
     'can_adjudicate', internal.can_adjudicate_factory_evaluation(receipt, actor),
     'adjudications', coalesce((select jsonb_agg(internal.project_factory_scorer_adjudication(item, receipt)
       order by created_at desc, id desc) from visible), '[]'),
+    'selected_adjudication', (select internal.project_factory_scorer_adjudication(review, receipt)
+      from public.factory_scorer_adjudications review
+      where (review.workspace_id, review.factory_id, review.attempt_id, review.id) =
+        (p_workspace_id, p_factory_id, p_attempt_id, p_selected_adjudication_id)),
     'has_more', exists(select 1 from boundary),
     'next_before_created_at', (select created_at from boundary),
     'next_before_adjudication_id', (select id from boundary)
@@ -290,7 +295,7 @@ end;
 $$;
 
 create function public.read_factory_scorer_calibration(
-  p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_scorer_id uuid,
+  p_workspace_id uuid, p_factory_id uuid, p_scorer_id uuid,
   p_set_id uuid default null, p_before_revision integer default null,
   p_before_set_at timestamptz default null, p_before_set_id uuid default null,
   p_before_candidate_at timestamptz default null, p_before_candidate_id uuid default null
@@ -302,7 +307,7 @@ declare
   candidate_boundary_id uuid;
   response jsonb;
 begin
-  perform internal.require_factory_scorer_review_scope(p_workspace_id, p_factory_id, p_actor_user_id);
+  perform internal.require_factory_score_read(p_workspace_id, p_factory_id);
   if not exists (select 1 from public.factory_scorers scorer
     where (scorer.workspace_id, scorer.factory_id, scorer.id) = (p_workspace_id, p_factory_id, p_scorer_id)) then
     raise exception 'Scorer is unavailable.' using errcode = 'P0002';
@@ -318,7 +323,7 @@ begin
 
   select exists (
     select 1 from public.workspace_members member
-    where (member.workspace_id, member.user_id, member.kind, member.is_active) = (p_workspace_id, p_actor_user_id, 'human', true)
+    where (member.workspace_id, member.user_id, member.kind, member.is_active) = (p_workspace_id, auth.uid(), 'human', true)
       and (member.role in ('owner', 'admin') or exists (
         select 1 from public.factory_members factory_member
         where (factory_member.workspace_id, factory_member.factory_id, factory_member.member_id) =
@@ -398,12 +403,13 @@ revoke all on function internal.preserve_factory_scorer_review_history(),
   internal.project_factory_scorer_adjudication(public.factory_scorer_adjudications, public.factory_evaluation_receipts),
   internal.project_factory_scorer_calibration_revision(public.factory_scorer_calibration_revisions),
   public.adjudicate_factory_evaluation_receipt(uuid, uuid, uuid, uuid, uuid, text, text, text),
-  public.read_factory_evaluation_review(uuid, uuid, uuid, uuid, timestamptz, uuid),
+  public.read_factory_evaluation_review(uuid, uuid, uuid, timestamptz, uuid, uuid),
   public.save_factory_scorer_calibration_revision(uuid, uuid, uuid, uuid, uuid, integer, uuid, text, uuid[]),
-  public.read_factory_scorer_calibration(uuid, uuid, uuid, uuid, uuid, integer, timestamptz, uuid, timestamptz, uuid)
+  public.read_factory_scorer_calibration(uuid, uuid, uuid, uuid, integer, timestamptz, uuid, timestamptz, uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.adjudicate_factory_evaluation_receipt(uuid, uuid, uuid, uuid, uuid, text, text, text),
-  public.read_factory_evaluation_review(uuid, uuid, uuid, uuid, timestamptz, uuid),
-  public.save_factory_scorer_calibration_revision(uuid, uuid, uuid, uuid, uuid, integer, uuid, text, uuid[]),
-  public.read_factory_scorer_calibration(uuid, uuid, uuid, uuid, uuid, integer, timestamptz, uuid, timestamptz, uuid)
+  public.save_factory_scorer_calibration_revision(uuid, uuid, uuid, uuid, uuid, integer, uuid, text, uuid[])
   to service_role;
+grant execute on function public.read_factory_evaluation_review(uuid, uuid, uuid, timestamptz, uuid, uuid),
+  public.read_factory_scorer_calibration(uuid, uuid, uuid, uuid, integer, timestamptz, uuid, timestamptz, uuid)
+  to authenticated;

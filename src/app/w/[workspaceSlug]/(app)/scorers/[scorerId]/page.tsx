@@ -63,7 +63,7 @@ export default async function ScorerDetailPage({
   const trendQuery = parseScorerTrendQuery(query);
   const revisionFilters = { ...factoryQuery, from: trendQuery?.from, to: trendQuery?.to };
   const latestHref = workspaceScorerDetailPath(workspaceSlug, scorer.id, revisionFilters);
-  const governanceScope = { workspaceId, factoryId: factory.id, actorUserId: scope.actorUserId };
+  const governanceScope = { workspaceId, factoryId: factory.id };
   const [trend, governance] = await Promise.all([
     trendQuery
       ? loadScoreTrendPanel(scope.supabase, { workspaceId, factoryId: factory.id }, trendQuery, {
@@ -71,7 +71,7 @@ export default async function ScorerDetailPage({
           scorerRevisionId: selected.id,
         }).catch(() => null)
       : null,
-    loadScorerGovernanceData(governanceScope, scorer.id, query),
+    loadScorerGovernanceData(scope.supabase, governanceScope, scorer.id, query),
   ]);
 
   return (

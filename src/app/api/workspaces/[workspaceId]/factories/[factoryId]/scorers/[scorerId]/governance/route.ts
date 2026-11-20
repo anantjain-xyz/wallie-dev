@@ -17,7 +17,6 @@ import {
   handleScorerGovernanceCommand,
   scorerGovernanceFailure,
 } from "@/lib/factory-evaluations/scorer-governance-http";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string; factoryId: string; scorerId: string }>;
@@ -40,11 +39,10 @@ export async function GET(request: Request, { params }: RouteContext) {
     const context = await resolveFactoryRouteContext(params);
     if (!context.ok) return context.response;
     const result = await readScorerCalibration(
-      createSupabaseAdminClient(),
+      context.access.supabase,
       {
         workspaceId: context.access.workspace.id,
         factoryId: context.factoryId,
-        actorUserId: context.access.user.id,
       },
       target.data,
       cursor.data,

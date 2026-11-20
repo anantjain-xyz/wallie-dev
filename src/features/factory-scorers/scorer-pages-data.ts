@@ -19,7 +19,7 @@ import {
 } from "@/lib/factory-scorers/service";
 
 export async function loadScorerPageScope(workspaceSlug: string, factoryQuery?: string | string[]) {
-  const [{ currentMember, supabase, user, workspace }, factories] = await Promise.all([
+  const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
@@ -32,7 +32,6 @@ export async function loadScorerPageScope(workspaceSlug: string, factoryQuery?: 
   return {
     factory,
     workspaceId: workspace.id,
-    actorUserId: user.id,
     supabase,
     canEdit: factory.status === "active" && factory.canManage === true,
     canBind: factory.status === "active" && isWorkspaceOperator(currentMember),

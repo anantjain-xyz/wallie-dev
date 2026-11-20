@@ -31,6 +31,18 @@ create table public.factory_scorer_pauses (
   foreign key (workspace_id, factory_id, scorer_id)
     references public.factory_scorers(workspace_id, factory_id, id) on delete cascade
 );
+create table public.factory_scorer_pause_transitions (
+  workspace_id uuid not null,
+  factory_id uuid not null,
+  scorer_id uuid not null,
+  revision integer not null check (revision > 0),
+  paused boolean not null,
+  actor_user_id uuid not null,
+  created_at timestamptz not null,
+  primary key (workspace_id, factory_id, scorer_id, revision),
+  foreign key (workspace_id, factory_id, scorer_id)
+    references public.factory_scorers(workspace_id, factory_id, id) on delete cascade
+);
 create table public.factory_scorer_admission_skips (
   sample_receipt_id uuid primary key references public.factory_scorer_sample_receipts(id) on delete cascade,
   workspace_id uuid not null,
@@ -39,14 +51,31 @@ create table public.factory_scorer_admission_skips (
   pause_revision integer not null check (pause_revision > 0),
   recorded_xact_id xid8 not null default pg_current_xact_id(),
   foreign key (workspace_id, factory_id, scorer_id)
-    references public.factory_scorers(workspace_id, factory_id, id) on delete cascade
+    references public.factory_scorers(workspace_id, factory_id, id) on delete cascade,
+  foreign key (workspace_id, factory_id, scorer_id, pause_revision)
+    references public.factory_scorer_pause_transitions(workspace_id, factory_id, scorer_id, revision)
+    deferrable initially deferred
 );
 create index factory_scorer_admission_skips_scorer_idx
   on public.factory_scorer_admission_skips(workspace_id, factory_id, scorer_id);
 alter table public.factory_scorer_pauses enable row level security;
+alter table public.factory_scorer_pause_transitions enable row level security;
 alter table public.factory_scorer_admission_skips enable row level security;
-revoke all on public.factory_scorer_pauses, public.factory_scorer_admission_skips
+revoke all on public.factory_scorer_pauses, public.factory_scorer_pause_transitions, public.factory_scorer_admission_skips
   from public, anon, authenticated, service_role;
+
+create function internal.preserve_factory_scorer_pause_transition()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if tg_op = 'DELETE' and not exists (
+    select 1 from public.factory_scorers scorer
+    where (scorer.workspace_id, scorer.factory_id, scorer.id) = (old.workspace_id, old.factory_id, old.scorer_id)
+  ) then return old; end if;
+  raise exception 'Scorer pause history is immutable.' using errcode = '23514';
+end;
+$$;
+create trigger factory_scorer_pause_transitions_immutable before update or delete
+  on public.factory_scorer_pause_transitions for each row execute function internal.preserve_factory_scorer_pause_transition();
 
 create function internal.preserve_factory_scorer_admission_skip()
 returns trigger language plpgsql set search_path = '' as $$
@@ -65,20 +94,39 @@ create trigger factory_scorer_admission_skips_immutable before update or delete
   on public.factory_scorer_admission_skips for each row execute function internal.preserve_factory_scorer_admission_skip();
 
 create function public.get_factory_scorer_pause(
-  p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_scorer_id uuid
+  p_workspace_id uuid, p_factory_id uuid, p_scorer_id uuid, p_before_pause_revision integer default null
 ) returns jsonb language plpgsql stable security definer set search_path = '' as $$
-declare state public.factory_scorer_pauses;
+declare state public.factory_scorer_pauses; result jsonb;
 begin
-  perform internal.assert_checkpoint_publication_service();
-  if not internal.can_read_factory_evaluation_receipts(p_workspace_id, p_factory_id, p_actor_user_id)
-    or not exists (
-      select 1 from public.factory_scorers scorer
-      where (scorer.workspace_id, scorer.factory_id, scorer.id) = (p_workspace_id, p_factory_id, p_scorer_id)
-    ) then raise exception 'Scorer is unavailable.' using errcode = 'P0002'; end if;
+  perform internal.require_factory_score_read(p_workspace_id, p_factory_id);
+  if not exists (
+    select 1 from public.factory_scorers scorer
+    where (scorer.workspace_id, scorer.factory_id, scorer.id) = (p_workspace_id, p_factory_id, p_scorer_id)
+  ) then raise exception 'Scorer is unavailable.' using errcode = 'P0002'; end if;
+  if p_before_pause_revision < 1 then raise exception 'Invalid scorer pause history page.' using errcode = '22023'; end if;
   select * into state from public.factory_scorer_pauses pause
     where (pause.workspace_id, pause.factory_id, pause.scorer_id) = (p_workspace_id, p_factory_id, p_scorer_id);
-  return jsonb_build_object('paused', coalesce(state.paused, false), 'revision', coalesce(state.revision, 0),
-    'updated_at', state.updated_at);
+
+  with page as materialized (
+    select transition.revision, transition.paused, transition.actor_user_id, transition.created_at
+    from public.factory_scorer_pause_transitions transition
+    where (transition.workspace_id, transition.factory_id, transition.scorer_id) = (p_workspace_id, p_factory_id, p_scorer_id)
+      and (p_before_pause_revision is null or transition.revision < p_before_pause_revision)
+    order by transition.revision desc limit 21
+  ), visible as materialized (
+    select * from page order by revision desc limit 20
+  )
+  select jsonb_build_object(
+    'paused', coalesce(state.paused, false), 'revision', coalesce(state.revision, 0), 'updated_at', state.updated_at,
+    'history', coalesce(jsonb_agg(jsonb_build_object('revision', transition.revision, 'paused', transition.paused,
+      'actor_name', left(coalesce(nullif(btrim(actor.full_name), ''), nullif(btrim(actor.username), '')), 120),
+      'created_at', transition.created_at) order by transition.revision desc), '[]'),
+    'next_before_pause_revision', case when (select count(*) from page) > 20 then min(transition.revision) end
+  ) into result
+  from visible transition
+  left join public.workspace_members actor on (actor.workspace_id, actor.user_id) = (p_workspace_id, transition.actor_user_id)
+    and actor.kind = 'human';
+  return result;
 end;
 $$;
 
@@ -108,6 +156,9 @@ begin
         set paused = excluded.paused, revision = excluded.revision, updated_by = excluded.updated_by,
             updated_at = excluded.updated_at
       returning * into state;
+    insert into public.factory_scorer_pause_transitions (
+      workspace_id, factory_id, scorer_id, revision, paused, actor_user_id, created_at
+    ) values (state.workspace_id, state.factory_id, state.scorer_id, state.revision, state.paused, state.updated_by, state.updated_at);
   end if;
   return jsonb_build_object('paused', coalesce(state.paused, false), 'revision', coalesce(state.revision, 0),
     'updated_at', state.updated_at);
@@ -655,21 +706,20 @@ create index factory_evaluation_jobs_manual_history_idx
   where source_attempt_id is not null;
 
 create function public.list_factory_scorer_reevaluations(
-  p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_prior_attempt_id uuid,
+  p_workspace_id uuid, p_factory_id uuid, p_prior_attempt_id uuid,
   p_before_created_at timestamptz default null, p_before_job_id uuid default null
 ) returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare result jsonb;
 begin
-  perform internal.assert_checkpoint_publication_service();
-  if not internal.can_read_factory_evaluation_receipts(p_workspace_id, p_factory_id, p_actor_user_id)
-    or not exists (
-      select 1 from public.factory_evaluation_receipts prior
-      join public.agent_runs run
-        on (run.workspace_id, run.session_id, run.id) = (prior.workspace_id, prior.session_id, prior.run_id)
-      join public.sessions owner
-        on (owner.workspace_id, owner.factory_id, owner.id) = (run.workspace_id, prior.factory_id, run.session_id)
-      where (prior.workspace_id, prior.factory_id, prior.attempt_id) = (p_workspace_id, p_factory_id, p_prior_attempt_id)
-    ) then raise exception 'Prior evaluation receipt is unavailable.' using errcode = 'P0002'; end if;
+  perform internal.require_factory_score_read(p_workspace_id, p_factory_id);
+  if not exists (
+    select 1 from public.factory_evaluation_receipts prior
+    join public.agent_runs run
+      on (run.workspace_id, run.session_id, run.id) = (prior.workspace_id, prior.session_id, prior.run_id)
+    join public.sessions owner
+      on (owner.workspace_id, owner.factory_id, owner.id) = (run.workspace_id, prior.factory_id, run.session_id)
+    where (prior.workspace_id, prior.factory_id, prior.attempt_id) = (p_workspace_id, p_factory_id, p_prior_attempt_id)
+  ) then raise exception 'Prior evaluation receipt is unavailable.' using errcode = 'P0002'; end if;
 
   if (p_before_created_at is null) <> (p_before_job_id is null)
     or (p_before_created_at is not null and not isfinite(p_before_created_at)) then
@@ -708,17 +758,18 @@ end;
 $$;
 
 revoke all on function internal.preserve_factory_scorer_admission_skip(),
+  internal.preserve_factory_scorer_pause_transition(),
   internal.is_factory_evaluation_scorer_paused(uuid, uuid, uuid),
   internal.select_factory_scorer_checkpoint_evidence(public.session_git_checkpoints, uuid, text[], boolean),
-  public.get_factory_scorer_pause(uuid, uuid, uuid, uuid),
+  public.get_factory_scorer_pause(uuid, uuid, uuid, integer),
   public.configure_factory_scorer_pause(uuid, uuid, uuid, uuid, integer, boolean),
   public.request_factory_scorer_reevaluation(uuid, uuid, uuid, uuid, uuid),
-  public.list_factory_scorer_reevaluations(uuid, uuid, uuid, uuid, timestamptz, uuid)
+  public.list_factory_scorer_reevaluations(uuid, uuid, uuid, timestamptz, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function public.get_factory_scorer_pause(uuid, uuid, uuid, uuid),
-  public.configure_factory_scorer_pause(uuid, uuid, uuid, uuid, integer, boolean),
-  public.request_factory_scorer_reevaluation(uuid, uuid, uuid, uuid, uuid),
-  public.list_factory_scorer_reevaluations(uuid, uuid, uuid, uuid, timestamptz, uuid) to service_role;
+grant execute on function public.get_factory_scorer_pause(uuid, uuid, uuid, integer),
+  public.list_factory_scorer_reevaluations(uuid, uuid, uuid, timestamptz, uuid) to authenticated;
+grant execute on function public.configure_factory_scorer_pause(uuid, uuid, uuid, uuid, integer, boolean),
+  public.request_factory_scorer_reevaluation(uuid, uuid, uuid, uuid, uuid) to service_role;
 
 -- Cohort membership and its rates continue to use automatic evaluation only.
 create or replace function public.read_factory_score_cohort(

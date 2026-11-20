@@ -1256,9 +1256,31 @@ insert into evaluation_claims select 'governance-expiring', claim.* from public.
 select is(pg_temp.begin_judge('governance-expiring', rotated_judge.id)->>'status', 'authorized',
   'a second started scorer attempt is independently recoverable') from rotated_judge;
 
-select ok((select public.get_factory_scorer_pause(revision.workspace_id, revision.factory_id,
-    pg_temp.sampling_id(1), revision.scorer_id) @> '{"paused":false,"revision":0}'::jsonb from numeric_scorer revision),
-  'a newly enrolled scorer starts enabled at pause revision zero');
+select ok((select bool_and(has_function_privilege('authenticated', signature, 'EXECUTE')
+    and not has_function_privilege('service_role', signature, 'EXECUTE')
+    and not has_function_privilege('anon', signature, 'EXECUTE'))
+  from (values ('public.get_factory_scorer_pause(uuid,uuid,uuid,integer)'),
+    ('public.list_factory_scorer_reevaluations(uuid,uuid,uuid,timestamptz,uuid)'),
+    ('public.read_factory_evaluation_review(uuid,uuid,uuid,timestamptz,uuid,uuid)'),
+    ('public.read_factory_scorer_calibration(uuid,uuid,uuid,uuid,integer,timestamptz,uuid,timestamptz,uuid)')) reads(signature))
+    and not has_table_privilege('authenticated', 'public.factory_scorer_pause_transitions', 'SELECT'),
+  'governance read functions require a signed-in database role and do not grant raw pause history');
+create function pg_temp.scorer_pause_state(p_before integer default null, p_scope text default 'primary')
+returns jsonb language sql as $$
+  select public.get_factory_scorer_pause(scope.workspace_id, scope.factory_id, revision.scorer_id, p_before)
+  from numeric_scorer revision cross join sample_scope scope where scope.key = p_scope;
+$$;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select is(pg_temp.scorer_pause_state(),
+  '{"paused":false,"revision":0,"updated_at":null,"history":[],"next_before_pause_revision":null}'::jsonb,
+  'a signed-in factory reader sees the initial enabled scorer and empty pause history');
+select throws_ok($$select pg_temp.scorer_pause_state(p_scope => 'sibling')$$, 'P0002', 'Evaluation factory is unavailable.',
+  'ordinary workspace membership does not authorize pause history in a restricted sibling factory');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
 select throws_ok($$select pg_temp.set_scorer_pause(0, true, pg_temp.sampling_id(2))$$,
   '42501', null, 'a permitted factory reader cannot pause a scorer');
 select ok(pg_temp.set_scorer_pause(0, true) @> '{"paused":true,"revision":1}'::jsonb,
@@ -1304,6 +1326,38 @@ select ok(pg_temp.set_scorer_pause(1, false) @> '{"paused":false,"revision":2}':
 select ok((select (pg_temp.record_sample('primary', 'trend-numeric', 'governance-paused')).id = sample.id
     and not exists (select 1 from public.factory_evaluation_jobs job where job.sample_receipt_id = sample.id)
   from paused_score_sample sample), 'an already skipped sample does not enqueue when its exact receipt is replayed after resume');
+
+do $$
+declare revision integer;
+begin
+  for revision in 2..21 loop
+    perform pg_temp.set_scorer_pause(revision, revision % 2 = 0);
+  end loop;
+end;
+$$;
+update public.workspace_members set full_name = 'Sampling owner' where id = pg_temp.sampling_id(21);
+select ok((select count(*) = 22 and bool_and(transition.actor_user_id = pg_temp.sampling_id(1))
+    and bool_and(transition.paused = (transition.revision % 2 = 1))
+  from numeric_scorer scorer join public.factory_scorer_pause_transitions transition
+    on (transition.workspace_id, transition.factory_id, transition.scorer_id) = (scorer.workspace_id, scorer.factory_id, scorer.scorer_id)),
+  'each actual state change durably records its scoped actor, revision and disposition');
+select throws_ok($$update public.factory_scorer_pause_transitions transition set actor_user_id = pg_temp.sampling_id(2)
+  from numeric_scorer scorer where (transition.workspace_id, transition.factory_id, transition.scorer_id, transition.revision) =
+    (scorer.workspace_id, scorer.factory_id, scorer.scorer_id, 1)$$, '23514', null,
+  'the original actor of a pause transition cannot be rewritten');
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select ok((select payload @> '{"paused":false,"revision":22,"next_before_pause_revision":3}'::jsonb
+    and jsonb_array_length(payload->'history') = 20 and payload#>>'{history,0,revision}' = '22'
+    and payload#>>'{history,19,revision}' = '3' and payload#>>'{history,0,actor_name}' = 'Sampling owner'
+    and (pg_temp.scorer_pause_state((payload->>'next_before_pause_revision')::integer))
+      @> '{"paused":false,"revision":22,"next_before_pause_revision":null,"history":[{"revision":2,"paused":false},{"revision":1,"paused":true}]}'::jsonb
+  from (select pg_temp.scorer_pause_state() as payload) recent),
+  'pause history pages keep current state while returning older immutable transitions and display-safe actor labels');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
 
 insert into sample_scorers select 'governance-manual-target', id from governance_revisions where revision_number = 4;
 insert into sample_policies select 'governance-manual-target', id
@@ -1357,28 +1411,35 @@ update public.factory_evaluation_receipts receipt set recorded_xact_id = null
 from evaluation_claims claim where claim.slot = 'governance-manual' and receipt.attempt_id = claim.attempt_id;
 alter table public.factory_evaluation_receipts enable trigger factory_evaluation_receipts_immutable;
 select ok((select to_jsonb(original) = to_jsonb(retained)
-    and judgment.payload->'jobs' @> jsonb_build_array(jsonb_build_object('job_id', claim.job_id,
+  from original_manual_score original join public.factory_evaluation_receipts retained on retained.attempt_id = original.attempt_id),
+  'the manual result does not alter the original judgment');
+create temp table manual_history_position as
+select job.created_at, job.id from original_manual_score original join public.factory_evaluation_jobs job
+  on (job.workspace_id, job.factory_id, job.source_attempt_id) = (original.workspace_id, original.factory_id, original.attempt_id);
+grant select (workspace_id, factory_id, attempt_id, run_id, finished_at) on original_manual_score to authenticated;
+grant select on manual_history_position to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select ok((select judgment.payload->'jobs' @> jsonb_build_array(jsonb_build_object('job_id', claim.job_id,
       'prior_attempt_id', original.attempt_id, 'target_scorer_revision_id', claim.scorer_revision_id,
       'receipt', jsonb_build_object('attempt_id', claim.attempt_id, 'status', 'pass')))
     and judgment.payload @> '{"next_before_created_at":null,"next_before_job_id":null}'::jsonb
-  from original_manual_score original join public.factory_evaluation_receipts retained on retained.attempt_id = original.attempt_id
-  join evaluation_claims claim on claim.run_id = original.run_id cross join lateral (
-    select public.list_factory_scorer_reevaluations(original.workspace_id, original.factory_id,
-      pg_temp.sampling_id(1), original.attempt_id) as payload
+  from original_manual_score original join evaluation_claims claim on claim.run_id = original.run_id cross join lateral (
+    select public.list_factory_scorer_reevaluations(original.workspace_id, original.factory_id, original.attempt_id) as payload
   ) judgment where claim.slot = 'governance-manual'),
-  'the manual result keeps its own score and source provenance without altering the original judgment');
+  'a factory reader can inspect the manual result and its exact source provenance');
 select is((select public.list_factory_scorer_reevaluations(original.workspace_id, original.factory_id,
-    pg_temp.sampling_id(1), original.attempt_id, job.created_at, job.id)
-  from original_manual_score original join public.factory_evaluation_jobs job
-    on (job.workspace_id, job.factory_id, job.source_attempt_id) = (original.workspace_id, original.factory_id, original.attempt_id)),
+    original.attempt_id, job.created_at, job.id)
+  from original_manual_score original cross join manual_history_position job),
   '{"jobs":[],"next_before_created_at":null,"next_before_job_id":null}'::jsonb,
   'the exact timestamp and job keyset boundary excludes the already listed re-evaluation');
 select throws_ok($$select public.list_factory_scorer_reevaluations(original.workspace_id, original.factory_id,
-    pg_temp.sampling_id(1), original.attempt_id, p_before_created_at => original.finished_at)
+    original.attempt_id, p_before_created_at => original.finished_at)
   from original_manual_score original$$, '22023', null, 'manual history rejects a partially specified keyset cursor');
-
-set local role authenticated;
-set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000003';
+select throws_ok($$select public.list_factory_scorer_reevaluations(workspace_id, factory_id, attempt_id)
+  from original_manual_score$$, 'P0002', 'Evaluation factory is unavailable.', 'foreign users cannot read known manual evaluation lineage');
 set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
 select ok((select pg_temp.read_run_scores('governance-paused') @> jsonb_build_array(jsonb_build_object(
     'scorer_revision_id', revision.id, 'admission_paused', true, 'evaluation_job_id', null::uuid))
@@ -1396,9 +1457,10 @@ select receipt.attempt_id, to_jsonb(receipt) as judgment, session.id as session_
 from evaluation_claims claim join public.factory_evaluation_receipts receipt on receipt.attempt_id = claim.attempt_id
 join public.sessions session on session.id = claim.session_id where claim.slot = 'governance-held';
 
-create function pg_temp.review_held_score(p_actor uuid default pg_temp.sampling_id(1))
+create function pg_temp.review_held_score(p_selected uuid default null)
 returns jsonb language sql as $$
-  select public.read_factory_evaluation_review(claim.workspace_id, claim.factory_id, p_actor, claim.attempt_id)
+  select public.read_factory_evaluation_review(claim.workspace_id, claim.factory_id, claim.attempt_id,
+    p_selected_adjudication_id => p_selected)
   from evaluation_claims claim where claim.slot = 'governance-held';
 $$;
 create function pg_temp.adjudicate_held_score(p_id uuid, p_disposition text, p_note text,
@@ -1408,10 +1470,20 @@ create function pg_temp.adjudicate_held_score(p_id uuid, p_disposition text, p_n
   from evaluation_claims claim where claim.slot = 'governance-held';
 $$;
 
+grant select (factory_definition_revision_id) on scorer_review_before to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
 select ok((select session.factory_definition_revision_id = pg_temp.sampling_id(53) and live.anyone_can_approve
-    and pg_temp.review_held_score(pg_temp.sampling_id(2)) @> '{"can_adjudicate":false,"adjudications":[]}'::jsonb
+    and pg_temp.review_held_score() @> '{"can_adjudicate":false,"adjudications":[]}'::jsonb
   from scorer_review_before session cross join public.pipeline_stages live where live.id = pg_temp.sampling_id(32)),
   'the live stage may allow everyone while only the frozen approver can adjudicate the exact judged run');
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000003';
+select throws_ok($$select pg_temp.review_held_score()$$,
+  'P0002', 'Evaluation factory is unavailable.', 'a foreign signed-in user cannot read a known exact adjudication target');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
 select throws_ok($$select pg_temp.adjudicate_held_score(pg_temp.sampling_id(142), 'confirmed', 'Unlisted reviewer',
     p_actor => pg_temp.sampling_id(2))$$, '42501', null, 'the pinned approver gate applies to an ordinary in-factory reader');
 select throws_ok($$select public.adjudicate_factory_evaluation_receipt(claim.workspace_id, pg_temp.sampling_id(20),
@@ -1429,7 +1501,14 @@ select throws_ok($$select pg_temp.adjudicate_held_score(pg_temp.sampling_id(141)
 select ok(pg_temp.adjudicate_held_score(pg_temp.sampling_id(142), 'disputed', 'The held case is a valid release.', 'pass')
     @> '{"disposition":"disputed","expected_status":"pass"}'::jsonb,
   'a later independent reviewer dispute retains its expected status separately from the model verdict');
-select ok((select pg_temp.review_held_score() @> jsonb_build_object('can_adjudicate', true, 'adjudications', jsonb_build_array(
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000001';
+create temp table retained_score_review as select pg_temp.review_held_score() as payload;
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+select ok((select review.payload @> jsonb_build_object('can_adjudicate', true, 'adjudications', jsonb_build_array(
       jsonb_build_object('id', pg_temp.sampling_id(141), 'disposition', 'confirmed', 'note', 'The recorded capacity checks agree.'),
       jsonb_build_object('id', pg_temp.sampling_id(142), 'disposition', 'disputed', 'expected_status', 'pass',
         'note', 'The held case is a valid release.')))
@@ -1437,7 +1516,7 @@ select ok((select pg_temp.review_held_score() @> jsonb_build_object('can_adjudic
     and (session.phase_status, session.current_artifact_id, session.artifact_review_revision) is not distinct from
       (before_review.phase_status, before_review.current_artifact_id, before_review.artifact_review_revision)
   from scorer_review_before before_review join public.factory_evaluation_receipts receipt on receipt.attempt_id = before_review.attempt_id
-  join public.sessions session on session.id = before_review.session_id),
+  join public.sessions session on session.id = before_review.session_id cross join retained_score_review review),
   'both adjudications remain inspectable without changing the original result or approving the production stage');
 
 create function pg_temp.save_scorer_calibration(p_expected integer, p_pin uuid, p_adjudication uuid,
@@ -1457,6 +1536,11 @@ select throws_ok($$select pg_temp.save_scorer_calibration(0, id, pg_temp.samplin
 create temp table second_scorer_calibration as
 select pg_temp.save_scorer_calibration(1, id, pg_temp.sampling_id(142)) as payload
 from governance_revisions where revision_number = 4;
+grant select on first_scorer_calibration, second_scorer_calibration to authenticated;
+grant select (id, revision_number) on governance_revisions to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000001';
 select ok((select first.payload @> jsonb_build_object('revision', 1, 'scorer_revision_id', scorer.id,
       'adjudication_ids', jsonb_build_array(pg_temp.sampling_id(141)))
     and second.payload @> jsonb_build_object('revision', 2, 'scorer_revision_id', revision.id,
@@ -1470,9 +1554,12 @@ select ok((select first.payload @> jsonb_build_object('revision', 1, 'scorer_rev
   from first_scorer_calibration first cross join second_scorer_calibration second
   cross join numeric_scorer scorer cross join governance_revisions revision cross join evaluation_claims claim cross join lateral (
     select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
-      pg_temp.sampling_id(1), scorer.scorer_id, pg_temp.sampling_id(140)) as payload
+      scorer.scorer_id, pg_temp.sampling_id(140)) as payload
   ) versions where revision.revision_number = 4 and claim.slot = 'governance-held'),
   'each calibration version retains its rubric number and exact adjudication, attempt, and run references');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
 select throws_ok($$update public.factory_scorer_adjudications set note = 'Rewritten' where id = pg_temp.sampling_id(142)$$,
   '23514', null, 'an adjudication cannot be updated after it is retained');
 select throws_ok($$update public.factory_scorer_calibration_revisions set name = 'Rewritten'
@@ -1487,9 +1574,12 @@ begin
   from original_manual_score original cross join generate_series(401, 439) slots(slot);
 end;
 $$;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000001';
 create temp table first_calibration_candidates as
 select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
-  pg_temp.sampling_id(1), scorer.scorer_id, pg_temp.sampling_id(140)) as payload from numeric_scorer scorer;
+  scorer.scorer_id, pg_temp.sampling_id(140)) as payload from numeric_scorer scorer;
 select ok((select jsonb_array_length(payload->'candidates') = 40
     and payload->>'next_before_candidate_at' is not null
     and payload->>'next_before_candidate_id' = payload#>>'{candidates,39,id}'
@@ -1501,13 +1591,49 @@ select ok((select jsonb_array_length(older.payload->'candidates') = 1
     and older.payload->'versions' = first.payload->'versions'
   from first_calibration_candidates first cross join numeric_scorer scorer cross join lateral (
     select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
-      pg_temp.sampling_id(1), scorer.scorer_id, pg_temp.sampling_id(140),
+      scorer.scorer_id, pg_temp.sampling_id(140),
       p_before_candidate_at => (first.payload->>'next_before_candidate_at')::timestamptz,
       p_before_candidate_id => (first.payload->>'next_before_candidate_id')::uuid) as payload
   ) older), 'the candidate continuation exposes the older case without changing calibration version history');
 select throws_ok($$select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
-    pg_temp.sampling_id(1), scorer.scorer_id, p_before_candidate_id => pg_temp.sampling_id(141))
+    scorer.scorer_id, p_before_candidate_id => pg_temp.sampling_id(141))
   from numeric_scorer scorer$$, '22023', null, 'calibration candidates require both keyset cursor fields');
+
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select ok((select reader.payload->'candidates' = '[]'::jsonb and jsonb_array_length(reader.payload->'versions') = 2
+  from numeric_scorer scorer cross join lateral (
+    select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
+      scorer.scorer_id, pg_temp.sampling_id(140)) as payload
+  ) reader), 'the signed-in reader can inspect retained versions but cannot fetch the manager’s candidate pool');
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000003';
+select throws_ok($$select public.read_factory_scorer_calibration(workspace_id, factory_id, scorer_id)
+  from numeric_scorer$$, 'P0002', 'Evaluation factory is unavailable.', 'a foreign signed-in user cannot list exact calibration history');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
+do $$
+begin
+  perform pg_temp.adjudicate_held_score(pg_temp.sampling_id(slot), 'confirmed', 'Newer adjudication on the same receipt.')
+  from generate_series(501, 520) slots(slot);
+end;
+$$;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select ok((select jsonb_array_length(payload->'adjudications') = 20 and payload->>'has_more' = 'true'
+    and not (payload->'adjudications' @> jsonb_build_array(jsonb_build_object('id', pg_temp.sampling_id(142))))
+    and payload->'selected_adjudication' @> jsonb_build_object('id', pg_temp.sampling_id(142),
+      'attempt_id', before_review.attempt_id, 'expected_status', 'pass', 'note', 'The held case is a valid release.')
+  from (select pg_temp.review_held_score(pg_temp.sampling_id(142)) as payload) exact
+  cross join evaluation_claims before_review where before_review.slot = 'governance-held'),
+  'a saved exact adjudication links beyond the latest twenty decisions on the same attempt');
+select is((select public.read_factory_evaluation_review(workspace_id, factory_id, attempt_id,
+    p_selected_adjudication_id => pg_temp.sampling_id(142))->'selected_adjudication' from original_manual_score),
+  'null'::jsonb, 'an exact adjudication ID from another attempt is not returned on this receipt');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
 
 update public.sessions session set archived_at = clock_timestamp()
 from scorer_review_before original where session.id = original.session_id;
@@ -1520,15 +1646,18 @@ set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000001';
 select (public.erase_session_retained_content(target.workspace_id, target.factory_id, target.id, target.archived_at)).erased_at
 from reviewed_erasure_target target;
+create temp table withheld_scorer_review as
+select pg_temp.review_held_score(pg_temp.sampling_id(141))->'selected_adjudication' as confirmed,
+  pg_temp.review_held_score(pg_temp.sampling_id(142))->'selected_adjudication' as disputed;
 reset role;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '';
-select ok((select pg_temp.review_held_score() @> jsonb_build_object('adjudications', jsonb_build_array(
-      jsonb_build_object('id', pg_temp.sampling_id(141), 'disposition', 'confirmed', 'note', null::text),
-      jsonb_build_object('id', pg_temp.sampling_id(142), 'disposition', 'disputed', 'expected_status', 'pass', 'note', null::text)))
+select ok((select review.confirmed @> jsonb_build_object('id', pg_temp.sampling_id(141), 'disposition', 'confirmed', 'note', null::text)
+    and review.disputed @> jsonb_build_object('id', pg_temp.sampling_id(142), 'disposition', 'disputed', 'expected_status', 'pass', 'note', null::text)
     and to_jsonb(receipt) = original.judgment
-  from scorer_review_before original join public.factory_evaluation_receipts receipt on receipt.attempt_id = original.attempt_id),
-  'erasure withholds the existing adjudication prose while preserving its exact disposition and immutable original receipt');
+  from scorer_review_before original join public.factory_evaluation_receipts receipt on receipt.attempt_id = original.attempt_id
+  cross join withheld_scorer_review review),
+  'erasure withholds even exact-linked adjudication prose while preserving its disposition and immutable original receipt');
 
 -- Model a historical receipt selected for admission as its workspace retires.
 insert into sample_runs values ('retiring-receipt', pg_temp.accept_sample_run('Retiring workspace receipt fixture'));

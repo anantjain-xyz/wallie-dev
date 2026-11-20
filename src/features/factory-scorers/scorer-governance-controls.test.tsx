@@ -187,13 +187,20 @@ it("links a reader to the rubric and exact attempts retained in the calibration 
   render(
     <ScorerGovernanceSection
       workspaceSlug="wallie"
-      scope={{ workspaceId: id(20), factoryId: id(21), actorUserId: id(22) }}
+      scope={{ workspaceId: id(20), factoryId: id(21) }}
       scorerId={id(23)}
       scorerRevisionId={id(12)}
       canEdit={false}
       path="/w/wallie/scorers/detail"
       data={{
-        pause: null,
+        pause: {
+          paused: false,
+          revision: 3,
+          updated_at: at,
+          history: [{ revision: 2, paused: true, actor_name: "Scorer Manager", created_at: at }],
+          next_before_pause_revision: 2,
+        },
+        beforePauseRevision: 3,
         selection: { calibrationSet: current.set_id },
         calibration: {
           ...candidatePage,
@@ -206,12 +213,22 @@ it("links a reader to the rubric and exact attempts retained in the calibration 
     />,
   );
   const rubric = screen.getByRole("link", { name: "Pinned rubric · Revision 2" });
+  expect(screen.getByText("Admitting evaluations")).toBeVisible();
+  expect(screen.getByText("Pause revision 2")).toBeVisible();
+  expect(screen.getByText("Scorer Manager")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Pause scorer" })).toBeNull();
+  const nextPause = new URL(
+    screen.getByRole("link", { name: "Older pause changes" }).getAttribute("href") ?? "",
+    "https://wallie.test",
+  );
+  expect(nextPause.searchParams.get("beforePauseRevision")).toBe("2");
+  expect(nextPause.searchParams.get("calibrationSet")).toBe(current.set_id);
   expect(
     new URL(rubric.getAttribute("href") ?? "", "https://wallie.test").searchParams.get("revision"),
   ).toBe(current.scorer_revision_id);
   fireEvent.click(screen.getByText("Inspect calibration cases"));
   const caseLink = screen.getByRole("link", { name: "Open case 1" });
   expect(caseLink.getAttribute("href")).toBe(
-    `/w/wallie/runs/${id(11)}?evaluationAttempt=${id(7)}#scorer-evaluations`,
+    `/w/wallie/runs/${id(11)}?evaluationAttempt=${id(7)}&evaluationAdjudication=${id(4)}#adjudication-${id(4)}`,
   );
 });

@@ -9,7 +9,7 @@ import {
 import { readBoundedJsonBody } from "@/lib/http/bounded-json-body";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
-import type { ScorerGovernanceScope } from "./scorer-governance";
+import type { ScorerGovernanceActor } from "./scorer-governance";
 
 const id = z
   .string()
@@ -53,7 +53,7 @@ export async function handleScorerGovernanceCommand<Command>(
   schema: z.ZodType<Command>,
   apply: (
     client: Admin,
-    scope: ScorerGovernanceScope,
+    scope: ScorerGovernanceActor,
     targetId: string,
     input: Command,
   ) => Promise<unknown>,

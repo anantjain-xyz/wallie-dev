@@ -12,9 +12,9 @@ import {
   type ScorerGovernanceScope,
 } from "@/lib/factory-evaluations/scorer-governance";
 import type { RunScore } from "@/lib/factory-evaluations/score-trend-contracts";
+import type { ScorerAdjudication } from "@/lib/factory-evaluations/scorer-governance-contracts";
 import { listFactoryScorerRevisions } from "@/lib/factory-scorers/service";
-import { workspaceRunDetailPath } from "@/lib/routes";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { workspaceRunDetailPath, workspaceScorerDetailPath } from "@/lib/routes";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
 import { AdjudicationForm, ReevaluationForm } from "./evaluation-governance-controls";
@@ -24,6 +24,11 @@ type Receipt = NonNullable<RunScore["receipt"]>;
 type Client = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 const querySchema = z
   .object({
+    evaluationAdjudication: z
+      .string()
+      .uuid()
+      .transform((value) => value.toLowerCase())
+      .optional(),
     beforeAdjudicationAt: z.string().datetime({ offset: true }).optional(),
     beforeAdjudicationId: z.string().uuid().optional(),
     beforeReevaluationAt: z.string().datetime({ offset: true }).optional(),
@@ -87,14 +92,19 @@ export async function loadRunEvaluationGovernance({
     page.beforeReevaluationAt && page.beforeReevaluationJob
       ? { createdAt: page.beforeReevaluationAt, jobId: page.beforeReevaluationJob }
       : undefined;
-  const admin = createSupabaseAdminClient();
   const [review, reevaluations, factories, pause] = await Promise.all([
-    readEvaluationReview(admin, scope, receipt.attempt_id, before).catch(() => null),
-    readScorerReevaluations(admin, scope, receipt.attempt_id, receipt.run_id, beforeJob).catch(
+    readEvaluationReview(
+      supabase,
+      scope,
+      receipt.attempt_id,
+      before,
+      page.evaluationAdjudication,
+    ).catch(() => null),
+    readScorerReevaluations(supabase, scope, receipt.attempt_id, receipt.run_id, beforeJob).catch(
       () => null,
     ),
     loadWorkspaceFactoryOptions(workspaceSlug).catch(() => []),
-    readScorerPause(admin, scope, score.scorer_id).catch(() => null),
+    readScorerPause(supabase, scope, score.scorer_id).catch(() => null),
   ]);
   const canManage = factories.some(
     (factory) => factory.id === scope.factoryId && factory.status === "active" && factory.canManage,
@@ -111,6 +121,11 @@ export async function loadRunEvaluationGovernance({
       : null;
   return {
     review,
+    rubric: {
+      scorerId: score.scorer_id,
+      revisionId: score.scorer_revision_id,
+      revisionNumber: score.scorer_revision_number,
+    },
     reevaluations,
     page,
     canManage,
@@ -129,6 +144,29 @@ export async function loadRunEvaluationGovernance({
 
 export type RunEvaluationGovernance = Awaited<ReturnType<typeof loadRunEvaluationGovernance>>;
 
+function ReviewRecord({ record }: { record: ScorerAdjudication }) {
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Status
+          compact
+          label={record.disposition === "disputed" ? "Disputed" : "Confirmed"}
+          value={record.disposition === "disputed" ? "needs_attention" : "approved"}
+        />
+        {record.expected_status ? (
+          <span className="type-secondary text-muted">Expected {record.expected_status}</span>
+        ) : null}
+        <time className="type-secondary text-muted" dateTime={record.created_at}>
+          {instant.format(new Date(record.created_at))} UTC
+        </time>
+      </div>
+      <p className="type-secondary whitespace-pre-wrap break-words">
+        {record.note ?? "Adjudication note withheld"}
+      </p>
+    </>
+  );
+}
+
 export function RunEvaluationControls({
   data,
   workspaceSlug,
@@ -138,17 +176,34 @@ export function RunEvaluationControls({
 }: {
   data: RunEvaluationGovernance;
   workspaceSlug: string;
-  scope: Pick<ScorerGovernanceScope, "workspaceId" | "factoryId">;
+  scope: ScorerGovernanceScope;
   receipt: Receipt;
   visibleJobIds: ReadonlySet<string | null>;
 }) {
   const endpoint = `/api/workspaces/${scope.workspaceId}/factories/${scope.factoryId}/evaluation-attempts/${receipt.attempt_id}`;
-  const reviewId = `adjudication-${receipt.attempt_id}`;
+  const reviewId = `evaluation-adjudications-${receipt.attempt_id}`;
   const reevaluateId = `reevaluation-${receipt.attempt_id}`;
   const pageHref = (anchor: string, page: PageQuery) =>
     runAttemptHref(workspaceSlug, receipt.run_id, receipt.attempt_id, receipt.job_id, anchor, page);
   const review = data?.review;
   const reevaluations = data?.reevaluations;
+  const selectedId = data?.page.evaluationAdjudication;
+  const selected = review?.selected_adjudication;
+  const selectedOutsidePage =
+    selected && !review.adjudications.some(({ id }) => id === selected.id);
+  const rubric = data?.rubric;
+  const pinnedRubric = rubric ? (
+    <Link
+      className="type-secondary text-accent underline underline-offset-4"
+      href={workspaceScorerDetailPath(workspaceSlug, rubric.scorerId, {
+        factory: scope.factoryId,
+        revision: rubric.revisionId,
+      })}
+      prefetch={false}
+    >
+      Pinned rubric · Revision {rubric.revisionNumber}
+    </Link>
+  ) : null;
   return (
     <div className="grid min-w-0 gap-4 border-t border-border pt-4">
       <section
@@ -159,31 +214,33 @@ export function RunEvaluationControls({
         <h4 className="type-label font-semibold" id={`${reviewId}-title`}>
           Adjudication
         </h4>
+        {selectedOutsidePage ? (
+          <div
+            className="scroll-mt-24 space-y-2 rounded-md border border-border px-3 py-2.5"
+            id={`adjudication-${selected.id}`}
+          >
+            <h5 className="type-label font-semibold">Saved adjudication</h5>
+            {pinnedRubric}
+            <ReviewRecord record={selected} />
+          </div>
+        ) : selectedId && !selected ? (
+          <p className="type-secondary scroll-mt-24 text-muted" id={`adjudication-${selectedId}`}>
+            Saved adjudication is unavailable.
+          </p>
+        ) : null}
         {review?.adjudications.length ? (
           <ul
             aria-label="Adjudication history"
             className="divide-y divide-border rounded-md border border-border"
           >
             {review.adjudications.map((record) => (
-              <li className="space-y-1 px-3 py-2.5" key={record.id}>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <Status
-                    compact
-                    label={record.disposition === "disputed" ? "Disputed" : "Confirmed"}
-                    value={record.disposition === "disputed" ? "needs_attention" : "approved"}
-                  />
-                  {record.expected_status ? (
-                    <span className="type-secondary text-muted">
-                      Expected {record.expected_status}
-                    </span>
-                  ) : null}
-                  <time className="type-secondary text-muted" dateTime={record.created_at}>
-                    {instant.format(new Date(record.created_at))} UTC
-                  </time>
-                </div>
-                <p className="type-secondary whitespace-pre-wrap break-words">
-                  {record.note ?? "Adjudication note withheld"}
-                </p>
+              <li
+                className="scroll-mt-24 space-y-1 px-3 py-2.5"
+                id={`adjudication-${record.id}`}
+                key={record.id}
+              >
+                {record.id === selectedId ? pinnedRubric : null}
+                <ReviewRecord record={record} />
               </li>
             ))}
           </ul>

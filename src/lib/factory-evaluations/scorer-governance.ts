@@ -11,29 +11,37 @@ import {
   scorerAdjudicationSchema,
   scorerCalibrationRevisionSchema,
   scorerCalibrationSchema,
+  scorerPauseHistorySchema,
   scorerPauseSchema,
   scorerReevaluationSchema,
   scorerReevaluationsSchema,
 } from "./scorer-governance-contracts";
 
 type Client = Pick<SupabaseClient<Database>, "rpc">;
-export type ScorerGovernanceScope = { workspaceId: string; factoryId: string; actorUserId: string };
+export type ScorerGovernanceScope = { workspaceId: string; factoryId: string };
+export type ScorerGovernanceActor = ScorerGovernanceScope & { actorUserId: string };
 
-function scoped({ workspaceId, factoryId, actorUserId }: ScorerGovernanceScope) {
-  return { p_workspace_id: workspaceId, p_factory_id: factoryId, p_actor_user_id: actorUserId };
+function scoped({ workspaceId, factoryId }: ScorerGovernanceScope) {
+  return { p_workspace_id: workspaceId, p_factory_id: factoryId };
+}
+
+function scopedActor(scope: ScorerGovernanceActor) {
+  return { ...scoped(scope), p_actor_user_id: scope.actorUserId };
 }
 
 export async function readScorerPause(
   client: Client,
   scope: ScorerGovernanceScope,
   scorerId: string,
+  beforePauseRevision?: number,
 ) {
   const { data, error } = await client.rpc("get_factory_scorer_pause", {
     ...scoped(scope),
     p_scorer_id: scorerId,
+    p_before_pause_revision: beforePauseRevision,
   });
   if (error) throw error;
-  return scorerPauseSchema.parse(data);
+  return scorerPauseHistorySchema.parse(data);
 }
 
 export async function readScorerCalibration(
@@ -72,16 +80,23 @@ export async function readEvaluationReview(
   scope: ScorerGovernanceScope,
   attemptId: string,
   before?: { createdAt: string; adjudicationId: string },
+  selectedAdjudicationId?: string,
 ) {
   const { data, error } = await client.rpc("read_factory_evaluation_review", {
     ...scoped(scope),
     p_attempt_id: attemptId,
     p_before_created_at: before?.createdAt,
     p_before_adjudication_id: before?.adjudicationId,
+    p_selected_adjudication_id: selectedAdjudicationId,
   });
   if (error) throw error;
   const review = evaluationReviewSchema.parse(data);
-  if (review.adjudications.some(({ attempt_id }) => attempt_id !== attemptId)) {
+  if (
+    review.adjudications.some(({ attempt_id }) => attempt_id !== attemptId) ||
+    (review.selected_adjudication &&
+      (review.selected_adjudication.attempt_id !== attemptId ||
+        review.selected_adjudication.id !== selectedAdjudicationId))
+  ) {
     throw new Error("Evaluation review did not match the selected attempt.");
   }
   return review;
@@ -120,11 +135,11 @@ export async function readScorerReevaluations(
 
 export async function applyScorerGovernance(
   client: Client,
-  scope: ScorerGovernanceScope,
+  scope: ScorerGovernanceActor,
   scorerId: string,
   command: ScorerGovernanceCommand,
 ) {
-  const target = { ...scoped(scope), p_scorer_id: scorerId };
+  const target = { ...scopedActor(scope), p_scorer_id: scorerId };
   if (command.action === "pause") {
     const { data, error } = await client.rpc("configure_factory_scorer_pause", {
       ...target,
@@ -158,13 +173,13 @@ export async function applyScorerGovernance(
 
 export async function applyEvaluationGovernance(
   client: Client,
-  scope: ScorerGovernanceScope,
+  scope: ScorerGovernanceActor,
   attemptId: string,
   command: EvaluationGovernanceCommand,
 ) {
   if (command.action === "adjudicate") {
     const { data, error } = await client.rpc("adjudicate_factory_evaluation_receipt", {
-      ...scoped(scope),
+      ...scopedActor(scope),
       p_attempt_id: attemptId,
       p_adjudication_id: command.adjudicationId,
       p_disposition: command.disposition,
@@ -183,7 +198,7 @@ export async function applyEvaluationGovernance(
   }
 
   const { data, error } = await client.rpc("request_factory_scorer_reevaluation", {
-    ...scoped(scope),
+    ...scopedActor(scope),
     p_prior_attempt_id: attemptId,
     p_target_revision_id: command.targetRevisionId,
   });

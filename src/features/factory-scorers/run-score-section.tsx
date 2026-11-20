@@ -279,7 +279,7 @@ export async function RunScoreSection({
   governanceQuery?: Record<string, string | string[] | undefined>;
 }) {
   const query = attemptId.optional().safeParse(attempt);
-  const { supabase, workspace, user } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
+  const { supabase, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
   const data = query.success
     ? await loadRunScores(supabase, {
         workspaceId: workspace.id,
@@ -303,17 +303,16 @@ export async function RunScoreSection({
   const selected = query.data
     ? data.scores.find(({ receipt }) => receipt?.attempt_id === query.data)
     : undefined;
-  const governance =
-    selected?.receipt && user?.id
-      ? loadRunEvaluationGovernance({
-          supabase,
-          scope: { workspaceId: workspace.id, factoryId: data.factoryId, actorUserId: user.id },
-          workspaceSlug,
-          score: selected,
-          receipt: selected.receipt,
-          query: governanceQuery,
-        }).catch(() => null)
-      : null;
+  const governance = selected?.receipt
+    ? loadRunEvaluationGovernance({
+        supabase,
+        scope: { workspaceId: workspace.id, factoryId: data.factoryId },
+        workspaceSlug,
+        score: selected,
+        receipt: selected.receipt,
+        query: governanceQuery,
+      }).catch(() => null)
+    : null;
 
   const artifacts = new Map<string, string>();
   const ids = [

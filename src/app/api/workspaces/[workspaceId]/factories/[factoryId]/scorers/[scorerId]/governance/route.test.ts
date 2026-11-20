@@ -24,7 +24,14 @@ function fixture(response: Response, visible = true) {
   const rpc = vi.fn<typeof fetch>(async () => response);
   const user = createClient<Database>("http://supabase.test", "reader", {
     auth: { persistSession: false },
-    global: { fetch: async () => Response.json(visible ? { id: factoryId } : null) },
+    global: {
+      fetch: async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        return url.pathname.includes("/rpc/")
+          ? rpc(input, init)
+          : Response.json(visible ? { id: factoryId } : null);
+      },
+    },
   });
   mocks.admin.mockReturnValue(
     createClient<Database>("http://supabase.test", "service-fixture", {
@@ -91,12 +98,12 @@ it("reads only the scoped candidate page using the exact cursor and human actor"
   expect(result.status).toBe(200);
   expect(result.headers.get("cache-control")).toBe("private, no-store");
   expect(await result.json()).toEqual(page);
+  expect(mocks.admin).not.toHaveBeenCalled();
   const [uri, init] = rpc.mock.calls[0] ?? [];
   expect(String(uri)).toMatch(/\/rpc\/read_factory_scorer_calibration$/);
   expect(JSON.parse(String(init?.body))).toEqual({
     p_workspace_id: workspaceId,
     p_factory_id: factoryId,
-    p_actor_user_id: actorUserId,
     p_scorer_id: scorerId,
     p_before_candidate_at: cursorAt,
     p_before_candidate_id: id(9),

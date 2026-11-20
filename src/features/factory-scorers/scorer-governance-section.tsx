@@ -9,14 +9,14 @@ import type { ScoreMetrics } from "@/lib/factory-evaluations/score-trend-contrac
 import { workspaceScorerDetailPath } from "@/lib/routes";
 import type {
   ScorerCalibration,
-  ScorerPause,
+  ScorerPauseHistory,
 } from "@/lib/factory-evaluations/scorer-governance-contracts";
 import {
   readScorerCalibration,
   readScorerPause,
   type ScorerGovernanceScope,
 } from "@/lib/factory-evaluations/scorer-governance";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
 import { CalibrationForm, ScorerPauseControl } from "./scorer-governance-controls";
 import { runAttemptHref } from "./run-evaluation-governance";
@@ -26,15 +26,15 @@ const id = z
   .string()
   .uuid()
   .transform((value) => value.toLowerCase());
+const revisionParameter = z
+  .string()
+  .regex(/^[1-9]\d*$/)
+  .transform(Number)
+  .pipe(z.number().int().max(2_147_483_647));
 const format = z
   .object({
     calibrationSet: id.optional(),
-    beforeCalibrationRevision: z
-      .string()
-      .regex(/^[1-9]\d*$/)
-      .transform(Number)
-      .pipe(z.number().int().max(2_147_483_647))
-      .optional(),
+    beforeCalibrationRevision: revisionParameter.optional(),
     beforeCalibrationSetAt: z.string().datetime({ offset: true }).optional(),
     beforeCalibrationSetId: id.optional(),
   })
@@ -48,10 +48,77 @@ const format = z
   );
 type CalibrationQuery = z.output<typeof format>;
 const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
+const pauseTime = new Intl.DateTimeFormat("en-US", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "UTC",
+});
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 
 function coverage(numerator: number, denominator: number) {
   return `${scoreNumber.format(numerator)} / ${scoreNumber.format(denominator)}${denominator ? ` (${percent.format(numerator / denominator)})` : ""}`;
+}
+
+function PauseHistory({
+  state,
+  beforeRevision,
+  path,
+}: {
+  state: ScorerPauseHistory;
+  beforeRevision?: number;
+  path: string;
+}) {
+  function href(before?: number) {
+    const url = new URL(path, "https://wallie.invalid");
+    if (before) url.searchParams.set("beforePauseRevision", String(before));
+    else url.searchParams.delete("beforePauseRevision");
+    return `${url.pathname}${url.search}#scorer-health`;
+  }
+  return (
+    <details className="border-t border-border pt-3" open={beforeRevision ? true : undefined}>
+      <summary className="type-label cursor-pointer">Pause history</summary>
+      {state.history.length ? (
+        <ul aria-label="Pause history" className="mt-2 divide-y divide-border">
+          {state.history.map((entry) => (
+            <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2" key={entry.revision}>
+              <Status
+                compact
+                label={entry.paused ? "Paused" : "Resumed"}
+                value={entry.paused ? "blocked" : "healthy"}
+              />
+              <span className="type-secondary text-muted">Pause revision {entry.revision}</span>
+              <span className="type-secondary min-w-0 break-words">
+                {entry.actor_name ?? "Actor unavailable"}
+              </span>
+              <time className="type-secondary text-muted" dateTime={entry.created_at}>
+                {pauseTime.format(new Date(entry.created_at))} UTC
+              </time>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="type-secondary mt-2 text-muted">No pause changes on this page.</p>
+      )}
+      {beforeRevision || state.next_before_pause_revision ? (
+        <nav aria-label="Pause history pages" className="mt-2 flex flex-wrap gap-2">
+          {beforeRevision ? (
+            <Link className="ui-button" href={href()} prefetch={false}>
+              Latest pause changes
+            </Link>
+          ) : null}
+          {state.next_before_pause_revision ? (
+            <Link
+              className="ui-button"
+              href={href(state.next_before_pause_revision)}
+              prefetch={false}
+            >
+              Older pause changes
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
+    </details>
+  );
 }
 
 function ScorerHealth({
@@ -59,11 +126,15 @@ function ScorerHealth({
   stats,
   endpoint,
   canEdit,
+  beforePauseRevision,
+  historyPath,
 }: {
-  pause: ScorerPause | null;
+  pause: ScorerPauseHistory | null;
   stats?: ScoreMetrics;
   endpoint: string;
   canEdit: boolean;
+  beforePauseRevision?: number;
+  historyPath: string;
 }) {
   const settled = stats
     ? stats.pass_count +
@@ -116,6 +187,7 @@ function ScorerHealth({
               Pausing skips new admissions and holds queued work. Active attempts can finish.
             </p>
             {canEdit ? <ScorerPauseControl endpoint={endpoint} pause={pause} /> : null}
+            <PauseHistory state={pause} beforeRevision={beforePauseRevision} path={historyPath} />
           </>
         ) : (
           <p className="type-secondary text-muted">Scorer admission state is unavailable.</p>
@@ -212,6 +284,9 @@ function CalibrationSection({
                                     workspaceSlug,
                                     reference.run_id,
                                     reference.attempt_id,
+                                    undefined,
+                                    `adjudication-${reference.adjudication_id}`,
+                                    { evaluationAdjudication: reference.adjudication_id },
                                   )}
                                   prefetch={false}
                                 >
@@ -309,33 +384,27 @@ function CalibrationSection({
 }
 
 export async function loadScorerGovernanceData(
+  client: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   scope: ScorerGovernanceScope,
   scorerId: string,
   search: Record<string, string | string[] | undefined>,
 ) {
   const parsed = format.safeParse(search);
   const selection = parsed.success ? parsed.data : null;
-  let pause: ScorerPause | null = null;
-  let calibration: ScorerCalibration | null = null;
-  if (scope.actorUserId) {
-    try {
-      const client = createSupabaseAdminClient();
-      [pause, calibration] = await Promise.all([
-        readScorerPause(client, scope, scorerId).catch(() => null),
-        selection
-          ? readScorerCalibration(client, scope, scorerId, {
-              setId: selection.calibrationSet,
-              beforeRevision: selection.beforeCalibrationRevision,
-              beforeSetAt: selection.beforeCalibrationSetAt,
-              beforeSetId: selection.beforeCalibrationSetId,
-            }).catch(() => null)
-          : null,
-      ]);
-    } catch {
-      /* Keep ordinary scorer reads available. */
-    }
-  }
-  return { pause, calibration, selection };
+  const pausePage = revisionParameter.optional().safeParse(search.beforePauseRevision);
+  const beforePauseRevision = pausePage.success ? pausePage.data : undefined;
+  const [pause, calibration] = await Promise.all([
+    readScorerPause(client, scope, scorerId, beforePauseRevision).catch(() => null),
+    selection
+      ? readScorerCalibration(client, scope, scorerId, {
+          setId: selection.calibrationSet,
+          beforeRevision: selection.beforeCalibrationRevision,
+          beforeSetAt: selection.beforeCalibrationSetAt,
+          beforeSetId: selection.beforeCalibrationSetId,
+        }).catch(() => null)
+      : null,
+  ]);
+  return { pause, calibration, selection, beforePauseRevision };
 }
 
 export function ScorerGovernanceSection({
@@ -357,11 +426,18 @@ export function ScorerGovernanceSection({
   path: string;
   data: Awaited<ReturnType<typeof loadScorerGovernanceData>>;
 }) {
-  const { pause, calibration, selection } = data;
+  const { pause, calibration, selection, beforePauseRevision } = data;
   const endpoint = `/api/workspaces/${scope.workspaceId}/factories/${scope.factoryId}/scorers/${scorerId}/governance`;
   return (
     <>
-      <ScorerHealth pause={pause} stats={stats} endpoint={endpoint} canEdit={canEdit} />
+      <ScorerHealth
+        pause={pause}
+        stats={stats}
+        endpoint={endpoint}
+        canEdit={canEdit}
+        beforePauseRevision={beforePauseRevision}
+        historyPath={calibrationHref(path, selection ?? {})}
+      />
       <CalibrationSection
         data={calibration}
         selection={selection}

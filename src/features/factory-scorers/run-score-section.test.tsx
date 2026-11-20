@@ -263,6 +263,7 @@ it("pages exact re-evaluations while retaining other history filters", () => {
       visibleJobIds={new Set()}
       data={{
         review: null,
+        rubric: { scorerId, revisionId, revisionNumber: 2 },
         canManage: false,
         paused: false,
         targets: [],
@@ -300,4 +301,55 @@ it("pages exact re-evaluations while retaining other history filters", () => {
   const latest = url("Latest re-evaluations");
   expect(latest.searchParams.has("beforeReevaluationJob")).toBe(false);
   expect(latest.searchParams.get("beforeAdjudicationId")).toBe(reportId);
+});
+
+it("opens an exact saved adjudication outside the ordinary history page and keeps it across pages", () => {
+  const selected = {
+    id: reportId,
+    attempt_id: attemptId,
+    disposition: "disputed" as const,
+    expected_status: "pass" as const,
+    note: "Saved case outside this page",
+    created_at: at,
+  };
+  render(
+    <RunEvaluationControls
+      workspaceSlug="wallie"
+      scope={{ workspaceId, factoryId }}
+      receipt={evaluated.receipt}
+      visibleJobIds={new Set()}
+      data={{
+        rubric: { scorerId, revisionId, revisionNumber: 2 },
+        canManage: false,
+        paused: false,
+        targets: [],
+        nextTarget: null,
+        reevaluations: null,
+        page: { evaluationAdjudication: selected.id },
+        review: {
+          can_adjudicate: false,
+          selected_adjudication: selected,
+          adjudications: [{ ...selected, id: sampleId, note: "Recent review" }],
+          has_more: true,
+          next_before_adjudication_id: sampleId,
+          next_before_created_at: at,
+        },
+      }}
+    />,
+  );
+  expect(screen.getByRole("heading", { name: "Saved adjudication" })).toBeTruthy();
+  const selectedCard = document.getElementById(`adjudication-${selected.id}`) ?? document.body;
+  expect(within(selectedCard).getByText(selected.note)).toBeTruthy();
+  expect(
+    within(selectedCard)
+      .getByRole("link", { name: "Pinned rubric · Revision 2" })
+      .getAttribute("href"),
+  ).toContain(`revision=${revisionId}`);
+  const url = new URL(
+    screen.getByRole("link", { name: "Older adjudications" }).getAttribute("href") ?? "",
+    "https://wallie.test",
+  );
+  expect(url.searchParams.get("evaluationAttempt")).toBe(attemptId);
+  expect(url.searchParams.get("evaluationAdjudication")).toBe(selected.id);
+  expect(url.searchParams.get("beforeAdjudicationId")).toBe(sampleId);
 });

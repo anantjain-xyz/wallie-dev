@@ -3103,6 +3103,23 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "factory_scorer_admission_ski_workspace_id_factory_id_scor_fkey1"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "scorer_id",
+              "pause_revision",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_scorer_pause_transitions"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "scorer_id",
+              "revision",
+            ]
+          },
+          {
             foreignKeyName: "factory_scorer_admission_skip_workspace_id_factory_id_scor_fkey"
             columns: ["workspace_id", "factory_id", "scorer_id"]
             isOneToOne: false
@@ -3161,6 +3178,44 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "factory_scorer_calibration_re_workspace_id_factory_id_scor_fkey"
+            columns: ["workspace_id", "factory_id", "scorer_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorers"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_scorer_pause_transitions: {
+        Row: {
+          actor_user_id: string
+          created_at: string
+          factory_id: string
+          paused: boolean
+          revision: number
+          scorer_id: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_user_id: string
+          created_at: string
+          factory_id: string
+          paused: boolean
+          revision: number
+          scorer_id: string
+          workspace_id: string
+        }
+        Update: {
+          actor_user_id?: string
+          created_at?: string
+          factory_id?: string
+          paused?: boolean
+          revision?: number
+          scorer_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorer_pause_transiti_workspace_id_factory_id_scor_fkey"
             columns: ["workspace_id", "factory_id", "scorer_id"]
             isOneToOne: false
             referencedRelation: "factory_scorers"
@@ -10461,7 +10516,7 @@ export type Database = {
       }
       get_factory_scorer_pause: {
         Args: {
-          p_actor_user_id: string
+          p_before_pause_revision?: number
           p_factory_id: string
           p_scorer_id: string
           p_workspace_id: string
@@ -11036,7 +11091,6 @@ export type Database = {
       }
       list_factory_scorer_reevaluations: {
         Args: {
-          p_actor_user_id: string
           p_before_created_at?: string
           p_before_job_id?: string
           p_factory_id: string
@@ -11692,11 +11746,11 @@ export type Database = {
       }
       read_factory_evaluation_review: {
         Args: {
-          p_actor_user_id: string
           p_attempt_id: string
           p_before_adjudication_id?: string
           p_before_created_at?: string
           p_factory_id: string
+          p_selected_adjudication_id?: string
           p_workspace_id: string
         }
         Returns: Json
@@ -11784,7 +11838,6 @@ export type Database = {
       }
       read_factory_scorer_calibration: {
         Args: {
-          p_actor_user_id: string
           p_before_candidate_at?: string
           p_before_candidate_id?: string
           p_before_revision?: number
