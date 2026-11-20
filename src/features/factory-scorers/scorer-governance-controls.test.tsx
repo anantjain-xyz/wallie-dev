@@ -5,19 +5,24 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, it, vi } from "vitest";
 
 import { CalibrationForm } from "./scorer-governance-controls";
+import { ScorerGovernanceSection } from "./scorer-governance-section";
 
 const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 const id = (suffix: number) => `60900000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 const at = "2026-11-19T23:30:00Z";
+const refs = (...ids: string[]) =>
+  ids.map((adjudication_id) => ({ adjudication_id, attempt_id: id(7), run_id: id(11) }));
 const current = {
   id: id(1),
   set_id: id(2),
   revision: 3,
   name: "Initial set",
   scorer_revision_id: id(3),
+  scorer_revision_number: 2,
   adjudication_ids: [id(4), id(5)],
+  case_refs: refs(id(4), id(5)),
   created_at: at,
 };
 const candidates = [
@@ -33,6 +38,11 @@ const candidates = [
   created_at: at,
   note,
 }));
+const candidatePage = {
+  candidates,
+  next_before_candidate_at: null,
+  next_before_candidate_id: null,
+};
 
 afterEach(() => {
   cleanup();
@@ -49,6 +59,7 @@ it("keeps earlier cases in their saved order and appends newly selected cases", 
         revision: 4,
         name: "Renamed set",
         adjudication_ids: [id(4), id(5), id(6)],
+        case_refs: refs(id(4), id(5), id(6)),
       },
     }),
   );
@@ -56,9 +67,9 @@ it("keeps earlier cases in their saved order and appends newly selected cases", 
   render(
     <CalibrationForm
       current={current}
-      candidates={candidates}
+      candidatePage={candidatePage}
       endpoint="/governance"
-      scorerRevisionId={current.scorer_revision_id}
+      scorerRevisionId={id(12)}
     />,
   );
   expect(screen.getByRole("checkbox", { name: /Earlier case/ })).toBeChecked();
@@ -93,7 +104,7 @@ it("retains the calibration draft on a stale revision while controls reload", as
   render(
     <CalibrationForm
       current={current}
-      candidates={candidates}
+      candidatePage={candidatePage}
       endpoint="/governance"
       scorerRevisionId={current.scorer_revision_id}
     />,
@@ -107,4 +118,100 @@ it("retains the calibration draft on a stale revision while controls reload", as
   fireEvent.click(screen.getByRole("button", { name: "Reload controls" }));
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   expect(screen.getByLabelText("Calibration set name")).toHaveValue("Draft update");
+});
+
+it("appends an older case page without resetting the draft or prior checkbox choices", async () => {
+  const cursor = "2026-11-19T23:30:00.123456+00:00";
+  const ids = [id(5), id(6), id(8)];
+  const fetcher = vi.fn(async (_url: string, init?: RequestInit) =>
+    init?.method === "POST"
+      ? Response.json({
+          action: "calibration",
+          calibration: {
+            ...current,
+            name: "Draft after paging",
+            revision: 4,
+            adjudication_ids: ids,
+            case_refs: refs(...ids),
+          },
+        })
+      : Response.json({
+          candidates: [
+            { ...candidates[0], id: id(4), note: "Previously hidden saved case" },
+            { ...candidates[0], id: id(8), note: "Another older case" },
+          ],
+          next_before_candidate_at: null,
+          next_before_candidate_id: null,
+        }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  render(
+    <CalibrationForm
+      current={current}
+      candidatePage={{
+        ...candidatePage,
+        next_before_candidate_at: cursor,
+        next_before_candidate_id: id(5),
+      }}
+      endpoint="/governance"
+      scorerRevisionId={id(12)}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Calibration set name"), {
+    target: { value: "Draft after paging" },
+  });
+  fireEvent.click(screen.getByRole("checkbox", { name: /Earlier case/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /New case/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Load older calibration cases" }));
+  expect(
+    await screen.findByRole("checkbox", { name: /Previously hidden saved case/ }),
+  ).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /New case/ })).toBeChecked();
+  expect(screen.getByLabelText("Calibration set name")).toHaveValue("Draft after paging");
+  expect(
+    new URL(fetcher.mock.calls[0]?.[0] ?? "", "https://wallie.test").searchParams.get(
+      "beforeCandidateAt",
+    ),
+  ).toBe(cursor);
+  fireEvent.click(screen.getByRole("checkbox", { name: /Another older case/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Publish next version" }));
+  expect(await screen.findByText("Calibration version published.")).toBeVisible();
+  expect(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))).toMatchObject({
+    scorerRevisionId: current.scorer_revision_id,
+    name: "Draft after paging",
+    adjudicationIds: ids,
+  });
+});
+
+it("links a reader to the rubric and exact attempts retained in the calibration version", () => {
+  render(
+    <ScorerGovernanceSection
+      workspaceSlug="wallie"
+      scope={{ workspaceId: id(20), factoryId: id(21), actorUserId: id(22) }}
+      scorerId={id(23)}
+      scorerRevisionId={id(12)}
+      canEdit={false}
+      path="/w/wallie/scorers/detail"
+      data={{
+        pause: null,
+        selection: { calibrationSet: current.set_id },
+        calibration: {
+          ...candidatePage,
+          versions: [current],
+          next_before_revision: null,
+          next_before_set_at: null,
+          next_before_set_id: null,
+        },
+      }}
+    />,
+  );
+  const rubric = screen.getByRole("link", { name: "Pinned rubric · Revision 2" });
+  expect(
+    new URL(rubric.getAttribute("href") ?? "", "https://wallie.test").searchParams.get("revision"),
+  ).toBe(current.scorer_revision_id);
+  fireEvent.click(screen.getByText("Inspect calibration cases"));
+  const caseLink = screen.getByRole("link", { name: "Open case 1" });
+  expect(caseLink.getAttribute("href")).toBe(
+    `/w/wallie/runs/${id(11)}?evaluationAttempt=${id(7)}#scorer-evaluations`,
+  );
 });

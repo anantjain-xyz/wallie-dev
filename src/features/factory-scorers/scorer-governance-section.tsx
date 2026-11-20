@@ -6,6 +6,7 @@ import { z } from "zod";
 import { PageSection } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import type { ScoreMetrics } from "@/lib/factory-evaluations/score-trend-contracts";
+import { workspaceScorerDetailPath } from "@/lib/routes";
 import type {
   ScorerCalibration,
   ScorerPause,
@@ -18,6 +19,7 @@ import {
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 import { CalibrationForm, ScorerPauseControl } from "./scorer-governance-controls";
+import { runAttemptHref } from "./run-evaluation-governance";
 import { scoreNumber } from "./score-outcome";
 
 const id = z
@@ -136,6 +138,9 @@ function CalibrationSection({
   path,
   endpoint,
   scorerRevisionId,
+  workspaceSlug,
+  scorerId,
+  factoryId,
   canEdit,
 }: {
   data: ScorerCalibration | null;
@@ -143,6 +148,9 @@ function CalibrationSection({
   path: string;
   endpoint: string;
   scorerRevisionId: string;
+  workspaceSlug: string;
+  scorerId: string;
+  factoryId: string;
   canEdit: boolean;
 }) {
   const setId = selection?.calibrationSet;
@@ -183,6 +191,36 @@ function CalibrationSection({
                           {scoreNumber.format(version.adjudication_ids.length)}{" "}
                           {version.adjudication_ids.length === 1 ? "case" : "cases"}
                         </p>
+                        <Link
+                          className="type-secondary block text-accent underline underline-offset-4"
+                          href={workspaceScorerDetailPath(workspaceSlug, scorerId, {
+                            factory: factoryId,
+                            revision: version.scorer_revision_id,
+                          })}
+                          prefetch={false}
+                        >
+                          Pinned rubric · Revision {version.scorer_revision_number}
+                        </Link>
+                        <details className="type-secondary text-muted">
+                          <summary className="cursor-pointer">Inspect calibration cases</summary>
+                          <ul className="mt-2 space-y-1">
+                            {version.case_refs.map((reference, index) => (
+                              <li key={reference.adjudication_id}>
+                                <Link
+                                  className="text-accent underline underline-offset-4"
+                                  href={runAttemptHref(
+                                    workspaceSlug,
+                                    reference.run_id,
+                                    reference.attempt_id,
+                                  )}
+                                  prefetch={false}
+                                >
+                                  Open case {index + 1}
+                                </Link>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
                       </div>
                       <time className="type-secondary text-muted" dateTime={version.created_at}>
                         {dateFormat.format(new Date(version.created_at))}
@@ -256,7 +294,11 @@ function CalibrationSection({
               key={latest?.set_id ?? "new"}
               endpoint={endpoint}
               current={latest}
-              candidates={data.candidates}
+              candidatePage={{
+                candidates: data.candidates,
+                next_before_candidate_at: data.next_before_candidate_at,
+                next_before_candidate_id: data.next_before_candidate_id,
+              }}
               scorerRevisionId={scorerRevisionId}
             />
           </div>
@@ -300,6 +342,7 @@ export function ScorerGovernanceSection({
   scope,
   scorerId,
   scorerRevisionId,
+  workspaceSlug,
   canEdit,
   stats,
   path,
@@ -308,6 +351,7 @@ export function ScorerGovernanceSection({
   scope: ScorerGovernanceScope;
   scorerId: string;
   scorerRevisionId: string;
+  workspaceSlug: string;
   canEdit: boolean;
   stats?: ScoreMetrics;
   path: string;
@@ -324,6 +368,9 @@ export function ScorerGovernanceSection({
         path={path}
         endpoint={endpoint}
         scorerRevisionId={scorerRevisionId}
+        workspaceSlug={workspaceSlug}
+        scorerId={scorerId}
+        factoryId={scope.factoryId}
         canEdit={canEdit}
       />
     </>

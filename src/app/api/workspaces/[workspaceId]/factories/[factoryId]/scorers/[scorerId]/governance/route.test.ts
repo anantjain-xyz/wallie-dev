@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({ access: vi.fn(), admin: vi.fn() }));
 vi.mock("@/lib/workspaces/access", () => ({ requireWorkspaceAccessById: mocks.access }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: mocks.admin }));
 
-import { POST as postScorer } from "./route";
+import { GET as readCandidates, POST as postScorer } from "./route";
 
 const id = (suffix: number) => `60900000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 const workspaceId = id(1);
@@ -56,6 +56,66 @@ function evaluation(body: unknown) {
 }
 
 beforeEach(() => vi.resetAllMocks());
+
+it("reads only the scoped candidate page using the exact cursor and human actor", async () => {
+  const cursorAt = "2026-11-19T23:00:00.123456+00:00";
+  const candidate = {
+    id: adjudicationId,
+    attempt_id: attemptId,
+    disposition: "disputed",
+    expected_status: "pass",
+    status: "fail",
+    reason: null,
+    note: "Qualified older case",
+    created_at: at,
+  };
+  const page = {
+    candidates: [candidate],
+    next_before_candidate_at: null,
+    next_before_candidate_id: null,
+  };
+  const rpc = fixture(
+    Response.json({
+      ...page,
+      versions: [],
+      next_before_revision: null,
+      next_before_set_at: null,
+      next_before_set_id: null,
+      server_only: "unprojected",
+    }),
+  );
+  const query = new URLSearchParams({ beforeCandidateAt: cursorAt, beforeCandidateId: id(9) });
+  const result = await readCandidates(new Request(`http://wallie.test/?${query}`), {
+    params: Promise.resolve({ ...scope, scorerId }),
+  });
+  expect(result.status).toBe(200);
+  expect(result.headers.get("cache-control")).toBe("private, no-store");
+  expect(await result.json()).toEqual(page);
+  const [uri, init] = rpc.mock.calls[0] ?? [];
+  expect(String(uri)).toMatch(/\/rpc\/read_factory_scorer_calibration$/);
+  expect(JSON.parse(String(init?.body))).toEqual({
+    p_workspace_id: workspaceId,
+    p_factory_id: factoryId,
+    p_actor_user_id: actorUserId,
+    p_scorer_id: scorerId,
+    p_before_candidate_at: cursorAt,
+    p_before_candidate_id: id(9),
+  });
+});
+
+it("rejects partial candidate cursors and hides a valid cursor in a hidden factory", async () => {
+  fixture(Response.json({}), false);
+  const params = Promise.resolve({ ...scope, scorerId });
+  const query = new URLSearchParams({ beforeCandidateAt: at });
+  expect(
+    (await readCandidates(new Request(`http://wallie.test/?${query}`), { params })).status,
+  ).toBe(400);
+  query.set("beforeCandidateId", id(9));
+  expect(
+    (await readCandidates(new Request(`http://wallie.test/?${query}`), { params })).status,
+  ).toBe(404);
+  expect(mocks.admin).not.toHaveBeenCalled();
+});
 
 it("sends the initial pause revision and the signed-in actor to the scoped RPC", async () => {
   const rpc = fixture(

@@ -11785,6 +11785,8 @@ export type Database = {
       read_factory_scorer_calibration: {
         Args: {
           p_actor_user_id: string
+          p_before_candidate_at?: string
+          p_before_candidate_id?: string
           p_before_revision?: number
           p_before_set_at?: string
           p_before_set_id?: string

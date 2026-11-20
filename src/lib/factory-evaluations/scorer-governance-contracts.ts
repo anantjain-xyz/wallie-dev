@@ -81,34 +81,66 @@ export const evaluationReviewSchema = z.object({
 });
 export type EvaluationReview = z.output<typeof evaluationReviewSchema>;
 
-export const scorerCalibrationRevisionSchema = z.object({
-  id,
-  set_id: id,
-  revision: positiveRevision,
-  name,
-  scorer_revision_id: id,
-  adjudication_ids: caseIds,
-  created_at: timestamp,
-});
+export const scorerCalibrationRevisionSchema = z
+  .object({
+    id,
+    set_id: id,
+    revision: positiveRevision,
+    name,
+    scorer_revision_id: id,
+    scorer_revision_number: positiveRevision,
+    adjudication_ids: caseIds,
+    case_refs: z.array(z.object({ adjudication_id: id, attempt_id: id, run_id: id })).max(40),
+    created_at: timestamp,
+  })
+  .refine(
+    (version) =>
+      version.case_refs.length === version.adjudication_ids.length &&
+      version.case_refs.every(
+        (reference, index) => reference.adjudication_id === version.adjudication_ids[index],
+      ),
+  );
 export type CalibrationRevision = z.output<typeof scorerCalibrationRevisionSchema>;
+
+const candidatePageFields = {
+  candidates: z
+    .array(
+      z.object({
+        ...adjudicationFields,
+        status: z.enum(["pass", "fail", "inconclusive", "skipped", "error"]),
+        reason: z.string().max(80).nullable(),
+      }),
+    )
+    .max(40),
+  next_before_candidate_at: timestamp.nullable(),
+  next_before_candidate_id: id.nullable(),
+};
+
+export const calibrationCandidateCursorSchema = z.strictObject({
+  beforeCandidateAt: timestamp,
+  beforeCandidateId: id.transform((value) => value.toLowerCase()),
+});
+
+export const calibrationCandidatePageSchema = z
+  .object(candidatePageFields)
+  .refine(
+    (page) => (page.next_before_candidate_at === null) === (page.next_before_candidate_id === null),
+  );
+export type CalibrationCandidatePage = z.output<typeof calibrationCandidatePageSchema>;
 
 export const scorerCalibrationSchema = z
   .object({
     versions: z.array(scorerCalibrationRevisionSchema).max(20),
-    candidates: z
-      .array(
-        z.object({
-          ...adjudicationFields,
-          status: z.enum(["pass", "fail", "inconclusive", "skipped", "error"]),
-          reason: z.string().max(80).nullable(),
-        }),
-      )
-      .max(40),
+    ...candidatePageFields,
     next_before_revision: positiveRevision.nullable(),
     next_before_set_at: timestamp.nullable(),
     next_before_set_id: id.nullable(),
   })
-  .refine((page) => (page.next_before_set_at === null) === (page.next_before_set_id === null));
+  .refine(
+    (page) =>
+      (page.next_before_set_at === null) === (page.next_before_set_id === null) &&
+      (page.next_before_candidate_at === null) === (page.next_before_candidate_id === null),
+  );
 export type ScorerCalibration = z.output<typeof scorerCalibrationSchema>;
 
 const reevaluationFields = {

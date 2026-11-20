@@ -1,14 +1,16 @@
 "use client";
 
-import { useRef, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import type { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import { useApiAction } from "@/features/settings/use-api-action";
 import {
+  calibrationCandidatePageSchema,
+  type CalibrationCandidatePage,
   type CalibrationRevision,
-  type ScorerCalibration,
   type ScorerGovernanceCommand,
   type ScorerPause,
   scorerGovernanceCommandSchema,
@@ -73,7 +75,7 @@ export function ScorerPauseControl({ endpoint, pause }: { endpoint: string; paus
   );
 }
 
-function caseLabel(candidate: ScorerCalibration["candidates"][number]) {
+function caseLabel(candidate: CalibrationCandidatePage["candidates"][number]) {
   const disposition = candidate.disposition === "disputed" ? "Disputed" : "Confirmed";
   const reason = scoreReasonDetail(candidate.reason);
   return `${disposition} · ${candidate.status}${candidate.expected_status ? ` → ${candidate.expected_status}` : ""}${reason ? ` · ${reason}` : ""}`;
@@ -82,15 +84,54 @@ function caseLabel(candidate: ScorerCalibration["candidates"][number]) {
 export function CalibrationForm({
   endpoint,
   current,
-  candidates,
+  candidatePage,
   scorerRevisionId,
 }: {
   endpoint: string;
   current?: CalibrationRevision;
-  candidates: ScorerCalibration["candidates"];
+  candidatePage: CalibrationCandidatePage;
   scorerRevisionId: string;
 }) {
   const newSet = useRef<string | null>(null);
+  const [choices, setChoices] = useState<Record<string, boolean>>({});
+  const [older, setOlder] = useState<CalibrationCandidatePage | null>(null);
+  const [pageMessage, setPageMessage] = useState<FlashMessage | null>(null);
+  const latestIds = new Set(candidatePage.candidates.map(({ id }) => id));
+  const candidates = [
+    ...candidatePage.candidates,
+    ...(older?.candidates.filter(({ id }) => !latestIds.has(id)) ?? []),
+  ];
+  const next = older ?? candidatePage;
+  const pages = useApiAction<unknown, [string, string]>({
+    call(beforeCandidateAt, beforeCandidateId) {
+      return fetch(`${endpoint}?${new URLSearchParams({ beforeCandidateAt, beforeCandidateId })}`, {
+        cache: "no-store",
+      });
+    },
+    onSuccess(payload, [previousAt, previousId]) {
+      const page = calibrationCandidatePageSchema.parse(payload);
+      if (
+        page.next_before_candidate_at === previousAt &&
+        page.next_before_candidate_id === previousId
+      ) {
+        throw new Error("Could not advance calibration cases.");
+      }
+      setPageMessage(null);
+      setOlder((previous) => ({
+        ...page,
+        candidates: [
+          ...new Map(
+            [...(previous?.candidates ?? []), ...page.candidates].map((candidate) => [
+              candidate.id,
+              candidate,
+            ]),
+          ).values(),
+        ],
+      }));
+    },
+    errorText: "Could not load older calibration cases.",
+    setFlashMessage: setPageMessage,
+  });
   const action = useGovernanceAction<ScorerGovernanceCommand, ScorerResponse>({
     endpoint,
     response: scorerGovernanceResponseSchema,
@@ -99,6 +140,9 @@ export function CalibrationForm({
   const selected = new Set(current?.adjudication_ids);
   const recent = new Set(candidates.map(({ id }) => id));
   const historical = [...selected].filter((id) => !recent.has(id));
+  const isChecked = (id: string) => choices[id] ?? selected.has(id);
+  const select = (id: string, checked: boolean) =>
+    setChoices((previous) => ({ ...previous, [id]: checked }));
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -113,7 +157,7 @@ export function CalibrationForm({
       action: "calibration",
       setId,
       expectedRevision: current?.revision ?? 0,
-      scorerRevisionId,
+      scorerRevisionId: current?.scorer_revision_id ?? scorerRevisionId,
       name: form.get("name"),
       adjudicationIds,
     });
@@ -128,6 +172,7 @@ export function CalibrationForm({
     void action.run(command.data).then((result) => {
       if (result?.action === "calibration" && !current) {
         newSet.current = null;
+        setChoices({});
         target.reset();
       }
     });
@@ -153,8 +198,9 @@ export function CalibrationForm({
               <label className="flex items-start gap-3 px-3 py-2.5" key={candidate.id}>
                 <input
                   className="mt-0.5"
-                  defaultChecked={selected.has(candidate.id)}
+                  checked={isChecked(candidate.id)}
                   name="case"
+                  onChange={(event) => select(candidate.id, event.currentTarget.checked)}
                   type="checkbox"
                   value={candidate.id}
                 />
@@ -168,7 +214,14 @@ export function CalibrationForm({
             ))}
             {historical.map((id) => (
               <label className="flex items-start gap-3 px-3 py-2.5" key={id}>
-                <input className="mt-0.5" defaultChecked name="case" type="checkbox" value={id} />
+                <input
+                  className="mt-0.5"
+                  checked={isChecked(id)}
+                  name="case"
+                  onChange={(event) => select(id, event.currentTarget.checked)}
+                  type="checkbox"
+                  value={id}
+                />
                 <span className="type-secondary min-w-0 break-words text-muted">
                   Earlier case {id.slice(0, 8)}
                 </span>
@@ -180,6 +233,25 @@ export function CalibrationForm({
             Adjudicate an evaluation before creating calibration cases.
           </p>
         )}
+        {next.next_before_candidate_at && next.next_before_candidate_id ? (
+          <button
+            className="ui-button"
+            disabled={pages.isBusy}
+            type="button"
+            onClick={() => {
+              if (next.next_before_candidate_at && next.next_before_candidate_id) {
+                void pages.run(next.next_before_candidate_at, next.next_before_candidate_id);
+              }
+            }}
+          >
+            <ActionButtonLabel
+              idle="Load older calibration cases"
+              pending={pages.isBusy}
+              pendingLabel="Loading cases"
+            />
+          </button>
+        ) : null}
+        <InlineActionMessage message={pageMessage} />
       </fieldset>
       <button
         className="ui-button-primary px-3 py-2"

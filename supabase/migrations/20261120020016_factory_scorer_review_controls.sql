@@ -215,7 +215,27 @@ create function internal.project_factory_scorer_calibration_revision(p_row publi
 returns jsonb language sql stable strict set search_path = '' as $$
   select jsonb_build_object(
     'id', p_row.id, 'set_id', p_row.set_id, 'revision', p_row.revision, 'name', p_row.name,
-    'scorer_revision_id', p_row.scorer_revision_id, 'adjudication_ids', p_row.adjudication_ids, 'created_at', p_row.created_at
+    'scorer_revision_id', p_row.scorer_revision_id, 'adjudication_ids', p_row.adjudication_ids, 'created_at', p_row.created_at,
+    'scorer_revision_number', (
+      select revision.revision_number from public.factory_scorer_revisions revision
+      where (revision.workspace_id, revision.factory_id, revision.scorer_id, revision.id) =
+        (p_row.workspace_id, p_row.factory_id, p_row.scorer_id, p_row.scorer_revision_id)
+    ),
+    'case_refs', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'adjudication_id', review.id, 'attempt_id', receipt.attempt_id, 'run_id', receipt.run_id
+      ) order by chosen.position)
+      from unnest(p_row.adjudication_ids) with ordinality chosen(id, position)
+      join public.factory_scorer_adjudications review on
+        (review.workspace_id, review.factory_id, review.scorer_id, review.id) =
+        (p_row.workspace_id, p_row.factory_id, p_row.scorer_id, chosen.id)
+      join public.factory_evaluation_receipts receipt on (receipt.workspace_id, receipt.factory_id, receipt.attempt_id) =
+        (review.workspace_id, review.factory_id, review.attempt_id)
+      join public.agent_runs run on (run.workspace_id, run.session_id, run.id) =
+        (receipt.workspace_id, receipt.session_id, receipt.run_id)
+      join public.sessions session on (session.workspace_id, session.factory_id, session.id) =
+        (receipt.workspace_id, receipt.factory_id, receipt.session_id)
+    ), '[]')
   )
 $$;
 
@@ -272,11 +292,14 @@ $$;
 create function public.read_factory_scorer_calibration(
   p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_scorer_id uuid,
   p_set_id uuid default null, p_before_revision integer default null,
-  p_before_set_at timestamptz default null, p_before_set_id uuid default null
+  p_before_set_at timestamptz default null, p_before_set_id uuid default null,
+  p_before_candidate_at timestamptz default null, p_before_candidate_id uuid default null
 ) returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare
   can_manage boolean;
   candidates jsonb := '[]';
+  candidate_boundary_at timestamptz;
+  candidate_boundary_id uuid;
   response jsonb;
 begin
   perform internal.require_factory_scorer_review_scope(p_workspace_id, p_factory_id, p_actor_user_id);
@@ -288,7 +311,8 @@ begin
     or (p_set_id is not null and p_before_set_at is not null)
     or p_before_revision < 1
     or (p_before_set_at is null) <> (p_before_set_id is null)
-    or not isfinite(p_before_set_at) then
+    or (p_before_candidate_at is null) <> (p_before_candidate_id is null)
+    or not isfinite(p_before_set_at) or not isfinite(p_before_candidate_at) then
     raise exception 'Invalid calibration page.' using errcode = '22023';
   end if;
 
@@ -303,7 +327,7 @@ begin
   ) into can_manage;
 
   if can_manage then
-    with choices as materialized (
+    with choice_page as materialized (
       select review as item, review.created_at, review.id, receipt
       from public.factory_scorer_adjudications review
       join public.factory_evaluation_receipts receipt on (receipt.workspace_id, receipt.factory_id, receipt.attempt_id) =
@@ -313,11 +337,18 @@ begin
       join public.sessions session on (session.workspace_id, session.factory_id, session.id) =
         (receipt.workspace_id, receipt.factory_id, receipt.session_id)
       where (review.workspace_id, review.factory_id, review.scorer_id) = (p_workspace_id, p_factory_id, p_scorer_id)
-      order by review.created_at desc, review.id desc limit 40
+        and (p_before_candidate_at is null or (review.created_at, review.id) < (p_before_candidate_at, p_before_candidate_id))
+      order by review.created_at desc, review.id desc limit 41
+    ), choices as (
+      select * from choice_page order by created_at desc, id desc limit 40
+    ), choice_boundary as (
+      select * from choices where (select count(*) from choice_page) > 40 order by created_at, id limit 1
     )
     select coalesce(jsonb_agg(internal.project_factory_scorer_adjudication(item, receipt)
       || jsonb_build_object('status', (receipt).status, 'reason', (receipt).reason)
-      order by created_at desc, id desc), '[]') into candidates from choices;
+      order by created_at desc, id desc), '[]'),
+      (select created_at from choice_boundary), (select id from choice_boundary)
+    into candidates, candidate_boundary_at, candidate_boundary_id from choices;
   end if;
 
   with latest as (
@@ -352,7 +383,9 @@ begin
     'candidates', candidates,
     'next_before_revision', (select revision from boundary where p_set_id is not null),
     'next_before_set_at', (select created_at from boundary where p_set_id is null),
-    'next_before_set_id', (select set_id from boundary where p_set_id is null)
+    'next_before_set_id', (select set_id from boundary where p_set_id is null),
+    'next_before_candidate_at', candidate_boundary_at,
+    'next_before_candidate_id', candidate_boundary_id
   ) into response;
   return response;
 end;
@@ -367,10 +400,10 @@ revoke all on function internal.preserve_factory_scorer_review_history(),
   public.adjudicate_factory_evaluation_receipt(uuid, uuid, uuid, uuid, uuid, text, text, text),
   public.read_factory_evaluation_review(uuid, uuid, uuid, uuid, timestamptz, uuid),
   public.save_factory_scorer_calibration_revision(uuid, uuid, uuid, uuid, uuid, integer, uuid, text, uuid[]),
-  public.read_factory_scorer_calibration(uuid, uuid, uuid, uuid, uuid, integer, timestamptz, uuid)
+  public.read_factory_scorer_calibration(uuid, uuid, uuid, uuid, uuid, integer, timestamptz, uuid, timestamptz, uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.adjudicate_factory_evaluation_receipt(uuid, uuid, uuid, uuid, uuid, text, text, text),
   public.read_factory_evaluation_review(uuid, uuid, uuid, uuid, timestamptz, uuid),
   public.save_factory_scorer_calibration_revision(uuid, uuid, uuid, uuid, uuid, integer, uuid, text, uuid[]),
-  public.read_factory_scorer_calibration(uuid, uuid, uuid, uuid, uuid, integer, timestamptz, uuid)
+  public.read_factory_scorer_calibration(uuid, uuid, uuid, uuid, uuid, integer, timestamptz, uuid, timestamptz, uuid)
   to service_role;

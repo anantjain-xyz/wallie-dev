@@ -130,6 +130,7 @@ export default async function ScorerDetailPage({
           workspaceSlug={workspaceSlug}
         />
         <ScorerGovernanceSection
+          workspaceSlug={workspaceSlug}
           data={governance}
           scope={governanceScope}
           scorerId={scorer.id}

@@ -1462,17 +1462,52 @@ select ok((select first.payload @> jsonb_build_object('revision', 1, 'scorer_rev
     and second.payload @> jsonb_build_object('revision', 2, 'scorer_revision_id', revision.id,
       'adjudication_ids', jsonb_build_array(pg_temp.sampling_id(142)))
     and versions.payload->'versions' @> jsonb_build_array(first.payload, second.payload)
+    and versions.payload->'versions' @> jsonb_build_array(
+      jsonb_build_object('revision', 1, 'scorer_revision_number', 3, 'case_refs', jsonb_build_array(
+        jsonb_build_object('adjudication_id', pg_temp.sampling_id(141), 'attempt_id', claim.attempt_id, 'run_id', claim.run_id))),
+      jsonb_build_object('revision', 2, 'scorer_revision_number', 4, 'case_refs', jsonb_build_array(
+        jsonb_build_object('adjudication_id', pg_temp.sampling_id(142), 'attempt_id', claim.attempt_id, 'run_id', claim.run_id))))
   from first_scorer_calibration first cross join second_scorer_calibration second
-  cross join numeric_scorer scorer cross join governance_revisions revision cross join lateral (
+  cross join numeric_scorer scorer cross join governance_revisions revision cross join evaluation_claims claim cross join lateral (
     select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
       pg_temp.sampling_id(1), scorer.scorer_id, pg_temp.sampling_id(140)) as payload
-  ) versions where revision.revision_number = 4),
-  'calibration versions freeze distinct rubric and adjudication IDs and retain earlier versions');
+  ) versions where revision.revision_number = 4 and claim.slot = 'governance-held'),
+  'each calibration version retains its rubric number and exact adjudication, attempt, and run references');
 select throws_ok($$update public.factory_scorer_adjudications set note = 'Rewritten' where id = pg_temp.sampling_id(142)$$,
   '23514', null, 'an adjudication cannot be updated after it is retained');
 select throws_ok($$update public.factory_scorer_calibration_revisions set name = 'Rewritten'
   where id = (select (payload->>'id')::uuid from first_scorer_calibration)$$,
   '23514', null, 'the earlier calibration version remains immutable');
+
+-- Fill the first candidate page without adding cases to the existing sets.
+do $$
+begin
+  perform public.adjudicate_factory_evaluation_receipt(original.workspace_id, original.factory_id,
+    pg_temp.sampling_id(1), original.attempt_id, pg_temp.sampling_id(slot), 'confirmed', 'Additional calibration case.')
+  from original_manual_score original cross join generate_series(401, 439) slots(slot);
+end;
+$$;
+create temp table first_calibration_candidates as
+select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
+  pg_temp.sampling_id(1), scorer.scorer_id, pg_temp.sampling_id(140)) as payload from numeric_scorer scorer;
+select ok((select jsonb_array_length(payload->'candidates') = 40
+    and payload->>'next_before_candidate_at' is not null
+    and payload->>'next_before_candidate_id' = payload#>>'{candidates,39,id}'
+    and not (payload->'candidates' @> jsonb_build_array(jsonb_build_object('id', pg_temp.sampling_id(141))))
+  from first_calibration_candidates), 'the first candidate page exposes its exact boundary and omits an older valid case');
+select ok((select jsonb_array_length(older.payload->'candidates') = 1
+    and older.payload#>>'{candidates,0,id}' = pg_temp.sampling_id(141)::text
+    and older.payload @> '{"next_before_candidate_at":null,"next_before_candidate_id":null}'::jsonb
+    and older.payload->'versions' = first.payload->'versions'
+  from first_calibration_candidates first cross join numeric_scorer scorer cross join lateral (
+    select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
+      pg_temp.sampling_id(1), scorer.scorer_id, pg_temp.sampling_id(140),
+      p_before_candidate_at => (first.payload->>'next_before_candidate_at')::timestamptz,
+      p_before_candidate_id => (first.payload->>'next_before_candidate_id')::uuid) as payload
+  ) older), 'the candidate continuation exposes the older case without changing calibration version history');
+select throws_ok($$select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
+    pg_temp.sampling_id(1), scorer.scorer_id, p_before_candidate_id => pg_temp.sampling_id(141))
+  from numeric_scorer scorer$$, '22023', null, 'calibration candidates require both keyset cursor fields');
 
 update public.sessions session set archived_at = clock_timestamp()
 from scorer_review_before original where session.id = original.session_id;

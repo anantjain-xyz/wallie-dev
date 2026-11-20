@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { z } from "zod/v4";
 
@@ -71,6 +72,7 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     await page.goto(run);
     await page.getByRole("link", { name: "Review evaluation", exact: true }).click();
     await expect(page).toHaveURL(/evaluationAttempt=/);
+    const attemptId = z.uuid().parse(new URL(page.url()).searchParams.get("evaluationAttempt"));
     await expect(page.getByRole("heading", { name: "Adjudication", exact: true })).toBeVisible();
     await page
       .getByRole("combobox", { name: "Adjudication outcome" })
@@ -91,24 +93,47 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await capture(page, info, "01-adjudication-and-rerun-mobile-dark");
 
+    const attemptApi = `/api/workspaces/${fixture.workspaceId}/factories/${fixture.factoryId}/evaluation-attempts/${attemptId}`;
+    const newerCases = await Promise.all(
+      Array.from({ length: 41 }, (_, index) =>
+        page.request.post(attemptApi, {
+          data: {
+            action: "adjudicate",
+            adjudicationId: randomUUID(),
+            disposition: "confirmed",
+            note: `Newer calibration case ${index + 1}`,
+          },
+        }),
+      ),
+    );
+    expect(newerCases.every((response) => response.ok())).toBe(true);
+
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Switch to light mode" }).click();
     await page.goto(`${scorer}&revision=${revision}`);
-    await page.getByRole("textbox", { name: "Calibration set name" }).fill(calibrationName);
-    await page.getByRole("checkbox", { name: new RegExp(note) }).check();
+    const name = page.getByRole("textbox", { name: "Calibration set name" });
+    const firstCase = page.getByRole("checkbox", { name: new RegExp(note) });
+    await name.fill(calibrationName);
+    await expect(firstCase).toHaveCount(0);
+    await page.getByRole("button", { name: "Load older calibration cases", exact: true }).click();
+    await expect(name).toHaveValue(calibrationName);
+    await firstCase.check();
     await page.getByRole("button", { name: "Publish calibration set", exact: true }).click();
     await page.getByRole("link", { name: calibrationName, exact: true }).click();
-    await expect(page.getByRole("checkbox", { name: new RegExp(note) })).toBeChecked();
-    await page.getByRole("textbox", { name: "Calibration set name" }).fill(revisedCalibrationName);
+    const historical = new URL(page.url());
+    historical.searchParams.set("revision", data.revisions[0]);
+    await page.goto(historical.toString());
+    await name.fill(revisedCalibrationName);
     await page.getByRole("button", { name: "Publish next version", exact: true }).click();
     const history = page.getByRole("list", { name: "Calibration version history" });
     await expect(history.getByText(revisedCalibrationName, { exact: true })).toBeVisible();
     await expect(history.getByText(calibrationName, { exact: true })).toBeVisible();
+    const pins = history.getByRole("link", { name: "Pinned rubric · Revision 3", exact: true });
+    await expect(pins).toHaveCount(2);
+    for (const pin of await pins.all())
+      await expect(pin).toHaveAttribute("href", new RegExp(`revision=${revision}`));
     await page.getByRole("button", { name: "Pause scorer", exact: true }).click();
     await expect(page.getByRole("button", { name: "Resume scorer", exact: true })).toBeVisible();
-    const historical = new URL(page.url());
-    historical.searchParams.set("revision", data.revisions[0]);
-    await page.goto(historical.toString());
     const health = page.locator("#scorer-health");
     await expect(health.getByText("Evaluator errors / settled")).toBeVisible();
     await expect(health.getByText("0 / 3 (0%)", { exact: true })).toBeVisible();

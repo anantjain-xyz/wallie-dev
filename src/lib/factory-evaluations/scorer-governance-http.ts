@@ -33,6 +33,19 @@ const failures: Record<string, { status: number; message: string }> = {
 type CommandScope = { workspaceId: string; factoryId: string };
 type Admin = ReturnType<typeof createSupabaseAdminClient>;
 
+export function scorerGovernanceFailure(
+  error: unknown,
+  fallback = "Could not apply the scorer action.",
+) {
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  const failure =
+    typeof code === "string" && Object.hasOwn(failures, code) ? failures[code] : undefined;
+  return Response.json(
+    { error: failure?.message ?? fallback },
+    { status: failure?.status ?? 500, headers },
+  );
+}
+
 export async function handleScorerGovernanceCommand<Command>(
   request: Request,
   params: Promise<CommandScope>,
@@ -79,12 +92,6 @@ export async function handleScorerGovernanceCommand<Command>(
     );
     return Response.json(result, { headers });
   } catch (error) {
-    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-    const failure =
-      typeof code === "string" && Object.hasOwn(failures, code) ? failures[code] : undefined;
-    return Response.json(
-      { error: failure?.message ?? "Could not apply the scorer action." },
-      { status: failure?.status ?? 500, headers },
-    );
+    return scorerGovernanceFailure(error);
   }
 }

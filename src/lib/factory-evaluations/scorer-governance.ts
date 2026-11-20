@@ -45,6 +45,8 @@ export async function readScorerCalibration(
     beforeRevision?: number;
     beforeSetAt?: string;
     beforeSetId?: string;
+    beforeCandidateAt?: string;
+    beforeCandidateId?: string;
   },
 ) {
   const { data, error } = await client.rpc("read_factory_scorer_calibration", {
@@ -54,6 +56,8 @@ export async function readScorerCalibration(
     p_before_revision: selection.beforeRevision,
     p_before_set_at: selection.beforeSetAt,
     p_before_set_id: selection.beforeSetId,
+    p_before_candidate_at: selection.beforeCandidateAt,
+    p_before_candidate_id: selection.beforeCandidateId,
   });
   if (error) throw error;
   const calibration = scorerCalibrationSchema.parse(data);
