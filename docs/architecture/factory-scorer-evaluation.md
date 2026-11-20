@@ -149,6 +149,7 @@ a reason. Presets use the same sampling and binding controls as custom rubrics.
 Open **Scorers** for a rubric revision and its sampling policies. **Analytics**
 also lets you select a scorer revision. Each trend covers one policy revision
 and a UTC date range. Different rubric or policy revisions have separate totals.
+Use the older revision and cohort links to browse earlier options.
 
 | Count     | Population                                                 |
 | --------- | ---------------------------------------------------------- |
@@ -166,4 +167,5 @@ mean displays as unavailable.
 The chart, table, and result filters use one signed cohort snapshot. Open a
 run to inspect the exact attempt used in that snapshot. The run page also shows
 sampling exclusions and unsampled decisions. Evidence links check current
-access and retention, while the historical verdict remains visible.
+access and retention, while the historical verdict remains visible. A recording
+citation opens the retained asset at the cited time.

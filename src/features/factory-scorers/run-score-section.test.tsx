@@ -134,6 +134,59 @@ describe("run score section", () => {
     );
   });
 
+  it("opens the evidence's own attempt and the exact cited offset even when another scorer is selected", async () => {
+    const otherAttempt = "608a0000-0000-4000-8000-000000000011";
+    const browserEvidenceJob = "608a0000-0000-4000-8000-000000000012";
+    const browserEvidenceRevision = "608a0000-0000-4000-8000-000000000013";
+    const screenshotId = "608a0000-0000-4000-8000-000000000014";
+    const recordingId = "608a0000-0000-4000-8000-000000000015";
+    const locations: NonNullable<NonNullable<RunScore["receipt"]>["evidence_locations"]> = [
+      { reference: { kind: "browser_screenshot", id: screenshotId }, location: { kind: "whole" } },
+      {
+        reference: { kind: "browser_recording", id: recordingId },
+        location: { kind: "time", startMs: 750, endMs: 1000 },
+      },
+    ];
+    vi.mocked(loadRunScores).mockResolvedValue({
+      factoryId,
+      scores: [
+        evaluated,
+        {
+          ...evaluated,
+          evaluation_job_id: browserEvidenceJob,
+          scorer_revision_id: browserEvidenceRevision,
+          receipt: {
+            ...evaluated.receipt,
+            attempt_id: otherAttempt,
+            job_id: browserEvidenceJob,
+            scorer_revision_id: browserEvidenceRevision,
+            result: {
+              ...evaluated.receipt.result,
+              evidence: locations.map(({ reference }) => reference),
+            },
+            evidence_locations: locations,
+          },
+        },
+      ],
+    });
+    render(
+      await RunScoreSection({
+        workspaceSlug: "wallie",
+        sessionId,
+        sessionNumber: 2,
+        runId,
+        attempt: attemptId,
+      }),
+    );
+    const path = `/w/wallie/runs/${runId}?evaluationAttempt=${otherAttempt}`;
+    expect(screen.getByRole("link", { name: "Open browser screenshot" }).getAttribute("href")).toBe(
+      `${path}#browser-screenshot-${screenshotId}`,
+    );
+    expect(screen.getByRole("link", { name: "Open browser recording" }).getAttribute("href")).toBe(
+      `${path}#browser-recording-citation-${recordingId}-750`,
+    );
+  });
+
   it("keeps the verdict while withholding evidence and its explanation", async () => {
     vi.mocked(loadRunScores).mockResolvedValue({
       factoryId,

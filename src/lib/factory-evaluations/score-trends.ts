@@ -14,17 +14,20 @@ type ScorerSelection = { scorerId: string; scorerRevisionId: string };
 async function listCohorts(
   client: Client,
   scope: FactoryScope,
-  selection?: Partial<ScorerSelection>,
+  selection?: ScorerSelection | { scorerRevisionId: string },
+  before?: { createdAt?: string; policyId?: string },
 ) {
   const { data, error } = await client.rpc("list_factory_score_cohorts", {
     p_workspace_id: scope.workspaceId,
     p_factory_id: scope.factoryId,
-    p_scorer_id: selection?.scorerId,
+    p_scorer_id: selection && "scorerId" in selection ? selection.scorerId : undefined,
     p_scorer_revision_id: selection?.scorerRevisionId,
+    p_before_created_at: before?.createdAt,
+    p_before_policy_id: before?.policyId,
     p_limit: 100,
   });
   if (error) throw error;
-  return scoreCohortPageSchema.parse(data).cohorts;
+  return scoreCohortPageSchema.parse(data);
 }
 
 async function readTrend(
@@ -59,22 +62,49 @@ export async function loadScoreTrendPanel(
   selection?: ScorerSelection,
 ) {
   const requestedRevision = selection?.scorerRevisionId ?? query.scorerRevision;
-  const [recentCohorts, revisionCohorts, selectedTrend] = await Promise.all([
-    listCohorts(client, scope, selection),
-    !selection && requestedRevision
-      ? listCohorts(client, scope, { scorerRevisionId: requestedRevision })
-      : [],
+  const beforeCohort = { createdAt: query.beforeCohortAt, policyId: query.beforeCohortPolicy };
+  const [revisionOptions, requestedCohorts, selectedTrend] = await Promise.all([
+    selection
+      ? null
+      : listCohorts(client, scope, undefined, {
+          createdAt: query.beforeRevisionAt,
+          policyId: query.beforeRevisionPolicy,
+        }),
+    requestedRevision
+      ? listCohorts(
+          client,
+          scope,
+          selection ?? { scorerRevisionId: requestedRevision },
+          beforeCohort,
+        )
+      : null,
     query.cohort ? readTrend(client, scope, query.cohort, query) : null,
   ]);
-  const recent = recentCohorts.find(
-    ({ scorer_revision_id }) => !requestedRevision || scorer_revision_id === requestedRevision,
-  );
-  const policyId = query.cohort ?? revisionCohorts[0]?.policy_id ?? recent?.policy_id;
+  const listed = revisionOptions?.cohorts ?? [];
+  const revisionId =
+    requestedRevision ??
+    (selectedTrend === "limit" ? null : selectedTrend?.cohort.scorer_revision_id) ??
+    listed.find(({ policy_id }) => policy_id === query.cohort)?.scorer_revision_id ??
+    listed[0]?.scorer_revision_id;
+  const firstPolicy =
+    requestedCohorts?.cohorts[0] ?? (!query.beforeCohortPolicy ? listed[0] : undefined);
+  const [cohortOptions, defaultTrend] = await Promise.all([
+    requestedCohorts ??
+      (revisionId
+        ? listCohorts(client, scope, { scorerRevisionId: revisionId }, beforeCohort)
+        : null),
+    !query.cohort && firstPolicy && firstPolicy.scorer_revision_id === revisionId
+      ? readTrend(client, scope, firstPolicy.policy_id, query)
+      : null,
+  ]);
+  const policyId = query.cohort ?? cohortOptions?.cohorts[0]?.policy_id;
   const read = query.cohort
     ? selectedTrend
-    : policyId
-      ? await readTrend(client, scope, policyId, query)
-      : null;
+    : firstPolicy?.policy_id === policyId
+      ? defaultTrend
+      : policyId
+        ? await readTrend(client, scope, policyId, query)
+        : null;
   let trend = read === "limit" ? null : read;
   if (
     trend &&
@@ -85,14 +115,18 @@ export async function loadScoreTrendPanel(
   ) {
     trend = null;
   }
-  const cohorts = new Map(
-    [...revisionCohorts, ...recentCohorts].map((cohort) => [cohort.policy_id, cohort]),
-  );
+  const cohorts = new Map(cohortOptions?.cohorts.map((cohort) => [cohort.policy_id, cohort]));
   if (trend) cohorts.set(trend.cohort.policy_id, trend.cohort);
+  const revisions = new Map(listed.map((cohort) => [cohort.scorer_revision_id, cohort]));
+  const selected = trend?.cohort ?? cohortOptions?.cohorts[0];
+  if (selected) revisions.set(selected.scorer_revision_id, selected);
   return {
     cohorts: [...cohorts.values()],
+    revisions: [...revisions.values()],
+    nextCohort: cohortOptions?.next ?? null,
+    nextRevision: revisionOptions?.next ?? null,
     trend,
-    requestedRevision,
+    revisionId,
     policyId,
     ...(read === "limit" ? { limitExceeded: true } : {}),
   };

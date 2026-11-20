@@ -239,6 +239,26 @@ test("keeps invalid finding times and dismissed requests from opening private me
   await expect(captured.getByRole("button", { name: "Load recording" })).toBeVisible();
 });
 
+test("seeks an exact citation between the steps of its retained recording only within duration", async ({
+  page,
+}) => {
+  const requested = await stubEvidence(page);
+  const citation = (assetId: string, offsetMs: number) =>
+    `${previewPath}?projection=run#browser-recording-citation-${assetId}-${offsetMs}`;
+  await page.goto(citation(availableId, 1500));
+  await expect(
+    page.getByText("The linked recording or capture time is unavailable."),
+  ).toBeVisible();
+  expect(requested.video).toEqual([]);
+
+  await page.goto(citation(availableId, 750));
+  const video = page.locator("video[aria-label='Recording captured for review-queue']");
+  await expect(video).toBeVisible();
+  await expectPausedAt(video, 0.75);
+  await frameDominates(video, 1);
+  expect([...new Set(requested.video)]).toEqual([availableId]);
+});
+
 test("reselects the same run step after closing and reopening the evidence disclosure", async ({
   page,
 }) => {

@@ -396,6 +396,27 @@ function CohortRows({
   );
 }
 
+function OptionPages({ label, latest, older }: { label: string; latest?: string; older?: string }) {
+  if (!latest && !older) return null;
+  return (
+    <nav
+      aria-label={`Browse ${label}`}
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"
+    >
+      {latest ? (
+        <Link className={linkClass} href={latest} prefetch={false}>
+          Latest {label}
+        </Link>
+      ) : null}
+      {older ? (
+        <Link className={linkClass} href={older} prefetch={false}>
+          Older {label}
+        </Link>
+      ) : null}
+    </nav>
+  );
+}
+
 export function ScorerTrends({
   workspaceSlug,
   query,
@@ -413,22 +434,45 @@ export function ScorerTrends({
 }) {
   const unavailable = !query || !data;
   const trend = data?.trend;
-  const revision =
-    trend?.cohort.scorer_revision_id ??
-    data?.requestedRevision ??
-    data?.cohorts.find(({ policy_id }) => policy_id === data.policyId)?.scorer_revision_id;
-  const revisions = new Map(data?.cohorts.map((cohort) => [cohort.scorer_revision_id, cohort]));
-  const cohorts = data?.cohorts.filter((cohort) => cohort.scorer_revision_id === revision) ?? [];
+  const revision = data?.revisionId;
+  const revisions = data?.revisions ?? [];
+  const cohorts = data?.cohorts ?? [];
   const fields = query ? { ...preserved, from: query.from, to: query.to } : preserved;
   const revisionField = selectRevision ? { scorerRevision: revision } : {};
+  const revisionPage = {
+    beforeRevisionAt: query?.beforeRevisionAt,
+    beforeRevisionPolicy: query?.beforeRevisionPolicy,
+  };
+  const cohortPage = {
+    beforeCohortAt: query?.beforeCohortAt,
+    beforeCohortPolicy: query?.beforeCohortPolicy,
+  };
   const frozenFields = {
     ...fields,
     ...revisionField,
-    cohort: trend?.cohort.policy_id,
+    ...revisionPage,
+    ...cohortPage,
+    cohort: data?.policyId,
     scoreSnapshot: trend?.snapshot,
   };
+  const optionHref = (page: Fields) =>
+    withFields(
+      path,
+      {
+        ...frozenFields,
+        evaluationDay: query?.evaluationDay,
+        evaluationStatus: query?.evaluationStatus,
+        beforeRunFinishedAt: trend ? query?.beforeRunFinishedAt : undefined,
+        beforeScoreRun: trend ? query?.beforeScoreRun : undefined,
+        ...page,
+      },
+      "scorer-trends",
+    );
   const dayHref = (day: string) =>
     withFields(path, { ...frozenFields, evaluationDay: day }, "scorer-cohort-results");
+  const showRevisionOptions =
+    selectRevision && (revisions.length > 0 || Boolean(query?.beforeRevisionPolicy));
+  const showCohortOptions = cohorts.length > 0 || Boolean(query?.beforeCohortPolicy);
   return (
     <PageSection anchorId="scorer-trends" className="min-w-0" title="Scorer trends">
       <div className="min-w-0 space-y-4">
@@ -444,84 +488,129 @@ export function ScorerTrends({
             </Link>
           </p>
         ) : null}
-        {query && data && data.cohorts.length ? (
+        {query && data && (showRevisionOptions || showCohortOptions) ? (
           <div className="ui-sheet divide-y divide-border">
-            {selectRevision ? (
-              <form
-                action={`${path}#scorer-trends`}
-                className="flex flex-wrap items-end gap-3 px-4 py-4 sm:px-5"
-                method="get"
-              >
-                <HiddenFields values={fields} />
-                <label className="type-label flex min-w-0 max-w-full flex-col gap-1.5">
-                  Scorer revision
-                  <select
-                    className="ui-input min-w-0 max-w-full"
-                    defaultValue={revision ?? ""}
-                    name="scorerRevision"
+            {showRevisionOptions ? (
+              <div className="space-y-3 px-4 py-4 sm:px-5">
+                {revisions.length ? (
+                  <form
+                    action={`${path}#scorer-trends`}
+                    className="flex flex-wrap items-end gap-3"
+                    method="get"
                   >
-                    {revisions.has(revision ?? "") ? null : (
-                      <option value="" disabled>
-                        Choose a revision
-                      </option>
-                    )}
-                    {[...revisions.values()].map((cohort) => (
-                      <option key={cohort.scorer_revision_id} value={cohort.scorer_revision_id}>
-                        {cohort.scorer_name} · Revision {cohort.scorer_revision_number}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button className="ui-button" type="submit">
-                  Show revision
-                </button>
-              </form>
+                    <HiddenFields values={fields} />
+                    <label className="type-label flex min-w-0 max-w-full flex-col gap-1.5">
+                      Scorer revision
+                      <select
+                        className="ui-input min-w-0 max-w-full"
+                        defaultValue={revision ?? ""}
+                        name="scorerRevision"
+                        required
+                      >
+                        {revisions.some(
+                          ({ scorer_revision_id }) => scorer_revision_id === revision,
+                        ) ? null : (
+                          <option value="" disabled>
+                            Choose a revision
+                          </option>
+                        )}
+                        {revisions.map((cohort) => (
+                          <option key={cohort.scorer_revision_id} value={cohort.scorer_revision_id}>
+                            {cohort.scorer_name} · Revision {cohort.scorer_revision_number}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button className="ui-button" type="submit">
+                      Show revision
+                    </button>
+                  </form>
+                ) : null}
+                <OptionPages
+                  label="scorer revisions"
+                  latest={
+                    query.beforeRevisionPolicy
+                      ? optionHref({ beforeRevisionAt: undefined, beforeRevisionPolicy: undefined })
+                      : undefined
+                  }
+                  older={
+                    data.nextRevision
+                      ? optionHref({
+                          beforeRevisionAt: data.nextRevision.createdAt,
+                          beforeRevisionPolicy: data.nextRevision.policyId,
+                        })
+                      : undefined
+                  }
+                />
+              </div>
             ) : null}
-            {cohorts.length ? (
-              <form
-                action={`${path}#scorer-trends`}
-                className="flex flex-wrap items-end gap-3 px-4 py-4 sm:px-5"
-                method="get"
-              >
-                <HiddenFields values={{ ...preserved, ...revisionField }} />
-                <label className="type-label flex min-w-0 max-w-full flex-col gap-1.5">
-                  Sampling cohort
-                  <select
-                    className="ui-input min-w-0 max-w-full"
-                    defaultValue={data.policyId ?? ""}
-                    name="cohort"
+            {showCohortOptions ? (
+              <div className="space-y-3 px-4 py-4 sm:px-5">
+                {cohorts.length ? (
+                  <form
+                    action={`${path}#scorer-trends`}
+                    className="flex flex-wrap items-end gap-3"
+                    method="get"
                   >
-                    {cohorts.map((cohort) => (
-                      <option key={cohort.policy_id} value={cohort.policy_id}>
-                        {cohortLabel(cohort)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="type-label flex flex-col gap-1.5">
-                  From (UTC)
-                  <input
-                    className="ui-input"
-                    defaultValue={query.from}
-                    name="from"
-                    required
-                    type="date"
-                  />
-                </label>
-                <label className="type-label flex flex-col gap-1.5">
-                  To (exclusive)
-                  <input
-                    className="ui-input"
-                    defaultValue={query.to}
-                    name="to"
-                    required
-                    type="date"
-                  />
-                </label>
-                <button className="ui-button-primary h-9 px-3 text-sm" type="submit">
-                  Apply scorer filters
-                </button>
-              </form>
+                    <HiddenFields
+                      values={{ ...preserved, ...revisionField, ...revisionPage, ...cohortPage }}
+                    />
+                    <label className="type-label flex min-w-0 max-w-full flex-col gap-1.5">
+                      Sampling cohort
+                      <select
+                        className="ui-input min-w-0 max-w-full"
+                        defaultValue={data.policyId ?? ""}
+                        name="cohort"
+                      >
+                        {cohorts.map((cohort) => (
+                          <option key={cohort.policy_id} value={cohort.policy_id}>
+                            {cohortLabel(cohort)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="type-label flex flex-col gap-1.5">
+                      From (UTC)
+                      <input
+                        className="ui-input"
+                        defaultValue={query.from}
+                        name="from"
+                        required
+                        type="date"
+                      />
+                    </label>
+                    <label className="type-label flex flex-col gap-1.5">
+                      To (exclusive)
+                      <input
+                        className="ui-input"
+                        defaultValue={query.to}
+                        name="to"
+                        required
+                        type="date"
+                      />
+                    </label>
+                    <button className="ui-button-primary h-9 px-3 text-sm" type="submit">
+                      Apply scorer filters
+                    </button>
+                  </form>
+                ) : null}
+                <OptionPages
+                  label="sampling cohorts"
+                  latest={
+                    query.beforeCohortPolicy
+                      ? optionHref({ beforeCohortAt: undefined, beforeCohortPolicy: undefined })
+                      : undefined
+                  }
+                  older={
+                    data.nextCohort
+                      ? optionHref({
+                          beforeCohortAt: data.nextCohort.createdAt,
+                          beforeCohortPolicy: data.nextCohort.policyId,
+                        })
+                      : undefined
+                  }
+                />
+              </div>
             ) : null}
           </div>
         ) : null}

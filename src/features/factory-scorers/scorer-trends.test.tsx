@@ -14,6 +14,9 @@ const factoryId = "608a0000-0000-4000-8000-000000000004";
 const attemptId = "608a0000-0000-4000-8000-000000000005";
 const jobId = "608a0000-0000-4000-8000-000000000006";
 const at = "2026-11-19T00:00:00Z";
+const cursorAt = "2026-11-18T11:30:04.876543+00:00";
+const from = "2026-11-19";
+const to = "2026-11-20";
 const scoreSnapshot = `17.${"f".repeat(64)}`;
 const counts = {
   candidate_count: 4,
@@ -54,8 +57,11 @@ describe("scorer trends", () => {
       <ScorerTrends
         data={{
           cohorts: [cohort],
+          revisions: [cohort],
+          nextCohort: null,
+          nextRevision: null,
           policyId,
-          requestedRevision: revisionId,
+          revisionId,
           trend: {
             cohort,
             from: at,
@@ -111,5 +117,76 @@ describe("scorer trends", () => {
     expect(screen.getByRole("link", { name: "Open run" }).getAttribute("href")).toBe(
       `/w/wallie/runs/${runId}?evaluationAttempt=${attemptId}#evaluation-${jobId}`,
     );
+  });
+
+  it("pages Analytics revisions and exact-revision cohort options independently", () => {
+    render(
+      <ScorerTrends
+        data={{
+          cohorts: [cohort],
+          revisions: [cohort],
+          policyId,
+          revisionId,
+          nextCohort: { createdAt: cursorAt, policyId: runId },
+          nextRevision: { createdAt: cursorAt, policyId: factoryId },
+          trend: {
+            cohort,
+            from: at,
+            to: "2026-11-20T00:00:00Z",
+            snapshot: scoreSnapshot,
+            totals: counts,
+            row_count: 0,
+            next_run_finished_at: null,
+            next_run_id: null,
+            points: [],
+            rows: [],
+          },
+        }}
+        query={{
+          from,
+          to,
+          evaluationDay: from,
+          evaluationStatus: "fail",
+          beforeCohortAt: at,
+          beforeCohortPolicy: attemptId,
+          beforeRevisionAt: at,
+          beforeRevisionPolicy: jobId,
+        }}
+        path="/w/wallie/analytics"
+        preserved={{ factory: factoryId }}
+        workspaceSlug="wallie"
+        selectRevision
+      />,
+    );
+    const pagingQuery = (name: string) =>
+      new URL(screen.getByRole("link", { name }).getAttribute("href") ?? "", "https://wallie.test")
+        .searchParams;
+    const olderRevisions = pagingQuery("Older scorer revisions");
+    expect(olderRevisions.get("beforeRevisionAt")).toBe(cursorAt);
+    expect(olderRevisions.get("beforeRevisionPolicy")).toBe(factoryId);
+    expect(olderRevisions.get("beforeCohortPolicy")).toBe(attemptId);
+    expect(olderRevisions.get("scoreSnapshot")).toBe(scoreSnapshot);
+    expect(olderRevisions.get("cohort")).toBe(policyId);
+    expect(olderRevisions.get("evaluationStatus")).toBe("fail");
+    expect(olderRevisions.get("from")).toBe(from);
+    expect(olderRevisions.get("to")).toBe(to);
+    const olderCohorts = pagingQuery("Older sampling cohorts");
+    expect(olderCohorts.get("beforeCohortAt")).toBe(cursorAt);
+    expect(olderCohorts.get("beforeCohortPolicy")).toBe(runId);
+    expect(olderCohorts.get("beforeRevisionPolicy")).toBe(jobId);
+    expect(olderCohorts.get("scorerRevision")).toBe(revisionId);
+    expect(pagingQuery("Latest scorer revisions").has("beforeRevisionPolicy")).toBe(false);
+    expect(pagingQuery("Latest sampling cohorts").has("beforeCohortPolicy")).toBe(false);
+
+    const showRevision = screen.getByRole("button", { name: "Show revision" });
+    if (!(showRevision instanceof HTMLButtonElement) || !showRevision.form)
+      throw new Error("Revision selector form is missing.");
+    const revisionForm = new FormData(showRevision.form);
+    expect(revisionForm.get("factory")).toBe(factoryId);
+    expect(revisionForm.get("scorerRevision")).toBe(revisionId);
+    expect(revisionForm.has("beforeRevisionPolicy")).toBe(false);
+    expect(revisionForm.has("beforeCohortPolicy")).toBe(false);
+    expect(revisionForm.has("cohort")).toBe(false);
+    expect(revisionForm.has("scoreSnapshot")).toBe(false);
   });
 });

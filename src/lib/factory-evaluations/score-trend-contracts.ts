@@ -31,11 +31,23 @@ export const scoreCohortSchema = z.object({
 });
 export type ScoreCohort = z.output<typeof scoreCohortSchema>;
 
-export const scoreCohortPageSchema = z.object({
-  cohorts: z.array(scoreCohortSchema).max(100),
-  next_created_at: timestamp.nullable(),
-  next_policy_id: id.nullable(),
-});
+export const scoreCohortPageSchema = z
+  .object({
+    cohorts: z.array(scoreCohortSchema).max(100),
+    next_created_at: timestamp.nullable(),
+    next_policy_id: id.nullable(),
+  })
+  .refine(
+    ({ next_created_at, next_policy_id }) =>
+      (next_created_at === null) === (next_policy_id === null),
+  )
+  .transform(({ cohorts, next_created_at, next_policy_id }) => ({
+    cohorts,
+    next:
+      next_created_at && next_policy_id
+        ? { createdAt: next_created_at, policyId: next_policy_id }
+        : null,
+  }));
 
 const scoreMetricShape = {
   candidate_count: count,

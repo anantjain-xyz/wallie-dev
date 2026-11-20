@@ -158,7 +158,7 @@ it("clears an Analytics scorer cohort and drilldown when switching factories", (
   expect(
     factorySwitchHref(
       "/w/acme/analytics",
-      "factory=old&from=2026-11-01&to=2026-12-01&cohort=c&scorerRevision=r&scoreSnapshot=s&evaluationDay=d&evaluationStatus=fail&beforeRunFinishedAt=at&beforeScoreRun=run",
+      "factory=old&from=2026-11-01&to=2026-12-01&cohort=c&scorerRevision=r&scoreSnapshot=s&evaluationDay=d&evaluationStatus=fail&beforeRunFinishedAt=at&beforeScoreRun=run&beforeRevisionAt=rat&beforeRevisionPolicy=rid&beforeCohortAt=cat&beforeCohortPolicy=cid",
       "new-factory",
     ),
   ).toBe("/w/acme/analytics?factory=new-factory&from=2026-11-01&to=2026-12-01");

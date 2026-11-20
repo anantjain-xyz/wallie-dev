@@ -4,7 +4,7 @@ import { z } from "zod";
 import { PageSection } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import {
-  browserRecordingAnchor,
+  browserRecordingCitationAnchor,
   browserScreenshotAnchor,
 } from "@/features/wallie/browser-evidence-contracts";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
@@ -36,9 +36,12 @@ function evidenceHref(
     case "validation_report":
       return `/api/sessions/${receipt.session_id}/validation-evidence/assets/${id}`;
     case "browser_screenshot":
-      return `${runHref}#${browserScreenshotAnchor(id)}`;
+      return `${runHref}?evaluationAttempt=${receipt.attempt_id}#${browserScreenshotAnchor(id)}`;
     case "browser_recording":
-      return `${runHref}#${browserRecordingAnchor(id, 0)}`;
+      return `${runHref}?evaluationAttempt=${receipt.attempt_id}#${browserRecordingCitationAnchor(
+        id,
+        citation.location.kind === "time" ? citation.location.startMs : 0,
+      )}`;
     case "code_diff":
       if (id !== receipt.run_id || !diff || diff.input_sha === diff.output_sha) return undefined;
       return `https://github.com/${diff.repository_full_name}/compare/${diff.input_sha}...${diff.output_sha}`;

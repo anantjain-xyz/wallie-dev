@@ -43,7 +43,29 @@ describe("scorer trend filters", () => {
     { cohort, scoreSnapshot, evaluationDay: date.to },
     { cohort: [cohort, cohort] },
     { from: "2024-01-01" },
+    { beforeRevisionAt: "2026-11-18T12:30:04.123456+00:00" },
+    { beforeCohortPolicy: cohort },
   ])("rejects invalid or unbound drilldown filters %j", (filters) => {
     expect(parseScorerTrendQuery({ ...date, ...filters })).toBeNull();
+  });
+
+  it("keeps independent option cursor pairs with full timestamp precision", () => {
+    const beforeRevisionAt = "2026-11-18T12:30:04.123456+00:00";
+    const beforeCohortAt = "2026-11-18T11:30:04.876543+00:00";
+    expect(
+      parseScorerTrendQuery({
+        ...date,
+        beforeRevisionAt,
+        beforeRevisionPolicy: cohort,
+        beforeCohortAt,
+        beforeCohortPolicy: run,
+      }),
+    ).toEqual({
+      ...date,
+      beforeRevisionAt,
+      beforeRevisionPolicy: cohort,
+      beforeCohortAt,
+      beforeCohortPolicy: run,
+    });
   });
 });

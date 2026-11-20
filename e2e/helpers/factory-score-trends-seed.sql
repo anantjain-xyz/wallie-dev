@@ -2,7 +2,8 @@ begin;
 set local request.jwt.claim.role = 'service_role';
 
 create function pg_temp.seed_scorer_trends(
-  workspace_id uuid, factory_id uuid, owner_id uuid, owner_member uuid, pipeline_id uuid, stage_id uuid
+  workspace_id uuid, factory_id uuid, owner_id uuid, owner_member uuid, pipeline_id uuid, stage_id uuid,
+  extra_policy_count integer
 ) returns jsonb language plpgsql as $$
 declare
   scorer public.factory_scorer_revisions;
@@ -134,6 +135,12 @@ begin
     end loop;
   end loop;
 
+  -- Fill the recent selector page with newer policies for the first rubric.
+  for newer_policy in 1..extra_policy_count loop
+    perform public.save_factory_scorer_sampling_policy(workspace_id, factory_id,
+      owner_id, scorer.id, newer_policy, 10000, 'qualification-cohort');
+  end loop;
+
   if not release_state.enabled then
     perform public.set_git_continuity_release(false, (select revision from public.get_git_continuity_release_state()),
       'Restore disposable scorer trend release state');
@@ -144,5 +151,5 @@ end;
 $$;
 
 select pg_temp.seed_scorer_trends(:'workspace_id'::uuid, :'factory_id'::uuid, :'owner_id'::uuid,
-  :'owner_member_id'::uuid, :'pipeline_id'::uuid, :'stage_id'::uuid);
+  :'owner_member_id'::uuid, :'pipeline_id'::uuid, :'stage_id'::uuid, :'extra_policy_count'::integer);
 commit;

@@ -50,20 +50,27 @@ test("a factory reader inspects frozen score coverage and exact run evidence", a
         owner_member_id: fixture.ownerMemberId,
         pipeline_id: fixture.pipelineId,
         stage_id: fixture.stageId,
+        extra_policy_count: "101",
       }),
     );
     const from = fixture.to;
     const to = new Date(Date.parse(from) + 86_400_000).toISOString().slice(0, 10);
     const scope = new URLSearchParams({ factory: fixture.factoryId, from, to });
     const base = `/w/${fixture.slug}`;
-    const revisionPath = (revision: string, cohort: string) =>
-      `${base}/scorers/${data.scorerId}?${new URLSearchParams({ ...Object.fromEntries(scope), revision, cohort })}`;
-    const initial = revisionPath(data.revisions[0], data.policies[0]);
+    const initial = `${base}/scorers/${data.scorerId}?${scope}&revision=${data.revisions[0]}`;
 
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, initial, { baseURL: fixture.app, email: fixture.viewerEmail });
     const trend = page.locator("#scorer-trends:visible");
+    const cohortPicker = trend.getByRole("combobox", { name: "Sampling cohort" });
+    const firstPolicy = cohortPicker.locator(`option[value="${data.policies[0]}"]`);
+    await expect(firstPolicy).toHaveCount(0);
+    await trend.getByRole("link", { name: "Older sampling cohorts", exact: true }).click();
+    await expect(firstPolicy).toHaveCount(1);
+    await cohortPicker.selectOption(data.policies[0]);
+    await trend.getByRole("button", { name: "Apply scorer filters" }).click();
+    await expect(cohortPicker).toHaveValue(data.policies[0]);
     const coverage = trend.locator("dl:visible");
     await expect(coverage.getByText("/ 2 sampled", { exact: true })).toBeVisible();
     await expect(coverage.getByText("/ 2 usable", { exact: true })).toBeVisible();
@@ -111,11 +118,16 @@ test("a factory reader inspects frozen score coverage and exact run evidence", a
 
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Switch to light mode" }).click();
-    const analytics = `${base}/analytics?${scope}&scorerRevision=${data.revisions[1]}&cohort=${data.policies[1]}`;
-    await page.goto(analytics);
-    await expect(trend.getByRole("combobox", { name: "Scorer revision" })).toHaveValue(
-      data.revisions[1],
-    );
+    await page.goto(`${base}/analytics?${scope}`);
+    const revisionPicker = trend.getByRole("combobox", { name: "Scorer revision" });
+    const secondRevision = revisionPicker.locator(`option[value="${data.revisions[1]}"]`);
+    await expect(secondRevision).toHaveCount(0);
+    await trend.getByRole("link", { name: "Older scorer revisions", exact: true }).click();
+    await expect(secondRevision).toHaveCount(1);
+    await revisionPicker.selectOption(data.revisions[1]);
+    await trend.getByRole("button", { name: "Show revision" }).click();
+    await expect(revisionPicker).toHaveValue(data.revisions[1]);
+    await expect(cohortPicker).toHaveValue(data.policies[1]);
     await expect(
       trend.locator("#scorer-cohort-results").getByText("Missing evidence", { exact: true }),
     ).toBeVisible();

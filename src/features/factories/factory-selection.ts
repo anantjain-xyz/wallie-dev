@@ -137,6 +137,10 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
       "evaluationStatus",
       "beforeRunFinishedAt",
       "beforeScoreRun",
+      "beforeRevisionAt",
+      "beforeRevisionPolicy",
+      "beforeCohortAt",
+      "beforeCohortPolicy",
     ])
       params.delete(key);
   }

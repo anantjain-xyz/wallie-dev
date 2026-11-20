@@ -8,6 +8,7 @@ const id = z
   .string()
   .uuid()
   .transform((value) => value.toLowerCase());
+const timestamp = z.string().datetime({ offset: true });
 const format = z.object({
   from: date.optional(),
   to: date.optional(),
@@ -16,8 +17,12 @@ const format = z.object({
   evaluationDay: date.optional(),
   evaluationStatus: scoreTrendStatusSchema.or(z.literal("").transform(() => undefined)).optional(),
   scoreSnapshot: scoreSnapshotSchema.optional(),
-  beforeRunFinishedAt: z.string().datetime({ offset: true }).optional(),
+  beforeRunFinishedAt: timestamp.optional(),
   beforeScoreRun: id.optional(),
+  beforeRevisionAt: timestamp.optional(),
+  beforeRevisionPolicy: id.optional(),
+  beforeCohortAt: timestamp.optional(),
+  beforeCohortPolicy: id.optional(),
 });
 
 export type ScorerTrendQuery = z.output<typeof format> & { from: string; to: string };
@@ -31,7 +36,11 @@ export function parseScorerTrendQuery(
   if (!parsed.success) return null;
   const { from, to, ...filters } = parsed.data;
   if ((from === undefined) !== (to === undefined)) return null;
-  if ((filters.beforeRunFinishedAt === undefined) !== (filters.beforeScoreRun === undefined))
+  if (
+    (filters.beforeRunFinishedAt === undefined) !== (filters.beforeScoreRun === undefined) ||
+    (filters.beforeRevisionAt === undefined) !== (filters.beforeRevisionPolicy === undefined) ||
+    (filters.beforeCohortAt === undefined) !== (filters.beforeCohortPolicy === undefined)
+  )
     return null;
   if (
     (filters.scoreSnapshot && !filters.cohort) ||
