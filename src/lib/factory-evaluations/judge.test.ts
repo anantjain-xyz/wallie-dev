@@ -83,7 +83,7 @@ describe("tool-free factory judge", () => {
   it("classifies injected evidence as data, requests one pinned route, and applies the rubric thresholds locally", async () => {
     const fetcher = vi.fn<typeof fetch>(async (url, request) => {
       expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
-      expect(request).toMatchObject({ redirect: "error", method: "POST", cache: "no-store" });
+      expect(request).toMatchObject({ redirect: "manual", method: "POST", cache: "no-store" });
       expect(new Headers(request?.headers).get("Authorization")).toBe(`Bearer ${key}`);
       const body = JSON.parse(String(request?.body));
       expect(body).toMatchObject({
@@ -308,7 +308,11 @@ describe("tool-free factory judge", () => {
     await expect(judge(fetcher)).resolves.toMatchObject({
       result: { status: "error", reason: "provider_unavailable" },
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    fetcher.mockResolvedValueOnce(Response.redirect("https://redirect.example.test/"));
+    await expect(judge(fetcher)).resolves.toMatchObject({
+      result: { status: "error", reason: "provider_unavailable" },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   it("returns at the caller deadline even when the supplied transport stalls", async () => {

@@ -339,7 +339,7 @@ export async function runFactoryJudge({
           Accept: "application/json",
         },
         signal,
-        redirect: "error",
+        redirect: "manual",
         cache: "no-store",
         body: requestBody,
       });
