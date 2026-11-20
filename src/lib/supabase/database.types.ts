@@ -2647,6 +2647,138 @@ export type Database = {
           },
         ]
       }
+      factory_scorer_sample_receipts: {
+        Row: {
+          attempt_count: number | null
+          created_at: string
+          definition_revision_id: string
+          evidence: Json
+          factory_id: string
+          id: string
+          missing_evidence: string[]
+          outcome: string
+          policy_id: string
+          reason: string | null
+          run_finished_at: string
+          run_id: string
+          scorer_revision_id: string
+          session_id: string
+          target_commit_sha: string | null
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count?: number | null
+          created_at?: string
+          definition_revision_id: string
+          evidence: Json
+          factory_id: string
+          id?: string
+          missing_evidence: string[]
+          outcome: string
+          policy_id: string
+          reason?: string | null
+          run_finished_at: string
+          run_id: string
+          scorer_revision_id: string
+          session_id: string
+          target_commit_sha?: string | null
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number | null
+          created_at?: string
+          definition_revision_id?: string
+          evidence?: Json
+          factory_id?: string
+          id?: string
+          missing_evidence?: string[]
+          outcome?: string
+          policy_id?: string
+          reason?: string | null
+          run_finished_at?: string
+          run_id?: string
+          scorer_revision_id?: string
+          session_id?: string
+          target_commit_sha?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorer_sample_receipt_workspace_id_factory_id_poli_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "policy_id",
+              "scorer_revision_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_scorer_sampling_policies"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "id",
+              "scorer_revision_id",
+            ]
+          },
+          {
+            foreignKeyName: "factory_scorer_sample_receipts_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      factory_scorer_sampling_policies: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          rate_bps: number
+          revision_number: number
+          scorer_revision_id: string
+          seed: string
+          stage_ids: string[]
+          terminal_statuses: string[]
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id?: string
+          rate_bps: number
+          revision_number: number
+          scorer_revision_id: string
+          seed: string
+          stage_ids: string[]
+          terminal_statuses: string[]
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          rate_bps?: number
+          revision_number?: number
+          scorer_revision_id?: string
+          seed?: string
+          stage_ids?: string[]
+          terminal_statuses?: string[]
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorer_sampling_polic_workspace_id_factory_id_scor_fkey"
+            columns: ["workspace_id", "factory_id", "scorer_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorer_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_scorers: {
         Row: {
           created_at: string
@@ -8030,6 +8162,27 @@ export type Database = {
         }
         Returns: string
       }
+      backfill_factory_scorer_samples: {
+        Args: {
+          p_after_finished_at?: string
+          p_after_run_id?: string
+          p_before: string
+          p_closed_before?: string
+          p_factory_id: string
+          p_limit?: number
+          p_policy_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          candidate_count: number
+          closed_before: string
+          eligible_count: number
+          excluded_count: number
+          next_finished_at: string
+          next_run_id: string
+          sampled_count: number
+        }[]
+      }
       begin_codex_device_auth_flow: {
         Args: {
           flow_id: string
@@ -10437,6 +10590,15 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: Json
       }
+      process_factory_scorer_sampling: {
+        Args: { p_limit?: number }
+        Returns: {
+          candidate_count: number
+          eligible_count: number
+          excluded_count: number
+          sampled_count: number
+        }[]
+      }
       propose_factory_memory: {
         Args: {
           p_artifact_id: string
@@ -10740,6 +10902,38 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      record_factory_scorer_sample: {
+        Args: {
+          p_factory_id: string
+          p_policy_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          attempt_count: number | null
+          created_at: string
+          definition_revision_id: string
+          evidence: Json
+          factory_id: string
+          id: string
+          missing_evidence: string[]
+          outcome: string
+          policy_id: string
+          reason: string | null
+          run_finished_at: string
+          run_id: string
+          scorer_revision_id: string
+          session_id: string
+          target_commit_sha: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_scorer_sample_receipts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       record_pr_verification_observation: {
         Args: {
@@ -11771,6 +11965,38 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_scorer_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_factory_scorer_sampling_policy: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision: number
+          p_factory_id: string
+          p_rate_bps: number
+          p_scorer_revision_id: string
+          p_seed: string
+          p_stage_ids?: string[]
+          p_terminal_statuses?: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          rate_bps: number
+          revision_number: number
+          scorer_revision_id: string
+          seed: string
+          stage_ids: string[]
+          terminal_statuses: string[]
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_scorer_sampling_policies"
           isOneToOne: true
           isSetofReturn: false
         }

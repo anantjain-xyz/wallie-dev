@@ -14,6 +14,7 @@ import {
   processFactoryFlowProjection,
   pruneFactoryAnalyticsExports,
 } from "@/lib/factory-outcomes/maintenance";
+import { processFactoryScorerSampling } from "@/lib/factory-scorers/sampling-maintenance";
 import { drainFactoryEventDeliveries } from "@/lib/factory-event-subscriptions/dispatch";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import {
@@ -197,6 +198,7 @@ async function main() {
 
     let deliveringFactoryEvents = false;
     let projectingFactoryFlow = false;
+    let samplingFactoryScorers = false;
     maintenanceTimers.push(
       setInterval(() => {
         if (!deliveringFactoryEvents) {
@@ -216,6 +218,16 @@ async function main() {
               await processFactoryFlowProjection(admin);
             } finally {
               projectingFactoryFlow = false;
+            }
+          });
+        }
+        if (!samplingFactoryScorers) {
+          samplingFactoryScorers = true;
+          timerTasks.run("factory scorer sampling", async () => {
+            try {
+              await processFactoryScorerSampling(admin);
+            } finally {
+              samplingFactoryScorers = false;
             }
           });
         }
