@@ -135,12 +135,12 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
       await expect(pin).toHaveAttribute("href", new RegExp(`revision=${revision}`));
     await page.getByRole("button", { name: "Pause scorer", exact: true }).click();
     await expect(page.getByRole("button", { name: "Resume scorer", exact: true })).toBeVisible();
-    const health = page.locator("#scorer-health");
+    const health = page.locator("#scorer-health:visible");
     await expect(health.getByText("Evaluator errors / settled")).toBeVisible();
     await expect(health.getByText("0 / 3 (0%)", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Resume scorer", exact: true }).click();
     await expect(page.getByRole("button", { name: "Pause scorer", exact: true })).toBeVisible();
-    await page.getByText("Pause history", { exact: true }).click();
+    await health.getByText("Pause history", { exact: true }).click();
     await expect(health.getByText("Paused", { exact: true })).toBeVisible();
     await expect(health.getByText("Resumed", { exact: true })).toBeVisible();
     await capture(page, info, "02-scorer-health-and-calibration-desktop-light");
@@ -172,8 +172,9 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
         email: fixture.viewerEmail,
       });
       await expect(reader.getByText(revisedCalibrationName, { exact: true }).first()).toBeVisible();
-      await reader.getByText("Pause history", { exact: true }).click();
-      await expect(reader.getByText("Resumed", { exact: true })).toBeVisible();
+      const readerHealth = reader.locator("#scorer-health:visible");
+      await readerHealth.getByText("Pause history", { exact: true }).click();
+      await expect(readerHealth.getByText("Resumed", { exact: true })).toBeVisible();
       await expect(reader.getByRole("button", { name: "Pause scorer", exact: true })).toHaveCount(
         0,
       );
