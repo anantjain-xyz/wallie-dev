@@ -7,6 +7,7 @@ import { loadRunScores } from "@/lib/factory-evaluations/score-trends";
 import type { RunScore } from "@/lib/factory-evaluations/score-trend-contracts";
 
 import { RunScoreSection } from "./run-score-section";
+import { RunEvaluationControls } from "./run-evaluation-governance";
 
 vi.mock("@/lib/factory-evaluations/score-trends", () => ({ loadRunScores: vi.fn() }));
 vi.mock("@/features/workspaces/authenticated-context", () => ({
@@ -33,6 +34,8 @@ const scoreRow = {
   scorer_slug: "release-quality",
   sample_outcome: "excluded",
   sample_reason: "missing_evidence",
+  source_attempt_id: null,
+  admission_paused: false,
   job_status: null,
   receipt: null,
   diff: null,
@@ -248,4 +251,53 @@ describe("run score section", () => {
     expect(screen.queryByRole("link", { name: "Open validation report" })).toBeNull();
     expect(screen.queryByText(evaluated.receipt.explanation)).toBeNull();
   });
+});
+
+it("pages exact re-evaluations while retaining other history filters", () => {
+  const older = "2026-11-19T01:02:03.123456+00:00";
+  render(
+    <RunEvaluationControls
+      workspaceSlug="wallie"
+      scope={{ workspaceId, factoryId }}
+      receipt={evaluated.receipt}
+      visibleJobIds={new Set()}
+      data={{
+        review: null,
+        canManage: false,
+        paused: false,
+        targets: [],
+        nextTarget: null,
+        page: {
+          beforeReevaluationJob: jobId,
+          beforeReevaluationAt: at,
+          beforeAdjudicationId: reportId,
+          beforeAdjudicationAt: at,
+        },
+        reevaluations: {
+          jobs: [
+            {
+              job_id: sampleId,
+              prior_attempt_id: attemptId,
+              target_scorer_revision_id: revisionId,
+              status: "queued",
+              receipt: null,
+            },
+          ],
+          next_before_created_at: older,
+          next_before_job_id: sampleId,
+        },
+      }}
+    />,
+  );
+  const url = (name: string) =>
+    new URL(screen.getByRole("link", { name }).getAttribute("href") ?? "", "https://wallie.test");
+  const next = url("Older re-evaluations");
+  expect(screen.queryByRole("link", { name: "Open re-evaluation" })).toBeNull();
+  expect(next.searchParams.get("evaluationAttempt")).toBe(attemptId);
+  expect(next.searchParams.get("beforeReevaluationAt")).toBe(older);
+  expect(next.searchParams.get("beforeReevaluationJob")).toBe(sampleId);
+  expect(next.searchParams.get("beforeAdjudicationId")).toBe(reportId);
+  const latest = url("Latest re-evaluations");
+  expect(latest.searchParams.has("beforeReevaluationJob")).toBe(false);
+  expect(latest.searchParams.get("beforeAdjudicationId")).toBe(reportId);
 });

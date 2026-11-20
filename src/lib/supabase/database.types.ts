@@ -1771,10 +1771,12 @@ export type Database = {
           factory_id: string
           finished_at: string | null
           id: string
+          requested_by: string | null
           run_id: string
           sample_receipt_id: string
           scorer_revision_id: string
           session_id: string
+          source_attempt_id: string | null
           status: string
           target_commit_sha: string
           workspace_id: string
@@ -1788,10 +1790,12 @@ export type Database = {
           factory_id: string
           finished_at?: string | null
           id?: string
+          requested_by?: string | null
           run_id: string
           sample_receipt_id: string
           scorer_revision_id: string
           session_id: string
+          source_attempt_id?: string | null
           status?: string
           target_commit_sha: string
           workspace_id: string
@@ -1805,10 +1809,12 @@ export type Database = {
           factory_id?: string
           finished_at?: string | null
           id?: string
+          requested_by?: string | null
           run_id?: string
           sample_receipt_id?: string
           scorer_revision_id?: string
           session_id?: string
+          source_attempt_id?: string | null
           status?: string
           target_commit_sha?: string
           workspace_id?: string
@@ -1820,6 +1826,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "factory_scorer_sample_receipts"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_evaluation_jobs_source_attempt_id_fkey"
+            columns: ["source_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "factory_evaluation_receipts"
+            referencedColumns: ["attempt_id"]
           },
           {
             foreignKeyName: "factory_evaluation_jobs_workspace_id_fkey"
@@ -3009,6 +3022,190 @@ export type Database = {
           },
         ]
       }
+      factory_scorer_adjudications: {
+        Row: {
+          actor_member_id: string
+          attempt_id: string
+          created_at: string
+          disposition: string
+          expected_status: string | null
+          factory_id: string
+          id: string
+          note: string
+          scorer_id: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_member_id: string
+          attempt_id: string
+          created_at?: string
+          disposition: string
+          expected_status?: string | null
+          factory_id: string
+          id: string
+          note: string
+          scorer_id: string
+          workspace_id: string
+        }
+        Update: {
+          actor_member_id?: string
+          attempt_id?: string
+          created_at?: string
+          disposition?: string
+          expected_status?: string | null
+          factory_id?: string
+          id?: string
+          note?: string
+          scorer_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorer_adjudications_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "factory_evaluation_receipts"
+            referencedColumns: ["attempt_id"]
+          },
+          {
+            foreignKeyName: "factory_scorer_adjudications_workspace_id_factory_id_score_fkey"
+            columns: ["workspace_id", "factory_id", "scorer_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorers"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_scorer_admission_skips: {
+        Row: {
+          factory_id: string
+          pause_revision: number
+          recorded_xact_id: unknown
+          sample_receipt_id: string
+          scorer_id: string
+          workspace_id: string
+        }
+        Insert: {
+          factory_id: string
+          pause_revision: number
+          recorded_xact_id?: unknown
+          sample_receipt_id: string
+          scorer_id: string
+          workspace_id: string
+        }
+        Update: {
+          factory_id?: string
+          pause_revision?: number
+          recorded_xact_id?: unknown
+          sample_receipt_id?: string
+          scorer_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorer_admission_skip_workspace_id_factory_id_scor_fkey"
+            columns: ["workspace_id", "factory_id", "scorer_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorers"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_scorer_admission_skips_sample_receipt_id_fkey"
+            columns: ["sample_receipt_id"]
+            isOneToOne: true
+            referencedRelation: "factory_scorer_sample_receipts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      factory_scorer_calibration_revisions: {
+        Row: {
+          adjudication_ids: string[]
+          created_at: string
+          created_by_member_id: string
+          factory_id: string
+          id: string
+          name: string
+          revision: number
+          scorer_id: string
+          scorer_revision_id: string
+          set_id: string
+          workspace_id: string
+        }
+        Insert: {
+          adjudication_ids: string[]
+          created_at?: string
+          created_by_member_id: string
+          factory_id: string
+          id?: string
+          name: string
+          revision: number
+          scorer_id: string
+          scorer_revision_id: string
+          set_id: string
+          workspace_id: string
+        }
+        Update: {
+          adjudication_ids?: string[]
+          created_at?: string
+          created_by_member_id?: string
+          factory_id?: string
+          id?: string
+          name?: string
+          revision?: number
+          scorer_id?: string
+          scorer_revision_id?: string
+          set_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorer_calibration_re_workspace_id_factory_id_scor_fkey"
+            columns: ["workspace_id", "factory_id", "scorer_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorers"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_scorer_pauses: {
+        Row: {
+          factory_id: string
+          paused: boolean
+          revision: number
+          scorer_id: string
+          updated_at: string
+          updated_by: string
+          workspace_id: string
+        }
+        Insert: {
+          factory_id: string
+          paused: boolean
+          revision: number
+          scorer_id: string
+          updated_at?: string
+          updated_by: string
+          workspace_id: string
+        }
+        Update: {
+          factory_id?: string
+          paused?: boolean
+          revision?: number
+          scorer_id?: string
+          updated_at?: string
+          updated_by?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_scorer_pauses_workspace_id_factory_id_scorer_id_fkey"
+            columns: ["workspace_id", "factory_id", "scorer_id"]
+            isOneToOne: true
+            referencedRelation: "factory_scorers"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_scorer_revisions: {
         Row: {
           created_at: string
@@ -3060,7 +3257,7 @@ export type Database = {
           id: string
           missing_evidence: string[]
           outcome: string
-          policy_id: string
+          policy_id: string | null
           reason: string | null
           recorded_xact_id: unknown
           run_finished_at: string
@@ -3079,7 +3276,7 @@ export type Database = {
           id?: string
           missing_evidence: string[]
           outcome: string
-          policy_id: string
+          policy_id?: string | null
           reason?: string | null
           recorded_xact_id?: unknown
           run_finished_at: string
@@ -3098,7 +3295,7 @@ export type Database = {
           id?: string
           missing_evidence?: string[]
           outcome?: string
-          policy_id?: string
+          policy_id?: string | null
           reason?: string | null
           recorded_xact_id?: unknown
           run_finished_at?: string
@@ -3132,6 +3329,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "agent_runs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_scorer_sample_receipts_scorer_fk"
+            columns: ["workspace_id", "factory_id", "scorer_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorer_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
           },
         ]
       }
@@ -8220,6 +8424,19 @@ export type Database = {
         }
         Returns: Json
       }
+      adjudicate_factory_evaluation_receipt: {
+        Args: {
+          p_actor_user_id: string
+          p_adjudication_id: string
+          p_attempt_id: string
+          p_disposition: string
+          p_expected_status?: string
+          p_factory_id: string
+          p_note: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       admit_factory_command:
         | {
             Args: {
@@ -8803,10 +9020,12 @@ export type Database = {
           factory_id: string
           finished_at: string | null
           id: string
+          requested_by: string | null
           run_id: string
           sample_receipt_id: string
           scorer_revision_id: string
           session_id: string
+          source_attempt_id: string | null
           status: string
           target_commit_sha: string
           workspace_id: string
@@ -9143,6 +9362,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      configure_factory_scorer_pause: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision: number
+          p_factory_id: string
+          p_paused: boolean
+          p_scorer_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       confirm_factory_event_subscription: {
         Args: {
@@ -10229,6 +10459,15 @@ export type Database = {
         }
         Returns: Json
       }
+      get_factory_scorer_pause: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_scorer_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_throughput_breakdown: {
         Args: {
           p_dimension?: string
@@ -10791,6 +11030,17 @@ export type Database = {
           p_limit?: number
           p_scorer_id?: string
           p_scorer_revision_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      list_factory_scorer_reevaluations: {
+        Args: {
+          p_actor_user_id: string
+          p_before_created_at?: string
+          p_before_job_id?: string
+          p_factory_id: string
+          p_prior_attempt_id: string
           p_workspace_id: string
         }
         Returns: Json
@@ -11440,6 +11690,17 @@ export type Database = {
           version: number
         }[]
       }
+      read_factory_evaluation_review: {
+        Args: {
+          p_actor_user_id: string
+          p_attempt_id: string
+          p_before_adjudication_id?: string
+          p_before_created_at?: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_memory_context: {
         Args: {
           p_factory_id: string
@@ -11521,6 +11782,19 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_scorer_calibration: {
+        Args: {
+          p_actor_user_id: string
+          p_before_revision?: number
+          p_before_set_at?: string
+          p_before_set_id?: string
+          p_factory_id: string
+          p_scorer_id: string
+          p_set_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_session_command: {
         Args: {
           p_admission_id: string
@@ -11588,7 +11862,7 @@ export type Database = {
           id: string
           missing_evidence: string[]
           outcome: string
-          policy_id: string
+          policy_id: string | null
           reason: string | null
           recorded_xact_id: unknown
           run_finished_at: string
@@ -11936,6 +12210,16 @@ export type Database = {
           id: string
           role: Database["public"]["Enums"]["member_role"]
         }[]
+      }
+      request_factory_scorer_reevaluation: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_prior_attempt_id: string
+          p_target_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       request_run_export: {
         Args: {
@@ -12635,6 +12919,20 @@ export type Database = {
           p_request_id: string
           p_revert_pr_number: number
           p_status: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      save_factory_scorer_calibration_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_adjudication_ids: string[]
+          p_expected_revision: number
+          p_factory_id: string
+          p_name: string
+          p_scorer_id: string
+          p_scorer_revision_id: string
+          p_set_id: string
           p_workspace_id: string
         }
         Returns: Json

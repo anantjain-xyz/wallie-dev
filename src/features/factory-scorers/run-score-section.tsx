@@ -18,6 +18,12 @@ import {
 
 import { ScoreOutcome, scoreReasonDetail, scoreValue } from "./score-outcome";
 import { scorerEvidenceLabels } from "./scorer-evidence-labels";
+import {
+  loadRunEvaluationGovernance,
+  runAttemptHref,
+  RunEvaluationControls,
+  type RunEvaluationGovernance,
+} from "./run-evaluation-governance";
 
 type Receipt = NonNullable<RunScore["receipt"]>;
 type EvidenceLocation = NonNullable<Receipt["evidence_locations"]>[number];
@@ -124,20 +130,25 @@ function EvidenceLinks({
 
 function RunScoresPanel({
   scores,
+  workspaceId,
   workspaceSlug,
   factoryId,
   runId,
   evaluationAttempt,
   artifacts,
+  governance,
 }: {
   scores: RunScore[];
+  workspaceId: string;
   workspaceSlug: string;
   factoryId: string;
   runId: string;
   evaluationAttempt?: string;
   artifacts: Map<string, string>;
+  governance: RunEvaluationGovernance;
 }) {
   const runHref = workspaceRunDetailPath(workspaceSlug, runId);
+  const visibleJobIds = new Set(scores.map(({ evaluation_job_id }) => evaluation_job_id));
   return (
     <PageSection anchorId="scorer-evaluations" title="Scorer evaluations">
       <ul className="ui-sheet divide-y divide-border">
@@ -174,7 +185,14 @@ function RunScoresPanel({
                 {result ? (
                   <ScoreOutcome status={result.status} reason={result.reason} />
                 ) : pending || job_status === null ? (
-                  <ScoreOutcome status={sampleStatus} reason={sample_reason} />
+                  <ScoreOutcome
+                    status={sampleStatus}
+                    reason={
+                      job_status === null && sampleStatus === "unsettled" && score.admission_paused
+                        ? "scorer_paused"
+                        : sample_reason
+                    }
+                  />
                 ) : (
                   <Status
                     compact
@@ -183,6 +201,15 @@ function RunScoresPanel({
                   />
                 )}
               </div>
+              {score.source_attempt_id ? (
+                <Link
+                  className="type-secondary text-accent underline underline-offset-4"
+                  href={runAttemptHref(workspaceSlug, runId, score.source_attempt_id)}
+                  prefetch={false}
+                >
+                  Open original evaluation
+                </Link>
+              ) : null}
               {result ? (
                 <>
                   <p className="type-secondary text-muted">
@@ -201,6 +228,24 @@ function RunScoresPanel({
                     artifacts={artifacts}
                     diff={score.diff}
                   />
+                  {result.attempt_id === evaluationAttempt ? (
+                    <RunEvaluationControls
+                      data={governance}
+                      key={result.attempt_id}
+                      workspaceSlug={workspaceSlug}
+                      scope={{ workspaceId, factoryId }}
+                      receipt={result}
+                      visibleJobIds={visibleJobIds}
+                    />
+                  ) : (
+                    <Link
+                      className="ui-button"
+                      href={runAttemptHref(workspaceSlug, runId, result.attempt_id, result.job_id)}
+                      prefetch={false}
+                    >
+                      Review evaluation
+                    </Link>
+                  )}
                 </>
               ) : reason ? (
                 <p className="type-secondary text-muted">{reason}</p>
@@ -224,15 +269,17 @@ export async function RunScoreSection({
   sessionNumber,
   runId,
   attempt,
+  governanceQuery = {},
 }: {
   workspaceSlug: string;
   sessionId: string;
   sessionNumber: number;
   runId: string;
   attempt: string | string[] | undefined;
+  governanceQuery?: Record<string, string | string[] | undefined>;
 }) {
   const query = attemptId.optional().safeParse(attempt);
-  const { supabase, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
+  const { supabase, workspace, user } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
   const data = query.success
     ? await loadRunScores(supabase, {
         workspaceId: workspace.id,
@@ -252,6 +299,21 @@ export async function RunScoreSection({
       </PageSection>
     );
   }
+
+  const selected = query.data
+    ? data.scores.find(({ receipt }) => receipt?.attempt_id === query.data)
+    : undefined;
+  const governance =
+    selected?.receipt && user?.id
+      ? loadRunEvaluationGovernance({
+          supabase,
+          scope: { workspaceId: workspace.id, factoryId: data.factoryId, actorUserId: user.id },
+          workspaceSlug,
+          score: selected,
+          receipt: selected.receipt,
+          query: governanceQuery,
+        }).catch(() => null)
+      : null;
 
   const artifacts = new Map<string, string>();
   const ids = [
@@ -284,11 +346,13 @@ export async function RunScoreSection({
   return (
     <RunScoresPanel
       scores={data.scores}
+      workspaceId={workspace.id}
       workspaceSlug={workspaceSlug}
       factoryId={data.factoryId}
       runId={runId}
       evaluationAttempt={query.success ? query.data : undefined}
       artifacts={artifacts}
+      governance={await governance}
     />
   );
 }

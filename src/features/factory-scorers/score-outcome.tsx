@@ -29,6 +29,7 @@ const reasonLabels: Record<string, string> = {
   judgment_unavailable: "Judgment unavailable",
   lease_expired: "Evaluation lease expired",
   canceled: "Canceled",
+  scorer_paused: "Admission paused",
 };
 
 export function scoreReason(reason: string | null): string | undefined {
@@ -40,6 +41,7 @@ const standaloneReasons = new Set([
   "withheld_evidence",
   "unsupported_evidence",
   "canceled",
+  "scorer_paused",
 ]);
 
 export function scoreReasonDetail(reason: string | null) {
@@ -61,6 +63,8 @@ export function ScoreOutcome({
     return <Status compact label={scoreReason(reason)} value="needs_attention" />;
   }
   if (reason === "canceled") return <Status compact label="Canceled" value="canceled" />;
+  if (reason === "scorer_paused")
+    return <Status compact label="Admission paused" value="blocked" />;
   const { label, value } = statusLabels[status];
   return <Status compact label={label} value={value} />;
 }
