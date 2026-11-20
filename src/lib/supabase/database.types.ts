@@ -1930,6 +1930,132 @@ export type Database = {
           },
         ]
       }
+      factory_judge_invocations: {
+        Row: {
+          adapter_runtime: string
+          attempt_id: string
+          candidate_result: Json | null
+          evidence_digest: string | null
+          factory_id: string
+          finished_at: string | null
+          job_id: string
+          profile_revision_id: string | null
+          provider_model: string | null
+          provider_name: string | null
+          provider_request_id: string | null
+          started_at: string | null
+          status: string
+          worker_runtime: string | null
+          workspace_id: string
+        }
+        Insert: {
+          adapter_runtime?: string
+          attempt_id: string
+          candidate_result?: Json | null
+          evidence_digest?: string | null
+          factory_id: string
+          finished_at?: string | null
+          job_id: string
+          profile_revision_id?: string | null
+          provider_model?: string | null
+          provider_name?: string | null
+          provider_request_id?: string | null
+          started_at?: string | null
+          status: string
+          worker_runtime?: string | null
+          workspace_id: string
+        }
+        Update: {
+          adapter_runtime?: string
+          attempt_id?: string
+          candidate_result?: Json | null
+          evidence_digest?: string | null
+          factory_id?: string
+          finished_at?: string | null
+          job_id?: string
+          profile_revision_id?: string | null
+          provider_model?: string | null
+          provider_name?: string | null
+          provider_request_id?: string | null
+          started_at?: string | null
+          status?: string
+          worker_runtime?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_judge_invocations_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: true
+            referencedRelation: "factory_evaluation_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_judge_invocations_job_id_workspace_id_factory_id_fkey"
+            columns: ["job_id", "workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factory_evaluation_jobs"
+            referencedColumns: ["id", "workspace_id", "factory_id"]
+          },
+          {
+            foreignKeyName: "factory_judge_invocations_workspace_id_profile_revision_id_fkey"
+            columns: ["workspace_id", "profile_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_judge_profile_revisions"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      factory_judge_profile_revisions: {
+        Row: {
+          allow_images: boolean
+          allow_video: boolean
+          approved_by_member_id: string
+          created_at: string
+          enabled: boolean
+          id: string
+          model_id: string
+          provider: string
+          provider_route: string
+          revision: number
+          workspace_id: string
+        }
+        Insert: {
+          allow_images: boolean
+          allow_video: boolean
+          approved_by_member_id: string
+          created_at?: string
+          enabled: boolean
+          id?: string
+          model_id: string
+          provider?: string
+          provider_route: string
+          revision: number
+          workspace_id: string
+        }
+        Update: {
+          allow_images?: boolean
+          allow_video?: boolean
+          approved_by_member_id?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          model_id?: string
+          provider?: string
+          provider_route?: string
+          revision?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_judge_profile_revisions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       factory_machine_tokens: {
         Row: {
           created_at: string
@@ -8370,6 +8496,19 @@ export type Database = {
           subscription_revision: number
         }[]
       }
+      begin_factory_judge_invocation: {
+        Args: {
+          p_attempt_id: string
+          p_evidence_digest: string
+          p_factory_id: string
+          p_job_id: string
+          p_lease_id: string
+          p_profile_revision_id: string
+          p_worker_runtime: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       begin_factory_oauth_authorization: {
         Args: {
           p_actor_session_id: string
@@ -8647,6 +8786,23 @@ export type Database = {
           subscription_revision: number
         }[]
       }
+      claim_factory_judge_job: {
+        Args: never
+        Returns: {
+          attempt_id: string
+          attempt_number: number
+          factory_id: string
+          job_id: string
+          lease_expires_at: string
+          lease_id: string
+          run_id: string
+          sample_receipt_id: string
+          scorer_revision_id: string
+          session_id: string
+          target_commit_sha: string
+          workspace_id: string
+        }[]
+      }
       claim_github_pr_refresh: {
         Args: { p_workspace_id?: string }
         Returns: Json
@@ -8820,6 +8976,37 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_evaluation_lanes"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      configure_factory_judge_profile: {
+        Args: {
+          p_actor_user_id: string
+          p_allow_images: boolean
+          p_allow_video: boolean
+          p_encrypted_api_key?: string
+          p_expected_revision: number
+          p_model_id: string
+          p_provider_route: string
+          p_workspace_id: string
+        }
+        Returns: {
+          allow_images: boolean
+          allow_video: boolean
+          approved_by_member_id: string
+          created_at: string
+          enabled: boolean
+          id: string
+          model_id: string
+          provider: string
+          provider_route: string
+          revision: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_judge_profile_revisions"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -9659,6 +9846,21 @@ export type Database = {
         }
         Returns: boolean
       }
+      finish_factory_judge_invocation: {
+        Args: {
+          p_attempt_id: string
+          p_candidate_result?: Json
+          p_factory_id: string
+          p_job_id: string
+          p_lease_id: string
+          p_provider_model?: string
+          p_provider_name?: string
+          p_provider_request_id?: string
+          p_status: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       finish_github_pr_refresh: {
         Args: {
           p_base_sha?: string
@@ -9845,6 +10047,28 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      get_factory_judge_profile: {
+        Args: { p_actor_user_id: string; p_workspace_id: string }
+        Returns: {
+          allow_images: boolean
+          allow_video: boolean
+          approved_by_member_id: string
+          created_at: string
+          enabled: boolean
+          id: string
+          model_id: string
+          provider: string
+          provider_route: string
+          revision: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_judge_profile_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       get_factory_revert_summary: {
         Args: {
@@ -10786,6 +11010,16 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      prepare_factory_judge_invocation: {
+        Args: {
+          p_attempt_id: string
+          p_factory_id: string
+          p_job_id: string
+          p_lease_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       prepare_session_checkpoint_publication: {
         Args: {
@@ -11745,6 +11979,32 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_execution_grants"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_factory_judge_profile: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision: number
+          p_workspace_id: string
+        }
+        Returns: {
+          allow_images: boolean
+          allow_video: boolean
+          approved_by_member_id: string
+          created_at: string
+          enabled: boolean
+          id: string
+          model_id: string
+          provider: string
+          provider_route: string
+          revision: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_judge_profile_revisions"
           isOneToOne: true
           isSetofReturn: false
         }

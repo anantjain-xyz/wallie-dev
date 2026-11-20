@@ -59,3 +59,38 @@ Workspace owners and admins can pause the evaluation lane or set its
 concurrency limit. Factory managers can cancel scoped jobs. Evaluations have
 their own locks and capacity. Production runs, publication, and human
 review continue through their existing commands.
+
+## Judge execution
+
+Workspace owners and admins can configure a dedicated OpenRouter judge
+through `/api/workspaces/[workspaceId]/evaluation-lane/judge-profile`.
+
+| Method   | Purpose                                                                                                                                               |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | Read the current profile revision and approved media types.                                                                                           |
+| `PUT`    | Save the model, provider route, and media permissions against `expectedRevision`. Supply a dedicated API key to enable the profile or rotate its key. |
+| `DELETE` | Revoke the active key against `expectedRevision` and retain prior profile metadata.                                                                   |
+
+The dedicated key is encrypted and kept outside production credential
+bindings. A worker can claim judge work when the workspace has an enabled
+profile. Wallie releases the key once per attempt after checking the current
+lease, profile, evidence references, and retention state.
+
+The judge reads only the sampled evidence for the exact run and commit.
+Snapshots and reports retain their private paths. The worker verifies the exact
+bytes before it sends inline media. Commit comparisons reject missing changes
+and comparisons that differ from the accepted checkpoint.
+
+The request uses one approved provider route with no fallback. Wallie asks for
+structured output and validates the score and any cited locations. Rubrics and
+evidence enter the model as data. The judge has no tools or production write
+access. Wallie applies the pinned thresholds after parsing the score.
+[OpenRouter structured outputs](https://openrouter.ai/docs/guides/features/structured-outputs)
+· [OpenRouter provider routing](https://openrouter.ai/docs/guides/routing/provider-selection)
+
+The adapter bounds text to 96 KiB, screenshots to 1 MiB, and recordings to
+8 MiB and 30 seconds. A missing, unsupported, malformed, or unavailable input
+or answer produces an explicit non-passing state. The invocation records
+the model, worker runtime, evidence digest, and typed candidate result.
+Temporary evidence outages use the queue's retry limit. Cancellation and
+lease expiry close the owning invocation without adopting a candidate.

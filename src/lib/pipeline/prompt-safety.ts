@@ -11,6 +11,7 @@ export type TrustedPromptSource =
   | "stage.promptTemplate"
   | "stage.slug"
   | "wallie.titleInstructions"
+  | "wallie.evaluationJudgeInstructions"
   | "wallie.artifactEvidencePolicy"
   | "wallie.buildGitPublicationPolicy"
   | "wallie.readContextInstructions"
@@ -31,6 +32,8 @@ export type UntrustedPromptSource =
   | "repo.readContext"
   | `context.document.${string}`
   | `context.memory.${string}.${string}`
+  | "evaluation.rubric"
+  | `evaluation.evidence.${string}`
   | "session.prompt"
   | "session.attachments"
   | `skill.repositoryRevision.${string}`

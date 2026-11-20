@@ -97,7 +97,32 @@ select workspace_id, factory_id, id, 1, created_by from revision;
 select public.set_git_continuity_release(true, revision, 'Scorer sampling fixture')
 from public.get_git_continuity_release_state() where not enabled;
 
-create function pg_temp.accept_sample_run(p_title text) returns uuid language plpgsql as $$
+create function pg_temp.record_judge_report(p_run_id uuid, p_commit_sha text) returns void language plpgsql as $$
+declare
+  asset_id uuid := gen_random_uuid();
+  report_path text := pg_temp.sampling_id(11)::text || '/' || p_run_id::text || '/' || asset_id::text;
+  report_body text := 'Retained judge fixture report.';
+  tree_sha text := repeat('c', 40);
+  observed_at timestamptz := clock_timestamp();
+begin
+  perform public.pin_session_validation_plan(p_run_id, p_commit_sha, tree_sha,
+    '{"version":1,"commands":[{"key":"tests","command":"pnpm test","timeoutSeconds":60,
+      "reports":[{"key":"report","path":"report.txt","kind":"report","required":true}]}]}');
+  insert into storage.objects(bucket_id, name, metadata)
+  values ('session-validation-evidence', report_path,
+    jsonb_build_object('size', octet_length(report_body), 'mimetype', 'text/plain'));
+  perform public.record_session_validation_evidence(p_run_id, p_commit_sha, tree_sha,
+    jsonb_build_array(jsonb_build_object('key', 'tests', 'command', 'pnpm test', 'provenance', 'harness',
+      'status', 'passed', 'exitCode', 0, 'startedAt', observed_at, 'completedAt', observed_at,
+      'commitSha', p_commit_sha, 'treeSha', tree_sha, 'finalCommitSha', p_commit_sha, 'finalTreeSha', tree_sha,
+      'reportKeys', '["tests/report"]'::jsonb, 'missingRequiredReports', '[]'::jsonb)),
+    jsonb_build_array(jsonb_build_object('id', asset_id, 'key', 'tests/report', 'kind', 'report', 'required', true,
+      'storagePath', report_path, 'sha256', encode(sha256(convert_to(report_body, 'UTF8')), 'hex'),
+      'contentType', 'text/plain', 'sizeBytes', octet_length(report_body))));
+end;
+$$;
+
+create function pg_temp.accept_sample_run(p_title text, p_with_report boolean default false) returns uuid language plpgsql as $$
 declare
   fixture record;
   run_id uuid;
@@ -113,7 +138,9 @@ begin
     'codex', 'gpt-5.5', 'project', 'wallie/sampling-' || fixture.job_id::text);
   if run_id is null then raise exception 'Could not start fixture run.'; end if;
   perform public.pin_session_job_git_input(fixture.job_id, 1, run_id, pg_temp.sampling_id(41), 'main', commit_sha);
-  if not found or public.prepare_session_source_and_checkpoint_publication(run_id, pg_temp.sampling_id(41), 'main',
+  if not found then raise exception 'Could not pin fixture checkpoint.'; end if;
+  if p_with_report then perform pg_temp.record_judge_report(run_id, commit_sha); end if;
+  if public.prepare_session_source_and_checkpoint_publication(run_id, pg_temp.sampling_id(41), 'main',
     commit_sha, commit_sha, 'No code change', artifact, '', '', '', 0, artifact) is distinct from true then
     raise exception 'Could not prepare fixture checkpoint.';
   end if;
@@ -413,6 +440,10 @@ where attempt.id = (select attempt_id from evaluation_claims where slot = 'initi
 alter table public.factory_evaluation_attempts enable trigger factory_evaluation_attempts_immutable;
 select is(pg_temp.settle_evaluation('initial', 'succeeded'), false,
   'an expired worker loses completion authority before a replacement takes the lease');
+select is((select public.prepare_factory_judge_invocation(claim.workspace_id, claim.factory_id,
+    claim.job_id, claim.attempt_id, claim.lease_id)->>'status'
+  from evaluation_claims claim where claim.slot = 'initial'), 'stale_claim',
+  'an expired judge lease cannot read evidence before another worker reclaims the job');
 select ok((select attempts_recovered = 1 and jobs_requeued = 1 and jobs_failed = 0
   from public.maintain_factory_evaluation_queue(10)), 'the maintenance loop requeues one expired evaluation');
 select ok((select attempt.outcome = 'lease_expired' and attempt.settled_at is not null and job.status = 'queued'
@@ -498,10 +529,207 @@ insert into evaluation_claims select 'success', claim.* from public.claim_factor
 select ok((select claim.sample_receipt_id = backlog.id and claim.attempt_number = 1
   from evaluation_claims claim cross join evaluation_backlog backlog where claim.slot = 'success'),
   'resuming the lane claims the recovered exact receipt');
+
+create function pg_temp.prepare_judge(p_slot text) returns jsonb language sql as $$
+  select public.prepare_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id,
+    claim.attempt_id, claim.lease_id)
+  from evaluation_claims claim where claim.slot = p_slot;
+$$;
+select is(pg_temp.prepare_judge('success')->>'status', 'profile_unavailable',
+  'an eligible claim cannot receive a judge payload before a workspace approves a profile');
 select is(pg_temp.settle_evaluation('success', 'succeeded'), true,
   'the current lease can settle the recovered evaluation successfully');
 select is(pg_temp.settle_evaluation('success', 'succeeded'), false,
   'a completion replay cannot settle the same lease twice');
+
+select ok(not has_table_privilege('authenticated', 'public.factory_judge_profile_revisions', 'SELECT')
+  and not has_table_privilege('service_role', 'internal.factory_judge_credential_heads', 'SELECT,INSERT,UPDATE,DELETE')
+  and not has_function_privilege('authenticated',
+    'public.prepare_factory_judge_invocation(uuid,uuid,uuid,uuid,uuid)', 'EXECUTE')
+  and not has_function_privilege('authenticated',
+    'public.begin_factory_judge_invocation(uuid,uuid,uuid,uuid,uuid,uuid,text,text)', 'EXECUTE'),
+  'judge profiles and credential material are available only through fenced commands');
+
+create function pg_temp.judge_ciphertext() returns text language sql immutable as $$
+  select 'v2.AAAAAAAAAAAAAAAA.YWJj.AAAAAAAAAAAAAAAAAAAAAA'::text;
+$$;
+create function pg_temp.configure_judge(p_expected integer, p_actor uuid default pg_temp.sampling_id(1),
+  p_ciphertext text default pg_temp.judge_ciphertext())
+returns public.factory_judge_profile_revisions language sql as $$
+  select public.configure_factory_judge_profile(pg_temp.sampling_id(11), p_actor, p_expected,
+    'openai/gpt-4.1-mini', 'openai', false, false, p_ciphertext);
+$$;
+select throws_ok($$select pg_temp.configure_judge(0, pg_temp.sampling_id(2))$$, '42501', null,
+  'an ordinary factory member cannot approve provider access to evidence');
+select throws_ok($$select pg_temp.configure_judge(0, pg_temp.sampling_id(3))$$, '42501', null,
+  'a foreign workspace owner cannot approve this workspace judge');
+select throws_ok($$select pg_temp.configure_judge(0, p_ciphertext => 'unsealed-fixture-key')$$, '22023', null,
+  'judge credential configuration rejects unencrypted material');
+create temp table judge_owner_approval as select * from pg_temp.configure_judge(0);
+select ok((select enabled and revision = 1 and provider = 'openrouter' and approved_by_member_id = pg_temp.sampling_id(21)
+  and not (to_jsonb(profile)::text like '%' || pg_temp.judge_ciphertext() || '%') from judge_owner_approval profile),
+  'owner approval stores an immutable profile and returns metadata without credential material');
+select throws_ok($$select pg_temp.configure_judge(0)$$, 'PT409', null,
+  'a stale workspace editor cannot replace an approved judge profile');
+select throws_ok($$update public.factory_judge_profile_revisions set model_id = 'openai/gpt-4.1'
+  where id = (select id from judge_owner_approval)$$, '23514', null,
+  'an approved profile revision cannot change in place');
+update public.workspace_members set role = 'admin' where id = pg_temp.sampling_id(22);
+create temp table approved_judge as select * from pg_temp.configure_judge(1, pg_temp.sampling_id(2), null);
+select ok((select latest.revision = 2 and latest.approved_by_member_id = pg_temp.sampling_id(22)
+    and prior.revision = 1 and prior.approved_by_member_id = pg_temp.sampling_id(21)
+  from approved_judge latest cross join judge_owner_approval prior),
+  'a workspace admin can append an approval while the earlier decision stays immutable');
+
+create function pg_temp.begin_judge(p_slot text, p_profile_id uuid) returns jsonb language sql as $$
+  select public.begin_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id, claim.attempt_id,
+    claim.lease_id, p_profile_id, repeat('d', 64), 'node')
+  from evaluation_claims claim where claim.slot = p_slot;
+$$;
+
+create function pg_temp.finish_judge(p_slot text, p_status text, p_result jsonb default null)
+returns boolean language sql as $$
+  select public.finish_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id, claim.attempt_id,
+    claim.lease_id, p_status, p_result,
+    case when p_status = 'completed' then 'openai/gpt-4.1-mini' end,
+    case when p_status = 'completed' then 'OpenAI' end,
+    case when p_status = 'completed' then 'fixture-request-id' end)
+  from evaluation_claims claim where claim.slot = p_slot;
+$$;
+
+insert into sample_runs values ('judge-report', pg_temp.accept_sample_run('Exact private judge report', true));
+select is((pg_temp.record_sample('primary', 'missing', 'judge-report')).outcome, 'sampled',
+  'an exact report and accepted artifact warrant a judge evaluation');
+insert into evaluation_claims select 'judge-report', claim.* from public.claim_factory_judge_job() claim;
+create temp table prepared_judge as select pg_temp.prepare_judge('judge-report') as payload;
+select ok((select payload->>'status' = 'ready' and payload->>'sample_receipt_id' = claim.sample_receipt_id::text
+    and payload->>'scorer_revision_id' = claim.scorer_revision_id::text
+    and payload->>'target_commit_sha' = checkpoint.output_sha
+    and payload->'definition' = scorer.definition
+    and payload->'evidence' @> jsonb_build_array(
+      jsonb_build_object('kind', 'artifact', 'id', checkpoint.artifact_id, 'content_md', 'Retained sampling artifact.'),
+      jsonb_build_object('kind', 'validation_report', 'id', report.id, 'workspace_id', claim.workspace_id,
+        'session_id', claim.session_id, 'run_id', claim.run_id, 'storage_path', report.storage_path,
+        'sha256', report.sha256, 'size_bytes', report.size_bytes, 'content_type', report.content_type))
+    and not (payload::text like '%' || pg_temp.judge_ciphertext() || '%')
+  from prepared_judge cross join evaluation_claims claim
+  join public.session_git_checkpoints checkpoint on checkpoint.run_id = claim.run_id
+  join public.session_validation_assets report on report.run_id = claim.run_id
+  join public.factory_scorer_revisions scorer on scorer.id = claim.scorer_revision_id
+  where claim.slot = 'judge-report'),
+  'prepare rehydrates the exact accepted checkpoint, report and scorer without releasing credential material');
+select is(pg_temp.prepare_judge('initial')->>'status', 'stale_claim', 'an expired and replaced claim cannot prepare evidence');
+select is(pg_temp.prepare_judge('canceled')->>'status', 'stale_claim', 'a canceled claim cannot prepare evidence');
+select is((select public.prepare_factory_judge_invocation(claim.workspace_id, claim.factory_id,
+    claim.job_id, claim.attempt_id, gen_random_uuid())->>'status'
+  from evaluation_claims claim where claim.slot = 'judge-report'), 'stale_claim',
+  'the current job and attempt identities do not authorize a different lease');
+create temp table authorized_judge as
+select pg_temp.begin_judge('judge-report', approved_judge.id) as payload from approved_judge;
+select ok((select payload->>'status' = 'authorized' and payload->>'encrypted_api_key' = pg_temp.judge_ciphertext()
+  from authorized_judge), 'the live claim obtains its approved encrypted provider key exactly once');
+select ok((select payload->>'status' = 'already_started' and not (payload ? 'encrypted_api_key')
+  from (select pg_temp.begin_judge('judge-report', approved_judge.id) as payload from approved_judge) duplicate),
+  'repeating an authorized invocation does not release the provider key again');
+
+create temp table judge_pass as
+select jsonb_build_object('schemaVersion', 1, 'status', 'pass', 'score', '{"kind":"boolean","value":true}'::jsonb,
+  'evidence', receipt.evidence) as result
+from evaluation_claims claim join public.factory_scorer_sample_receipts receipt on receipt.id = claim.sample_receipt_id
+where claim.slot = 'judge-report';
+select throws_ok($$select pg_temp.finish_judge('judge-report', 'completed',
+    jsonb_set(result, '{score}', '{"kind":"numeric","value":1}')) from judge_pass$$,
+  '22023', null, 'a score of the wrong type for the frozen rubric cannot settle as passing');
+select throws_ok($$select pg_temp.finish_judge('judge-report', 'completed',
+    jsonb_set(result, '{evidence,0,id}', to_jsonb(pg_temp.sampling_id(100)))) from judge_pass$$,
+  '22023', null, 'a structured verdict cannot substitute an evidence reference from outside the sample');
+select throws_ok($$select public.finish_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id,
+    claim.attempt_id, claim.lease_id, 'completed', outcome.result, 'openai/gpt-4.1', 'OpenAI', 'fixture-request-id')
+  from evaluation_claims claim cross join judge_pass outcome where claim.slot = 'judge-report'$$,
+  '22023', null, 'a different observed provider model cannot settle as the approved judge');
+select is((select pg_temp.finish_judge('judge-report', 'completed', result) from judge_pass), true,
+  'a schema-valid verdict settles the exact judge invocation');
+select is((select pg_temp.finish_judge('judge-report', 'completed', result) from judge_pass), false,
+  'a settled invocation cannot overwrite its result with a late replay');
+select ok((select trace.profile_revision_id = profile.id and trace.evidence_digest = repeat('d', 64)
+    and trace.worker_runtime = 'node' and trace.adapter_runtime is not null
+    and trace.status = 'completed' and trace.provider_model = 'openai/gpt-4.1-mini'
+    and trace.provider_request_id = 'fixture-request-id' and trace.candidate_result = outcome.result
+    and not (to_jsonb(trace)::text like '%' || pg_temp.judge_ciphertext() || '%')
+    and not (to_jsonb(trace)::text like '%Retained sampling artifact.%')
+    and not (to_jsonb(trace)::text like '%Retained judge fixture report.%')
+  from evaluation_claims claim join public.factory_judge_invocations trace on trace.attempt_id = claim.attempt_id
+  cross join approved_judge profile cross join judge_pass outcome where claim.slot = 'judge-report'),
+  'the completed invocation records exact model, runtime, evidence digest and verdict without private source or key bytes');
+
+insert into sample_runs values ('judge-erased', pg_temp.accept_sample_run('Judge erasure fixture', true));
+select (pg_temp.record_sample('primary', 'missing', 'judge-erased')).id;
+insert into evaluation_claims select 'judge-erased', claim.* from public.claim_factory_judge_job() claim;
+select is(pg_temp.prepare_judge('judge-erased')->>'status', 'ready', 'the newly sampled judge target is ready before erasure');
+update public.sessions session set archived_at = clock_timestamp()
+from evaluation_claims claim where claim.slot = 'judge-erased' and session.id = claim.session_id;
+create temp table judge_erasure_target as
+select session.workspace_id, session.factory_id, session.id, session.archived_at
+from evaluation_claims claim join public.sessions session on session.id = claim.session_id where claim.slot = 'judge-erased';
+grant select on judge_erasure_target to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000001';
+select ok((select erased.erased_at is not null from judge_erasure_target target
+  cross join lateral public.erase_session_retained_content(target.workspace_id, target.factory_id, target.id, target.archived_at) erased),
+  'the authenticated owner erases the exact already-sampled source');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+select ok((select payload->>'status' = 'missing_evidence' and not (payload ? 'encrypted_api_key')
+  from (select pg_temp.begin_judge('judge-erased', approved_judge.id) as payload from approved_judge) denied),
+  'an erasure after prepare prevents opening the provider credential permit');
+select is(pg_temp.finish_judge('judge-erased', 'missing_evidence'), true,
+  'a withheld source settles as an explicit non-passing invocation');
+
+insert into sample_runs values ('judge-evidence-retry', pg_temp.accept_sample_run('Judge private evidence retry fixture'));
+select (pg_temp.record_sample('primary', 'evaluation-replay', 'judge-evidence-retry')).id;
+insert into evaluation_claims select 'judge-evidence-retry', claim.* from public.claim_factory_judge_job() claim;
+select is(pg_temp.finish_judge('judge-evidence-retry', 'evidence_unavailable'), true,
+  'temporary evidence failure can settle without opening a provider permit');
+select ok((select trace.status = 'evidence_unavailable' and trace.started_at is null and trace.evidence_digest is null
+    and trace.candidate_result is null and attempt.outcome = 'retryable_failure'
+    and job.status = 'queued' and job.available_at > clock_timestamp()
+  from evaluation_claims claim join public.factory_judge_invocations trace on trace.attempt_id = claim.attempt_id
+  join public.factory_evaluation_attempts attempt on attempt.id = claim.attempt_id
+  join public.factory_evaluation_jobs job on job.id = claim.job_id where claim.slot = 'judge-evidence-retry'),
+  'the no-send failure records no result and schedules the same evaluation for retry');
+select public.cancel_factory_evaluation_job(claim.workspace_id, claim.factory_id, pg_temp.sampling_id(1), claim.job_id)
+from evaluation_claims claim where claim.slot = 'judge-evidence-retry';
+
+insert into sample_runs values ('judge-canceled', pg_temp.accept_sample_run('Started judge cancellation fixture'));
+select (pg_temp.record_sample('primary', 'evaluation-replay', 'judge-canceled')).id;
+insert into evaluation_claims select 'judge-canceled', claim.* from public.claim_factory_judge_job() claim;
+select is(pg_temp.begin_judge('judge-canceled', approved_judge.id)->>'status', 'authorized',
+  'the canceled fixture has already obtained its one-shot provider permit') from approved_judge;
+select public.cancel_factory_evaluation_job(claim.workspace_id, claim.factory_id, pg_temp.sampling_id(1), claim.job_id)
+from evaluation_claims claim where claim.slot = 'judge-canceled';
+select ok((select trace.status = 'canceled' and attempt.outcome = 'canceled' and trace.finished_at = attempt.settled_at
+    and trace.profile_revision_id = profile.id and trace.evidence_digest = repeat('d', 64)
+    and trace.candidate_result is null
+  from evaluation_claims claim join public.factory_judge_invocations trace on trace.attempt_id = claim.attempt_id
+  join public.factory_evaluation_attempts attempt on attempt.id = claim.attempt_id
+  cross join approved_judge profile where claim.slot = 'judge-canceled'),
+  'canceling the exact attempt closes its started judge trace while preserving identity');
+select is(pg_temp.finish_judge('judge-canceled', 'provider_unavailable'), false,
+  'a late provider outcome cannot replace the canceled trace');
+
+insert into sample_runs values ('judge-revoked', pg_temp.accept_sample_run('Judge profile revocation fixture'));
+select (pg_temp.record_sample('primary', 'evaluation-replay', 'judge-revoked')).id;
+insert into evaluation_claims select 'judge-revoked', claim.* from public.claim_factory_judge_job() claim;
+select is(pg_temp.prepare_judge('judge-revoked')->>'status', 'ready', 'the active approved profile can prepare an exact run');
+select ok((select not enabled and revision = 3 from public.revoke_factory_judge_profile(
+  pg_temp.sampling_id(11), pg_temp.sampling_id(1), 2)), 'the workspace owner can revoke the current judge profile');
+select ok((select payload->>'status' = 'profile_unavailable' and not (payload ? 'encrypted_api_key')
+  from (select pg_temp.begin_judge('judge-revoked', approved_judge.id) as payload from approved_judge) denied),
+  'an approval revoked after prepare cannot authorize a new provider request');
+select is(pg_temp.finish_judge('judge-revoked', 'profile_unavailable'), true,
+  'an unavailable profile settles as an explicit non-passing invocation');
 
 -- Model a historical receipt selected for admission as its workspace retires.
 insert into sample_runs values ('retiring-receipt', pg_temp.accept_sample_run('Retiring workspace receipt fixture'));
