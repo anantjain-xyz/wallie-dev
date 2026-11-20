@@ -46,17 +46,25 @@ export function browserRecordingDownloadPath(
 }
 
 const recordingOffset = z.number().int().min(0).lt(30_000);
-const recordingHashPattern = /^#browser-recording-([0-9a-f-]{36})-(0|[1-9][0-9]{0,4})$/i;
+const recordingHashPattern =
+  /^#browser-recording-(citation-)?([0-9a-f-]{36})-(0|[1-9][0-9]{0,4})$/i;
 
 export function browserRecordingAnchor(assetId: string, offsetMs: number) {
   return `browser-recording-${assetId}-${offsetMs}`;
 }
 
+export function browserRecordingCitationAnchor(assetId: string, offsetMs: number) {
+  return `browser-recording-citation-${assetId}-${offsetMs}`;
+}
+
 export function parseBrowserRecordingHash(hash: string) {
   const match = recordingHashPattern.exec(hash);
-  if (!match || !uuid.safeParse(match[1]).success) return null;
-  const offset = recordingOffset.safeParse(Number(match[2]));
-  return offset.success ? { assetId: match[1]!.toLowerCase(), offsetMs: offset.data } : null;
+  if (!match) return null;
+  const asset = uuid.safeParse(match[2]);
+  const offset = recordingOffset.safeParse(Number(match[3]));
+  return asset.success && offset.success
+    ? { citation: Boolean(match[1]), assetId: asset.data.toLowerCase(), offsetMs: offset.data }
+    : null;
 }
 
 const recordingFindingSchema = z.discriminatedUnion("action", [

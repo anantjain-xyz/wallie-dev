@@ -84,7 +84,10 @@ export async function seedFactoryAnalytics(baseURL: string | undefined, windowDa
   }
 
   async function runFixtureFile(
-    file: "factory-analytics-seed.sql" | "factory-outcome-release.sql",
+    file:
+      | "factory-analytics-seed.sql"
+      | "factory-outcome-release.sql"
+      | "factory-score-trends-seed.sql",
     fields: Record<string, string>,
   ): Promise<unknown> {
     const { stdout } = await runFixtureSql([

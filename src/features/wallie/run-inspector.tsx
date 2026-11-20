@@ -37,6 +37,7 @@ export function RunInspector({
   workspaceId,
   workspaceSlug,
   initialNow,
+  evaluations,
   transcript,
 }: {
   run: WorkspaceRunCatalogItem;
@@ -50,6 +51,7 @@ export function RunInspector({
   workspaceId: string;
   workspaceSlug: string;
   initialNow: string;
+  evaluations?: ReactNode;
   transcript: ReactNode;
 }) {
   const active = run.status === "started" || run.status === "running";
@@ -354,6 +356,8 @@ export function RunInspector({
             </div>
           </div>
         </PageSection>
+
+        {evaluations}
 
         <RunSkillRevisions skills={skills} />
 

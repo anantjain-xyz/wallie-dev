@@ -916,6 +916,284 @@ select ok((select to_jsonb(receipt) = to_jsonb(original)
   from first_evaluation_receipt original join public.factory_evaluation_receipts receipt on receipt.attempt_id = original.attempt_id),
   'a retention-aware read does not rewrite earlier judgments');
 
+-- The trends fixture uses the same genuinely adopted outcomes. Keep one
+-- receipt inside this transaction to distinguish closed history from live work.
+insert into sample_runs values ('trend-unclosed', pg_temp.accept_sample_run('Unclosed trend receipt fixture'));
+select (pg_temp.record_sample('primary', 'missing', 'trend-unclosed')).id;
+select (pg_temp.record_sample('primary', 'none', 'trend-unclosed')).id;
+select public.cancel_factory_evaluation_job(claim.workspace_id, claim.factory_id, pg_temp.sampling_id(1), claim.job_id)
+from evaluation_claims claim where claim.slot = 'judge-estimated';
+
+create temp table numeric_scorer as
+select revision.* from revised_rubric prior cross join lateral public.save_factory_scorer_revision(
+  prior.workspace_id, prior.factory_id, pg_temp.sampling_id(1), prior.scorer_id, prior.revision_number,
+  '{"schemaVersion":1,"rubric":"Rate the retained result from zero to ten.","requiredEvidence":["code_diff","artifact"],
+    "scoring":{"kind":"numeric","min":0,"max":10,"direction":"higher_is_better","failThreshold":4,"passThreshold":8}}') revision;
+insert into sample_scorers select 'trend-numeric', id from numeric_scorer;
+insert into sample_policies select 'trend-numeric', id from pg_temp.save_sample_policy('primary', 'trend-numeric', 0, 10000);
+with compiled as (
+  select prior.workspace_id, prior.factory_id, prior.created_by,
+    jsonb_set(prior.definition_json::jsonb, '{scorerRevisionIds}',
+      (select jsonb_agg(id order by id) from sample_scorers where key in ('exact', 'trend-numeric')))::text as definition
+  from public.factory_definition_revisions prior where prior.id = pg_temp.sampling_id(51)
+), revision as (
+  insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version,
+    definition_json, canonical_digest, created_by)
+  select pg_temp.sampling_id(52), workspace_id, factory_id, 2, definition,
+    encode(sha256(convert_to(definition, 'UTF8')), 'hex'), created_by from compiled
+  returning id, workspace_id, factory_id, created_by
+)
+insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
+select workspace_id, factory_id, id, 2, created_by from revision;
+
+insert into sample_runs values ('trend-inconclusive', pg_temp.accept_sample_run('Numeric middle band trend fixture'));
+select (pg_temp.record_sample('primary', 'trend-numeric', 'trend-inconclusive')).id;
+insert into evaluation_claims select 'trend-inconclusive', claim.* from public.claim_factory_judge_job() claim;
+select is(pg_temp.begin_judge('trend-inconclusive', rotated_judge.id)->>'status', 'authorized',
+  'the latest rubric revision receives a live judge permit') from rotated_judge;
+select is((select pg_temp.finish_judge('trend-inconclusive', 'completed', jsonb_build_object('schemaVersion', 1,
+    'status', 'inconclusive', 'reason', 'between_thresholds', 'score', '{"kind":"numeric","value":6}'::jsonb,
+    'evidence', receipt.evidence))
+  from evaluation_claims claim join public.factory_scorer_sample_receipts receipt on receipt.id = claim.sample_receipt_id
+  where claim.slot = 'trend-inconclusive'), true,
+  'the judge durably adopts a usable numeric score between the decision thresholds');
+
+insert into sample_runs values ('trend-fail', pg_temp.accept_sample_run('Numeric failed trend fixture'));
+select (pg_temp.record_sample('primary', 'trend-numeric', 'trend-fail')).id;
+insert into evaluation_claims select 'trend-fail', claim.* from public.claim_factory_judge_job() claim;
+select (pg_temp.begin_judge('trend-fail', rotated_judge.id))->>'status' from rotated_judge;
+select is((select pg_temp.finish_judge('trend-fail', 'completed', jsonb_build_object('schemaVersion', 1,
+    'status', 'fail', 'score', '{"kind":"numeric","value":2}'::jsonb, 'evidence', receipt.evidence))
+  from evaluation_claims claim join public.factory_scorer_sample_receipts receipt on receipt.id = claim.sample_receipt_id
+  where claim.slot = 'trend-fail'), true, 'the same rubric can adopt a legitimate failing score');
+insert into sample_runs values ('trend-unsettled', pg_temp.accept_sample_run('Unsettled trend fixture'));
+select (pg_temp.record_sample('primary', 'trend-numeric', 'trend-unsettled')).id;
+
+-- The pgTAP transaction cannot commit. Mark only its named historical rows
+-- as predating transaction-ID capture so the real snapshot code can read them.
+alter table public.factory_scorer_sample_receipts disable trigger factory_scorer_sample_receipts_immutable;
+update public.factory_scorer_sample_receipts receipt set recorded_xact_id = null
+from sample_runs fixture where receipt.workspace_id = pg_temp.sampling_id(11) and receipt.run_id = fixture.id
+  and fixture.key <> 'trend-unclosed';
+alter table public.factory_scorer_sample_receipts enable trigger factory_scorer_sample_receipts_immutable;
+alter table public.factory_evaluation_receipts disable trigger factory_evaluation_receipts_immutable;
+update public.factory_evaluation_receipts receipt set recorded_xact_id = null
+from sample_runs fixture where receipt.workspace_id = pg_temp.sampling_id(11) and receipt.run_id = fixture.id;
+alter table public.factory_evaluation_receipts enable trigger factory_evaluation_receipts_immutable;
+
+create temp table trend_window as
+select date_trunc('day', min(run_finished_at), 'UTC') as since, clock_timestamp() as until
+from public.factory_scorer_sample_receipts where workspace_id = pg_temp.sampling_id(11);
+grant select on sample_scope, sample_policies, sample_runs, trend_window, numeric_scorer, evaluation_claims to authenticated;
+
+create function pg_temp.read_score_cohort(p_policy text, p_snapshot text default null,
+  p_bucket_at timestamptz default null, p_status text default null,
+  p_before_finished_at timestamptz default null, p_before_run_id uuid default null,
+  p_limit integer default 25, p_scope text default 'primary') returns jsonb language sql as $$
+  select public.read_factory_score_cohort(scope.workspace_id, scope.factory_id, policy.id, bounds.since, bounds.until,
+    p_snapshot, p_bucket_at, p_status, p_before_finished_at, p_before_run_id, p_limit)
+  from sample_scope scope cross join sample_policies policy cross join trend_window bounds
+  where scope.key = p_scope and policy.key = p_policy;
+$$;
+
+create function pg_temp.read_run_scores(p_run text, p_attempt_id uuid default null, p_scope text default 'primary')
+returns jsonb language sql as $$
+  select public.list_factory_run_score_results(scope.workspace_id, scope.factory_id, fixture.id, p_attempt_id)
+  from sample_scope scope cross join sample_runs fixture where scope.key = p_scope and fixture.key = p_run;
+$$;
+select ok(has_function_privilege('authenticated', 'public.list_factory_run_score_results(uuid,uuid,uuid,uuid)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.list_factory_run_score_results(uuid,uuid,uuid,uuid)', 'EXECUTE')
+  and not has_function_privilege('service_role', 'public.list_factory_run_score_results(uuid,uuid,uuid,uuid)', 'EXECUTE')
+  and not has_table_privilege('authenticated', 'public.factory_evaluation_receipts', 'SELECT'),
+  'the signed-in read functions do not grant raw receipt access');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+create temp table report_trend as select pg_temp.read_score_cohort('missing') as payload;
+select ok((select payload#>>'{cohort,scorer_revision_number}' = '1' and payload#>>'{cohort,policy_revision_number}' = '1'
+    and payload->'totals' @> '{"candidate_count":4,"eligible_count":2,"sampled_count":2,"excluded_count":2,
+      "usable_count":1,"decided_count":1,"pass_count":1,"fail_count":0,"inconclusive_count":1,"missing_evidence_count":3}'::jsonb
+    and payload->>'row_count' = '4' and jsonb_array_length(payload->'rows') = 4 from report_trend),
+  'the report cohort reconciles eligible, sampled, usable, decided and missing evidence to closed receipts');
+select ok((select sum(day.candidate_count) = 4 and sum(day.eligible_count) = 2 and sum(day.sampled_count) = 2
+    and sum(day.usable_count) = 1 and sum(day.decided_count) = 1 and sum(day.missing_evidence_count) = 3
+    and bool_and(day.bucket_at = date_trunc('day', day.bucket_at, 'UTC'))
+  from report_trend trend cross join lateral jsonb_to_recordset(trend.payload->'points') day(
+    bucket_at timestamptz, candidate_count bigint, eligible_count bigint, sampled_count bigint,
+    usable_count bigint, decided_count bigint, missing_evidence_count bigint)),
+  'UTC chart points sum to the table denominator and preserve incomplete evidence coverage');
+select ok((select pg_temp.read_score_cohort('none')->'totals' @>
+  '{"candidate_count":1,"eligible_count":1,"sampled_count":0,"not_sampled_count":1,"usable_count":0}'::jsonb),
+  'a zero-percent policy retains its eligible denominator without counting a usable result');
+
+create temp table middle_trend as select pg_temp.read_score_cohort('trend-numeric') as payload;
+select ok((select payload#>>'{cohort,scorer_revision_number}' = '3' and payload#>>'{cohort,policy_revision_number}' = '1'
+    and payload->'totals' @> '{"candidate_count":3,"eligible_count":3,"sampled_count":3,"usable_count":2,
+      "decided_count":1,"pass_count":0,"fail_count":1,"inconclusive_count":1,"unsettled_count":1,"mean_numeric_score":4}'::jsonb
+    and payload->'rows' @> '[{"status":"inconclusive","reason":"between_thresholds","score":{"kind":"numeric","value":6}},
+      {"status":"fail","score":{"kind":"numeric","value":2}},{"status":"unsettled","score":null}]'::jsonb
+  from middle_trend), 'a middle-band score is usable while only the fail counts as decided and active work remains unsettled');
+select ok((select jsonb_array_length(catalog.payload->'cohorts') = 2
+    and catalog.payload->'cohorts' @> '[{"scorer_revision_number":1,"policy_revision_number":1},
+      {"scorer_revision_number":3,"policy_revision_number":1}]'::jsonb
+  from sample_scope scope cross join numeric_scorer scorer cross join lateral (
+    select public.list_factory_score_cohorts(scope.workspace_id, scope.factory_id, scorer.scorer_id) as payload
+  ) catalog where scope.key = 'primary'), 'the cohort list labels two separate rubric revisions for the same scorer');
+
+create temp table replay_trend as select pg_temp.read_score_cohort('evaluation-replay') as payload;
+select ok((select payload->'totals' @> '{"candidate_count":6,"sampled_count":6}'::jsonb
+    and payload->'rows' @> jsonb_build_array(jsonb_build_object('run_id', claim.run_id,
+      'evaluation_attempt_id', claim.attempt_id, 'status', 'error', 'reason', 'provider_unavailable'))
+    and (select count(*) from jsonb_array_elements(payload->'rows') row where row->>'run_id' = claim.run_id::text) = 1
+  from replay_trend cross join evaluation_claims claim where claim.slot = 'judge-estimated'),
+  'a reclaimed run appears once in the cohort with only its latest settled attempt');
+select ok((select original.sample_receipt_id <> sample.id
+    and payload->'rows' @> jsonb_build_array(jsonb_build_object('run_id', original.run_id,
+      'sample_receipt_id', sample.id, 'evaluation_sample_receipt_id', original.sample_receipt_id,
+      'evaluation_attempt_id', original.attempt_id))
+  from replay_trend cross join evaluation_claims original
+  join sample_runs fixture on fixture.id = original.run_id
+  cross join lateral (
+    select (replayed->>'sample_receipt_id')::uuid as id
+    from jsonb_array_elements(payload->'rows') replayed where replayed->>'run_id' = original.run_id::text
+  ) sample where original.slot = 'final' and fixture.key = 'first'),
+  'a different policy can show the same exact-run judgment with its original winning sample identity');
+
+create temp table score_first_page as
+select pg_temp.read_score_cohort('missing', trend.payload->>'snapshot', p_limit => 2) as payload from report_trend trend;
+select ok((select ((first.payload->'rows') || (remaining.payload->'rows')) = (trend.payload->'rows')
+    and remaining.payload->>'next_run_id' is null and remaining.payload->'totals' = trend.payload->'totals'
+    and remaining.payload->'points' = trend.payload->'points'
+  from score_first_page first cross join report_trend trend cross join lateral (
+    select pg_temp.read_score_cohort('missing', first.payload->>'snapshot',
+      p_before_finished_at => (first.payload->>'next_run_finished_at')::timestamptz,
+      p_before_run_id => (first.payload->>'next_run_id')::uuid, p_limit => 2) as payload
+  ) remaining), 'a signed continuation returns the rest of the exact table without changing the chart or totals');
+select ok((select narrowed.payload->>'row_count' = '1' and narrowed.payload#>>'{rows,0,status}' = 'pass'
+    and narrowed.payload->'totals' = trend.payload->'totals' and narrowed.payload->'points' = trend.payload->'points'
+  from report_trend trend cross join evaluation_claims claim cross join lateral (
+    select pg_temp.read_score_cohort('missing', trend.payload->>'snapshot', p_status => 'pass',
+      p_bucket_at => date_trunc('day', (select (row_item->>'run_finished_at')::timestamptz
+        from jsonb_array_elements(trend.payload->'rows') row_item where row_item->>'run_id' = claim.run_id::text), 'UTC')) as payload
+  ) narrowed where claim.slot = 'judge-report'), 'status and UTC bucket filter drilldown rows without changing the signed cohort');
+select throws_ok($$select pg_temp.read_score_cohort('trend-numeric', payload->>'snapshot') from report_trend$$,
+  '22023', 'Invalid score cohort snapshot.', 'a signed snapshot cannot drift to a different policy or rubric revision');
+select throws_ok($$select pg_temp.read_score_cohort('missing', left(payload->>'snapshot', -1)
+    || case right(payload->>'snapshot', 1) when '0' then '1' else '0' end) from report_trend$$,
+  '22023', 'Invalid score cohort snapshot.', 'a modified signature cannot bypass the closed score horizon');
+select throws_ok($$select public.read_factory_score_cohort(scope.workspace_id, scope.factory_id, policy.id,
+    bounds.since, bounds.until + interval '1 second', trend.payload->>'snapshot')
+  from report_trend trend cross join sample_scope scope cross join sample_policies policy cross join trend_window bounds
+  where scope.key = 'primary' and policy.key = 'missing'$$,
+  '22023', 'Invalid score cohort snapshot.', 'a signed snapshot cannot be used for a different date window');
+
+select ok((select current.payload#>>'{0,receipt,reason}' = 'provider_unavailable'
+    and expired.payload#>>'{0,receipt,reason}' = 'lease_expired'
+    and expired.payload#>>'{0,receipt,attempt_id}' = claim.attempt_id::text
+  from evaluation_claims claim cross join lateral (select pg_temp.read_run_scores('judge-expired') as payload) current
+  cross join lateral (select pg_temp.read_run_scores('judge-expired', claim.attempt_id) as payload) expired
+  where claim.slot = 'judge-expired'), 'run results can open the exact earlier attempt without replacing the latest result');
+select ok((select payload#>>'{0,receipt,status}' = 'pass' and payload#>>'{0,receipt,evidence_availability}' = 'withheld'
+    and payload#>>'{0,receipt,explanation}' is null and payload#>>'{0,receipt,evidence_locations}' is null
+    and payload#>>'{0,receipt,result}' is null and payload#>>'{0,diff}' is null
+  from (select pg_temp.read_run_scores('judge-report') as payload) erased),
+  'a signed-in reader cannot reopen erased evidence or locations even though the original score remains');
+select ok((select payload#>>'{0,receipt,evidence_availability}' = 'available'
+    and payload#>>'{0,receipt,reason}' = 'between_thresholds' and payload#>>'{0,receipt,evidence_locations,0,reference,id}' = run.id::text
+    and payload#>>'{0,diff,repository_full_name}' = 'fixture/sampling' and payload#>>'{0,diff,output_sha}' = repeat('a', 40)
+  from sample_runs run cross join lateral (select pg_temp.read_run_scores(run.key) as payload) retained
+  where run.key = 'trend-inconclusive'), 'available evidence keeps an exact location and a scope-checked Git comparison');
+select ok((select jsonb_array_length(payload) = 2 and payload @> '[
+    {"sample_outcome":"excluded","sample_reason":"missing_evidence","evaluation_job_id":null,"receipt":null,"diff":null},
+    {"sample_outcome":"not_sampled","sample_reason":null,"evaluation_job_id":null,"receipt":null,"diff":null}]'::jsonb
+  from (select pg_temp.read_run_scores('trend-unclosed') as payload) unsampled),
+  'live run results explain excluded and unsampled scorers without inventing an evaluation');
+select throws_ok($$select pg_temp.read_run_scores('judge-report', claim.attempt_id)
+  from evaluation_claims claim where claim.slot = 'trend-inconclusive'$$,
+  'P0002', null, 'a retained evaluation attempt cannot be opened through a different run');
+select throws_ok($$select pg_temp.read_score_cohort('missing', p_scope => 'sibling')$$,
+  'P0002', null, 'ordinary workspace membership cannot read a restricted sibling score cohort');
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000003';
+select throws_ok($$select pg_temp.read_run_scores('trend-inconclusive')$$, 'P0002', null,
+  'a foreign workspace user cannot open retained score evidence');
+select throws_ok($$select pg_temp.read_score_cohort('missing')$$, 'P0002', null,
+  'a foreign workspace user cannot read cohort totals with a known ID');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
+create temp table score_cancellation_targets as
+select fixture.key, job.id as job_id, job.workspace_id, job.factory_id, job.run_id, job.sample_receipt_id
+from sample_runs fixture join public.factory_evaluation_jobs job on job.run_id = fixture.id
+join sample_scope scope on (scope.workspace_id, scope.factory_id) = (job.workspace_id, job.factory_id)
+where scope.key = 'primary' and fixture.key in ('trend-unsettled', 'judge-expired');
+grant select on score_cancellation_targets to authenticated;
+
+select ok((select canceled.status = 'canceled' and canceled.attempt_count = 0
+    and canceled.canceled_recorded_xact_id = pg_current_xact_id() and canceled.finished_at is not null
+  from score_cancellation_targets target cross join lateral public.cancel_factory_evaluation_job(
+    target.workspace_id, target.factory_id, pg_temp.sampling_id(1), target.job_id) canceled
+  where target.key = 'trend-unsettled'), 'canceling before claim records the cancellation transaction without an attempt');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select ok((select pg_temp.read_score_cohort('trend-numeric', original.payload->>'snapshot') = original.payload
+  from middle_trend original), 'a signed view predating the live cancellation still shows the queued run as unsettled');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
+-- Model a cancellation that closed at the boundary of an earlier signed
+-- snapshot. The rollback-only fixture cannot commit its own transactions.
+create temp table score_cancellation_horizon as
+select cutoff.xact_id, internal.factory_score_cohort_snapshot(scope.workspace_id, scope.factory_id,
+    policy.id, bounds.since, bounds.until, cutoff.xact_id) as older_snapshot
+from middle_trend original cross join sample_scope scope cross join sample_policies policy cross join trend_window bounds
+cross join lateral (select (split_part(original.payload->>'snapshot', '.', 1)::numeric - 1)::text as xact_id) cutoff
+where scope.key = 'primary' and policy.key = 'trend-numeric';
+grant select on score_cancellation_horizon to authenticated;
+alter table public.factory_evaluation_jobs disable trigger factory_evaluation_jobs_immutable;
+update public.factory_evaluation_jobs job set canceled_recorded_xact_id = horizon.xact_id::xid8
+from score_cancellation_targets target cross join score_cancellation_horizon horizon
+where (job.workspace_id, job.factory_id, job.id) = (target.workspace_id, target.factory_id, target.job_id)
+  and job.status = 'canceled';
+alter table public.factory_evaluation_jobs enable trigger factory_evaluation_jobs_immutable;
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select ok((select older.payload->'totals' = original.payload->'totals'
+    and older.payload->'points' = original.payload->'points' and older.payload->'rows' = original.payload->'rows'
+  from score_cancellation_horizon horizon cross join middle_trend original cross join lateral (
+    select pg_temp.read_score_cohort('trend-numeric', horizon.older_snapshot) as payload
+  ) older), 'a cancellation at the signed boundary remains unsettled in that earlier view');
+select ok((select fresh.payload->'totals' @> '{"candidate_count":3,"sampled_count":3,"usable_count":2,
+      "decided_count":1,"skipped_count":1,"unsettled_count":0}'::jsonb
+    and fresh.payload->>'row_count' = '1'
+    and fresh.payload->'rows' @> jsonb_build_array(jsonb_build_object('run_id', target.run_id,
+      'evaluation_job_id', target.job_id, 'evaluation_sample_receipt_id', target.sample_receipt_id,
+      'evaluation_attempt_id', null::uuid, 'status', 'skipped', 'reason', 'canceled', 'score', null::jsonb))
+    and (select sum((day->>'skipped_count')::integer) from jsonb_array_elements(fresh.payload->'points') day) = 1
+  from score_cancellation_targets target cross join lateral (
+    select pg_temp.read_score_cohort('trend-numeric', p_status => 'skipped') as payload
+  ) fresh where target.key = 'trend-unsettled'),
+  'a later view counts a closed queued cancellation as skipped with no fabricated evaluation attempt');
+select ok((select fresh.payload->'rows' @> jsonb_build_array(jsonb_build_object('run_id', claim.run_id,
+      'evaluation_job_id', claim.job_id, 'evaluation_attempt_id', null::uuid, 'status', 'skipped', 'reason', 'canceled'))
+    and history.payload#>>'{0,receipt,attempt_id}' = claim.attempt_id::text
+    and history.payload#>>'{0,receipt,reason}' = 'provider_unavailable'
+  from evaluation_claims claim cross join lateral (
+    select pg_temp.read_score_cohort('evaluation-replay') as payload
+  ) fresh cross join lateral (
+    select pg_temp.read_run_scores('judge-expired', claim.attempt_id) as payload
+  ) history where claim.slot = 'judge-estimated'),
+  'cancelling a queued retry records a skipped run while preserving its exact earlier provider failure');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
 -- Model a historical receipt selected for admission as its workspace retires.
 insert into sample_runs values ('retiring-receipt', pg_temp.accept_sample_run('Retiring workspace receipt fixture'));
 alter table public.factory_scorer_sample_receipts disable trigger factory_evaluation_job_from_sample;

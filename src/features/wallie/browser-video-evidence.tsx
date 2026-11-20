@@ -85,12 +85,16 @@ export function BrowserVideoInspector({
   const linkedRecording =
     target &&
     evidence &&
-    recordings.find(
-      (record) =>
-        record.status === "captured" &&
-        record.manifest.assetId === target.assetId &&
-        findingsFor(evidence, record)?.some((step) => step.offsetMs === target.offsetMs),
-    );
+    recordings.find((record) => {
+      if (record.status !== "captured" || record.manifest.assetId !== target.assetId) return false;
+      const steps = findingsFor(evidence, record);
+      return (
+        steps !== null &&
+        (target.citation
+          ? target.offsetMs < record.manifest.durationMs
+          : steps.some((step) => step.offsetMs === target.offsetMs))
+      );
+    });
 
   useEffect(() => {
     if (linkedRecording)
@@ -151,6 +155,9 @@ export function BrowserVideoInspector({
                 sessionId={sessionId}
                 artifactId={artifactId}
                 artifactLinkQuery={artifactLinkQuery}
+                citationAnchor={
+                  linkedRecording === record && target?.citation ? hash.slice(1) : undefined
+                }
                 offsetMs={linkedRecording === record ? target?.offsetMs : undefined}
                 findingHash={linkedRecording === record ? hash : undefined}
                 onReselectFinding={() => setDismissedHash("")}
@@ -169,6 +176,7 @@ function RecordingReceipt({
   sessionId,
   artifactId,
   artifactLinkQuery,
+  citationAnchor,
   offsetMs,
   findingHash,
   onReselectFinding,
@@ -178,6 +186,7 @@ function RecordingReceipt({
   sessionId: string;
   artifactId?: string;
   artifactLinkQuery?: string;
+  citationAnchor?: string;
   offsetMs?: number;
   findingHash?: string;
   onReselectFinding: () => void;
@@ -186,7 +195,7 @@ function RecordingReceipt({
   const steps = captured ? findingsFor(evidence, captured) : null;
   const [seekRequest, setSeekRequest] = useState(0);
   return (
-    <li className="min-w-0 space-y-3 py-3">
+    <li className="min-w-0 scroll-mt-24 space-y-3 py-3" id={citationAnchor}>
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
         <p className="min-w-0 break-all text-sm font-semibold text-foreground">{record.key}</p>
         <span className="text-xs text-muted">

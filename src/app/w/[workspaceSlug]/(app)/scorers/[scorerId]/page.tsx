@@ -7,10 +7,13 @@ import { Status } from "@/components/ui/status";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { ScorerDefinitionView } from "@/features/factory-scorers/scorer-definition-view";
 import { ScorerForm } from "@/features/factory-scorers/scorer-form";
+import { ScorerTrends } from "@/features/factory-scorers/scorer-trends";
 import {
   loadScorerDetail,
   loadScorerPageScope,
 } from "@/features/factory-scorers/scorer-pages-data";
+import { parseScorerTrendQuery } from "@/lib/factory-evaluations/score-trend-query";
+import { loadScoreTrendPanel } from "@/lib/factory-evaluations/score-trends";
 import {
   workspaceFactoryDefinitionPath,
   workspaceScorerDetailPath,
@@ -32,11 +35,7 @@ export default async function ScorerDetailPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; scorerId: string }>;
-  searchParams: Promise<{
-    factory?: string | string[];
-    revision?: string | string[];
-    before?: string | string[];
-  }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug, scorerId }, query] = await Promise.all([params, searchParams]);
   const scorerKey = uuid.safeParse(scorerId);
@@ -57,7 +56,20 @@ export default async function ScorerDetailPage({
   const factoryQuery = { factory: factory.id };
   const historical = selected.id !== latest.id;
   const active = activePins.includes(selected.id);
-  const latestHref = workspaceScorerDetailPath(workspaceSlug, scorer.id, factoryQuery);
+  const trendQuery = parseScorerTrendQuery(query);
+  const revisionFilters = { ...factoryQuery, from: trendQuery?.from, to: trendQuery?.to };
+  const latestHref = workspaceScorerDetailPath(workspaceSlug, scorer.id, revisionFilters);
+  const trend = trendQuery
+    ? await loadScoreTrendPanel(
+        scope.supabase,
+        { workspaceId, factoryId: factory.id },
+        trendQuery,
+        {
+          scorerId: scorer.id,
+          scorerRevisionId: selected.id,
+        },
+      ).catch(() => null)
+    : null;
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
@@ -103,6 +115,17 @@ export default async function ScorerDetailPage({
             </div>
           ) : null}
         </PageSection>
+        <ScorerTrends
+          data={trend}
+          path={workspaceScorerDetailPath(workspaceSlug, scorer.id)}
+          preserved={{
+            factory: factory.id,
+            revision: selected.id,
+            before: before.data?.toString(),
+          }}
+          query={trendQuery}
+          workspaceSlug={workspaceSlug}
+        />
         {canEdit ? (
           historical ? (
             <Link className="ui-button" href={latestHref}>
@@ -140,7 +163,7 @@ export default async function ScorerDetailPage({
                     aria-current={entry.id === selected.id ? "true" : undefined}
                     className="font-semibold text-foreground underline-offset-4 hover:text-accent hover:underline"
                     href={workspaceScorerDetailPath(workspaceSlug, scorer.id, {
-                      ...factoryQuery,
+                      ...revisionFilters,
                       before: before.data,
                       revision: entry.id,
                     })}
@@ -167,7 +190,7 @@ export default async function ScorerDetailPage({
                 <Link
                   className="ui-button"
                   href={workspaceScorerDetailPath(workspaceSlug, scorer.id, {
-                    ...factoryQuery,
+                    ...revisionFilters,
                     before: nextBeforeRevisionNumber,
                     revision: selected.id,
                   })}

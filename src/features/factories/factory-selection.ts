@@ -128,6 +128,22 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
   if (pathname.endsWith("/analytics") || pathname.endsWith("/overview")) {
     for (const key of ["metric", "period", "facet", "bucket"]) params.delete(key);
   }
+  if (pathname.endsWith("/analytics")) {
+    for (const key of [
+      "scorerRevision",
+      "cohort",
+      "scoreSnapshot",
+      "evaluationDay",
+      "evaluationStatus",
+      "beforeRunFinishedAt",
+      "beforeScoreRun",
+      "beforeRevisionAt",
+      "beforeRevisionPolicy",
+      "beforeCohortAt",
+      "beforeCohortPolicy",
+    ])
+      params.delete(key);
+  }
   if (pathname.endsWith("/scorers")) params.delete("revision");
   if (pathname.endsWith("/governance")) {
     for (const key of [

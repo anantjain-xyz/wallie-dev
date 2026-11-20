@@ -15,7 +15,7 @@ const natural = z.number().int().safe().nonnegative();
 const cost = z.number().min(0).max(Number.MAX_SAFE_INTEGER);
 const attemptCount = natural.max(maxJobEvaluationReceipts);
 const usageProvenance = z.enum(["measured", "estimated", "unavailable"]);
-const score = z.discriminatedUnion("kind", [
+export const factoryEvaluationScoreSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("numeric"), value: factoryScorerNumericValueSchema }),
   z.strictObject({ kind: z.literal("boolean"), value: z.boolean() }),
 ]);
@@ -34,7 +34,7 @@ const evidenceLocation = z.strictObject({
   location,
 });
 
-const evaluationReceiptRecordSchema = z
+export const evaluationReceiptRecordSchema = z
   .object({
     attempt_id: id,
     workspace_id: id,
@@ -80,7 +80,7 @@ const evaluationReceiptRecordSchema = z
         "canceled",
       ])
       .nullable(),
-    score: score.nullable(),
+    score: factoryEvaluationScoreSchema.nullable(),
     result: factoryScorerResultSchema.nullable(),
     explanation: z.string().min(1).max(640).refine(isFactoryDefinitionText).nullable(),
     evidence_locations: z.array(evidenceLocation).max(5).nullable(),

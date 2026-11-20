@@ -143,3 +143,32 @@ previously uncaught behavior from an assertion that repeats existing coverage
 or uses unrelated setup. Findings cite the relevant lines in the exact diff.
 Ambiguous context and unsupported diffs produce an inconclusive receipt with
 a reason. Presets use the same sampling and binding controls as custom rubrics.
+
+## Scorer trends
+
+Open **Scorers** for a rubric revision and its sampling policies. **Analytics**
+also lets you select a scorer revision. Each trend covers one policy revision
+and a UTC date range. Different rubric or policy revisions have separate totals.
+Use the older revision and cohort links to browse earlier options.
+
+| Count     | Population                                                 |
+| --------- | ---------------------------------------------------------- |
+| Candidate | Runs with a sampling receipt for the selected policy.      |
+| Eligible  | Candidates that meet the policy and evidence requirements. |
+| Sampled   | Eligible runs selected by the deterministic draw.          |
+| Usable    | Sampled runs with a typed score.                           |
+| Decided   | Usable results that pass or fail the rubric thresholds.    |
+
+A numeric result between thresholds is usable and remains inconclusive.
+Pass rate divides passed results by decided results. The mean uses typed
+numeric scores for the selected rubric revision. A missing denominator or
+mean displays as unavailable.
+
+A canceled evaluation counts as skipped, including a job canceled before its
+first attempt. Earlier snapshots keep the state recorded at their cutoff.
+
+The chart, table, and result filters use one signed cohort snapshot. Open a
+run to inspect the exact attempt used in that snapshot. The run page also shows
+sampling exclusions and unsampled decisions. Evidence links check current
+access and retention, while the historical verdict remains visible. A recording
+citation opens the retained asset at the cited time.
