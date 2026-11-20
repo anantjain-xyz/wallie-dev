@@ -29,8 +29,18 @@ const revisedRubric = {
   rubric: "Confirm that the retained artifact explicitly names the revised qualification.",
 } satisfies FactoryScorerDefinition;
 
+export type FactoryScorerExpectedJudgeInput = {
+  rubric: string;
+  artifactId: string;
+  artifact: string;
+};
+
 export type FactoryScorerFixtureJudge = {
-  respondAfter(outcome: "unavailable" | "pass", beforeResponse: () => Promise<void>): () => void;
+  respond(
+    input: FactoryScorerExpectedJudgeInput,
+    outcome: "unavailable" | "pass",
+    beforeResponse?: () => Promise<void>,
+  ): () => void;
   requestCount(): number;
 };
 
@@ -209,7 +219,7 @@ export async function qualifyFactoryScorerRuntime({
     assert.equal(checkpoint.attempt_count, run.attempt_count);
     assert.equal(checkpoint.input_sha, BASE_SHA);
     assert.equal(checkpoint.output_sha, BASE_SHA);
-    return { job, current, checkpoint, run };
+    return { job, current, checkpoint, run, artifact };
   }
 
   async function readEvaluation(runId: string, scorerRevisionId: string) {
@@ -255,8 +265,17 @@ export async function qualifyFactoryScorerRuntime({
     );
   }
 
-  async function whileJudgeHeld(outcome: "unavailable" | "pass", run: () => Promise<void>) {
-    const verify = judge.respondAfter(outcome, run);
+  async function evaluatePublication(
+    publication: Awaited<ReturnType<typeof publish>>,
+    rubric: string,
+    outcome: "unavailable" | "pass",
+    beforeResponse?: () => Promise<void>,
+  ) {
+    const verify = judge.respond(
+      { rubric, artifactId: publication.checkpoint.artifact_id, artifact: publication.artifact },
+      outcome,
+      beforeResponse,
+    );
     await maintain();
     verify();
   }
@@ -277,7 +296,7 @@ export async function qualifyFactoryScorerRuntime({
     originalEnrollment.revision.id,
   );
   note("published the exact production artifact");
-  await maintain();
+  await evaluatePublication(scored, originalRubric.rubric, "pass");
   const logical = await readEvaluation(scored.job.run_id, original.id);
   const scoredReceipt = await readReceipt(logical.id);
   assert.equal(
@@ -350,7 +369,7 @@ export async function qualifyFactoryScorerRuntime({
     "# Qualification approval during judge outage",
     originalEnrollment.revision.id,
   );
-  await whileJudgeHeld("unavailable", async () => {
+  await evaluatePublication(outage, originalRubric.rubric, "unavailable", async () => {
     const claimed = await readEvaluation(outage.job.run_id, original.id);
     assert.equal(claimed.status, "claimed");
     const { current, run } = outage;
@@ -448,7 +467,7 @@ export async function qualifyFactoryScorerRuntime({
     revisedEnrollment.revision.id,
   );
   let canceledReceiptId: string | undefined;
-  await whileJudgeHeld("pass", async () => {
+  await evaluatePublication(canceled, revisedRubric.rubric, "pass", async () => {
     const claimed = await readEvaluation(canceled.job.run_id, revised.id);
     assert.equal(claimed.status, "claimed");
     const settled = await checked(
