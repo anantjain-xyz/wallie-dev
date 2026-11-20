@@ -1,13 +1,16 @@
+import { RunScoreSection } from "@/features/factory-scorers/run-score-section";
 import { RunInspector } from "@/features/wallie/run-inspector";
 import { loadRunInspectorData } from "@/features/wallie/run-inspector-data";
 import { RunTranscriptLive } from "@/features/wallie/run-transcript-live";
 
 export default async function RunInspectorPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; runId: string }>;
+  searchParams: Promise<{ evaluationAttempt?: string | string[] }>;
 }) {
-  const { workspaceSlug, runId } = await params;
+  const [{ workspaceSlug, runId }, query] = await Promise.all([params, searchParams]);
   const data = await loadRunInspectorData(workspaceSlug, runId);
   return (
     <RunInspector
@@ -15,6 +18,15 @@ export default async function RunInspectorPage({
       credential={data.credential}
       executionProfile={data.executionProfile}
       frozenContext={data.frozenContext}
+      evaluations={
+        <RunScoreSection
+          workspaceSlug={data.workspaceSlug}
+          runId={data.run.id}
+          sessionId={data.run.sessionId}
+          sessionNumber={data.run.sessionNumber}
+          attempt={query.evaluationAttempt}
+        />
+      }
       memoryProposalHref={data.memoryProposalHref}
       mcp={data.mcp}
       initialNow={new Date().toISOString()}

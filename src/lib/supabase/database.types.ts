@@ -1886,6 +1886,7 @@ export type Database = {
           provider_name: string | null
           provider_request_id: string | null
           reason: string | null
+          recorded_xact_id: unknown
           result: Json | null
           run_id: string
           sample_receipt_id: string
@@ -1921,6 +1922,7 @@ export type Database = {
           provider_name?: string | null
           provider_request_id?: string | null
           reason?: string | null
+          recorded_xact_id?: unknown
           result?: Json | null
           run_id: string
           sample_receipt_id: string
@@ -1956,6 +1958,7 @@ export type Database = {
           provider_name?: string | null
           provider_request_id?: string | null
           reason?: string | null
+          recorded_xact_id?: unknown
           result?: Json | null
           run_id?: string
           sample_receipt_id?: string
@@ -3056,6 +3059,7 @@ export type Database = {
           outcome: string
           policy_id: string
           reason: string | null
+          recorded_xact_id: unknown
           run_finished_at: string
           run_id: string
           scorer_revision_id: string
@@ -3074,6 +3078,7 @@ export type Database = {
           outcome: string
           policy_id: string
           reason?: string | null
+          recorded_xact_id?: unknown
           run_finished_at: string
           run_id: string
           scorer_revision_id: string
@@ -3092,6 +3097,7 @@ export type Database = {
           outcome?: string
           policy_id?: string
           reason?: string | null
+          recorded_xact_id?: unknown
           run_finished_at?: string
           run_id?: string
           scorer_revision_id?: string
@@ -10764,6 +10770,27 @@ export type Database = {
         }
         Returns: Json
       }
+      list_factory_run_score_results: {
+        Args: {
+          p_attempt_id?: string
+          p_factory_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      list_factory_score_cohorts: {
+        Args: {
+          p_before_created_at?: string
+          p_before_policy_id?: string
+          p_factory_id: string
+          p_limit?: number
+          p_scorer_id?: string
+          p_scorer_revision_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_secret_bindings: {
         Args: {
           p_actor_user_id: string
@@ -11474,6 +11501,22 @@ export type Database = {
           status: string
         }[]
       }
+      read_factory_score_cohort: {
+        Args: {
+          p_before_run_finished_at?: string
+          p_before_run_id?: string
+          p_bucket_at?: string
+          p_factory_id: string
+          p_from: string
+          p_limit?: number
+          p_policy_id: string
+          p_snapshot?: string
+          p_status?: string
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_session_command: {
         Args: {
           p_admission_id: string
@@ -11543,6 +11586,7 @@ export type Database = {
           outcome: string
           policy_id: string
           reason: string | null
+          recorded_xact_id: unknown
           run_finished_at: string
           run_id: string
           scorer_revision_id: string

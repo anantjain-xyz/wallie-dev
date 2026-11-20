@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import type {
   loadAnalyticsEvidence,
@@ -23,6 +25,7 @@ export function AnalyticsView({
   query,
   periods,
   evidence,
+  scorerTrends,
 }: {
   workspaceId: string;
   workspaceSlug: string;
@@ -30,6 +33,7 @@ export function AnalyticsView({
   query: AnalyticsQuery;
   periods: Awaited<ReturnType<typeof loadAnalyticsPeriods>>;
   evidence: Awaited<ReturnType<typeof loadAnalyticsEvidence>>;
+  scorerTrends?: ReactNode;
 }) {
   const href: AnalyticsHref = (selection) =>
     analyticsCohortHref(workspaceSlug, factory.id, query, selection);
@@ -75,6 +79,7 @@ export function AnalyticsView({
         />
       )}
       <AnalyticsMetrics query={query} periods={periods} href={href} />
+      {scorerTrends ? <div className="mt-8">{scorerTrends}</div> : null}
     </PageContainer>
   );
 }

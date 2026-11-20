@@ -8,7 +8,10 @@ import { resolveAnalyticsFactory } from "@/features/factories/factory-selection"
 import { AnalyticsView } from "@/features/factory-analytics/analytics-view";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
+import { ScorerTrends } from "@/features/factory-scorers/scorer-trends";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import { parseScorerTrendQuery } from "@/lib/factory-evaluations/score-trend-query";
+import { loadScoreTrendPanel } from "@/lib/factory-evaluations/score-trends";
 import { workspaceAnalyticsPath } from "@/lib/routes";
 
 export default async function AnalyticsPage({
@@ -48,9 +51,14 @@ export default async function AnalyticsPage({
   if (!factory) return <FactoryUnavailable title="Analytics" />;
 
   const scope = { supabase, workspaceId: workspace.id, factoryId: factory.id, query };
-  const [periods, evidence] = await Promise.all([
+  const trendQuery = parseScorerTrendQuery(search, {
+    from: query.from.slice(0, 10),
+    to: query.to.slice(0, 10),
+  });
+  const [periods, evidence, trend] = await Promise.all([
     loadAnalyticsPeriods(scope),
     loadAnalyticsEvidence(scope),
+    trendQuery ? loadScoreTrendPanel(supabase, scope, trendQuery).catch(() => null) : null,
   ]);
   return (
     <AnalyticsView
@@ -60,6 +68,21 @@ export default async function AnalyticsPage({
       query={query}
       periods={periods}
       evidence={evidence}
+      scorerTrends={
+        <ScorerTrends
+          data={trend}
+          path={workspaceAnalyticsPath(workspaceSlug)}
+          preserved={{
+            factory: factory.id,
+            dimension: query.dimension,
+            environment: query.environment ?? undefined,
+            compare: query.comparison ? "previous" : undefined,
+          }}
+          query={trendQuery}
+          selectRevision
+          workspaceSlug={workspace.slug}
+        />
+      }
     />
   );
 }
