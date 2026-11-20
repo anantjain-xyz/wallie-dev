@@ -1714,6 +1714,154 @@ export type Database = {
           },
         ]
       }
+      factory_evaluation_attempts: {
+        Row: {
+          attempt_number: number
+          claimed_at: string
+          factory_id: string
+          id: string
+          job_id: string
+          lease_expires_at: string
+          lease_id: string
+          outcome: string | null
+          settled_at: string | null
+          workspace_id: string
+        }
+        Insert: {
+          attempt_number: number
+          claimed_at: string
+          factory_id: string
+          id?: string
+          job_id: string
+          lease_expires_at: string
+          lease_id?: string
+          outcome?: string | null
+          settled_at?: string | null
+          workspace_id: string
+        }
+        Update: {
+          attempt_number?: number
+          claimed_at?: string
+          factory_id?: string
+          id?: string
+          job_id?: string
+          lease_expires_at?: string
+          lease_id?: string
+          outcome?: string | null
+          settled_at?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_evaluation_attempts_job_id_workspace_id_factory_id_fkey"
+            columns: ["job_id", "workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factory_evaluation_jobs"
+            referencedColumns: ["id", "workspace_id", "factory_id"]
+          },
+        ]
+      }
+      factory_evaluation_jobs: {
+        Row: {
+          attempt_count: number
+          attempt_limit: number
+          available_at: string | null
+          created_at: string
+          factory_id: string
+          finished_at: string | null
+          id: string
+          run_id: string
+          sample_receipt_id: string
+          scorer_revision_id: string
+          session_id: string
+          status: string
+          target_commit_sha: string
+          workspace_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          attempt_limit?: number
+          available_at?: string | null
+          created_at?: string
+          factory_id: string
+          finished_at?: string | null
+          id?: string
+          run_id: string
+          sample_receipt_id: string
+          scorer_revision_id: string
+          session_id: string
+          status?: string
+          target_commit_sha: string
+          workspace_id: string
+        }
+        Update: {
+          attempt_count?: number
+          attempt_limit?: number
+          available_at?: string | null
+          created_at?: string
+          factory_id?: string
+          finished_at?: string | null
+          id?: string
+          run_id?: string
+          sample_receipt_id?: string
+          scorer_revision_id?: string
+          session_id?: string
+          status?: string
+          target_commit_sha?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_evaluation_jobs_sample_receipt_id_fkey"
+            columns: ["sample_receipt_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorer_sample_receipts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_evaluation_jobs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "factory_evaluation_lanes"
+            referencedColumns: ["workspace_id"]
+          },
+        ]
+      }
+      factory_evaluation_lanes: {
+        Row: {
+          max_concurrent: number
+          paused: boolean
+          revision: number
+          updated_at: string | null
+          updated_by: string | null
+          workspace_id: string
+        }
+        Insert: {
+          max_concurrent?: number
+          paused?: boolean
+          revision?: number
+          updated_at?: string | null
+          updated_by?: string | null
+          workspace_id: string
+        }
+        Update: {
+          max_concurrent?: number
+          paused?: boolean
+          revision?: number
+          updated_at?: string | null
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_evaluation_lanes_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       factory_execution_grants: {
         Row: {
           approved_at: string
@@ -8368,6 +8516,36 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      cancel_factory_evaluation_job: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_job_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          attempt_count: number
+          attempt_limit: number
+          available_at: string | null
+          created_at: string
+          factory_id: string
+          finished_at: string | null
+          id: string
+          run_id: string
+          sample_receipt_id: string
+          scorer_revision_id: string
+          session_id: string
+          status: string
+          target_commit_sha: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_evaluation_jobs"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       cancel_session_command_once: {
         Args: {
           actor_member_id: string
@@ -8441,6 +8619,23 @@ export type Database = {
           repository_full_name: string
           repository_id: number
           status: string
+        }[]
+      }
+      claim_factory_evaluation_job: {
+        Args: never
+        Returns: {
+          attempt_id: string
+          attempt_number: number
+          factory_id: string
+          job_id: string
+          lease_expires_at: string
+          lease_id: string
+          run_id: string
+          sample_receipt_id: string
+          scorer_revision_id: string
+          session_id: string
+          target_commit_sha: string
+          workspace_id: string
         }[]
       }
       claim_factory_event_delivery: {
@@ -8605,6 +8800,29 @@ export type Database = {
           p_workspace_rate_limit: number
         }
         Returns: undefined
+      }
+      configure_factory_evaluation_lane: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision: number
+          p_max_concurrent: number
+          p_paused: boolean
+          p_workspace_id: string
+        }
+        Returns: {
+          max_concurrent: number
+          paused: boolean
+          revision: number
+          updated_at: string | null
+          updated_by: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_evaluation_lanes"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       confirm_factory_event_subscription: {
         Args: {
@@ -9588,6 +9806,23 @@ export type Database = {
         }
         Returns: Json
       }
+      get_factory_evaluation_lane: {
+        Args: { p_actor_user_id: string; p_workspace_id: string }
+        Returns: {
+          max_concurrent: number
+          paused: boolean
+          revision: number
+          updated_at: string | null
+          updated_by: string | null
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_evaluation_lanes"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       get_factory_flow_projection_health: {
         Args: { p_factory_id: string; p_workspace_id: string }
         Returns: Json
@@ -10410,6 +10645,16 @@ export type Database = {
       load_workspace_onboarding_secret_previews: {
         Args: { target_workspace_id: string }
         Returns: Json
+      }
+      maintain_factory_evaluation_queue: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempts_recovered: number
+          jobs_admitted: number
+          jobs_failed: number
+          jobs_requeued: number
+          receipts_processed: number
+        }[]
       }
       mark_codex_auth_reconnect_required: {
         Args: {
@@ -12230,6 +12475,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      settle_factory_evaluation_attempt: {
+        Args: {
+          p_attempt_id: string
+          p_factory_id: string
+          p_job_id: string
+          p_lease_id: string
+          p_outcome: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       settle_factory_event_delivery: {
         Args: {

@@ -1,4 +1,4 @@
-# Factory scorer sampling
+# Factory scorer evaluation
 
 Each run uses the scorer revision IDs pinned by its session's factory
 definition. A sampling policy belongs to one of those revisions. A factory
@@ -37,3 +37,25 @@ plan and the exact input and final commit and tree.
   traversal to include runs that committed after the previous horizon.
 - Candidates equal eligible plus excluded. Eligible includes sampled and
   unsampled runs. Sampled counts measure admission to the sampled cohort.
+
+## Evaluation queue
+
+Each sampled receipt can create one evaluation job for its run and scorer
+revision. The job pins the receipt and target commit. Sampling another policy
+revision for the same run and scoring rules reuses the existing job.
+
+| Event                              | Queue behavior                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| Claim                              | Reserve one workspace slot and issue a 90-second lease with a new attempt ID.              |
+| Retryable failure or expired lease | Retain the attempt and schedule a retry with backoff. The job allows up to three attempts. |
+| Permanent failure or cancellation  | Close the job and retain attempt history.                                                  |
+| Pause or factory archive           | Keep queued jobs and hold new claims. Active attempts keep their existing leases.          |
+
+An attempt can settle only its own current, unexpired lease. An expired or
+canceled attempt cannot complete another worker's claim. The worker can
+recover leases in both Node and Cloudflare.
+
+Workspace owners and admins can pause the evaluation lane or set its
+concurrency limit. Factory managers can cancel scoped jobs. Evaluations have
+their own locks and capacity. Production runs, publication, and human
+review continue through their existing commands.
