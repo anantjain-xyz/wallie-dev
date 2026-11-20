@@ -10,6 +10,7 @@ import {
   qualifyFactoryRuntime,
 } from "../../test/release/factory-runtime-fixture";
 import { createFactoryRuntimeTransport } from "../../test/release/factory-runtime-transport";
+import { createFactoryScorerRuntimeProvider } from "../../test/release/factory-scorer-runtime-provider";
 import type { Env } from "../index";
 
 const hosted = vi.hoisted(() => ({ driver: vi.fn(), token: vi.fn() }));
@@ -29,6 +30,7 @@ it.skipIf(typeof raw !== "string")(
     const { admin, viewer, config } = createFactoryRuntimeClients(raw);
     const transport = createFactoryRuntimeTransport();
     const upstream = config.m05 ? createM05ContextProvider() : undefined;
+    const judge = config.m07 ? createFactoryScorerRuntimeProvider() : undefined;
     hosted.driver.mockImplementation(async (provider: string) => {
       assert.equal(provider, "e2b");
       return transport.driver;
@@ -37,13 +39,21 @@ it.skipIf(typeof raw !== "string")(
       async (request: Parameters<typeof mintSandboxRepositoryToken>[0]) =>
         upstream?.mintToken(request) ?? "synthetic-local-checkout-token",
     );
-    if (upstream) {
+    if (upstream || judge) {
       const originalFetch = globalThis.fetch;
-      vi.stubGlobal(
-        "fetch",
-        async (request: Parameters<typeof fetch>[0], init?: RequestInit) =>
-          upstream.fixtureFetch(request, init) ?? originalFetch(request, init),
-      );
+      vi.stubGlobal("fetch", async (request: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const fixed = judge?.fixtureFetch(request, init) ?? upstream?.fixtureFetch(request, init);
+        if (fixed) return fixed;
+        if (judge) {
+          const url = new URL(request instanceof Request ? request.url : String(request));
+          assert.equal(
+            url.origin,
+            new URL(config.url).origin,
+            "The scorer fixture only fetches its local database.",
+          );
+        }
+        return originalFetch(request, init);
+      });
     }
 
     try {
@@ -53,6 +63,37 @@ it.skipIf(typeof raw !== "string")(
         runtime: "workerd",
         transport,
         ...(upstream ? { m05: { upstream } } : {}),
+        ...(judge
+          ? {
+              m07: {
+                judge,
+                maintain: async () => {
+                  const id = `scorer-runtime-${crypto.randomUUID()}`;
+                  const workflow = await bindings.MAINTENANCE.create({
+                    id,
+                    params: { tick: Date.now() },
+                  });
+                  try {
+                    const terminal = await vi.waitFor(
+                      async () => {
+                        const status = await workflow.status();
+                        assert(
+                          ["complete", "errored", "terminated"].includes(status.status),
+                          `Native scorer maintenance is ${status.status}.`,
+                        );
+                        return status;
+                      },
+                      { timeout: 15_000, interval: 50 },
+                    );
+                    assert.equal(terminal.status, "complete", terminal.error?.message);
+                  } catch (error) {
+                    await workflow.terminate().catch(() => {});
+                    throw error;
+                  }
+                },
+              },
+            }
+          : {}),
         execute: async (expected) => {
           const result = await admin.rpc("claim_next_worker_dispatch", { p_timeout_ms: 30000 });
           assert(!result.error, result.error?.message);

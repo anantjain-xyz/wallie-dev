@@ -56,9 +56,10 @@ async function runFactoryRuntime() {
     const [flag, directory, ...extra] = process.argv.slice(2);
     const m05 = extra.length === 1 && extra[0] === "--m05";
     const m06 = extra.length === 1 && extra[0] === "--m06";
-    if (flag !== "--workdir" || !directory || (extra.length > 0 && !m05 && !m06)) {
+    const m07 = extra.length === 1 && extra[0] === "--m07";
+    if (flag !== "--workdir" || !directory || (extra.length > 0 && !m05 && !m06 && !m07)) {
       throw new FixtureConfigurationError(
-        "Pass --workdir with a disposable local Supabase project and optionally --m05 or --m06.",
+        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, or --m07.",
       );
     }
     const status = JSON.parse(
@@ -103,7 +104,15 @@ async function runFactoryRuntime() {
     }
 
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...(m07
+        ? {
+            NODE_ENV: "test",
+            PATH: process.env.PATH,
+            TMPDIR: process.env.TMPDIR,
+            PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH,
+            NEXT_TELEMETRY_DISABLED: "1",
+          }
+        : process.env),
       NEXT_PUBLIC_SUPABASE_URL: url,
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: publishableKey,
       SUPABASE_SECRET_KEY: serviceKey,
@@ -113,6 +122,7 @@ async function runFactoryRuntime() {
         serviceKey,
         publishableKey,
         ...(m05 ? { m05: true } : {}),
+        ...(m07 ? { m07: true } : {}),
       }),
       CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false",
       WRANGLER_SEND_METRICS: "false",
@@ -123,10 +133,11 @@ async function runFactoryRuntime() {
     delete env.WALLIE_NATIVE_HISTORY_FIXTURE;
     delete env.OPENROUTER_API_KEY;
 
-    if (m05) {
+    if (m05 || m07) {
       const port = await loopbackPort();
       const appUrl = `http://127.0.0.1:${port}`;
       const next = resolve("node_modules/next/dist/bin/next");
+      if (m07) env.NEXT_PUBLIC_APP_URL = appUrl;
       const appEnv: NodeJS.ProcessEnv = {
         ...env,
         NEXT_PUBLIC_APP_URL: appUrl,
@@ -151,10 +162,17 @@ async function runFactoryRuntime() {
       app = localApp;
       localApp.on("error", () => localApp.kill());
       await waitForWallie(localApp, appUrl);
-      env.WALLIE_FACTORY_MEDIA_BROWSER_URL = appUrl;
-      env.WALLIE_FACTORY_MEDIA_PROOF_DIR = resolve(
-        process.env.WALLIE_FACTORY_MEDIA_PROOF_DIR ?? ".wallie/m05-qualification",
-      );
+      if (m07) {
+        env.WALLIE_FACTORY_SCORER_BROWSER_URL = appUrl;
+        env.WALLIE_FACTORY_SCORER_PROOF_DIR = resolve(
+          process.env.WALLIE_FACTORY_SCORER_PROOF_DIR ?? ".wallie/m07-qualification",
+        );
+      } else {
+        env.WALLIE_FACTORY_MEDIA_BROWSER_URL = appUrl;
+        env.WALLIE_FACTORY_MEDIA_PROOF_DIR = resolve(
+          process.env.WALLIE_FACTORY_MEDIA_PROOF_DIR ?? ".wallie/m05-qualification",
+        );
+      }
     }
 
     const entries = [
@@ -170,7 +188,7 @@ async function runFactoryRuntime() {
           file,
           "--config",
           config,
-          ...(m05 ? ["--testTimeout=180000"] : []),
+          ...(m05 || m07 ? ["--testTimeout=180000"] : []),
         ],
         { env, stdio: "inherit", timeout: 240_000 },
       );

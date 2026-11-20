@@ -197,3 +197,40 @@ also re-evaluate the original commit under a newer revision of the same scorer
 when the required evidence remains available.
 The new job links to the earlier attempt and appears in the run's evaluation
 history. Online cohort totals use the original sampling decisions.
+
+## Enrollment and rollback
+
+1. A workspace owner or admin reads the current judge profile and saves the
+   chosen model, explicit provider route, and permitted media types against
+   its revision. Use a dedicated key and record the returned profile ID.
+2. A factory manager publishes a scorer revision with its evidence and score
+   requirements. Create a sampling policy for that revision through the
+   service-side `save_factory_scorer_sampling_policy` command. Start with a
+   single controlled stage and a sampling rate appropriate to the canary.
+3. Bind the exact scorer revision in the factory definition, run its current
+   capability check, and publish the definition. Run one canary session with
+   the required evidence and complete its normal human approval. Record the
+   definition, rubric, and policy revisions used by the run. [Factory definition activation](factory-definition-activation.md)
+
+| Action                                            | Effect                                                                                                                                                                                                                                 |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pause the scorer from **Scorers → Scorer health** | New sampled admissions are skipped and queued claims wait. Active leases can finish. Resume admits future samples and releases queued work.                                                                                            |
+| Pause the workspace evaluation lane               | A workspace owner or admin can use `PUT /api/workspaces/[workspaceId]/evaluation-lane` to hold claims for every scorer.                                                                                                                |
+| Revoke or replace the judge key                   | Use the judge-profile endpoint with the current profile revision. Revocation blocks future credential release. Restoring a previous model and route creates a new profile revision with a dedicated key.                               |
+| Roll back a rubric binding                        | Activate a previously published factory definition with an eligible capability receipt. New sessions use that revision. Existing sessions retain their admission pin, and cohorts retain their original sampling policies and results. |
+
+The bounded judge smoke uses `openai/gpt-4.1-mini` with the `openai` route and
+text artifact evidence. The release fixture validates the request and receipt
+with synthetic provider responses. For hosted enrollment, capture one
+controlled run with the configured provider and retain the following evidence.
+
+- The profile revision, explicit route, exact attempts and commit, pinned
+  rubric and policy revisions, and retained artifact citation.
+- The settled verdict, evidence digest, worker runtime, and usage provenance.
+  Record missing token or cost measurements as unavailable.
+- The signed-in trend and run detail for the exact score, the normal human
+  approval receipt, and confirmation that replay keeps one evaluation.
+
+Keep credentials and evidence bytes out of the enrollment record. The local
+qualification command and its failure and cancellation checks are in
+[Factory scorer qualification](../development/verification.md#factory-scorer-qualification).
