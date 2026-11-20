@@ -1123,6 +1123,77 @@ reset role;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '';
 
+create temp table score_cancellation_targets as
+select fixture.key, job.id as job_id, job.workspace_id, job.factory_id, job.run_id, job.sample_receipt_id
+from sample_runs fixture join public.factory_evaluation_jobs job on job.run_id = fixture.id
+join sample_scope scope on (scope.workspace_id, scope.factory_id) = (job.workspace_id, job.factory_id)
+where scope.key = 'primary' and fixture.key in ('trend-unsettled', 'judge-expired');
+grant select on score_cancellation_targets to authenticated;
+
+select ok((select canceled.status = 'canceled' and canceled.attempt_count = 0
+    and canceled.canceled_recorded_xact_id = pg_current_xact_id() and canceled.finished_at is not null
+  from score_cancellation_targets target cross join lateral public.cancel_factory_evaluation_job(
+    target.workspace_id, target.factory_id, pg_temp.sampling_id(1), target.job_id) canceled
+  where target.key = 'trend-unsettled'), 'canceling before claim records the cancellation transaction without an attempt');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select ok((select pg_temp.read_score_cohort('trend-numeric', original.payload->>'snapshot') = original.payload
+  from middle_trend original), 'a signed view predating the live cancellation still shows the queued run as unsettled');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
+-- Model a cancellation that closed at the boundary of an earlier signed
+-- snapshot. The rollback-only fixture cannot commit its own transactions.
+create temp table score_cancellation_horizon as
+select cutoff.xact_id, internal.factory_score_cohort_snapshot(scope.workspace_id, scope.factory_id,
+    policy.id, bounds.since, bounds.until, cutoff.xact_id) as older_snapshot
+from middle_trend original cross join sample_scope scope cross join sample_policies policy cross join trend_window bounds
+cross join lateral (select (split_part(original.payload->>'snapshot', '.', 1)::numeric - 1)::text as xact_id) cutoff
+where scope.key = 'primary' and policy.key = 'trend-numeric';
+grant select on score_cancellation_horizon to authenticated;
+alter table public.factory_evaluation_jobs disable trigger factory_evaluation_jobs_immutable;
+update public.factory_evaluation_jobs job set canceled_recorded_xact_id = horizon.xact_id::xid8
+from score_cancellation_targets target cross join score_cancellation_horizon horizon
+where (job.workspace_id, job.factory_id, job.id) = (target.workspace_id, target.factory_id, target.job_id)
+  and job.status = 'canceled';
+alter table public.factory_evaluation_jobs enable trigger factory_evaluation_jobs_immutable;
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000002';
+select ok((select older.payload->'totals' = original.payload->'totals'
+    and older.payload->'points' = original.payload->'points' and older.payload->'rows' = original.payload->'rows'
+  from score_cancellation_horizon horizon cross join middle_trend original cross join lateral (
+    select pg_temp.read_score_cohort('trend-numeric', horizon.older_snapshot) as payload
+  ) older), 'a cancellation at the signed boundary remains unsettled in that earlier view');
+select ok((select fresh.payload->'totals' @> '{"candidate_count":3,"sampled_count":3,"usable_count":2,
+      "decided_count":1,"skipped_count":1,"unsettled_count":0}'::jsonb
+    and fresh.payload->>'row_count' = '1'
+    and fresh.payload->'rows' @> jsonb_build_array(jsonb_build_object('run_id', target.run_id,
+      'evaluation_job_id', target.job_id, 'evaluation_sample_receipt_id', target.sample_receipt_id,
+      'evaluation_attempt_id', null::uuid, 'status', 'skipped', 'reason', 'canceled', 'score', null::jsonb))
+    and (select sum((day->>'skipped_count')::integer) from jsonb_array_elements(fresh.payload->'points') day) = 1
+  from score_cancellation_targets target cross join lateral (
+    select pg_temp.read_score_cohort('trend-numeric', p_status => 'skipped') as payload
+  ) fresh where target.key = 'trend-unsettled'),
+  'a later view counts a closed queued cancellation as skipped with no fabricated evaluation attempt');
+select ok((select fresh.payload->'rows' @> jsonb_build_array(jsonb_build_object('run_id', claim.run_id,
+      'evaluation_job_id', claim.job_id, 'evaluation_attempt_id', null::uuid, 'status', 'skipped', 'reason', 'canceled'))
+    and history.payload#>>'{0,receipt,attempt_id}' = claim.attempt_id::text
+    and history.payload#>>'{0,receipt,reason}' = 'provider_unavailable'
+  from evaluation_claims claim cross join lateral (
+    select pg_temp.read_score_cohort('evaluation-replay') as payload
+  ) fresh cross join lateral (
+    select pg_temp.read_run_scores('judge-expired', claim.attempt_id) as payload
+  ) history where claim.slot = 'judge-estimated'),
+  'cancelling a queued retry records a skipped run while preserving its exact earlier provider failure');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
 -- Model a historical receipt selected for admission as its workspace retires.
 insert into sample_runs values ('retiring-receipt', pg_temp.accept_sample_run('Retiring workspace receipt fixture'));
 alter table public.factory_scorer_sample_receipts disable trigger factory_evaluation_job_from_sample;

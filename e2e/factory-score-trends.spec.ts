@@ -13,6 +13,7 @@ const seed = z.object({
   runs: z.tuple([
     z.object({ runId: z.uuid(), sessionId: z.uuid(), jobId: z.uuid() }),
     z.object({ runId: z.uuid(), sessionId: z.uuid(), jobId: z.uuid() }),
+    z.object({ runId: z.uuid(), sessionId: z.uuid(), jobId: z.uuid() }),
     z.object({ runId: z.uuid(), sessionId: z.uuid() }),
   ]),
 });
@@ -72,7 +73,7 @@ test("a factory reader inspects frozen score coverage and exact run evidence", a
     await trend.getByRole("button", { name: "Apply scorer filters" }).click();
     await expect(cohortPicker).toHaveValue(data.policies[0]);
     const coverage = trend.locator("dl:visible");
-    await expect(coverage.getByText("/ 2 sampled", { exact: true })).toBeVisible();
+    await expect(coverage.getByText("/ 3 sampled", { exact: true })).toBeVisible();
     await expect(coverage.getByText("/ 2 usable", { exact: true })).toBeVisible();
     const table = trend.getByRole("table", { name: "Scorer trend totals" });
     const daily = table.locator("tbody tr").first();
@@ -81,12 +82,20 @@ test("a factory reader inspects frozen score coverage and exact run evidence", a
       await total.getByRole("cell").allTextContents(),
     );
     await expect(total.getByRole("cell", { name: "4.5", exact: true })).toBeVisible();
-    await expect(trend.locator("#scorer-cohort-results")).toContainText("2 matching runs");
+    await expect(trend.locator("#scorer-cohort-results")).toContainText("3 matching runs");
+    const canceled = trend.locator("#scorer-cohort-results li").filter({
+      has: page.getByText("Canceled", { exact: true }),
+    });
+    await expect(canceled).toBeVisible();
+    await expect(canceled.getByRole("link", { name: "Open run" })).toHaveAttribute(
+      "href",
+      `${base}/runs/${data.runs[2].runId}#evaluation-${data.runs[2].jobId}`,
+    );
     await capture(page, info, "01-scorer-cohort-desktop-light");
 
     await daily.getByRole("link").click();
     await expect(page).toHaveURL(/scoreSnapshot=/);
-    await expect(trend.locator("#scorer-cohort-results")).toContainText("2 matching runs");
+    await expect(trend.locator("#scorer-cohort-results")).toContainText("3 matching runs");
     await trend.getByRole("combobox", { name: "Result state" }).selectOption("fail");
     await trend.getByRole("button", { name: "Filter results" }).click();
     await expect(trend.locator("#scorer-cohort-results")).toContainText("1 matching");
@@ -133,7 +142,7 @@ test("a factory reader inspects frozen score coverage and exact run evidence", a
     ).toBeVisible();
     await capture(page, info, "03-analytics-scorer-revision", trend);
     await trend.getByRole("link", { name: "Open run", exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/runs/${data.runs[2].runId}#scorer-evaluations$`));
+    await expect(page).toHaveURL(new RegExp(`/runs/${data.runs[3].runId}#scorer-evaluations$`));
     await expect(evaluations.getByText("Missing evidence", { exact: true })).toBeVisible();
 
     const restricted = await page.request.get(

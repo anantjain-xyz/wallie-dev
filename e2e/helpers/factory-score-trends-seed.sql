@@ -17,6 +17,7 @@ declare
   accepted record;
   scenario record;
   claim record;
+  canceled_job uuid;
   target_run uuid;
   publication uuid;
   judge_result jsonb;
@@ -80,7 +81,8 @@ begin
     policies := policies || jsonb_build_array(policy.id);
 
     for scenario in (select value from unnest(case rubric_version
-        when 1 then array['Reconciliation regression','Reconciliation edge case'] else array['Reconciliation without report'] end) value)
+        when 1 then array['Reconciliation regression','Reconciliation edge case','Canceled reconciliation evaluation']
+        else array['Reconciliation without report'] end) value)
     loop
       title := scenario.value;
       select * into strict accepted from internal.create_attributed_session(
@@ -110,6 +112,14 @@ begin
       end if;
       if membership.outcome is distinct from 'sampled' then
         raise exception 'Fixture run was not sampled (%).', membership.reason;
+      end if;
+      if title = 'Canceled reconciliation evaluation' then
+        select job.id into strict canceled_job from public.factory_evaluation_jobs job
+        where job.sample_receipt_id = membership.id;
+        perform public.cancel_factory_evaluation_job(workspace_id, factory_id, owner_id, canceled_job);
+        run_info := run_info || jsonb_build_array(jsonb_build_object(
+          'runId', target_run, 'sessionId', accepted.session_id, 'jobId', canceled_job));
+        continue;
       end if;
       -- This fixture creates and claims the job in a single SQL statement.
       update public.factory_evaluation_jobs queued set available_at = statement_timestamp()

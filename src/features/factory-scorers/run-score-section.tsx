@@ -144,7 +144,10 @@ function RunScoresPanel({
         {scores.map((score) => {
           const { receipt, job_status, sample_outcome, sample_reason } = score;
           const pending = job_status === "queued" || job_status === "claimed";
-          const showReceipt = receipt && (!pending || receipt.attempt_id === evaluationAttempt);
+          const canceledAfterReceipt = job_status === "canceled" && receipt?.reason !== "canceled";
+          const showReceipt =
+            receipt &&
+            (receipt.attempt_id === evaluationAttempt || (!pending && !canceledAfterReceipt));
           const result = showReceipt ? receipt : null;
           const reason = scoreReasonDetail(result?.reason ?? sample_reason);
           const sampleStatus =

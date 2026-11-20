@@ -164,6 +164,9 @@ Pass rate divides passed results by decided results. The mean uses typed
 numeric scores for the selected rubric revision. A missing denominator or
 mean displays as unavailable.
 
+A canceled evaluation counts as skipped, including a job canceled before its
+first attempt. Earlier snapshots keep the state recorded at their cutoff.
+
 The chart, table, and result filters use one signed cohort snapshot. Open a
 run to inspect the exact attempt used in that snapshot. The run page also shows
 sampling exclusions and unsampled decisions. Evidence links check current

@@ -93,6 +93,36 @@ const evaluated = {
 } satisfies RunScore;
 
 describe("run score section", () => {
+  it("shows job cancellation while keeping an explicitly selected earlier failure", async () => {
+    vi.mocked(loadRunScores).mockResolvedValue({
+      factoryId,
+      scores: [
+        {
+          ...evaluated,
+          job_status: "canceled",
+          receipt: {
+            ...evaluated.receipt,
+            attempt_outcome: "retryable_failure",
+            status: "error",
+            reason: "provider_unavailable",
+            result: null,
+            score: null,
+            explanation: null,
+            evidence_locations: null,
+          },
+        },
+      ],
+    });
+    const scope = { workspaceSlug: "wallie", sessionId, sessionNumber: 2, runId };
+    const view = render(await RunScoreSection({ ...scope, attempt: undefined }));
+    expect(screen.getByText("Canceled", { exact: true })).toBeTruthy();
+    expect(screen.queryByText("Evaluator error", { exact: true })).toBeNull();
+
+    view.rerender(await RunScoreSection({ ...scope, attempt: attemptId }));
+    expect(screen.getByText("Evaluator error", { exact: true })).toBeTruthy();
+    expect(screen.getByText(/Judge provider unavailable/)).toBeTruthy();
+  });
+
   it("links exact available evidence and distinguishes sample-only dispositions", async () => {
     vi.mocked(loadRunScores).mockResolvedValue({
       factoryId,

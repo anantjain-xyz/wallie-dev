@@ -4,6 +4,30 @@ alter table public.factory_scorer_sample_receipts add column recorded_xact_id xi
 alter table public.factory_scorer_sample_receipts alter column recorded_xact_id set default pg_current_xact_id();
 alter table public.factory_evaluation_receipts add column recorded_xact_id xid8;
 alter table public.factory_evaluation_receipts alter column recorded_xact_id set default pg_current_xact_id();
+alter table public.factory_evaluation_jobs add column canceled_recorded_xact_id xid8,
+  add constraint factory_evaluation_jobs_cancel_watermark_check
+    check (status = 'canceled' or canceled_recorded_xact_id is null);
+
+create or replace function internal.guard_factory_evaluation_job()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if tg_op = 'DELETE' then
+    if not exists (select 1 from public.factory_scorer_sample_receipts sample where sample.id = old.sample_receipt_id)
+      or not exists (select 1 from public.factory_evaluation_lanes lane where lane.workspace_id = old.workspace_id) then
+      return old;
+    end if;
+  elsif old.status in ('queued', 'claimed') and
+    (new.id, new.workspace_id, new.factory_id, new.session_id, new.run_id, new.scorer_revision_id,
+      new.sample_receipt_id, new.target_commit_sha, new.created_at, new.attempt_limit, new.canceled_recorded_xact_id)
+    is not distinct from
+    (old.id, old.workspace_id, old.factory_id, old.session_id, old.run_id, old.scorer_revision_id,
+      old.sample_receipt_id, old.target_commit_sha, old.created_at, old.attempt_limit, old.canceled_recorded_xact_id) then
+    if new.status = 'canceled' then new.canceled_recorded_xact_id := pg_current_xact_id(); end if;
+    return new;
+  end if;
+  raise exception 'Evaluation job identity and terminal history are immutable.' using errcode = '23514';
+end;
+$$;
 
 -- Keep the OP-606 projection stable when adding its private scan watermark.
 create or replace function internal.project_factory_evaluation_receipt(p_receipt public.factory_evaluation_receipts)
@@ -183,17 +207,26 @@ begin
     select sample.id as sample_receipt_id, sample.run_id, sample.session_id, sample.run_finished_at,
       sample.target_commit_sha, sample.outcome as sample_outcome, sample.reason as sample_reason,
       date_trunc('day', sample.run_finished_at, 'UTC') as bucket_at,
-      case when latest.attempt_id is not null then job.id end as evaluation_job_id,
-      case when latest.attempt_id is not null then job.sample_receipt_id end as evaluation_sample_receipt_id,
-      latest.attempt_id as evaluation_attempt_id,
-      case when sample.outcome = 'sampled' then coalesce(latest.status, 'unsettled') else sample.outcome end as status,
-      coalesce(latest.reason, sample.reason) as reason, latest.result->'score' as score
+      case when cancellation.visible or latest.attempt_id is not null then job.id end as evaluation_job_id,
+      case when cancellation.visible or latest.attempt_id is not null then job.sample_receipt_id end as evaluation_sample_receipt_id,
+      case when not cancellation.visible or latest.reason = 'canceled' then latest.attempt_id end as evaluation_attempt_id,
+      case
+        when cancellation.visible then 'skipped'
+        when sample.outcome = 'sampled' then coalesce(latest.status, 'unsettled')
+        else sample.outcome
+      end as status,
+      case when cancellation.visible then 'canceled' else coalesce(latest.reason, sample.reason) end as reason,
+      case when not cancellation.visible then latest.result->'score' end as score
     from population sample
     cross join bounds
     left join public.factory_evaluation_jobs job
       on sample.outcome = 'sampled'
       and (job.workspace_id, job.factory_id, job.run_id, job.session_id, job.scorer_revision_id, job.target_commit_sha) =
         (sample.workspace_id, sample.factory_id, sample.run_id, sample.session_id, sample.scorer_revision_id, sample.target_commit_sha)
+    cross join lateral (
+      select job.status is not distinct from 'canceled'
+        and (job.canceled_recorded_xact_id is null or job.canceled_recorded_xact_id < horizon) as visible
+    ) cancellation
     left join lateral (
       select receipt.attempt_id, receipt.status, receipt.reason, receipt.result
       from public.factory_evaluation_receipts receipt

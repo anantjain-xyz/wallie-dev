@@ -1766,6 +1766,7 @@ export type Database = {
           attempt_count: number
           attempt_limit: number
           available_at: string | null
+          canceled_recorded_xact_id: unknown
           created_at: string
           factory_id: string
           finished_at: string | null
@@ -1782,6 +1783,7 @@ export type Database = {
           attempt_count?: number
           attempt_limit?: number
           available_at?: string | null
+          canceled_recorded_xact_id?: unknown
           created_at?: string
           factory_id: string
           finished_at?: string | null
@@ -1798,6 +1800,7 @@ export type Database = {
           attempt_count?: number
           attempt_limit?: number
           available_at?: string | null
+          canceled_recorded_xact_id?: unknown
           created_at?: string
           factory_id?: string
           finished_at?: string | null
@@ -8795,6 +8798,7 @@ export type Database = {
           attempt_count: number
           attempt_limit: number
           available_at: string | null
+          canceled_recorded_xact_id: unknown
           created_at: string
           factory_id: string
           finished_at: string | null

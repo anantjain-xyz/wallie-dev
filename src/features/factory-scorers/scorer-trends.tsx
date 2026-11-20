@@ -231,7 +231,7 @@ const filterOptions = [
   ["fail", "Failed"],
   ["inconclusive", "Inconclusive"],
   ["error", "Evaluator error"],
-  ["skipped", "Skipped"],
+  ["skipped", "Skipped or canceled"],
   ["unsettled", "Awaiting evaluation"],
   ["not_sampled", "Not sampled"],
   ["excluded", "Excluded"],
