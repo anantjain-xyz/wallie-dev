@@ -76,9 +76,13 @@ with compiled as (
       'skillIds', '[]'::jsonb, 'toolIds', '[]'::jsonb, 'operatingRulesMd', '', 'operatingRuleStageIds', '[]'::jsonb,
       'agent', jsonb_build_object('provider', 'codex', 'model', 'gpt-5.5', 'concurrencyLimit', 1,
         'stallTimeoutMs', 900000, 'maxRetries', 3, 'maxTurns', 5),
-      'stages', jsonb_build_array(jsonb_build_object('id', pg_temp.sampling_id(32), 'slug', 'build', 'name', 'Build',
-        'description', '', 'promptTemplateMd', 'Produce a report.', 'anyoneCanApprove', true,
-        'previousStageIds', '[]'::jsonb, 'approverMemberIds', '[]'::jsonb)))::text as definition
+      'stages', jsonb_build_array(
+        jsonb_build_object('id', pg_temp.sampling_id(32), 'slug', 'build', 'name', 'Build',
+          'description', '', 'promptTemplateMd', 'Produce a report.', 'anyoneCanApprove', true,
+          'previousStageIds', '[]'::jsonb, 'approverMemberIds', '[]'::jsonb),
+        jsonb_build_object('id', pg_temp.sampling_id(33), 'slug', 'review', 'name', 'Review',
+          'description', '', 'promptTemplateMd', 'Review the report.', 'anyoneCanApprove', true,
+          'previousStageIds', jsonb_build_array(pg_temp.sampling_id(32)), 'approverMemberIds', '[]'::jsonb)))::text as definition
   from sample_scope scope where scope.key = 'primary'
 ), revision as (
   insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version,
@@ -94,7 +98,12 @@ select public.set_git_continuity_release(true, revision, 'Scorer sampling fixtur
 from public.get_git_continuity_release_state() where not enabled;
 
 create function pg_temp.accept_sample_run(p_title text) returns uuid language plpgsql as $$
-declare fixture record; run_id uuid; commit_sha text := repeat('a', 40); artifact text := 'Retained sampling artifact.';
+declare
+  fixture record;
+  run_id uuid;
+  publication_claim uuid;
+  commit_sha text := repeat('a', 40);
+  artifact text := 'Retained sampling artifact.';
 begin
   select * into strict fixture from public.create_session_with_first_job(
     pg_temp.sampling_id(11), pg_temp.sampling_id(21), p_title, 'Sample the exact output.', 'codex', 'gpt-5.5');
@@ -104,24 +113,22 @@ begin
     'codex', 'gpt-5.5', 'project', 'wallie/sampling-' || fixture.job_id::text);
   if run_id is null then raise exception 'Could not start fixture run.'; end if;
   perform public.pin_session_job_git_input(fixture.job_id, 1, run_id, pg_temp.sampling_id(41), 'main', commit_sha);
-  if not found or public.prepare_session_source_delivery(run_id, pg_temp.sampling_id(41), 'main',
-    commit_sha, commit_sha, 'No code change', artifact, '', '', '') is distinct from true then
+  if not found or public.prepare_session_source_and_checkpoint_publication(run_id, pg_temp.sampling_id(41), 'main',
+    commit_sha, commit_sha, 'No code change', artifact, '', '', '', 0, artifact) is distinct from true then
     raise exception 'Could not prepare fixture checkpoint.';
   end if;
-  if public.publish_session_job_with_source(fixture.job_id, 1, run_id, 0, artifact) is distinct from true then
-    raise exception 'Could not publish fixture checkpoint.';
+  publication_claim := public.claim_session_checkpoint_publication(run_id);
+  if publication_claim is null or
+    public.adopt_session_checkpoint_publication(run_id, publication_claim, null, null) is distinct from true then
+    raise exception 'Could not adopt fixture checkpoint.';
   end if;
   return run_id;
 end;
 $$;
 
--- Keep this no-code fixture on the legacy delivery path while exercising the
--- real exact claim, input pin, accepted checkpoint and artifact guards.
-alter table public.session_git_heads disable trigger enqueue_session_pr_sync;
 create temp table sample_runs(key text primary key, id uuid not null);
 insert into sample_runs values ('first', pg_temp.accept_sample_run('First sampling fixture'));
 insert into sample_runs values ('second', pg_temp.accept_sample_run('Second sampling fixture'));
-alter table public.session_git_heads enable trigger enqueue_session_pr_sync;
 
 with tied as (select clock_timestamp() as finished_at)
 update public.agent_runs run set finished_at = tied.finished_at
@@ -289,6 +296,231 @@ set local request.jwt.claim.sub = '60300000-0000-4000-8000-000000000003';
 select is((select count(*) from public.factory_scorer_sampling_policies), 1::bigint,
   'the foreign tenant can read only its own policy');
 reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
+-- Reuse the accepted runs above for the dedicated queue. The two policies can
+-- yield distinct receipts for the same run and immutable scorer revision.
+create temp table evaluation_targets as
+select fixture.key, job.id as job_id, job.run_id, job.session_id, job.sample_receipt_id,
+  job.workspace_id, job.factory_id, job.scorer_revision_id
+from sample_runs fixture join public.factory_evaluation_jobs job on job.run_id = fixture.id
+join sample_scorers scorer on scorer.id = job.scorer_revision_id and scorer.key = 'exact';
+select is((select count(*) from evaluation_targets), 2::bigint,
+  'the two eligible sampled outputs enter the evaluation lane');
+insert into sample_policies select 'evaluation-replay', id from pg_temp.save_sample_policy('primary', 'exact', 5, 10000);
+select isnt((pg_temp.record_sample('primary', 'evaluation-replay', 'first')).id,
+  (select sample_receipt_id from evaluation_targets where key = 'first'),
+  'a new policy revision delivers a distinct sampled receipt for the same target and scorer');
+select (pg_temp.record_sample('primary', 'evaluation-replay', 'first')).id;
+select is((select count(*) from public.factory_evaluation_jobs job join evaluation_targets target
+  on (target.workspace_id, target.factory_id, target.run_id, target.scorer_revision_id) =
+    (job.workspace_id, job.factory_id, job.run_id, job.scorer_revision_id) where target.key = 'first'),
+  1::bigint, 'repeated deliveries across policies admit only one evaluation for the run and scorer');
+select ok((select job.sample_receipt_id = target.sample_receipt_id and job.status = 'queued' and job.attempt_count = 0
+  from public.factory_evaluation_jobs job join evaluation_targets target on job.id = target.job_id where target.key = 'first'),
+  'the evaluation keeps the first exact input receipt and waits without a claim');
+
+create temp table published_before_evaluation as
+select publication.run_id, to_jsonb(publication) as publication, to_jsonb(checkpoint) as checkpoint
+from evaluation_targets target join public.session_checkpoint_publications publication on publication.run_id = target.run_id
+join public.session_git_checkpoints checkpoint on checkpoint.run_id = target.run_id;
+
+select ok(not has_table_privilege('authenticated', 'public.factory_evaluation_attempts', 'SELECT')
+  and not has_table_privilege('service_role', 'public.factory_evaluation_jobs', 'INSERT,UPDATE,DELETE')
+  and not has_function_privilege('authenticated', 'public.claim_factory_evaluation_job()', 'EXECUTE')
+  and not has_function_privilege('authenticated',
+    'public.cancel_factory_evaluation_job(uuid,uuid,uuid,uuid)', 'EXECUTE'),
+  'attempt leases stay private and queue mutations require the guarded commands');
+
+create function pg_temp.configure_evaluation(p_expected integer, p_paused boolean)
+returns public.factory_evaluation_lanes language sql as $$
+  select public.configure_factory_evaluation_lane(pg_temp.sampling_id(11), pg_temp.sampling_id(1),
+    p_expected, p_paused, 1);
+$$;
+
+create function pg_temp.advance_production(p_key text)
+returns table(job_id uuid, run_id uuid, current_stage_id uuid, job_created boolean) language sql as $$
+  select approved.job_id, approved.run_id, approved.current_stage_id, approved.job_created
+  from evaluation_targets target join public.sessions session on session.id = target.session_id
+  cross join lateral public.approve_session_stage(session.id, session.workspace_id, session.current_stage_id,
+    session.current_artifact_id, session.current_artifact_version, pg_temp.sampling_id(21),
+    'codex', 'gpt-5.5', 'project', session.artifact_review_revision) approved
+  where target.key = p_key;
+$$;
+
+select ok((select lane.revision = 0 and not lane.paused and lane.max_concurrent = 2
+  from public.get_factory_evaluation_lane(pg_temp.sampling_id(11), pg_temp.sampling_id(1)) lane),
+  'a new workspace has its own default evaluation capacity');
+select throws_ok($$select public.configure_factory_evaluation_lane(pg_temp.sampling_id(11),
+    pg_temp.sampling_id(2), 0, true, 1)$$, '42501', null,
+  'an ordinary workspace member cannot change the lane');
+select ok((select paused and revision = 1 and max_concurrent = 1 from pg_temp.configure_evaluation(0, true)),
+  'the workspace owner can pause evaluation and set its own limit');
+select throws_ok($$select pg_temp.configure_evaluation(0, false)$$, 'PT409', null,
+  'an outdated lane editor cannot overwrite the current pause and limit');
+select is((select count(*) from public.claim_factory_evaluation_job()), 0::bigint,
+  'a paused evaluation lane hands out no new claims');
+select ok((select job_created and job_id is not null and run_id is not null and current_stage_id = pg_temp.sampling_id(33)
+  from pg_temp.advance_production('second')),
+  'the same session can approve its accepted artifact and enqueue the next production stage while evaluation is paused');
+
+select (pg_temp.configure_evaluation(1, false)).revision;
+create temp table evaluation_claims as
+select 'initial'::text as slot, claim.* from public.claim_factory_evaluation_job() claim;
+select ok((select claim.attempt_number = 1 and claim.workspace_id = target.workspace_id
+    and claim.factory_id = target.factory_id and claim.session_id = target.session_id and claim.run_id = target.run_id
+    and claim.scorer_revision_id = target.scorer_revision_id and claim.sample_receipt_id = target.sample_receipt_id
+    and claim.target_commit_sha = repeat('a', 40) and claim.lease_expires_at > clock_timestamp()
+  from evaluation_claims claim join evaluation_targets target on claim.job_id = target.job_id and target.key = 'first'
+  where claim.slot = 'initial'),
+  'the claim returns the immutable evaluation identity and exact accepted commit');
+select is((select count(*) from public.claim_factory_evaluation_job()), 0::bigint,
+  'an active evaluation lease consumes the single workspace slot');
+create temp table production_approval_at_capacity as select * from pg_temp.advance_production('first');
+select ok((select job_created and job_id is not null and run_id is not null and current_stage_id = pg_temp.sampling_id(33)
+  from production_approval_at_capacity),
+  'a saturated evaluation lane leaves the same session free to take its next production job');
+create temp table production_claim_at_capacity as select * from public.claim_next_agent_job();
+select ok((select claim.id is not null and claim.stage_id = pg_temp.sampling_id(33)
+  from production_claim_at_capacity claim join evaluation_targets target on claim.session_id = target.session_id),
+  'the production queue still claims a real next-stage job at evaluation capacity');
+select ok((select public.start_session_job_attempt(claim.id, claim.attempt_count, claim.stage_id,
+    session.current_artifact_version, 'codex', 'gpt-5.5', 'project', 'wallie/sampling-review-' || claim.id::text) is not null
+  from production_claim_at_capacity claim join public.sessions session on session.id = claim.session_id),
+  'the claimed production attempt starts while the evaluation lease still holds the slot');
+
+select throws_ok($$update public.factory_evaluation_attempts set attempt_number = 9
+  where id = (select attempt_id from evaluation_claims where slot = 'initial')$$,
+  '23514', null, 'an evaluation attempt cannot be reassigned to another attempt number');
+select throws_ok($$update public.factory_evaluation_jobs set target_commit_sha = repeat('b', 40)
+  where id = (select job_id from evaluation_claims where slot = 'initial')$$,
+  '23514', null, 'the evaluation target cannot move to another commit');
+
+create function pg_temp.settle_evaluation(p_slot text, p_outcome text)
+returns boolean language sql as $$
+  select public.settle_factory_evaluation_attempt(claim.workspace_id, claim.factory_id,
+    claim.job_id, claim.attempt_id, claim.lease_id, p_outcome)
+  from evaluation_claims claim where claim.slot = p_slot;
+$$;
+
+-- Advance only the owned attempt's fixture clocks, retaining a 90-second lease.
+alter table public.factory_evaluation_attempts disable trigger factory_evaluation_attempts_immutable;
+with expired as (select clock_timestamp() - interval '1 second' as lease_at)
+update public.factory_evaluation_attempts attempt set lease_expires_at = expired.lease_at,
+  claimed_at = expired.lease_at - interval '90 seconds' from expired
+where attempt.id = (select attempt_id from evaluation_claims where slot = 'initial');
+alter table public.factory_evaluation_attempts enable trigger factory_evaluation_attempts_immutable;
+select is(pg_temp.settle_evaluation('initial', 'succeeded'), false,
+  'an expired worker loses completion authority before a replacement takes the lease');
+select ok((select attempts_recovered = 1 and jobs_requeued = 1 and jobs_failed = 0
+  from public.maintain_factory_evaluation_queue(10)), 'the maintenance loop requeues one expired evaluation');
+select ok((select attempt.outcome = 'lease_expired' and attempt.settled_at is not null and job.status = 'queued'
+  and job.available_at > clock_timestamp() and job.available_at <= clock_timestamp() + interval '5 seconds'
+  from evaluation_claims claim join public.factory_evaluation_attempts attempt on attempt.id = claim.attempt_id
+  join public.factory_evaluation_jobs job on job.id = claim.job_id where claim.slot = 'initial'),
+  'expiry closes the old attempt and places the job behind bounded retry delay');
+
+-- Keep the other fixture idle, then make the exact reclaimed attempt due.
+update public.factory_evaluation_jobs set available_at = clock_timestamp() + interval '10 minutes'
+where id = (select job_id from evaluation_targets where key = 'second');
+select is((select count(*) from public.claim_factory_evaluation_job()), 0::bigint,
+  'a retry cannot be claimed until its backoff has elapsed');
+update public.factory_evaluation_jobs set available_at = clock_timestamp()
+where id = (select job_id from evaluation_claims where slot = 'initial');
+insert into evaluation_claims select 'replacement', claim.* from public.claim_factory_evaluation_job() claim;
+select ok((select new.attempt_number = 2 and new.job_id = old.job_id and new.attempt_id <> old.attempt_id
+    and new.lease_id <> old.lease_id and new.sample_receipt_id = old.sample_receipt_id
+  from evaluation_claims new cross join evaluation_claims old
+  where new.slot = 'replacement' and old.slot = 'initial'),
+  'recovery keeps the target and replaces both attempt and lease identity');
+select is(pg_temp.settle_evaluation('initial', 'succeeded'), false,
+  'the original worker cannot settle after the replacement receives its own lease');
+select is(pg_temp.settle_evaluation('replacement', 'retryable_failure'), true,
+  'the current attempt can schedule another bounded retry');
+select ok((select status = 'queued' and attempt_count = 2 and available_at > clock_timestamp()
+  and available_at <= clock_timestamp() + interval '10 seconds' from public.factory_evaluation_jobs
+  where id = (select job_id from evaluation_claims where slot = 'replacement')), 'retry delay grows with the attempt count');
+update public.factory_evaluation_jobs set available_at = clock_timestamp()
+where id = (select job_id from evaluation_claims where slot = 'replacement');
+insert into evaluation_claims select 'final', claim.* from public.claim_factory_evaluation_job() claim;
+select is(pg_temp.settle_evaluation('final', 'retryable_failure'), true,
+  'the final permitted attempt can settle its retryable failure');
+select ok((select status = 'failed' and attempt_count = attempt_limit and attempt_count = 3
+  and available_at is null and finished_at is not null from public.factory_evaluation_jobs
+  where id = (select job_id from evaluation_claims where slot = 'final')), 'the attempt budget stops retries at the configured limit');
+
+update public.factory_evaluation_jobs set available_at = clock_timestamp()
+where id = (select job_id from evaluation_targets where key = 'second');
+select (public.archive_factory(workspace_id, factory_id, owner_id, 'Fixture archive')).status
+from sample_scope where key = 'primary';
+select is((select count(*) from public.claim_factory_evaluation_job()), 0::bigint,
+  'an archived factory cannot acquire an evaluation claim');
+select (public.restore_factory(workspace_id, factory_id, owner_id)).status from sample_scope where key = 'primary';
+insert into evaluation_claims select 'canceled', claim.* from public.claim_factory_evaluation_job() claim;
+select (pg_temp.configure_evaluation(2, true)).revision;
+select is((select canceled.status from evaluation_claims claim
+  cross join lateral public.cancel_factory_evaluation_job(claim.workspace_id, claim.factory_id,
+    pg_temp.sampling_id(1), claim.job_id) canceled where claim.slot = 'canceled'),
+  'canceled', 'a manager can cancel an active claim while evaluation is paused');
+select is(pg_temp.settle_evaluation('canceled', 'succeeded'), false,
+  'the holder of a canceled lease cannot publish a completion');
+select is((select attempt.outcome from evaluation_claims claim
+  join public.factory_evaluation_attempts attempt on attempt.id = claim.attempt_id where claim.slot = 'canceled'),
+  'canceled', 'cancellation closes the exact live attempt');
+select results_eq($$select p.run_id, to_jsonb(p), to_jsonb(checkpoint)
+  from published_before_evaluation frozen join public.session_checkpoint_publications p using (run_id)
+  join public.session_git_checkpoints checkpoint using (run_id) order by p.run_id$$,
+  $$select run_id, publication, checkpoint from published_before_evaluation order by run_id$$,
+  'evaluation scheduling, retry, and cancellation preserve the production publication and checkpoint');
+
+-- A receipt created before the automatic admission trigger remains recoverable.
+insert into sample_runs values ('older-receipt', pg_temp.accept_sample_run('Sampling receipt recovery fixture'));
+select is((select publication.status from public.session_checkpoint_publications publication
+  join sample_runs fixture on publication.run_id = fixture.id where fixture.key = 'older-receipt'),
+  'adopted', 'production can adopt an exact checkpoint while evaluation is paused');
+alter table public.factory_scorer_sample_receipts disable trigger factory_evaluation_job_from_sample;
+create temp table evaluation_backlog as
+select receipt.* from pg_temp.record_sample('primary', 'evaluation-replay', 'older-receipt') receipt;
+alter table public.factory_scorer_sample_receipts enable trigger factory_evaluation_job_from_sample;
+update internal.factory_evaluation_admission_progress progress
+set before_created_at = backlog.created_at, before_receipt_id = backlog.id,
+  last_created_at = '-infinity', last_receipt_id = '00000000-0000-0000-0000-000000000000', completed = false
+from evaluation_backlog backlog where progress.singleton;
+select ok((select receipts_processed = 1 and jobs_admitted = 1 from public.maintain_factory_evaluation_queue(1)),
+  'bounded maintenance admits an eligible sampled receipt that predates automatic admission');
+select ok((select receipts_processed = 0 and jobs_admitted = 0 from public.maintain_factory_evaluation_queue(1)),
+  'maintenance replay does not create another evaluation');
+select is((select count(*) from public.claim_factory_evaluation_job()), 0::bigint,
+  'recovering the backlog does not bypass the workspace pause');
+select (pg_temp.configure_evaluation(3, false)).revision;
+insert into evaluation_claims select 'success', claim.* from public.claim_factory_evaluation_job() claim;
+select ok((select claim.sample_receipt_id = backlog.id and claim.attempt_number = 1
+  from evaluation_claims claim cross join evaluation_backlog backlog where claim.slot = 'success'),
+  'resuming the lane claims the recovered exact receipt');
+select is(pg_temp.settle_evaluation('success', 'succeeded'), true,
+  'the current lease can settle the recovered evaluation successfully');
+select is(pg_temp.settle_evaluation('success', 'succeeded'), false,
+  'a completion replay cannot settle the same lease twice');
+
+-- Model a historical receipt selected for admission as its workspace retires.
+insert into sample_runs values ('retiring-receipt', pg_temp.accept_sample_run('Retiring workspace receipt fixture'));
+alter table public.factory_scorer_sample_receipts disable trigger factory_evaluation_job_from_sample;
+create temp table retiring_evaluation_backlog as
+select receipt.id, receipt.run_id, receipt.created_at
+from pg_temp.record_sample('primary', 'evaluation-replay', 'retiring-receipt') receipt;
+alter table public.factory_scorer_sample_receipts enable trigger factory_evaluation_job_from_sample;
+update internal.factory_evaluation_admission_progress progress
+set before_created_at = backlog.created_at, before_receipt_id = backlog.id, completed = false
+from retiring_evaluation_backlog backlog where progress.singleton;
+select ok(public.begin_workspace_deletion(pg_temp.sampling_id(11), pg_temp.sampling_id(21), 'Sampling primary') is not null,
+  'the owner opens the workspace deletion fence before recovery');
+select ok((select receipts_processed = 0 and jobs_admitted = 0 from public.maintain_factory_evaluation_queue(1)),
+  'backlog maintenance skips evaluation admission for a deleting workspace');
+select ok((select progress.completed
+    and not exists (select 1 from public.factory_evaluation_jobs job where job.run_id = backlog.run_id)
+  from internal.factory_evaluation_admission_progress progress cross join retiring_evaluation_backlog backlog),
+  'the deleting workspace leaves no evaluation and cannot keep the backlog open');
 
 select * from finish();
 rollback;

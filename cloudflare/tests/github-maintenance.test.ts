@@ -50,21 +50,30 @@ vi.mock("@/lib/run-exports/worker", () => ({
 beforeEach(() => vi.resetAllMocks());
 
 it.each([
-  [false, false, false, false, false, false],
-  [true, false, false, false, false, false],
-  [false, true, false, false, false, false],
-  [true, true, true, true, true, false],
-  [false, false, false, false, false, true],
+  { scenario: "all tasks succeed" },
+  { scenario: "GitHub verification fails", githubFailure: true },
+  { scenario: "readiness fails", readinessFailure: true },
+  {
+    scenario: "several existing tasks fail",
+    githubFailure: true,
+    readinessFailure: true,
+    oauthCleanupFailure: true,
+    commandCleanupFailure: true,
+    projectionFailure: true,
+  },
+  { scenario: "scorer sampling fails", samplingFailure: true },
+  { scenario: "evaluation maintenance fails", evaluationFailure: true },
 ])(
-  "runs independent maintenance (GitHub fails=%s, readiness fails=%s, OAuth cleanup fails=%s, command cleanup fails=%s, flow projection fails=%s, scorer sampling fails=%s)",
-  async (
+  "runs independent maintenance when $scenario",
+  async ({
     githubFailure,
     readinessFailure,
     oauthCleanupFailure,
     commandCleanupFailure,
     projectionFailure,
     samplingFailure,
-  ) => {
+    evaluationFailure,
+  }) => {
     const bindings = env as unknown as Env;
     const id = `maintenance-${crypto.randomUUID()}`;
     const query = {
@@ -85,9 +94,26 @@ it.each([
             error: null,
           },
     );
+    const evaluations = vi.fn().mockResolvedValue(
+      evaluationFailure
+        ? { data: null, error: { message: "Evaluation queue temporarily unavailable" } }
+        : {
+            data: {
+              receipts_processed: 4,
+              jobs_admitted: 2,
+              attempts_recovered: 3,
+              jobs_requeued: 2,
+              jobs_failed: 1,
+            },
+            error: null,
+          },
+    );
     const rpc = vi.fn((name: string) => {
       if (name === "process_factory_scorer_sampling") {
         return { abortSignal: () => ({ single: sample }) };
+      }
+      if (name === "maintain_factory_evaluation_queue") {
+        return { abortSignal: () => ({ single: evaluations }) };
       }
       return {
         abortSignal: () =>
@@ -160,7 +186,9 @@ it.each([
       });
       expect(rpc).toHaveBeenNthCalledWith(2, "process_factory_scorer_sampling", { p_limit: 25 });
       expect(sample).toHaveBeenCalledOnce();
-      expect(rpc).toHaveBeenNthCalledWith(3, "prune_factory_analytics_exports", { p_limit: 100 });
+      expect(rpc).toHaveBeenNthCalledWith(3, "maintain_factory_evaluation_queue", { p_limit: 25 });
+      expect(evaluations).toHaveBeenCalledOnce();
+      expect(rpc).toHaveBeenNthCalledWith(4, "prune_factory_analytics_exports", { p_limit: 100 });
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );

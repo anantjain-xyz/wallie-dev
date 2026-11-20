@@ -10,6 +10,7 @@ import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
+import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import {
   processFactoryFlowProjection,
   pruneFactoryAnalyticsExports,
@@ -199,6 +200,7 @@ async function main() {
     let deliveringFactoryEvents = false;
     let projectingFactoryFlow = false;
     let samplingFactoryScorers = false;
+    let maintainingEvaluationQueue = false;
     maintenanceTimers.push(
       setInterval(() => {
         if (!deliveringFactoryEvents) {
@@ -228,6 +230,16 @@ async function main() {
               await processFactoryScorerSampling(admin);
             } finally {
               samplingFactoryScorers = false;
+            }
+          });
+        }
+        if (!maintainingEvaluationQueue) {
+          maintainingEvaluationQueue = true;
+          timerTasks.run("factory evaluation queue", async () => {
+            try {
+              await maintainFactoryEvaluationQueue(admin);
+            } finally {
+              maintainingEvaluationQueue = false;
             }
           });
         }
