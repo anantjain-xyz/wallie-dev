@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { isFactoryDefinitionText } from "@/lib/factory-definitions/text";
+
 export const factoryScorerEvidenceKindSchema = z.enum([
   "code_diff",
   "artifact",
@@ -77,8 +79,7 @@ export const factoryScorerDefinitionSchema = z
       .string()
       .refine(
         (value) =>
-          value.isWellFormed() &&
-          !value.includes("\0") &&
+          isFactoryDefinitionText(value) &&
           value.trim().length > 0 &&
           Array.from(value).length <= 20_000,
         "Use 1 to 20,000 characters of well-formed rubric text.",

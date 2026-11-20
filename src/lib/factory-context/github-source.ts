@@ -41,12 +41,12 @@ const tokenRequestErrorSchema = z.object({
     .optional(),
 });
 
-type GitHubContextInput = {
+type GitHubRepositoryReadContext = {
   installationId: number;
   repositoryId: number;
   repositoryFullName: string;
-  filePath: string;
 };
+type GitHubContextInput = GitHubRepositoryReadContext & { filePath: string };
 
 export type GitHubContextResult =
   | {
@@ -71,7 +71,8 @@ type ReadGitHubResource = (
   accept?: string,
 ) => Promise<Uint8Array>;
 
-class GitHubAccessError extends Error {}
+export class GitHubAccessError extends Error {}
+export class GitHubResourceBoundsError extends Error {}
 
 function isAccessError(status: number, headers: Headers, message = "") {
   return (
@@ -87,9 +88,13 @@ async function readBoundedBytes(response: Response, maximum: number, signal: Abo
   const body = response.body;
   if (!body) throw new Error("GitHub response body is unavailable.");
   const length = Number(response.headers.get("content-length"));
-  if (length > maximum || signal.aborted) {
+  if (signal.aborted) {
     void body.cancel().catch(() => {});
-    throw new Error("GitHub response did not fit its bounds.");
+    signal.throwIfAborted();
+  }
+  if (length > maximum) {
+    void body.cancel().catch(() => {});
+    throw new GitHubResourceBoundsError("GitHub response did not fit its bounds.");
   }
 
   const reader = body.getReader();
@@ -105,7 +110,7 @@ async function readBoundedBytes(response: Response, maximum: number, signal: Abo
       if (done) return bytes.subarray(0, size);
       if (value.byteLength > maximum - size) {
         cancel();
-        throw new Error("GitHub response exceeded its byte limit.");
+        throw new GitHubResourceBoundsError("GitHub response exceeded its byte limit.");
       }
       bytes.set(value, size);
       size += value.byteLength;
@@ -124,8 +129,8 @@ function parseJson(bytes: Uint8Array): unknown {
   return JSON.parse(decodeUtf8(bytes));
 }
 
-async function createGitHubResourceReader(
-  input: GitHubContextInput,
+export async function createGitHubResourceReader(
+  input: GitHubRepositoryReadContext,
   signal: AbortSignal,
 ): Promise<ReadGitHubResource> {
   let token: string;

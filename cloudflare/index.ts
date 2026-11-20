@@ -30,6 +30,7 @@ import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachme
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
+import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import {
   processFactoryFlowProjection,
@@ -335,6 +336,17 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       }
     }
     await step.do("wake dispatcher", () => dispatcher(this.env).kick());
+    try {
+      await step.do(
+        "run factory judges",
+        { timeout: "2 minutes", retries: { limit: 0, delay: "1 second" } },
+        () => drainFactoryJudges(admin, "workerd"),
+      );
+    } catch {
+      console.warn("[cloudflare-maintenance] task will retry next cycle", {
+        task: "factory judges",
+      });
+    }
   }
 }
 

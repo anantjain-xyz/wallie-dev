@@ -11,6 +11,7 @@ import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
+import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import { requestFactoryEventDispatch } from "@/lib/factory-event-subscriptions/relay";
 import type { Env } from "../index";
@@ -35,6 +36,7 @@ vi.mock("@/lib/factory-oauth/maintenance", () => ({ pruneFactoryOAuthCredentials
 vi.mock("@/lib/factory-command-authorization/maintenance", () => ({
   pruneFactoryCommandAdmissions: vi.fn(),
 }));
+vi.mock("@/lib/factory-evaluations/judge-worker", () => ({ drainFactoryJudges: vi.fn() }));
 vi.mock("@/lib/factory-event-subscriptions/maintenance", () => ({
   pruneFactoryEventOutbox: vi.fn(),
 }));
@@ -63,6 +65,7 @@ it.each([
   },
   { scenario: "scorer sampling fails", samplingFailure: true },
   { scenario: "evaluation maintenance fails", evaluationFailure: true },
+  { scenario: "a judge dispatch fails", judgeFailure: true },
 ])(
   "runs independent maintenance when $scenario",
   async ({
@@ -73,6 +76,7 @@ it.each([
     projectionFailure,
     samplingFailure,
     evaluationFailure,
+    judgeFailure,
   }) => {
     const bindings = env as unknown as Env;
     const id = `maintenance-${crypto.randomUUID()}`;
@@ -128,6 +132,8 @@ it.each([
     });
     const admin = { from: () => query, rpc };
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin as never);
+    if (judgeFailure)
+      vi.mocked(drainFactoryJudges).mockRejectedValue(new Error("Judge dispatch unavailable."));
     if (githubFailure)
       vi.mocked(reconcileGitHubPrVerification).mockRejectedValue(
         new Error("temporarily unavailable"),
@@ -197,6 +203,10 @@ it.each([
         vi.mocked(drainRunExports).mock.invocationCallOrder[0],
       );
       expect(cleanupRunExports).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(drainFactoryJudges).toHaveBeenCalledExactlyOnceWith(admin, "workerd");
+      expect(vi.mocked(cleanupRunExports).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(drainFactoryJudges).mock.invocationCallOrder[0],
+      );
     } finally {
       await inspection.dispose();
     }
