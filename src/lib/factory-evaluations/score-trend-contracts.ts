@@ -121,6 +121,8 @@ const runScoreSchema = z
     job_status: z.enum(["queued", "claimed", "succeeded", "failed", "canceled"]).nullable(),
     sample_outcome: z.enum(["sampled", "not_sampled", "excluded"]),
     sample_reason: z.string().max(80).nullable(),
+    source_attempt_id: id.nullable(),
+    admission_paused: z.boolean(),
     receipt: evaluationReceiptRecordSchema.nullable(),
     diff: z
       .object({

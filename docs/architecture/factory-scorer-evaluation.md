@@ -172,3 +172,28 @@ run to inspect the exact attempt used in that snapshot. The run page also shows
 sampling exclusions and unsampled decisions. Evidence links check current
 access and retention, while the historical verdict remains visible. A recording
 citation opens the retained asset at the cited time.
+
+## Scorer health and review
+
+Scorer health shows the selected cohort's coverage and evaluator errors over
+settled results. A factory manager can pause the scorer across its rubric
+revisions. Sampling continues and records when a pause prevents admission. New
+claims and retries wait while the scorer is paused, and active attempts can
+settle or recover. Resuming opens future admission. **Pause history** retains
+the actor and time for each change, and each skipped admission records the
+pause revision that applied.
+
+Open an exact attempt from **Runs** to confirm or dispute its verdict. The
+attempt's recorded stage approval policy determines who can adjudicate. A
+dispute can include an expected result. The model verdict and reviewer
+decision each keep their own record. Production approval follows its existing
+stage requirements.
+
+Factory managers can publish a calibration set version with a rubric revision
+and up to 40 adjudications. Use **Load older calibration cases** to browse past
+the first page. Each set version links to its pinned rubric and exact saved
+adjudications. Editing an existing set preserves its rubric pin. Managers can
+also re-evaluate the original commit under a newer revision of the same scorer
+when the required evidence remains available.
+The new job links to the earlier attempt and appears in the run's evaluation
+history. Online cohort totals use the original sampling decisions.

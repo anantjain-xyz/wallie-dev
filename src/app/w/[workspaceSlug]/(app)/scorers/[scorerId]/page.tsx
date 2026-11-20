@@ -7,6 +7,10 @@ import { Status } from "@/components/ui/status";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { ScorerDefinitionView } from "@/features/factory-scorers/scorer-definition-view";
 import { ScorerForm } from "@/features/factory-scorers/scorer-form";
+import {
+  loadScorerGovernanceData,
+  ScorerGovernanceSection,
+} from "@/features/factory-scorers/scorer-governance-section";
 import { ScorerTrends } from "@/features/factory-scorers/scorer-trends";
 import {
   loadScorerDetail,
@@ -59,17 +63,16 @@ export default async function ScorerDetailPage({
   const trendQuery = parseScorerTrendQuery(query);
   const revisionFilters = { ...factoryQuery, from: trendQuery?.from, to: trendQuery?.to };
   const latestHref = workspaceScorerDetailPath(workspaceSlug, scorer.id, revisionFilters);
-  const trend = trendQuery
-    ? await loadScoreTrendPanel(
-        scope.supabase,
-        { workspaceId, factoryId: factory.id },
-        trendQuery,
-        {
+  const governanceScope = { workspaceId, factoryId: factory.id };
+  const [trend, governance] = await Promise.all([
+    trendQuery
+      ? loadScoreTrendPanel(scope.supabase, { workspaceId, factoryId: factory.id }, trendQuery, {
           scorerId: scorer.id,
           scorerRevisionId: selected.id,
-        },
-      ).catch(() => null)
-    : null;
+        }).catch(() => null)
+      : null,
+    loadScorerGovernanceData(scope.supabase, governanceScope, scorer.id, query),
+  ]);
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
@@ -125,6 +128,20 @@ export default async function ScorerDetailPage({
           }}
           query={trendQuery}
           workspaceSlug={workspaceSlug}
+        />
+        <ScorerGovernanceSection
+          workspaceSlug={workspaceSlug}
+          data={governance}
+          scope={governanceScope}
+          scorerId={scorer.id}
+          scorerRevisionId={selected.id}
+          canEdit={canEdit}
+          stats={trend?.trend?.totals}
+          path={workspaceScorerDetailPath(workspaceSlug, scorer.id, {
+            ...trendQuery,
+            factory: factory.id,
+            revision: selected.id,
+          })}
         />
         {canEdit ? (
           historical ? (

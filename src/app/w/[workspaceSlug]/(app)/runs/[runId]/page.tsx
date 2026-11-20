@@ -8,7 +8,7 @@ export default async function RunInspectorPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; runId: string }>;
-  searchParams: Promise<{ evaluationAttempt?: string | string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug, runId }, query] = await Promise.all([params, searchParams]);
   const data = await loadRunInspectorData(workspaceSlug, runId);
@@ -25,6 +25,7 @@ export default async function RunInspectorPage({
           sessionId={data.run.sessionId}
           sessionNumber={data.run.sessionNumber}
           attempt={query.evaluationAttempt}
+          governanceQuery={query}
         />
       }
       memoryProposalHref={data.memoryProposalHref}
