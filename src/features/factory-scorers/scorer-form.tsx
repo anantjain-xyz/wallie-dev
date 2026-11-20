@@ -18,10 +18,11 @@ import {
   factoryScorerEvidenceKindSchema,
   type FactoryScorerDefinition,
 } from "@/lib/factory-scorers/contracts";
+import type { FactoryScorerPreset } from "@/lib/factory-scorers/presets";
 import { workspaceScorerDetailPath } from "@/lib/routes";
 
 type ScorerDraft =
-  | { kind: "create" }
+  | { kind: "create"; preset?: FactoryScorerPreset }
   | {
       kind: "revise";
       scorerId: string;
@@ -92,7 +93,8 @@ export function ScorerForm({
 }) {
   const router = useRouter();
   const create = draft.kind === "create";
-  const initial = create ? undefined : draft.definition;
+  const preset = create ? draft.preset : undefined;
+  const initial = create ? preset?.definition : draft.definition;
   const [scale, setScale] = useState<ScoringRule["kind"]>(initial?.scoring.kind ?? "boolean");
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -161,6 +163,10 @@ export function ScorerForm({
       onChange={() => {
         if (!conflict) setMessage(null);
       }}
+      onReset={() => {
+        setScale(initial?.scoring.kind ?? "boolean");
+        setMessage(null);
+      }}
       onSubmit={submit}
     >
       <InlineActionMessage message={message} />
@@ -177,10 +183,22 @@ export function ScorerForm({
         {create ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Scorer name">
-              <input className="ui-input" maxLength={120} name="name" required />
+              <input
+                className="ui-input"
+                defaultValue={preset?.name}
+                maxLength={120}
+                name="name"
+                required
+              />
             </Field>
             <Field label="Identifier">
-              <input className="ui-input" maxLength={60} name="slug" required />
+              <input
+                className="ui-input"
+                defaultValue={preset?.slug}
+                maxLength={60}
+                name="slug"
+                required
+              />
             </Field>
           </div>
         ) : null}
@@ -265,6 +283,11 @@ export function ScorerForm({
           </div>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
+          {preset ? (
+            <button className="ui-button" type="reset">
+              Restore preset
+            </button>
+          ) : null}
           <button
             className="ui-button"
             disabled={conflict}

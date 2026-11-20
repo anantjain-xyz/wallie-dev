@@ -121,3 +121,25 @@ Authorized factory readers can open the bounded attempt history at
 Use the evaluation job ID in the path. Wallie checks the run's current
 visibility and withholds explanations and evidence locations when the
 underlying evidence is no longer readable.
+
+## Scorer presets
+
+Factory managers can copy a shipped version from **Scorers → New scorer**.
+The copy fills the draft name, identifier, rubric, evidence requirements, and
+passing value. Select **Restore preset** to revert the current draft to those
+values. Edit the draft and publish it as a factory scorer, then bind
+its exact revision through the factory definition. A new copy starts from
+the shipped version each time.
+
+| Version 1 preset                | Required evidence      | What the judge checks                                        |
+| ------------------------------- | ---------------------- | ------------------------------------------------------------ |
+| Correctness                     | Code diff and artifact | Whether the change supports the intended behavior.           |
+| Verification                    | Validation report      | Whether relevant checks ran and passed for the exact commit. |
+| Scope                           | Code diff and artifact | Whether material changes belong to the requested work.       |
+| Redundant tests and scaffolding | Code diff              | Whether new coverage or setup adds a distinct test outcome.  |
+
+The redundant-test preset distinguishes a regression test that detects a
+previously uncaught behavior from an assertion that repeats existing coverage
+or uses unrelated setup. Findings cite the relevant lines in the exact diff.
+Ambiguous context and unsupported diffs produce an inconclusive receipt with
+a reason. Presets use the same sampling and binding controls as custom rubrics.
