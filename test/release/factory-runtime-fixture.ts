@@ -31,6 +31,10 @@ import {
   syncM05ContextRevision,
 } from "./factory-m05-inputs";
 import {
+  type FactoryScorerRuntimeMode,
+  qualifyFactoryScorerRuntime,
+} from "./factory-scorer-runtime-fixture";
+import {
   BASE_SHA,
   FIXTURE_AGENT_EXIT,
   HOSTED_SANDBOX_KEY,
@@ -60,6 +64,7 @@ const fixtureSchema = z.object({
   serviceKey: z.string().min(1),
   publishableKey: z.string().min(1),
   m05: z.boolean().default(false),
+  m07: z.boolean().default(false),
 });
 
 type Admin = SupabaseClient<Database>;
@@ -100,6 +105,7 @@ type QualificationInput = {
     upstream: ReturnType<typeof createM05ContextProvider>;
     inspectReview?: (fixture: FactoryBrowserReviewFixture) => Promise<void>;
   };
+  m07?: FactoryScorerRuntimeMode;
 };
 
 export function createFactoryRuntimeClients(rawFixture: string) {
@@ -366,6 +372,7 @@ async function seedAuthority(
   admin: Admin,
   workspace: Workspace,
   m05?: { contextRepositoryId: string; tools: BrowserTools },
+  m07 = false,
 ) {
   const scope = {
     p_actor_user_id: workspace.actorId,
@@ -383,8 +390,8 @@ async function seedAuthority(
           maxRepairAttempts: m05 ? 1 : 0,
           maxExecutionMs: 120000,
           maxTotalTokens: 10000,
-          // The synthetic Codex provider reports measured tokens and has no billed spend.
-          maxCostUsd: m05 ? null : 5,
+          // These successful fixtures report tokens without a provider spend measurement.
+          maxCostUsd: m05 || m07 ? null : 5,
         },
       }),
       "save service budget",
@@ -519,10 +526,14 @@ async function activate(
   authority: Authority,
   model: string,
   activation: number,
-  m05?: { context: ContextRevision; tools: BrowserTools },
+  mode?: { context: ContextRevision; tools: BrowserTools } | { scorerRevisionId: string },
 ) {
+  const m05 = mode && "context" in mode ? mode : undefined;
+  const scorerRevisionId = mode && "scorerRevisionId" in mode ? mode.scorerRevisionId : undefined;
   const bundle = compiledFactoryDefinitionSchema.parse({
-    schemaVersion: 1,
+    ...(scorerRevisionId
+      ? { schemaVersion: 2, scorerRevisionIds: [scorerRevisionId] }
+      : { schemaVersion: 1 }),
     kind: "serial",
     sandboxProvider: provider,
     agent: {
@@ -563,8 +574,8 @@ async function activate(
         ...workspace.stage,
         description: "",
         promptTemplateMd: "Pinned stage " + model + " for {{session.title}}.",
-        approverMemberIds: [],
-        anyoneCanApprove: true,
+        approverMemberIds: scorerRevisionId ? [workspace.memberId] : [],
+        anyoneCanApprove: !scorerRevisionId,
         previousStageIds: [],
       },
     ],
@@ -1121,7 +1132,7 @@ async function qualifyM05(
 }
 
 export async function qualifyFactoryRuntime(input: QualificationInput) {
-  const { admin, viewer, runtime, transport, execute, m05 } = input;
+  const { admin, viewer, runtime, transport, execute, m05, m07 } = input;
   // Both real claim RPCs select from the global queue.
   const queue = await admin
     .from("agent_jobs")
@@ -1166,6 +1177,7 @@ export async function qualifyFactoryRuntime(input: QualificationInput) {
       contextRepository && browserTools
         ? { contextRepositoryId: contextRepository.id, tools: browserTools }
         : undefined,
+      Boolean(m07),
     );
     const pinnedRevision = await activate(admin, workspace, authority, pinnedModel, 1);
     const wrongRepository = await admin.rpc("create_session_with_first_job", {
@@ -1269,6 +1281,24 @@ export async function qualifyFactoryRuntime(input: QualificationInput) {
         password,
       });
     }
+    if (m07) {
+      const firstScorerActivation = m05 ? 5 : 3;
+      await qualifyFactoryScorerRuntime({
+        ...m07,
+        admin,
+        viewer,
+        runtime,
+        transport,
+        workspace,
+        owner: { email, password },
+        activate: (scorerRevisionId, offset) =>
+          activate(admin, workspace, authority, pinnedModel, firstScorerActivation + offset, {
+            scorerRevisionId,
+          }),
+        admit: (title) => admit(admin, workspace, title),
+        execute,
+      });
+    }
     const priorSandboxCount = transport.sandboxes.length;
     const priorInvocationCount = transport.invocations.length;
 
@@ -1304,7 +1334,9 @@ export async function qualifyFactoryRuntime(input: QualificationInput) {
         "lookup denied manifests",
       ),
       checked(
-        m05 ? credentialReceipts.in("run_id", [pinned.run_id, revoked.run_id]) : credentialReceipts,
+        m05 || m07
+          ? credentialReceipts.in("run_id", [pinned.run_id, revoked.run_id])
+          : credentialReceipts,
         "lookup exact credential receipts",
       ),
     ]);
@@ -1316,18 +1348,18 @@ export async function qualifyFactoryRuntime(input: QualificationInput) {
     assert.equal(transport.scopedMaterial.size, 0);
   } finally {
     try {
-      if (m05 && workspaceId && workspaceMemberId) {
+      if ((m05 || m07) && workspaceId && workspaceMemberId) {
         await checked(
           admin.rpc("begin_workspace_deletion", {
             p_workspace_id: workspaceId,
             p_owner_member_id: workspaceMemberId,
             p_confirmation: fixtureWorkspaceName,
           }),
-          "fence disposable workspace and media cleanup",
+          "fence disposable workspace cleanup",
         );
         assert(
           await resumeWorkspaceDeletion(admin, workspaceId),
-          "Disposable media cleanup did not complete.",
+          "Disposable workspace cleanup did not complete.",
         );
       } else if (workspaceId) {
         await checked(

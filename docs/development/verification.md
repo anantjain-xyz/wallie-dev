@@ -257,6 +257,35 @@ The browser proof uses synthetic source evidence and signed-in local accounts.
 See [metric coverage](../architecture/factory-outcomes.md#qualification-and-coverage-limits)
 and [projection recovery](../deployment/worker-operations.md#factory-outcome-projection-recovery).
 
+### Factory scorer qualification
+
+Use an isolated checkout without deployment environment files and an exclusive
+disposable Supabase project. The runtime command starts production Wallie on
+loopback, then runs the Node worker and native Workerd Workflows in sequence.
+Install Chromium before running the signed-in browser checks. The independent
+SQL suite uses the demo seed in a separate disposable project.
+
+```sh
+pnpm exec playwright install chromium
+supabase db reset --local --no-seed --workdir /path/to/disposable-runtime-project
+pnpm check:factory-runtime --workdir /path/to/disposable-runtime-project --m07
+pnpm check:db-tests --workdir /path/to/seeded-disposable-project supabase/tests/factory_scorer_sampling.sql
+pnpm check
+```
+
+| Evidence                 | What the fixture verifies                                                                                                                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Published run            | The accepted artifact, sampled receipt, and judgment all reference the exact run, commit, and rubric. Event replay keeps the same logical evaluation.                                              |
+| Judge outage             | The judge request holds its permit while the required reviewer approves the published artifact. A simulated provider outage records an evaluation failure and schedules a retry independently.     |
+| Cancellation and history | Canceling a permitted job keeps the canceled receipt when the late response arrives. Publishing a new rubric and policy leaves the older verdict and both current and frozen cohort totals intact. |
+| Signed-in browser        | Follow the older cohort to its run and retained artifact, then inspect the canceled evaluation in the newer cohort.                                                                                |
+
+The fixture uses synthetic Git, sandbox, and agent transport. Its OpenRouter
+HTTP fixture uses a dedicated synthetic key and exercises the real judge
+adapter, credential permit, citation validation, and settlement. Node saves browser screenshots to
+`.wallie/m07-qualification`. Set `WALLIE_FACTORY_SCORER_PROOF_DIR` to change
+that directory. See [enrollment and rollback](../architecture/factory-scorer-evaluation.md#enrollment-and-rollback).
+
 ## Browser and benchmark commands
 
 The checked-in Playwright suites are targeted rather than one universal E2E

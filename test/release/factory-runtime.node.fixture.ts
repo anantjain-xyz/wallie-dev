@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 
 import { it, vi } from "vitest";
 
+import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
+import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
+import { processFactoryScorerSampling } from "@/lib/factory-scorers/sampling-maintenance";
 import type { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 import { parseWorkerConfig } from "@/worker/config";
 import { claimNextJob, runClaimedJob } from "@/worker/loop";
@@ -11,6 +14,8 @@ import { createFactoryMediaQualificationBroker } from "./factory-media-qualifica
 import { runAuthenticatedBrowserQualification } from "./factory-media-qualification-browser";
 import { createFactoryRuntimeClients, qualifyFactoryRuntime } from "./factory-runtime-fixture";
 import { createFactoryRuntimeTransport } from "./factory-runtime-transport";
+import { createFactoryScorerRuntimeProvider } from "./factory-scorer-runtime-provider";
+import { runFactoryScorerQualificationBrowser } from "./factory-scorer-qualification-browser";
 
 const hosted = vi.hoisted(() => ({ driver: vi.fn(), token: vi.fn() }));
 vi.mock("@/lib/sandbox/provider-contract", async (original) => ({
@@ -25,6 +30,7 @@ it("qualifies actual factory execution and revocation through a Node worker clai
   const { admin, viewer, config } = createFactoryRuntimeClients(raw);
   const transport = createFactoryRuntimeTransport();
   const upstream = config.m05 ? createM05ContextProvider() : undefined;
+  const judge = config.m07 ? createFactoryScorerRuntimeProvider() : undefined;
   hosted.driver.mockImplementation(async (provider: string) => {
     assert.equal(provider, "e2b");
     return transport.driver;
@@ -34,13 +40,21 @@ it("qualifies actual factory execution and revocation through a Node worker clai
       upstream?.mintToken(request) ?? "synthetic-local-checkout-token",
   );
 
-  if (upstream) {
+  if (upstream || judge) {
     const originalFetch = globalThis.fetch;
-    vi.stubGlobal(
-      "fetch",
-      async (request: Parameters<typeof fetch>[0], init?: RequestInit) =>
-        upstream.fixtureFetch(request, init) ?? originalFetch(request, init),
-    );
+    vi.stubGlobal("fetch", async (request: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const fixed = judge?.fixtureFetch(request, init) ?? upstream?.fixtureFetch(request, init);
+      if (fixed) return fixed;
+      if (judge) {
+        const url = new URL(request instanceof Request ? request.url : String(request));
+        assert.equal(
+          url.origin,
+          new URL(config.url).origin,
+          "The scorer fixture only fetches its local database.",
+        );
+      }
+      return originalFetch(request, init);
+    });
   }
   try {
     await qualifyFactoryRuntime({
@@ -60,6 +74,28 @@ it("qualifies actual factory execution and revocation through a Node worker clai
                   proofDir: process.env.WALLIE_FACTORY_MEDIA_PROOF_DIR,
                   supabaseUrl: config.url,
                   serviceKey: config.serviceKey,
+                  publishableKey: config.publishableKey,
+                });
+              },
+            },
+          }
+        : {}),
+      ...(judge
+        ? {
+            m07: {
+              judge,
+              maintain: async () => {
+                await processFactoryScorerSampling(admin);
+                await maintainFactoryEvaluationQueue(admin);
+                await drainFactoryJudges(admin, "node");
+              },
+              inspectScore: async (fixture) => {
+                const appUrl = process.env.WALLIE_FACTORY_SCORER_BROWSER_URL;
+                assert(appUrl, "The scorer qualification needs a local Wallie app.");
+                await runFactoryScorerQualificationBrowser(fixture, {
+                  appUrl,
+                  proofDir: process.env.WALLIE_FACTORY_SCORER_PROOF_DIR,
+                  supabaseUrl: config.url,
                   publishableKey: config.publishableKey,
                 });
               },
