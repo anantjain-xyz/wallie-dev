@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useState, type FormEvent } from "react";
 
@@ -12,7 +13,11 @@ import {
   saveBenchmarkSuiteSchema,
   type SaveBenchmarkSuite,
 } from "@/lib/factory-benchmarks/curation-contracts";
-import { workspaceBenchmarkSuitePath } from "@/lib/routes";
+import {
+  workspaceBenchmarksPath,
+  workspaceBenchmarkSuitePath,
+  workspaceRunDetailPath,
+} from "@/lib/routes";
 
 import { benchmarkEligibilityLabel, readBenchmarkTags } from "./curation-labels";
 import type { BenchmarkTaskChoice } from "./suites-data";
@@ -45,10 +50,10 @@ export function SuiteCurationForm({
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [conflict, setConflict] = useState(false);
   const [picks, setPicks] = useState(
-    () => new Map(draft?.members.map((task) => [task.task_id, task.id])),
+    () => new Map(draft?.members.map((task) => [task.task_id, task])),
   );
   const pinned = new Map(draft?.members.map((task) => [task.task_id, task]));
-  const options = new Map(pinned);
+  const options = new Map([...pinned, ...picks]);
   for (const task of taskChoices) options.set(task.task_id, task);
 
   const action = useApiAction<unknown, [SaveBenchmarkSuite]>({
@@ -77,10 +82,10 @@ export function SuiteCurationForm({
     },
   });
 
-  function pick(taskId: string, revisionId?: string) {
+  function pick(taskId: string, revision?: BenchmarkTaskChoice) {
     setPicks((current) => {
       const next = new Map(current);
-      if (revisionId) next.set(taskId, revisionId);
+      if (revision) next.set(taskId, revision);
       else next.delete(taskId);
       return next;
     });
@@ -96,8 +101,11 @@ export function SuiteCurationForm({
       purpose: fields.get("purpose"),
       selection:
         mode === "explicit"
-          ? { kind: "explicit", taskRevisionIds: [...picks.values()] }
-          : { kind: "tags", tags: readBenchmarkTags(fields.get("tags")) },
+          ? { kind: "explicit", taskRevisionIds: [...picks.values()].map(({ id }) => id) }
+          : {
+              kind: "tags",
+              tags: readBenchmarkTags(fields.get("tags"), draft?.selectionTags ?? undefined),
+            },
     });
     if (!parsed.success) {
       setMessage({
@@ -117,12 +125,16 @@ export function SuiteCurationForm({
       onSubmit={submit}
     >
       <InlineActionMessage message={message} />
-      {conflict && draft ? (
+      {conflict ? (
         <a
           className="ui-button"
-          href={`${workspaceBenchmarkSuitePath(workspaceSlug, draft.suiteId, { factory: factoryId, edit: "suite" })}#edit-suite`}
+          href={
+            draft
+              ? `${workspaceBenchmarkSuitePath(workspaceSlug, draft.suiteId, { factory: factoryId, edit: "suite" })}#edit-suite`
+              : `${workspaceBenchmarksPath(workspaceSlug, { factory: factoryId, newSuite: "1" })}#new-suite`
+          }
         >
-          Reload latest revision
+          {draft ? "Reload latest revision" : "Reload benchmark suites"}
         </a>
       ) : null}
       <fieldset aria-busy={action.isBusy} className="min-w-0 space-y-4" disabled={action.isBusy}>
@@ -197,8 +209,8 @@ export function SuiteCurationForm({
               {[...options.values()].map((latest) => {
                 const original = pinned.get(latest.task_id);
                 const selected = picks.get(latest.task_id);
-                const shown = selected === latest.id ? latest : (original ?? latest);
-                const alternate = selected === latest.id ? original : latest;
+                const shown = selected ?? original ?? latest;
+                const alternate = selected?.id === latest.id ? original : latest;
                 return (
                   <li className="min-w-0 px-3 py-2.5" key={latest.task_id}>
                     <label className="flex min-w-0 items-start gap-2.5">
@@ -208,7 +220,7 @@ export function SuiteCurationForm({
                         type="checkbox"
                         checked={!!selected}
                         onChange={(event) =>
-                          pick(latest.task_id, event.target.checked ? shown.id : undefined)
+                          pick(latest.task_id, event.target.checked ? shown : undefined)
                         }
                       />
                       <span className="min-w-0 space-y-1">
@@ -222,10 +234,32 @@ export function SuiteCurationForm({
                         </span>
                       </span>
                     </label>
+                    <details className="ml-6 mt-2 break-words">
+                      <summary className="type-secondary cursor-pointer text-muted">
+                        Review {shown.name}
+                      </summary>
+                      <div className="space-y-2 py-2">
+                        {shown.eligibility_reason ? (
+                          <p className="type-secondary whitespace-pre-wrap [overflow-wrap:anywhere] text-muted">
+                            {shown.eligibility_reason}
+                          </p>
+                        ) : null}
+                        <p className="type-label text-foreground">Acceptance criteria</p>
+                        <p className="type-secondary whitespace-pre-wrap [overflow-wrap:anywhere]">
+                          {shown.acceptance_criteria}
+                        </p>
+                        <Link
+                          className="type-secondary underline underline-offset-4"
+                          href={workspaceRunDetailPath(workspaceSlug, shown.sourceRunId)}
+                        >
+                          View source run
+                        </Link>
+                      </div>
+                    </details>
                     {selected && alternate && alternate.id !== shown.id ? (
                       <button
                         className="ui-button ml-6 mt-2"
-                        onClick={() => pick(latest.task_id, alternate.id)}
+                        onClick={() => pick(latest.task_id, alternate)}
                         type="button"
                       >
                         {`Use revision ${alternate.revision_number} for ${alternate.name}`}

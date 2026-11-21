@@ -21,6 +21,7 @@ const task = {
   replay_eligibility: "eligible",
   acceptance_criteria: "Keep the author's original criteria.",
   eligibility_reason: null,
+  sourceRunId: id(10),
 };
 const latest = { ...task, id: id(5), revision_number: 2 };
 const draft = {
@@ -132,4 +133,69 @@ it("keeps edited acceptance criteria on conflict and sends only task revision fi
     tags: ["ui", "regression"],
   });
   expect(refresh).not.toHaveBeenCalled();
+});
+
+it("preserves previously stored tags when acceptance criteria change", async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+    Response.json({ taskId: latest.task_id, revisionId: id(8), revisionNumber: 3 }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(<TaskCurationEditor {...scope} revision={{ ...latest, tags: ["ui,accessibility"] }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Acceptance criteria" }), {
+    target: { value: "Revised criteria." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save task revision" }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).tags).toEqual(["ui,accessibility"]);
+});
+
+it("offers a way to reload an unavailable factory while preserving the new suite draft", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ error: "This factory is archived." }, { status: 409 })),
+  );
+  render(<SuiteCurationForm {...scope} taskChoices={[]} />);
+  const name = screen.getByRole("textbox", { name: "Suite name" });
+  fireEvent.change(name, { target: { value: "Unpublished suite" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save suite" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("This factory is archived.");
+  expect(name).toHaveValue("Unpublished suite");
+  expect(screen.getByRole("link", { name: "Reload benchmark suites" })).toHaveAttribute(
+    "href",
+    `/w/acme/benchmarks?factory=${scope.factoryId}&newSuite=1#new-suite`,
+  );
+});
+
+it("keeps the selected revision and its review details after newer choices arrive", async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+    Response.json({ suiteId: draft.suiteId, revisionId: id(8), revisionNumber: 2 }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const revised = {
+    ...latest,
+    acceptance_criteria: "Reviewed invoice criteria.",
+    eligibility_reason: "The starting ref is unavailable.",
+    replay_eligibility: "ineligible",
+  };
+  const { rerender } = render(
+    <SuiteCurationForm {...scope} draft={draft} taskChoices={[revised]} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Use revision 2 for Invoice UI" }));
+  rerender(
+    <SuiteCurationForm
+      {...scope}
+      draft={draft}
+      taskChoices={[{ ...latest, id: id(9), revision_number: 3 }]}
+    />,
+  );
+  expect(screen.getByText("Reviewed invoice criteria.")).toBeInTheDocument();
+  expect(screen.getByText("The starting ref is unavailable.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Use revision 3 for Invoice UI" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Save suite" }));
+  await waitFor(() => expect(push).toHaveBeenCalledOnce());
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).selection).toEqual({
+    kind: "explicit",
+    taskRevisionIds: [revised.id],
+  });
 });

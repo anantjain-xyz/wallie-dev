@@ -43,6 +43,16 @@ describe("factory scope on aggregate routes", () => {
     });
   });
 
+  it("uses the first accessible factory when the view allows fallback and the default is hidden", () => {
+    expect(resolveFactorySelection([secondary], undefined, { useFirstVisible: true })).toEqual({
+      kind: "factory",
+      factory: secondary,
+    });
+    expect(resolveFactorySelection([secondary], "restricted", { useFirstVisible: true })).toEqual({
+      kind: "unavailable",
+    });
+  });
+
   it("only treats exact list/board destinations as aggregate", () => {
     expect(isFactoryAggregatePath("/w/acme", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/sessions", "acme")).toBe(true);

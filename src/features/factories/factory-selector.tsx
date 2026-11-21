@@ -16,6 +16,7 @@ import {
   resolveGovernanceFactorySelection,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
+import { workspaceBenchmarksPath } from "@/lib/routes";
 
 export function FactorySelector({
   factories,
@@ -40,6 +41,7 @@ export function FactorySelector({
     : resolveFactorySelection(
         factories,
         requested ?? (defaultsToAllFactories(pathname, workspaceSlug) ? "all" : undefined),
+        { useFirstVisible: pathname === workspaceBenchmarksPath(workspaceSlug) },
       );
   const selectedValue = isFactoryOutcomePath(pathname, workspaceSlug)
     ? (resolveAnalyticsFactory(factories, requested)?.id ?? "unavailable")

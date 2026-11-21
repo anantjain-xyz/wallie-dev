@@ -6,17 +6,23 @@ import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authent
 import type { Tables } from "@/lib/supabase/database.types";
 
 const suiteFields = "id,suite_id,name,purpose,revision_number,selection_tags,created_at";
-const taskChoiceFields = "id,task_id,name,revision_number,tags,replay_eligibility";
-const taskFields = `${taskChoiceFields},acceptance_criteria,eligibility_reason` as const;
+const taskFields =
+  "id,task_id,name,revision_number,tags,replay_eligibility,acceptance_criteria,eligibility_reason";
 const pageSize = 30;
 const scanPageSize = 200;
 
-export type BenchmarkTaskChoice = Pick<
+export type BenchmarkTaskRevision = Pick<
   Tables<"factory_benchmark_task_revisions">,
-  "id" | "task_id" | "name" | "revision_number" | "tags" | "replay_eligibility"
+  | "id"
+  | "task_id"
+  | "name"
+  | "revision_number"
+  | "tags"
+  | "replay_eligibility"
+  | "acceptance_criteria"
+  | "eligibility_reason"
 >;
-export type BenchmarkTaskRevision = BenchmarkTaskChoice &
-  Pick<Tables<"factory_benchmark_task_revisions">, "acceptance_criteria" | "eligibility_reason">;
+export type BenchmarkTaskChoice = BenchmarkTaskRevision & { sourceRunId: string };
 
 export async function loadBenchmarkScope(
   workspaceSlug: string,
@@ -39,10 +45,7 @@ export async function loadBenchmarkScope(
     if (!data) return null;
     requested = data.factory_id;
   }
-  const selected = resolveFactorySelection(
-    factories,
-    requested ?? factories.find(({ isDefault }) => isDefault)?.id ?? factories[0]?.id,
-  );
+  const selected = resolveFactorySelection(factories, requested, { useFirstVisible: true });
   if (selected.kind !== "factory") return null;
   const { factory } = selected;
   return {
@@ -86,7 +89,7 @@ export async function loadBenchmarkTaskChoices({ supabase, workspaceId, factory 
   do {
     const query = supabase
       .from("factory_benchmark_tasks")
-      .select(`id,factory_benchmark_task_revisions(${taskChoiceFields})`)
+      .select(`id,source_run_id,factory_benchmark_task_revisions(${taskFields})`)
       .eq("workspace_id", workspaceId)
       .eq("factory_id", factory.id)
       .order("id")
@@ -98,16 +101,18 @@ export async function loadBenchmarkTaskChoices({ supabase, workspaceId, factory 
       .limit(scanPageSize);
     const { data, error } = await (after ? query.gt("id", after) : query);
     if (error) throw error;
-    choices.push(...data.flatMap(({ factory_benchmark_task_revisions: revisions }) => revisions));
+    choices.push(
+      ...data.flatMap(({ source_run_id, factory_benchmark_task_revisions: revisions }) =>
+        revisions.map((revision) => ({ ...revision, sourceRunId: source_run_id })),
+      ),
+    );
     after = data.length === scanPageSize ? data.at(-1)?.id : undefined;
   } while (after);
   return choices.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
-type BenchmarkMember = BenchmarkTaskRevision & { sourceRunId: string };
-
 async function loadBenchmarkMembers({ supabase, workspaceId, factory }: Scope, revisionId: string) {
-  const members: BenchmarkMember[] = [];
+  const members: BenchmarkTaskChoice[] = [];
   let after: string | undefined;
   do {
     const query = supabase
@@ -133,7 +138,7 @@ async function loadBenchmarkMembers({ supabase, workspaceId, factory }: Scope, r
 
 async function loadLatestMemberTasks(
   { supabase, workspaceId, factory }: Scope,
-  members: BenchmarkMember[],
+  members: BenchmarkTaskChoice[],
 ) {
   const result = new Map<string, BenchmarkTaskRevision>();
   const batchSize = 50;

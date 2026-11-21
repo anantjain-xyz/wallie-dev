@@ -68,7 +68,7 @@ export function TaskCurationEditor({
       expectedRevisionId: draftBase.id,
       name: fields.get("name"),
       acceptanceCriteria: fields.get("acceptanceCriteria"),
-      tags: readBenchmarkTags(fields.get("tags")),
+      tags: readBenchmarkTags(fields.get("tags"), draftBase.tags),
     });
     if (!parsed.success) {
       setMessage({ kind: "error", text: "Enter a task name and acceptance criteria." });

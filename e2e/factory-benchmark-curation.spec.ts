@@ -80,6 +80,8 @@ test("a factory manager curates distinct suites and preserves the earlier task c
     const holdout = "Invoice triage holdout";
     await page.getByRole("link", { name: "New suite", exact: true }).click();
     await page.getByRole("textbox", { name: "Suite name", exact: true }).fill(regression);
+    await page.getByText("Review Invoice UI task", { exact: true }).click();
+    await expect(page.getByText(originalCriteria, { exact: true })).toBeVisible();
     const include = page.getByRole("checkbox", { name: "Include Invoice UI task", exact: true });
     await include.focus();
     await page.keyboard.press("Space");

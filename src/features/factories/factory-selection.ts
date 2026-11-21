@@ -32,13 +32,15 @@ export type FactorySelection =
 export function resolveFactorySelection(
   factories: readonly FactorySelectionOption[],
   value: string | string[] | null | undefined,
+  options?: { useFirstVisible?: boolean },
 ): FactorySelection {
   if (value === "all") return { kind: "all" };
   const requestedId = typeof value === "string" ? value.toLowerCase() : null;
 
   const match =
     value == null
-      ? factories.find((factory) => factory.isDefault)
+      ? (factories.find((factory) => factory.isDefault) ??
+        (options?.useFirstVisible ? factories[0] : undefined))
       : factories.find((factory) => factory.id === requestedId);
   return match ? { kind: "factory", factory: match } : { kind: "unavailable" };
 }

@@ -13,7 +13,8 @@ export function benchmarkEligibilityLabel(eligibility: string) {
   }
 }
 
-export function readBenchmarkTags(value: FormDataEntryValue | null) {
+export function readBenchmarkTags(value: FormDataEntryValue | null, previous?: readonly string[]) {
+  if (previous && value === previous.join(", ")) return [...previous];
   return typeof value === "string"
     ? value
         .split(",")
