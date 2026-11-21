@@ -157,7 +157,7 @@ export type SourceCheckpoint =
   | { kind: "bundle"; baseSha: string; headSha: string; bytes: Buffer; sha256: string };
 
 type CaptureSourceCheckpointInput = {
-  sandbox: SandboxHandle;
+  sandbox: Pick<SandboxHandle, "exec" | "repoPath" | "writeFile">;
   baseSha: string;
   signal?: AbortSignal;
   /** Exact current prompts/credentials to reject, including encoded variants. Values shorter than 8 characters are ignored. */
@@ -168,7 +168,7 @@ type CaptureSourceCheckpointInput = {
 
 /** Capture the checkout's base before the agent changes branches or commits. */
 export async function readSourceBase(
-  sandbox: SandboxHandle,
+  sandbox: Pick<SandboxHandle, "exec">,
   signal?: AbortSignal,
 ): Promise<string> {
   const proc = await sandbox.exec("git", ["rev-parse", "--verify", "HEAD^{commit}"], { signal });

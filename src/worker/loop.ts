@@ -32,6 +32,7 @@ export async function claimNextJob(
 ): Promise<ClaimNextResult> {
   const { data, error } = await admin.rpc("claim_next_agent_job", {
     default_concurrency_limit: config.defaultConcurrencyLimit,
+    accept_benchmark_trials: true,
   });
 
   if (error) {

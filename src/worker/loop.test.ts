@@ -61,6 +61,7 @@ describe("claimNextJob", () => {
     expect(result).toEqual({ outcome: "idle" });
     expect(admin.rpc).toHaveBeenCalledWith("claim_next_agent_job", {
       default_concurrency_limit: 2,
+      accept_benchmark_trials: true,
     });
     expect(admin.from).not.toHaveBeenCalled();
   });

@@ -12,6 +12,7 @@ import {
 } from "@/lib/pipeline/source-checkpoint";
 import { STAGE_PROMPT_RENDERER_VERSION } from "@/lib/prompt-templates";
 import { runContextManifestSchema } from "@/lib/run-context/contracts";
+import type { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/database.types";
 import type { WorkspaceAccessContext } from "@/lib/workspaces/access";
 
@@ -20,6 +21,7 @@ import {
   loadBenchmarkSource,
   readConnectedRepository,
   verifyBenchmarkRepositoryInput,
+  type BenchmarkSourceScope,
 } from "./capture-evidence";
 import { readRequiredRunInputs } from "./capture-required";
 import { readReplayContext } from "./replay-context";
@@ -55,8 +57,24 @@ const snapshotSchema = z.object({
   context_manifest_sha256: replayDigestSchema,
 });
 const runtimeSchema = z.enum(["node", "workerd"]);
-type Scope = Awaited<ReturnType<typeof resolveBenchmarkCapture>>;
+type Scope = BenchmarkSourceScope;
 type Snapshot = z.infer<typeof snapshotSchema>;
+
+type BenchmarkReplayPrincipal = {
+  admin: ReturnType<typeof createSupabaseAdminClient>;
+  workspaceId: string;
+  actorUserId: string;
+};
+
+type BenchmarkReplayInput = (
+  | { access: WorkspaceAccessContext }
+  | { principal: BenchmarkReplayPrincipal }
+) & {
+  factoryId: string;
+  taskRevisionId: string;
+  candidate?: ReplayCandidate;
+  signal: AbortSignal;
+};
 
 async function authorizeReplay(
   access: WorkspaceAccessContext,
@@ -111,6 +129,55 @@ async function authorizeReplay(
       "The original benchmark execution scope is no longer authorized.",
     );
   return scope;
+}
+
+async function authorizeWorkerReplay(
+  principal: BenchmarkReplayPrincipal,
+  factoryId: string,
+  sourceRunId: string,
+  taskRevisionId: string,
+  signal: AbortSignal,
+): Promise<Scope> {
+  const { admin, workspaceId, actorUserId } = principal;
+  const authority = {
+    p_workspace_id: workspaceId,
+    p_factory_id: factoryId,
+    p_actor_user_id: actorUserId,
+    p_task_revision_id: taskRevisionId,
+  };
+  const allowed = await admin
+    .rpc("assert_factory_benchmark_replay_access", authority)
+    .abortSignal(signal);
+  signal.throwIfAborted();
+  if (allowed.error || !allowed.data)
+    throw new BenchmarkReplayUnavailable(
+      "The original benchmark execution scope is no longer authorized.",
+    );
+  const { data: run, error } = await admin
+    .from("agent_runs")
+    .select("id, session_id, agent_job_id, attempt_count")
+    .eq("id", sourceRunId)
+    .eq("workspace_id", workspaceId)
+    .abortSignal(signal)
+    .maybeSingle();
+  signal.throwIfAborted();
+  if (error || !run)
+    throw new BenchmarkReplayUnavailable("The source benchmark attempt is unavailable.");
+  return {
+    admin,
+    factoryId,
+    run,
+    access: {
+      workspace: { id: workspaceId },
+      listSourceAccess: (sourceIds) =>
+        admin
+          .rpc("benchmark_list_factory_context_source_access", {
+            ...authority,
+            p_source_ids: sourceIds,
+          })
+          .abortSignal(signal),
+    },
+  };
 }
 
 async function requireSourceAvailability(scope: Scope) {
@@ -211,18 +278,14 @@ function qualifyReplay(
   return { limits, candidateChanges };
 }
 
-export async function resolveBenchmarkReplay(input: {
-  access: WorkspaceAccessContext;
-  factoryId: string;
-  taskRevisionId: string;
-  candidate?: ReplayCandidate;
-  signal: AbortSignal;
-}) {
-  const { access, factoryId, taskRevisionId, signal } = input;
+export async function resolveBenchmarkReplay(input: BenchmarkReplayInput) {
+  const { factoryId, taskRevisionId, signal } = input;
   const candidate = input.candidate && replayCandidateSchema.parse(input.candidate);
-  const workspaceId = access.workspace.id;
+  const workspaceId =
+    "principal" in input ? input.principal.workspaceId : input.access.workspace.id;
+  const client = "principal" in input ? input.principal.admin : input.access.supabase;
   signal.throwIfAborted();
-  const task = await access.supabase
+  const task = await client
     .from("factory_benchmark_task_revisions")
     .select(
       "task_id, replay_eligibility, factory_benchmark_tasks!inner(source_run_id,source_session_id)",
@@ -238,7 +301,11 @@ export async function resolveBenchmarkReplay(input: {
     );
   const { source_run_id: sourceRunId, source_session_id: sessionId } =
     task.data.factory_benchmark_tasks;
-  const scope = await authorizeReplay(access, factoryId, sourceRunId, taskRevisionId);
+  const authorize = () =>
+    "principal" in input
+      ? authorizeWorkerReplay(input.principal, factoryId, sourceRunId, taskRevisionId, signal)
+      : authorizeReplay(input.access, factoryId, sourceRunId, taskRevisionId);
+  const scope = await authorize();
   if (scope.run.session_id !== sessionId)
     throw new BenchmarkReplayUnavailable("The benchmark source session changed.");
 
@@ -465,7 +532,7 @@ export async function resolveBenchmarkReplay(input: {
     repository,
     async recheckAccess() {
       signal.throwIfAborted();
-      const currentScope = await authorizeReplay(access, factoryId, sourceRunId, taskRevisionId);
+      const currentScope = await authorize();
       const currentRepository = await readConnectedRepository(currentScope, pinned.repository_id);
       if (
         !currentRepository ||

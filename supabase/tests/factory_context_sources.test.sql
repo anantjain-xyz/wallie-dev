@@ -221,6 +221,69 @@ select is((pg_temp.settle_source((select lease_id from restored_claim), 'synced'
   repeat('d', 40), '2026-01-04T01:00:00Z')).current_revision_id, (select current_revision_id from changed_success),
   'a verified restoration reuses the immutable revision of the same body');
 
+insert into public.pipelines(id, workspace_id, factory_id, name)
+select pg_temp.fixture_id(61), workspace_id, factory_id, 'Benchmark source pipeline'
+from fixture_scopes where slot = 1;
+insert into public.pipeline_stages(id, workspace_id, pipeline_id, position, slug, name)
+values (pg_temp.fixture_id(62), pg_temp.fixture_id(1), pg_temp.fixture_id(61), 1, 'review', 'Review');
+insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version,
+  definition_json, canonical_digest, created_by)
+select pg_temp.fixture_id(63), workspace_id, factory_id, 1, body,
+  encode(sha256(convert_to(body, 'UTF8')), 'hex'), owner_id
+from fixture_scopes
+cross join lateral (select jsonb_build_object(
+  'schemaVersion', 1, 'kind', 'serial', 'pipelineId', pg_temp.fixture_id(61))::text as body) definition
+where slot = 1;
+insert into public.sessions(id, workspace_id, factory_id, number, title, pipeline_id, current_stage_id,
+  factory_definition_provenance, factory_definition_revision_id)
+select pg_temp.fixture_id(64), workspace_id, factory_id, 1, 'Benchmark source', pg_temp.fixture_id(61),
+  pg_temp.fixture_id(62), 'pinned', pg_temp.fixture_id(63)
+from fixture_scopes where slot = 1;
+insert into public.agent_jobs(id, workspace_id, session_id, stage_id, stage_slug, trigger_type, status,
+  attempt_count, finished_at)
+values (pg_temp.fixture_id(65), pg_temp.fixture_id(1), pg_temp.fixture_id(64), pg_temp.fixture_id(62),
+  'review', 'manual_run', 'success', 1, clock_timestamp());
+insert into public.agent_runs(id, workspace_id, session_id, agent_job_id, stage_id, stage_slug,
+  run_type, model_provider, model_name, status, attempt_count, finished_at)
+values (pg_temp.fixture_id(66), pg_temp.fixture_id(1), pg_temp.fixture_id(64), pg_temp.fixture_id(65),
+  pg_temp.fixture_id(62), 'review', 'project', 'codex', 'fixture-model', 'success', 1, clock_timestamp());
+insert into public.session_run_context_manifests(run_id, workspace_id, session_id, job_id, attempt_count,
+  manifest, manifest_sha256)
+select pg_temp.fixture_id(66), pg_temp.fixture_id(1), pg_temp.fixture_id(64), pg_temp.fixture_id(65), 1,
+  manifest, encode(sha256(convert_to(manifest::text, 'UTF8')), 'hex')
+from lateral (select jsonb_build_object('documents', jsonb_build_array(jsonb_build_object(
+  'sourceId', pg_temp.source_id(), 'status', 'selected'
+))) as manifest) captured;
+create temp table context_benchmark_task as
+select revision.id, revision.task_id, revision.workspace_id, revision.factory_id
+from fixture_scopes scope cross join lateral public.create_factory_benchmark_task(
+  scope.workspace_id, scope.factory_id, scope.owner_id, pg_temp.fixture_id(66),
+  'Benchmark source', 'Use the exact reference.', '{}', 'eligible'
+) revision where scope.slot = 1;
+insert into public.factory_benchmark_task_inputs(task_id, workspace_id, factory_id, source_run_id,
+  source_session_id, source_job_id, source_attempt_count, definition_revision_id, context_manifest_sha256)
+select task_id, task.workspace_id, task.factory_id, context.run_id, context.session_id, context.job_id,
+  context.attempt_count, pg_temp.fixture_id(63), context.manifest_sha256
+from context_benchmark_task task join public.session_run_context_manifests context
+  on context.run_id = pg_temp.fixture_id(66);
+
+create function pg_temp.replay_source_status(source_id uuid, actor_id uuid default pg_temp.fixture_id(0, 2))
+returns text language sql as $$
+  select access.status from context_benchmark_task task
+  cross join lateral public.benchmark_list_factory_context_source_access(
+    task.workspace_id, task.factory_id, actor_id, task.id, array[source_id]
+  ) access
+$$;
+select ok(not has_function_privilege('authenticated',
+  'public.benchmark_list_factory_context_source_access(uuid,uuid,uuid,uuid,uuid[])', 'EXECUTE'),
+  'only service callers can recheck a benchmark actor');
+select is(pg_temp.replay_source_status(pg_temp.source_id()), 'available',
+  'the admitted actor may recheck an exact captured document without browser authorization');
+select throws_ok($$select pg_temp.replay_source_status(pg_temp.source_id(1, 'docs/remove.txt'))$$,
+  '42501', null, 'the benchmark actor cannot substitute another source in their factory');
+select throws_ok($$select pg_temp.replay_source_status(pg_temp.source_id(), pg_temp.fixture_id(0, 3))$$,
+  '42501', null, 'the worker cannot replay on behalf of a member who lacks current manager access');
+
 grant select on fixture_scopes, fixture_sources, fixture_grants to authenticated;
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';
@@ -320,6 +383,8 @@ select results_eq($$
   $$, 'live revocation overrides the cached healthy sync and preserves explicit local deletion');
 reset role;
 set local request.jwt.claim.role = 'service_role';
+select is(pg_temp.replay_source_status(pg_temp.source_id()), 'access_revoked',
+  'a retained benchmark source never overrides the current document grant');
 create temp table revoked_result as select * from pg_temp.settle_source((select lease_id from revoked_claim), 'synced',
   'Revoked during provider request', repeat('e', 40), '2026-01-05T01:00:00Z');
 select ok((select status = 'access_revoked' and current_revision_id is null from revoked_result),
