@@ -13581,6 +13581,20 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_benchmark_frontier: {
+        Args: {
+          p_actor_user_id: string
+          p_after_candidate_key?: string
+          p_experiment_id: string
+          p_factory_id: string
+          p_limit?: number
+          p_min_resolved_trials?: number
+          p_quality_floor_bps?: number
+          p_scorer_revision_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_benchmark_inference_connection: {
         Args: {
           p_actor_user_id: string

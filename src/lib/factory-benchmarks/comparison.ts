@@ -19,6 +19,7 @@ import {
   type benchmarkComparisonListQuerySchema,
   type benchmarkComparisonQuerySchema,
 } from "./comparison-contracts";
+import { benchmarkFrontierSchema, type BenchmarkFrontierQuery } from "./frontier-contracts";
 
 export type BenchmarkComparisonFactoryScope = {
   admin: SupabaseClient<Database>;
@@ -149,6 +150,37 @@ export async function readBenchmarkComparison(
     throw new Error("The comparison did not match the requested experiment and page.");
   }
   return page;
+}
+
+export async function readBenchmarkFrontier(
+  scope: BenchmarkComparisonScope,
+  query: BenchmarkFrontierQuery,
+) {
+  const { scorerRevisionId, afterCandidateKey, limit, qualityFloorBps, minResolvedTrials } = query;
+  const data = await readRpc(
+    scope.admin.rpc("read_factory_benchmark_frontier", {
+      ...experimentArgs(scope),
+      ...(scorerRevisionId ? { p_scorer_revision_id: scorerRevisionId } : {}),
+      ...(afterCandidateKey ? { p_after_candidate_key: afterCandidateKey } : {}),
+      p_limit: limit,
+      p_quality_floor_bps: qualityFloorBps,
+      p_min_resolved_trials: minResolvedTrials,
+    }),
+    scope.signal,
+  );
+  const result = benchmarkFrontierSchema.parse(data);
+  if (
+    result.experimentId !== scope.experimentId ||
+    (scorerRevisionId && result.scorer?.id !== scorerRevisionId) ||
+    result.policy.qualityFloorBps !== qualityFloorBps ||
+    result.policy.minimumResolved !== minResolvedTrials ||
+    result.items.length > limit ||
+    result.items.some(({ candidateKey }) => candidateKey === afterCandidateKey) ||
+    (!afterCandidateKey && !result.nextCursor && result.items.length !== result.candidateCount)
+  ) {
+    throw new Error("The frontier did not match the requested experiment, constraints, and page.");
+  }
+  return result;
 }
 
 export async function listBenchmarkComparisonExports(

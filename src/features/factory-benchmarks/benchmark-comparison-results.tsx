@@ -501,6 +501,7 @@ function TrialRows({
 
 export function BenchmarkComparisonResults({
   comparison,
+  frontier,
   trialHref,
   firstTrialsHref,
   nextTrialsHref,
@@ -508,6 +509,7 @@ export function BenchmarkComparisonResults({
   nextConfigurationsHref,
 }: {
   comparison: BenchmarkComparison;
+  frontier?: ReactNode;
   trialHref: (trialId: string) => string;
   firstTrialsHref?: string;
   nextTrialsHref?: string;
@@ -565,6 +567,7 @@ export function BenchmarkComparisonResults({
           </div>
         </div>
       </PageSection>
+      {frontier}
       <Configurations
         candidates={candidates}
         scorers={scorerByRevision}

@@ -17,6 +17,7 @@ import { GET as getComparison } from "../experiments/[experimentId]/comparison/r
 import { GET as getPart } from "../experiments/[experimentId]/exports/[exportId]/[section]/[part]/route";
 import { GET as getManifest } from "../experiments/[experimentId]/exports/[exportId]/route";
 import { GET as getExports, POST as postExport } from "../experiments/[experimentId]/exports/route";
+import { GET as getFrontier } from "../experiments/[experimentId]/frontier/route";
 import { GET as getComparisons } from "./route";
 
 const id = (slot: number) => `62100000-0000-4000-8000-${String(slot).padStart(12, "0")}`;
@@ -361,6 +362,84 @@ describe("benchmark comparison endpoints", () => {
       p_before_created_at: createdAt,
       p_before_experiment_id: id(19),
       p_limit: 24,
+    });
+  });
+
+  it("uses the signed-in actor with exact frontier constraints and a private cursor", async () => {
+    const scorer = { id: scorerRevisionId, scorerId: id(14), revisionNumber: 2, name: "Rubric" };
+    const rpc = setup(() =>
+      Response.json({
+        experimentId,
+        snapshotAt: createdAt,
+        suite,
+        policy: {
+          revision: "measured-usd-v1",
+          qualityFloorBps: 8501,
+          minimumResolved: 3,
+          costBasis: "execution_plus_selected_judge",
+        },
+        scorer,
+        scorers: [scorer],
+        cohort: {
+          plannedTrialCount: 4,
+          eligibleTrialCount: 0,
+          excludedTrialCount: 4,
+          eligibleSlotCount: 0,
+          taskRevisionCount: 0,
+          repetitions: 2,
+        },
+        candidateCount: 2,
+        frontierCount: 0,
+        recommendation: {
+          status: "unavailable",
+          reason: "no_eligible_trials",
+          candidates: [],
+          candidateCount: 0,
+          meanCostUsd: null,
+          passRateBps: null,
+        },
+        items: [],
+        nextCursor: null,
+      }),
+    );
+    const url = new URL(`${experimentUrl}/frontier`);
+    url.search = new URLSearchParams({
+      scorerRevisionId,
+      afterCandidateKey: candidateKey,
+      qualityFloorBps: "8501",
+      minResolvedTrials: "3",
+      limit: "16",
+    }).toString();
+
+    const response = await getFrontier(new Request(url), experimentContext);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("read_factory_benchmark_frontier", {
+      ...experimentArgs,
+      p_scorer_revision_id: scorerRevisionId,
+      p_after_candidate_key: candidateKey,
+      p_quality_floor_bps: 8501,
+      p_min_resolved_trials: 3,
+      p_limit: 16,
+    });
+  });
+
+  it("rejects ambiguous frontier constraints and enforces the factory manager result", async () => {
+    const rpc = setup(() => Response.json({ code: "42501" }, { status: 403 }));
+    const url = `${experimentUrl}/frontier`;
+    for (const query of ["qualityFloorBps=10001", "minResolvedTrials=1", "limit=3&limit=2"]) {
+      const response = await getFrontier(new Request(`${url}?${query}`), experimentContext);
+      expect(response.status).toBe(400);
+    }
+    expect(rpc).not.toHaveBeenCalled();
+
+    const denied = await getFrontier(new Request(url), experimentContext);
+    expect(denied.status).toBe(403);
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("read_factory_benchmark_frontier", {
+      ...experimentArgs,
+      p_quality_floor_bps: 8000,
+      p_min_resolved_trials: 2,
+      p_limit: 50,
     });
   });
 

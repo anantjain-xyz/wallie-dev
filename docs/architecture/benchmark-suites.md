@@ -282,6 +282,36 @@ The API base is `/api/workspaces/{workspaceId}/factories/{factoryId}/benchmarks`
 | `GET /experiments/{experimentId}/exports/{exportId}/parts/{ordinal}`           | Download a numbered trial part.                                                                                                                         |
 | `GET /experiments/{experimentId}/exports/{exportId}/candidate-parts/{ordinal}` | Download a numbered candidate part.                                                                                                                     |
 
+## Compare measured cost and quality
+
+The cost and quality frontier uses a selected frozen scorer. Its default policy
+requires at least an 80% pass rate and two resolved trials. Choose different
+thresholds on the comparison page to share a view of the same frozen matrix.
+
+Each candidate needs exact runs and resolved outcomes for the same eligible
+task revisions, seeds, repetitions, and deadlines. Successful trials require
+a pass or fail from a comparable judge. Exact executed failures and timeouts
+count as non-passes. The table reports cancellations, absent or pending
+scores, unmatched executions, and exclusions with their coverage counts.
+
+The cost axis is mean measured USD per eligible trial. It includes execution
+and every started attempt for the selected scorer, including failed attempts
+and retries. The existing comparison totals include all selected scorers.
+Estimated dollars, reserved spend, and measured tokens have their own
+provenance. A candidate needs complete measured dollars to enter the frontier.
+
+The frontier contains configurations for which the eligible candidates offer
+no cheaper matching quality and no better quality at the same cost. The
+recommendation favors the cheapest qualifying frontier point. Equal measured
+cost and quality share the recommendation. The table gives the reason for
+each exclusion, the underlying counts, and the observed range for complete
+repetitions over the same task set. These ranges describe the repetitions
+that ran. Routing and approvals remain separate operator decisions.
+
+The live OpenAI Responses relay currently records provider token coverage.
+Where provider dollar cost is unavailable, the price and recommendation for
+those candidates stay unavailable.
+
 ## Inspect trial evidence
 
 Open a trial row to see its frozen task, configuration, repetition, and
