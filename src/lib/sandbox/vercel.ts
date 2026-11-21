@@ -1,4 +1,4 @@
-import { APIError, Sandbox, type Command } from "@vercel/sandbox";
+import { APIError, Sandbox, type Command, type NetworkPolicy } from "@vercel/sandbox";
 
 import {
   formatVercelSandboxError,
@@ -213,11 +213,33 @@ class VercelSandboxHandle implements SandboxHandle {
   }
 }
 
+const benchmarkInferenceHost = "api.openai.com";
+
+type QualifiedBenchmarkSandboxProfile = { image: string; proxyUrl: string };
+
+function isBenchmarkInferencePolicy(policy: Sandbox["networkPolicy"], proxyUrl: string) {
+  if (typeof policy !== "object" || policy.subnets?.allow?.length) return false;
+  const { allow } = policy;
+  if (Array.isArray(allow)) return allow.length === 1 && allow[0] === benchmarkInferenceHost;
+  if (!allow || Object.keys(allow).length !== 1) return false;
+  const rules = allow[benchmarkInferenceHost];
+  if (!Array.isArray(rules)) return false;
+  // Vercel can omit handling rules in the readback. The caller must still
+  // prove proxy routing and deny behavior from inside the sandbox.
+  if (!rules.length) return true;
+  const rule = rules[0];
+  return rules.length === 1 && rule?.forwardURL === proxyUrl && !rule.match;
+}
+
 class VercelBenchmarkReplaySandboxHandle extends VercelSandboxHandle {
-  #phase: "bootstrap" | "sealing" | "sealed" = "bootstrap";
+  #phase: "bootstrap" | "sealing" | "sealed" | "inference" = "bootstrap";
   readonly #sandbox: Sandbox;
 
-  constructor(sandbox: Sandbox, secrets: Array<string | undefined>) {
+  constructor(
+    sandbox: Sandbox,
+    secrets: Array<string | undefined>,
+    private readonly inferenceProxyUrl?: string,
+  ) {
     super(sandbox, secrets);
     this.#sandbox = sandbox;
   }
@@ -226,7 +248,7 @@ class VercelBenchmarkReplaySandboxHandle extends VercelSandboxHandle {
     if (this.#phase === "sealing") {
       throw new Error("The benchmark replay network seal has not been verified.");
     }
-    if (this.#phase === "sealed" && opts.env !== undefined) {
+    if ((this.#phase === "sealed" || this.#phase === "inference") && opts.env !== undefined) {
       throw new Error("Benchmark replay commands cannot inject environment variables.");
     }
     return super.exec(cmd, args, opts);
@@ -252,6 +274,28 @@ class VercelBenchmarkReplaySandboxHandle extends VercelSandboxHandle {
       signal.throwIfAborted();
       throw new Error("The benchmark replay network seal has not been verified.");
     }
+  }
+  async sealBenchmarkInference(signal: AbortSignal) {
+    const proxyUrl = this.inferenceProxyUrl;
+    if (!proxyUrl) throw new Error("The benchmark inference proxy is unavailable.");
+    if (this.#phase === "bootstrap") await this.seal(signal);
+    if (this.#phase !== "sealed") {
+      throw new Error("Benchmark inference requires a verified network seal.");
+    }
+    this.#phase = "sealing";
+    const policy = {
+      allow: { [benchmarkInferenceHost]: [{ forwardURL: proxyUrl }] },
+    } satisfies NetworkPolicy;
+    await observeUntilAbort(signal, () =>
+      this.#sandbox.update({ networkPolicy: policy }, { signal }),
+    );
+    if (
+      !isBenchmarkInferencePolicy(this.#sandbox.networkPolicy, proxyUrl) ||
+      !isBenchmarkInferencePolicy(this.#sandbox.currentSession().networkPolicy, proxyUrl)
+    ) {
+      throw new Error("The benchmark inference network policy has not been verified.");
+    }
+    this.#phase = "inference";
   }
 }
 
@@ -460,12 +504,13 @@ async function createVercelUtilitySandbox(
   input: CreateUtilitySandboxInput,
   connection: VercelConnection,
   purpose: "utility" | "benchmark-replay",
+  profile?: QualifiedBenchmarkSandboxProfile,
 ): Promise<SandboxHandle> {
   const benchmarkReplay = purpose === "benchmark-replay";
   const secrets = [connection.credentials.token];
   const sandbox = await Sandbox.create({
     ...vercelClientOptions(connection.credentials),
-    runtime: "node22",
+    ...(profile ? { image: profile.image } : { runtime: "node22" }),
     persistent: false,
     timeout: input.timeoutMs,
     resources: { vcpus: 2 },
@@ -475,7 +520,7 @@ async function createVercelUtilitySandbox(
     rethrowVercelSandboxError(error, secrets);
   });
   const handle = benchmarkReplay
-    ? new VercelBenchmarkReplaySandboxHandle(sandbox, secrets)
+    ? new VercelBenchmarkReplaySandboxHandle(sandbox, secrets, profile?.proxyUrl)
     : new VercelSandboxHandle(sandbox, secrets);
   try {
     await input.onSandboxCreated({ provider: "vercel", sandboxId: handle.id });
@@ -499,6 +544,33 @@ export function createVercelBenchmarkReplaySandbox(
   connection: VercelConnection,
 ) {
   return createVercelUtilitySandbox(input, connection, "benchmark-replay");
+}
+
+export async function createVercelQualifiedBenchmarkReplaySandbox(
+  input: CreateUtilitySandboxInput,
+  connection: VercelConnection,
+  profile: QualifiedBenchmarkSandboxProfile,
+): Promise<SandboxHandle & { sealBenchmarkInference(signal: AbortSignal): Promise<void> }> {
+  const proxy = new URL(profile.proxyUrl);
+  if (
+    !/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$/.test(profile.image) ||
+    proxy.protocol !== "https:" ||
+    proxy.username ||
+    proxy.password ||
+    proxy.search ||
+    proxy.hash
+  ) {
+    throw new Error("The benchmark inference profile is invalid.");
+  }
+  const sandbox = await createVercelUtilitySandbox(input, connection, "benchmark-replay", {
+    image: profile.image,
+    proxyUrl: proxy.href,
+  });
+  if (!(sandbox instanceof VercelBenchmarkReplaySandboxHandle)) {
+    await sandbox.stop();
+    throw new Error("The benchmark inference sandbox is unavailable.");
+  }
+  return sandbox;
 }
 
 export const vercelSandboxDriver: SandboxProviderDriver<VercelConnection> = {

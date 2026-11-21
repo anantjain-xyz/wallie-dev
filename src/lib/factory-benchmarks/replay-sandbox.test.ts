@@ -312,6 +312,7 @@ async function acquiredReplay() {
   vi.mocked(mintSandboxRepositoryToken).mockResolvedValue("fixture-read-token");
   vi.mocked(resolveBenchmarkReplay).mockResolvedValue({
     plan,
+    baseBranch: "main",
     repository: {
       recordedInstallationId: id(22),
       installationId: 1,

@@ -91,6 +91,42 @@ async function collectOpenCodeRecords(records: unknown[], exitCode = 0) {
 }
 
 describe("OpenCodeRunner", () => {
+  it("registers only the requested dated OpenAI model in the offline benchmark configuration", async () => {
+    const sandbox = new FakeSandbox();
+    const modelId = "gpt-4.1-2025-04-14";
+    const model = `openai/${modelId}`;
+    sandbox.scriptExec("env", []);
+    await collectOpenCode(
+      new OpenCodeRunner({ isolatedBenchmark: true, executablePath: "/opt/opencode", model }),
+      { sandbox, sessionId: "qualified-replay", prompt: "Change the local fixture" },
+    );
+
+    const configFile = harnessPath(sandbox, "config/opencode/opencode.json");
+    const config = JSON.parse((await sandbox.readFile(configFile)) ?? "");
+    expect(config).toMatchObject({
+      enabled_providers: ["openai"],
+      model,
+      small_model: model,
+    });
+    expect(config.provider).toEqual({
+      openai: {
+        npm: "@ai-sdk/openai",
+        options: { baseURL: "https://api.openai.com/v1" },
+        whitelist: [modelId],
+        models: { [modelId]: { name: modelId } },
+      },
+    });
+    const launch = sandbox.calls.find(({ cmd }) => cmd === "env");
+    expect(launch?.args.slice(-6)).toEqual([
+      expect.stringContaining("OPENCODE_DISABLE_MODELS_FETCH"),
+      "run",
+      "--format",
+      "json",
+      "--model",
+      model,
+    ]);
+  });
+
   it("loads the approved MCP bridge with only the selected model credential and removes its files", async () => {
     const sandbox = new FakeSandbox();
     const modelKey = "selected-provider-secret-key";

@@ -15,7 +15,7 @@ import {
   stopSandboxById,
 } from "@/lib/sandbox";
 import { checkoutSandboxCheckpoint } from "@/lib/sandbox/checkout";
-import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
+import { observeUntilAbort, runBoundedSandboxProviderOperation } from "@/lib/sandbox/lifecycle";
 import type {
   CreateUtilitySandboxInput,
   SandboxConnection,
@@ -79,7 +79,7 @@ export async function stageBenchmarkReplay(input: {
   token?: string;
   plan: ReplayPlan;
   readContext?: readonly Pick<FactoryRepositoryContextSnapshot, "repositoryId" | "commitSha">[];
-  payloadKind?: "isolated_context";
+  payloadKind?: "isolated_context" | "qualified_task";
   signal: AbortSignal;
 }) {
   const { sandbox, provider, connectionRevision, repositoryUrl, token, plan, signal } = input;
@@ -173,22 +173,33 @@ export async function stageBenchmarkReplay(input: {
       id,
       commitSha,
     }));
-    const payload = JSON.stringify(
-      input.payloadKind
-        ? {
-            version: 1,
-            text: {
-              originalPrompt: text.originalPrompt,
-              required: text.required,
-              documents: text.documents,
-              memories: text.memories,
-              conversation: text.conversation,
-              skills: text.skills,
-              agentPrompt: text.agentPrompt,
-            },
-          }
-        : { version: 1, identity, runtime: plan.runtime, readRepositories, text },
-    );
+    const task = {
+      originalPrompt: text.originalPrompt,
+      required: text.required,
+      documents: text.documents,
+      memories: text.memories,
+      conversation: text.conversation,
+    };
+    let payload: string;
+    switch (input.payloadKind) {
+      case "qualified_task":
+        payload = JSON.stringify({ version: 1, readRepositories, text: task });
+        break;
+      case "isolated_context":
+        payload = JSON.stringify({
+          version: 1,
+          text: { ...task, skills: text.skills, agentPrompt: text.agentPrompt },
+        });
+        break;
+      default:
+        payload = JSON.stringify({
+          version: 1,
+          identity,
+          runtime: plan.runtime,
+          readRepositories,
+          text,
+        });
+    }
     const bundleSha256 = replaySha256(payload);
     await runRestoreCommand(sandbox, "mkdir", ["-m", "700", directory], signal);
     signal.throwIfAborted();
@@ -268,6 +279,9 @@ type RestoredBenchmarkInputs = Omit<StagedReplay, "cleanup"> & {
   signal: AbortSignal;
   readContext: FactoryRepositoryContextSnapshot[];
 };
+
+type QualifiedSandboxProfile = { image: string; proxyUrl: string };
+type VerifiedReplayInputs = { plan: ReplayPlan; repositoryFullName: string; baseBranch: string };
 
 type ReplayPolicyPin = {
   executionId: string;
@@ -363,16 +377,60 @@ export async function withIsolatedBenchmarkReplay<T>(
   });
 }
 
+/** Keep the restored source in a fresh, nonpersistent sandbox with one brokered inference origin. */
+export async function withQualifiedBenchmarkReplay<T>(
+  input: BenchmarkSandboxInput & ReplayPolicyPin & { profile: QualifiedSandboxProfile },
+  execute: (
+    live: VerifiedReplayInputs & {
+      sandbox: SandboxHandle;
+      signal: AbortSignal;
+      snapshot: ReturnType<typeof exportReplaySnapshot>;
+    },
+  ) => Promise<T>,
+) {
+  if (input.connection.provider !== "vercel" || process.env.WALLIE_SANDBOX_IMPL === "fake")
+    throw new BenchmarkReplayUnavailable("Qualified live replay requires Vercel Sandbox.");
+  const { workspaceId, actorUserId } =
+    "principal" in input
+      ? input.principal
+      : {
+          workspaceId: input.access.workspace.id,
+          actorUserId: input.access.user.id,
+        };
+  return withBenchmarkSandbox(input, input.profile, async (restored, admin, inputs) => {
+    const { sandbox, signal, receipt } = restored;
+    const snapshot = exportReplaySnapshot(receipt);
+    await openBenchmarkReplayPolicy({
+      admin,
+      workspaceId,
+      actorUserId,
+      factoryId: input.factoryId,
+      taskRevisionId: input.taskRevisionId,
+      executionId: input.executionId,
+      policyRevisionId: input.policyRevisionId,
+      expectedPolicyDigest: input.expectedPolicyDigest,
+      restorationReceiptSha256: snapshot.restorationReceiptSha256,
+      signal,
+    });
+    signal.throwIfAborted();
+    return execute({ ...inputs, sandbox, signal, snapshot });
+  });
+}
+
 async function withBenchmarkSandbox<T>(
   input: BenchmarkSandboxInput,
-  purpose: "restore" | "isolated",
+  purpose: "restore" | "isolated" | QualifiedSandboxProfile,
   inspect: (
     result: RestoredBenchmarkInputs,
     admin: ReturnType<typeof createSupabaseAdminClient>,
+    inputs: VerifiedReplayInputs,
   ) => Promise<T>,
 ) {
   const signal = AbortSignal.any([input.signal, AbortSignal.timeout(lifetimeMs)]);
-  const { plan, repository, recheckAccess } = await resolveBenchmarkReplay({ ...input, signal });
+  const { plan, repository, baseBranch, recheckAccess } = await resolveBenchmarkReplay({
+    ...input,
+    signal,
+  });
   const { repositoryFullName, repositoryId, installationId } = repository;
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repositoryFullName))
     throw new BenchmarkReplayUnavailable("The recorded repository identity is invalid.");
@@ -380,7 +438,7 @@ async function withBenchmarkSandbox<T>(
     installationId,
     repositoryId,
     repositoryFullName,
-    purpose: purpose === "isolated" ? "benchmark-checkout" : "checkout",
+    purpose: purpose === "restore" ? "checkout" : "benchmark-checkout",
     signal,
   });
   signal.throwIfAborted();
@@ -400,25 +458,22 @@ async function withBenchmarkSandbox<T>(
   let staged: Awaited<ReturnType<typeof stageBenchmarkReplay>> | undefined;
   let result: T;
   try {
-    const createSandbox =
-      purpose === "isolated" ? createBenchmarkReplaySandbox : createUtilitySandbox;
-    const sandbox = await createSandbox(
-      {
-        workspaceId,
-        ownerId: randomUUID(),
-        timeoutMs: lifetimeMs,
-        signal,
-        onSandboxCreated: async (acquisition) => {
-          const { sandboxId: id } = acquisition;
-          sandboxId = id;
-          if (!(await recordWorkspaceSandbox(admin, operationId, id))) {
-            throw new WorkspaceDeletingError();
-          }
-          await input.onSandboxCreated?.(acquisition);
-        },
+    const request: CreateUtilitySandboxInput = {
+      workspaceId,
+      ownerId: randomUUID(),
+      timeoutMs: lifetimeMs,
+      signal,
+      onSandboxCreated: async (acquisition) => {
+        const { sandboxId: id } = acquisition;
+        sandboxId = id;
+        if (!(await recordWorkspaceSandbox(admin, operationId, id))) {
+          throw new WorkspaceDeletingError();
+        }
+        await input.onSandboxCreated?.(acquisition);
       },
-      connection,
-    );
+    };
+    const acquired = await acquireReplaySandbox(request, connection, purpose);
+    const { sandbox } = acquired;
     sandboxId = sandbox.id;
     dispose = sandbox[Symbol.asyncDispose]?.bind(sandbox);
     result = await observeUntilAbort(signal, async () => {
@@ -443,7 +498,9 @@ async function withBenchmarkSandbox<T>(
         plan,
         readContext,
         signal,
-        ...(purpose === "isolated" ? { payloadKind: "isolated_context" } : {}),
+        ...(purpose === "restore"
+          ? {}
+          : { payloadKind: purpose === "isolated" ? "isolated_context" : "qualified_task" }),
       });
       // Provider writes cannot always be canceled. Discard a bundle that arrives
       // after the owning operation has moved on to sandbox teardown.
@@ -452,13 +509,14 @@ async function withBenchmarkSandbox<T>(
         signal.throwIfAborted();
       }
       staged = restored;
-      if (purpose === "isolated") await sealBenchmarkReplaySandbox(sandbox, signal);
+      await acquired.seal?.(signal);
       signal.throwIfAborted();
       await recheckAccess();
       signal.throwIfAborted();
       return inspect(
         { sandbox, signal, inputPath: restored.inputPath, receipt: restored.receipt, readContext },
         admin,
+        { plan, repositoryFullName, baseBranch },
       );
     });
   } finally {
@@ -477,4 +535,31 @@ async function withBenchmarkSandbox<T>(
   }
   signal.throwIfAborted();
   return result;
+}
+
+async function acquireReplaySandbox(
+  input: CreateUtilitySandboxInput,
+  connection: SandboxConnection,
+  purpose: "restore" | "isolated" | QualifiedSandboxProfile,
+): Promise<{ sandbox: SandboxHandle; seal?: (signal: AbortSignal) => Promise<void> }> {
+  if (purpose === "restore") return { sandbox: await createUtilitySandbox(input, connection) };
+  if (purpose === "isolated") {
+    const sandbox = await createBenchmarkReplaySandbox(input, connection);
+    return { sandbox, seal: (signal) => sealBenchmarkReplaySandbox(sandbox, signal) };
+  }
+  if (connection.provider !== "vercel")
+    throw new BenchmarkReplayUnavailable("Qualified replay requires Vercel Sandbox.");
+  const { createVercelQualifiedBenchmarkReplaySandbox } = await import("@/lib/sandbox/vercel");
+  const sandbox = await runBoundedSandboxProviderOperation<
+    Awaited<ReturnType<typeof createVercelQualifiedBenchmarkReplaySandbox>>
+  >({
+    operation: "acquire",
+    provider: "vercel",
+    timeoutMs: 60_000,
+    signal: input.signal,
+    onLateSuccess: (late) => late.stop(),
+    run: (signal) =>
+      createVercelQualifiedBenchmarkReplaySandbox({ ...input, signal }, connection, purpose),
+  });
+  return { sandbox, seal: (signal) => sandbox.sealBenchmarkInference(signal) };
 }

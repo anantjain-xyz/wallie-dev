@@ -19,6 +19,7 @@ export type TrustedPromptSource =
   | "wallie.factoryMemoryInstructions"
   | "wallie.factoryMemoryProposalPolicy"
   | "wallie.frozenConversationInstructions"
+  | "wallie.benchmarkReplayInstructions"
   | "wallie.retryCheckpointInstructions"
   | "wallie.specificationStagePolicy";
 
@@ -32,6 +33,7 @@ export type UntrustedPromptSource =
   | "repo.readContext"
   | `context.document.${string}`
   | `context.memory.${string}.${string}`
+  | `benchmark.memory.${string}`
   | "evaluation.rubric"
   | `evaluation.evidence.${string}`
   | "session.prompt"

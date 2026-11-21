@@ -5,19 +5,29 @@ import { z } from "zod";
 
 import type { Database } from "@/lib/supabase/database.types";
 
+import { QUALIFIED_BENCHMARK_RUNNER } from "./qualified-trial-contracts";
 import { RECORDED_FIXTURE_RUNNER, replayDigestSchema } from "./replay-contracts";
 
 const maxTrials = 10_000;
-const runnerRevision = z.literal(RECORDED_FIXTURE_RUNNER);
+const runnerRevision = z.enum([RECORDED_FIXTURE_RUNNER, QUALIFIED_BENCHMARK_RUNNER]);
 const scheduleUsd = z.number().min(0).max(1_000_000).multipleOf(0.000001);
 const factoryConcurrencyLimit = z.number().int().min(1).max(100);
 const maxAdmittedTrials = z.number().int().min(1).max(maxTrials);
 const trialCount = z.number().int().min(0).max(maxTrials);
 export const benchmarkScheduleIdSchema = z.string().uuid().toLowerCase();
 
-const configureSchedule = z.strictObject({
+const scheduleLimits = {
   action: z.literal("configure"),
-  runnerRevision,
+  executionReserveUsd: scheduleUsd,
+  evaluationReserveUsd: scheduleUsd,
+  budgetLimitUsd: scheduleUsd,
+  factoryConcurrencyLimit,
+  maxAdmittedTrials,
+};
+
+const configureFixtureSchedule = z.strictObject({
+  ...scheduleLimits,
+  runnerRevision: z.literal(RECORDED_FIXTURE_RUNNER),
   sandboxConnectionRevision: benchmarkScheduleIdSchema,
   taskFixtures: z
     .array(
@@ -32,16 +42,18 @@ const configureSchedule = z.strictObject({
       (fixtures) =>
         new Set(fixtures.map((fixture) => fixture.taskRevisionId)).size === fixtures.length,
     ),
-  executionReserveUsd: scheduleUsd,
-  evaluationReserveUsd: scheduleUsd,
-  budgetLimitUsd: scheduleUsd,
-  factoryConcurrencyLimit,
-  maxAdmittedTrials,
+});
+
+const configureLiveSchedule = z.strictObject({
+  ...scheduleLimits,
+  executionReserveUsd: scheduleUsd.positive(),
+  runnerRevision: z.literal(QUALIFIED_BENCHMARK_RUNNER),
+  inferenceConnectionRevision: benchmarkScheduleIdSchema,
 });
 
 export const benchmarkScheduleCommandSchema = z
-  .discriminatedUnion("action", [
-    configureSchedule,
+  .union([
+    z.discriminatedUnion("runnerRevision", [configureFixtureSchedule, configureLiveSchedule]),
     z.strictObject({ action: z.literal("pause") }),
     z.strictObject({ action: z.literal("resume") }),
     z.strictObject({ action: z.literal("cancel") }),
@@ -148,19 +160,30 @@ export async function requestBenchmarkSchedule(
     case "read":
       request = admin.rpc("read_factory_benchmark_schedule", scope);
       break;
-    case "configure":
-      request = admin.rpc("configure_factory_benchmark_schedule", {
-        ...scope,
-        p_runner_revision: command.runnerRevision,
-        p_sandbox_connection_revision: command.sandboxConnectionRevision,
-        p_task_fixtures: command.taskFixtures,
+    case "configure": {
+      const limits = {
         p_execution_reserve_usd: command.executionReserveUsd,
         p_evaluation_reserve_usd: command.evaluationReserveUsd,
         p_budget_limit_usd: command.budgetLimitUsd,
         p_factory_concurrency_limit: command.factoryConcurrencyLimit,
         p_max_admitted_trials: command.maxAdmittedTrials,
-      });
+      };
+      request =
+        command.runnerRevision === QUALIFIED_BENCHMARK_RUNNER
+          ? admin.rpc("configure_factory_benchmark_live_schedule", {
+              ...scope,
+              p_inference_connection_revision: command.inferenceConnectionRevision,
+              ...limits,
+            })
+          : admin.rpc("configure_factory_benchmark_schedule", {
+              ...scope,
+              p_runner_revision: command.runnerRevision,
+              p_sandbox_connection_revision: command.sandboxConnectionRevision,
+              p_task_fixtures: command.taskFixtures,
+              ...limits,
+            });
       break;
+    }
     default:
       request = admin.rpc("control_factory_benchmark_schedule", {
         ...scope,
