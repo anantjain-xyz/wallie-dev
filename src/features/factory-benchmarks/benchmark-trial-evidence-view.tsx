@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import Link from "next/link";
 
 import {
@@ -23,6 +24,7 @@ import {
   benchmarkRuntimeNames,
   benchmarkTrialStatuses,
 } from "./benchmark-trial-labels";
+import { BenchmarkTrialRefresh } from "./benchmark-trial-refresh";
 
 type Availability = Detail["source"]["availability"];
 
@@ -90,6 +92,7 @@ export function BenchmarkTrialEvidenceView({
   const harness = benchmarkHarnessNames[candidate.harness] ?? candidate.harness;
   const role = benchmarkCandidateRole(candidate.position);
   const runtime = benchmarkRuntimeNames[candidate.workerRuntime] ?? candidate.workerRuntime;
+  const canRefresh = trial.status === "pending" || trial.status === "running";
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
@@ -103,7 +106,12 @@ export function BenchmarkTrialEvidenceView({
         }
         eyebrowAsPlain
         actionsRightOnDesktop
-        actions={<Status {...benchmarkTrialStatuses[trial.status]} />}
+        actions={
+          <>
+            <Status {...benchmarkTrialStatuses[trial.status]} />
+            {canRefresh ? <BenchmarkTrialRefresh /> : null}
+          </>
+        }
       />
       <div className="space-y-8">
         <PageSection title="Frozen inputs">
@@ -291,6 +299,7 @@ export function BenchmarkTrialEvidenceView({
 
         {transcript ? (
           <RunTranscriptLive
+            key={createHash("sha256").update(JSON.stringify(transcript)).digest("hex")}
             workspaceId={detail.workspaceId}
             runId={transcript.runId}
             initialPage={transcript}

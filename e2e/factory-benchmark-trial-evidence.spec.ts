@@ -47,6 +47,91 @@ async function capture(page: Page, info: TestInfo, name: string) {
   await info.attach(name, { path, contentType: "image/png" });
 }
 
+test("refreshing an active benchmark trial updates its transcript and status", async ({
+  baseURL,
+  page,
+}) => {
+  test.skip(
+    process.env.WALLIE_FACTORY_BENCHMARKS_E2E !== "1",
+    "Requires disposable local Supabase.",
+  );
+  const fixture = await seedBenchmarkResults(baseURL);
+  const { admin, experimentId, factoryId, workspaceId } = fixture;
+  try {
+    expect(checked(await admin.rpc("reconcile_factory_benchmark_schedules", { p_limit: 10 }))).toBe(
+      1,
+    );
+    const admitted = checked(
+      await admin
+        .from("factory_benchmark_trials")
+        .select("id,job_id")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .eq("status", "queued")
+        .single(),
+    );
+    const [claim] = checked(
+      await admin.rpc("claim_next_agent_job", {
+        accept_benchmark_trials: true,
+        default_concurrency_limit: 4,
+        p_worker_runtime: "node",
+      }),
+    );
+    expect(claim?.id).toBe(admitted.job_id);
+    const trial = checked(
+      await admin.rpc("start_factory_benchmark_trial", {
+        p_attempt_count: 1,
+        p_job_id: admitted.job_id,
+      }),
+    );
+    expect(trial.id).toBe(admitted.id);
+
+    const trialPath = `/w/${fixture.slug}/benchmarks/${fixture.saved.suiteId}/comparisons/${experimentId}/trials/${trial.id}?factory=${factoryId}`;
+    await signInViaMagicLink(page, trialPath, {
+      baseURL: fixture.app,
+      email: fixture.ownerEmail,
+    });
+    const refresh = page.getByRole("button", { name: "Refresh trial evidence" });
+    await expect(refresh).toBeVisible();
+    await expect(page.getByText("No activity has been recorded for this run.")).toBeVisible();
+    const activity = "Verified the active trial’s new invoice step.";
+    expect(
+      checked(
+        await admin.rpc("append_agent_run_event", {
+          p_job_id: trial.job_id,
+          p_run_id: trial.run_id,
+          p_attempt_count: 1,
+          p_sequence: 1,
+          p_kind: "text",
+          p_payload: { text: activity },
+          p_truncated: false,
+        }),
+      ),
+    ).toBe(true);
+    await refresh.press("Enter");
+    await expect(page.getByText(activity, { exact: true })).toBeVisible();
+    await expect(refresh).toBeFocused();
+    expect(
+      checked(
+        await admin.rpc("fail_factory_benchmark_trial", {
+          p_trial_id: trial.id,
+          p_job_id: trial.job_id,
+          p_run_id: trial.run_id,
+          p_attempt_count: 1,
+          p_failure_code: "candidate_failed",
+        }),
+      ),
+    ).toBe(true);
+    await refresh.press("Enter");
+    await expect(refresh).toHaveCount(0);
+    await expect(page.getByText(activity, { exact: true })).toBeVisible();
+    const transcript = page.getByRole("region", { name: "Transcript" });
+    await expect(transcript.getByText("Failed", { exact: true })).toBeVisible();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("a benchmark trial shares exact private evidence and rechecks access at delivery", async ({
   baseURL,
   page,

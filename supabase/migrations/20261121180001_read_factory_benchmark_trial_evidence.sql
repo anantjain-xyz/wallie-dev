@@ -259,9 +259,9 @@ begin
       'eligibility',(cell.identity).replay_eligibility,'eligibilityReason',(cell.identity).eligibility_reason,
       'status',facts.disposition,'reason',facts.reason,'admitted',facts.admitted,'started',facts.started),
     'task',jsonb_build_object('id',(cell.revision).task_id,'revisionId',(cell.revision).id,'revisionNumber',(cell.revision).revision_number,
-      'name',(cell.revision).name,'acceptanceCriteria',case when source_availability <> 'withheld'
+      'name',(cell.revision).name,'acceptanceCriteria',case when source_availability = 'available'
         then left((cell.revision).acceptance_criteria,20000) end,
-      'acceptanceTruncated',source_availability <> 'withheld' and char_length((cell.revision).acceptance_criteria) > 20000,
+      'acceptanceTruncated',source_availability = 'available' and char_length((cell.revision).acceptance_criteria) > 20000,
       'tags',(cell.revision).tags),
     'candidate',jsonb_build_object('key',(cell.configuration).candidate_key,'position',(cell.configuration).comparison_position,
       'definitionRevisionId',(cell.configuration).definition_revision_id,'definitionDigest',(cell.configuration).definition_digest,
