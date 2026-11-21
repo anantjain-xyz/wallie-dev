@@ -30,6 +30,7 @@ export default async function RunInspectorPage({
           />
         ) : undefined
       }
+      canOpenRoutingPolicy={data.canOpenRoutingPolicy}
       credential={data.credential}
       executionProfile={data.executionProfile}
       frozenContext={data.frozenContext}
@@ -46,6 +47,7 @@ export default async function RunInspectorPage({
       memoryProposalHref={data.memoryProposalHref}
       mcp={data.mcp}
       initialNow={new Date().toISOString()}
+      routingDecision={data.routingDecision}
       run={data.run}
       skills={data.skills}
       workspaceId={data.workspaceId}

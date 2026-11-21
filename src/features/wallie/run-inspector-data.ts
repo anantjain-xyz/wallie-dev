@@ -3,6 +3,7 @@ import "server-only";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import {
   loadWorkspaceRunCatalogItem,
   RunCatalogWorkspaceUnavailableError,
@@ -10,12 +11,15 @@ import {
 } from "@/features/wallie/run-catalog";
 import { runCatalogItemParamsSchema } from "@/features/wallie/run-catalog-contracts";
 import { loadRunTranscript, RunTranscriptResetError } from "@/features/wallie/run-transcript";
+import { isWorkspaceOperator } from "@/features/workspaces/authenticated-context";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 import {
   recordedRunExecutionProfileSchema,
   type RecordedRunExecutionProfile,
 } from "@/lib/factory-definitions/execution-profile-contracts";
 import { factoryMcpManifestSchema } from "@/lib/factory-mcp/manifest";
+import { routingDecisionSchema } from "@/lib/model-routing/decision-contracts";
+import { routingDraftEvidenceSchema } from "@/lib/model-routing/draft-contracts";
 import { runContextInspectionSchema } from "@/lib/run-context/contracts";
 import { workspaceMemoryPath, workspaceSessionDetailPath } from "@/lib/routes";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -69,6 +73,52 @@ export type RunInspectorMcpManifest = z.infer<typeof runMcpManifestSchema>;
 export type RunInspectorExecutionProfile =
   | { kind: "recorded"; profile: RecordedRunExecutionProfile }
   | { kind: "unrecorded" | "unavailable" };
+
+const runRoutingDecisionSchema = z
+  .strictObject({
+    factoryId: z.string().uuid(),
+    canManageFactory: z.boolean(),
+    decision: routingDecisionSchema,
+    taskClassName: z.string().nullable(),
+    benchmarkEvidence: routingDraftEvidenceSchema.nullable(),
+  })
+  .refine(
+    ({ canManageFactory, decision, benchmarkEvidence }) =>
+      benchmarkEvidence === null ||
+      (canManageFactory &&
+        decision.disposition === "selected" &&
+        decision.source === "primary" &&
+        benchmarkEvidence.ruleId === decision.ruleId &&
+        benchmarkEvidence.candidateKey === decision.benchmarkCandidateKey &&
+        benchmarkEvidence.experimentId === decision.configuration.experimentId &&
+        (!decision.configuration.scorerRevisionId ||
+          benchmarkEvidence.scorerRevisionId === decision.configuration.scorerRevisionId)),
+  );
+
+export type RunInspectorRoutingDecision =
+  | { kind: "recorded"; receipt: z.infer<typeof runRoutingDecisionSchema> }
+  | { kind: "unrecorded" | "unavailable" };
+
+export async function loadRunInspectorRoutingDecision({
+  supabase,
+  workspaceId,
+  run,
+}: {
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  workspaceId: string;
+  run: Pick<WorkspaceRunCatalogItem, "id" | "attemptCount">;
+}): Promise<RunInspectorRoutingDecision> {
+  if (run.attemptCount === null) return { kind: "unrecorded" };
+  const { data, error } = await supabase.rpc("get_run_routing_decision", {
+    target_workspace_id: workspaceId,
+    target_run_id: run.id,
+    target_attempt_count: run.attemptCount,
+  });
+  if (error) return { kind: "unavailable" };
+  if (data === null) return { kind: "unrecorded" };
+  const parsed = runRoutingDecisionSchema.safeParse(data);
+  return parsed.success ? { kind: "recorded", receipt: parsed.data } : { kind: "unavailable" };
+}
 
 export async function loadRunInspectorExecutionProfile({
   supabase,
@@ -219,7 +269,7 @@ export async function loadRunInspectorContext({
 }
 
 export async function loadRunInspectorData(workspaceSlug: string, runId: string) {
-  const { supabase, workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
+  const { currentMember, supabase, workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
   if (!runCatalogItemParamsSchema.safeParse({ workspaceId: workspace.id, runId }).success) {
     notFound();
   }
@@ -241,14 +291,22 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     run = await loadRun();
     if (!run) notFound();
   }
-  const [artifact, skills, credential, mcp, executionProfile, frozenContext] = await Promise.all([
-    loadRunInspectorArtifact({ ...context, run }),
-    loadRunInspectorSkills({ ...context, run }),
-    loadRunInspectorCredential({ ...context, run }),
-    loadRunInspectorMcpManifest({ ...context, run }),
-    loadRunInspectorExecutionProfile({ ...context, run }),
-    loadRunInspectorContext({ ...context, run }),
-  ]);
+  const [artifact, skills, credential, mcp, executionProfile, frozenContext, routingDecision] =
+    await Promise.all([
+      loadRunInspectorArtifact({ ...context, run }),
+      loadRunInspectorSkills({ ...context, run }),
+      loadRunInspectorCredential({ ...context, run }),
+      loadRunInspectorMcpManifest({ ...context, run }),
+      loadRunInspectorExecutionProfile({ ...context, run }),
+      loadRunInspectorContext({ ...context, run }),
+      loadRunInspectorRoutingDecision({ ...context, run }),
+    ]);
+  const canOpenRoutingPolicy =
+    routingDecision.kind === "recorded" &&
+    isWorkspaceOperator(currentMember) &&
+    (await loadWorkspaceFactoryOptions(workspaceSlug)).some(
+      ({ id, status }) => id === routingDecision.receipt.factoryId && status === "active",
+    );
   const memoryProposal =
     frozenContext.kind === "recorded" &&
     frozenContext.context.canManage &&
@@ -270,6 +328,8 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
     mcp,
     executionProfile,
     frozenContext,
+    routingDecision,
+    canOpenRoutingPolicy,
     memoryProposalHref:
       memoryProposal?.data === true &&
       frozenContext.kind === "recorded" &&

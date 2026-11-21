@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
@@ -9,6 +9,7 @@ import { RunInspector } from "@/features/wallie/run-inspector";
 import type {
   RunInspectorArtifact,
   RunInspectorExecutionProfile,
+  RunInspectorRoutingDecision,
   RunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
 import { parseRunFailure } from "@/lib/pipeline/run-failure";
@@ -67,17 +68,85 @@ const run: WorkspaceRunCatalogItem = {
   recovery,
 };
 
+const historicalDecision = {
+  kind: "recorded",
+  receipt: {
+    factoryId: workspaceId,
+    canManageFactory: true,
+    taskClassName: "Original verification",
+    decision: {
+      version: 1,
+      mode: "shadow",
+      policyRevisionId: artifact.id,
+      policyDigest: "a".repeat(64),
+      taskClassSlug: "verify",
+      taskClassId: run.stageId ?? null,
+      ruleId: "00000000-0000-4000-8000-000000000016",
+      initialReason: null,
+      disposition: "selected",
+      source: "primary",
+      reason: "qualified",
+      configuration: {
+        modelKey: "openai/gpt-5.5",
+        harness: "codex",
+        workerRuntime: "workerd",
+        agentId: run.id,
+        definitionRevisionId: "00000000-0000-4000-8000-000000000019",
+        qualificationId: run.sessionId,
+        experimentId: "00000000-0000-4000-8000-000000000021",
+        scorerRevisionId: "00000000-0000-4000-8000-000000000022",
+      },
+      benchmarkCandidateKey: "b".repeat(64),
+    },
+    benchmarkEvidence: {
+      version: 1,
+      experimentId: "00000000-0000-4000-8000-000000000021",
+      candidateKey: "b".repeat(64),
+      suite: {
+        id: "00000000-0000-4000-8000-000000000023",
+        revisionId: "00000000-0000-4000-8000-000000000024",
+        purpose: "holdout",
+        name: "Verification suite",
+      },
+      scorerRevisionId: "00000000-0000-4000-8000-000000000022",
+      scorerName: "Release accuracy",
+      taskClassName: "Original verification",
+      definitionDigest: "c".repeat(64),
+      replayPolicyRevisionId: "00000000-0000-4000-8000-000000000025",
+      replayPolicyDigest: "d".repeat(64),
+      ruleId: "00000000-0000-4000-8000-000000000016",
+      capturedAt: now,
+      qualityPassRateBps: 9_200,
+      resolvedTrials: 12,
+      measuredMeanCostUsd: "0.08",
+      constraints: {
+        qualityFloorBps: 8_000,
+        minResolvedTrials: 5,
+        maxMeanCostUsd: null,
+        maxLatencyMs: null,
+        minConfidenceBps: null,
+      },
+      p95WallLatencyMs: 1_506,
+      isRecommended: true,
+    },
+  },
+} satisfies RunInspectorRoutingDecision;
+
 function show(
   changes: Partial<WorkspaceRunCatalogItem> = {},
   artifact: RunInspectorArtifact = { kind: "none" },
   skills: RunInspectorSkills = { kind: "unrecorded" },
   executionProfile?: RunInspectorExecutionProfile,
+  routingDecision?: RunInspectorRoutingDecision,
+  canOpenRoutingPolicy = false,
 ) {
   return render(
     <RunInspector
       artifact={artifact}
+      canOpenRoutingPolicy={canOpenRoutingPolicy}
       executionProfile={executionProfile}
       initialNow={now}
+      routingDecision={routingDecision}
       run={{ ...run, ...changes }}
       skills={skills}
       workspaceId={workspaceId}
@@ -92,7 +161,95 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function routingPanel() {
+  const panel = screen.getByRole("heading", { name: "Routing decision" }).closest("section");
+  if (!panel) throw new Error("Missing routing decision section.");
+  return within(panel);
+}
+
 describe("RunInspector", () => {
+  it("shows the original routing policy and exact frozen benchmark qualification", () => {
+    show(
+      { modelName: "actual-execution-model" },
+      undefined,
+      undefined,
+      undefined,
+      historicalDecision,
+      true,
+    );
+    const routing = routingPanel();
+    const { decision, benchmarkEvidence } = historicalDecision.receipt;
+    expect(routing.getByText("Original verification")).toBeTruthy();
+    expect(routing.getByText("Primary configuration")).toBeTruthy();
+    expect(routing.getByText(decision.ruleId)).toBeTruthy();
+    expect(routing.getByText("openai/gpt-5.5")).toBeTruthy();
+    expect(routing.getByText("Release accuracy")).toBeTruthy();
+    expect(routing.getByText("92%")).toBeTruthy();
+    expect(screen.getByText(/actual-execution-model/)).toBeTruthy();
+    expect(
+      routing.getByRole("link", { name: decision.policyRevisionId }).getAttribute("href"),
+    ).toBe(
+      `/w/wallie/settings/factory-definition?factory=${workspaceId}&revision=${decision.policyRevisionId}`,
+    );
+    const href = routing
+      .getByRole("link", { name: "Open exact comparison configuration" })
+      .getAttribute("href");
+    const link = new URL(href ?? "", "http://localhost");
+    expect(link.pathname).toBe(
+      `/w/wallie/benchmarks/${benchmarkEvidence.suite.id}/comparisons/${benchmarkEvidence.experimentId}`,
+    );
+    expect(Object.fromEntries(link.searchParams)).toEqual({
+      factory: workspaceId,
+      scorerRevisionId: benchmarkEvidence.scorerRevisionId,
+      qualityFloorPercent: "80",
+      minResolvedTrials: "5",
+      routingCandidateKey: benchmarkEvidence.candidateKey,
+    });
+    expect(link.hash).toBe(`#frontier-configuration-${benchmarkEvidence.candidateKey}`);
+  });
+
+  it("keeps benchmark links available to delegated factory managers", () => {
+    show({}, undefined, undefined, undefined, historicalDecision);
+    const routing = routingPanel();
+    const { policyRevisionId } = historicalDecision.receipt.decision;
+    expect(routing.getByText(policyRevisionId)).toBeTruthy();
+    expect(routing.queryByRole("link", { name: policyRevisionId })).toBeNull();
+    expect(routing.getByRole("link", { name: "Open exact comparison configuration" })).toBeTruthy();
+    expect(routing.getByRole("link", { name: "Open frozen suite revision" })).toBeTruthy();
+  });
+
+  it("keeps the fallback reason visible when the reviewer cannot manage the factory", () => {
+    const { receipt } = historicalDecision;
+    show({}, undefined, undefined, undefined, {
+      kind: "recorded",
+      receipt: {
+        ...receipt,
+        canManageFactory: false,
+        benchmarkEvidence: null,
+        decision: {
+          ...receipt.decision,
+          source: "rule_fallback",
+          initialReason: "credential_unavailable",
+        },
+      },
+    });
+    const routing = routingPanel();
+    expect(routing.getByText("Rule fallback")).toBeTruthy();
+    expect(routing.getByText("The required credential is unavailable.")).toBeTruthy();
+    expect(routing.getByText(/Benchmark proposal details require permission/)).toBeTruthy();
+    expect(routing.getByText(receipt.decision.benchmarkCandidateKey)).toBeTruthy();
+    expect(routing.queryByRole("link")).toBeNull();
+  });
+
+  it.each([
+    ["unrecorded", "This attempt has no recorded routing decision."],
+    ["unavailable", "The routing decision is unavailable."],
+  ] as const)("shows a clear %s routing state", (kind, message) => {
+    show({}, undefined, undefined, undefined, { kind });
+    expect(routingPanel().getByText(message)).toBeTruthy();
+    expect(routingPanel().queryByRole("link")).toBeNull();
+  });
+
   it("displays the recorded execution profile for this attempt", () => {
     show({ modelName: "current-catalog-model" }, undefined, undefined, {
       kind: "recorded",

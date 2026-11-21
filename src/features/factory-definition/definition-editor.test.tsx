@@ -260,12 +260,14 @@ function setup({
   initialDraft = draft,
   repositories = [{ id: id(3), fullName: "acme/project", isArchived: false }],
   credentials,
+  routingPreview,
 }: {
   selection?: { draft: string; test: string } | null;
   initialDraftPasses?: boolean;
   initialDraft?: FactoryEditorDocument;
   repositories?: CapabilityRepository[];
   credentials?: FactorySecretBindingResponse;
+  routingPreview?: (body: Record<string, unknown>) => Response;
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
     activationNumber: 2,
@@ -386,6 +388,16 @@ function setup({
     requests.push({ path: pathname, body });
     if (body.expectedActivationNumber !== snapshot.activationNumber) {
       return Response.json({ error: "The activation changed." }, { status: 409 });
+    }
+    if (pathname === `${endpoint}/routing-preview`) {
+      const current = snapshot.draft;
+      if (!current || current.id !== body.draftId) {
+        return Response.json({ error: "The draft changed." }, { status: 409 });
+      }
+      return (
+        routingPreview?.(body) ??
+        Response.json({ draftId: current.id, draftDigest: current.digest, decision: null })
+      );
     }
     if (body.action === "rollback") {
       const selected = records.get(body.revisionId);
@@ -781,4 +793,83 @@ it("opens a permalink at a specific saved test receipt and scrolls to it after l
       Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     }
   }
+});
+
+it("previews the current saved draft for configured and unmatched slugs", async () => {
+  const { requests } = setup({
+    routingPreview: ({ taskClassSlug }) =>
+      Response.json({
+        draftId: draft.id,
+        draftDigest: draft.digest,
+        decision: {
+          version: 1,
+          taskClassSlug,
+          initialReason: null,
+          ...(taskClassSlug === "plan"
+            ? {
+                disposition: "selected",
+                source: "primary",
+                reason: "qualified",
+                taskClassId: id(70),
+                ruleId: id(71),
+                configuration: {
+                  agentId: id(72),
+                  definitionRevisionId: id(73),
+                  experimentId: id(74),
+                  qualificationId: id(75),
+                  modelKey: "openai/gpt-5.5",
+                  harness: "codex",
+                  workerRuntime: "workerd",
+                },
+                benchmarkCandidateKey: "a".repeat(64),
+              }
+            : {
+                disposition: "escalated",
+                source: null,
+                reason: "unmatched_class",
+                taskClassId: null,
+                ruleId: null,
+                configuration: null,
+                benchmarkCandidateKey: null,
+              }),
+        },
+      }),
+  });
+  const panel = within(await screen.findByRole("region", { name: "Routing preview" }));
+  const input = panel.getByRole("combobox", { name: "Task class slug" });
+  const preview = panel.getByRole("button", { name: "Preview routing" });
+  expect(input).toHaveValue("plan");
+
+  fireEvent.click(preview);
+  expect(
+    await panel.findByRole("heading", { name: "Primary configuration selected" }),
+  ).toBeVisible();
+  expect(panel.getByText("openai/gpt-5.5")).toBeVisible();
+  expect(requests).toContainEqual({
+    path: endpoint + "/routing-preview",
+    body: { expectedActivationNumber: 2, draftId: draft.id, taskClassSlug: "plan" },
+  });
+
+  fireEvent.change(input, { target: { value: "unmatched" } });
+  expect(panel.queryByRole("heading", { name: "Primary configuration selected" })).toBeNull();
+  fireEvent.click(preview);
+  expect(await panel.findByRole("heading", { name: "Escalated" })).toBeVisible();
+  expect(panel.getByText("No task class matches this slug.")).toBeVisible();
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Operating rules" }), {
+    target: { value: "Unsaved draft edit" },
+  });
+  expect(preview).toBeDisabled();
+  expect(panel.getByText("Save draft changes before previewing routing.")).toBeVisible();
+  expect(panel.queryByRole("heading", { name: "Escalated" })).toBeNull();
+});
+
+it.each([
+  [403, "Workspace admin access is required to preview routing."],
+  [409, "The draft or active definition changed. Reload the definition and preview again."],
+])("shows an actionable routing preview error for status %s", async (status, message) => {
+  setup({ routingPreview: () => Response.json({ error: "Unavailable." }, { status }) });
+  const panel = within(await screen.findByRole("region", { name: "Routing preview" }));
+  fireEvent.click(panel.getByRole("button", { name: "Preview routing" }));
+  expect(await panel.findByRole("alert")).toHaveTextContent(message);
 });

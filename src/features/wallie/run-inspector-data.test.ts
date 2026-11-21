@@ -9,12 +9,18 @@ import {
   loadRunInspectorData,
   loadRunInspectorExecutionProfile,
   loadRunInspectorMcpManifest,
+  loadRunInspectorRoutingDecision,
   loadRunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
 import { RunTranscriptResetError } from "@/features/wallie/run-transcript";
 import type { Database } from "@/lib/supabase/database.types";
 
-const mocks = vi.hoisted(() => ({ context: vi.fn(), catalog: vi.fn(), transcript: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  context: vi.fn(),
+  catalog: vi.fn(),
+  factories: vi.fn(),
+  transcript: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({
   notFound: () => {
     throw new Error("NOT_FOUND");
@@ -22,6 +28,9 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/features/workspaces/workspace-layout-data", () => ({
   loadWorkspaceLayoutContext: mocks.context,
+}));
+vi.mock("@/features/factories/factory-options-data", () => ({
+  loadWorkspaceFactoryOptions: mocks.factories,
 }));
 vi.mock("@/features/wallie/run-catalog", () => ({
   loadWorkspaceRunCatalogItem: mocks.catalog,
@@ -70,6 +79,7 @@ function fixture({
   credential = false,
   mcp = null,
   executionProfile = null,
+  routingDecision = null,
   failure,
 }: {
   checkpoint?: boolean;
@@ -78,12 +88,14 @@ function fixture({
   credential?: boolean;
   mcp?: unknown;
   executionProfile?: unknown;
+  routingDecision?: unknown;
   failure?: string;
 } = {}) {
   const requests: URL[] = [];
   const skillRequests: unknown[] = [];
   const mcpRequests: unknown[] = [];
   const profileRequests: unknown[] = [];
+  const routingRequests: unknown[] = [];
   const supabase = createClient<Database>("https://database.example.test", "test-key", {
     auth: { persistSession: false, autoRefreshToken: false },
     global: {
@@ -108,6 +120,12 @@ function fixture({
           return table === failure
             ? Response.json({ message: "private database error" }, { status: 403 })
             : Response.json(executionProfile);
+        }
+        if (table === "get_run_routing_decision") {
+          routingRequests.push(JSON.parse(String(init?.body)));
+          return table === failure
+            ? Response.json({ message: "private database error" }, { status: 403 })
+            : Response.json(routingDecision);
         }
         const data =
           table === "factory_run_credential_receipts"
@@ -136,11 +154,68 @@ function fixture({
     skillRequests,
     mcpRequests,
     profileRequests,
+    routingRequests,
     input: { supabase, workspaceId, workspaceSlug: "wallie", run },
   };
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+const historicalRoutingReceipt = {
+  factoryId: workspaceId,
+  canManageFactory: false,
+  taskClassName: "Original verification",
+  benchmarkEvidence: null,
+  decision: {
+    version: 1,
+    mode: "shadow",
+    policyRevisionId: artifactId,
+    policyDigest: "a".repeat(64),
+    taskClassSlug: "verify",
+    taskClassId: run.sessionId,
+    ruleId: skillRevision.skillId,
+    initialReason: "qualification_unavailable",
+    disposition: "escalated",
+    source: null,
+    reason: "authority_unavailable",
+    configuration: null,
+    benchmarkCandidateKey: null,
+  },
+};
+
+it("loads the original routing receipt for this workspace, run, and attempt", async () => {
+  const { input, routingRequests } = fixture({ routingDecision: historicalRoutingReceipt });
+  await expect(loadRunInspectorRoutingDecision(input)).resolves.toEqual({
+    kind: "recorded",
+    receipt: historicalRoutingReceipt,
+  });
+  expect(routingRequests).toEqual([
+    { target_workspace_id: workspaceId, target_run_id: run.id, target_attempt_count: 4 },
+  ]);
+});
+
+it("distinguishes missing routing decisions from unreadable or invalid receipts", async () => {
+  const missing = fixture();
+  await expect(loadRunInspectorRoutingDecision(missing.input)).resolves.toEqual({
+    kind: "unrecorded",
+  });
+  const queued = fixture();
+  await expect(
+    loadRunInspectorRoutingDecision({ ...queued.input, run: { ...run, attemptCount: null } }),
+  ).resolves.toEqual({ kind: "unrecorded" });
+  expect(queued.routingRequests).toHaveLength(0);
+
+  const failed = fixture({ failure: "get_run_routing_decision" });
+  await expect(loadRunInspectorRoutingDecision(failed.input)).resolves.toEqual({
+    kind: "unavailable",
+  });
+  const malformed = fixture({
+    routingDecision: { ...historicalRoutingReceipt, privateInput: "secret" },
+  });
+  await expect(loadRunInspectorRoutingDecision(malformed.input)).resolves.toEqual({
+    kind: "unavailable",
+  });
+});
 
 it("loads the recorded profile only for the exact attempt and rejects unexpected private fields", async () => {
   const profile = {
@@ -344,12 +419,20 @@ describe("exact-attempt accepted artifact", () => {
 });
 
 describe("run inspector composition", () => {
-  function prepare() {
-    const { input } = fixture({ revisions: [skillRevision] });
+  function prepare(
+    role: "member" | "owner" | "admin" = "member",
+    factoryStatus: "active" | "archived" = "active",
+  ) {
+    const { input, routingRequests } = fixture({
+      revisions: [skillRevision],
+      routingDecision: historicalRoutingReceipt,
+    });
     mocks.context.mockResolvedValue({
+      currentMember: { id: run.sessionId, kind: "human", is_active: true, role },
       supabase: input.supabase,
       workspace: { id: workspaceId, slug: "wallie" },
     });
+    mocks.factories.mockResolvedValue([{ id: workspaceId, status: factoryStatus }]);
     mocks.catalog.mockResolvedValue({ ...run, status: "canceled", interrupted: false });
     mocks.transcript.mockResolvedValue({
       runId: run.id,
@@ -357,11 +440,25 @@ describe("run inspector composition", () => {
       runStatus: "canceled",
       entries: [],
     });
-    return input;
+    return { input, routingRequests };
   }
 
+  it.each([
+    ["owner", "active", true],
+    ["admin", "active", true],
+    ["member", "active", false],
+    ["owner", "archived", false],
+  ] as const)(
+    "matches Settings page access for a workspace %s and %s factory",
+    async (role, factoryStatus, canOpen) => {
+      prepare(role, factoryStatus);
+      const data = await loadRunInspectorData("wallie", run.id);
+      expect(data.canOpenRoutingPolicy).toBe(canOpen);
+    },
+  );
+
   it("uses the newest exact transcript status so a cancellation between reads is not revived", async () => {
-    const input = prepare();
+    const { input } = prepare();
     mocks.catalog.mockResolvedValueOnce({ ...run, status: "running", interrupted: false });
     const data = await loadRunInspectorData("wallie", run.id);
     expect(data.run).toMatchObject({ id: run.id, status: "canceled", interrupted: false });
@@ -379,8 +476,8 @@ describe("run inspector composition", () => {
     expect(mocks.catalog).toHaveBeenCalledTimes(2);
   });
 
-  it("reloads a queued run's newly claimed attempt before looking up its artifact", async () => {
-    prepare();
+  it("reloads a queued run's claimed attempt before reading evidence", async () => {
+    const { routingRequests } = prepare();
     mocks.catalog.mockResolvedValueOnce({
       ...run,
       attemptCount: null,
@@ -391,6 +488,10 @@ describe("run inspector composition", () => {
     expect(data.run.attemptCount).toBe(4);
     expect(data.artifact.kind).toBe("available");
     expect(data.skills).toEqual({ kind: "recorded", revisions: [skillRevision] });
+    expect(data.routingDecision).toEqual({ kind: "recorded", receipt: historicalRoutingReceipt });
+    expect(routingRequests).toEqual([
+      { target_workspace_id: workspaceId, target_run_id: run.id, target_attempt_count: 4 },
+    ]);
     expect(mocks.catalog).toHaveBeenCalledTimes(2);
   });
 

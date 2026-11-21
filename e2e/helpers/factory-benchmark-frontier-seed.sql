@@ -35,6 +35,11 @@ join public.pipeline_stages stage on (stage.workspace_id,stage.id) = (repo.works
 where (repo.workspace_id,repo.factory_id) = (:'workspace_id'::uuid,:'factory_id'::uuid)
   and stage.pipeline_id = :'pipeline_id'::uuid;
 
+-- Preview checks credential metadata without launching a provider request.
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+select owner_id,'platform_api_key','synthetic-routing-preview-credential' from live_scope
+on conflict (user_id) do nothing;
+
 create temp table fixture_ids as
 select slot,gen_random_uuid() as id from unnest(array[43,44,45,46,50,51,101,102,103,104,105]) slot;
 create function pg_temp.live_id(p_slot integer) returns uuid language sql stable as $$

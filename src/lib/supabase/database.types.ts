@@ -12399,6 +12399,14 @@ export type Database = {
         }
         Returns: Json
       }
+      get_run_routing_decision: {
+        Args: {
+          target_attempt_count: number
+          target_run_id: string
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
       get_run_skill_revisions: {
         Args: {
           target_attempt_count: number
@@ -13410,6 +13418,17 @@ export type Database = {
           p_title: string
         }
         Returns: boolean
+      }
+      preview_factory_model_routing: {
+        Args: {
+          p_actor_user_id: string
+          p_draft_id: string
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_task_class_slug?: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       process_factory_flow_projection: {
         Args: { p_limit?: number }

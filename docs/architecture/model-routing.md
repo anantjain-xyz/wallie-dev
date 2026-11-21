@@ -31,6 +31,12 @@ Missing evidence follows `onUnavailable`. A configured zero floor or cost ceilin
 - Admission checks the exact candidate’s current capability profile and the session’s scoped credential authority. It records the result, policy revision and digest, rule, and candidate identity before it queues the first run.
 - Each attempt manifest links to the original admission receipt. Publishing a later policy or retrying a run preserves that receipt. The manifest’s model and worker runtime continue to describe actual execution.
 
+## Preview and inspect
+
+- Edit routing rules in Factory Definition and save the draft. Preview a task class slug against that saved draft. A change to the draft or active definition requires a fresh preview.
+- Preview and admission share the same resolver. Preview uses the manager’s authority and the draft’s writer repository. An admitted session uses its own authority and writer repository.
+- Run Inspector reads the exact attempt’s routing receipt and original policy label. Factory managers can follow the retained benchmark evidence when the published rule matches its source draft.
+
 ## Benchmark-backed drafts
 
 Workspace owners and admins can apply a comparison configuration to a task class. The draft save keeps the current factory activation and uses its normal stale-draft check. The routing rule retains the exact scorer revision from the experiment.
