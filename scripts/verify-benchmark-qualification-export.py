@@ -38,6 +38,10 @@ CONFIGURATION_PINS = (
     "sandboxProvider", "sandboxConnectionRevision", "canonicalModelKey", "toolchain",
     "toolchainDigest",
 )
+TRIAL_INPUTS = (
+    "task", "candidateKey", "candidatePosition", "plannedHarness", "plannedModel",
+    "repetition", "seed", "timeoutMs", "eligibility", "eligibilityReason",
+)
 
 
 def expect(actual, expected, label):
@@ -162,6 +166,11 @@ def main():
         for key in ("experimentId", "suite", "seed", "repetitions", "policyRevisionId", "policyDigest"):
             expect(summary[key], original[key], f"original comparison {key}")
         expect(ids, [row["trialId"] for row in original["trialRows"]], "original comparison trial IDs")
+        original_trials = {row["trialId"]: row for row in original["trialRows"]}
+        for row in trials:
+            trial_id = row["trialId"]
+            for field in TRIAL_INPUTS:
+                expect(row[field], original_trials[trial_id][field], f"Trial {trial_id} frozen {field}")
         expect(
             configuration_pins(candidates), configuration_pins(original["candidates"]),
             "original configuration pins",
