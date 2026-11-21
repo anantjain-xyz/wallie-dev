@@ -1,6 +1,7 @@
 import type { AgentProvider, SandboxProvider } from "@/lib/sandbox/types";
 import type { FactoryAgentPromptSnapshot } from "@/lib/factory-agents/contracts";
 import type { FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
+import type { ModelRoutingConfiguration } from "@/lib/model-routing/contracts";
 
 export type FactoryReferenceEntry = {
   id: string;
@@ -33,6 +34,11 @@ export type FactoryMcpExecutionGrant = FactoryReferenceEntry & {
   toolIds: readonly string[];
 };
 
+export type QualifiedModelRoutingConfiguration = ModelRoutingConfiguration & {
+  workspaceId: string;
+  factoryId: string;
+};
+
 /** A caller supplies the eligible entries without loading secrets or contacting providers. */
 export type FactoryDefinitionCatalog = {
   workspaceId: string;
@@ -49,6 +55,7 @@ export type FactoryDefinitionCatalog = {
   approvers: readonly FactoryReferenceEntry[];
   sandboxProviders: readonly SandboxProvider[];
   agentPromptRevisions?: readonly (FactoryReferenceEntry & FactoryAgentPromptSnapshot)[];
+  modelRoutingConfigurations?: readonly QualifiedModelRoutingConfiguration[];
 };
 
 type FactoryReferenceResult<T> =

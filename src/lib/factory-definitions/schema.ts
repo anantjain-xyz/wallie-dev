@@ -11,6 +11,7 @@ import {
   mcpBindingSourceSchema,
   mcpManifestScopeIds,
 } from "@/lib/factory-mcp/manifest";
+import { modelRoutingPolicySchema } from "@/lib/model-routing/contracts";
 import {
   pipelineApproversSchema,
   pipelineOperatingRulesSchema,
@@ -112,6 +113,7 @@ const serialDefinitionFields = z
     skills: z.array(referenceSchema).max(MAX_FACTORY_SKILL_REVISIONS).default([]),
     tools: z.array(referenceSchema).default([]),
     mcpBindings: z.array(mcpBindingSourceSchema).max(MAX_MCP_BINDINGS).optional(),
+    modelRouting: modelRoutingPolicySchema.optional(),
     operatingRulesMd: pipelineOperatingRulesSchema
       .default("")
       .refine(isFactoryDefinitionText, validText),

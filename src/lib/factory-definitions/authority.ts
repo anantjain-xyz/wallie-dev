@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import { factorySkillRevisionIdSchema } from "@/lib/factory-skills/contracts";
+import type { ModelRoutingConfiguration } from "@/lib/model-routing/contracts";
 import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import { getEnabledSandboxProviders } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
@@ -11,6 +12,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import type { CompiledFactoryDefinition } from "./compiler";
 import { loadFactoryMcpCatalog, type FactoryMcpCatalogSelection } from "./mcp-catalog";
 import type { FactoryDefinitionCatalog } from "./references";
+import { loadQualifiedModelRoutingConfigurations } from "./routing-catalog";
 
 type AdminClient = SupabaseClient<Database>;
 type CatalogPage<T> = PromiseLike<{ data: T[] | null; error: unknown }>;
@@ -66,6 +68,7 @@ export async function loadFactoryDefinitionCatalog(
     agentPromptRevisionId,
     skillRevisionIds,
     scorerRevisionIds,
+    modelRoutingConfigurations,
     ...mcpSelection
   }: FactoryMcpCatalogSelection & {
     workspaceId: string;
@@ -73,6 +76,7 @@ export async function loadFactoryDefinitionCatalog(
     agentPromptRevisionId?: string;
     skillRevisionIds?: readonly string[];
     scorerRevisionIds?: readonly string[];
+    modelRoutingConfigurations?: readonly ModelRoutingConfiguration[];
   },
 ): Promise<FactoryDefinitionCatalog> {
   const [
@@ -85,6 +89,7 @@ export async function loadFactoryDefinitionCatalog(
     skillRevisions,
     scorerRevisions,
     mcpCatalog,
+    qualifiedRoutingConfigurations,
   ] = await Promise.all([
     collectCatalogRows((from, to) =>
       admin
@@ -126,6 +131,11 @@ export async function loadFactoryDefinitionCatalog(
     loadSelectedSkillRevisions(admin, workspaceId, factoryId, skillRevisionIds ?? []),
     loadSelectedScorerRevisions(admin, workspaceId, factoryId, scorerRevisionIds ?? []),
     loadFactoryMcpCatalog(admin, { workspaceId, factoryId, ...mcpSelection }),
+    loadQualifiedModelRoutingConfigurations(
+      admin,
+      { workspaceId, factoryId },
+      modelRoutingConfigurations ?? [],
+    ),
   ]);
   return {
     workspaceId,
@@ -160,6 +170,7 @@ export async function loadFactoryDefinitionCatalog(
       factoryId: factory_id,
     })),
     ...mcpCatalog,
+    modelRoutingConfigurations: qualifiedRoutingConfigurations,
     sandboxProviders: getEnabledSandboxProviders(),
   };
 }
