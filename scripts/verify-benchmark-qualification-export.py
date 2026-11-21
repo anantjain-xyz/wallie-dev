@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from uuid import UUID
 
 STATUSES = {
     "excluded": "excluded",
@@ -31,6 +32,12 @@ BUCKETS = {
     "pendingAttemptCount": int,
     "neverStartedAttemptCount": int,
 }
+CONFIGURATION_PINS = (
+    "candidateKey", "position", "definitionRevisionId", "definitionDigest",
+    "qualificationId", "plannedHarness", "plannedModel", "plannedRuntime",
+    "sandboxProvider", "sandboxConnectionRevision", "canonicalModelKey", "toolchain",
+    "toolchainDigest",
+)
 
 
 def expect(actual, expected, label):
@@ -102,6 +109,7 @@ def check_matrix(trials, candidates, summary, expected_trials):
         expect(row["status"] == "excluded", row["eligibility"] != "eligible", "trial exclusion")
         seed_key = (task["id"], row["repetition"])
         expect(row["seed"], seeds.setdefault(seed_key, row["seed"]), "paired repetition seed")
+        expect(row["timeoutMs"], summary["timeoutMs"], "frozen trial timeout")
         by_cell[(task["id"], candidate["candidateKey"], row["repetition"])] += 1
     expect(
         by_cell,
@@ -124,6 +132,13 @@ def check_matrix(trials, candidates, summary, expected_trials):
                 expect(quality[status], outcomes.count(status), f"scorer {status}")
 
 
+def configuration_pins(rows):
+    return {
+        row["candidateKey"]: tuple(row[field] for field in CONFIGURATION_PINS)
+        for row in rows
+    }
+
+
 def main():
     arguments = argparse.ArgumentParser(description=__doc__)
     arguments.add_argument("manifest", type=Path, help="Manifest saved beside every downloaded part")
@@ -131,6 +146,7 @@ def main():
     arguments.add_argument("--original-snapshot", type=Path, help="Comparison JSON saved before editing")
     options = arguments.parse_args()
     manifest = json.loads(options.manifest.read_bytes())
+    expect(str(UUID(manifest["exportId"])), manifest["exportId"], "canonical export ID")
     directory = options.manifest.parent
     trials = read_parts(directory, manifest, "trials", "pages", "part", "trialRows", "trialId", "TrialId")
     candidates = read_parts(directory, manifest, "candidates", "candidatePages", "candidate-part",
@@ -146,6 +162,10 @@ def main():
         for key in ("experimentId", "suite", "seed", "repetitions", "policyRevisionId", "policyDigest"):
             expect(summary[key], original[key], f"original comparison {key}")
         expect(ids, [row["trialId"] for row in original["trialRows"]], "original comparison trial IDs")
+        expect(
+            configuration_pins(candidates), configuration_pins(original["candidates"]),
+            "original configuration pins",
+        )
     print(f"Verified {len(trials)} trial rows, {len(candidates)} configurations, and all exported spend.")
 
 
