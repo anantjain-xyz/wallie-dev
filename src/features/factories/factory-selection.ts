@@ -3,6 +3,7 @@ import {
   workspaceAgentsPath,
   workspaceAnalyticsPath,
   workspaceBasePath,
+  workspaceBenchmarksPath,
   workspaceContextPath,
   workspaceGovernancePath,
   workspaceInboxPath,
@@ -31,13 +32,15 @@ export type FactorySelection =
 export function resolveFactorySelection(
   factories: readonly FactorySelectionOption[],
   value: string | string[] | null | undefined,
+  options?: { useFirstVisible?: boolean },
 ): FactorySelection {
   if (value === "all") return { kind: "all" };
   const requestedId = typeof value === "string" ? value.toLowerCase() : null;
 
   const match =
     value == null
-      ? factories.find((factory) => factory.isDefault)
+      ? (factories.find((factory) => factory.isDefault) ??
+        (options?.useFirstVisible ? factories[0] : undefined))
       : factories.find((factory) => factory.id === requestedId);
   return match ? { kind: "factory", factory: match } : { kind: "unavailable" };
 }
@@ -103,6 +106,7 @@ export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
     isFactoryAggregatePath(pathname, workspaceSlug) ||
     pathname === workspaceAgentsPath(workspaceSlug) ||
     pathname === workspaceScorersPath(workspaceSlug) ||
+    pathname === workspaceBenchmarksPath(workspaceSlug) ||
     isFactoryOutcomePath(pathname, workspaceSlug) ||
     isManagedFactoryPath(pathname, workspaceSlug)
   );
@@ -144,7 +148,7 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
     ])
       params.delete(key);
   }
-  if (pathname.endsWith("/scorers")) params.delete("revision");
+  if (pathname.endsWith("/scorers") || pathname.endsWith("/benchmarks")) params.delete("revision");
   if (pathname.endsWith("/governance")) {
     for (const key of [
       "principal",
