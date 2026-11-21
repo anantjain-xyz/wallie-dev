@@ -9078,6 +9078,15 @@ export type Database = {
         Args: { p_claim_id: string; p_epoch_id: string; p_operation_id: string }
         Returns: boolean
       }
+      assert_factory_benchmark_replay_access: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_task_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       assert_session_checkpoint_cleanup_claim: {
         Args: { p_claim_id: string; p_run_id: string }
         Returns: boolean
