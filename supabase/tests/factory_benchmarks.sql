@@ -76,6 +76,15 @@ select run.id, run.workspace_id, run.session_id, run.agent_job_id, run.attempt_c
   repeat('c', 64), 24, 3, '[]', 'node', run.run_type, run.model_provider, run.model_name
 from revision join public.agent_runs run on (run.workspace_id, run.id) = (revision.workspace_id, pg_temp.benchmark_id(43));
 
+insert into public.pipeline_stages(id, workspace_id, pipeline_id, position, slug, name)
+values (pg_temp.benchmark_id(48), pg_temp.benchmark_id(11), pg_temp.benchmark_id(40), 2, 'next', 'Next');
+update public.sessions set current_stage_id = pg_temp.benchmark_id(48) where id = pg_temp.benchmark_id(42);
+delete from public.pipeline_stages where id = pg_temp.benchmark_id(41);
+select results_eq($$select run.stage_id, manifest.stage_id from public.agent_runs run
+  join public.session_attempt_manifests manifest on manifest.run_id = run.id where run.id = pg_temp.benchmark_id(43)$$,
+  $$select null::uuid, pg_temp.benchmark_id(41)$$,
+  'stage deletion clears the live run stage while retaining the exact attempt manifest');
+
 create temp table benchmark_task_keys(key text primary key, revision_id uuid not null, task_id uuid not null);
 create temp table benchmark_suite_keys(key text primary key, revision_id uuid not null, suite_id uuid not null);
 grant select on benchmark_scope to service_role;
@@ -243,7 +252,7 @@ select results_eq($$select source_provenance->>'definitionRevisionId', source_pr
   from public.factory_benchmark_tasks where source_run_id = pg_temp.benchmark_id(43)$$,
   $$select id::text, canonical_digest, repeat('b', 40), repeat('c', 64)
     from public.factory_definition_revisions where id = pg_temp.benchmark_id(46)$$,
-  'task provenance retains the exact attempt definition, checkout input, and prompt digests after source removal');
+  'capture retains exact attempt digests through stage deletion and subsequent source removal');
 select is((select count(*) from public.factory_benchmark_tasks task
   join public.factory_benchmark_suite_members member on member.task_id = task.id
   where task.source_run_id = pg_temp.benchmark_id(43)), 2::bigint,

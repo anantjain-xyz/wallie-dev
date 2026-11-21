@@ -162,9 +162,10 @@ begin
   ), p_actor_user_id
   from public.agent_runs run
   join public.sessions session on (session.workspace_id, session.id) = (run.workspace_id, run.session_id)
+  -- A deleted stage clears run.stage_id while its attempt manifest remains retained.
   left join public.session_attempt_manifests manifest
-    on (manifest.workspace_id, manifest.session_id, manifest.run_id, manifest.job_id, manifest.stage_id, manifest.attempt_count)
-      = (run.workspace_id, run.session_id, run.id, run.agent_job_id, run.stage_id, run.attempt_count)
+    on (manifest.workspace_id, manifest.session_id, manifest.run_id, manifest.job_id, manifest.attempt_count)
+      = (run.workspace_id, run.session_id, run.id, run.agent_job_id, run.attempt_count)
   where run.id = p_source_run_id and (session.workspace_id, session.factory_id) = (p_workspace_id, p_factory_id)
   returning id into task_id;
   if not found then
