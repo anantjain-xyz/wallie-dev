@@ -81,8 +81,38 @@ export async function loadQualifiedModelRoutingConfigurations(
     }),
   );
   const candidates = batches.flat();
+  const requestedScorers = [
+    ...new Set(
+      [...selected.values()].flatMap(({ configuration }) =>
+        configuration.scorerRevisionId
+          ? [
+              `and(experiment_id.eq.${configuration.experimentId},scorer_revision_id.eq.${configuration.scorerRevisionId})`,
+            ]
+          : [],
+      ),
+    ),
+  ];
+  const scorerMatches = new Set<string>();
+  for (let index = 0; index < requestedScorers.length; index += candidateBatchSize) {
+    const dimensions = await client
+      .from("factory_benchmark_evaluation_dimensions")
+      .select("experiment_id,scorer_revision_id")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .or(requestedScorers.slice(index, index + candidateBatchSize).join(","));
+    if (dimensions.error) throw dimensions.error;
+    for (const { experiment_id, scorer_revision_id } of dimensions.data) {
+      scorerMatches.add(`${experiment_id}:${scorer_revision_id}`);
+    }
+  }
 
   return [...selected.values()].flatMap(({ configuration, definition }) => {
+    if (
+      configuration.scorerRevisionId &&
+      !scorerMatches.has(`${configuration.experimentId}:${configuration.scorerRevisionId}`)
+    ) {
+      return [];
+    }
     const matches = candidates.filter(
       (candidate) =>
         candidate.experiment_id === configuration.experimentId &&

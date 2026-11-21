@@ -31,6 +31,12 @@ select pg_temp.live_id(42), workspace_id, factory_id, pg_temp.live_id(35), 62300
 with definition as (
   select scope.*, jsonb_build_object(
     'schemaVersion', 1, 'kind', 'serial', 'pipelineId', pg_temp.live_id(40), 'repositoryId', pg_temp.live_id(42),
+    'implementationAgent', (select jsonb_build_object('agentId', agent.id, 'promptRevisionId', prompt.id,
+      'promptMd', prompt.prompt_md, 'promptSha256', prompt.prompt_sha256)
+      from public.factory_agents agent
+      join public.factory_agent_prompt_revisions prompt using (workspace_id, factory_id)
+      where (agent.workspace_id, agent.factory_id, agent.id) = (scope.workspace_id, scope.factory_id, prompt.agent_id)
+        and agent.is_default and prompt.revision_number = 1),
     'sandboxProvider', 'vercel', 'agent', jsonb_build_object(
       'provider','codex','model','gpt-4.1-2025-04-14','concurrencyLimit',2),
     'stages', jsonb_build_array(jsonb_build_object('id', pg_temp.live_id(41), 'slug','review'))
@@ -327,6 +333,103 @@ select is(pg_temp.read_frontier(83)#>>'{recommendation,reason}','mixed_judge_pro
   'a candidate with full scores and missing execution price still participates in judge compatibility');
 select ok(pg_temp.frontier_result(2,83)->'exclusions' @> '["unavailable_cost","mixed_judge_profile"]'::jsonb,
   'an unpriced candidate retains its cost and judge exclusions');
+
+create function pg_temp.apply_routing_finding(
+  p_position integer, p_request integer, p_floor integer default 8000,
+  p_cost numeric default 0.10, p_suite_id uuid default null, p_expected_draft uuid default null
+) returns uuid language plpgsql as $$
+declare
+  scope live_scope;
+  candidate public.factory_benchmark_experiment_candidates;
+  body jsonb;
+  scorer_id uuid;
+begin
+  select * into strict scope from live_scope;
+  select * into strict candidate from public.factory_benchmark_experiment_candidates
+    where (workspace_id, factory_id, experiment_id, comparison_position) =
+      (scope.workspace_id, scope.factory_id, pg_temp.live_id(80), p_position);
+  select id into strict scorer_id from frontier_scorer;
+  select definition_json::jsonb into strict body from public.factory_definition_revisions
+    where id = candidate.definition_revision_id;
+  body := body || jsonb_build_object('modelRouting', jsonb_build_object(
+    'version', 1,
+    'taskClasses', jsonb_build_array(jsonb_build_object('id', pg_temp.live_id(201), 'slug', 'repair', 'name', 'Repair')),
+    'rules', jsonb_build_array(jsonb_build_object('id', pg_temp.live_id(202), 'taskClassId', pg_temp.live_id(201),
+      'configuration', jsonb_build_object(
+        'agentId', body#>>'{implementationAgent,agentId}', 'definitionRevisionId', candidate.definition_revision_id,
+        'experimentId', candidate.experiment_id, 'qualificationId', candidate.qualification_id,
+        'scorerRevisionId', scorer_id, 'modelKey', candidate.canonical_model_key,
+        'harness', candidate.harness, 'workerRuntime', candidate.worker_runtime
+      ), 'constraints', jsonb_build_object('qualityFloorBps', p_floor, 'maxMeanCostUsd', p_cost,
+        'minResolvedTrials', 2, 'maxLatencyMs', 120000, 'minConfidenceBps', null),
+      'onUnavailable', '{"kind":"escalate"}'::jsonb)),
+    'onUnmatched', '{"kind":"escalate"}'::jsonb
+  ));
+  return (public.save_factory_routing_draft(
+    scope.workspace_id, scope.factory_id, scope.owner_id, 0, body::text,
+    encode(sha256(convert_to(body::text, 'UTF8')), 'hex'), '{"newStageIds":[]}'::jsonb,
+    candidate.experiment_id, candidate.candidate_key, coalesce(p_suite_id, (select id from live_suite)),
+    scorer_id, pg_temp.live_id(202), pg_temp.live_id(p_request), repeat(p_request::text, 32), p_expected_draft
+  )).id;
+end;
+$$;
+
+select throws_ok($$select pg_temp.apply_routing_finding(1, 11, 9000)$$, 'PT422',
+  'The measured pass rate is below the selected quality floor.', 'a low-quality candidate cannot create a draft');
+select throws_ok($$select pg_temp.apply_routing_finding(4, 12)$$, 'PT422',
+  'The candidate needs measured cost for all comparable trials.', 'a candidate with an unpriced slot cannot create a draft');
+select throws_ok($$select pg_temp.apply_routing_finding(1, 13, p_cost => 0.079)$$, 'PT422',
+  'The measured mean cost exceeds the selected ceiling.', 'the measured total is checked against the exact decimal limit');
+select throws_ok($$select pg_temp.apply_routing_finding(1, 14, p_suite_id => pg_temp.live_id(299))$$, 'PT409',
+  'The suite revision changed. Run a new comparison before applying it.', 'a mismatched suite cannot qualify a draft');
+select is((select count(*) from public.factory_definition_drafts where workspace_id = pg_temp.live_id(11)),
+  0::bigint, 'failed qualifications roll back the written draft');
+
+create temp table routing_apply as select pg_temp.apply_routing_finding(1, 15) as draft_id;
+select is(pg_temp.apply_routing_finding(1, 15), (select draft_id from routing_apply),
+  'the same request returns the exact immutable draft even after its write moves the draft head');
+select ok(exists (
+  select 1 from public.factory_routing_draft_evidence receipt
+  join routing_apply using (draft_id)
+  where receipt.evidence @> jsonb_build_object('ruleId', pg_temp.live_id(202),
+    'experimentId', pg_temp.live_id(80), 'candidateKey', pg_temp.frontier_result(1)->>'candidateKey',
+    'scorerRevisionId', (select id from frontier_scorer), 'qualityPassRateBps', 8000,
+    'resolvedTrials', 5, 'measuredMeanCostUsd', '0.08', 'suite', jsonb_build_object('revisionId', (select id from live_suite)))
+), 'the saved draft retains exact frozen evidence and measured tradeoffs');
+select is((select count(*) from public.factory_definition_activations where workspace_id = pg_temp.live_id(11)),
+  0::bigint, 'applying a benchmark finding does not activate a policy');
+insert into public.workspace_sandbox_connection_mutations(workspace_id, provider)
+  values (pg_temp.live_id(11), 'vercel');
+select throws_ok($$select pg_temp.apply_routing_finding(1, 17, p_expected_draft => (select draft_id from routing_apply))$$,
+  'PT409', 'The sandbox connection is being updated. Retry after the change finishes.',
+  'an unexpired sandbox rotation reservation blocks new routing drafts');
+select is(pg_temp.apply_routing_finding(1, 15), (select draft_id from routing_apply),
+  'an idempotent retry returns its frozen receipt during a sandbox rotation');
+delete from public.workspace_sandbox_connection_mutations where workspace_id = pg_temp.live_id(11);
+update public.github_installations set suspended = true where workspace_id = pg_temp.live_id(11);
+select throws_ok($$select pg_temp.apply_routing_finding(1, 18, p_expected_draft => (select draft_id from routing_apply))$$,
+  'PT409', 'The factory writer repository or installation is unavailable.',
+  'a suspended writer installation blocks new routing drafts');
+update public.github_installations set suspended = false where workspace_id = pg_temp.live_id(11);
+select throws_ok($$update public.factory_routing_draft_evidence set evidence = '{}'::jsonb$$, '23514',
+  'Factory definition records are immutable.', 'a frozen benchmark receipt cannot be edited');
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '62300000-0000-4000-9000-000000000099';
+select is((select count(*) from public.factory_routing_draft_evidence where workspace_id = pg_temp.live_id(11)),
+  0::bigint, 'receipt evidence is private to the factory');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select updated.id from live_scope scope cross join live_suite suite cross join live_task task
+cross join lateral public.save_factory_benchmark_suite_revision(
+  scope.workspace_id, scope.factory_id, scope.owner_id, 'Revised live replay suite', 'regression',
+  p_suite_id => suite.suite_id, p_expected_revision_id => suite.id, p_task_revision_ids => array[task.id]
+) updated;
+select throws_ok($$select pg_temp.apply_routing_finding(1, 16, p_expected_draft => (select draft_id from routing_apply))$$,
+  'PT409', 'The suite revision changed. Run a new comparison before applying it.',
+  'a suite edit invalidates previously qualified evidence for new proposals');
+select is(pg_temp.apply_routing_finding(1, 15), (select draft_id from routing_apply),
+  'resubmitting the same request still reads its original receipt after a suite edit');
 
 select * from finish();
 rollback;

@@ -19,6 +19,7 @@ import {
 import { CandidateTestPanel } from "@/features/factory-definition/candidate-test-panel";
 import { FactoryMcpManifestInspector } from "@/features/factory-definition/mcp-manifest-inspector";
 import { FactoryRevisionHistory } from "@/features/factory-definition/revision-history";
+import { RoutingDraftEvidencePanel } from "@/features/factory-definition/routing-draft-evidence";
 import { FactoryScorerBindings } from "@/features/factory-definition/scorer-bindings";
 import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff";
 import { ServiceCredentialsPanel } from "@/features/factory-definition/service-credentials-panel";
@@ -554,6 +555,13 @@ export function FactoryDefinitionEditor({
           </button>
         }
       />
+      {selected?.routingDraftEvidence ? (
+        <RoutingDraftEvidencePanel
+          evidence={selected.routingDraftEvidence}
+          factoryId={factoryId}
+          workspaceSlug={workspaceSlug}
+        />
+      ) : null}
       <div className="mb-6 space-y-2">
         <InlineActionMessage message={feedback} />
         {loading ? (

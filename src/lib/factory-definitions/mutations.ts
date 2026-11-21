@@ -18,6 +18,7 @@ import {
   latestFactoryDraft,
   loadActivatedFactoryArchiveBase,
   readFactorySettingsMetadata,
+  type RoutingDraftWrite,
   saveSettingsFactoryDraft,
 } from "./settings-persistence";
 import { selectFactory, selectStoredFactoryDefinition } from "./storage";
@@ -71,12 +72,14 @@ export async function mutateFactoryDefinition({
   factoryId,
   actorUserId,
   command,
+  routingDraft,
 }: {
   admin: AdminClient;
   workspaceId: string;
   factoryId?: string;
   actorUserId: string;
   command: FactoryDefinitionMutation;
+  routingDraft?: RoutingDraftWrite;
 }): Promise<FactoryMutationResult> {
   const { data: factory, error: factoryError } = await selectFactory(admin, workspaceId, factoryId);
   if (factoryError) return mutationError(factoryError);
@@ -146,6 +149,7 @@ export async function mutateFactoryDefinition({
         expectedDraftId: currentId,
         compiled,
         metadata,
+        routingDraft,
       });
       if (error || !data) return mutationError(error);
       return {

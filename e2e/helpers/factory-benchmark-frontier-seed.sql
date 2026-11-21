@@ -1,11 +1,34 @@
 begin;
 set local request.jwt.claim.role = 'service_role';
 
+\if :{?cleanup_paths}
+-- The fixture inserts checkpoint metadata directly and never uploads bytes.
+set local storage.allow_delete_query = 'true';
+update public.workspaces set deletion_requested_at = coalesce(deletion_requested_at, now())
+where id = :'workspace_id'::uuid and slug = :'workspace_slug';
+with removed as (
+  delete from storage.objects object
+  where object.bucket_id = 'session-source-checkpoints'
+    and split_part(object.name,'/',1) = :'workspace_id'
+    and split_part(object.name,'/',2) = 'benchmark'
+    and object.name in (select jsonb_array_elements_text(:'cleanup_paths'::jsonb))
+    and exists (select 1 from public.workspaces workspace
+      where workspace.id = :'workspace_id'::uuid and workspace.slug = :'workspace_slug')
+  returning object.id
+)
+select jsonb_build_object('removed', count(*)) from removed;
+delete from public.workspaces where id = :'workspace_id'::uuid and slug = :'workspace_slug';
+commit;
+\quit
+\endif
+
 -- SQL settlement for synthetic provider and judge receipts. This fixture makes
 -- no external calls and shares no queues with a running worker.
 create temp table live_scope as
 select repo.workspace_id,repo.factory_id,:'owner_id'::uuid as owner_id,
   repo.id as repository_id,stage.pipeline_id,stage.id as stage_id,stage.slug as stage_slug,
+  stage.name as stage_name,stage.description as stage_description,
+  stage.prompt_template_md as stage_prompt,
   :'experiment_id'::uuid as experiment_id,:'excluded_run_id'::uuid as excluded_run_id
 from public.github_repositories repo
 join public.pipeline_stages stage on (stage.workspace_id,stage.id) = (repo.workspace_id,:'stage_id'::uuid)
@@ -18,18 +41,33 @@ create function pg_temp.live_id(p_slot integer) returns uuid language sql stable
   select id from fixture_ids where slot = p_slot
 $$;
 
+create temp table live_agent as
+select agent.* from live_scope scope
+cross join lateral public.create_factory_agent(scope.workspace_id,scope.factory_id,scope.owner_id,
+  'Invoice review agent','invoice-review-agent','Review the frozen invoice evidence.') agent;
+
 with definition as (
   select scope.*, jsonb_build_object(
     'schemaVersion', 1, 'kind', 'serial', 'pipelineId', scope.pipeline_id, 'repositoryId', scope.repository_id,
     'sandboxProvider', 'vercel', 'agent', jsonb_build_object(
-      'provider','codex','model','gpt-4.1-2025-04-14','concurrencyLimit',2),
-    'stages', jsonb_build_array(jsonb_build_object('id', scope.stage_id, 'slug', scope.stage_slug))
-  )::text as body from live_scope scope
+      'provider','codex','model','gpt-4.1-2025-04-14','concurrencyLimit',2,'effort',null,
+      'stallTimeoutMs',120000,'maxRetries',1,'maxTurns',10),
+    'implementationAgent', jsonb_build_object('agentId',agent.agent_id,'promptRevisionId',agent.id,
+      'promptMd',agent.prompt_md,'promptSha256',agent.prompt_sha256),
+    'executionPolicyRevisionId',null,'deliveryPolicyRevisionId',null,'skillIds','[]'::jsonb,
+    'toolIds','[]'::jsonb,'operatingRulesMd','','operatingRuleStageIds','[]'::jsonb,
+    'stages', jsonb_build_array(jsonb_build_object('id',scope.stage_id,'slug',scope.stage_slug,
+      'name',scope.stage_name,'description',coalesce(scope.stage_description,''),
+      'promptTemplateMd',scope.stage_prompt,'anyoneCanApprove',true,'approverMemberIds','[]'::jsonb,
+      'previousStageIds','[]'::jsonb))
+  )::text as body from live_scope scope cross join live_agent agent
 )
 insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version, definition_json,
   canonical_digest, created_by)
 select pg_temp.live_id(43), workspace_id, factory_id, 1, body,
   encode(sha256(convert_to(body, 'UTF8')), 'hex'), owner_id from definition;
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,pg_temp.live_id(43),1,owner_id from live_scope;
 
 insert into public.sessions(id, workspace_id, factory_id, number, title, pipeline_id, current_stage_id,
   factory_definition_provenance, factory_definition_revision_id)
@@ -241,7 +279,7 @@ begin
 end;
 $$;
 
-select jsonb_build_object('suiteId',suite.suite_id,'storagePaths',(select jsonb_agg(path) from frontier_storage),
+select jsonb_build_object('suiteId',suite.suite_id,'suiteRevisionId',suite.id,'storagePaths',(select jsonb_agg(path) from frontier_storage),
   'accuracyScorerRevisionId',(select id from frontier_scorer where rubric_slug = 'invoice-accuracy'),
   'validationScorerRevisionId',(select id from frontier_scorer where rubric_slug = 'validation-quality'))
 from live_suite suite;

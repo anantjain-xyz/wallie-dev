@@ -5,6 +5,7 @@ import { expect, test, type Locator, type Page, type TestInfo } from "@playwrigh
 import { z } from "zod/v4";
 
 import { benchmarkFrontierSchema } from "@/lib/factory-benchmarks/frontier-contracts";
+import { routingDraftResponseSchema } from "@/lib/model-routing/draft-contracts";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
@@ -28,6 +29,18 @@ async function capture(page: Page, section: Locator, info: TestInfo, name: strin
   await info.attach(name, { path, contentType: "image/png" });
 }
 
+async function captureRoutingFlow(page: Page, info: TestInfo, name: string) {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+  ).toBeLessThanOrEqual(1);
+  const path = info.outputPath(`${name}.png`);
+  await page.screenshot({ path, fullPage: true, animations: "disabled", caret: "hide" });
+  await info.attach(name, { path, contentType: "image/png" });
+}
+
 test("the frozen frontier explains comparable measured cost, repeats and exclusions", async ({
   baseURL,
   browser,
@@ -37,7 +50,7 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
     process.env.WALLIE_FACTORY_BENCHMARKS_E2E !== "1",
     "Requires a disposable loopback Supabase project.",
   );
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   const fixture = await seedFactoryAnalytics(baseURL);
   const experimentId = randomUUID();
   const admin = createClient(
@@ -61,6 +74,7 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
     const seeded = z
       .object({
         suiteId: z.uuid(),
+        suiteRevisionId: z.uuid(),
         accuracyScorerRevisionId: z.uuid(),
         validationScorerRevisionId: z.uuid(),
         storagePaths: z.array(z.string()).length(25),
@@ -202,6 +216,125 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
     await expect(winnerRow).toBeVisible();
     await capture(page, section, info, "benchmark-frontier-mobile-dark");
 
+    await test.step("Create a reviewed draft from exact measured evidence", async () => {
+      const routingEndpoint = endpoint.replace(/frontier\?.*$/, "routing-drafts");
+      const readActivation = async () => {
+        const { data, error } = await admin
+          .from("factory_definition_activations")
+          .select("activation_number,revision_id")
+          .eq("workspace_id", fixture.workspaceId)
+          .eq("factory_id", fixture.factoryId)
+          .order("activation_number");
+        if (error) throw error;
+        return data;
+      };
+      const activeBefore = await readActivation();
+      expect(activeBefore).toHaveLength(1);
+      const routingCandidate = frontier.items.filter((candidate) => candidate.isRecommended).at(-1);
+      if (!routingCandidate || routingCandidate.position !== frontier.candidateCount) {
+        throw new Error(
+          "The routing fixture needs a qualified candidate at the final frontier position.",
+        );
+      }
+      const routingRowId = `frontier-configuration-${routingCandidate.candidateKey}`;
+      const routingRow = table.locator(`#${routingRowId}`);
+      const applyRouting = routingRow.getByRole("button", { name: "Apply to routing" });
+      await expect(applyRouting).toBeVisible();
+      await expect(unknownRow.getByRole("button", { name: "Apply to routing" })).toHaveCount(0);
+      await applyRouting.click();
+      const dialog = page.getByRole("dialog", { name: "Apply to routing" });
+      await expect(dialog).toBeVisible();
+      await captureRoutingFlow(page, info, "apply-routing-mobile-dark");
+      await page.setViewportSize({ width: 1440, height: 960 });
+      await dialog.getByRole("textbox", { name: "Task class name" }).fill("Invoice delivery");
+      await dialog.getByRole("textbox", { name: "Task class slug" }).fill("delivery");
+      await dialog.getByRole("spinbutton", { name: "Maximum mean cost (USD)" }).fill("0.10");
+      await dialog
+        .getByRole("spinbutton", { name: "Maximum p95 wall latency (ms)" })
+        .fill("120000");
+      const floor = dialog.getByRole("spinbutton", { name: "Quality floor (%)" });
+      const createDraft = dialog.getByRole("button", { name: "Create routing draft" });
+      await expect(floor).toHaveValue("80");
+      await floor.fill("100");
+      await createDraft.click();
+      await expect(dialog.getByRole("alert")).toHaveText(/below the selected quality floor/i);
+      await captureRoutingFlow(page, info, "apply-routing-below-quality-floor");
+      await floor.fill("80");
+      const savedResponse = page.waitForResponse(
+        (result) =>
+          new URL(result.url()).pathname === routingEndpoint &&
+          result.request().method() === "POST",
+      );
+      await createDraft.click();
+      const saved = await savedResponse;
+      const savedBody: unknown = await saved.json();
+      expect(saved.status(), JSON.stringify(savedBody)).toBe(201);
+      await expect(dialog.getByRole("status")).toHaveText("Routing draft created.");
+      const draft = routingDraftResponseSchema.parse(savedBody);
+      expect(await readActivation()).toEqual(activeBefore);
+
+      const directRequest = {
+        requestId: randomUUID(),
+        candidateKey: routingCandidate.candidateKey,
+        scorerRevisionId: seeded.accuracyScorerRevisionId,
+        suiteRevisionId: seeded.suiteRevisionId,
+        taskClass: { slug: "delivery", name: "Invoice delivery" },
+        constraints: {
+          qualityFloorBps: 8000,
+          maxMeanCostUsd: 0.1,
+          maxLatencyMs: 120_000,
+          minResolvedTrials: 2,
+          minConfidenceBps: null,
+        },
+      };
+      const unavailable = await page.request.post(routingEndpoint, {
+        data: { ...directRequest, candidateKey: unknown.candidateKey },
+      });
+      expect(unavailable.status()).toBe(422);
+      expect(await unavailable.json()).toMatchObject({
+        error: expect.stringMatching(/measured cost/i),
+      });
+      const stale = await page.request.post(routingEndpoint, {
+        data: { ...directRequest, requestId: randomUUID(), suiteRevisionId: randomUUID() },
+      });
+      expect(stale.status()).toBe(409);
+      expect(await stale.json()).toMatchObject({
+        error: expect.stringMatching(/suite revision changed/i),
+      });
+      const denied = await reader.request.post(routingEndpoint, {
+        data: { ...directRequest, requestId: randomUUID() },
+      });
+      expect(denied.status()).toBe(403);
+      expect(await readActivation()).toEqual(activeBefore);
+
+      await dialog.getByRole("link", { name: "Open routing draft" }).click();
+      await expect(page).toHaveURL(new RegExp(`[?&]draft=${draft.draftId}(?:&|$)`));
+      await expect(page.getByRole("heading", { name: "Routing draft evidence" })).toBeVisible({
+        timeout: 75_000,
+      });
+      const evidenceLink = page.getByRole("link", { name: "Open exact comparison configuration" });
+      const suiteLink = page.getByRole("link", { name: "Open frozen suite revision" });
+      const evidenceUrl = new URL((await evidenceLink.getAttribute("href")) ?? "", fixture.app);
+      expect(evidenceUrl.pathname).toContain(`/comparisons/${experimentId}`);
+      expect(evidenceUrl.searchParams.get("scorerRevisionId")).toBe(
+        seeded.accuracyScorerRevisionId,
+      );
+      expect(evidenceUrl.searchParams.get("routingCandidateKey")).toBe(
+        routingCandidate.candidateKey,
+      );
+      expect(evidenceUrl.hash).toBe(`#${routingRowId}`);
+      const suiteUrl = new URL((await suiteLink.getAttribute("href")) ?? "", fixture.app);
+      expect(suiteUrl.pathname).toBe(`${benchmarks}/${seeded.suiteId}`);
+      expect(suiteUrl.searchParams.get("revision")).toBe(seeded.suiteRevisionId);
+      await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+      await captureRoutingFlow(page, info, "routing-draft-exact-evidence");
+      await evidenceLink.click();
+      await expect(routingRow).toBeVisible({ timeout: 75_000 });
+      await expect(table.getByRole("row")).toHaveCount(2);
+      await expect(page).toHaveURL(new RegExp(`#${routingRowId}$`));
+    });
+
     expect(
       (
         await page.request.get(endpoint.replace(fixture.factoryId, fixture.siblingFactoryId))
@@ -210,15 +343,17 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
     expect((await reader.request.get(endpoint)).status()).toBe(403);
   } finally {
     await viewer.close();
-    try {
-      await test.step("Clean up the loopback workspace", () => fixture.cleanup());
-    } finally {
+    await test.step("Clean up the loopback workspace", async () => {
       if (storagePaths.length) {
-        const { error } = await admin.storage
-          .from("session-source-checkpoints")
-          .remove(storagePaths);
-        if (error) throw error;
+        expect(
+          await fixture.runFixtureFile("factory-benchmark-frontier-seed.sql", {
+            workspace_id: fixture.workspaceId,
+            workspace_slug: fixture.slug,
+            cleanup_paths: JSON.stringify(storagePaths),
+          }),
+        ).toEqual({ removed: storagePaths.length });
       }
-    }
+      await fixture.cleanup();
+    });
   }
 });

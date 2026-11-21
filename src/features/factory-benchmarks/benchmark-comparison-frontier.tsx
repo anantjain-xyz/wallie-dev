@@ -6,6 +6,7 @@ import type {
   BenchmarkFrontierCandidate,
 } from "@/lib/factory-benchmarks/frontier-contracts";
 
+import { ApplyToRoutingButton, BenchmarkRoutingDraft } from "./benchmark-routing-draft";
 import {
   benchmarkCandidateRole,
   benchmarkHarnessNames,
@@ -381,7 +382,13 @@ function FrontierChart({ frontier }: { frontier: BenchmarkFrontier }) {
   );
 }
 
-function CandidateRows({ frontier }: { frontier: BenchmarkFrontier }) {
+function CandidateRows({
+  frontier,
+  canApplyRouting = false,
+}: {
+  frontier: BenchmarkFrontier;
+  canApplyRouting?: boolean;
+}) {
   return (
     <table className="type-secondary w-full table-fixed text-left tabular-nums">
       <caption className="sr-only">Frontier configuration results</caption>
@@ -438,6 +445,11 @@ function CandidateRows({ frontier }: { frontier: BenchmarkFrontier }) {
                   {" · "}
                   {number.format(counts.excluded)} excluded
                 </span>
+                {canApplyRouting && status !== "excluded" && candidate.position !== null ? (
+                  <ApplyToRoutingButton
+                    candidate={{ key: candidateKey, label: candidateLabel(candidate) }}
+                  />
+                ) : null}
               </th>
               <td className="space-y-1 break-words px-2 py-3 sm:px-5">
                 <p className="font-medium">
@@ -517,12 +529,14 @@ export function BenchmarkComparisonFrontier({
   preservedQuery,
   firstHref,
   nextHref,
+  routingDraft,
 }: {
   frontier: BenchmarkFrontier;
   action: string;
   preservedQuery: Readonly<Record<string, string | undefined>>;
   firstHref?: string;
   nextHref?: string;
+  routingDraft?: { workspaceId: string; workspaceSlug: string; factoryId: string };
 }) {
   return (
     <PageSection anchorId="cost-quality-frontier" title="Cost and quality frontier">
@@ -530,7 +544,24 @@ export function BenchmarkComparisonFrontier({
         <Constraints frontier={frontier} action={action} preservedQuery={preservedQuery} />
         <Recommendation frontier={frontier} />
         <FrontierChart frontier={frontier} />
-        {frontier.items.length ? <CandidateRows frontier={frontier} /> : null}
+        {frontier.items.length ? (
+          routingDraft && frontier.scorer ? (
+            <BenchmarkRoutingDraft
+              context={{
+                ...routingDraft,
+                experimentId: frontier.experimentId,
+                suiteRevisionId: frontier.suite.revisionId,
+                scorerRevisionId: frontier.scorer.id,
+                qualityFloorBps: frontier.policy.qualityFloorBps,
+                minimumResolved: frontier.policy.minimumResolved,
+              }}
+            >
+              <CandidateRows frontier={frontier} canApplyRouting />
+            </BenchmarkRoutingDraft>
+          ) : (
+            <CandidateRows frontier={frontier} />
+          )
+        ) : null}
         {firstHref || nextHref ? (
           <nav
             aria-label="Frontier configuration pages"

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { routingDraftEvidenceSchema } from "@/lib/model-routing/draft-contracts";
 import { loadWorkspaceSandboxOverview } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -98,7 +99,21 @@ async function readEditorDocument(
     target,
   );
   if (error) throw error;
-  return data ? editorDocument(data, target.kind) : null;
+  if (!data) return null;
+  const document = editorDocument(data, target.kind);
+  if (target.kind === "draft" && document.bundle.modelRouting) {
+    const receipt = await client
+      .from("factory_routing_draft_evidence")
+      .select("evidence")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .eq("draft_id", target.id)
+      .maybeSingle();
+    if (receipt.error) throw receipt.error;
+    if (receipt.data)
+      document.routingDraftEvidence = routingDraftEvidenceSchema.parse(receipt.data.evidence);
+  }
+  return document;
 }
 
 export async function loadFactoryEditorDocument(
