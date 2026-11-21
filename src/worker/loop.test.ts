@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createWorkerAttemptDeadline } from "@/lib/pipeline/worker-attempt-deadline";
+
 import type { WorkerConfig } from "./config";
 
 const mocked = vi.hoisted(() => ({
@@ -116,7 +118,10 @@ describe("runClaimedJob", () => {
       select: vi.fn(() => query),
       insert: vi.fn(() => query),
       eq: vi.fn(() => query),
-      abortSignal: vi.fn(() => query),
+      abortSignal: vi.fn((signal: AbortSignal) => {
+        signal.throwIfAborted();
+        return query;
+      }),
       maybeSingle: vi.fn(async () => ({
         data: runId ? { id: runId } : null,
         error: null as { message: string } | null,
@@ -152,7 +157,10 @@ describe("runClaimedJob", () => {
     };
     admin.rpc.mockImplementation((name, input) => ({
       abortSignal: vi.fn(async () => {
-        if (name !== "fail_stalled_session_job_attempt")
+        if (
+          name !== "fail_stalled_session_job_attempt" &&
+          name !== "fail_deadline_session_job_attempt"
+        )
           throw new Error(`Unexpected supervisor recovery RPC ${name}`);
         const args = input as Record<string, unknown>;
         const publication = state.publication;
@@ -229,6 +237,52 @@ describe("runClaimedJob", () => {
     });
   });
 
+  it.each([
+    new DOMException("The provider timed out.", "TimeoutError"),
+    new DOMException("The attempt was canceled.", "AbortError"),
+  ])("keeps an ordinary %s on the generic attempt recovery path", async (error) => {
+    mocked.processPipelineJob.mockRejectedValueOnce(error);
+    const admin = recoveryAdmin();
+    await runClaimedJob(admin as never, baseJob as never);
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_stalled_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: error.message,
+      p_retry: false,
+      p_max_retries: 0,
+    });
+  });
+
+  it("settles an earlier benchmark deadline with the still-live recovery signal", async () => {
+    vi.useFakeTimers();
+    mocked.processPipelineJob.mockImplementationOnce(async () => {
+      using deadline = createWorkerAttemptDeadline(20, "Benchmark attempt deadline expired.");
+      await new Promise<void>((_, reject) => {
+        deadline.signal.addEventListener("abort", () => reject(deadline.signal.reason), {
+          once: true,
+        });
+      });
+    });
+    const admin = recoveryAdmin();
+    const processing = runClaimedJob(admin as never, baseJob as never, {
+      timeoutMs: 100,
+      workerRuntime: "workerd",
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    await processing;
+    const workSignal = mocked.processPipelineJob.mock.calls[0][0].signal;
+    expect(workSignal.aborted).toBe(true);
+    const recoverySignal = admin.query.abortSignal.mock.calls[0][0];
+    expect(recoverySignal.aborted).toBe(false);
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_deadline_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: "Benchmark attempt deadline expired.",
+    });
+  });
+
   it.each(["pending", "claimed"] as const)(
     "preserves a committed %s intent when non-timeout processor recovery rejects",
     async (status) => {
@@ -284,7 +338,7 @@ describe("runClaimedJob", () => {
       expect(state.jobStatus).toBe("error");
       expect(state.publication?.deadline_at).toBe(deadlineAt);
       expect(admin.rpc).toHaveBeenCalledExactlyOnceWith(
-        "fail_stalled_session_job_attempt",
+        "fail_deadline_session_job_attempt",
         expect.objectContaining({
           p_job_id: "job-1",
           p_attempt_count: 1,
@@ -388,16 +442,12 @@ describe("runClaimedJob", () => {
       kind: "worker_error",
       message_md: "Worker attempt exceeded its 50ms deadline.",
     });
-    expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_stalled_session_job_attempt",
-      expect.objectContaining({
-        p_job_id: "job-1",
-        p_attempt_count: 1,
-        p_run_id: "run-attempt-1",
-        p_retry: false,
-        p_error: expect.stringContaining("deadline"),
-      }),
-    );
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_deadline_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: "Worker attempt exceeded its 50ms deadline.",
+    });
   });
 
   it("re-reads the same attempt when a late start defeats runless recovery", async () => {
@@ -430,14 +480,12 @@ describe("runClaimedJob", () => {
     await vi.advanceTimersByTimeAsync(20);
     await processing;
     expect(signal.aborted).toBe(true);
-    expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_stalled_session_job_attempt",
-      expect.objectContaining({
-        p_job_id: "job-1",
-        p_attempt_count: 1,
-        p_retry: false,
-      }),
-    );
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_deadline_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: "Worker attempt exceeded its 20ms deadline.",
+    });
   });
 
   it("retires an attempt that expired before execution without starting a processor", async () => {
@@ -446,14 +494,12 @@ describe("runClaimedJob", () => {
       deadlineAt: new Date(Date.now() - 1).toISOString(),
     });
     expect(mocked.processPipelineJob).not.toHaveBeenCalled();
-    expect(admin.rpc).toHaveBeenCalledWith(
-      "fail_stalled_session_job_attempt",
-      expect.objectContaining({
-        p_job_id: "job-1",
-        p_attempt_count: 1,
-        p_retry: false,
-      }),
-    );
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_deadline_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: "Worker attempt deadline expired before execution.",
+    });
   });
 
   it("bounds stalled recovery and prevents its late lookup from issuing a write", async () => {

@@ -113,6 +113,18 @@ export function workspaceBenchmarkSuitePath(
   );
 }
 
+export function workspaceBenchmarkComparisonPath(
+  workspaceSlug: string,
+  suiteId: string,
+  experimentId: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(
+    `${workspaceBenchmarkSuitePath(workspaceSlug, suiteId)}/comparisons/${encodeURIComponent(experimentId)}`,
+    query,
+  );
+}
+
 export function workspaceContextPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/context`, query);
 }

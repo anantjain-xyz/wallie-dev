@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -18,6 +19,7 @@ import {
   MAX_BENCHMARK_EVALUATION_BUDGET_USD,
   MAX_BENCHMARK_SCORER_REVISIONS,
 } from "@/lib/factory-benchmarks/experiment-evaluation-contracts";
+import { workspaceBenchmarkComparisonPath } from "@/lib/routes";
 
 type Selection = {
   definitionRevisionId: string;
@@ -294,14 +296,18 @@ function ScoringFields({
 
 export function BenchmarkComparisonForm({
   workspaceId,
+  workspaceSlug,
   factoryId,
+  suiteId,
   suiteRevisionId,
   suiteRevisionNumber,
   taskCount,
   options,
 }: {
   workspaceId: string;
+  workspaceSlug: string;
   factoryId: string;
+  suiteId: string;
   suiteRevisionId: string;
   suiteRevisionNumber: number;
   taskCount: number;
@@ -548,6 +554,14 @@ export function BenchmarkComparisonForm({
             <p className="type-secondary text-muted">
               Experiment <span className="font-mono">{receipt.experimentId}</span>
             </p>
+            <Link
+              className="ui-button mt-2 w-fit"
+              href={workspaceBenchmarkComparisonPath(workspaceSlug, suiteId, receipt.experimentId, {
+                factory: factoryId,
+              })}
+            >
+              View comparison
+            </Link>
             {receipt.evaluation ? (
               <div className="type-secondary space-y-1 pt-1">
                 <p>

@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { WorkerAttemptDeadlineError } from "@/lib/pipeline/worker-attempt-deadline";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -300,7 +301,7 @@ describe("benchmark worker execution contract", () => {
     vi.mocked(runRecordedTrialFixture).mockImplementationOnce(async (input) => {
       const output = await candidate(input);
       await releaseProvider.promise;
-      expect(input.signal.reason).toMatchObject({ name: "TimeoutError" });
+      expect(input.signal.reason).toBeInstanceOf(WorkerAttemptDeadlineError);
       sentLateOutput.resolve();
       return output;
     });
@@ -320,7 +321,7 @@ describe("benchmark worker execution contract", () => {
             watchdog = setTimeout(() => resolve("The worker still owns canceled work"), 3000);
           }),
         ]),
-      ).toMatchObject({ name: "TimeoutError" });
+      ).toBeInstanceOf(WorkerAttemptDeadlineError);
     } finally {
       clearTimeout(watchdog);
       releaseProvider.resolve();

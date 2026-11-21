@@ -339,6 +339,21 @@ begin
 end;
 $$;
 select is(pg_temp.test_live_diagnostic(),'cli_pin_mismatch', 'the exact live attempt retains its safe diagnostic');
+create function pg_temp.test_live_deadline() returns jsonb language plpgsql as $$
+declare trial record; outcome text; saved jsonb;
+begin
+  select * into strict trial from live_trials where seq = 2;
+  outcome := public.fail_deadline_session_job_attempt(trial.job_id,trial.attempt_count,
+    'The Workerd attempt clock fired.',trial.run_id);
+  select jsonb_build_object('outcome',outcome,'reason',current.failure_code,'status',current.status) into saved
+  from public.factory_benchmark_trials current where current.id = trial.trial_id;
+  raise exception using errcode = 'QT001', message = 'Restore the Workerd attempt for subsequent tests.';
+exception when sqlstate 'QT001' then
+  return saved;
+end;
+$$;
+select is(pg_temp.test_live_deadline(),'{"outcome":"error","reason":"deadline_elapsed","status":"error"}'::jsonb,
+  'a running Workerd attempt retains its exact typed deadline cause');
 
 create function pg_temp.live_failed_usage(p_late boolean) returns jsonb language plpgsql as $$
 declare

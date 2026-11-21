@@ -240,3 +240,44 @@ replay policy. See [qualified live replay](./qualified-benchmark-replay.md).
 - The evaluation projection keeps every eligible trial and selected revision
   in its denominator. It exposes pending and unavailable results and reports
   execution and evaluation spend, outstanding reserves, and unavailable costs.
+
+## Inspect and export a comparison
+
+Open **Frozen comparisons** on the selected suite revision. The comparison
+links back to that revision and lists the frozen candidate configurations and
+scorer revisions. Factory managers can read and export comparisons from active
+and archived factories they can still manage.
+
+- The planned count includes every materialized task, candidate, and
+  repetition. Excluded trials stay visible alongside eligible trials.
+  Pending, running, and terminal counts reconcile to the eligible count.
+- Quality counts use the full eligible denominator for each exact scorer
+  revision. The latency sample count covers trials with observed start and
+  finish times. Trial rows include the seed and any recorded exclusion or
+  failure reason.
+- Spending covers execution, evaluation, and both together. It reports
+  measured and estimated amounts, outstanding reserves, and holds for
+  attempts with unavailable cost. The available amount is a subtotal when
+  a trial has unknown charges.
+
+Use **Create result export** to preserve the comparison at the captured time. The
+JSON manifest includes all frozen trial IDs in order, the scorer revisions,
+the totals, and directories for the numbered trial and candidate parts.
+Download each part and verify its byte count and SHA-256 against the manifest.
+The trial parts together contain one row per manifest trial ID. The candidate
+parts contain every frozen configuration and its totals. Suite edits and
+later trial state changes leave an existing export intact. Only the requester
+can download it, with current factory manager access, for 24 hours after
+capture.
+
+The API base is `/api/workspaces/{workspaceId}/factories/{factoryId}/benchmarks`.
+
+| Request                                                                        | Parameters and result                                                                                                                                   |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /comparisons`                                                             | Filter by `suiteRevisionId`. Pass the cursor's `createdAt` and `experimentId` as `beforeCreatedAt` and `beforeExperimentId`.                            |
+| `GET /experiments/{experimentId}/comparison`                                   | Use `afterTrialId` with `limit` and `afterCandidateKey` with `candidateLimit` to page independently. The totals always cover the full matrix.           |
+| `POST /experiments/{experimentId}/exports`                                     | Send `{ "requestId": "<uuid>" }`. Reuse the ID to retry the same capture. The receipt gives the export ID, expiry, and trial and candidate part counts. |
+| `GET /experiments/{experimentId}/exports`                                      | List the caller's unexpired exports. Pass the cursor's `capturedAt` and `exportId` as `beforeCapturedAt` and `beforeExportId`.                          |
+| `GET /experiments/{experimentId}/exports/{exportId}`                           | Download the manifest.                                                                                                                                  |
+| `GET /experiments/{experimentId}/exports/{exportId}/parts/{ordinal}`           | Download a numbered trial part.                                                                                                                         |
+| `GET /experiments/{experimentId}/exports/{exportId}/candidate-parts/{ordinal}` | Download a numbered candidate part.                                                                                                                     |

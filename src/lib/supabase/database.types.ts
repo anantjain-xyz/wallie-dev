@@ -11157,6 +11157,16 @@ export type Database = {
         }
         Returns: Json
       }
+      create_factory_benchmark_comparison_export: {
+        Args: {
+          p_actor_user_id: string
+          p_experiment_id: string
+          p_factory_id: string
+          p_request_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       create_factory_benchmark_task: {
         Args: {
           p_acceptance_criteria: string
@@ -11744,6 +11754,15 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      fail_deadline_session_job_attempt: {
+        Args: {
+          p_attempt_count: number
+          p_error: string
+          p_job_id: string
+          p_run_id?: string
+        }
+        Returns: string
       }
       fail_factory_benchmark_trial: {
         Args: {
@@ -12607,6 +12626,30 @@ export type Database = {
           unavailable_reason: string
           worker_runtime: string
         }[]
+      }
+      list_factory_benchmark_comparison_exports: {
+        Args: {
+          p_actor_user_id: string
+          p_before_captured_at?: string
+          p_before_export_id?: string
+          p_experiment_id: string
+          p_factory_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      list_factory_benchmark_comparisons: {
+        Args: {
+          p_actor_user_id: string
+          p_before_created_at?: string
+          p_before_experiment_id?: string
+          p_factory_id: string
+          p_limit?: number
+          p_suite_revision_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       list_factory_bindable_workspace_secrets: {
         Args: {
@@ -13497,6 +13540,31 @@ export type Database = {
         Args: {
           p_export_id: string
           p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
+      read_factory_benchmark_comparison: {
+        Args: {
+          p_actor_user_id: string
+          p_after_candidate_key?: string
+          p_after_trial_id?: string
+          p_candidate_limit?: number
+          p_experiment_id: string
+          p_factory_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_benchmark_comparison_export: {
+        Args: {
+          p_actor_user_id: string
+          p_experiment_id: string
+          p_export_id: string
+          p_factory_id: string
+          p_page_kind?: string
+          p_page_ordinal?: number
           p_workspace_id: string
         }
         Returns: string

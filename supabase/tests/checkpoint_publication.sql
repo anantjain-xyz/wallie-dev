@@ -79,13 +79,18 @@ select is((select public.fail_stalled_session_job_attempt(j.id,1,'Stalled',true,
   from public.agent_runs r join public.agent_jobs j on j.id=r.agent_job_id
   where r.id=(select run_id from publication_fixtures where label='atomic')),'stale',
   'authoritative stall failure leaves an unexpired current publication recoverable');
+select is((select public.fail_deadline_session_job_attempt(j.id,1,'The worker deadline elapsed.',r.id)
+  from public.agent_runs r join public.agent_jobs j on j.id=r.agent_job_id
+  where r.id=(select run_id from publication_fixtures where label='atomic')),'stale',
+  'typed worker deadline recovery also defers to an unexpired current publication');
 select ok((select r.status='running' and j.status='running' and j.attempt_count=1
   from public.agent_runs r join public.agent_jobs j on j.id=r.agent_job_id
   where r.id=(select run_id from publication_fixtures where label='atomic')),
   'stall protection does not retire or retry the original agent execution');
 select ok(not has_function_privilege('authenticated',
   'public.prepare_session_source_and_checkpoint_publication(uuid,uuid,text,text,text,text,text,text,text,text,integer,text,timestamptz,bigint,bigint)','EXECUTE')
-  and not has_function_privilege('authenticated','public.fail_stalled_session_job_attempt(uuid,integer,text,boolean,integer,uuid)','EXECUTE'),
+  and not has_function_privilege('authenticated','public.fail_stalled_session_job_attempt(uuid,integer,text,boolean,integer,uuid)','EXECUTE')
+  and not has_function_privilege('authenticated','public.fail_deadline_session_job_attempt(uuid,integer,text,uuid)','EXECUTE'),
   'browser cannot prepare privileged obligations or decide stalled ownership');
 
 update publication_fixtures set claim_id=public.claim_session_checkpoint_publication(run_id) where label='atomic';

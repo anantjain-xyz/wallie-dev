@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { WorkerAttemptDeadlineError } from "@/lib/pipeline/worker-attempt-deadline";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -29,8 +30,7 @@ export async function recoverAttempt(
   admin: AdminClient,
   jobId: string,
   attemptCount: number,
-  message: string,
-  retry = true,
+  failure: string | WorkerAttemptDeadlineError,
 ) {
   // A runless failure may race start. Retry the lookup once, preserving the
   // exact attempt throughout, as in the Node supervisor.
@@ -51,8 +51,9 @@ export async function recoverAttempt(
       if (result.error) throw new Error("Could not acknowledge published attempt.");
       return;
     }
+    const deadlineElapsed = failure instanceof WorkerAttemptDeadlineError;
     let maxRetries = 3;
-    if (run) {
+    if (run && !deadlineElapsed) {
       const config = await admin
         .from("workspace_agent_config")
         .select("value_json")
@@ -64,14 +65,19 @@ export async function recoverAttempt(
     }
     // Interruption can follow a committed publication intent whose response was
     // lost. Let the transaction guard preserve it until its original deadline.
-    const result = await admin.rpc("fail_stalled_session_job_attempt", {
+    const identity = {
       p_job_id: jobId,
       p_attempt_count: attemptCount,
       p_run_id: run?.id,
-      p_error: message,
-      p_retry: retry && !run?.source_recovery_required,
-      p_max_retries: maxRetries,
-    });
+      p_error: deadlineElapsed ? failure.message : failure,
+    };
+    const result = deadlineElapsed
+      ? await admin.rpc("fail_deadline_session_job_attempt", identity)
+      : await admin.rpc("fail_stalled_session_job_attempt", {
+          ...identity,
+          p_retry: !run?.source_recovery_required,
+          p_max_retries: maxRetries,
+        });
     if (result.error) throw new Error("Could not recover interrupted attempt.");
     if (run || result.data !== "stale") return;
   }
@@ -108,8 +114,7 @@ export async function dispatchWork(
         admin,
         dispatch.job_id,
         dispatch.attempt_count,
-        "Worker attempt deadline expired before dispatch.",
-        false,
+        new WorkerAttemptDeadlineError("Worker attempt deadline expired before dispatch."),
       );
       return;
     }

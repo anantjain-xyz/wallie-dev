@@ -18,7 +18,7 @@ vi.mock("@/lib/cursor/auth-processor", () => ({ processClaimedCursorAuthFlow: vi
 
 const bindings = env as unknown as Env;
 
-function fixture() {
+function fixture(deadlineOffsetMs = 60_000) {
   const id = `job-${crypto.randomUUID()}-2`;
   const job = { id: "job", attempt_count: 2, status: "running", workspace_id: "workspace" };
   const run = {
@@ -27,7 +27,7 @@ function fixture() {
     source_recovery_required: false,
     workspace_id: "workspace",
   };
-  const deadlineAt = new Date(Date.now() + 60_000).toISOString();
+  const deadlineAt = new Date(Date.now() + deadlineOffsetMs).toISOString();
   const recovery = { now: Date.now() };
   const publications: Array<{
     run_id: string;
@@ -38,27 +38,35 @@ function fixture() {
     artifact_md: string;
   }> = [];
   let executed = false;
-  const rpc = vi.fn(async (name: string, args?: Record<string, unknown>) => {
-    if (name === "begin_worker_dispatch") {
-      const data = !executed;
-      executed = true;
-      return { data, error: null };
-    }
-    if (name === "fail_stalled_session_job_attempt") {
-      const saved = publications.some(
-        (publication) =>
-          publication.run_id === args?.p_run_id &&
-          publication.job_id === args?.p_job_id &&
-          publication.attempt_count === args?.p_attempt_count &&
-          Date.parse(publication.deadline_at) > recovery.now,
-      );
-      if (saved) return { data: "stale", error: null };
-      run.status = "error";
-      job.status = args?.p_retry ? "queued" : "error";
-      return { data: job.status, error: null };
-    }
-    return { data: "error", error: null };
-  });
+  const rpc = vi.fn(
+    async (
+      name: string,
+      args?: Record<string, unknown>,
+    ): Promise<{ data: boolean | string | null; error: { message: string } | null }> => {
+      if (name === "begin_worker_dispatch") {
+        const data = !executed;
+        executed = true;
+        return { data, error: null };
+      }
+      if (
+        name === "fail_stalled_session_job_attempt" ||
+        name === "fail_deadline_session_job_attempt"
+      ) {
+        const saved = publications.some(
+          (publication) =>
+            publication.run_id === args?.p_run_id &&
+            publication.job_id === args?.p_job_id &&
+            publication.attempt_count === args?.p_attempt_count &&
+            Date.parse(publication.deadline_at) > recovery.now,
+        );
+        if (saved) return { data: "stale", error: null };
+        run.status = "error";
+        job.status = args?.p_retry ? "queued" : "error";
+        return { data: job.status, error: null };
+      }
+      return { data: "error", error: null };
+    },
+  );
   const from = (table: string) => {
     const query = {
       select: () => query,
@@ -95,6 +103,30 @@ function fixture() {
 beforeEach(() => vi.resetAllMocks());
 
 describe("native Workflow ownership", () => {
+  it("retries deadline settlement for an expired captured attempt without executing it", async () => {
+    const f = fixture(-1_000);
+    f.admin.rpc.mockResolvedValueOnce({ data: null, error: { message: "Transient DB error" } });
+    const inspection = await introspectWorkflowInstance(bindings.SESSION_ATTEMPT, f.id);
+    try {
+      await bindings.SESSION_ATTEMPT.create({ id: f.id, params: f.params });
+      await inspection.waitForStatus("complete");
+      expect(runClaimedJob).not.toHaveBeenCalled();
+      const identity = {
+        p_job_id: "job",
+        p_attempt_count: 2,
+        p_run_id: "run",
+        p_error: "Worker attempt deadline expired before execution.",
+      };
+      expect(f.admin.rpc.mock.calls).toEqual([
+        ["fail_deadline_session_job_attempt", identity],
+        ["fail_deadline_session_job_attempt", identity],
+      ]);
+      expect(f.job.status).toBe("error");
+    } finally {
+      await inspection.dispose();
+    }
+  });
+
   it("executes a captured attempt once and fences an explicit Workflow replay", async () => {
     const f = fixture();
     const inspection = await introspectWorkflowInstance(bindings.SESSION_ATTEMPT, f.id);

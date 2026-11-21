@@ -8,6 +8,7 @@ import { timingSafeEqual } from "node:crypto";
 import { cloudflareEnvSchema } from "@/env/cloudflare";
 import { workerRunCaptureEnvSchema } from "@/env/worker";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { WorkerAttemptDeadlineError } from "@/lib/pipeline/worker-attempt-deadline";
 import { runClaimedJob } from "@/worker/loop";
 import { processClaimedCursorAuthFlow } from "@/lib/cursor/auth-processor";
 import { registerWorker, sendHeartbeat, deregisterWorker } from "@/worker/heartbeat";
@@ -153,8 +154,9 @@ export class SessionAttemptWorkflow extends WorkflowEntrypoint<Env, AttemptParam
     const { WALLIE_ORDERED_RUN_CAPTURE_ENABLED: captureOrderedEvents } =
       workerRunCaptureEnvSchema.parse(this.env);
     const admin = createSupabaseAdminClient();
+    let failure: WorkerAttemptDeadlineError | string | undefined;
     try {
-      await step.do(
+      const execution = await step.do(
         "execute captured attempt",
         { retries: { limit: 0, delay: "1 second" }, timeout: "30 minutes" },
         async () => {
@@ -166,13 +168,18 @@ export class SessionAttemptWorkflow extends WorkflowEntrypoint<Env, AttemptParam
             .eq("workflow_id", workflowId)
             .single();
           if (dispatch.error) throw new Error("Attempt dispatch is unavailable.");
+          const deadlineMs = Date.parse(dispatch.data.deadline_at);
+          if (deadlineMs <= Date.now()) return "deadline_elapsed";
           const claim = await admin.rpc("begin_worker_dispatch", {
             p_job_id: jobId,
             p_attempt_count: attemptCount,
             p_workflow_id: workflowId,
           });
           if (claim.error) throw new Error("Could not fence attempt execution.");
-          if (!claim.data) throw new Error("Attempt execution was already started or expired.");
+          if (!claim.data) {
+            if (deadlineMs <= Date.now()) return "deadline_elapsed";
+            throw new Error("Attempt execution was already started or expired.");
+          }
           const job = await admin
             .from("agent_jobs")
             .select("*")
@@ -181,8 +188,8 @@ export class SessionAttemptWorkflow extends WorkflowEntrypoint<Env, AttemptParam
             .eq("status", "running")
             .single();
           if (job.error) throw new Error("Captured attempt is no longer current.");
-          const remaining = Date.parse(dispatch.data.deadline_at) - Date.now();
-          if (remaining <= 0) throw new Error("Attempt deadline expired.");
+          const remaining = deadlineMs - Date.now();
+          if (remaining <= 0) return "deadline_elapsed";
           const workerId = `cloudflare-${workflowId}`;
           const heartbeats = new Set<Promise<void>>();
           await registerWorker(admin, workerId);
@@ -210,22 +217,23 @@ export class SessionAttemptWorkflow extends WorkflowEntrypoint<Env, AttemptParam
           }
         },
       );
+      if (execution === "deadline_elapsed")
+        failure = new WorkerAttemptDeadlineError(
+          "Worker attempt deadline expired before execution.",
+        );
     } catch {
       console.warn("[cloudflare-attempt] execution interrupted", { jobId, attemptCount });
+      failure = "Cloudflare execution interrupted or reached its deadline.";
+    }
+    if (failure) {
+      const disposition = failure;
       await step.do(
         "recover captured attempt",
         {
           timeout: "30 seconds",
           retries: { limit: 3, delay: "2 seconds", backoff: "exponential" },
         },
-        async () => {
-          await recoverAttempt(
-            admin,
-            jobId,
-            attemptCount,
-            "Cloudflare execution interrupted or reached its deadline.",
-          );
-        },
+        () => recoverAttempt(admin, jobId, attemptCount, disposition),
       );
     }
     await step.do("wake dispatcher", () => dispatcher(this.env).kick());
