@@ -157,3 +157,17 @@ WALLIE_BENCHMARK_TRIAL_SMOKE_WORKDIR=/path/to/disposable-supabase \
 
 The fixture uses anonymous read access to the archived public Wallie ref.
 It checks the private bundle in Storage and removes the temporary trial data.
+
+## Freeze a comparison
+
+- An experiment pins the suite revision, replay policy revision, and exact
+  candidate factory revisions. Model, harness, and sandbox settings come
+  from the verified revisions. The initial matrix uses Node as its planned
+  worker runtime.
+- The freeze command materializes one identity per task, candidate, and
+  repetition. Repeated candidates share the planned seed for each repetition.
+  Each cell retains its exact task revision, timeout, and recorded eligibility.
+- The receipt reports expected, materialized, eligible, and ineligible counts.
+  Unverified tasks count as ineligible and keep their recorded status in the
+  matrix. A matching retry returns the same comparison. Scheduling uses these
+  frozen identities as the input to trial admission.

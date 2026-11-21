@@ -1343,6 +1343,213 @@ export type Database = {
           },
         ]
       }
+      factory_benchmark_experiment_candidates: {
+        Row: {
+          candidate_key: string
+          definition_digest: string
+          definition_revision_id: string
+          experiment_id: string
+          factory_id: string
+          harness: string
+          model: string
+          sandbox_provider: string
+          worker_runtime: string
+          workspace_id: string
+        }
+        Insert: {
+          candidate_key: string
+          definition_digest: string
+          definition_revision_id: string
+          experiment_id: string
+          factory_id: string
+          harness: string
+          model: string
+          sandbox_provider: string
+          worker_runtime: string
+          workspace_id: string
+        }
+        Update: {
+          candidate_key?: string
+          definition_digest?: string
+          definition_revision_id?: string
+          experiment_id?: string
+          factory_id?: string
+          harness?: string
+          model?: string
+          sandbox_provider?: string
+          worker_runtime?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_experiment__workspace_id_factory_id_defi_fkey"
+            columns: ["workspace_id", "factory_id", "definition_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_experiment__workspace_id_factory_id_expe_fkey"
+            columns: ["workspace_id", "factory_id", "experiment_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_experiments"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_experiment_trials: {
+        Row: {
+          candidate_key: string
+          eligibility_reason: string | null
+          experiment_id: string
+          factory_id: string
+          repetition: number
+          replay_eligibility: string
+          seed: number
+          task_id: string
+          task_revision_id: string
+          timeout_ms: number
+          trial_id: string
+          workspace_id: string
+        }
+        Insert: {
+          candidate_key: string
+          eligibility_reason?: string | null
+          experiment_id: string
+          factory_id: string
+          repetition: number
+          replay_eligibility: string
+          seed: number
+          task_id: string
+          task_revision_id: string
+          timeout_ms: number
+          trial_id: string
+          workspace_id: string
+        }
+        Update: {
+          candidate_key?: string
+          eligibility_reason?: string | null
+          experiment_id?: string
+          factory_id?: string
+          repetition?: number
+          replay_eligibility?: string
+          seed?: number
+          task_id?: string
+          task_revision_id?: string
+          timeout_ms?: number
+          trial_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_experiment__workspace_id_factory_id_task_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "task_id",
+              "task_revision_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_task_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "task_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_experiment_workspace_id_factory_id_expe_fkey1"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "experiment_id",
+              "candidate_key",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_experiment_candidates"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "experiment_id",
+              "candidate_key",
+            ]
+          },
+        ]
+      }
+      factory_benchmark_experiments: {
+        Row: {
+          candidate_count: number
+          created_at: string
+          created_by: string
+          eligible_trial_count: number
+          expected_trial_count: number
+          factory_id: string
+          id: string
+          ineligible_trial_count: number
+          materialized_trial_count: number
+          policy_digest: string
+          policy_revision_id: string
+          repetitions: number
+          request_digest: string
+          seed: number
+          suite_revision_id: string
+          task_count: number
+          timeout_ms: number
+          workspace_id: string
+        }
+        Insert: {
+          candidate_count: number
+          created_at?: string
+          created_by: string
+          eligible_trial_count: number
+          expected_trial_count: number
+          factory_id: string
+          id: string
+          ineligible_trial_count: number
+          materialized_trial_count: number
+          policy_digest: string
+          policy_revision_id: string
+          repetitions: number
+          request_digest: string
+          seed: number
+          suite_revision_id: string
+          task_count: number
+          timeout_ms: number
+          workspace_id: string
+        }
+        Update: {
+          candidate_count?: number
+          created_at?: string
+          created_by?: string
+          eligible_trial_count?: number
+          expected_trial_count?: number
+          factory_id?: string
+          id?: string
+          ineligible_trial_count?: number
+          materialized_trial_count?: number
+          policy_digest?: string
+          policy_revision_id?: string
+          repetitions?: number
+          request_digest?: string
+          seed?: number
+          suite_revision_id?: string
+          task_count?: number
+          timeout_ms?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_experiments_workspace_id_factory_id_poli_fkey"
+            columns: ["workspace_id", "factory_id", "policy_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_replay_policy_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_experiments_workspace_id_factory_id_suit_fkey"
+            columns: ["workspace_id", "factory_id", "suite_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_suite_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_benchmark_replay_executions: {
         Row: {
           created_at: string
@@ -11146,6 +11353,22 @@ export type Database = {
         }
         Returns: string
       }
+      find_factory_benchmark_experiment_retry: {
+        Args: {
+          p_actor_user_id: string
+          p_definition_revision_ids: string[]
+          p_experiment_id: string
+          p_factory_id: string
+          p_policy_revision_id: string
+          p_repetitions: number
+          p_seed: number
+          p_suite_revision_id: string
+          p_timeout_ms: number
+          p_worker_runtime?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       find_session_creation_command: {
         Args: {
           creator_member_id: string
@@ -11359,6 +11582,21 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      freeze_factory_benchmark_experiment: {
+        Args: {
+          p_actor_user_id: string
+          p_candidates: Json
+          p_experiment_id: string
+          p_factory_id: string
+          p_policy_revision_id: string
+          p_repetitions: number
+          p_seed: number
+          p_suite_revision_id: string
+          p_timeout_ms: number
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       get_factory_cost_summary: {
         Args: {
