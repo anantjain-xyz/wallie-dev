@@ -1343,6 +1343,223 @@ export type Database = {
           },
         ]
       }
+      factory_benchmark_suite_members: {
+        Row: {
+          factory_id: string
+          suite_revision_id: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        Insert: {
+          factory_id: string
+          suite_revision_id: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        Update: {
+          factory_id?: string
+          suite_revision_id?: string
+          task_id?: string
+          task_revision_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_suite_membe_workspace_id_factory_id_suit_fkey"
+            columns: ["workspace_id", "factory_id", "suite_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_suite_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_suite_membe_workspace_id_factory_id_task_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "task_id",
+              "task_revision_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_task_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "task_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_suite_revisions: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          name: string
+          purpose: string
+          revision_number: number
+          selection_tags: string[] | null
+          suite_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id?: string
+          name: string
+          purpose: string
+          revision_number: number
+          selection_tags?: string[] | null
+          suite_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          name?: string
+          purpose?: string
+          revision_number?: number
+          selection_tags?: string[] | null
+          suite_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_suite_revis_workspace_id_factory_id_suit_fkey"
+            columns: ["workspace_id", "factory_id", "suite_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_suites"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_suites: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_suites_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_task_revisions: {
+        Row: {
+          acceptance_criteria: string
+          created_at: string
+          created_by: string
+          eligibility_reason: string | null
+          factory_id: string
+          id: string
+          name: string
+          replay_eligibility: string
+          revision_number: number
+          tags: string[]
+          task_id: string
+          workspace_id: string
+        }
+        Insert: {
+          acceptance_criteria: string
+          created_at?: string
+          created_by: string
+          eligibility_reason?: string | null
+          factory_id: string
+          id?: string
+          name: string
+          replay_eligibility: string
+          revision_number: number
+          tags: string[]
+          task_id: string
+          workspace_id: string
+        }
+        Update: {
+          acceptance_criteria?: string
+          created_at?: string
+          created_by?: string
+          eligibility_reason?: string | null
+          factory_id?: string
+          id?: string
+          name?: string
+          replay_eligibility?: string
+          revision_number?: number
+          tags?: string[]
+          task_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_task_revisi_workspace_id_factory_id_task_fkey"
+            columns: ["workspace_id", "factory_id", "task_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_tasks"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_tasks: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          source_provenance: Json
+          source_run_id: string
+          source_session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id?: string
+          source_provenance: Json
+          source_run_id: string
+          source_session_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          source_provenance?: Json
+          source_run_id?: string
+          source_session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_tasks_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       factory_context_source_revisions: {
         Row: {
           content: string | null
@@ -9643,6 +9860,39 @@ export type Database = {
         }
         Returns: Json
       }
+      create_factory_benchmark_task: {
+        Args: {
+          p_acceptance_criteria: string
+          p_actor_user_id: string
+          p_eligibility_reason?: string
+          p_factory_id: string
+          p_name: string
+          p_replay_eligibility?: string
+          p_source_run_id: string
+          p_tags: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          acceptance_criteria: string
+          created_at: string
+          created_by: string
+          eligibility_reason: string | null
+          factory_id: string
+          id: string
+          name: string
+          replay_eligibility: string
+          revision_number: number
+          tags: string[]
+          task_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_task_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       create_factory_event_subscription: {
         Args: {
           p_actor_user_id: string
@@ -12899,6 +13149,71 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "factory_agent_prompt_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_factory_benchmark_suite_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision_id?: string
+          p_factory_id: string
+          p_name: string
+          p_purpose: string
+          p_selection_tags?: string[]
+          p_suite_id?: string
+          p_task_revision_ids?: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          name: string
+          purpose: string
+          revision_number: number
+          selection_tags: string[] | null
+          suite_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_suite_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      save_factory_benchmark_task_revision: {
+        Args: {
+          p_acceptance_criteria: string
+          p_actor_user_id: string
+          p_eligibility_reason?: string
+          p_expected_revision_id: string
+          p_factory_id: string
+          p_name: string
+          p_replay_eligibility: string
+          p_tags: string[]
+          p_task_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          acceptance_criteria: string
+          created_at: string
+          created_by: string
+          eligibility_reason: string | null
+          factory_id: string
+          id: string
+          name: string
+          replay_eligibility: string
+          revision_number: number
+          tags: string[]
+          task_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_task_revisions"
           isOneToOne: true
           isSetofReturn: false
         }
