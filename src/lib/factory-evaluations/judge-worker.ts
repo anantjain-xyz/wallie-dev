@@ -28,7 +28,7 @@ type PreflightFailure =
 const maxClaims = 4;
 const maxEvaluationMs = 55_000;
 const rpcTimeoutMs = 5_000;
-// A job can record up to six attempts. Its total still fits the API's number range.
+// A job can record usage on up to six attempts. Its total fits the API's number range.
 const maxAttemptUsage = Math.floor(Number.MAX_SAFE_INTEGER / 6);
 
 function claimIdentity(claim: FactoryJudgeClaim) {
@@ -110,7 +110,12 @@ export async function runClaimedFactoryJudge(
   if (result.error || !preparation.success)
     throw new Error("Could not prepare the factory judge attempt.");
   const plan = preparation.data;
-  if (plan.status === "stale_claim" || plan.status === "already_started") return false;
+  if (
+    plan.status === "stale_claim" ||
+    plan.status === "already_started" ||
+    plan.status === "benchmark_blocked"
+  )
+    return false;
   if (plan.status !== "ready") return finish(admin, identity, plan.status);
   if (
     !plan.profile.enabled ||
@@ -122,6 +127,17 @@ export async function runClaimedFactoryJudge(
     plan.run_id !== claim.run_id
   )
     throw new Error("The factory judge input did not match its current claim.");
+  const benchmark = plan.benchmark_source;
+  if (
+    plan.evidence.some((evidence) => {
+      const isBenchmarkReport = "source" in evidence;
+      return benchmark
+        ? evidence.id !== benchmark.trial_id || !(evidence.kind === "artifact" || isBenchmarkReport)
+        : isBenchmarkReport;
+    })
+  ) {
+    throw new Error("The factory judge evidence did not match its source.");
+  }
 
   const parsed = factoryScorerDefinitionSchema.safeParse(plan.definition);
   if (!parsed.success) throw new Error("The factory judge received an invalid rubric revision.");
@@ -146,7 +162,11 @@ export async function runClaimedFactoryJudge(
   const permit = factoryJudgePermitSchema.safeParse(authorization.data);
   if (authorization.error || !permit.success)
     throw new Error("Could not authorize the factory judge attempt.");
-  if (permit.data.status === "stale_claim" || permit.data.status === "already_started")
+  if (
+    permit.data.status === "stale_claim" ||
+    permit.data.status === "already_started" ||
+    permit.data.status === "benchmark_blocked"
+  )
     return false;
   if (permit.data.status !== "authorized") return finish(admin, identity, permit.data.status);
 

@@ -11,6 +11,7 @@ import {
   type BenchmarkAxisCatalog,
   type BenchmarkAxisRequest,
 } from "./experiment-axes-contracts";
+import { matchesBenchmarkEvaluationPlan } from "./experiment-evaluation-contracts";
 import { BenchmarkExperimentError } from "./experiment";
 
 type Client = SupabaseClient<Database>;
@@ -40,7 +41,7 @@ export async function loadBenchmarkExperimentAxes({
   factoryId: string;
   suiteRevisionId: string;
 }): Promise<BenchmarkAxisCatalog> {
-  const [revisions, policies, receipts] = await Promise.all([
+  const [revisions, policies, receipts, scorers] = await Promise.all([
     readPages((from, to) =>
       supabase
         .from("factory_definition_revisions")
@@ -69,6 +70,15 @@ export async function loadBenchmarkExperimentAxes({
         })
         .order("id")
         .order("definition_id")
+        .range(from, to),
+    ),
+    readPages((from, to) =>
+      supabase
+        .from("factory_scorer_revisions")
+        .select("id,revision_number,scorer:factory_scorers!inner(name)")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .order("id")
         .range(from, to),
     ),
   ]);
@@ -128,6 +138,18 @@ export async function loadBenchmarkExperimentAxes({
       profile,
       revisionNumber: revision_number,
     })),
+    scorerRevisions: scorers
+      .map(({ id, scorer, revision_number }) => ({
+        id,
+        scorerName: scorer.name,
+        revisionNumber: revision_number,
+      }))
+      .sort(
+        (a, b) =>
+          a.scorerName.localeCompare(b.scorerName) ||
+          b.revisionNumber - a.revisionNumber ||
+          a.id.localeCompare(b.id),
+      ),
     profiles: [...profiles.values()],
   });
 }
@@ -147,20 +169,25 @@ export async function freezeBenchmarkExperimentAxes({
   request: BenchmarkAxisRequest;
   signal: AbortSignal;
 }) {
-  const { data, error } = await admin
-    .rpc("freeze_factory_benchmark_experiment_axes", {
-      p_workspace_id: workspaceId,
-      p_factory_id: factoryId,
-      p_actor_user_id: actorUserId,
-      p_experiment_id: request.experimentId,
-      p_suite_revision_id: request.suiteRevisionId,
-      p_policy_revision_id: request.policyRevisionId,
-      p_candidates: request.candidates,
-      p_repetitions: request.repetitions,
-      p_seed: request.seed,
-      p_timeout_ms: request.timeoutMs,
-    })
-    .abortSignal(signal);
+  const args = {
+    p_workspace_id: workspaceId,
+    p_factory_id: factoryId,
+    p_actor_user_id: actorUserId,
+    p_experiment_id: request.experimentId,
+    p_suite_revision_id: request.suiteRevisionId,
+    p_policy_revision_id: request.policyRevisionId,
+    p_candidates: request.candidates,
+    p_repetitions: request.repetitions,
+    p_seed: request.seed,
+    p_timeout_ms: request.timeoutMs,
+  };
+  const freeze = request.evaluation
+    ? admin.rpc("freeze_factory_benchmark_experiment_axes_with_evaluation", {
+        ...args,
+        p_evaluation_plan: request.evaluation,
+      })
+    : admin.rpc("freeze_factory_benchmark_experiment_axes", args);
+  const { data, error } = await freeze.abortSignal(signal);
   if (error?.code === "42501") {
     throw new BenchmarkExperimentError(
       403,
@@ -176,7 +203,7 @@ export async function freezeBenchmarkExperimentAxes({
   if (error?.code === "PT422" || error?.code === "22023") {
     throw new BenchmarkExperimentError(
       422,
-      "A candidate is unavailable or the selected axes cannot form a comparison. Check the suite, policy, and capability checks.",
+      "The selected suite, policy, candidates, or scorer revisions cannot form a comparison.",
     );
   }
   if (error) throw error;
@@ -190,7 +217,9 @@ export async function freezeBenchmarkExperimentAxes({
     snapshot.expectedTrialCount !==
       snapshot.taskCount * snapshot.candidateCount * snapshot.repetitions ||
     snapshot.materializedTrialCount !== snapshot.expectedTrialCount ||
-    snapshot.eligibleTrialCount + snapshot.ineligibleTrialCount !== snapshot.materializedTrialCount
+    snapshot.eligibleTrialCount + snapshot.ineligibleTrialCount !==
+      snapshot.materializedTrialCount ||
+    !matchesBenchmarkEvaluationPlan(snapshot.evaluation, request.evaluation)
   ) {
     throw new Error("The frozen comparison returned an invalid snapshot.");
   }
