@@ -73,6 +73,11 @@ const definitionFields = [
         : [],
   },
   {
+    label: "Model routing policy",
+    read: (value) => (value.modelRouting ? JSON.stringify(value.modelRouting, null, 2) : null),
+    multiline: true,
+  },
+  {
     label: "MCP bindings",
     read: (value) =>
       value.mcpManifest?.servers.map((server) => {

@@ -1064,12 +1064,115 @@ select ok((select stored.schema_version=2 and stored.definition_json::jsonb->'sc
 select is((select max(a.activation_number) from public.factory_definition_activations a join factory_activation_scope s using(factory_id)),
   7::bigint, 'the sibling factory activation head does not change');
 
+-- The compiler supplies the routing document inside the digest-bound definition.
+create temp table routing_policy_fixture as
+select jsonb_build_object(
+  'version',1,
+  'taskClasses','[
+    {"id":"54200000-0010-4000-8000-000000000001","slug":"maintenance","name":"Maintenance"},
+    {"id":"54200000-0010-4000-8000-000000000002","slug":"delivery","name":"Delivery"}
+  ]'::jsonb,
+  'rules',jsonb_build_array(
+    jsonb_build_object('id','54200000-0011-4000-8000-000000000002',
+      'taskClassId','54200000-0010-4000-8000-000000000002',
+      'configuration',target.configuration,'constraints',constraints.requirements,
+      'onUnavailable',jsonb_build_object('kind','fallback',
+        'configuration',jsonb_set(target.configuration,'{workerRuntime}','"workerd"'))),
+    jsonb_build_object('id','54200000-0011-4000-8000-000000000001',
+      'taskClassId','54200000-0010-4000-8000-000000000001',
+      'configuration',target.configuration,'constraints',constraints.requirements || '{"maxMeanCostUsd":null}'::jsonb,
+      'onUnavailable','{"kind":"escalate"}'::jsonb)
+  ),
+  'onUnmatched','{"kind":"escalate"}'::jsonb
+) as policy
+from selected_agent_revision agent cross join selected_factory_activation activation cross join selected_factory_check probe
+cross join lateral (select jsonb_build_object('agentId',agent.agent_id,'definitionRevisionId',activation.revision_id,
+  'experimentId','54200000-0012-4000-8000-000000000001','qualificationId',probe.id,
+  'modelKey','openai/gpt-5','harness','codex','workerRuntime','node') as configuration) target
+cross join (select '{"qualityFloorBps":8500,"maxMeanCostUsd":0.375,"maxLatencyMs":30000,
+  "minResolvedTrials":5,"minConfidenceBps":9000}'::jsonb as requirements) constraints;
+
+create function pg_temp.save_routing_policy(p_base bigint, p_policy jsonb)
+returns public.factory_definition_drafts language sql as $$
+  select public.save_factory_definition_draft(factory.workspace_id,factory.factory_id,factory.owner_id,
+    p_base,body.definition,encode(sha256(convert_to(body.definition,'UTF8')),'hex'))
+  from selected_factory factory cross join selected_factory_draft prior
+  cross join lateral (select (prior.definition_json::jsonb || jsonb_build_object('modelRouting',p_policy))::text definition) body;
+$$;
+
+create function pg_temp.publish_routing_policy(p_base bigint, p_draft_id uuid)
+returns public.factory_definition_activations language plpgsql as $$
+declare probe_id uuid; smoke_id uuid; activation public.factory_definition_activations;
+begin
+  select probe.id into strict probe_id
+  from selected_factory factory join public.factory_definition_drafts draft on draft.id = p_draft_id
+  cross join lateral public.start_factory_definition_capability_check(factory.workspace_id,
+    '54200000-0006-4000-8000-000000000019',factory.owner_id,'e2b','codex','gpt-5',draft.canonical_digest) probe;
+  update public.sandbox_capability_checks set status='success',capabilities=(
+    select jsonb_object_agg(probe,jsonb_build_object('ok',true,'detail',null))
+    from unnest(pg_temp.factory_activation_probes()) as probe
+  ) where id=probe_id;
+  select smoke.id into strict smoke_id
+  from selected_factory factory join public.factory_definition_drafts draft on draft.id = p_draft_id
+  cross join lateral public.start_factory_definition_smoke_test(factory.workspace_id,factory.factory_id,factory.owner_id,
+    p_base,'draft',draft.id,draft.canonical_digest,array['e2b'],pg_temp.factory_activation_probes()) smoke;
+  if pg_temp.factory_smoke_finish(smoke_id) is distinct from true then
+    raise exception 'Expected a passing routing definition smoke receipt.';
+  end if;
+  select published.* into strict activation from selected_factory factory
+  cross join lateral public.publish_factory_definition_draft(factory.workspace_id,factory.factory_id,factory.owner_id,
+    p_base,p_draft_id,array['e2b'],pg_temp.factory_activation_probes()) published;
+  return activation;
+end;
+$$;
+
+create temp table routing_first_draft as
+select draft.* from routing_policy_fixture fixture cross join lateral pg_temp.save_routing_policy(1,fixture.policy) draft;
+create temp table routing_first_activation as
+select activation.* from routing_first_draft draft cross join lateral pg_temp.publish_routing_policy(1,draft.id) activation;
+select ok((select definition.definition_json=draft.definition_json and definition.canonical_digest=draft.canonical_digest
+    and definition.definition_json::jsonb->'modelRouting'=fixture.policy
+    and definition.definition_json::jsonb->'agent'=baseline.definition_json::jsonb->'agent'
+  from routing_first_activation activation join public.factory_definition_revisions definition on definition.id=activation.revision_id
+  cross join routing_first_draft draft cross join routing_policy_fixture fixture cross join selected_factory_draft baseline),
+  'publication retains the ordered rules, exact thresholds, and fallback in the draft digest alongside the existing execution config');
+
+create temp table routing_later_draft as
+select draft.* from routing_policy_fixture fixture
+cross join lateral pg_temp.save_routing_policy(2,jsonb_set(
+  jsonb_set(fixture.policy,'{rules}',jsonb_build_array(fixture.policy#>'{rules,1}',fixture.policy#>'{rules,0}')),
+  '{rules,1,constraints,qualityFloorBps}','9500')) draft;
+create temp table routing_later_activation as
+select activation.* from routing_later_draft draft cross join lateral pg_temp.publish_routing_policy(2,draft.id) activation;
+select ok((select first.definition_json::jsonb->'modelRouting'=fixture.policy
+    and later.definition_json::jsonb#>>'{modelRouting,rules,0,taskClassId}'='54200000-0010-4000-8000-000000000001'
+    and later.definition_json::jsonb#>>'{modelRouting,rules,1,constraints,qualityFloorBps}'='9500'
+    and first.canonical_digest<>later.canonical_digest
+  from routing_first_activation first_activation join public.factory_definition_revisions first on first.id=first_activation.revision_id
+  cross join routing_later_activation later_activation
+  join public.factory_definition_revisions later on later.id=later_activation.revision_id
+  cross join routing_policy_fixture fixture), 'reordering and editing policy creates a new digest and leaves the earlier policy intact');
+select throws_ok($$update public.factory_definition_revisions set definition_json = '{}',
+    canonical_digest=encode(sha256(convert_to('{}','UTF8')),'hex')
+  where id=(select revision_id from routing_first_activation)$$,
+  '23514','Factory definition records are immutable.','stored routing revisions cannot be overwritten');
+
 grant select on selected_agent_revision to authenticated;
+grant select on selected_factory to authenticated;
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000002';
 select is((select count(*) from public.factory_agent_prompt_revisions revision join selected_agent_revision selected using(id)),
   1::bigint, 'a read-only member can inspect the agent prompt they can access');
+select is((select count(*) from public.factory_definition_revisions revision join selected_factory factory using(factory_id)
+  where revision.definition_json::jsonb ? 'modelRouting'), 2::bigint, 'a factory member can inspect its published routing policies');
+select is((select count(*) from public.factory_definition_drafts draft join selected_factory factory using(factory_id)
+  where draft.definition_json::jsonb ? 'modelRouting'), 0::bigint, 'a read-only factory member cannot inspect routing drafts');
+set local request.jwt.claim.sub = '54200000-0000-4000-8000-000000000003';
+select is((select count(*) from public.factory_definition_revisions revision join selected_factory factory using(factory_id)
+  where revision.definition_json::jsonb ? 'modelRouting'), 0::bigint, 'an unrelated factory owner cannot inspect routing revisions');
+select is((select count(*) from public.factory_definition_drafts draft join selected_factory factory using(factory_id)
+  where draft.definition_json::jsonb ? 'modelRouting'), 0::bigint, 'an unrelated factory owner cannot inspect routing drafts');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 select (public.archive_factory(workspace_id,factory_id,owner_id)).status from selected_factory;
@@ -1078,7 +1181,7 @@ select throws_ok($$select public.start_factory_definition_capability_check(facto
   from selected_factory factory cross join selected_factory_draft draft$$,
   'P0002', null, 'archiving the factory prevents a new candidate probe');
 select throws_ok($$select public.save_factory_definition_draft(factory.workspace_id,factory.factory_id,
-    factory.owner_id,1,draft.definition_json,draft.canonical_digest)
+    factory.owner_id,3,draft.definition_json,draft.canonical_digest)
   from selected_factory factory cross join selected_factory_draft draft$$,
   'P0002', 'Factory is unavailable.', 'the shared definition write lock rejects an archived factory');
 

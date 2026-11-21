@@ -4,6 +4,7 @@ import {
   mcpManifestScopeIds,
   type FactoryMcpBindingSource,
 } from "@/lib/factory-mcp/manifest";
+import { modelRoutingTargets, type ModelRoutingPolicy } from "@/lib/model-routing/contracts";
 
 import { compileFactoryMcpManifest } from "./mcp-compiler";
 import { inspectFactoryPromptReferences } from "./prompt-references";
@@ -72,6 +73,7 @@ export function factoryComponentRevisionsForSource(source: FactoryDefinitionSour
       ? { scorerRevisionIds: parsed.definition.scorerRevisionIds }
       : {}),
     ...mcpCatalogSelections(parsed.definition.mcpBindings, parsed.definition.executionGrant?.id),
+    ...modelRoutingCatalogSelections(parsed.definition.modelRouting),
   };
 }
 
@@ -86,7 +88,18 @@ export function factoryComponentRevisionsForBundle(bundle: CompiledFactoryDefini
       bundle?.mcpManifest ? mcpBindingsFromManifest(bundle.mcpManifest) : undefined,
       bundle?.executionGrant?.id,
     ),
+    ...modelRoutingCatalogSelections(bundle?.modelRouting),
   };
+}
+
+function modelRoutingCatalogSelections(policy: ModelRoutingPolicy | undefined) {
+  return policy
+    ? {
+        modelRoutingConfigurations: modelRoutingTargets(policy).map(
+          ({ configuration }) => configuration,
+        ),
+      }
+    : {};
 }
 
 function mcpCatalogSelections(
@@ -139,6 +152,29 @@ function compileSerialDefinition(
 ): FactoryDefinitionCompileResult {
   const diagnostics: FactoryDefinitionDiagnostic[] = [];
   const { schemaVersion, kind, agent, sandboxProvider, operatingRulesMd } = definition;
+  if (definition.modelRouting) {
+    for (const { configuration, path } of modelRoutingTargets(definition.modelRouting)) {
+      const matches = (catalog.modelRoutingConfigurations ?? []).filter(
+        (entry) =>
+          entry.workspaceId === catalog.workspaceId &&
+          entry.factoryId === catalog.factoryId &&
+          entry.experimentId === configuration.experimentId &&
+          entry.definitionRevisionId === configuration.definitionRevisionId &&
+          entry.qualificationId === configuration.qualificationId &&
+          entry.agentId === configuration.agentId &&
+          entry.modelKey === configuration.modelKey &&
+          entry.harness === configuration.harness &&
+          entry.workerRuntime === configuration.workerRuntime,
+      );
+      if (matches.length !== 1) {
+        diagnostics.push({
+          path: ["modelRouting", ...path],
+          code: matches.length ? "ambiguous_reference" : "missing_reference",
+          message: "Choose one exact qualified benchmark configuration from this factory.",
+        });
+      }
+    }
+  }
   if (definition.contextDocuments && !definition.executionGrant) {
     diagnostics.push({
       path: ["contextDocuments"],
@@ -364,6 +400,7 @@ function compileSerialDefinition(
     ...(definition.credentialBindingId
       ? { credentialBindingId: definition.credentialBindingId }
       : {}),
+    ...(definition.modelRouting ? { modelRouting: definition.modelRouting } : {}),
     executionPolicyRevisionId: executionPolicy ? normalizeFactoryId(executionPolicy.id) : null,
     deliveryPolicyRevisionId: deliveryPolicy ? normalizeFactoryId(deliveryPolicy.id) : null,
     skillIds,

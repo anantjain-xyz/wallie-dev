@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 
 import { runtimeMcpManifest } from "@/lib/factory-mcp/manifest";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
+import type { Database } from "@/lib/supabase/database.types";
 
 import { compareFactoryDefinitions } from "./semantic-diff";
 import {
@@ -14,6 +16,7 @@ import {
 import type { FactoryDefinitionCatalog } from "./references";
 import { compiledFactoryDefinitionSchema, type SerialFactoryDefinitionInput } from "./schema";
 import { factoryWritableRepositoryIds } from "./repository-bindings";
+import { loadQualifiedModelRoutingConfigurations } from "./routing-catalog";
 import { factoryDefinitionFromBundle, recompileStoredFactoryDefinition } from "./stored-definition";
 
 const workspaceId = "c5410000-0000-4000-8000-000000000001";
@@ -41,6 +44,12 @@ const factoryId = "c5410000-0000-4000-8000-000000000027";
 const otherFactoryId = "c5410000-0000-4000-8000-000000000028";
 const scorerRevisionId = "c5410000-0000-4000-8000-000000000029";
 const laterScorerRevisionId = "c5410000-0000-4000-8000-000000000030";
+const sourceRevisionId = "c5410000-0000-4000-8000-000000000031";
+const experimentId = "c5410000-0000-4000-8000-000000000032";
+const qualificationId = "c5410000-0000-4000-8000-000000000033";
+const fallbackQualificationId = "c5410000-0000-4000-8000-000000000034";
+const taskClassId = "c5410000-0000-4000-8000-000000000035";
+const ruleId = "c5410000-0000-4000-8000-000000000036";
 
 const catalog: FactoryDefinitionCatalog = {
   workspaceId,
@@ -178,6 +187,166 @@ function mcpFixture() {
   };
   return { input, references };
 }
+
+describe("factory model routing", () => {
+  const configuration = {
+    agentId,
+    definitionRevisionId: sourceRevisionId,
+    experimentId,
+    qualificationId,
+    harness: "codex",
+    modelKey: "openai/gpt-5.4-2026-03-05",
+    workerRuntime: "node",
+  } as const;
+  const fallback = {
+    ...configuration,
+    qualificationId: fallbackQualificationId,
+    modelKey: "openai/gpt-5.4-mini-2026-03-17",
+  };
+  const policy = {
+    version: 1,
+    taskClasses: [{ id: taskClassId, slug: "bug-fix", name: "Bug fix" }],
+    rules: [
+      {
+        id: ruleId,
+        taskClassId,
+        configuration,
+        constraints: {
+          qualityFloorBps: 8_000,
+          maxMeanCostUsd: null,
+          maxLatencyMs: 60_000,
+          minResolvedTrials: 10,
+          minConfidenceBps: 9_000,
+        },
+        onUnavailable: { kind: "fallback", configuration: fallback },
+      },
+    ],
+    onUnmatched: { kind: "escalate" },
+  };
+  const scope = { workspaceId, factoryId };
+  const qualified = [configuration, fallback].map((target) => ({ ...target, ...scope }));
+  const references = { ...catalog, factoryId, modelRoutingConfigurations: qualified };
+
+  it("round-trips routing through the factory digest and retains bytes after another edit", () => {
+    const value = { ...candidate(), modelRouting: policy };
+    const original = compile(value, references);
+    expect(original.ok).toBe(true);
+    if (!original.ok) return;
+
+    expect(original.bundle.modelRouting).toEqual(policy);
+    for (const selection of [
+      factoryComponentRevisionsForSource({ kind: "structured", value }),
+      factoryComponentRevisionsForBundle(original.bundle),
+    ]) {
+      expect(selection).toHaveProperty("modelRoutingConfigurations", [configuration, fallback]);
+    }
+    expect(
+      recompileStoredFactoryDefinition(
+        original.definitionJson,
+        original.canonicalDigest,
+        references,
+      ),
+    ).toEqual(original);
+    const edited = compile(
+      {
+        ...factoryDefinitionFromBundle(original.bundle),
+        modelRouting: { ...policy, taskClasses: [{ ...policy.taskClasses[0], name: "Fix" }] },
+      },
+      references,
+    );
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) return;
+    expect(edited.canonicalDigest).not.toBe(original.canonicalDigest);
+    expect(JSON.parse(original.definitionJson).modelRouting).toEqual(policy);
+    expect(edited.bundle.agent).toEqual(original.bundle.agent);
+    expect(compareFactoryDefinitions(original.bundle, edited.bundle)).toMatchObject({
+      fields: [{ label: "Model routing policy", multiline: true }],
+      stages: [],
+    });
+  });
+
+  it("rejects missing, cross-factory, mismatched, and ambiguous qualification records", () => {
+    const value = { ...candidate(), modelRouting: policy };
+    const badConfigurations = [
+      [],
+      [qualified[0], { ...qualified[1], factoryId: otherFactoryId }],
+      [qualified[0], { ...qualified[1], workerRuntime: "workerd" as const }],
+    ];
+    for (const modelRoutingConfigurations of badConfigurations) {
+      expect(compile(value, { ...references, modelRoutingConfigurations })).toMatchObject({
+        ok: false,
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["modelRouting", "rules", 0, "onUnavailable", "configuration"],
+            code: "missing_reference",
+          }),
+        ]),
+      });
+    }
+    expect(
+      compile(value, { ...references, modelRoutingConfigurations: [...qualified, qualified[0]] }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: "ambiguous_reference" })],
+    });
+  });
+
+  it("batch-resolves exact frozen candidate receipts against their definition bytes and agent", async () => {
+    const fixture = mcpFixture();
+    const source = compile(fixture.input, fixture.references);
+    expect(source.ok).toBe(true);
+    if (!source.ok) return;
+
+    const queries: URL[] = [];
+    const fetch: typeof globalThis.fetch = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      queries.push(url);
+      expect(url.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+      expect(url.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+      if (url.pathname.endsWith("/factory_definition_revisions")) {
+        expect(url.searchParams.get("id")).toBe(`in.(${sourceRevisionId})`);
+        return Response.json([
+          {
+            id: sourceRevisionId,
+            canonical_digest: source.canonicalDigest,
+            definition_json: source.definitionJson,
+          },
+        ]);
+      }
+      expect(url.pathname.endsWith("/factory_benchmark_experiment_candidates")).toBe(true);
+      const filters = [configuration, fallback].map(
+        (target) =>
+          `and(experiment_id.eq.${experimentId},definition_revision_id.eq.${sourceRevisionId},qualification_id.eq.${target.qualificationId},worker_runtime.eq.node)`,
+      );
+      expect(url.searchParams.get("or")).toBe(`(${filters.join(",")})`);
+      return Response.json(
+        [configuration, fallback].map((target) => ({
+          experiment_id: experimentId,
+          definition_revision_id: sourceRevisionId,
+          definition_digest: source.canonicalDigest,
+          qualification_id: target.qualificationId,
+          canonical_model_key: target.modelKey,
+          harness: target.harness,
+          worker_runtime: target.workerRuntime,
+        })),
+      );
+    };
+    const client = createClient<Database>("http://factory.test", "test-service-key", {
+      auth: { persistSession: false },
+      global: { fetch },
+    });
+    await expect(
+      loadQualifiedModelRoutingConfigurations(client, scope, [
+        configuration,
+        configuration,
+        fallback,
+        { ...configuration, agentId: otherFactoryId },
+        { ...configuration, modelKey: "openai/gpt-incompatible" },
+      ]),
+    ).resolves.toEqual(qualified);
+    expect(queries).toHaveLength(2);
+  });
+});
 
 describe("compileFactoryDefinition", () => {
   it("keeps the default runtime MCP list explicitly empty without changing the canonical digest", () => {
