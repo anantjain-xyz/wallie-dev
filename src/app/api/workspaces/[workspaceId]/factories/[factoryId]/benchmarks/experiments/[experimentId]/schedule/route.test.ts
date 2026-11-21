@@ -34,6 +34,16 @@ const configure = {
   factoryConcurrencyLimit: 2,
   maxAdmittedTrials: 5,
 };
+const live = {
+  action: "configure",
+  runnerRevision: "openai-responses-v1",
+  inferenceConnectionRevision: id(9),
+  executionReserveUsd: configure.executionReserveUsd,
+  evaluationReserveUsd: configure.evaluationReserveUsd,
+  budgetLimitUsd: configure.budgetLimitUsd,
+  factoryConcurrencyLimit: configure.factoryConcurrencyLimit,
+  maxAdmittedTrials: configure.maxAdmittedTrials,
+};
 const snapshot = {
   experimentId,
   state: "active",
@@ -113,6 +123,44 @@ describe("benchmark schedule route", () => {
       }),
     );
     expect(mocks.wake).toHaveBeenCalledOnce();
+  });
+
+  it("pins the live inference revision and wakes the scheduler", async () => {
+    const liveSnapshot = { ...snapshot, runnerRevision: live.runnerRevision };
+    const rpc = vi.fn<typeof fetch>(async () => Response.json(liveSnapshot));
+    setup(rpc);
+    const response = await POST(post(live), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(liveSnapshot);
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(
+      "https://factory.test/rest/v1/rpc/configure_factory_benchmark_live_schedule",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          ...scopedRpcArgs,
+          p_inference_connection_revision: live.inferenceConnectionRevision,
+          p_execution_reserve_usd: live.executionReserveUsd,
+          p_evaluation_reserve_usd: live.evaluationReserveUsd,
+          p_budget_limit_usd: live.budgetLimitUsd,
+          p_factory_concurrency_limit: live.factoryConcurrencyLimit,
+          p_max_admitted_trials: live.maxAdmittedTrials,
+        }),
+      }),
+    );
+    expect(mocks.wake).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { ...live, executionReserveUsd: 0 },
+    { ...live, taskFixtures: configure.taskFixtures },
+    { ...live, sandboxConnectionRevision: configure.sandboxConnectionRevision },
+    { ...live, apiKey: "synthetic-key" },
+  ])("rejects an invalid live schedule before database access %#", async (command) => {
+    const rpc = vi.fn<typeof fetch>();
+    setup(rpc);
+    expect((await POST(post(command), context)).status).toBe(400);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(mocks.wake).not.toHaveBeenCalled();
   });
 
   it.each([

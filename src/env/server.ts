@@ -38,6 +38,48 @@ export const titleGenerationEnvSchema = z.object({
   ),
 });
 
+const benchmarkReplayCliSchema = z
+  .object({
+    cliVersion: z
+      .string()
+      .max(64)
+      .regex(/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/),
+    cliDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const benchmarkReplayImageProfileSchema = z
+  .object({
+    image: z
+      .string()
+      .max(300)
+      .regex(/^vcr\.vercel\.com\/[A-Za-z0-9/_.-]+@sha256:[a-f0-9]{64}$/),
+    codex: benchmarkReplayCliSchema,
+    opencode: benchmarkReplayCliSchema,
+  })
+  .strict();
+
+const benchmarkReplayImageProfileEnvSchema = optionalEnvStringSchema.transform((value, context) => {
+  if (!value) return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(value);
+  } catch {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Set a valid benchmark replay image profile.",
+    });
+    return z.NEVER;
+  }
+  const profile = benchmarkReplayImageProfileSchema.safeParse(raw);
+  if (profile.success) return profile.data;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: "Pin a benchmark replay image and both CLI digests.",
+  });
+  return z.NEVER;
+});
+
 export const serverEnvSchema = z.object({
   ...workerWakeEnvSchema.shape,
   ...factoryEventDispatchRelayEnvSchema.shape,
@@ -50,6 +92,7 @@ export const serverEnvSchema = z.object({
   GITHUB_APP_PRIVATE_KEY: optionalEnvStringSchema,
   GITHUB_WEBHOOK_SECRET: optionalEnvStringSchema,
   SUPABASE_SECRET_KEY: requiredEnvStringSchema,
+  WALLIE_BENCHMARK_LIVE_IMAGE_PROFILE: benchmarkReplayImageProfileEnvSchema,
   WALLIE_ENCRYPTION_KEY: z
     .string()
     .refine(
@@ -107,6 +150,7 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
     GITHUB_WEBHOOK_SECRET: input.GITHUB_WEBHOOK_SECRET,
     SUPABASE_SECRET_KEY: input.SUPABASE_SECRET_KEY,
     WALLIE_ENCRYPTION_KEY: input.WALLIE_ENCRYPTION_KEY,
+    WALLIE_BENCHMARK_LIVE_IMAGE_PROFILE: input.WALLIE_BENCHMARK_LIVE_IMAGE_PROFILE,
     VERCEL_TOKEN: input.VERCEL_TOKEN,
     VERCEL_TEAM_ID: input.VERCEL_TEAM_ID,
     VERCEL_PROJECT_ID: input.VERCEL_PROJECT_ID,

@@ -1424,6 +1424,7 @@ export type Database = {
           experiment_id: string
           factory_id: string
           harness: string
+          live_inference_connection_revision: string | null
           model: string
           qualification_id: string | null
           sandbox_connection_revision: string | null
@@ -1442,6 +1443,7 @@ export type Database = {
           experiment_id: string
           factory_id: string
           harness: string
+          live_inference_connection_revision?: string | null
           model: string
           qualification_id?: string | null
           sandbox_connection_revision?: string | null
@@ -1460,6 +1462,7 @@ export type Database = {
           experiment_id?: string
           factory_id?: string
           harness?: string
+          live_inference_connection_revision?: string | null
           model?: string
           qualification_id?: string | null
           sandbox_connection_revision?: string | null
@@ -1964,6 +1967,7 @@ export type Database = {
           experiment_id: string
           factory_concurrency_limit: number
           factory_id: string
+          inference_connection_revision: string | null
           last_reconciled_at: string | null
           max_admitted_trials: number
           runner_revision: string
@@ -1982,6 +1986,7 @@ export type Database = {
           experiment_id: string
           factory_concurrency_limit: number
           factory_id: string
+          inference_connection_revision?: string | null
           last_reconciled_at?: string | null
           max_admitted_trials: number
           runner_revision: string
@@ -2000,6 +2005,7 @@ export type Database = {
           experiment_id?: string
           factory_concurrency_limit?: number
           factory_id?: string
+          inference_connection_revision?: string | null
           last_reconciled_at?: string | null
           max_admitted_trials?: number
           runner_revision?: string
@@ -2326,15 +2332,18 @@ export type Database = {
           checkpoint_storage_path: string
           created_at: string
           factory_id: string
-          fixture_operation_id: string
-          fixture_response_sha256: string
-          fixture_revision_id: string
+          fixture_operation_id: string | null
+          fixture_response_sha256: string | null
+          fixture_revision_id: string | null
+          inference_receipt_id: string | null
           input_bundle_sha256: string
           input_commit_sha: string
           input_tree_sha: string
           output_commit_sha: string
           output_tree_sha: string
+          renderer_revision: string | null
           replay_execution_id: string
+          replay_prompt_sha256: string | null
           restoration_receipt_sha256: string
           result_digest: string
           run_id: string
@@ -2350,15 +2359,18 @@ export type Database = {
           checkpoint_storage_path: string
           created_at?: string
           factory_id: string
-          fixture_operation_id: string
-          fixture_response_sha256: string
-          fixture_revision_id: string
+          fixture_operation_id?: string | null
+          fixture_response_sha256?: string | null
+          fixture_revision_id?: string | null
+          inference_receipt_id?: string | null
           input_bundle_sha256: string
           input_commit_sha: string
           input_tree_sha: string
           output_commit_sha: string
           output_tree_sha: string
+          renderer_revision?: string | null
           replay_execution_id: string
+          replay_prompt_sha256?: string | null
           restoration_receipt_sha256: string
           result_digest: string
           run_id: string
@@ -2374,15 +2386,18 @@ export type Database = {
           checkpoint_storage_path?: string
           created_at?: string
           factory_id?: string
-          fixture_operation_id?: string
-          fixture_response_sha256?: string
-          fixture_revision_id?: string
+          fixture_operation_id?: string | null
+          fixture_response_sha256?: string | null
+          fixture_revision_id?: string | null
+          inference_receipt_id?: string | null
           input_bundle_sha256?: string
           input_commit_sha?: string
           input_tree_sha?: string
           output_commit_sha?: string
           output_tree_sha?: string
+          renderer_revision?: string | null
           replay_execution_id?: string
+          replay_prompt_sha256?: string | null
           restoration_receipt_sha256?: string
           result_digest?: string
           run_id?: string
@@ -2414,12 +2429,14 @@ export type Database = {
           attempt_count: number | null
           created_at: string
           deadline_at: string | null
+          effective_execution_digest: string | null
           factory_id: string
           failure_code: string | null
           finished_at: string | null
-          fixture_key: string
-          fixture_revision_id: string
+          fixture_key: string | null
+          fixture_revision_id: string | null
           id: string
+          inference_connection_revision: string | null
           job_id: string
           policy_digest: string
           policy_revision_id: string
@@ -2438,12 +2455,14 @@ export type Database = {
           attempt_count?: number | null
           created_at?: string
           deadline_at?: string | null
+          effective_execution_digest?: string | null
           factory_id: string
           failure_code?: string | null
           finished_at?: string | null
-          fixture_key: string
-          fixture_revision_id: string
+          fixture_key?: string | null
+          fixture_revision_id?: string | null
           id: string
+          inference_connection_revision?: string | null
           job_id: string
           policy_digest: string
           policy_revision_id: string
@@ -2462,12 +2481,14 @@ export type Database = {
           attempt_count?: number | null
           created_at?: string
           deadline_at?: string | null
+          effective_execution_digest?: string | null
           factory_id?: string
           failure_code?: string | null
           finished_at?: string | null
-          fixture_key?: string
-          fixture_revision_id?: string
+          fixture_key?: string | null
+          fixture_revision_id?: string | null
           id?: string
+          inference_connection_revision?: string | null
           job_id?: string
           policy_digest?: string
           policy_revision_id?: string
@@ -9723,12 +9744,14 @@ export type Database = {
           attempt_count: number | null
           created_at: string
           deadline_at: string | null
+          effective_execution_digest: string | null
           factory_id: string
           failure_code: string | null
           finished_at: string | null
-          fixture_key: string
-          fixture_revision_id: string
+          fixture_key: string | null
+          fixture_revision_id: string | null
           id: string
+          inference_connection_revision: string | null
           job_id: string
           policy_digest: string
           policy_revision_id: string
@@ -10031,6 +10054,17 @@ export type Database = {
           run_ids: string[]
         }[]
       }
+      arm_factory_benchmark_live_sandbox_binding: {
+        Args: {
+          p_attempt_count: number
+          p_expires_at: string
+          p_job_id: string
+          p_nonce_sha256: string
+          p_run_id: string
+          p_trial_id: string
+        }
+        Returns: boolean
+      }
       arm_session_pr_creation: {
         Args: { p_claim_id: string; p_epoch_id: string; p_operation_id: string }
         Returns: boolean
@@ -10137,6 +10171,15 @@ export type Database = {
           target_workspace_id: string
         }
         Returns: string
+      }
+      begin_factory_benchmark_inference_request: {
+        Args: {
+          p_project_id: string
+          p_request_digest: string
+          p_signed_sandbox_id: string
+          p_team_id: string
+        }
+        Returns: Json
       }
       begin_factory_event_send: {
         Args: {
@@ -10557,6 +10600,40 @@ export type Database = {
             }
           }
         | {
+            Args: {
+              accept_benchmark_trials: boolean
+              default_concurrency_limit: number
+              p_worker_runtime: string
+            }
+            Returns: {
+              attempt_count: number
+              created_at: string
+              dedupe_key: string | null
+              finished_at: string | null
+              git_continuity_release_revision: number | null
+              id: string
+              is_repair: boolean
+              last_error: string | null
+              requested_by_member_id: string | null
+              scheduled_at: string | null
+              session_id: string
+              stage_id: string | null
+              stage_name: string | null
+              stage_slug: string | null
+              started_at: string | null
+              status: Database["public"]["Enums"]["agent_job_status"]
+              trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+              updated_at: string
+              workspace_id: string
+            }[]
+            SetofOptions: {
+              from: "*"
+              to: "agent_jobs"
+              isOneToOne: false
+              isSetofReturn: true
+            }
+          }
+        | {
             Args: { default_concurrency_limit?: number }
             Returns: {
               attempt_count: number
@@ -10684,6 +10761,15 @@ export type Database = {
         Returns: string
       }
       claim_session_source_delivery: { Args: never; Returns: string }
+      close_factory_benchmark_live_inference: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_run_id: string
+          p_trial_id: string
+        }
+        Returns: Json
+      }
       commit_run_export_page: {
         Args: {
           p_entries: Json
@@ -10717,6 +10803,31 @@ export type Database = {
       complete_session_job_attempt: {
         Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
         Returns: boolean
+      }
+      configure_factory_benchmark_inference_connection: {
+        Args: {
+          p_actor_user_id: string
+          p_encrypted_api_key: string
+          p_factory_id: string
+          p_profile: Json
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      configure_factory_benchmark_live_schedule: {
+        Args: {
+          p_actor_user_id: string
+          p_budget_limit_usd: number
+          p_evaluation_reserve_usd: number
+          p_execution_reserve_usd: number
+          p_experiment_id: string
+          p_factory_concurrency_limit: number
+          p_factory_id: string
+          p_inference_connection_revision: string
+          p_max_admitted_trials: number
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       configure_factory_benchmark_schedule: {
         Args: {
@@ -10820,6 +10931,15 @@ export type Database = {
           p_subscription_id: string
           p_verification_digest: string
           p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      consume_factory_benchmark_live_sandbox_binding: {
+        Args: {
+          p_nonce_sha256: string
+          p_project_id: string
+          p_signed_sandbox_id: string
+          p_team_id: string
         }
         Returns: boolean
       }
@@ -11456,6 +11576,19 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      enable_factory_benchmark_live_inference: {
+        Args: {
+          p_attempt_count: number
+          p_input_bundle_sha256: string
+          p_job_id: string
+          p_replay_prompt_sha256: string
+          p_restoration_receipt_sha256: string
+          p_run_id: string
+          p_signed_sandbox_id: string
+          p_trial_id: string
+        }
+        Returns: boolean
+      }
       enqueue_due_github_pr_refreshes: {
         Args: { p_limit?: number; p_workspace_id?: string }
         Returns: number
@@ -11733,6 +11866,26 @@ export type Database = {
           session_number: number
           workspace_slug: string
         }[]
+      }
+      finish_factory_benchmark_inference_request: {
+        Args: {
+          p_input_tokens?: number
+          p_observed_model?: string
+          p_output_tokens?: number
+          p_request_id: string
+          p_status: string
+        }
+        Returns: boolean
+      }
+      finish_factory_benchmark_live_trial: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_result: Json
+          p_run_id: string
+          p_trial_id: string
+        }
+        Returns: boolean
       }
       finish_factory_benchmark_trial: {
         Args: {
@@ -12316,6 +12469,10 @@ export type Database = {
           scopes: Database["public"]["Enums"]["factory_command_scope"][]
           status: string
         }[]
+      }
+      is_factory_benchmark_inference_request_open: {
+        Args: { p_request_id: string }
+        Returns: boolean
       }
       issue_factory_machine_token: {
         Args: {
@@ -13415,6 +13572,23 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_benchmark_inference_connection: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_benchmark_live_sandbox_binding: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_run_id: string
+          p_trial_id: string
+        }
+        Returns: Json
+      }
       read_factory_benchmark_schedule: {
         Args: {
           p_actor_user_id: string
@@ -14200,6 +14374,15 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      revoke_factory_benchmark_inference_connection: {
+        Args: {
+          p_actor_user_id: string
+          p_connection_revision: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       revoke_factory_benchmark_replay_revision: {
         Args: {
@@ -15133,6 +15316,15 @@ export type Database = {
         }
         Returns: boolean
       }
+      start_factory_benchmark_live_trial: {
+        Args: {
+          p_attempt_count: number
+          p_deadline_at: string
+          p_job_id: string
+          p_worker_runtime: string
+        }
+        Returns: Json
+      }
       start_factory_benchmark_trial: {
         Args: {
           p_attempt_count: number
@@ -15144,12 +15336,14 @@ export type Database = {
           attempt_count: number | null
           created_at: string
           deadline_at: string | null
+          effective_execution_digest: string | null
           factory_id: string
           failure_code: string | null
           finished_at: string | null
-          fixture_key: string
-          fixture_revision_id: string
+          fixture_key: string | null
+          fixture_revision_id: string | null
           id: string
+          inference_connection_revision: string | null
           job_id: string
           policy_digest: string
           policy_revision_id: string

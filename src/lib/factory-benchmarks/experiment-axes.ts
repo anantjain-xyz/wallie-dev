@@ -113,7 +113,7 @@ export async function loadBenchmarkExperimentAxes({
   >();
   for (const receipt of receipts) {
     if (!definitionIds.has(receipt.definition_id)) continue;
-    const key = `${receipt.id}:${receipt.unavailable_reason ?? ""}`;
+    const key = `${receipt.id}:${receipt.worker_runtime}:${receipt.unavailable_reason ?? ""}`;
     const profile = profiles.get(key) ?? {
       id: receipt.id,
       modelKey: receipt.model_key,

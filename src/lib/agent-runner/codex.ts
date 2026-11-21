@@ -15,22 +15,33 @@ import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { shellQuote } from "@/lib/sandbox/command";
 import { normalizeMeasuredUsage } from "./usage";
 import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-credentials";
+import { BENCHMARK_REPLAY_API_PLACEHOLDER, launchBenchmarkCli } from "./benchmark-replay";
 
 export const CODEX_EXTERNAL_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 export const CODEX_SANDBOX_MODE = "danger-full-access";
 
-export interface CodexRunnerOptions {
-  /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
-  credential?: CodexCredential;
-  /** Resolve after nonsecret sandbox setup, immediately before credential delivery. */
-  loadCredential?: () => Promise<CodexCredential>;
-  /** Required for ChatGPT subscription auth so the runner can persist refreshed auth.json. */
-  chatGptAuthStore?: CodexChatGptAuthStore;
-  /** Model identifier (e.g. "gpt-5.6-sol"). */
+export type CodexRunnerOptions = {
   model?: string;
-  /** Reasoning effort passed to Codex. */
   effort?: AgentEffort;
-}
+} & (
+  | {
+      isolatedBenchmark?: false;
+      /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
+      credential?: CodexCredential;
+      /** Resolve after nonsecret sandbox setup, immediately before credential delivery. */
+      loadCredential?: () => Promise<CodexCredential>;
+      /** Required for ChatGPT subscription auth so the runner can persist refreshed auth.json. */
+      chatGptAuthStore?: CodexChatGptAuthStore;
+    }
+  | {
+      isolatedBenchmark: true;
+      model: string;
+      executablePath: string;
+      credential?: never;
+      loadCredential?: never;
+      chatGptAuthStore?: never;
+    }
+);
 
 /**
  * Codex CLI agent runner.
@@ -48,7 +59,7 @@ export class CodexRunner implements AgentRunner {
   readonly requiresSandbox = true;
 
   constructor(private readonly options: CodexRunnerOptions) {
-    if (!options.loadCredential && !options.credential?.secret) {
+    if (!options.isolatedBenchmark && !options.loadCredential && !options.credential?.secret) {
       throw new Error("CodexRunner requires a Codex credential.");
     }
   }
@@ -71,6 +82,9 @@ export class CodexRunner implements AgentRunner {
     if (input.mcp && !material) {
       throw new Error("Codex MCP requires scoped factory credentials.");
     }
+    const replay = this.options.isolatedBenchmark === true;
+    if (replay && (input.mcp || input.scopedCredential || input.continueSessionId))
+      throw new Error("Isolated Codex replay requires a fresh local task.");
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
@@ -83,7 +97,7 @@ export class CodexRunner implements AgentRunner {
     await sandbox.writeFile(promptFile, input.prompt, { mode: 0o600 });
     input.signal?.throwIfAborted();
     if (this.options.loadCredential || this.options.credential?.type !== "codex_access_token") {
-      await ensureCodexHome(sandbox, codexHome, safety);
+      await ensureCodexHome(sandbox, codexHome, safety, replay);
     }
     const mcp =
       input.mcp && material
@@ -98,9 +112,11 @@ export class CodexRunner implements AgentRunner {
 
     // All nonsecret sandbox setup precedes the current authorization reads.
     input.signal?.throwIfAborted();
-    const credential = this.options.loadCredential
-      ? await this.options.loadCredential()
-      : this.options.credential;
+    const credential: CodexCredential | undefined = replay
+      ? { type: "platform_api_key", expiresAt: null, secret: BENCHMARK_REPLAY_API_PLACEHOLDER }
+      : this.options.loadCredential
+        ? await this.options.loadCredential()
+        : this.options.credential;
     if (!credential?.secret) throw new Error("CodexRunner requires a Codex credential.");
     safety.addSecret(credential.secret);
     input.signal?.throwIfAborted();
@@ -129,16 +145,18 @@ export class CodexRunner implements AgentRunner {
       return;
     }
 
-    const shellCmd = codexCommandForCredential(
-      model,
-      effort,
-      credential,
-      codexHome,
-      promptFile,
-      sandbox.repoPath,
-      finalOutputFile,
-      mcp?.servers,
-    );
+    const shellCmd = replay
+      ? ""
+      : codexCommandForCredential(
+          model,
+          effort,
+          credential,
+          codexHome,
+          promptFile,
+          sandbox.repoPath,
+          finalOutputFile,
+          mcp?.servers,
+        );
 
     const credentialEnv = codexCredentialEnv(credential);
     const options = {
@@ -154,15 +172,28 @@ export class CodexRunner implements AgentRunner {
       ? ["--noprofile", "--norc", "-c", `exec ${shellCmd}`]
       : ["-lc", shellCmd];
     if (mcp && material) await mcp.stageCredentials(material, safety);
-    const proc = material
-      ? await material.exec("bash", launchArgs, options, {
-          path: `${directory}/credential.env`,
-          values: credentialEnv,
+    const proc = replay
+      ? await launchBenchmarkCli({
+          sandbox,
+          executablePath: this.options.executablePath,
+          promptFile,
+          signal: input.signal,
+          args: codexExecArgs(model, sandbox.repoPath, effort, finalOutputFile, undefined, true),
+          environment: {
+            ...options.env,
+            OPENAI_API_KEY: BENCHMARK_REPLAY_API_PLACEHOLDER,
+            HOME: directory,
+          },
         })
-      : await sandbox.exec("bash", launchArgs, {
-          ...options,
-          env: { ...options.env, ...credentialEnv },
-        });
+      : material
+        ? await material.exec("bash", launchArgs, options, {
+            path: `${directory}/credential.env`,
+            values: credentialEnv,
+          })
+        : await sandbox.exec("bash", launchArgs, {
+            ...options,
+            env: { ...options.env, ...credentialEnv },
+          });
 
     const errors: string[] = [];
     const tools = new ToolEventTracker();
@@ -677,6 +708,7 @@ export function codexExecArgs(
   effort: AgentEffort = DEFAULT_CODEX_REASONING_EFFORT,
   finalOutputFile?: string,
   mcp?: CodexMcpServers,
+  replay = false,
 ): string[] {
   return [
     "exec",
@@ -690,12 +722,41 @@ export function codexExecArgs(
     `cli_auth_credentials_store="file"`,
     "-c",
     mcp ? codexMcpConfig(mcp) : "mcp_servers={}",
-    ...(mcp ? ["--disable", "apps"] : ["-c", "apps.github.enabled=false"]),
-    "--disable",
-    "plugins",
-    "--disable",
-    "skill_mcp_dependency_install",
-    "--ignore-user-config",
+    ...(replay
+      ? [
+          "-c",
+          "features.apps=false",
+          "-c",
+          "features.plugins=false",
+          "-c",
+          "features.skill_mcp_dependency_install=false",
+          "-c",
+          "features.web_search_request=false",
+          "-c",
+          "features.web_search_cached=false",
+          "-c",
+          'model_provider="wallie_benchmark"',
+          "-c",
+          'model_providers.wallie_benchmark.name="Wallie OpenAI replay"',
+          "-c",
+          'model_providers.wallie_benchmark.base_url="https://api.openai.com/v1"',
+          "-c",
+          'model_providers.wallie_benchmark.env_key="OPENAI_API_KEY"',
+          "-c",
+          'model_providers.wallie_benchmark.wire_api="responses"',
+          "-c",
+          "model_providers.wallie_benchmark.supports_websockets=false",
+          "-c",
+          'web_search="disabled"',
+        ]
+      : [
+          ...(mcp ? ["--disable", "apps"] : ["-c", "apps.github.enabled=false"]),
+          "--disable",
+          "plugins",
+          "--disable",
+          "skill_mcp_dependency_install",
+          "--ignore-user-config",
+        ]),
     CODEX_EXTERNAL_SANDBOX_FLAG,
     "--cd",
     sandboxRepoPath,
@@ -810,11 +871,14 @@ async function ensureCodexHome(
   sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>,
   codexHome: string,
   safety: AgentOutputSafety,
+  replay = false,
 ) {
-  const proc = await sandbox.exec("bash", ["-lc", `mkdir -p ${shellQuote(codexHome)}`], {
-    cwd: sandbox.repoPath,
-    env: { CI: "1" },
-  });
+  const proc = await (replay
+    ? sandbox.exec("mkdir", ["-m", "700", codexHome], { cwd: sandbox.repoPath })
+    : sandbox.exec("bash", ["-lc", `mkdir -p ${shellQuote(codexHome)}`], {
+        cwd: sandbox.repoPath,
+        env: { CI: "1" },
+      }));
   let stderr = "";
   for await (const log of proc.logs()) {
     if (log.stream === "stderr") stderr += log.data;
