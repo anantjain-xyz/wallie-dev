@@ -136,7 +136,15 @@ begin
       select min(schedule.factory_concurrency_limit) into factory_limit
       from public.factory_benchmark_schedules schedule
       where (schedule.workspace_id, schedule.factory_id) = (candidate.workspace_id, session_owner.factory_id)
-        and schedule.state = 'active';
+        and schedule.state = 'active'
+        and exists (
+          select 1 from public.factory_benchmark_schedule_trials scheduled
+          join public.factory_benchmark_trials outstanding
+            on (outstanding.id, outstanding.run_id) = (scheduled.trial_id, scheduled.run_id)
+          where (scheduled.workspace_id, scheduled.factory_id, scheduled.experiment_id) =
+            (schedule.workspace_id, schedule.factory_id, schedule.experiment_id)
+            and outstanding.status in ('queued', 'running')
+        );
       if factory_limit is not null and (select count(*)
         from public.factory_benchmark_trials trial join public.agent_jobs running on running.id = trial.job_id
         where (trial.workspace_id, trial.factory_id) = (candidate.workspace_id, session_owner.factory_id)

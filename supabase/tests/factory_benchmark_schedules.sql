@@ -287,7 +287,12 @@ select pg_temp.configure_schedule(83, p_max => 1, p_cap => 1);
 select is(public.reconcile_factory_benchmark_schedules(10), 1, 'another schedule can queue independent work in the same factory');
 select is((select count(*) from public.claim_next_agent_job(true, 4)), 0::bigint,
   'the running benchmark holds the effective factory slot shared by independent schedules');
-select pg_temp.schedule_control(83, 'cancel');
+select ok(public.cancel_factory_benchmark_trial(trial.workspace_id, trial.factory_id, trial.actor_user_id, trial.id, trial.run_id),
+  'retiring the only trial leaves the one-slot schedule at its expansion cap')
+from pg_temp.last_scheduled_trial(83) trial;
+select ok(snapshot->>'state' = 'active' and snapshot->>'terminalTrialCount' = snapshot->>'maxAdmittedTrials',
+  'an exhausted experiment keeps its active control state and terminal history')
+from pg_temp.schedule_snapshot(83) snapshot;
 
 -- With today's default at four, this historical production pin will wait
 -- until the active benchmark drains. The sibling queue must stop refilling.
@@ -341,7 +346,14 @@ select is(pg_temp.schedule_snapshot(80)->>'reservedUsd', '0.600000', 'cancel pre
 select pg_temp.freeze_schedule(82);
 select pg_temp.configure_schedule(82, p_budget => 0.7, p_execution => 0.2, p_max => 1, p_evaluation => 0.4);
 select is(public.reconcile_factory_benchmark_schedules(10), 1, 'a second experiment reserves its one permitted cell');
-select id from public.claim_next_agent_job(true, 4);
+select is((select id from public.claim_next_agent_job(true, 4)), (pg_temp.last_scheduled_trial(82)).job_id,
+  'the second experiment occupies its first factory slot');
+select pg_temp.freeze_schedule(84);
+select pg_temp.configure_schedule(84, p_max => 1);
+select is(public.reconcile_factory_benchmark_schedules(10), 1, 'the sibling experiment queues a second trial in the factory');
+select is((select id from public.claim_next_agent_job(true, 4)), (pg_temp.last_scheduled_trial(84)).job_id,
+  'a completed one-slot schedule does not clamp active siblings with work to claim');
+select pg_temp.schedule_control(84, 'cancel');
 select (public.start_factory_benchmark_trial((pg_temp.last_scheduled_trial(82)).job_id, 1)).run_id;
 select result.accepted from pg_temp.last_scheduled_trial(82) trial
 cross join lateral public.record_session_run_usage(trial.job_id, 1, trial.run_id, 0, 0, 'measured', 0, 'measured', null, false) result;
