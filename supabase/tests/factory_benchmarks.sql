@@ -41,13 +41,40 @@ select pg_temp.benchmark_id(pipeline_slot + 1), workspace_id, pg_temp.benchmark_
 insert into public.sessions(id, workspace_id, factory_id, number, title, pipeline_id, current_stage_id)
 select pg_temp.benchmark_id(pipeline_slot + 2), workspace_id, factory_id, session_number, 'Benchmark fixture source',
   pg_temp.benchmark_id(pipeline_slot), pg_temp.benchmark_id(pipeline_slot + 1) from benchmark_scope;
-insert into public.agent_runs(id, workspace_id, session_id, stage_id, stage_slug, run_type, model_provider,
+insert into public.agent_jobs(id, workspace_id, session_id, stage_id, stage_slug, trigger_type, status, attempt_count,
+  started_at, finished_at)
+select pg_temp.benchmark_id(45), workspace_id, pg_temp.benchmark_id(42), pg_temp.benchmark_id(41),
+  'review', 'manual_run', 'success', 1, clock_timestamp() - interval '1 minute', clock_timestamp()
+from benchmark_scope where key = 'primary';
+insert into public.agent_runs(id, workspace_id, session_id, agent_job_id, stage_id, stage_slug, run_type, model_provider,
   model_name, status, attempt_count, started_at, finished_at)
 select pg_temp.benchmark_id(pipeline_slot + target.offset_slot), workspace_id, pg_temp.benchmark_id(pipeline_slot + 2),
+  case when key = 'primary' and target.offset_slot = 3 then pg_temp.benchmark_id(45) end,
   pg_temp.benchmark_id(pipeline_slot + 1), 'review', 'project', 'codex', 'gpt-5.5', 'success', 1,
   clock_timestamp() - interval '1 minute', clock_timestamp()
 from benchmark_scope cross join (values (3), (4)) target(offset_slot)
 where key = 'primary' or target.offset_slot = 3;
+
+with definition as (
+  select workspace_id, factory_id, owner_id,
+    jsonb_build_object('schemaVersion', 1, 'kind', 'serial', 'pipelineId', pg_temp.benchmark_id(pipeline_slot))::text as body
+  from benchmark_scope where key = 'primary'
+), revision as (
+  insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version,
+    definition_json, canonical_digest, created_by)
+  select pg_temp.benchmark_id(46), workspace_id, factory_id, 1, body,
+    encode(sha256(convert_to(body, 'UTF8')), 'hex'), owner_id from definition
+  returning id, workspace_id, canonical_digest
+)
+insert into public.session_attempt_manifests(run_id, workspace_id, session_id, job_id, attempt_count, stage_id,
+  definition_provenance, definition_revision_id, definition_digest, definition_skill_ids, definition_tool_ids,
+  repository_id, repository_full_name, base_branch, initial_base_sha, input_sha, checkout_sha, prompt_sha256,
+  prompt_utf8_bytes, renderer_version, predecessors, worker_runtime, run_type, model_provider, model_name)
+select run.id, run.workspace_id, run.session_id, run.agent_job_id, run.attempt_count, run.stage_id,
+  'pinned', revision.id, revision.canonical_digest, '{}', '{}',
+  pg_temp.benchmark_id(47), 'fixture/benchmark', 'main', repeat('a', 40), repeat('b', 40), repeat('b', 40),
+  repeat('c', 64), 24, 3, '[]', 'node', run.run_type, run.model_provider, run.model_name
+from revision join public.agent_runs run on (run.workspace_id, run.id) = (revision.workspace_id, pg_temp.benchmark_id(43));
 
 create temp table benchmark_task_keys(key text primary key, revision_id uuid not null, task_id uuid not null);
 create temp table benchmark_suite_keys(key text primary key, revision_id uuid not null, suite_id uuid not null);
@@ -208,7 +235,15 @@ select results_eq($$select task.source_run_id, task.source_session_id, task.sour
     and revision.revision_number = 1 where task.source_run_id = pg_temp.benchmark_id(43)$$,
   $$select pg_temp.benchmark_id(43), pg_temp.benchmark_id(42), 'review'::text, '1'::text, 'All checks pass.'::text$$,
   'a changed historical run cannot rewrite captured provenance or task acceptance criteria');
-delete from public.agent_runs where id = pg_temp.benchmark_id(43);
+delete from public.sessions where id = pg_temp.benchmark_id(42);
+select is((select count(*) from public.session_attempt_manifests where run_id = pg_temp.benchmark_id(43)),
+  0::bigint, 'removing the original session also removes its run attempt manifest');
+select results_eq($$select source_provenance->>'definitionRevisionId', source_provenance->>'definitionDigest',
+    source_provenance->>'inputSha', source_provenance->>'promptSha256'
+  from public.factory_benchmark_tasks where source_run_id = pg_temp.benchmark_id(43)$$,
+  $$select id::text, canonical_digest, repeat('b', 40), repeat('c', 64)
+    from public.factory_definition_revisions where id = pg_temp.benchmark_id(46)$$,
+  'task provenance retains the exact attempt definition, checkout input, and prompt digests after source removal');
 select is((select count(*) from public.factory_benchmark_tasks task
   join public.factory_benchmark_suite_members member on member.task_id = task.id
   where task.source_run_id = pg_temp.benchmark_id(43)), 2::bigint,
