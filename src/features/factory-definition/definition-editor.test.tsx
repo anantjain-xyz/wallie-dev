@@ -125,6 +125,50 @@ function document(
 const published = document(5, "revision", source);
 const draft = document(6, "draft", source);
 
+it("shows the working draft's routing evidence until a historical revision is selected", async () => {
+  setup({
+    initialDraft: {
+      ...draft,
+      routingDraftEvidence: {
+        version: 1,
+        experimentId: id(77),
+        candidateKey: "a".repeat(64),
+        suite: { id: id(78), revisionId: id(79), purpose: "holdout", name: "Delivery suite" },
+        scorerRevisionId: id(80),
+        scorerName: "Delivery scorer",
+        taskClassName: "Invoice delivery",
+        definitionDigest: draft.digest,
+        replayPolicyRevisionId: id(81),
+        replayPolicyDigest: "b".repeat(64),
+        ruleId: id(82),
+        capturedAt: createdAt,
+        qualityPassRateBps: 9_000,
+        resolvedTrials: 12,
+        measuredMeanCostUsd: "0.08",
+        constraints: {
+          qualityFloorBps: 8_000,
+          minResolvedTrials: 5,
+          maxMeanCostUsd: null,
+          maxLatencyMs: null,
+          minConfidenceBps: null,
+        },
+        p95WallLatencyMs: null,
+        isRecommended: true,
+      },
+    },
+  });
+  const evidenceHeading = { name: "Routing draft evidence" };
+  expect(await screen.findByRole("heading", evidenceHeading)).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open exact comparison configuration" })).toHaveAttribute(
+    "href",
+    expect.stringContaining(`/comparisons/${id(77)}`),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Activation #1/ }));
+  await screen.findByRole("button", { name: "Roll back to this revision" });
+  expect(screen.queryByRole("heading", evidenceHeading)).toBeNull();
+});
+
 it("shows the empty MCP configuration for a definition without bindings", async () => {
   setup();
   expect(await screen.findByRole("heading", { name: "MCP tool manifest" })).toBeVisible();

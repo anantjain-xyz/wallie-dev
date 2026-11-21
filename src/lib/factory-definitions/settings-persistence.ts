@@ -13,6 +13,16 @@ import { archivedFactoryStageSchema } from "./settings-contracts";
 import { factoryStageDefinition, readCompiledFactoryDefinition } from "./stored-definition";
 
 type Client = SupabaseClient<Database>;
+export type RoutingDraftWrite = Pick<
+  Database["public"]["Functions"]["save_factory_routing_draft"]["Args"],
+  | "p_experiment_id"
+  | "p_candidate_key"
+  | "p_suite_revision_id"
+  | "p_scorer_revision_id"
+  | "p_rule_id"
+  | "p_request_id"
+  | "p_request_digest"
+>;
 const uuid = z.string().uuid();
 
 const metadataSchema = z.object({
@@ -151,6 +161,7 @@ export async function saveSettingsFactoryDraft({
   expectedDraftId,
   compiled,
   metadata,
+  routingDraft,
 }: {
   client: Client;
   scope: {
@@ -162,12 +173,13 @@ export async function saveSettingsFactoryDraft({
   expectedDraftId: string | null;
   compiled: { bundle: CompiledFactoryDefinition; definitionJson: string; canonicalDigest: string };
   metadata: FactorySettingsMetadata;
+  routingDraft?: RoutingDraftWrite;
 }) {
   const { pipelineId, stages, executionPolicyRevisionId, deliveryPolicyRevisionId } =
     compiled.bundle;
   const anchors = await loadStageAnchors(client, scope.p_workspace_id, pipelineId);
   const anchorIds = new Set(anchors.map(({ id }) => id));
-  return client.rpc("save_settings_factory_definition_draft", {
+  const args = {
     ...scope,
     ...(expectedDraftId ? { p_expected_draft_id: expectedDraftId } : {}),
     p_definition_json: compiled.definitionJson,
@@ -184,5 +196,8 @@ export async function saveSettingsFactoryDraft({
           ? metadata.deliveryPolicy
           : undefined,
     },
-  });
+  };
+  return routingDraft
+    ? client.rpc("save_factory_routing_draft", { ...args, ...routingDraft })
+    : client.rpc("save_settings_factory_definition_draft", args);
 }

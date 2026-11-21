@@ -9,7 +9,10 @@ import { BenchmarkComparisonExports } from "@/features/factory-benchmarks/benchm
 import { BenchmarkComparisonFrontier } from "@/features/factory-benchmarks/benchmark-comparison-frontier";
 import { BenchmarkComparisonResults } from "@/features/factory-benchmarks/benchmark-comparison-results";
 import { loadBenchmarkScope } from "@/features/factory-benchmarks/suites-data";
-import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import {
+  isWorkspaceOperator,
+  loadAuthenticatedWorkspaceContext,
+} from "@/features/workspaces/authenticated-context";
 import {
   BenchmarkComparisonError,
   listBenchmarkComparisonExports,
@@ -21,7 +24,10 @@ import {
   benchmarkComparisonIdSchema,
   benchmarkComparisonQuerySchema,
 } from "@/lib/factory-benchmarks/comparison-contracts";
-import { benchmarkFrontierQuerySchema } from "@/lib/factory-benchmarks/frontier-contracts";
+import {
+  benchmarkFrontierQuerySchema,
+  type BenchmarkFrontierQuery,
+} from "@/lib/factory-benchmarks/frontier-contracts";
 import {
   workspaceBenchmarkComparisonPath,
   workspaceBenchmarkSuitePath,
@@ -49,6 +55,29 @@ const qualityFloorPercent = numberInput
   .optional();
 
 const minimumResolvedTrials = numberInput.pipe(z.number().int()).transform(String).optional();
+
+async function readFrontierAtRoutingCandidate(
+  scope: Parameters<typeof readBenchmarkFrontier>[0],
+  query: BenchmarkFrontierQuery,
+  candidateKey: string,
+) {
+  const candidates = await scope.admin
+    .from("factory_benchmark_experiment_candidates")
+    .select("candidate_key")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("factory_id", scope.factoryId)
+    .eq("experiment_id", scope.experimentId)
+    .not("comparison_position", "is", null)
+    .order("comparison_position")
+    .limit(100);
+  if (candidates.error) throw candidates.error;
+  const target = candidates.data.findIndex(({ candidate_key }) => candidate_key === candidateKey);
+  if (target < 0) notFound();
+  return readBenchmarkFrontier(scope, {
+    ...query,
+    afterCandidateKey: candidates.data[target - 1]?.candidate_key,
+  });
+}
 
 export default async function BenchmarkComparisonPage({
   params,
@@ -81,7 +110,17 @@ export default async function BenchmarkComparisonPage({
     afterCandidateKey: query.afterFrontierCandidateKey,
     limit: "16",
   });
-  if (!ids.success || !trials.success || !history.success || !frontierQuery.success) notFound();
+  const routingCandidateKey = benchmarkFrontierQuerySchema.shape.afterCandidateKey.safeParse(
+    query.routingCandidateKey,
+  );
+  if (
+    !ids.success ||
+    !trials.success ||
+    !history.success ||
+    !frontierQuery.success ||
+    !routingCandidateKey.success
+  )
+    notFound();
   const { workspaceSlug, suiteId, experimentId } = ids.data;
   const [scope, access] = await Promise.all([
     loadBenchmarkScope(workspaceSlug, query.factory, suiteId),
@@ -100,7 +139,9 @@ export default async function BenchmarkComparisonPage({
   const [comparison, exports, frontier] = await Promise.all([
     readBenchmarkComparison(reportScope, trials.data),
     listBenchmarkComparisonExports(reportScope, history.data),
-    readBenchmarkFrontier(reportScope, frontierQuery.data),
+    routingCandidateKey.data
+      ? readFrontierAtRoutingCandidate(reportScope, frontierQuery.data, routingCandidateKey.data)
+      : readBenchmarkFrontier(reportScope, frontierQuery.data),
   ]).catch((error: unknown) => {
     if (error instanceof BenchmarkComparisonError && [400, 403, 404].includes(error.status)) {
       notFound();
@@ -160,8 +201,13 @@ export default async function BenchmarkComparisonPage({
               frontier={frontier}
               action={`${workspaceBenchmarkComparisonPath(workspaceSlug, suiteId, experimentId)}#cost-quality-frontier`}
               preservedQuery={resultCursors}
+              routingDraft={
+                isWorkspaceOperator(access.currentMember)
+                  ? { workspaceId, workspaceSlug, factoryId: factory.id }
+                  : undefined
+              }
               firstHref={
-                frontierQuery.data.afterCandidateKey
+                frontierQuery.data.afterCandidateKey || routingCandidateKey.data
                   ? `${href({ afterFrontierCandidateKey: undefined })}#cost-quality-frontier`
                   : undefined
               }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { routingDraftEvidenceSchema } from "@/lib/model-routing/draft-contracts";
 import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 
 import {
@@ -22,6 +23,7 @@ const documentSchema = contentSchema.extend({
   kind: z.enum(["draft", "revision"]),
   createdAt,
   sourceDraftId: uuid.nullable(),
+  routingDraftEvidence: routingDraftEvidenceSchema.optional(),
 });
 
 export const factoryEditorSnapshotSchema = z.object({

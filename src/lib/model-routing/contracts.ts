@@ -26,7 +26,7 @@ export const modelRoutingConfigurationSchema = z.strictObject({
   workerRuntime: z.enum(["node", "workerd"]),
 });
 
-const modelRoutingConstraintsSchema = z.strictObject({
+export const modelRoutingConstraintsSchema = z.strictObject({
   qualityFloorBps: basisPoints,
   maxMeanCostUsd: z.number().finite().min(0).max(1_000_000).nullable(),
   maxLatencyMs: z.number().int().min(1).max(86_400_000).nullable(),
@@ -40,8 +40,7 @@ const fallback = z.strictObject({
   configuration: modelRoutingConfigurationSchema,
 });
 
-const taskClass = z.strictObject({
-  id: taskClassId,
+export const routingTaskClassDetailsSchema = z.strictObject({
   slug: z
     .string()
     .min(1)
@@ -49,6 +48,7 @@ const taskClass = z.strictObject({
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   name: z.string().trim().min(1).max(120).refine(isFactoryDefinitionText),
 });
+const taskClass = routingTaskClassDetailsSchema.extend({ id: taskClassId });
 
 const rule = z.strictObject({
   id: ruleId,
@@ -59,6 +59,7 @@ const rule = z.strictObject({
 });
 
 export type ModelRoutingConfiguration = z.infer<typeof modelRoutingConfigurationSchema>;
+type RoutingFailure = z.infer<typeof rule>["onUnavailable"];
 
 function sameConfiguration(
   primary: ModelRoutingConfiguration,
@@ -71,6 +72,19 @@ function sameConfiguration(
     primary.harness === alternative.harness &&
     primary.workerRuntime === alternative.workerRuntime
   );
+}
+
+export function routingFailureAfterPromotion({
+  configuration,
+  previous,
+}: {
+  configuration: ModelRoutingConfiguration;
+  previous: RoutingFailure | undefined;
+}): RoutingFailure {
+  if (previous?.kind === "fallback" && !sameConfiguration(configuration, previous.configuration)) {
+    return previous;
+  }
+  return { kind: "escalate" };
 }
 
 export const modelRoutingPolicySchema = z

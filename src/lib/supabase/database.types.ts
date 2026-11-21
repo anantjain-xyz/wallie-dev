@@ -4160,6 +4160,67 @@ export type Database = {
           },
         ]
       }
+      factory_routing_draft_evidence: {
+        Row: {
+          candidate_key: string
+          created_by: string
+          draft_id: string
+          evidence: Json
+          experiment_id: string
+          factory_id: string
+          request_digest: string
+          request_id: string
+          workspace_id: string
+        }
+        Insert: {
+          candidate_key: string
+          created_by: string
+          draft_id: string
+          evidence: Json
+          experiment_id: string
+          factory_id: string
+          request_digest: string
+          request_id: string
+          workspace_id: string
+        }
+        Update: {
+          candidate_key?: string
+          created_by?: string
+          draft_id?: string
+          evidence?: Json
+          experiment_id?: string
+          factory_id?: string
+          request_digest?: string
+          request_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_routing_draft_evidenc_workspace_id_factory_id_draf_fkey"
+            columns: ["workspace_id", "factory_id", "draft_id"]
+            isOneToOne: true
+            referencedRelation: "factory_definition_drafts"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_routing_draft_evidenc_workspace_id_factory_id_expe_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "experiment_id",
+              "candidate_key",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_experiment_candidates"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "experiment_id",
+              "candidate_key",
+            ]
+          },
+        ]
+      }
       factory_run_credential_receipts: {
         Row: {
           agent_provider: string
@@ -15022,6 +15083,43 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      save_factory_routing_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_candidate_key: string
+          p_canonical_digest: string
+          p_definition_json: string
+          p_expected_activation_number: number
+          p_expected_draft_id?: string
+          p_experiment_id: string
+          p_factory_id: string
+          p_request_digest: string
+          p_request_id: string
+          p_rule_id: string
+          p_scorer_revision_id: string
+          p_settings_metadata: Json
+          p_suite_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          base_activation_number: number | null
+          canonical_digest: string
+          created_at: string
+          created_by: string
+          definition_json: string
+          factory_id: string
+          id: string
+          schema_version: number
+          settings_metadata: Json
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       save_factory_scorer_calibration_revision: {
         Args: {

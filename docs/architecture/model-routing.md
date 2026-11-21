@@ -30,3 +30,17 @@ Missing evidence follows `onUnavailable`. A configured zero floor or cost ceilin
 - The first selected stage’s slug comes from the pinned factory definition. Admission matches that slug to a configured task class. An absent match follows `onUnmatched`. An ambiguous match escalates.
 - Admission checks the exact candidate’s current capability profile and the session’s scoped credential authority. It records the result, policy revision and digest, rule, and candidate identity before it queues the first run.
 - Each attempt manifest links to the original admission receipt. Publishing a later policy or retrying a run preserves that receipt. The manifest’s model and worker runtime continue to describe actual execution.
+
+## Benchmark-backed drafts
+
+Workspace owners and admins can apply a comparison configuration to a task class. The draft save keeps the current factory activation and uses its normal stale-draft check. The routing rule retains the exact scorer revision from the experiment.
+
+| Check               | Draft requirement                                                                                                                                                                                                           |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frozen inputs       | The suite revision and scorer revision are current. The replay policy, capability check, connection and toolchain still qualify the exact configuration. A pending sandbox rotation or unavailable writer blocks the draft. |
+| Quality and support | The comparable cohort clears the declared pass-rate floor and minimum resolved trials. Known failures count in the denominator.                                                                                             |
+| Measured cost       | Every comparable trial has measured costs for execution and the selected judge. The total must fit the mean ceiling when one is configured.                                                                                 |
+| Wall latency        | A configured ceiling requires wall-time observations from every comparable trial. The 95th percentile is rounded up to whole milliseconds.                                                                                  |
+| Confidence          | The comparison currently supplies no confidence value. Leave the confidence floor unset when applying a finding.                                                                                                            |
+
+The save transaction retains an immutable receipt with the draft and the exact experiment, candidate key, suite revision and purpose, scorer revision, and measured tradeoffs. The draft links to the frozen comparison configuration and suite revision. Later suite and scorer edits leave the receipt intact.
