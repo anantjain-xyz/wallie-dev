@@ -1466,6 +1466,89 @@ export type Database = {
           },
         ]
       }
+      factory_benchmark_task_inputs: {
+        Row: {
+          checkout_sha: string | null
+          context_manifest_sha256: string | null
+          context_origin_run_id: string | null
+          created_at: string
+          definition_digest: string | null
+          definition_revision_id: string | null
+          factory_id: string
+          input_ref: string | null
+          input_sha: string | null
+          original_prompt_sha256: string | null
+          rendered_prompt_sha256: string | null
+          renderer_version: number | null
+          repository_id: string | null
+          retry_bundle_sha256: string | null
+          retry_source_run_id: string | null
+          source_attempt_count: number | null
+          source_checkpoint_run_id: string | null
+          source_job_id: string | null
+          source_run_id: string
+          source_session_id: string
+          task_id: string
+          workspace_id: string
+        }
+        Insert: {
+          checkout_sha?: string | null
+          context_manifest_sha256?: string | null
+          context_origin_run_id?: string | null
+          created_at?: string
+          definition_digest?: string | null
+          definition_revision_id?: string | null
+          factory_id: string
+          input_ref?: string | null
+          input_sha?: string | null
+          original_prompt_sha256?: string | null
+          rendered_prompt_sha256?: string | null
+          renderer_version?: number | null
+          repository_id?: string | null
+          retry_bundle_sha256?: string | null
+          retry_source_run_id?: string | null
+          source_attempt_count?: number | null
+          source_checkpoint_run_id?: string | null
+          source_job_id?: string | null
+          source_run_id: string
+          source_session_id: string
+          task_id: string
+          workspace_id: string
+        }
+        Update: {
+          checkout_sha?: string | null
+          context_manifest_sha256?: string | null
+          context_origin_run_id?: string | null
+          created_at?: string
+          definition_digest?: string | null
+          definition_revision_id?: string | null
+          factory_id?: string
+          input_ref?: string | null
+          input_sha?: string | null
+          original_prompt_sha256?: string | null
+          rendered_prompt_sha256?: string | null
+          renderer_version?: number | null
+          repository_id?: string | null
+          retry_bundle_sha256?: string | null
+          retry_source_run_id?: string | null
+          source_attempt_count?: number | null
+          source_checkpoint_run_id?: string | null
+          source_job_id?: string | null
+          source_run_id?: string
+          source_session_id?: string
+          task_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_task_inputs_workspace_id_factory_id_task_fkey"
+            columns: ["workspace_id", "factory_id", "task_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_tasks"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_benchmark_task_revisions: {
         Row: {
           acceptance_criteria: string
@@ -9337,6 +9420,24 @@ export type Database = {
           job_ids: string[]
           run_ids: string[]
         }[]
+      }
+      capture_factory_benchmark_run: {
+        Args: {
+          p_acceptance_criteria: string
+          p_actor_user_id: string
+          p_eligibility_reason?: string
+          p_expected_revision_id?: string
+          p_expected_task_revision_id?: string
+          p_factory_id: string
+          p_new_suite_name?: string
+          p_new_suite_purpose?: string
+          p_replay_eligibility: string
+          p_source_run_id: string
+          p_suite_id: string
+          p_task_name: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       check_factory_credential_binding: {
         Args: {

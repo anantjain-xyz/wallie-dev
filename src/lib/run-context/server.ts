@@ -12,9 +12,9 @@ import type { AttemptPredecessor } from "@/lib/pipeline/stages";
 import { untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import type { SpecificationPromptContext } from "@/lib/prompt-templates";
 import type { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { Tables } from "@/lib/supabase/database.types";
 
 import { runContextManifestSchema, type RunContextManifest } from "./contracts";
+import { formatRunContextMessage } from "./conversation";
 import { factoryMemoryPromptValue, fingerprintRunContextInput, packRunContext } from "./packing";
 
 const maxConversationMessages = 32;
@@ -31,11 +31,6 @@ type ContextScope = {
 };
 
 type ContextReference = Parameters<typeof retrieveFactoryContextDocuments>[0]["references"];
-type ContextMessage = Pick<
-  Tables<"session_conversation_messages">,
-  "sequence" | "author_label" | "body_md" | "body_truncated"
->;
-
 const originSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("fresh") }),
   z.object({ status: z.literal("missing") }),
@@ -138,18 +133,6 @@ function scopedMessages(scope: ContextScope) {
     .eq("kind", "message");
 }
 
-function formatMessage(message: ContextMessage) {
-  return {
-    sequence: message.sequence,
-    body: [
-      "Message " + message.sequence + " from " + message.author_label,
-      ...(message.body_truncated ? ["The stored conversation excerpt is truncated."] : []),
-      "",
-      message.body_md,
-    ].join("\n"),
-  };
-}
-
 async function readNewConversation(scope: ContextScope) {
   const head = scope.admin
     .from("session_conversations")
@@ -175,7 +158,7 @@ async function readNewConversation(scope: ContextScope) {
   return {
     throughSequence,
     olderOmitted: result.count - result.data.length,
-    messages: result.data.slice().reverse().map(formatMessage),
+    messages: result.data.slice().reverse().map(formatRunContextMessage),
   };
 }
 
@@ -198,7 +181,7 @@ async function restoreConversation(scope: ContextScope, manifest: RunContextMani
   if (error || !data || data.length !== selected.length) {
     throw new FrozenRunContextUnavailableError("A recorded conversation message is missing.");
   }
-  const restored = data.map(formatMessage);
+  const restored = data.map(formatRunContextMessage);
   if (
     restored.some(
       (message, i) =>

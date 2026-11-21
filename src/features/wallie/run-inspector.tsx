@@ -37,6 +37,7 @@ export function RunInspector({
   workspaceId,
   workspaceSlug,
   initialNow,
+  benchmarkCapture,
   evaluations,
   transcript,
 }: {
@@ -51,6 +52,7 @@ export function RunInspector({
   workspaceId: string;
   workspaceSlug: string;
   initialNow: string;
+  benchmarkCapture?: ReactNode;
   evaluations?: ReactNode;
   transcript: ReactNode;
 }) {
@@ -61,12 +63,15 @@ export function RunInspector({
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         actions={
-          <Status
-            label={
-              run.interrupted ? "Interrupted" : run.status === "started" ? "Starting" : undefined
-            }
-            value={agentRunStatusValue(run.status)}
-          />
+          <>
+            <Status
+              label={
+                run.interrupted ? "Interrupted" : run.status === "started" ? "Starting" : undefined
+              }
+              value={agentRunStatusValue(run.status)}
+            />
+            {benchmarkCapture}
+          </>
         }
         actionsRightOnDesktop
         description={
