@@ -125,6 +125,9 @@ it.each([
             ),
         };
       }
+      if (name === "reconcile_factory_benchmark_evaluations") {
+        return { abortSignal: () => Promise.resolve({ data: 2, error: null }) };
+      }
       if (name === "process_factory_scorer_sampling") {
         return { abortSignal: () => ({ single: sample }) };
       }
@@ -205,14 +208,17 @@ it.each([
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         rpc.mock.invocationCallOrder[0],
       );
-      expect(rpc).toHaveBeenNthCalledWith(2, "process_factory_flow_projection", {
+      expect(rpc).toHaveBeenNthCalledWith(2, "reconcile_factory_benchmark_evaluations", {
         p_limit: 25,
       });
-      expect(rpc).toHaveBeenNthCalledWith(3, "process_factory_scorer_sampling", { p_limit: 25 });
+      expect(rpc).toHaveBeenNthCalledWith(3, "process_factory_flow_projection", {
+        p_limit: 25,
+      });
+      expect(rpc).toHaveBeenNthCalledWith(4, "process_factory_scorer_sampling", { p_limit: 25 });
       expect(sample).toHaveBeenCalledOnce();
-      expect(rpc).toHaveBeenNthCalledWith(4, "maintain_factory_evaluation_queue", { p_limit: 25 });
+      expect(rpc).toHaveBeenNthCalledWith(5, "maintain_factory_evaluation_queue", { p_limit: 25 });
       expect(evaluations).toHaveBeenCalledOnce();
-      expect(rpc).toHaveBeenNthCalledWith(5, "prune_factory_analytics_exports", { p_limit: 100 });
+      expect(rpc).toHaveBeenNthCalledWith(6, "prune_factory_analytics_exports", { p_limit: 100 });
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );

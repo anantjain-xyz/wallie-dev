@@ -29,6 +29,7 @@ const booleanScoreSchema = z
   .strictObject({ kind: z.literal("boolean"), value: z.boolean() })
   .readonly();
 const scoreSchema = z.union([numericScoreSchema, booleanScoreSchema]);
+export { scoreSchema as factoryScorerScoreSchema };
 
 const unscorableReason = z.enum(["ambiguous_evidence", "unsupported_evidence"]);
 const skipReason = z.enum(["not_sampled", "excluded", "canceled"]);

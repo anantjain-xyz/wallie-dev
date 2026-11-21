@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { createClient } from "@supabase/supabase-js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -16,9 +18,15 @@ function id(slot: number) {
 
 const profileId = id(11);
 const artifactId = id(12);
+const trialId = id(13);
+const validationText = '{"status":"passed","checks":["invoice totals match"]}';
 const exampleKey = "synthetic-dedicated-judge-key";
 
-function fixture(permitStatus = "authorized", kind: "artifact" | "validation_report" = "artifact") {
+function fixture(
+  permitStatus = "authorized",
+  kind: "artifact" | "validation_report" = "artifact",
+  benchmark?: { evidenceId?: string; reportDigest?: string },
+) {
   const claim: FactoryJudgeClaim = {
     workspace_id: id(1),
     factory_id: id(2),
@@ -39,6 +47,34 @@ function fixture(permitStatus = "authorized", kind: "artifact" | "validation_rep
     requiredEvidence: [kind],
     scoring: { kind: "boolean", passValue: true },
   };
+  let evidence;
+  if (kind === "artifact") {
+    evidence = {
+      kind,
+      id: benchmark ? (benchmark.evidenceId ?? trialId) : artifactId,
+      content_md: "Result summary",
+    };
+  } else if (benchmark) {
+    evidence = {
+      kind,
+      id: benchmark.evidenceId ?? trialId,
+      source: "benchmark_result",
+      content_text: validationText,
+      sha256: benchmark.reportDigest ?? createHash("sha256").update(validationText).digest("hex"),
+    };
+  } else {
+    evidence = {
+      kind,
+      id: artifactId,
+      workspace_id: claim.workspace_id,
+      session_id: claim.session_id,
+      run_id: claim.run_id,
+      storage_path: `${claim.workspace_id}/${claim.run_id}/${artifactId}`,
+      sha256: "0".repeat(64),
+      content_type: "text/plain",
+      size_bytes: 10,
+    };
+  }
   const requests: { rpc: string; body: unknown }[] = [];
   const admin = createClient<Database>("https://evaluation.example.test", "test-key", {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -72,29 +108,19 @@ function fixture(permitStatus = "authorized", kind: "artifact" | "validation_rep
             session_id: claim.session_id,
             sample_receipt_id: claim.sample_receipt_id,
             scorer_revision_id: claim.scorer_revision_id,
-            evidence:
-              kind === "artifact"
-                ? [{ kind, id: artifactId, content_md: "Result summary" }]
-                : [
-                    {
-                      kind,
-                      id: artifactId,
-                      workspace_id: claim.workspace_id,
-                      session_id: claim.session_id,
-                      run_id: claim.run_id,
-                      storage_path: `${claim.workspace_id}/${claim.run_id}/${artifactId}`,
-                      sha256: "0".repeat(64),
-                      content_type: "text/plain",
-                      size_bytes: 10,
-                    },
-                  ],
+            evidence: [evidence],
+            ...(benchmark
+              ? { benchmark_source: { trial_id: trialId, result_digest: "a".repeat(64) } }
+              : {}),
           });
         }
         if (rpc === "begin_factory_judge_invocation") {
           return Response.json(
             permitStatus === "authorized"
               ? { status: "authorized", encrypted_api_key: encryptSecretValue(exampleKey) }
-              : { status: permitStatus },
+              : permitStatus === "benchmark_blocked"
+                ? { status: permitStatus, reason: "evaluation_budget_exhausted" }
+                : { status: permitStatus },
           );
         }
         if (rpc === "finish_factory_judge_invocation") return Response.json(true);
@@ -110,6 +136,73 @@ beforeEach(() => {
   vi.stubEnv("WALLIE_ENCRYPTION_KEY", "wallie-synthetic-encryption-input-for-judge-test");
 });
 afterEach(() => vi.unstubAllEnvs());
+
+it.each(["node", "workerd"] as const)(
+  "evaluates a digest-checked private benchmark report through the %s claim path",
+  async (runtime) => {
+    const { admin, claim, requests } = fixture("authorized", "validation_report", {});
+    vi.mocked(runFactoryJudge).mockResolvedValue({
+      result: {
+        schemaVersion: 1,
+        evidence: [{ kind: "validation_report", id: trialId }],
+        status: "pass",
+        score: { kind: "boolean", value: true },
+      },
+    });
+
+    await expect(runClaimedFactoryJudge(admin, claim, runtime)).resolves.toBe(true);
+    expect(runFactoryJudge).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        evidence: [
+          {
+            mediaType: "text/plain",
+            reference: { kind: "validation_report", id: trialId },
+            text: validationText,
+          },
+        ],
+      }),
+    );
+    expect(requests[1]).toMatchObject({
+      rpc: "begin_factory_judge_invocation",
+      body: { p_worker_runtime: runtime },
+    });
+  },
+);
+
+it("withholds a benchmark report when its bytes differ from the retained digest", async () => {
+  const { admin, claim, requests } = fixture("authorized", "validation_report", {
+    reportDigest: "1".repeat(64),
+  });
+
+  await expect(runClaimedFactoryJudge(admin, claim, "node")).resolves.toBe(true);
+  expect(requests.map(({ rpc }) => rpc)).toEqual([
+    "prepare_factory_judge_invocation",
+    "finish_factory_judge_invocation",
+  ]);
+  expect(requests[1]?.body).toMatchObject({ p_status: "unsupported_evidence" });
+  expect(runFactoryJudge).not.toHaveBeenCalled();
+});
+
+it("withholds a benchmark artifact associated with another trial", async () => {
+  const { admin, claim, requests } = fixture("authorized", "artifact", { evidenceId: id(14) });
+
+  await expect(runClaimedFactoryJudge(admin, claim, "node")).rejects.toThrow(
+    "The factory judge evidence did not match its source.",
+  );
+  expect(requests.map(({ rpc }) => rpc)).toEqual(["prepare_factory_judge_invocation"]);
+  expect(runFactoryJudge).not.toHaveBeenCalled();
+});
+
+it("preserves the database disposition when a benchmark reservation cannot authorize a call", async () => {
+  const { admin, claim, requests } = fixture("benchmark_blocked", "artifact", {});
+
+  await expect(runClaimedFactoryJudge(admin, claim, "workerd")).resolves.toBe(false);
+  expect(requests.map(({ rpc }) => rpc)).toEqual([
+    "prepare_factory_judge_invocation",
+    "begin_factory_judge_invocation",
+  ]);
+  expect(runFactoryJudge).not.toHaveBeenCalled();
+});
 
 it("issues an exact one-shot permit before invoking the judge and records a typed candidate", async () => {
   const { admin, claim, requests, definition } = fixture();

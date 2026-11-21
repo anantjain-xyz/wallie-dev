@@ -4,9 +4,14 @@ import { expect, test, type Locator, type Page, type TestInfo } from "@playwrigh
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod/v4";
 
-import { benchmarkAxisSnapshotSchema } from "@/lib/factory-benchmarks/experiment-axes-contracts";
+import { benchmarkEvaluationPageSchema } from "@/lib/factory-benchmarks/evaluation-outcomes-contracts";
+import {
+  benchmarkAxisSnapshotSchema,
+  freezeBenchmarkAxesRequestSchema,
+} from "@/lib/factory-benchmarks/experiment-axes-contracts";
 import { compiledFactoryDefinitionSchema } from "@/lib/factory-definitions/schema";
 import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
+import type { FactoryScorerDefinition } from "@/lib/factory-scorers/contracts";
 import type { Database } from "@/lib/supabase/database.types";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
@@ -183,6 +188,39 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
     const eligible = checked(eligibleResult);
     const ineligible = checked(ineligibleResult);
     const policy = checked(policyResult);
+    const scoringDefinition = {
+      schemaVersion: 1,
+      rubric: "Verify that invoice totals reconcile after a duplicate import.",
+      requiredEvidence: ["artifact"],
+      scoring: { kind: "boolean", passValue: true },
+    } satisfies FactoryScorerDefinition;
+    const earlierScorer = checked(
+      await admin.rpc("create_factory_scorer", {
+        ...scope,
+        p_name: "Invoice accuracy",
+        p_slug: "invoice-accuracy",
+        p_definition: scoringDefinition,
+      }),
+    );
+    const latestScorer = checked(
+      await admin.rpc("save_factory_scorer_revision", {
+        ...scope,
+        p_scorer_id: earlierScorer.scorer_id,
+        p_expected_revision: earlierScorer.revision_number,
+        p_definition: { ...scoringDefinition, rubric: "Verify totals and original line items." },
+      }),
+    );
+    const auditScorer = checked(
+      await admin.rpc("create_factory_scorer", {
+        ...scope,
+        p_name: "Retry audit evidence",
+        p_slug: "retry-audit-evidence",
+        p_definition: {
+          ...scoringDefinition,
+          rubric: "Verify that the retry recorded an audit entry.",
+        },
+      }),
+    );
     const saved = checked(
       await admin.rpc("save_factory_benchmark_suite_revision", {
         ...scope,
@@ -290,6 +328,7 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
       const body = await result.text();
       expect(result.ok(), body).toBeTruthy();
       const receipt = benchmarkAxisSnapshotSchema.parse(JSON.parse(body));
+      const command = freezeBenchmarkAxesRequestSchema.parse(result.request().postDataJSON());
       await expect(form.getByText("Comparison frozen", { exact: true })).toBeVisible();
       await expect(
         form.getByText("12 planned · 6 eligible · 6 ineligible", { exact: true }),
@@ -336,10 +375,11 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
           ),
         );
       }
-      return pairs;
+      return { pairs, receipt, command, endpoint: result.url() };
     }
 
-    const sameRevision = await freezeAndRead();
+    const { pairs: sameRevision, receipt: unscoredReceipt } = await freezeAndRead();
+    expect(unscoredReceipt.evaluation).toBeUndefined();
     expect(sameRevision).toEqual(
       expect.arrayContaining(
         [
@@ -388,7 +428,20 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
       await candidatePins.click();
     }
     await expect(candidate.getByText(candidateDefinition.canonicalDigest)).toBeVisible();
-    const differentRevisions = await freezeAndRead();
+    await form.getByText("Scoring (optional)", { exact: true }).click();
+    const currentScorerOption = form.getByRole("checkbox", {
+      name: "Invoice accuracy · Revision 2",
+      exact: true,
+    });
+    await form.getByRole("checkbox", { name: "Retry audit evidence · Revision 1" }).check();
+    await form.getByRole("checkbox", { name: "Invoice accuracy · Revision 1" }).check();
+    await expect(currentScorerOption).not.toBeChecked();
+    const budget = form.getByRole("spinbutton", { name: "Evaluation budget (USD)" });
+    await budget.fill("12.345678");
+    await budget.blur();
+    await screenshot(page, info, "05-benchmark-scoring-selection-desktop-light");
+
+    const { pairs: differentRevisions, receipt, command, endpoint } = await freezeAndRead();
     expect(differentRevisions).toEqual(
       expect.arrayContaining(
         [
@@ -406,6 +459,105 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
       ),
     );
     await screenshot(page, info, "03-benchmark-exact-revisions-frozen-desktop-light");
+    const frozenPlan = {
+      scorerRevisionIds: [earlierScorer.id, auditScorer.id].sort(),
+      budgetLimitUsd: 12.345678,
+    };
+    expect(receipt.evaluation).toEqual(frozenPlan);
+    const frozenScorers = form.getByRole("list", { name: "Frozen scorer revisions" });
+    await expect(frozenScorers.getByText("Invoice accuracy · Revision 1")).toBeVisible();
+    await expect(frozenScorers.getByText("Retry audit evidence · Revision 1")).toBeVisible();
+    await expect(frozenScorers.getByText("Invoice accuracy · Revision 2")).toHaveCount(0);
+    await expect(form.getByText("Evaluation budget $12.345678")).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Switch to dark mode" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await baseline.getByText("Exact configuration pins", { exact: true }).click();
+    await candidatePins.click();
+    await form.getByText("Scoring · 2 selected", { exact: true }).click();
+    await screenshot(page, info, "06-benchmark-frozen-scoring-mobile-dark");
+
+    const evaluationUrl = new URL(
+      `experiments/${receipt.experimentId}/evaluation?limit=1`,
+      endpoint,
+    );
+    const evaluationResponse = await page.request.get(evaluationUrl.toString());
+    const evaluationBody = await evaluationResponse.text();
+    expect(evaluationResponse.ok(), evaluationBody).toBeTruthy();
+    const evaluationPage = benchmarkEvaluationPageSchema.parse(JSON.parse(evaluationBody));
+    const emptySpend = { spentUsd: 0, reservedUsd: 0, unavailableCount: 0 };
+    expect(evaluationPage).toMatchObject({
+      experimentId: receipt.experimentId,
+      evaluation: frozenPlan,
+      eligibleTrialCount: receipt.eligibleTrialCount,
+      denominator: receipt.eligibleTrialCount * 2,
+      scheduleState: "unconfigured",
+      spend: { execution: emptySpend, evaluation: emptySpend, combined: emptySpend },
+    });
+    expect(evaluationPage.cells).toHaveLength(1);
+    const [firstCell] = evaluationPage.cells;
+    expect(firstCell).toMatchObject({
+      status: "pending",
+      reason: "schedule_unconfigured",
+      evaluationJobId: null,
+      attemptId: null,
+      score: null,
+    });
+    expect(frozenPlan.scorerRevisionIds).toContain(firstCell.scorerRevisionId);
+    expect(evaluationPage.nextCursor).toEqual({
+      trialId: firstCell.trialId,
+      scorerRevisionId: firstCell.scorerRevisionId,
+    });
+
+    const [planRow, dimensions] = await Promise.all([
+      admin
+        .from("factory_benchmark_evaluation_plans")
+        .select("budget_limit_usd")
+        .eq("workspace_id", fixture.workspaceId)
+        .eq("factory_id", fixture.factoryId)
+        .eq("experiment_id", receipt.experimentId)
+        .single(),
+      admin
+        .from("factory_benchmark_evaluation_dimensions")
+        .select("scorer_revision_id")
+        .eq("workspace_id", fixture.workspaceId)
+        .eq("factory_id", fixture.factoryId)
+        .eq("experiment_id", receipt.experimentId)
+        .order("scorer_revision_id"),
+    ]);
+    if (planRow.error) throw planRow.error;
+    expect(planRow.data.budget_limit_usd).toBe(frozenPlan.budgetLimitUsd);
+    expect(checked(dimensions).map(({ scorer_revision_id }) => scorer_revision_id)).toEqual(
+      frozenPlan.scorerRevisionIds,
+    );
+    checked(
+      await admin.rpc("save_factory_scorer_revision", {
+        ...scope,
+        p_scorer_id: earlierScorer.scorer_id,
+        p_expected_revision: latestScorer.revision_number,
+        p_definition: { ...scoringDefinition, rubric: "Verify totals against the audit history." },
+      }),
+    );
+    const retry = await page.request.post(endpoint, {
+      data: {
+        ...command,
+        evaluation: {
+          ...frozenPlan,
+          scorerRevisionIds: [...frozenPlan.scorerRevisionIds].reverse(),
+        },
+      },
+    });
+    const retryBody = await retry.text();
+    expect(retry.ok(), retryBody).toBeTruthy();
+    expect(benchmarkAxisSnapshotSchema.parse(JSON.parse(retryBody))).toEqual(receipt);
+    const changedBudget = await page.request.post(endpoint, {
+      data: { ...command, evaluation: { ...frozenPlan, budgetLimitUsd: 13 } },
+    });
+    expect(changedBudget.status()).toBe(409);
+    const unscoredRetry = await page.request.post(endpoint, {
+      data: { ...command, evaluation: undefined },
+    });
+    expect(unscoredRetry.status()).toBe(409);
   } finally {
     await fixture.cleanup();
   }

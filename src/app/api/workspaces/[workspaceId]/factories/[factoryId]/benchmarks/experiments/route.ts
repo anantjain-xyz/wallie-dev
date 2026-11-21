@@ -20,7 +20,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const command = await readBenchmarkCommand(
       request,
       freezeBenchmarkExperimentRequestSchema,
-      "Provide an exact suite revision, replay policy, and candidate definition revisions.",
+      "Check the suite revision, replay policy, candidate revisions, and any scoring settings.",
     );
     if (!command.ok) return command.response;
 

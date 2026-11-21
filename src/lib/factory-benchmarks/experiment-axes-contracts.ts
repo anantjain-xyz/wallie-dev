@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { benchmarkEvaluationPlanSchema } from "./experiment-evaluation-contracts";
+
 const id = z
   .string()
   .uuid()
@@ -36,6 +38,7 @@ export const freezeBenchmarkAxesRequestSchema = z.strictObject({
   repetitions: z.number().int().min(1).max(100),
   seed: z.number().int().min(0).max(2_147_483_647),
   timeoutMs: z.number().int().min(1_000).max(1_800_000),
+  evaluation: benchmarkEvaluationPlanSchema.optional(),
 });
 
 export const benchmarkAxisSnapshotSchema = z.object({
@@ -49,10 +52,14 @@ export const benchmarkAxisSnapshotSchema = z.object({
   materializedTrialCount: z.number().int().positive(),
   eligibleTrialCount: z.number().int().nonnegative(),
   ineligibleTrialCount: z.number().int().nonnegative(),
+  evaluation: benchmarkEvaluationPlanSchema.optional(),
 });
 
 export const benchmarkAxisCatalogSchema = z.object({
   definitions: z.array(z.object({ id, digest, label: z.string(), sandboxProvider: sandbox })),
+  scorerRevisions: z.array(
+    z.object({ id, scorerName: z.string().min(1), revisionNumber: z.number().int().positive() }),
+  ),
   policies: z.array(
     z.object({
       id,

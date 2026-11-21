@@ -18,7 +18,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const command = await readBenchmarkCommand(
       request,
       freezeBenchmarkAxesRequestSchema,
-      "Select distinct comparison configurations and a replay policy.",
+      "Check the comparison configurations, replay policy, and any scoring settings.",
     );
     if (!command.ok) return command.response;
     const snapshot = await freezeBenchmarkExperimentAxes({

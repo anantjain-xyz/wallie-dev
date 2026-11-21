@@ -32,7 +32,10 @@ import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
-import { reconcileBenchmarkSchedules } from "@/lib/factory-benchmarks/schedule-maintenance";
+import {
+  reconcileBenchmarkEvaluations,
+  reconcileBenchmarkSchedules,
+} from "@/lib/factory-benchmarks/schedule-maintenance";
 import {
   processFactoryFlowProjection,
   pruneFactoryAnalyticsExports,
@@ -306,6 +309,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ],
       ["stall recovery", () => sweepStalledRuns(admin, 900_000)],
       ["benchmark schedules", () => reconcileBenchmarkSchedules(admin)],
+      ["benchmark evaluations", () => reconcileBenchmarkEvaluations(admin)],
       ["source delivery", () => drainSourceDeliveries(admin)],
       ["checkpoint cleanup", () => drainCheckpointCleanup(admin)],
       ["Linear reconciliation", () => reconcileLinearState(admin)],

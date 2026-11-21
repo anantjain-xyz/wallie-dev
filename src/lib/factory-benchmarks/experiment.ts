@@ -12,6 +12,11 @@ import {
 } from "@/lib/factory-definitions/stored-definition";
 import type { Database } from "@/lib/supabase/database.types";
 
+import {
+  benchmarkEvaluationPlanSchema,
+  matchesBenchmarkEvaluationPlan,
+} from "./experiment-evaluation-contracts";
+
 const plannedWorkerRuntime = "node";
 const maxPlannedTrials = 10_000;
 const repetitionCount = z.number().int().min(1).max(100);
@@ -34,6 +39,7 @@ export const freezeBenchmarkExperimentRequestSchema = z
     repetitions: repetitionCount,
     seed: z.number().int().min(0).max(2_147_483_647),
     timeoutMs: z.number().int().min(1_000).max(1_800_000),
+    evaluation: benchmarkEvaluationPlanSchema.optional(),
   })
   .refine(
     ({ definitionRevisionIds, repetitions }) =>
@@ -54,6 +60,7 @@ const benchmarkExperimentSnapshotSchema = z
     materializedTrialCount: count.min(1),
     eligibleTrialCount: count,
     ineligibleTrialCount: count,
+    evaluation: benchmarkEvaluationPlanSchema.optional(),
   })
   .refine((snapshot) => {
     const {
@@ -115,7 +122,7 @@ function experimentRpcError(code: string) {
     case "22023":
       return new BenchmarkExperimentError(
         422,
-        "The selected suite, policy, or candidates cannot form a comparison.",
+        "The selected suite, policy, candidates, or scorer revisions cannot form a comparison.",
       );
     default:
       return new Error("The benchmark experiment could not be frozen.");
@@ -130,7 +137,8 @@ function projectSnapshot(value: unknown, request: ExperimentRequest): BenchmarkE
     result.data.suiteRevisionId !== request.suiteRevisionId ||
     result.data.policyRevisionId !== request.policyRevisionId ||
     result.data.repetitions !== request.repetitions ||
-    result.data.candidateCount !== request.definitionRevisionIds.length
+    result.data.candidateCount !== request.definitionRevisionIds.length ||
+    !matchesBenchmarkEvaluationPlan(result.data.evaluation, request.evaluation)
   ) {
     throw new Error("The frozen benchmark experiment returned an invalid snapshot.");
   }
@@ -232,11 +240,17 @@ export async function freezeBenchmarkExperiment(
 
   // PostgreSQL checks the actor and normalized request before returning a prior
   // snapshot. A retry does not need the current mutable factory catalog.
-  const lookup = admin.rpc("find_factory_benchmark_experiment_retry", {
+  const lookupArgs = {
     ...args,
     p_definition_revision_ids: request.definitionRevisionIds,
     p_worker_runtime: plannedWorkerRuntime,
-  });
+  };
+  const lookup = request.evaluation
+    ? admin.rpc("find_factory_benchmark_experiment_retry_with_evaluation", {
+        ...lookupArgs,
+        p_evaluation_plan: request.evaluation,
+      })
+    : admin.rpc("find_factory_benchmark_experiment_retry", lookupArgs);
   const prior = await (signal ? lookup.abortSignal(signal) : lookup);
   signal?.throwIfAborted();
   if (prior.error) throw experimentRpcError(prior.error.code);
@@ -254,10 +268,13 @@ export async function freezeBenchmarkExperiment(
   }
 
   signal?.throwIfAborted();
-  const freeze = admin.rpc("freeze_factory_benchmark_experiment", {
-    ...args,
-    p_candidates: candidates,
-  });
+  const freezeArgs = { ...args, p_candidates: candidates };
+  const freeze = request.evaluation
+    ? admin.rpc("freeze_factory_benchmark_experiment_with_evaluation", {
+        ...freezeArgs,
+        p_evaluation_plan: request.evaluation,
+      })
+    : admin.rpc("freeze_factory_benchmark_experiment", freezeArgs);
   const result = await (signal ? freeze.abortSignal(signal) : freeze);
   signal?.throwIfAborted();
   if (result.error) throw experimentRpcError(result.error.code);

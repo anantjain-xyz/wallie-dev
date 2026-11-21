@@ -219,3 +219,19 @@ runtime. Each execution records its actual runner revision and worker runtime.
   reserve. When a started attempt has unavailable spend, the full reserve
   stays held. Late charges can exceed the budget and leave no capacity for
   further reservations.
+
+## Score a frozen comparison
+
+- Choose published scorer revisions and an evaluation budget when freezing the
+  comparison. The saved revision IDs and ceiling stay fixed when an operator
+  publishes a new rubric. Both freeze commands accept an optional
+  `evaluation` object with `scorerRevisionIds` and `budgetLimitUsd`.
+- The evaluation queue checks retained output and reserves each judge attempt
+  against both the evaluation ceiling and the experiment budget. A zero
+  evaluation ceiling prevents paid calls.
+- The judge reads the exact retained artifact or validation output. Missing
+  private diffs or media produce an explicit evidence disposition. The judge
+  does not publish benchmark output to obtain evidence.
+- The evaluation projection keeps every eligible trial and selected revision
+  in its denominator. It exposes pending and unavailable results and reports
+  execution and evaluation spend, outstanding reserves, and unavailable costs.
