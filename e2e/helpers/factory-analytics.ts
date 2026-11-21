@@ -79,8 +79,8 @@ export async function seedFactoryAnalytics(baseURL: string | undefined, windowDa
     PGPASSWORD: decodeURIComponent(database.password),
   };
 
-  function runFixtureSql(args: string[]) {
-    return exec("psql", [...psqlOptions, ...args], { env: psqlEnvironment, timeout: 20_000 });
+  function runFixtureSql(args: string[], timeout = 20_000) {
+    return exec("psql", [...psqlOptions, ...args], { env: psqlEnvironment, timeout });
   }
 
   async function runFixtureFile(
@@ -91,14 +91,19 @@ export async function seedFactoryAnalytics(baseURL: string | undefined, windowDa
       | "factory-benchmark-results-seed.sql"
       | "factory-benchmark-trial-media-seed.sql"
       | "factory-outcome-release.sql"
-      | "factory-score-trends-seed.sql",
+      | "factory-score-trends-seed.sql"
+      | "model-routing-inspector-seed.sql",
     fields: Record<string, string>,
+    timeout?: number,
   ): Promise<unknown> {
-    const { stdout } = await runFixtureSql([
-      ...Object.entries(fields).map(([key, value]) => `--set=${key}=${value}`),
-      "--file",
-      resolve(__dirname, file),
-    ]);
+    const { stdout } = await runFixtureSql(
+      [
+        ...Object.entries(fields).map(([key, value]) => `--set=${key}=${value}`),
+        "--file",
+        resolve(__dirname, file),
+      ],
+      timeout,
+    );
     return JSON.parse(stdout.trim());
   }
 

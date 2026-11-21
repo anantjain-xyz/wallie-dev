@@ -2765,6 +2765,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id: string
+          routing_evidence_source_draft_id: string | null
           schema_version: number
           settings_metadata: Json
           workspace_id: string
@@ -2777,6 +2778,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id?: string
+          routing_evidence_source_draft_id?: string | null
           schema_version: number
           settings_metadata?: Json
           workspace_id: string
@@ -2789,6 +2791,7 @@ export type Database = {
           definition_json?: string
           factory_id?: string
           id?: string
+          routing_evidence_source_draft_id?: string | null
           schema_version?: number
           settings_metadata?: Json
           workspace_id?: string
@@ -2804,6 +2807,17 @@ export type Database = {
               "factory_id",
               "activation_number",
             ]
+          },
+          {
+            foreignKeyName: "factory_definition_drafts_routing_evidence_source_fk"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "routing_evidence_source_draft_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_routing_draft_evidence"
+            referencedColumns: ["workspace_id", "factory_id", "draft_id"]
           },
           {
             foreignKeyName: "factory_definition_drafts_workspace_id_factory_id_fkey"
@@ -12399,6 +12413,14 @@ export type Database = {
         }
         Returns: Json
       }
+      get_run_routing_decision: {
+        Args: {
+          target_attempt_count: number
+          target_run_id: string
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
       get_run_skill_revisions: {
         Args: {
           target_attempt_count: number
@@ -13410,6 +13432,17 @@ export type Database = {
           p_title: string
         }
         Returns: boolean
+      }
+      preview_factory_model_routing: {
+        Args: {
+          p_actor_user_id: string
+          p_draft_id: string
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_task_class_slug?: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       process_factory_flow_projection: {
         Args: { p_limit?: number }
@@ -15026,6 +15059,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id: string
+          routing_evidence_source_draft_id: string | null
           schema_version: number
           settings_metadata: Json
           workspace_id: string
@@ -15110,6 +15144,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id: string
+          routing_evidence_source_draft_id: string | null
           schema_version: number
           settings_metadata: Json
           workspace_id: string
@@ -15287,6 +15322,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id: string
+          routing_evidence_source_draft_id: string | null
           schema_version: number
           settings_metadata: Json
           workspace_id: string

@@ -19,8 +19,10 @@ import type {
   RunInspectorContext,
   RunInspectorExecutionProfile,
   RunInspectorMcpManifest,
+  RunInspectorRoutingDecision,
   RunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
+import { RunRoutingDecisionInspection } from "@/features/wallie/run-inspector-routing";
 import { RunContextInspection } from "@/features/wallie/run-context-inspection";
 import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs-list-state";
 import { workspaceActivityPath, workspaceAgentDetailPath, workspaceRunsPath } from "@/lib/routes";
@@ -28,11 +30,13 @@ import { workspaceActivityPath, workspaceAgentDetailPath, workspaceRunsPath } fr
 export function RunInspector({
   run,
   artifact,
+  canOpenRoutingPolicy = false,
   credential,
   executionProfile,
   frozenContext,
   memoryProposalHref,
   mcp,
+  routingDecision,
   skills,
   workspaceId,
   workspaceSlug,
@@ -43,11 +47,13 @@ export function RunInspector({
 }: {
   run: WorkspaceRunCatalogItem;
   artifact: RunInspectorArtifact;
+  canOpenRoutingPolicy?: boolean;
   credential?: RunInspectorCredential | null;
   executionProfile?: RunInspectorExecutionProfile;
   frozenContext?: RunInspectorContext;
   memoryProposalHref?: string | null;
   mcp?: RunInspectorMcpManifest | null;
+  routingDecision?: RunInspectorRoutingDecision;
   skills: RunInspectorSkills;
   workspaceId: string;
   workspaceSlug: string;
@@ -168,6 +174,14 @@ export function RunInspector({
             />
           </MetadataList>
         </section>
+
+        {routingDecision ? (
+          <RunRoutingDecisionInspection
+            canOpenPolicy={canOpenRoutingPolicy}
+            result={routingDecision}
+            workspaceSlug={workspaceSlug}
+          />
+        ) : null}
 
         {frozenContext && (
           <RunContextInspection

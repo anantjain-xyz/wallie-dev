@@ -474,7 +474,7 @@ begin
     where id = candidate.definition_revision_id;
   body := body || jsonb_build_object('modelRouting', jsonb_build_object(
     'version', 1,
-    'taskClasses', jsonb_build_array(jsonb_build_object('id', pg_temp.live_id(201), 'slug', 'repair', 'name', 'Repair')),
+    'taskClasses', jsonb_build_array(jsonb_build_object('id', pg_temp.live_id(201), 'slug', 'review', 'name', 'Artifact review')),
     'rules', jsonb_build_array(jsonb_build_object('id', pg_temp.live_id(202), 'taskClassId', pg_temp.live_id(201),
       'configuration', jsonb_build_object(
         'agentId', body#>>'{implementationAgent,agentId}', 'definitionRevisionId', candidate.definition_revision_id,
@@ -541,6 +541,53 @@ select is((select count(*) from public.factory_routing_draft_evidence where work
   0::bigint, 'receipt evidence is private to the factory');
 reset role;
 set local request.jwt.claim.role = 'service_role';
+
+insert into auth.users(id,email) values (pg_temp.live_id(2),'routing-inspector-reader@example.test');
+insert into public.workspace_members(id,workspace_id,user_id,kind,role)
+values (pg_temp.live_id(22),pg_temp.live_id(11),pg_temp.live_id(2),'human','member');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(1),'platform_api_key','synthetic-routing-key');
+
+create function pg_temp.preview_frontier_routing(
+  p_slug text default 'review', p_activation bigint default 0, p_draft_id uuid default null,
+  p_actor uuid default pg_temp.live_id(1)
+) returns jsonb language sql as $$
+  select public.preview_factory_model_routing(scope.workspace_id,scope.factory_id,p_actor,p_activation,
+    coalesce(p_draft_id, applied.draft_id),p_slug)
+  from live_scope scope cross join routing_apply applied;
+$$;
+create temp table before_routing_preview as
+select count(*) as sessions from public.sessions where workspace_id = pg_temp.live_id(11);
+create temp table frontier_preview as select pg_temp.preview_frontier_routing() as result;
+select ok((select result->>'draftDigest'=draft.canonical_digest and result->>'draftId'=draft.id::text
+    and result#>>'{decision,disposition}'='selected' and result#>>'{decision,source}'='primary'
+    and not (result->'decision' ? 'policyRevisionId')
+  from frontier_preview cross join routing_apply
+  join public.factory_definition_drafts draft on draft.id=routing_apply.draft_id),
+  'preview resolves the exact saved draft without inventing published provenance');
+select is(pg_temp.preview_frontier_routing('build')#>>'{decision,reason}','unmatched_class',
+  'preview explains the unmatched task class');
+select is(pg_temp.preview_frontier_routing(null)#>>'{decision,reason}','unmatched_class',
+  'preview can exercise a missing task class');
+select is(pg_temp.preview_frontier_routing(repeat('a',64))#>>'{decision,reason}','unmatched_class',
+  'preview accepts the maximum production stage slug length');
+delete from public.user_codex_credentials where user_id=pg_temp.live_id(1);
+select is(pg_temp.preview_frontier_routing()#>>'{decision,reason}','credential_unavailable',
+  'preview uses current credentials for the requesting manager');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(1),'platform_api_key','synthetic-routing-key');
+select is((select count(*) from public.sessions where workspace_id = pg_temp.live_id(11)),
+  (select sessions from before_routing_preview),'preview creates no session');
+select throws_ok($$select pg_temp.preview_frontier_routing(p_activation => 1)$$, 'PT409',null,
+  'preview rejects a stale activation');
+select throws_ok($$select pg_temp.preview_frontier_routing(p_draft_id => pg_temp.live_id(299))$$, 'PT409',null,
+  'preview rejects a stale draft');
+select throws_ok($$select pg_temp.preview_frontier_routing(p_actor => pg_temp.live_id(2))$$, '42501',null,
+  'preview requires a workspace manager even when the caller is the service');
+select ok(not has_function_privilege('authenticated','public.preview_factory_model_routing(uuid,uuid,uuid,bigint,uuid,text)','EXECUTE')
+  and has_function_privilege('service_role','public.preview_factory_model_routing(uuid,uuid,uuid,bigint,uuid,text)','EXECUTE'),
+  'direct draft preview is service-only');
+
 select updated.id from live_scope scope cross join live_suite suite cross join live_task task
 cross join lateral public.save_factory_benchmark_suite_revision(
   scope.workspace_id, scope.factory_id, scope.owner_id, 'Revised live replay suite', 'regression',
@@ -551,6 +598,149 @@ select throws_ok($$select pg_temp.apply_routing_finding(1, 16, p_expected_draft 
   'a suite edit invalidates previously qualified evidence for new proposals');
 select is(pg_temp.apply_routing_finding(1, 15), (select draft_id from routing_apply),
   'resubmitting the same request still reads its original receipt after a suite edit');
+
+create function pg_temp.save_frontier_routing_edit(
+  p_source_draft_id uuid, p_path text[], p_value jsonb, p_activation bigint, p_expected_draft_id uuid
+) returns uuid language sql as $$
+  select (public.save_settings_factory_definition_draft(source.workspace_id, source.factory_id, source.created_by,
+    p_activation, edited.body, encode(sha256(convert_to(edited.body,'UTF8')),'hex'),
+    source.settings_metadata, p_expected_draft_id)).id
+  from public.factory_definition_drafts source
+  cross join lateral (select jsonb_set(source.definition_json::jsonb,p_path,p_value)::text as body) edited
+  where source.id = p_source_draft_id
+$$;
+create temp table renamed_routing_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,taskClasses,0,name}','"Reviewed work"',0,draft_id) as draft_id
+from routing_apply;
+select is((select draft.routing_evidence_source_draft_id from public.factory_definition_drafts draft
+  join renamed_routing_draft renamed on renamed.draft_id = draft.id),
+  (select draft_id from routing_apply), 'renaming a class in settings retains the original routing proposal');
+create temp table published_routing_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,taskClasses,0,name}','"Reviewed output"',0,draft_id) as draft_id
+from renamed_routing_draft;
+select is((select draft.routing_evidence_source_draft_id from public.factory_definition_drafts draft
+  join published_routing_draft edited on edited.draft_id = draft.id),
+  (select draft_id from routing_apply), 'successive label edits link directly to the original proposal');
+select is((select count(*) from public.factory_routing_draft_evidence where workspace_id = pg_temp.live_id(11)),
+  1::bigint, 'saving a normal draft leaves the original evidence row intact');
+
+-- Publication mechanics have their own fixture. Use its exact source-draft pin
+-- here to compare preview with real admission and the production run RPCs.
+insert into public.factory_definition_revisions(id,workspace_id,factory_id,source_draft_id,schema_version,definition_json,canonical_digest,created_by)
+select pg_temp.live_id(300),draft.workspace_id,draft.factory_id,draft.id,draft.schema_version,
+  draft.definition_json,draft.canonical_digest,draft.created_by
+from public.factory_definition_drafts draft join published_routing_draft edited on edited.draft_id=draft.id;
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,id,1,created_by from public.factory_definition_revisions where id=pg_temp.live_id(300);
+select public.set_git_continuity_release(true,revision,'Routing inspector fixture')
+from public.get_git_continuity_release_state() where not enabled;
+insert into internal.workspace_issue_counters as counters(workspace_id,last_issue_number)
+select pg_temp.live_id(11),max(number) from public.sessions where workspace_id=pg_temp.live_id(11)
+on conflict(workspace_id) do update set last_issue_number=greatest(counters.last_issue_number,excluded.last_issue_number);
+create temp table inspected_routing_run as
+select * from public.create_session_with_first_job(pg_temp.live_id(11),pg_temp.live_id(21),
+  'Inspect exact routing evidence','Review a fixture task.','codex','gpt-4.1-2025-04-14',
+  session_github_repository_id => pg_temp.live_id(42), selected_pipeline_id => pg_temp.live_id(40),
+  selected_stage_ids => array[pg_temp.live_id(41)]);
+select is((select receipt.routing_decision - array['mode','policyRevisionId','policyDigest']
+  from public.session_factory_admission_inputs receipt join inspected_routing_run using(session_id)),
+  (select result->'decision' from frontier_preview), 'preview and admission resolve identical inputs to the same complete decision');
+update public.agent_jobs set status='running',attempt_count=1,
+  git_continuity_release_revision=(select revision from public.get_git_continuity_release_state())
+where id=(select job_id from inspected_routing_run);
+select is(public.start_session_job_attempt(job_id,1,pg_temp.live_id(41),0,
+  'codex','gpt-4.1-2025-04-14','project','wallie/routing-inspector'),run_id,'the inspected run starts') from inspected_routing_run;
+select public.pin_session_job_git_input(job_id,1,run_id,pg_temp.live_id(42),'main',repeat('a',40)) from inspected_routing_run;
+select ok(public.pin_session_attempt_manifest(job_id,run_id,1,repeat('a',64),24,3,repeat('a',40),'[]',
+  'workerd',null,null,pg_temp.live_id(21)), 'the inspected run pins the original admission receipt') from inspected_routing_run;
+
+create temp table post_publish_routing_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,taskClasses,0,name}','"Next revision label"',1,null) as draft_id
+from published_routing_draft;
+select is((select draft.routing_evidence_source_draft_id from public.factory_definition_drafts draft
+  join post_publish_routing_draft edited on edited.draft_id = draft.id),
+  (select draft_id from routing_apply),'the first edit after publication follows the exact published source draft');
+create temp table edited_fallback_routing_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,rules,0,onUnavailable}',
+  jsonb_build_object('kind','fallback','configuration',pg_temp.routing_configuration(2)),1,draft_id) as draft_id
+from post_publish_routing_draft;
+select is((select draft.routing_evidence_source_draft_id from public.factory_definition_drafts draft
+  join edited_fallback_routing_draft edited on edited.draft_id = draft.id),
+  (select draft_id from routing_apply),'changing the unavailable-primary action preserves its benchmark proposal');
+create temp table changed_constraints_routing_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,rules,0,constraints,maxMeanCostUsd}','0.11',1,draft_id) as draft_id
+from edited_fallback_routing_draft;
+select is((select draft.routing_evidence_source_draft_id from public.factory_definition_drafts draft
+  join changed_constraints_routing_draft edited on edited.draft_id = draft.id),
+  null::uuid,'a material constraint edit drops the inherited proposal');
+create temp table restored_constraints_routing_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,rules,0,constraints,maxMeanCostUsd}','0.10',1,draft_id) as draft_id
+from changed_constraints_routing_draft;
+select is((select draft.routing_evidence_source_draft_id from public.factory_definition_drafts draft
+  join restored_constraints_routing_draft edited on edited.draft_id = draft.id),
+  null::uuid,'restoring older constraints cannot reacquire a discarded proposal');
+
+insert into public.factory_definition_revisions(id,workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+select pg_temp.live_id(301),prior.workspace_id,prior.factory_id,prior.schema_version,changed.body,
+  encode(sha256(convert_to(changed.body,'UTF8')),'hex'),prior.created_by
+from public.factory_definition_revisions prior cross join lateral (
+  select jsonb_set(prior.definition_json::jsonb,'{modelRouting,taskClasses,0,name}','"Renamed review"')::text as body
+) changed where prior.id=pg_temp.live_id(300);
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,id,2,created_by from public.factory_definition_revisions where id=pg_temp.live_id(301);
+
+grant select on inspected_routing_run to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '62300000-0000-4000-9000-000000000001';
+select ok((select value->>'taskClassName'='Reviewed output' and value->'canManageFactory'='true'::jsonb
+    and value#>>'{decision,policyRevisionId}'=pg_temp.live_id(300)::text
+    and value#>>'{benchmarkEvidence,taskClassName}'='Artifact review'
+    and value#>>'{benchmarkEvidence,ruleId}'=pg_temp.live_id(202)::text
+  from inspected_routing_run run cross join lateral (select public.get_run_routing_decision(pg_temp.live_id(11),run.run_id,1) as value) result),
+  'a manager sees the pinned class name and the original inherited proposal after a later rename');
+select is(public.get_run_routing_decision(pg_temp.live_id(11),run_id,2),null::jsonb,
+  'a different attempt cannot borrow the routing receipt') from inspected_routing_run;
+select is(public.get_run_routing_decision(gen_random_uuid(),run_id,1),null::jsonb,
+  'a different workspace cannot borrow the routing receipt') from inspected_routing_run;
+select is(public.get_run_routing_decision(pg_temp.live_id(11),pg_temp.live_id(46),1),null::jsonb,
+  'a historical run without a decision is unrecorded');
+set local request.jwt.claim.sub = '62300000-0000-4000-9000-000000000002';
+select ok((select value->>'taskClassName'='Reviewed output' and value->'canManageFactory'='false'::jsonb
+    and value->'benchmarkEvidence'='null'::jsonb
+  from inspected_routing_run run cross join lateral (select public.get_run_routing_decision(pg_temp.live_id(11),run.run_id,1) as value) result),
+  'a factory reader sees the original decision without manager-only benchmark evidence');
+set local request.jwt.claim.sub = '62300000-0000-4000-9000-000000000975';
+select is(public.get_run_routing_decision(pg_temp.live_id(11),run_id,1),null::jsonb,
+  'an outsider cannot read the routing decision') from inspected_routing_run;
+reset role;
+
+set local request.jwt.claim.role = 'service_role';
+create temp table unrouted_preview_draft as
+select (public.save_factory_definition_draft(revision.workspace_id,revision.factory_id,revision.created_by,2,
+  revision.definition_json,revision.canonical_digest)).id as id
+from public.factory_definition_revisions revision where revision.id=pg_temp.live_id(43);
+select is(pg_temp.preview_frontier_routing(p_activation => 2,p_draft_id => (select id from unrouted_preview_draft))->'decision',
+  'null'::jsonb,'a current draft without routing has no preview decision');
+
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,id,3,created_by from public.factory_definition_revisions where id=pg_temp.live_id(300);
+create temp table changed_configuration_routing_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,rules,0,configuration,workerRuntime}','"node"',3,null) as draft_id
+from published_routing_draft;
+select is((select draft.routing_evidence_source_draft_id from public.factory_definition_drafts draft
+  join changed_configuration_routing_draft edited on edited.draft_id = draft.id),
+  null::uuid,'a primary configuration change drops evidence even from an exact published base');
+
+update public.workspaces set deletion_requested_at = clock_timestamp() where id = pg_temp.live_id(11);
+set local storage.allow_delete_query = 'true';
+delete from storage.objects where bucket_id = 'session-source-checkpoints'
+  and split_part(name,'/',1) = pg_temp.live_id(11)::text;
+delete from public.workspaces where id = pg_temp.live_id(11);
+set constraints factory_definition_drafts_routing_evidence_source_fk immediate;
+select is((select count(*) from public.factory_definition_drafts where workspace_id = pg_temp.live_id(11)) +
+  (select count(*) from public.factory_routing_draft_evidence where workspace_id = pg_temp.live_id(11)),
+  0::bigint,'workspace teardown removes both the derived draft and its retained proposal');
 
 select * from finish();
 rollback;

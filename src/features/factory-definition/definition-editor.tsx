@@ -20,6 +20,7 @@ import { CandidateTestPanel } from "@/features/factory-definition/candidate-test
 import { FactoryMcpManifestInspector } from "@/features/factory-definition/mcp-manifest-inspector";
 import { FactoryRevisionHistory } from "@/features/factory-definition/revision-history";
 import { RoutingDraftEvidencePanel } from "@/features/factory-definition/routing-draft-evidence";
+import { FactoryRoutingPreview } from "@/features/factory-definition/routing-preview";
 import { FactoryScorerBindings } from "@/features/factory-definition/scorer-bindings";
 import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff";
 import { ServiceCredentialsPanel } from "@/features/factory-definition/service-credentials-panel";
@@ -45,7 +46,11 @@ import {
   type SerialFactoryDefinition,
 } from "@/lib/factory-definitions/schema";
 import type { FactorySecretBindingScope } from "@/lib/factory-secret-bindings/contracts";
-import { workspaceFactoryDefinitionPath, workspaceSettingsPath } from "@/lib/routes";
+import {
+  workspaceBenchmarksPath,
+  workspaceFactoryDefinitionPath,
+  workspaceSettingsPath,
+} from "@/lib/routes";
 
 type AgentSelection = { agentId: string; promptRevisionId: string };
 type Selection = ({ revision: string } | { draft: string }) & { test?: string };
@@ -699,6 +704,9 @@ export function FactoryDefinitionEditor({
                     </div>
                     {edit.input.kind === "structured" ? (
                       <StructuredFactoryDefinitionEditor
+                        benchmarksHref={workspaceBenchmarksPath(workspaceSlug, {
+                          factory: factoryId,
+                        })}
                         disabled={busy}
                         repositories={repositories}
                         referenceOptions={referenceOptions}
@@ -769,6 +777,20 @@ export function FactoryDefinitionEditor({
                 )}
               </div>
             </PageSection>
+            <FactoryRoutingPreview
+              key={draft ? `${draft.id}:${draft.digest}:${activationNumber}` : "no-routing-draft"}
+              activationNumber={activationNumber}
+              api={api}
+              disabled={locked || dirty}
+              disabledReason={
+                conflict || stale
+                  ? "Reload the definition before previewing routing."
+                  : dirty
+                    ? "Save draft changes before previewing routing."
+                    : null
+              }
+              draft={draft}
+            />
             {draft ? (
               <div
                 className="scroll-mt-8"

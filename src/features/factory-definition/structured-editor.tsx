@@ -8,6 +8,7 @@ import {
   AGENT_PROVIDER_LABELS,
 } from "@/components/shared/agent-provider-options";
 import { FactoryRepositoryBindingsEditor } from "@/features/factory-definition/repository-bindings-editor";
+import { ModelRoutingEditor } from "@/features/factory-definition/model-routing-editor";
 import {
   AGENT_CONFIG_LIMITS,
   AGENT_PROVIDERS,
@@ -158,12 +159,14 @@ function ReferenceList({
 }
 
 export function StructuredFactoryDefinitionEditor({
+  benchmarksHref,
   disabled,
   onChange,
   referenceOptions,
   repositories,
   value,
 }: {
+  benchmarksHref?: string;
   disabled?: boolean;
   onChange: (value: SerialFactoryDefinition) => void;
   referenceOptions?: FactoryEditorReferenceOptions;
@@ -757,6 +760,11 @@ export function StructuredFactoryDefinitionEditor({
           })}
         </ol>
       </section>
+      <ModelRoutingEditor
+        benchmarksHref={benchmarksHref}
+        onChange={(next) => update("modelRouting", next)}
+        value={value.modelRouting}
+      />
     </fieldset>
   );
 }

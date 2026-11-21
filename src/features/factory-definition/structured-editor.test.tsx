@@ -60,13 +60,14 @@ const initialDefinition: SerialFactoryDefinition = {
   ],
 };
 
-function renderEditor(initial = initialDefinition) {
+function renderEditor(initial = initialDefinition, benchmarksHref?: string) {
   const onChange = vi.fn<(definition: SerialFactoryDefinition) => void>();
 
   function Harness() {
     const [definition, setDefinition] = useState(initial);
     return (
       <StructuredFactoryDefinitionEditor
+        benchmarksHref={benchmarksHref}
         onChange={(next) => {
           onChange(next);
           setDefinition(next);
@@ -242,4 +243,67 @@ describe("structured factory definition editor", () => {
     fireEvent.click(within(list).getByRole("button", { name: "Remove Plan" }));
     expect(within(list).getByRole("button", { name: "Remove Build" })).toBeDisabled();
   });
+});
+
+it("adds and orders routing classes and rules through the structured definition", () => {
+  const benchmarksHref = "/w/test/benchmarks";
+  const { current } = renderEditor(initialDefinition, benchmarksHref);
+  const routing = within(screen.getByRole("region", { name: "Model routing" }));
+  fireEvent.click(routing.getByRole("button", { name: "Add routing policy" }));
+  const addClass = routing.getByRole("button", { name: "Add task class" });
+  expect(addClass).toHaveFocus();
+  const benchmarks = routing.getByRole("link", { name: "Benchmarks (opens in a new tab)" });
+  expect(benchmarks).toHaveAttribute("href", benchmarksHref);
+  expect(benchmarks).toHaveAttribute("target", "_blank");
+  expect(benchmarks).toHaveAttribute("rel", "noreferrer");
+
+  for (const [index, [name, slug]] of [
+    ["Planning", "plan"],
+    ["Build", "build"],
+  ].entries()) {
+    fireEvent.click(addClass);
+    const nameInput = routing.getAllByRole("textbox", { name: "Task class name" })[index];
+    expect(nameInput).toHaveFocus();
+    fireEvent.change(nameInput, { target: { value: name } });
+    fireEvent.change(routing.getAllByRole("textbox", { name: "Task class slug" })[index], {
+      target: { value: slug },
+    });
+    fireEvent.click(routing.getByRole("button", { name: "Add routing rule" }));
+  }
+
+  fireEvent.click(routing.getByRole("button", { name: "Move Build rule up" }));
+  const editedRule = routing.getByRole("button", { name: "Hide Build rule" });
+  expect(editedRule).toHaveFocus();
+  const orderedIds = current()
+    .modelRouting?.taskClasses.map(({ id }) => id)
+    .reverse();
+  expect(current().modelRouting?.rules.map(({ taskClassId }) => taskClassId)).toEqual(orderedIds);
+
+  fireEvent.change(routing.getByRole("spinbutton", { name: "Quality floor (%)" }), {
+    target: { value: "83.25" },
+  });
+  fireEvent.change(routing.getByRole("combobox", { name: "When the primary is unavailable" }), {
+    target: { value: "fallback" },
+  });
+  const fallback = within(routing.getByRole("group", { name: "Rule fallback configuration" }));
+  fireEvent.change(fallback.getByRole("textbox", { name: "Model ID" }), {
+    target: { value: "openai/gpt-5.5" },
+  });
+  expect(current().modelRouting?.rules[0]).toMatchObject({
+    constraints: { qualityFloorBps: 8_325 },
+    onUnavailable: { kind: "fallback", configuration: { modelKey: "openai/gpt-5.5" } },
+  });
+  expect(current().modelRouting?.rules[1]?.onUnavailable).toEqual({ kind: "escalate" });
+
+  fireEvent.change(routing.getByRole("combobox", { name: "When no rule matches" }), {
+    target: { value: "fallback" },
+  });
+  expect(
+    routing.getByRole("group", { name: "Unmatched-task fallback configuration" }),
+  ).toBeVisible();
+
+  fireEvent.click(routing.getByRole("button", { name: "Remove Build and its rule" }));
+  expect(current().modelRouting?.taskClasses.map(({ slug }) => slug)).toEqual(["plan"]);
+  expect(current().modelRouting?.rules).toHaveLength(1);
+  expect(current().stages).toEqual(initialDefinition.stages);
 });
