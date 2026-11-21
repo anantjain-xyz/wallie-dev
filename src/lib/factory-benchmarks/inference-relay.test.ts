@@ -1,14 +1,19 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { runInNewContext } from "node:vm";
 
+import { createClient } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/internal/benchmark-openai/[...path]/route";
+import { FakeSandbox } from "@/lib/sandbox/fake";
+import type { Database } from "@/lib/supabase/database.types";
 
 import { relayBenchmarkInference, type BenchmarkInferenceRelayStore } from "./inference-relay";
+import { bindQualifiedSandbox } from "./qualified-sandbox-binding";
 
-const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ admin: vi.fn(), rpc: vi.fn() }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdminClient: () => ({ rpc: mocks.rpc }),
+  createSupabaseAdminClient: mocks.admin,
 }));
 
 const bindUrl = "https://api.openai.com/.well-known/wallie-benchmark-bind";
@@ -56,6 +61,7 @@ function event(type: string, fields: Record<string, unknown>, separator = "\n") 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  mocks.admin.mockReset();
   mocks.rpc.mockReset();
 });
 
@@ -69,12 +75,12 @@ describe("benchmark inference relay", () => {
     );
     expect(response.status).toBe(403);
     expect(await response.text()).toBe("");
+    expect(mocks.admin).not.toHaveBeenCalled();
   });
 
-  it("authenticates the documented catch-all forwarding shape using the SDK", async () => {
+  it("binds the signed sandbox and denies its actual files probe through the POST route", async () => {
     const issuer = "https://oidc.vercel.com/benchmark-relay-test";
     const audience = "https://wallie.test/api/internal/benchmark-openai";
-    const forwardedPath = "/.well-known/wallie-benchmark-bind";
     const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const claims = {
       iss: issuer,
@@ -95,32 +101,101 @@ describe("benchmark inference relay", () => {
       return Response.json({ keys: [jwk] });
     });
     vi.stubGlobal("fetch", fetch);
+    mocks.admin.mockReturnValue({ rpc: mocks.rpc });
     mocks.rpc.mockReturnValue({ abortSignal: async () => ({ data: true, error: null }) });
 
-    const nonce = "n".repeat(43);
-    const response = await POST(
-      new Request(audience + forwardedPath, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "vercel-forwarded-host": "api.openai.com",
-          "vercel-forwarded-scheme": "https",
-          "vercel-forwarded-port": "443",
-          "vercel-forwarded-path": forwardedPath,
-          "vercel-sandbox-oidc-token": token,
+    let nonceDigest: unknown;
+    const admin = createClient<Database>("https://db.example.test", "test-key", {
+      auth: { persistSession: false },
+      global: {
+        fetch: async (url, init) => {
+          const rpcName = new URL(String(url)).pathname.split("/").at(-1);
+          if (rpcName === "arm_factory_benchmark_live_sandbox_binding") {
+            nonceDigest = JSON.parse(String(init?.body)).p_nonce_sha256;
+            return Response.json(true);
+          }
+          expect(rpcName).toBe("read_factory_benchmark_live_sandbox_binding");
+          return Response.json({ signedSandboxId: identity.sandboxId });
         },
-        body: JSON.stringify({ nonce }),
+      },
+    });
+    const forwarded: Array<{ path: string; method: string; status: number }> = [];
+    const fetchInSandbox = async (url: string, init: RequestInit) => {
+      const target = new URL(url);
+      if (target.hostname !== "api.openai.com") {
+        expect(init.method).toBe("HEAD");
+        throw new TypeError("Blocked by sandbox firewall");
+      }
+      const headers = new Headers(init.headers);
+      if (target.pathname === "/v1/files") {
+        expect(headers.has("authorization")).toBe(false);
+        expect(init.body).toBeUndefined();
+      }
+      headers.set("vercel-forwarded-host", target.hostname);
+      headers.set("vercel-forwarded-scheme", "https");
+      headers.set("vercel-forwarded-port", "443");
+      headers.set("vercel-forwarded-path", target.pathname);
+      headers.set("vercel-sandbox-oidc-token", token);
+      const method = init.method ?? "GET";
+      // The Next route exports only POST. Non-POST requests never reach the SDK.
+      const response =
+        method === "POST"
+          ? await POST(
+              new Request(audience + target.pathname, { method, headers, body: init.body }),
+            )
+          : new Response(null, { status: 405 });
+      forwarded.push({ path: target.pathname, method, status: response.status });
+      return response;
+    };
+    const sandbox = new FakeSandbox();
+    const exec = sandbox.exec.bind(sandbox);
+    vi.spyOn(sandbox, "exec").mockImplementation(async (command, args = [], options) => {
+      if (command !== "node") return exec(command, args, options);
+      const program = { argv: [command, ...args.slice(3)], exitCode: 1 };
+      await runInNewContext(args[1], {
+        AbortSignal,
+        fetch: fetchInSandbox,
+        process: program,
+        require: () => ({
+          readFileSync: (file: string) => sandbox.files.get(file)?.data.toString("utf8"),
+          unlinkSync: (file: string) => sandbox.files.delete(file),
+        }),
+      });
+      sandbox.scriptExec(command, [], { exitCode: program.exitCode });
+      return exec(command, args, options);
+    });
+
+    await expect(
+      bindQualifiedSandbox({
+        admin,
+        sandbox,
+        identity: {
+          trialId: requestId,
+          jobId: requestId,
+          runId: requestId,
+          attemptCount: 1,
+          workspaceId: requestId,
+          factoryId: requestId,
+          sessionId: requestId,
+          actorUserId: requestId,
+        },
+        deadlineAt: new Date(Date.now() + 30_000).toISOString(),
+        signal: new AbortController().signal,
       }),
-    );
-    expect(response.status).toBe(204);
+    ).resolves.toBe(identity.sandboxId);
+    expect(forwarded).toEqual([
+      { path: "/.well-known/wallie-benchmark-bind", method: "POST", status: 204 },
+      { path: "/v1/files", method: "POST", status: 403 },
+    ]);
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.admin).toHaveBeenCalledTimes(2);
     expect(mocks.rpc).toHaveBeenCalledExactlyOnceWith(
       "consume_factory_benchmark_live_sandbox_binding",
       {
         p_team_id: identity.teamId,
         p_project_id: identity.projectId,
         p_signed_sandbox_id: identity.sandboxId,
-        p_nonce_sha256: createHash("sha256").update(nonce).digest("hex"),
+        p_nonce_sha256: nonceDigest,
       },
     );
   });

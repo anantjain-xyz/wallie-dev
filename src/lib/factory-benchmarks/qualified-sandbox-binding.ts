@@ -26,14 +26,15 @@ fetch(url, {method:"POST", headers:{"content-type":"application/json"}, body:JSO
   .then((response) => { process.exitCode = response.status === 204 ? 0 : 1; }, () => { process.exitCode = 1; });
 `;
 
+// An empty POST reaches the relay's deny handler without provider credentials.
 const verifyIsolation = `
 const origins = ["https://github.com", "https://api.github.com", "https://slack.com", "https://api.linear.app", "https://api.vercel.com", "https://example.com"];
 async function blocked(url) {
   try { await fetch(url, {method:"HEAD", redirect:"manual", signal:AbortSignal.timeout(3000)}); return false; }
   catch (error) { return error.name !== "TimeoutError"; }
 }
-Promise.all([...origins.map(blocked), fetch("https://api.openai.com/v1/files", {redirect:"manual", signal:AbortSignal.timeout(5000)})
-  .then((response) => response.status === 403 || response.status === 404, () => false)])
+Promise.all([...origins.map(blocked), fetch("https://api.openai.com/v1/files", {method:"POST", redirect:"manual", signal:AbortSignal.timeout(5000)})
+  .then((response) => response.status === 403, () => false)])
   .then((checks) => { process.exitCode = checks.every(Boolean) ? 0 : 1; }, () => { process.exitCode = 1; });
 `;
 

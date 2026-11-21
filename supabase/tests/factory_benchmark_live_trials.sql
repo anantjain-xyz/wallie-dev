@@ -120,6 +120,9 @@ select throws_ok($$select pg_temp.configure_live(80, 0)$$, '22023', null, 'execu
 select throws_ok($$select pg_temp.configure_live(80, connection => pg_temp.live_id(700))$$,
   'PT422', null, 'the schedule rejects an unavailable connection');
 select is(pg_temp.configure_live(80)->>'runnerRevision', 'openai-responses-v1', 'the schedule accepts the exact live pin');
+select public.save_execution_policy(scope.workspace_id,scope.owner_id,0,
+  '{"version":1,"maxRepairAttempts":0,"maxExecutionMs":180000,"maxTotalTokens":15,"maxCostUsd":null}'::jsonb)
+from live_scope scope;
 update public.agent_jobs set scheduled_at = clock_timestamp() + interval '1 hour' where status = 'queued';
 select is(public.reconcile_factory_benchmark_schedules(10), 1, 'one reconciliation admits one eligible cell');
 select is(public.reconcile_factory_benchmark_schedules(10), 1, 'one more cell fits the shared execution reserve');
@@ -336,6 +339,62 @@ begin
 end;
 $$;
 select is(pg_temp.test_live_diagnostic(),'cli_pin_mismatch', 'the exact live attempt retains its safe diagnostic');
+
+create function pg_temp.live_failed_usage(p_late boolean) returns jsonb language plpgsql as $$
+declare
+  cell record;
+  completed_request uuid;
+  late_request uuid;
+  late_delivered boolean;
+  retained jsonb;
+  previously_unavailable boolean;
+begin
+  begin
+    select * into strict cell from live_trials where seq = 2;
+    completed_request := (pg_temp.request_live(2)->>'requestId')::uuid;
+    if public.finish_factory_benchmark_inference_request(completed_request,'completed','gpt-4.1-2025-04-14',11,7)
+      is distinct from true then raise exception 'Expected a completed inference request.'; end if;
+    if p_late then late_request := (pg_temp.request_live(2)->>'requestId')::uuid; end if;
+    if public.close_factory_benchmark_live_inference(cell.trial_id,cell.job_id,cell.run_id,cell.attempt_count) is null
+    then raise exception 'Expected a closed exact inference receipt.'; end if;
+
+    if p_late then
+      -- The checkpoint RPC can fail before the worker explicitly settles the trial.
+      if public.fail_session_job_attempt(cell.job_id,cell.attempt_count,'Benchmark trial failed.',false,0,cell.run_id)
+        is distinct from 'error' then raise exception 'Expected generic recovery to fail the exact trial.'; end if;
+      select run.token_provenance = 'unavailable' into previously_unavailable from public.agent_runs run where run.id = cell.run_id;
+      late_delivered := public.finish_factory_benchmark_inference_request(late_request,'completed','gpt-4.1-2025-04-14',5,3);
+      perform public.finish_factory_benchmark_inference_request(late_request,'completed','gpt-4.1-2025-04-14',50,30);
+    elsif public.fail_factory_benchmark_trial(cell.trial_id,cell.job_id,cell.attempt_count,cell.run_id,'checkpoint_unavailable')
+      is distinct from true then raise exception 'Expected the checkpoint failure to settle the exact trial.';
+    end if;
+
+    select jsonb_build_object('status',run.status,'failureCode',trial.failure_code,
+      'tokenProvenance',run.token_provenance,'inputTokens',run.input_tokens,'outputTokens',run.output_tokens,
+      'costProvenance',run.cost_provenance,'costUsd',run.total_cost_usd,'usageFinalized',run.usage_finalized_at is not null,
+      'budgetCode',budget.exhaustion_code,'budgetTokens',budget.total_tokens,'budgetTokensUnavailable',budget.tokens_unavailable,
+      'previouslyUnavailable',previously_unavailable,'lateDelivered',late_delivered)
+      into retained
+    from public.factory_benchmark_trials trial
+    join public.agent_runs run on run.id = trial.run_id
+    cross join lateral public.get_session_execution_budget(trial.session_id) budget
+    where trial.id = cell.trial_id;
+    raise exception using errcode = 'QF002', message = 'Rollback failure evidence fixture to exercise cancellation next.';
+  exception when sqlstate 'QF002' then
+    return retained;
+  end;
+end;
+$$;
+select is(pg_temp.live_failed_usage(false),
+  '{"status":"error","failureCode":"checkpoint_unavailable","tokenProvenance":"measured","inputTokens":11,"outputTokens":7,
+    "costProvenance":"unavailable","costUsd":null,"usageFinalized":true,"budgetCode":"tokens","budgetTokens":18,
+    "budgetTokensUnavailable":false,"previouslyUnavailable":null,"lateDelivered":null}'::jsonb,
+  'complete exact receipt usage is available before checkpoint failure finalizes the token budget');
+select is(pg_temp.live_failed_usage(true),
+  '{"status":"error","failureCode":"attempt_lost","tokenProvenance":"measured","inputTokens":16,"outputTokens":10,
+    "costProvenance":"unavailable","costUsd":null,"usageFinalized":true,"budgetCode":"tokens_unavailable","budgetTokens":26,
+    "budgetTokensUnavailable":false,"previouslyUnavailable":true,"lateDelivered":false}'::jsonb,
+  'late exact counts complete failed usage once without reopening delivery or changing the prior budget decision');
 insert into live_requests values ('canceled',pg_temp.request_live(2));
 select is(public.control_factory_benchmark_schedule(scope.workspace_id,scope.factory_id,pg_temp.live_id(80),
   scope.owner_id,'cancel')->>'state','canceled','cancel fences queued and running schedule work') from live_scope scope;
