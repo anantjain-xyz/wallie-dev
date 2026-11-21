@@ -1,3 +1,5 @@
+import "server-only";
+
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -22,12 +24,20 @@ import {
   loadBenchmarkSuiteDetail,
 } from "@/features/factory-benchmarks/suites-data";
 import { TaskCurationEditor } from "@/features/factory-benchmarks/task-curation-editor";
+import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import {
+  BenchmarkComparisonError,
+  listBenchmarkComparisons,
+} from "@/lib/factory-benchmarks/comparison";
+import { benchmarkComparisonListQuerySchema } from "@/lib/factory-benchmarks/comparison-contracts";
 import { loadBenchmarkExperimentAxes } from "@/lib/factory-benchmarks/experiment-axes";
 import {
+  workspaceBenchmarkComparisonPath,
   workspaceBenchmarksPath,
   workspaceBenchmarkSuitePath,
   workspaceRunDetailPath,
 } from "@/lib/routes";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const pageQuery = z.object({
   revision: z.string().uuid().optional(),
@@ -49,7 +59,12 @@ export default async function BenchmarkSuitePage({
   const [{ workspaceSlug, suiteId: rawSuiteId }, query] = await Promise.all([params, searchParams]);
   const suiteId = z.string().uuid().safeParse(rawSuiteId);
   const page = pageQuery.safeParse(query);
-  if (!suiteId.success || !page.success) notFound();
+  const comparisonPage = benchmarkComparisonListQuerySchema.safeParse({
+    limit: "12",
+    beforeCreatedAt: query.beforeComparisonCreatedAt,
+    beforeExperimentId: query.beforeComparisonId,
+  });
+  if (!suiteId.success || !page.success || !comparisonPage.success) notFound();
   const scope = await loadBenchmarkScope(workspaceSlug, query.factory, suiteId.data);
   if (!scope) notFound();
   const comparing = scope.canEdit && query.compare === "1";
@@ -63,14 +78,32 @@ export default async function BenchmarkSuitePage({
   const { factory, workspaceId } = scope;
   const { selected, latest, editable, members, latestTasks, choices, revisions, nextBefore } =
     detail;
-  const comparisonOptions = comparing
-    ? await loadBenchmarkExperimentAxes({
-        workspaceId,
-        factoryId: factory.id,
-        suiteRevisionId: selected.id,
-        supabase: scope.supabase,
-      })
-    : null;
+  const [comparisonOptions, comparisons] = await Promise.all([
+    comparing
+      ? loadBenchmarkExperimentAxes({
+          workspaceId,
+          factoryId: factory.id,
+          suiteRevisionId: selected.id,
+          supabase: scope.supabase,
+        })
+      : null,
+    factory.canManage
+      ? loadAuthenticatedWorkspaceContext(workspaceSlug).then(({ user }) =>
+          listBenchmarkComparisons(
+            {
+              admin: createSupabaseAdminClient(),
+              workspaceId,
+              factoryId: factory.id,
+              actorUserId: user.id,
+            },
+            { ...comparisonPage.data, suiteRevisionId: selected.id },
+          ).catch((error: unknown) => {
+            if (error instanceof BenchmarkComparisonError && error.status === 403) return null;
+            throw error;
+          }),
+        )
+      : null,
+  ]);
   const editing = editable && query.edit === "suite";
   const factoryQuery = { factory: factory.id };
   const suitePath = (extra?: Parameters<typeof workspaceBenchmarkSuitePath>[2]) =>
@@ -121,12 +154,82 @@ export default async function BenchmarkSuitePage({
             <BenchmarkComparisonForm
               key={`${factory.id}:${selected.id}`}
               workspaceId={workspaceId}
+              workspaceSlug={workspaceSlug}
               factoryId={factory.id}
+              suiteId={selected.suite_id}
               suiteRevisionId={selected.id}
               suiteRevisionNumber={selected.revision_number}
               taskCount={members.length}
               options={comparisonOptions}
             />
+          </PageSection>
+        ) : null}
+        {comparisons ? (
+          <PageSection anchorId="frozen-comparisons" title="Frozen comparisons">
+            <div className="ui-sheet divide-y divide-border">
+              {comparisons.items.length ? (
+                <ul className="divide-y divide-border">
+                  {comparisons.items.map((comparison) => (
+                    <li
+                      className="flex min-w-0 flex-wrap items-baseline justify-between gap-2 px-4 py-3 sm:px-5"
+                      key={comparison.experimentId}
+                    >
+                      <Link
+                        className="type-label min-w-0 underline decoration-border underline-offset-4 hover:text-accent"
+                        href={workspaceBenchmarkComparisonPath(
+                          workspaceSlug,
+                          selected.suite_id,
+                          comparison.experimentId,
+                          factoryQuery,
+                        )}
+                        prefetch={false}
+                      >
+                        Comparison from{" "}
+                        <TimeDisplay initialNow={now} value={comparison.createdAt} />
+                      </Link>
+                      <p className="type-annotation text-muted">
+                        {comparison.counts.planned} planned · {comparison.counts.terminal} finished
+                        · {comparison.counts.pending} pending · {comparison.counts.excluded}{" "}
+                        excluded
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="type-secondary px-4 py-3 text-muted sm:px-5">
+                  No comparisons on this page.
+                </p>
+              )}
+              {comparisonPage.data.beforeExperimentId || comparisons.nextCursor ? (
+                <nav
+                  className="flex flex-wrap gap-2 px-4 py-3 sm:px-5"
+                  aria-label="Frozen comparison pages"
+                >
+                  {comparisonPage.data.beforeExperimentId ? (
+                    <Link
+                      className="ui-button"
+                      href={`${suitePath({ revision: selected.id })}#frozen-comparisons`}
+                      prefetch={false}
+                    >
+                      Latest comparisons
+                    </Link>
+                  ) : null}
+                  {comparisons.nextCursor ? (
+                    <Link
+                      className="ui-button"
+                      href={`${suitePath({
+                        revision: selected.id,
+                        beforeComparisonCreatedAt: comparisons.nextCursor.createdAt,
+                        beforeComparisonId: comparisons.nextCursor.experimentId,
+                      })}#frozen-comparisons`}
+                      prefetch={false}
+                    >
+                      Older comparisons
+                    </Link>
+                  ) : null}
+                </nav>
+              ) : null}
+            </div>
           </PageSection>
         ) : null}
         <PageSection
