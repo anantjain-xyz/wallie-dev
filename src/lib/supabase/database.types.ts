@@ -11755,6 +11755,15 @@ export type Database = {
         }
         Returns: Json
       }
+      fail_deadline_session_job_attempt: {
+        Args: {
+          p_attempt_count: number
+          p_error: string
+          p_job_id: string
+          p_run_id?: string
+        }
+        Returns: string
+      }
       fail_factory_benchmark_trial: {
         Args: {
           p_attempt_count: number

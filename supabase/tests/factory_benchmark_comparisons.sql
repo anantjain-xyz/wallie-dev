@@ -321,10 +321,69 @@ from pg_temp.last_scheduled_trial(80) trial;
 
 select is(public.reconcile_factory_benchmark_schedules(10),1,'execution admits the observed timeout case');
 select id from public.claim_next_agent_job(true,4);
+create function pg_temp.capture_comparison_prestart(p_expired boolean) returns jsonb language plpgsql as $$
+declare trial public.factory_benchmark_trials; supplied_deadline timestamptz; saved jsonb;
+begin
+  select * into strict trial from pg_temp.last_scheduled_trial(80);
+  supplied_deadline := clock_timestamp() + interval '1 minute';
+  if p_expired then
+    supplied_deadline := clock_timestamp() - interval '1 second';
+  else
+    perform internal.exhaust_session_execution(trial.session_id,'tokens',10,10);
+  end if;
+  perform public.start_factory_benchmark_trial(trial.job_id,1,supplied_deadline);
+  select jsonb_build_object('status',current.status,'failureCode',current.failure_code,'started',run.started_at is not null)
+    into saved from public.factory_benchmark_trials current join public.agent_runs run on run.id = current.run_id
+  where current.id = trial.id;
+  raise exception using errcode = 'QT001', message = 'Restore the claimed fixture before running it.';
+exception when sqlstate 'QT001' then
+  return saved;
+end;
+$$;
+select is(pg_temp.capture_comparison_prestart(true),'{"status":"error","failureCode":"deadline_elapsed","started":false}'::jsonb,
+  'a deadline expiring in transit records a durable cause before the attempt starts');
+select is(pg_temp.capture_comparison_prestart(false),'{"status":"error","failureCode":"attempt_lost","started":false}'::jsonb,
+  'a pre-start budget rejection never records a deadline cause');
 select (public.start_factory_benchmark_trial((pg_temp.last_scheduled_trial(80)).job_id,1)).run_id;
-select is(public.fail_session_job_attempt(trial.job_id,1,'Worker attempt deadline expired before execution.',false,0,trial.run_id),
-  'error','the exact dispatch retains its explicit deadline retirement')
+select is(public.fail_deadline_session_job_attempt(trial.job_id,2,'An isolated worker clock fired.',trial.run_id),
+  'stale','a different attempt cannot retire the running trial as a timeout') from pg_temp.last_scheduled_trial(80) trial;
+select is(public.fail_deadline_session_job_attempt(trial.job_id,1,'An isolated worker clock fired.',pg_temp.schedule_id(999)),
+  'stale','a different run cannot record a timeout for the running trial') from pg_temp.last_scheduled_trial(80) trial;
+select is(public.fail_deadline_session_job_attempt(trial.job_id,1,'An isolated worker clock fired.'),
+  'stale','runless timeout recovery cannot retire a job that already started') from pg_temp.last_scheduled_trial(80) trial;
+
+-- Exercise the same running attempt through both supervisor paths, restoring
+-- the fixture before the following legacy-worker report test.
+create function pg_temp.capture_comparison_retirement(p_deadline boolean) returns jsonb language plpgsql as $$
+declare trial public.factory_benchmark_trials; saved jsonb;
+begin
+  select * into strict trial from pg_temp.last_scheduled_trial(80);
+  if p_deadline then
+    perform public.fail_deadline_session_job_attempt(trial.job_id,1,'An isolated worker clock fired.',trial.run_id);
+  else
+    update public.factory_benchmark_trials set deadline_at = transaction_timestamp() - interval '1 second' where id = trial.id;
+    perform public.fail_stalled_session_job_attempt(trial.job_id,1,
+      'Worker attempt exceeded its 50ms deadline. Sandbox disconnected.',false,0,trial.run_id);
+  end if;
+  select jsonb_build_object('status',row->'status','reason',row->'reason','deadlineElapsed',row->'deadlineElapsed',
+    'failureCode',(select current.failure_code from public.factory_benchmark_trials current where current.id = trial.id))
+  into saved from jsonb_array_elements(pg_temp.comparison(80)->'trialRows') row where row->>'trialId' = trial.id::text;
+  raise exception using errcode = 'QT001', message = 'Restore the fixture for the legacy supervisor.';
+exception when sqlstate 'QT001' then
+  return saved;
+end;
+$$;
+select is(pg_temp.capture_comparison_retirement(true),
+  '{"status":"timed_out","reason":"deadline_elapsed","deadlineElapsed":true,"failureCode":"deadline_elapsed"}'::jsonb,
+  'typed supervisor recovery retains a durable cause even with a different diagnostic message');
+select is(pg_temp.capture_comparison_retirement(false),
+  '{"status":"failed","reason":"attempt_lost","deadlineElapsed":true,"failureCode":"attempt_lost"}'::jsonb,
+  'time elapsed and a deadline-like provider diagnostic do not prove a timeout');
+select is(public.fail_stalled_session_job_attempt(trial.job_id,1,'Worker attempt exceeded its 50ms deadline.',false,0,trial.run_id),
+  'error','an exact running worker timeout retires the claimed trial')
 from pg_temp.last_scheduled_trial(80) trial;
+select is((pg_temp.last_scheduled_trial(80)).failure_code,'deadline_elapsed',
+  'the canonical deployed worker timeout becomes durable on the terminal trial');
 
 select is(public.reconcile_factory_benchmark_schedules(10),1,'execution admits the cancellation case');
 select ok(public.cancel_factory_benchmark_trial(trial.workspace_id,trial.factory_id,trial.actor_user_id,trial.id,trial.run_id),

@@ -186,7 +186,7 @@ test("comparison pages and immutable exports reconcile every frozen trial", asyn
       experimentId,
       suite: { name: "Invoice benchmark snapshot", revisionId: saved.suiteRevisionId },
       repetitions: 20,
-      counts: { planned: 80, eligible: 40, excluded: 40, terminal: 4 },
+      counts: { planned: 80, eligible: 40, excluded: 40, terminal: 4, timedOut: 1, failed: 1 },
       candidateCount: 2,
       scorers: [{ id: saved.scorerRevisionId, revisionNumber: 1 }],
     });
@@ -194,6 +194,7 @@ test("comparison pages and immutable exports reconcile every frozen trial", asyn
     await showParts.focus();
     await page.keyboard.press("Enter");
     const partIds: string[] = [];
+    const timedOutIds: string[] = [];
     for (const part of manifest.pages) {
       const body = await downloadJson(
         page,
@@ -204,8 +205,14 @@ test("comparison pages and immutable exports reconcile every frozen trial", asyn
       const parsed = benchmarkComparisonExportPageSchema.parse(JSON.parse(body));
       if (parsed.kind !== "trials") throw new Error("The trial export part had the wrong kind.");
       partIds.push(...parsed.trialRows.map(({ trialId }) => trialId));
+      timedOutIds.push(
+        ...parsed.trialRows
+          .filter(({ status }) => status === "timed_out")
+          .map(({ trialId }) => trialId),
+      );
     }
     expect(partIds).toEqual(manifest.trialIds);
+    expect(timedOutIds).toHaveLength(1);
 
     await exports.getByText("Configuration rows · 1 part", { exact: true }).click();
     const candidateIds: string[] = [];

@@ -190,15 +190,17 @@ begin
             'commitSha',repeat('b',40),'treeSha',repeat('b',40),'outputSha256',repeat('f',64))
         )
       ) then raise exception 'Could not retain the successful fixture result.'; end if;
+    elsif step = 'timeout' then
+      -- Advance the started fixture to its deadline and use worker retirement.
+      update public.factory_benchmark_trials set deadline_at = clock_timestamp()
+      where id = selected_trial.id and workspace_id = scope.workspace_id;
+      if public.fail_deadline_session_job_attempt(
+        selected_trial.job_id, 1, 'Worker attempt exceeded its 60000ms deadline.', selected_trial.run_id
+      ) <> 'error' then raise exception 'Could not retire the expired running fixture.'; end if;
     else
       if not public.fail_factory_benchmark_trial(
-        selected_trial.id, selected_trial.job_id, 1, selected_trial.run_id,
-        case when step = 'timeout' then 'attempt_lost' else 'candidate_failed' end
+        selected_trial.id, selected_trial.job_id, 1, selected_trial.run_id, 'candidate_failed'
       ) then raise exception 'Could not finish the failed fixture result.'; end if;
-      if step = 'timeout' then
-        update public.agent_jobs set last_error = 'Worker attempt deadline expired before execution.'
-        where id = selected_trial.job_id and workspace_id = scope.workspace_id;
-      end if;
     end if;
   end loop;
 

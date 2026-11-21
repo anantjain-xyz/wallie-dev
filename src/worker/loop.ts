@@ -8,6 +8,7 @@ import { workerRunCaptureEnvSchema } from "@/env/worker";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AttemptWorkerRuntime } from "@/lib/pipeline/attempt-manifest";
 import { processPipelineJob } from "@/lib/pipeline/processor";
+import { WorkerAttemptDeadlineError } from "@/lib/pipeline/worker-attempt-deadline";
 
 import type { WorkerConfig } from "./config";
 
@@ -80,13 +81,14 @@ export async function runClaimedJob(
   const deadlineAt = new Date(deadlineMs).toISOString();
   const timeoutMs = Math.max(0, deadlineMs - now);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let timeoutMessage: string | undefined;
   try {
-    if (timeoutMs === 0) throw new Error("Worker attempt deadline expired before execution.");
+    if (timeoutMs === 0)
+      throw new WorkerAttemptDeadlineError("Worker attempt deadline expired before execution.");
     const deadline = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
-        const error = new Error(`Worker attempt exceeded its ${timeoutMs}ms deadline.`);
-        timeoutMessage = error.message;
+        const error = new WorkerAttemptDeadlineError(
+          `Worker attempt exceeded its ${timeoutMs}ms deadline.`,
+        );
         controller.abort(error);
         reject(error);
       }, timeoutMs);
@@ -111,6 +113,7 @@ export async function runClaimedJob(
     ]);
   } catch (error) {
     controller.abort(error);
+    const deadlineElapsed = error instanceof WorkerAttemptDeadlineError;
     const message = error instanceof Error ? error.message : "Worker job processing failed";
     console.error("[worker] job processing error", { error: message, jobId: job.id });
     const recovery = new AbortController();
@@ -131,7 +134,8 @@ export async function runClaimedJob(
           attemptCount,
           message,
           workspaceId: job.workspace_id,
-          historyMessage: timeoutMessage ?? "Worker job processing failed.",
+          deadlineElapsed,
+          historyMessage: deadlineElapsed ? message : "Worker job processing failed.",
           signal: recovery.signal,
         }),
         recoveryDeadline,
@@ -157,6 +161,7 @@ async function retireAttempt(
     jobId: string;
     attemptCount: number;
     message: string;
+    deadlineElapsed: boolean;
     workspaceId: string;
     historyMessage: string;
     signal: AbortSignal;
@@ -178,16 +183,20 @@ async function retireAttempt(
     input.signal.throwIfAborted();
     // A processor rejection may follow a committed intent and a lost database
     // reply. Preserve that completed work until its original deadline expires.
-    const { data: result, error } = await admin
-      .rpc("fail_stalled_session_job_attempt", {
-        p_job_id: input.jobId,
-        p_attempt_count: input.attemptCount,
-        p_run_id: run?.id,
-        p_error: input.message,
-        p_retry: false,
-        p_max_retries: 0,
-      })
-      .abortSignal(input.signal);
+    const identity = {
+      p_job_id: input.jobId,
+      p_attempt_count: input.attemptCount,
+      p_run_id: run?.id,
+      p_error: input.message,
+    };
+    const failure = input.deadlineElapsed
+      ? admin.rpc("fail_deadline_session_job_attempt", identity)
+      : admin.rpc("fail_stalled_session_job_attempt", {
+          ...identity,
+          p_retry: false,
+          p_max_retries: 0,
+        });
+    const { data: result, error } = await failure.abortSignal(input.signal);
     if (error) throw error;
     if (run && result === "error") {
       input.signal.throwIfAborted();

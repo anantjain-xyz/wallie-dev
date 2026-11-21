@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { WorkerAttemptDeadlineError } from "@/lib/pipeline/worker-attempt-deadline";
 import {
   dispatchWork,
   ensureWorkflow,
@@ -96,7 +97,10 @@ function interruptedFixture(status: "pending" | "claimed", expired = false) {
   };
   const receipts = [] as Array<typeof publication>;
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
-    if (name === "fail_stalled_session_job_attempt") {
+    if (
+      name === "fail_stalled_session_job_attempt" ||
+      name === "fail_deadline_session_job_attempt"
+    ) {
       const saved = receipts.some(
         (receipt) =>
           receipt.run_id === args.p_run_id &&
@@ -211,6 +215,20 @@ describe("durable workflow dispatch", () => {
     expect(f.changes).toEqual([{ table: "worker_dispatches", kind: "delete", data: undefined }]);
   });
 
+  it("settles an expired dispatch without starting a Workflow", async () => {
+    const f = fixture();
+    f.dispatch.deadline_at = new Date(Date.now() - 1_000).toISOString();
+    f.rpc.mockResolvedValueOnce({ data: "error", error: null });
+    await dispatchWork(f.admin, f, { maxConcurrent: 0, timeoutMs: 1_800_000 });
+    expect(f.attempts.create).not.toHaveBeenCalled();
+    expect(f.rpc).toHaveBeenCalledWith("fail_deadline_session_job_attempt", {
+      p_job_id: "job",
+      p_attempt_count: 2,
+      p_run_id: undefined,
+      p_error: "Worker attempt deadline expired before dispatch.",
+    });
+  });
+
   it("acknowledges an already-published exact run during recovery", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: true, error: null });
     const query = {
@@ -252,18 +270,20 @@ describe("durable workflow dispatch", () => {
     async (status) => {
       const f = interruptedFixture(status, true);
       f.receipts.push(f.publication);
-      await recoverAttempt(f.admin, "job", 2, "Original deadline elapsed", false);
+      await recoverAttempt(
+        f.admin,
+        "job",
+        2,
+        new WorkerAttemptDeadlineError("Original deadline elapsed"),
+      );
       expect(f.run.status).toBe("error");
       expect(f.job.status).toBe("error");
-      expect(f.rpc).toHaveBeenCalledExactlyOnceWith(
-        "fail_stalled_session_job_attempt",
-        expect.objectContaining({
-          p_job_id: "job",
-          p_attempt_count: 2,
-          p_run_id: "run",
-          p_retry: false,
-        }),
-      );
+      expect(f.rpc).toHaveBeenCalledExactlyOnceWith("fail_deadline_session_job_attempt", {
+        p_job_id: "job",
+        p_attempt_count: 2,
+        p_run_id: "run",
+        p_error: "Original deadline elapsed",
+      });
     },
   );
 

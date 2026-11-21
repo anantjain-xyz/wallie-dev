@@ -5,6 +5,10 @@ import { z } from "zod";
 
 import type { AttemptWorkerRuntime } from "@/lib/pipeline/attempt-manifest";
 import { SOURCE_CHECKPOINT_BUCKET } from "@/lib/pipeline/source-checkpoint";
+import {
+  createWorkerAttemptDeadline,
+  WorkerAttemptDeadlineError,
+} from "@/lib/pipeline/worker-attempt-deadline";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -25,6 +29,8 @@ type TrialFailure =
   | RecordedTrialFixtureError["code"];
 
 const uuid = z.string().uuid();
+const deadlineMessage = "Benchmark attempt deadline expired.";
+const maxDurationMs = 180_000;
 const startedTrialSchema = z.object({
   id: uuid,
   workspace_id: uuid,
@@ -58,11 +64,14 @@ export async function runRecordedBenchmarkTrial({
   deadlineAt?: string;
   workerRuntime?: AttemptWorkerRuntime;
 }) {
-  const deadline = deadlineAt ? Date.parse(deadlineAt) - Date.now() : 180_000;
-  if (!Number.isFinite(deadline) || deadline <= 0)
-    throw new Error("Benchmark attempt deadline expired.");
-  const budget = AbortSignal.timeout(Math.min(deadline, 180_000));
-  const startupSignal = workerSignal ? AbortSignal.any([workerSignal, budget]) : budget;
+  workerSignal?.throwIfAborted();
+  const deadline = deadlineAt ? Date.parse(deadlineAt) - Date.now() : maxDurationMs;
+  if (!Number.isFinite(deadline)) throw new Error("Benchmark attempt deadline is invalid.");
+  if (deadline <= 0) throw new WorkerAttemptDeadlineError(deadlineMessage);
+  using budget = createWorkerAttemptDeadline(Math.min(deadline, maxDurationMs), deadlineMessage);
+  const startupSignal = workerSignal
+    ? AbortSignal.any([workerSignal, budget.signal])
+    : budget.signal;
   const { id: jobId, attempt_count: attemptCount } = job;
   const outcome = (result: "idle" | "error" | "success", runId: string | null) => ({
     jobId,
@@ -71,15 +80,15 @@ export async function runRecordedBenchmarkTrial({
     runId,
   });
 
-  startupSignal.throwIfAborted();
-  const started = await admin
-    .rpc("start_factory_benchmark_trial", {
-      p_job_id: jobId,
-      p_attempt_count: attemptCount,
-      ...(deadlineAt ? { p_deadline_at: deadlineAt } : {}),
-    })
-    .abortSignal(startupSignal);
-  startupSignal.throwIfAborted();
+  const started = await observeUntilAbort(startupSignal, async () =>
+    admin
+      .rpc("start_factory_benchmark_trial", {
+        p_job_id: jobId,
+        p_attempt_count: attemptCount,
+        ...(deadlineAt ? { p_deadline_at: deadlineAt } : {}),
+      })
+      .abortSignal(startupSignal),
+  );
   if (started.error) throw new Error("The captured benchmark attempt could not start.");
   if (!started.data?.id) return outcome("idle", null);
   const parsed = startedTrialSchema.safeParse(started.data);
@@ -94,12 +103,13 @@ export async function runRecordedBenchmarkTrial({
     throw new Error("The captured benchmark attempt changed.");
   }
   const remaining = Date.parse(trial.deadline_at) - Date.now();
-  if (!Number.isFinite(remaining) || remaining <= 0)
-    throw new Error("Benchmark attempt deadline expired.");
-  const signal = AbortSignal.any([
-    startupSignal,
-    AbortSignal.timeout(Math.min(remaining, 180_000)),
-  ]);
+  if (!Number.isFinite(remaining)) throw new Error("Benchmark attempt deadline is invalid.");
+  if (remaining <= 0) throw new WorkerAttemptDeadlineError(deadlineMessage);
+  using attemptDeadline = createWorkerAttemptDeadline(
+    Math.min(remaining, maxDurationMs),
+    deadlineMessage,
+  );
+  const signal = AbortSignal.any([startupSignal, attemptDeadline.signal]);
   const identity = {
     p_trial_id: trial.id,
     p_job_id: jobId,
@@ -224,27 +234,29 @@ export async function runRecordedBenchmarkTrial({
     }
   });
 
-  signal.throwIfAborted();
   if (!staged) {
-    const failed = await admin
-      .rpc("fail_factory_benchmark_trial", {
-        ...identity,
-        p_failure_code: failure,
-      })
-      .abortSignal(signal);
+    const failed = await observeUntilAbort(signal, async () =>
+      admin
+        .rpc("fail_factory_benchmark_trial", {
+          ...identity,
+          p_failure_code: failure,
+        })
+        .abortSignal(signal),
+    );
     if (failed.error) throw new Error("The benchmark attempt failure could not be recorded.");
     return outcome(failed.data ? "error" : "idle", trial.run_id);
   }
 
   // The finish transaction adopts the reserved upload. A stale claim or lost
   // reply leaves its cleanup obligation intact until ownership is known.
-  const finished = await admin
-    .rpc("finish_factory_benchmark_trial", {
-      ...identity,
-      p_result: staged,
-    })
-    .abortSignal(signal);
+  const finished = await observeUntilAbort(signal, async () =>
+    admin
+      .rpc("finish_factory_benchmark_trial", {
+        ...identity,
+        p_result: staged,
+      })
+      .abortSignal(signal),
+  );
   if (finished.error) throw new Error("The benchmark attempt result could not be recorded.");
-  signal.throwIfAborted();
   return outcome(finished.data ? "success" : "idle", trial.run_id);
 }

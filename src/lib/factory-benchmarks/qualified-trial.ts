@@ -10,6 +10,10 @@ import {
   captureSourceCheckpoint,
   SOURCE_CHECKPOINT_BUCKET,
 } from "@/lib/pipeline/source-checkpoint";
+import {
+  createWorkerAttemptDeadline,
+  WorkerAttemptDeadlineError,
+} from "@/lib/pipeline/worker-attempt-deadline";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
@@ -41,6 +45,7 @@ type BenchmarkJob = {
 };
 
 const maxDurationMs = 180_000;
+const deadlineMessage = "The live benchmark deadline expired.";
 
 const setupFailureByPhase = {
   acquiring_sandbox: "sandbox_unavailable",
@@ -84,22 +89,28 @@ export async function runBenchmarkTrial(input: BenchmarkJob) {
 
 export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
   const { admin, job, workerRuntime } = input;
+  input.signal?.throwIfAborted();
   const deadlineAt = input.deadlineAt ?? new Date(Date.now() + maxDurationMs).toISOString();
   const remaining = Date.parse(deadlineAt) - Date.now();
-  if (!Number.isFinite(remaining) || remaining <= 0)
-    throw new Error("The live benchmark deadline expired.");
-  const startupBudget = AbortSignal.timeout(Math.min(remaining, maxDurationMs));
-  const startup = input.signal ? AbortSignal.any([input.signal, startupBudget]) : startupBudget;
-  startup.throwIfAborted();
-  const start = await admin
-    .rpc("start_factory_benchmark_live_trial", {
-      p_job_id: job.id,
-      p_attempt_count: job.attempt_count,
-      p_deadline_at: deadlineAt,
-      p_worker_runtime: workerRuntime,
-    })
-    .abortSignal(startup);
-  startup.throwIfAborted();
+  if (!Number.isFinite(remaining)) throw new Error("The live benchmark deadline is invalid.");
+  if (remaining <= 0) throw new WorkerAttemptDeadlineError(deadlineMessage);
+  using startupBudget = createWorkerAttemptDeadline(
+    Math.min(remaining, maxDurationMs),
+    deadlineMessage,
+  );
+  const startup = input.signal
+    ? AbortSignal.any([input.signal, startupBudget.signal])
+    : startupBudget.signal;
+  const start = await observeUntilAbort(startup, async () =>
+    admin
+      .rpc("start_factory_benchmark_live_trial", {
+        p_job_id: job.id,
+        p_attempt_count: job.attempt_count,
+        p_deadline_at: deadlineAt,
+        p_worker_runtime: workerRuntime,
+      })
+      .abortSignal(startup),
+  );
   if (start.error) throw new Error("The captured live benchmark could not start.");
   if (start.data === null) return outcome(job.id, "idle", null);
   const claim = qualifiedTrialClaimSchema.safeParse(start.data);
@@ -115,11 +126,12 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
   )
     throw new Error("The live benchmark claim does not match this worker.");
   const attemptRemaining = Date.parse(trial.deadlineAt) - Date.now();
-  if (attemptRemaining <= 0) throw new Error("The live benchmark deadline expired.");
-  const signal = AbortSignal.any([
-    startup,
-    AbortSignal.timeout(Math.min(attemptRemaining, maxDurationMs)),
-  ]);
+  if (attemptRemaining <= 0) throw new WorkerAttemptDeadlineError(deadlineMessage);
+  using attemptDeadline = createWorkerAttemptDeadline(
+    Math.min(attemptRemaining, maxDurationMs),
+    deadlineMessage,
+  );
+  const signal = AbortSignal.any([startup, attemptDeadline.signal]);
   const scope = qualifiedTrialRpcIdentity(identity);
 
   let failure: QualifiedTrialFailure = "sandbox_unavailable";
@@ -320,19 +332,21 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
     }
   });
 
-  signal.throwIfAborted();
   if (!result) {
-    const failed = await admin
-      .rpc("fail_factory_benchmark_trial", { ...scope, p_failure_code: failure })
-      .abortSignal(signal);
+    const failed = await observeUntilAbort(signal, async () =>
+      admin
+        .rpc("fail_factory_benchmark_trial", { ...scope, p_failure_code: failure })
+        .abortSignal(signal),
+    );
     if (failed.error) throw new Error("The live benchmark failure could not be recorded.");
     return outcome(job.id, failed.data ? "error" : "idle", identity.runId);
   }
-  const finished = await admin
-    .rpc("finish_factory_benchmark_live_trial", { ...scope, p_result: result })
-    .abortSignal(signal);
+  const finished = await observeUntilAbort(signal, async () =>
+    admin
+      .rpc("finish_factory_benchmark_live_trial", { ...scope, p_result: result })
+      .abortSignal(signal),
+  );
   if (finished.error) throw new Error("The exact live benchmark result could not be recorded.");
-  signal.throwIfAborted();
   return outcome(job.id, finished.data ? "success" : "idle", identity.runId);
 }
 

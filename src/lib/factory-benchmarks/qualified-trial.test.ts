@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { captureSourceCheckpoint } from "@/lib/pipeline/source-checkpoint";
+import { WorkerAttemptDeadlineError } from "@/lib/pipeline/worker-attempt-deadline";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -58,6 +59,7 @@ function fixture(
     | "invalid-start"
     | "canceled"
     | "oversize",
+  deadlineOffsetMs = 60_000,
 ) {
   const sandbox = new FakeSandbox();
   const controller = new AbortController();
@@ -73,7 +75,7 @@ function fixture(
       actorUserId: id(7),
       attemptCount: 1,
     },
-    deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+    deadlineAt: new Date(Date.now() + deadlineOffsetMs).toISOString(),
     taskRevisionId: id(8),
     policyRevisionId: id(9),
     policyDigest: "a".repeat(64),
@@ -367,6 +369,18 @@ describe("qualified live benchmark execution", () => {
     );
     expect(sandbox.calls.some(({ cmd }) => cmd === "env")).toBe(false);
     expect(uploadWorkspaceObject).not.toHaveBeenCalled();
+  });
+
+  it("propagates the owned deadline for a started live attempt while keeping its closed receipt", async () => {
+    const { admin, job, requests, signal } = fixture("codex", undefined, 1_000);
+    vi.mocked(captureSourceCheckpoint).mockImplementationOnce(() => new Promise(() => {}));
+    await expect(
+      runQualifiedBenchmarkTrial({ admin, job, workerRuntime: "workerd", signal }),
+    ).rejects.toBeInstanceOf(WorkerAttemptDeadlineError);
+    expect(captureSourceCheckpoint).toHaveBeenCalledOnce();
+    expect(requests.at(-1)?.name).toBe("close_factory_benchmark_live_inference");
+    expect(uploadWorkspaceObject).not.toHaveBeenCalled();
+    expect(signal.aborted).toBe(false);
   });
 
   it("never allocates a sandbox for a stale or wrong-runtime claim", async () => {

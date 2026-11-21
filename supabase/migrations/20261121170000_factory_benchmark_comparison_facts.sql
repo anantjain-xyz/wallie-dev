@@ -45,7 +45,7 @@ create function internal.factory_benchmark_comparison_trial_facts(
         when frozen.replay_eligibility <> 'eligible' then 'excluded'
         when trial.status = 'success' and result.trial_id is not null and run.status = 'success' then 'succeeded'
         when trial.status = 'success' or (reservation.trial_id is not null and (trial.id is null or run.id is null)) then 'unavailable'
-        when trial.status = 'error' and timeout.proven then 'timed_out'
+        when trial.status = 'error' and trial.failure_code = 'deadline_elapsed' then 'timed_out'
         when trial.status = 'error' then 'failed'
         when trial.status = 'canceled' or (trial.id is null and schedule.state = 'canceled') then 'canceled'
         when trial.id is null and admitted.count >= schedule.max_admitted_trials then 'unavailable'
@@ -56,7 +56,6 @@ create function internal.factory_benchmark_comparison_trial_facts(
         when frozen.replay_eligibility <> 'eligible' then coalesce(frozen.eligibility_reason, frozen.replay_eligibility)
         when trial.status = 'success' then case when result.trial_id is null or run.status is distinct from 'success' then 'result_unavailable' end
         when reservation.trial_id is not null and (trial.id is null or run.id is null) then 'execution_unavailable'
-        when trial.status = 'error' and timeout.proven then 'deadline_elapsed'
         when trial.status = 'error' then trial.failure_code
         when trial.status = 'canceled' then 'trial_canceled'
         when trial.id is null and schedule.state = 'canceled' then 'schedule_canceled'
@@ -72,7 +71,8 @@ create function internal.factory_benchmark_comparison_trial_facts(
       trial.finished_at, trial.deadline_at,
       case when run.finished_at >= run.started_at then floor(extract(epoch from (run.finished_at - run.started_at)) * 1000)::bigint end
         as wall_runtime_ms,
-      coalesce(trial.deadline_at <= coalesce(trial.finished_at, p_as_of), false) as deadline_elapsed,
+      coalesce(trial.failure_code = 'deadline_elapsed', false)
+        or coalesce(trial.deadline_at <= coalesce(trial.finished_at, p_as_of), false) as deadline_elapsed,
       case when run.started_at is not null then trial.runner_revision end as runner_revision,
       case when run.started_at is not null then result.runtime end as actual_runtime,
       case when run.started_at is not null then run.model_provider end as model_provider,
@@ -109,15 +109,10 @@ create function internal.factory_benchmark_comparison_trial_facts(
         (reservation.workspace_id, reservation.factory_id, reservation.trial_id, reservation.run_id, frozen.task_revision_id)
     left join public.agent_runs run on (run.workspace_id, run.session_id, run.id) =
       (trial.workspace_id, trial.session_id, trial.run_id)
-    left join public.agent_jobs job on (job.workspace_id, job.session_id, job.id) =
-      (trial.workspace_id, trial.session_id, trial.job_id)
     left join public.factory_benchmark_trial_results result
       on (result.workspace_id, result.factory_id, result.trial_id, result.run_id) =
         (trial.workspace_id, trial.factory_id, trial.id, trial.run_id) and trial.status = 'success'
     cross join admitted
-    cross join lateral (select trial.failure_code in ('timeout', 'deadline_elapsed')
-      or (trial.failure_code = 'attempt_lost' and job.last_error in ('Benchmark trial deadline elapsed before start.',
-        'Worker attempt deadline expired before dispatch.', 'Worker attempt deadline expired before execution.')) as proven) timeout
     where (frozen.workspace_id, frozen.factory_id, frozen.experiment_id) = (p_workspace_id, p_factory_id, p_experiment_id)
   )
   select trial_id, task_id, task_revision_id, revision_number, name, candidate_key, comparison_position,
