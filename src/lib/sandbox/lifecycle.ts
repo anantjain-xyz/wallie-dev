@@ -52,6 +52,27 @@ export async function finalizeSandboxAcquisition(input: {
   }
 }
 
+export async function observeUntilAbort<T>(signal: AbortSignal, operation: () => Promise<T>) {
+  signal.throwIfAborted();
+  let onAbort: () => void;
+  const abort = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  const work = Promise.resolve().then(() => {
+    signal.throwIfAborted();
+    return operation();
+  });
+
+  try {
+    const result = await Promise.race([work, abort]);
+    signal.throwIfAborted();
+    return result;
+  } finally {
+    signal.removeEventListener("abort", onAbort!);
+  }
+}
+
 export class SandboxProviderDeadlineError extends Error {
   readonly operation: SandboxProviderOperation;
   readonly provider: SandboxProvider;

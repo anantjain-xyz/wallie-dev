@@ -1,13 +1,42 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { createClient } from "@supabase/supabase-js";
+import { expect, it, vi } from "vitest";
+
+import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
+import { createUtilitySandbox, stopSandboxById } from "@/lib/sandbox";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
+import type { SandboxConnection } from "@/lib/sandbox/types";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/lib/supabase/database.types";
+import type { WorkspaceAccessContext } from "@/lib/workspaces/access";
+import {
+  recordWorkspaceSandbox,
+  reserveWorkspaceSandbox,
+  settleWorkspaceResource,
+} from "@/lib/workspaces/resource-operations";
 
 import { replaySha256, type ReplayPlan } from "./replay-contracts";
-import { stageBenchmarkReplay } from "./replay-sandbox";
+import { resolveBenchmarkReplay } from "./replay-inputs";
+import { stageBenchmarkReplay, withRestoredBenchmarkInputs } from "./replay-sandbox";
+
+vi.mock("@/features/github/sandbox-token", () => ({ mintSandboxRepositoryToken: vi.fn() }));
+vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
+vi.mock("./replay-inputs", () => ({ resolveBenchmarkReplay: vi.fn() }));
+vi.mock(import("@/lib/sandbox"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  createUtilitySandbox: vi.fn(),
+  stopSandboxById: vi.fn(),
+}));
+vi.mock(import("@/lib/workspaces/resource-operations"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  reserveWorkspaceSandbox: vi.fn(),
+  recordWorkspaceSandbox: vi.fn(),
+  settleWorkspaceResource: vi.fn(),
+}));
 
 const ref = "refs/heads/wallie/benchmark-fixtures/retained";
 const id = (suffix: number) => "61400000-0000-4000-8000-" + String(suffix).padStart(12, "0");
@@ -226,3 +255,239 @@ it("restores an exact private retry bundle after checking out its verified base"
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+async function acquiredReplay() {
+  const { directory, repositoryUrl, sha } = await retainedSource();
+  const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
+  const plan = replayPlan(sha);
+  const recheckAccess = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  const controller = new AbortController();
+  const admin = createClient<Database>("http://127.0.0.1:1", "local-test-key");
+  const access: WorkspaceAccessContext = {
+    supabase: admin,
+    user: { id: id(18) },
+    currentMember: { id: id(19), role: "owner", kind: "human", is_active: true },
+    workspace: { id: id(20), slug: "replay-fixture", name: "Replay fixture", avatar_path: null },
+  };
+  const connection: SandboxConnection = {
+    provider: "vercel",
+    revision: id(9),
+    credentials: { token: "fixture-token", teamId: "fixture-team", projectId: "fixture-project" },
+  };
+  const operationId = id(21);
+  const run = sandbox.exec.bind(sandbox);
+  const exec = vi
+    .spyOn(sandbox, "exec")
+    .mockImplementation((command, args, options) =>
+      run(
+        command,
+        command === "git" && args[0] === "remote" && args[1] === "add"
+          ? ["remote", "add", "origin", repositoryUrl]
+          : args,
+        options,
+      ),
+    );
+  const stagedPaths: string[] = [];
+  const write = sandbox.writeFile.bind(sandbox);
+  const writeFile = vi
+    .spyOn(sandbox, "writeFile")
+    .mockImplementation(async (path, body, options) => {
+      stagedPaths.push(path);
+      await write(path, body, options);
+    });
+  vi.mocked(createSupabaseAdminClient).mockReturnValue(admin);
+  vi.mocked(mintSandboxRepositoryToken).mockResolvedValue("fixture-read-token");
+  vi.mocked(resolveBenchmarkReplay).mockResolvedValue({
+    plan,
+    repository: {
+      recordedInstallationId: id(22),
+      installationId: 1,
+      repositoryId: 2,
+      repositoryFullName: "fixture/replay",
+    },
+    recheckAccess,
+  });
+  vi.mocked(reserveWorkspaceSandbox).mockClear().mockResolvedValue(operationId);
+  vi.mocked(recordWorkspaceSandbox).mockClear().mockResolvedValue(true);
+  vi.mocked(settleWorkspaceResource).mockClear().mockResolvedValue(undefined);
+  vi.mocked(createUtilitySandbox).mockImplementation(async (request) => {
+    await request.onSandboxCreated?.({ provider: "vercel", sandboxId: sandbox.id });
+    return sandbox;
+  });
+  vi.mocked(stopSandboxById)
+    .mockClear()
+    .mockImplementation(async (sandboxId) => {
+      expect(sandboxId).toBe(sandbox.id);
+      expect(stagedPaths.every((path) => !existsSync(path))).toBe(true);
+      await sandbox.stop();
+    });
+
+  return {
+    input: {
+      access,
+      connection,
+      taskRevisionId: plan.identity.taskRevisionId,
+      factoryId: id(23),
+      signal: controller.signal,
+    },
+    admin,
+    operationId,
+    plan,
+    controller,
+    sandbox,
+    recheckAccess,
+    stagedPaths,
+    exec,
+    writeFile,
+    async teardown() {
+      await sandbox.stop();
+      rmSync(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+it("removes staged inputs and settles the lease when an inspection ignores cancellation", async () => {
+  const fixture = await acquiredReplay();
+  const started = Promise.withResolvers<{ inputPath: string; signal: AbortSignal }>();
+  const completion = Promise.withResolvers<string>();
+  const reason = new Error("Cancel benchmark replay");
+  try {
+    const result = withRestoredBenchmarkInputs(fixture.input, ({ inputPath, signal }) => {
+      started.resolve({ inputPath, signal });
+      return completion.promise;
+    });
+    const rejected = expect(result).rejects.toBe(reason);
+    const { inputPath, signal } = await started.promise;
+    expect(existsSync(inputPath)).toBe(true);
+    fixture.controller.abort(reason);
+    await rejected;
+    expect(signal.aborted).toBe(true);
+    expect(existsSync(inputPath)).toBe(false);
+    expect(existsSync(fixture.sandbox.repoPath)).toBe(false);
+    expect(stopSandboxById).toHaveBeenCalledExactlyOnceWith(fixture.sandbox.id, {
+      connection: fixture.input.connection,
+      throwOnError: true,
+    });
+    expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(
+      fixture.admin,
+      fixture.operationId,
+      true,
+    );
+  } finally {
+    completion.resolve("Late inspection success");
+    await fixture.teardown();
+  }
+});
+
+it("stops the sandbox when a provider write stays pending after cancellation", async () => {
+  const fixture = await acquiredReplay();
+  const writing = Promise.withResolvers<void>();
+  const writeFinished = Promise.withResolvers<void>();
+  const reason = new Error("Cancel while staging");
+  const inspect = vi.fn<() => Promise<void>>();
+  let scratch: string | undefined;
+  fixture.writeFile.mockImplementationOnce((path) => {
+    scratch = dirname(path);
+    writing.resolve();
+    return writeFinished.promise;
+  });
+  try {
+    const result = withRestoredBenchmarkInputs(fixture.input, inspect);
+    const rejected = expect(result).rejects.toBe(reason);
+    await writing.promise;
+    fixture.controller.abort(reason);
+    await rejected;
+    expect(existsSync(fixture.sandbox.repoPath)).toBe(false);
+    expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(
+      fixture.admin,
+      fixture.operationId,
+      true,
+    );
+    writeFinished.resolve();
+    await Promise.resolve();
+    expect(inspect).not.toHaveBeenCalled();
+    expect(fixture.exec.mock.calls.some(([command]) => command === "sha256sum")).toBe(false);
+  } finally {
+    writeFinished.resolve();
+    await fixture.teardown();
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+it("does not return an inspection result if cancellation arrives during teardown", async () => {
+  const fixture = await acquiredReplay();
+  const reason = new Error("Cancel during sandbox stop");
+  const stopping = Promise.withResolvers<void>();
+  const finishStop = Promise.withResolvers<void>();
+  vi.mocked(stopSandboxById).mockImplementationOnce(async () => {
+    stopping.resolve();
+    await finishStop.promise;
+    await fixture.sandbox.stop();
+  });
+  try {
+    const result = withRestoredBenchmarkInputs(fixture.input, async () => "Inspection finished");
+    const rejected = expect(result).rejects.toBe(reason);
+    await stopping.promise;
+    fixture.controller.abort(reason);
+    finishStop.resolve();
+    await rejected;
+    expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(
+      fixture.admin,
+      fixture.operationId,
+      true,
+    );
+  } finally {
+    finishStop.resolve();
+    await fixture.teardown();
+  }
+});
+
+it("discards a staged bundle if source access is revoked before inspection", async () => {
+  const fixture = await acquiredReplay();
+  const revoked = new Error("Original context access revoked");
+  fixture.recheckAccess.mockResolvedValueOnce(undefined).mockRejectedValueOnce(revoked);
+  const inspect = vi.fn<() => Promise<void>>();
+  try {
+    await expect(withRestoredBenchmarkInputs(fixture.input, inspect)).rejects.toBe(revoked);
+    expect(fixture.stagedPaths).toHaveLength(1);
+    expect(existsSync(fixture.stagedPaths[0])).toBe(false);
+    expect(existsSync(fixture.sandbox.repoPath)).toBe(false);
+    expect(inspect).not.toHaveBeenCalled();
+    expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(
+      fixture.admin,
+      fixture.operationId,
+      true,
+    );
+  } finally {
+    await fixture.teardown();
+  }
+});
+
+it.each([false, true])(
+  "cleans up or retains its obligation after a failed checkout (stop fails: %s)",
+  async (stopFails) => {
+    const fixture = await acquiredReplay();
+    const stopError = new Error("Provider could not confirm stop");
+    if (stopFails) vi.mocked(stopSandboxById).mockRejectedValueOnce(stopError);
+    fixture.plan.identity.inputRef = "refs/heads/wallie/missing-fixture";
+    const inspect = vi.fn<() => Promise<void>>();
+    try {
+      await expect(withRestoredBenchmarkInputs(fixture.input, inspect)).rejects.toThrow(
+        stopFails ? stopError.message : "The exact starting source could not be restored.",
+      );
+      expect(inspect).not.toHaveBeenCalled();
+      expect(stopSandboxById).toHaveBeenCalledExactlyOnceWith(fixture.sandbox.id, {
+        connection: fixture.input.connection,
+        throwOnError: true,
+      });
+      expect(existsSync(fixture.sandbox.repoPath)).toBe(stopFails);
+      expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(
+        fixture.admin,
+        fixture.operationId,
+        !stopFails,
+      );
+    } finally {
+      await fixture.teardown();
+    }
+  },
+);

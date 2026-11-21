@@ -12,6 +12,7 @@ import {
 } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 import { createUtilitySandbox, stopSandboxById } from "@/lib/sandbox";
+import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
 import type { SandboxConnection, SandboxHandle, SandboxImplementation } from "@/lib/sandbox/types";
 import type { Database } from "@/lib/supabase/database.types";
 import {
@@ -149,21 +150,6 @@ async function renderPrompts(
   }
 
   return evidence;
-}
-
-async function observeUntilAbort<T>(signal: AbortSignal, operation: () => Promise<T>) {
-  signal.throwIfAborted();
-  let onAbort: () => void;
-  const abort = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-
-  try {
-    return await Promise.race([operation(), abort]);
-  } finally {
-    signal.removeEventListener("abort", onAbort!);
-  }
 }
 
 async function executeFixedCommand(

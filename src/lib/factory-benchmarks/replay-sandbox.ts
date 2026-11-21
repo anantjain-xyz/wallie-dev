@@ -10,6 +10,7 @@ import {
 import { restoreRetryCheckpoint } from "@/lib/pipeline/retry-checkpoint-git";
 import { createUtilitySandbox, stopSandboxById } from "@/lib/sandbox";
 import { checkoutSandboxCheckpoint } from "@/lib/sandbox/checkout";
+import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
 import type { SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
@@ -45,6 +46,7 @@ async function runRestoreCommand(
   signal: AbortSignal,
   cwd = sandbox.repoPath,
 ) {
+  signal.throwIfAborted();
   const process = await sandbox.exec(cmd, args, { cwd, signal, env: gitEnvironment });
   const [code, output] = await Promise.all([process.exitCode, process.output()]);
   signal.throwIfAborted();
@@ -96,6 +98,12 @@ export async function stageBenchmarkReplay(input: {
   const directory = `/tmp/wallie-benchmark-replay-${instance}`;
   const inputPath = `${directory}/inputs.json`;
   const branch = `wallie/benchmark-replay/${instance}`;
+  const cleanup = () => {
+    const deadline = AbortSignal.timeout(5_000);
+    return observeUntilAbort(deadline, () =>
+      runRestoreCommand(sandbox, "rm", ["-rf", directory], deadline, "/tmp"),
+    );
+  };
   let complete = false;
   try {
     // An ephemeral command environment keeps installation credentials off disk.
@@ -155,7 +163,9 @@ export async function stageBenchmarkReplay(input: {
     });
     const bundleSha256 = replaySha256(payload);
     await runRestoreCommand(sandbox, "mkdir", ["-m", "700", directory], signal);
+    signal.throwIfAborted();
     await sandbox.writeFile(inputPath, payload, { mode: 0o600 });
+    signal.throwIfAborted();
     const [observedDigest] = (
       await runRestoreCommand(sandbox, "sha256sum", [inputPath], signal)
     ).split(/\s+/, 1);
@@ -200,22 +210,14 @@ export async function stageBenchmarkReplay(input: {
     return {
       inputPath,
       receipt: { ...receipt, receiptSha256: replaySha256(JSON.stringify(receipt)) },
-      cleanup: () =>
-        runRestoreCommand(sandbox, "rm", ["-rf", directory], AbortSignal.timeout(5_000), "/tmp"),
+      cleanup,
     };
   } catch (error) {
     signal.throwIfAborted();
     if (error instanceof BenchmarkReplayUnavailable) throw error;
     throw new BenchmarkReplayUnavailable("The exact starting source could not be restored.");
   } finally {
-    if (!complete)
-      await runRestoreCommand(
-        sandbox,
-        "rm",
-        ["-rf", directory],
-        AbortSignal.timeout(5_000),
-        "/tmp",
-      ).catch(() => undefined);
+    if (!complete) await cleanup().catch(() => undefined);
   }
 }
 
@@ -224,6 +226,7 @@ export async function withRestoredBenchmarkInputs<T>(
   inspect: (
     result: Omit<Awaited<ReturnType<typeof stageBenchmarkReplay>>, "cleanup"> & {
       sandbox: SandboxHandle;
+      signal: AbortSignal;
       readContext: Awaited<ReturnType<typeof materializeFactoryRepositoryContext>>;
     },
   ) => Promise<T>,
@@ -240,6 +243,7 @@ export async function withRestoredBenchmarkInputs<T>(
     purpose: "checkout",
     signal,
   });
+  signal.throwIfAborted();
   const { connection, access } = input;
   const admin = createSupabaseAdminClient();
   const operationId = await reserveWorkspaceSandbox(admin, {
@@ -250,9 +254,11 @@ export async function withRestoredBenchmarkInputs<T>(
     timeoutMs: lifetimeMs,
   });
   let sandboxId: string | undefined;
-  let sandbox: SandboxHandle | undefined;
+  let dispose: SandboxHandle[typeof Symbol.asyncDispose];
+  let staged: Awaited<ReturnType<typeof stageBenchmarkReplay>> | undefined;
+  let result: T;
   try {
-    sandbox = await createUtilitySandbox(
+    const sandbox = await createUtilitySandbox(
       {
         workspaceId: access.workspace.id,
         ownerId: randomUUID(),
@@ -268,38 +274,49 @@ export async function withRestoredBenchmarkInputs<T>(
       connection,
     );
     sandboxId = sandbox.id;
-    await recheckAccess();
-    const readContext = await materializeFactoryRepositoryContext({
-      admin,
-      workspaceId: access.workspace.id,
-      factoryId: input.factoryId,
-      sandbox,
-      repositoryIds: [...plan.readRepositories.keys()],
-      expectedCommits: plan.readRepositories,
-      signal,
-    });
-    const staged = await stageBenchmarkReplay({
-      sandbox,
-      provider: connection.provider,
-      connectionRevision: connection.revision,
-      repositoryUrl: `https://github.com/${repositoryFullName}.git`,
-      token,
-      plan,
-      readContext,
-      signal,
-    });
-    try {
+    dispose = sandbox[Symbol.asyncDispose]?.bind(sandbox);
+    result = await observeUntilAbort(signal, async () => {
       await recheckAccess();
-      return await inspect({
+      signal.throwIfAborted();
+      const readContext = await materializeFactoryRepositoryContext({
+        admin,
+        workspaceId: access.workspace.id,
+        factoryId: input.factoryId,
         sandbox,
-        inputPath: staged.inputPath,
-        receipt: staged.receipt,
+        repositoryIds: [...plan.readRepositories.keys()],
+        expectedCommits: plan.readRepositories,
+        signal,
+      });
+      signal.throwIfAborted();
+      const restored = await stageBenchmarkReplay({
+        sandbox,
+        provider: connection.provider,
+        connectionRevision: connection.revision,
+        repositoryUrl: `https://github.com/${repositoryFullName}.git`,
+        token,
+        plan,
+        readContext,
+        signal,
+      });
+      // Provider writes cannot always be canceled. Discard a bundle that arrives
+      // after the owning operation has moved on to sandbox teardown.
+      if (signal.aborted) {
+        await restored.cleanup().catch(() => undefined);
+        signal.throwIfAborted();
+      }
+      staged = restored;
+      await recheckAccess();
+      signal.throwIfAborted();
+      return inspect({
+        sandbox,
+        signal,
+        inputPath: restored.inputPath,
+        receipt: restored.receipt,
         readContext,
       });
-    } finally {
-      await staged.cleanup().catch(() => undefined);
-    }
+    });
   } finally {
+    await staged?.cleanup().catch(() => undefined);
     if (sandboxId) {
       try {
         await stopSandboxById(sandboxId, { connection, throwOnError: true });
@@ -308,8 +325,10 @@ export async function withRestoredBenchmarkInputs<T>(
         await settleWorkspaceResource(admin, operationId, false).catch(() => undefined);
         throw error;
       } finally {
-        await sandbox?.[Symbol.asyncDispose]?.().catch(() => undefined);
+        await dispose?.().catch(() => undefined);
       }
     }
   }
+  signal.throwIfAborted();
+  return result;
 }
