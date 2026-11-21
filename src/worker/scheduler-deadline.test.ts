@@ -62,10 +62,12 @@ it("retires a hung attempt and fills its scheduler slot without waiting for its 
   await running;
   await scheduler.waitForIdle();
   expect(mocked.processPipelineJob).toHaveBeenCalledTimes(2);
-  expect(admin.rpc).toHaveBeenCalledWith(
-    "fail_stalled_session_job_attempt",
-    expect.objectContaining({ p_job_id: "hung-job", p_attempt_count: 1, p_run_id: "hung-run" }),
-  );
+  expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_deadline_session_job_attempt", {
+    p_job_id: "hung-job",
+    p_attempt_count: 1,
+    p_run_id: "hung-run",
+    p_error: "Worker attempt exceeded its 50ms deadline.",
+  });
   expect(scheduler.getActiveJobIds()).toEqual([]);
   expect(mocked.sendHeartbeat.mock.calls.at(-1)?.[2]).toEqual([]);
 });
