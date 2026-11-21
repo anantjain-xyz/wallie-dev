@@ -425,9 +425,32 @@ select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,con
     ->>'reason' from frontier_routing_policy), 'confidence_unavailable', 'even a zero floor requires a known confidence metric');
 select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,constraints,qualityFloorBps}','9000'))
     ->>'reason' from frontier_routing_policy), 'threshold_not_met', 'known non-pass executions count against the quality threshold');
+
+insert into public.factory_benchmark_evaluation_dimensions(workspace_id,factory_id,experiment_id,scorer_revision_id)
+select scope.workspace_id,scope.factory_id,pg_temp.live_id(80),scorer.id
+from live_scope scope cross join lateral public.create_factory_scorer(
+  scope.workspace_id,scope.factory_id,scope.owner_id,'Additional quality','additional-quality',
+  '{"schemaVersion":1,"rubric":"Inspect another aspect.","requiredEvidence":["artifact"],"scoring":{"kind":"boolean","passValue":true}}') scorer;
+select is((select pg_temp.resolve_frontier_policy(policy)->>'reason' from frontier_routing_policy),
+  'evidence_unavailable','multiple frozen scorers require an explicit selection');
+select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,configuration,scorerRevisionId}',
+    to_jsonb(scorer.id)))->>'disposition' from frontier_routing_policy cross join frontier_scorer scorer),
+  'selected','an explicit frozen scorer resolves when an experiment has multiple scorers');
 delete from public.user_codex_credentials where user_id = pg_temp.live_id(1);
 select is((select pg_temp.resolve_frontier_policy(policy)->>'reason' from frontier_routing_policy),
   'credential_unavailable','revoking the credential blocks new shadow selections');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '62300000-0000-4000-9000-000000000001';
+select is((select count(*) from public.factory_benchmark_evaluation_dimensions
+  where experiment_id = '62300000-0000-4000-9000-000000000080'),
+  2::bigint,'a factory manager can resolve frozen scorers through the preview client');
+set local request.jwt.claim.sub = '62300000-0000-4000-9000-000000000975';
+select is((select count(*) from public.factory_benchmark_evaluation_dimensions
+  where experiment_id = '62300000-0000-4000-9000-000000000080'),
+  0::bigint,'a user outside the factory cannot inspect its frozen scorers');
+reset role;
 
 select * from finish();
 rollback;

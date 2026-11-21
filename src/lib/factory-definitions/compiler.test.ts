@@ -194,6 +194,7 @@ describe("factory model routing", () => {
     definitionRevisionId: sourceRevisionId,
     experimentId,
     qualificationId,
+    scorerRevisionId,
     harness: "codex",
     modelKey: "openai/gpt-5.4-2026-03-05",
     workerRuntime: "node",
@@ -313,6 +314,14 @@ describe("factory model routing", () => {
           },
         ]);
       }
+      if (url.pathname.endsWith("/factory_benchmark_evaluation_dimensions")) {
+        expect(url.searchParams.get("or")).toBe(
+          `(and(experiment_id.eq.${experimentId},scorer_revision_id.eq.${scorerRevisionId}),and(experiment_id.eq.${experimentId},scorer_revision_id.eq.${laterScorerRevisionId}))`,
+        );
+        return Response.json([
+          { experiment_id: experimentId, scorer_revision_id: scorerRevisionId },
+        ]);
+      }
       expect(url.pathname.endsWith("/factory_benchmark_experiment_candidates")).toBe(true);
       const filters = [configuration, fallback].map(
         (target) =>
@@ -342,9 +351,10 @@ describe("factory model routing", () => {
         fallback,
         { ...configuration, agentId: otherFactoryId },
         { ...configuration, modelKey: "openai/gpt-incompatible" },
+        { ...configuration, scorerRevisionId: laterScorerRevisionId },
       ]),
     ).resolves.toEqual(qualified);
-    expect(queries).toHaveLength(2);
+    expect(queries).toHaveLength(3);
   });
 });
 

@@ -1,3 +1,9 @@
+-- Definition preview uses the manager's RLS-scoped client to resolve a named scorer.
+grant select on public.factory_benchmark_evaluation_dimensions to authenticated;
+create policy factory_benchmark_evaluation_dimensions_read_manager
+  on public.factory_benchmark_evaluation_dimensions for select to authenticated
+  using (internal.can_manage_factory(workspace_id, factory_id));
+
 -- Restrict admission evidence before joining trial, run, and evaluator data.
 -- The existing four-argument readers keep their whole-experiment behavior.
 create function internal.factory_benchmark_comparison_trial_facts(
