@@ -200,7 +200,8 @@ select is(pg_temp.request_live(1, project => 'prj_foreign'), null::jsonb, 'a dif
 select is(pg_temp.request_live(1, signed_override => 'sbx_substituted'), null::jsonb, 'a different sandbox cannot authorize inference');
 
 create temp table live_requests(key text primary key, receipt jsonb not null);
-insert into live_requests values ('completed', pg_temp.request_live(1)), ('unknown', pg_temp.request_live(1));
+insert into live_requests values ('completed', pg_temp.request_live(1)),
+  ('late_before_adoption', pg_temp.request_live(1)), ('late_after_adoption', pg_temp.request_live(1));
 select is(receipt->>'model', 'gpt-4.1-2025-04-14', 'the relay gets the exact provider model')
 from live_requests where key = 'completed';
 select ok(public.is_factory_benchmark_inference_request_open((receipt->>'requestId')::uuid),
@@ -220,8 +221,30 @@ select is(pg_temp.request_live(1), null::jsonb, 'closed inference cannot authori
 select results_eq(
   $$select request_count, unavailable_usage_count, input_tokens, output_tokens
     from internal.factory_benchmark_inference_receipts where trial_id = (select trial_id from live_closed)$$,
-  $$values (2,1,40::bigint,12::bigint)$$,
+  $$values (3,2,40::bigint,12::bigint)$$,
   'the durable receipt preserves observed tokens alongside incomplete usage without claiming completeness');
+select is(public.finish_factory_benchmark_inference_request((receipt->>'requestId')::uuid,'completed',
+  'gpt-4.1-2025-04-14',8,3), false, 'late usage never permits completed response delivery')
+from live_requests where key = 'late_before_adoption';
+select is(public.finish_factory_benchmark_inference_request((receipt->>'requestId')::uuid,'completed',
+  'gpt-4.1-2025-04-14',8,3), false, 'an identical late retry remains closed')
+from live_requests where key = 'late_before_adoption';
+select is(public.finish_factory_benchmark_inference_request((receipt->>'requestId')::uuid,'unavailable',
+  'gpt-4.1-2025-04-14',90,99), false, 'a contradictory late retry cannot replace known usage')
+from live_requests where key = 'late_before_adoption';
+select ok(public.finish_factory_benchmark_inference_request((receipt->>'requestId')::uuid,'failed',
+  'gpt-4.1-2025-04-14',8,3), 'a late accounting retry acknowledges already recorded usage')
+from live_requests where key = 'late_before_adoption';
+select results_eq(
+  $$select status,observed_model,input_tokens,output_tokens from internal.factory_benchmark_inference_requests
+    where id = (select (receipt->>'requestId')::uuid from live_requests where key = 'late_before_adoption')$$,
+  $$values ('unavailable'::text,'gpt-4.1-2025-04-14'::text,8,3)$$,
+  'the closed request retains the late exact model and tokens');
+select results_eq(
+  $$select request_count,unavailable_usage_count,input_tokens,output_tokens
+    from internal.factory_benchmark_inference_receipts where trial_id = (select trial_id from live_closed)$$,
+  $$values (3,1,48::bigint,15::bigint)$$,
+  'the retained receipt records the late tokens exactly once');
 
 create temp table live_checkpoint as
 select closed.*, (claim#>>'{identity,workspaceId}')::uuid as workspace_id,
@@ -264,6 +287,19 @@ select is((select result.fixture_revision_id from public.factory_benchmark_trial
   join live_output output using (trial_id)), null::uuid, 'live evidence cannot acquire recorded fixture provenance');
 select is((select token_provenance from public.agent_runs run join live_output output on output.run_id = run.id),
   'unavailable', 'public run telemetry marks partial provider usage unavailable as an aggregate');
+select is(public.finish_factory_benchmark_inference_request((receipt->>'requestId')::uuid,'completed',
+  'gpt-4.1-2025-04-14',2,5), false, 'the exact late provider result cannot reopen a finished trial')
+from live_requests where key = 'late_after_adoption';
+select results_eq(
+  $$select request_count,unavailable_usage_count,input_tokens,output_tokens
+    from internal.factory_benchmark_inference_receipts where trial_id = (select trial_id from live_closed)$$,
+  $$values (3,0,50::bigint,20::bigint)$$,
+  'late usage after adoption completes the same retained receipt');
+select results_eq(
+  $$select token_provenance,cost_provenance,input_tokens,output_tokens
+    from public.agent_runs run join live_output output on output.run_id = run.id$$,
+  $$values ('measured'::text,'unavailable'::text,50::bigint,20::bigint)$$,
+  'complete late token usage corrects the exact run while dollar cost stays unavailable');
 select is(public.reconcile_factory_benchmark_schedules(10), 0, 'unknown cost cannot reopen spent admission headroom');
 select is((pg_temp.live_snapshot()->>'executionSpentUsd')::numeric, 0::numeric,
   'observed tokens do not fabricate an actual dollar amount');
@@ -283,6 +319,23 @@ select ok(pg_temp.arm_live(2), 'the independent trial can arm its own nonce');
 select ok(pg_temp.bind_live(2), 'the second sandbox can redeem its own nonce');
 select is(pg_temp.open_live(2), (select trial_id from live_trials where seq = 2), 'the second replay has its own restoration');
 select ok(pg_temp.enable_live(2), 'the second trial gets an independent inference permit');
+select is(public.fail_factory_benchmark_trial(trial_id,job_id,attempt_count + 1,run_id,'cli_pin_mismatch'),
+  false, 'a stale attempt cannot persist a qualified failure classification') from live_trials where seq = 2;
+create function pg_temp.test_live_diagnostic() returns text language plpgsql as $$
+declare observed text;
+begin
+  begin
+    perform public.fail_factory_benchmark_trial(trial_id,job_id,attempt_count,run_id,'cli_pin_mismatch')
+    from live_trials where seq = 2;
+    select trial.failure_code into observed from public.factory_benchmark_trials trial
+    where trial.id = (select trial_id from live_trials where seq = 2);
+    raise exception using errcode = 'QF001', message = 'Rollback diagnostic fixture to exercise cancellation next.';
+  exception when sqlstate 'QF001' then
+    return observed;
+  end;
+end;
+$$;
+select is(pg_temp.test_live_diagnostic(),'cli_pin_mismatch', 'the exact live attempt retains its safe diagnostic');
 insert into live_requests values ('canceled',pg_temp.request_live(2));
 select is(public.control_factory_benchmark_schedule(scope.workspace_id,scope.factory_id,pg_temp.live_id(80),
   scope.owner_id,'cancel')->>'state','canceled','cancel fences queued and running schedule work') from live_scope scope;

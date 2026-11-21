@@ -42,6 +42,21 @@ type BenchmarkJob = {
 
 const maxDurationMs = 180_000;
 
+const setupFailureByPhase = {
+  acquiring_sandbox: "sandbox_unavailable",
+  restoring_inputs: "replay_unavailable",
+  sealing_network: "sandbox_binding_unavailable",
+} as const;
+
+type QualifiedTrialFailure =
+  | (typeof setupFailureByPhase)[keyof typeof setupFailureByPhase]
+  | "cli_pin_mismatch"
+  | "replay_prompt_unavailable"
+  | "inference_relay_unavailable"
+  | "candidate_failed"
+  | "provider_receipt_unavailable"
+  | "checkpoint_unavailable";
+
 function outcome(jobId: string, result: "idle" | "success" | "error", runId: string | null) {
   return { jobId, result, runId, processed: true };
 }
@@ -87,7 +102,9 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
   startup.throwIfAborted();
   if (start.error) throw new Error("The captured live benchmark could not start.");
   if (start.data === null) return outcome(job.id, "idle", null);
-  const trial = qualifiedTrialClaimSchema.parse(start.data);
+  const claim = qualifiedTrialClaimSchema.safeParse(start.data);
+  if (!claim.success) throw new Error("The live benchmark start returned an invalid claim.");
+  const trial = claim.data;
   const { identity, candidate } = trial;
   if (
     identity.jobId !== job.id ||
@@ -105,7 +122,7 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
   ]);
   const scope = qualifiedTrialRpcIdentity(identity);
 
-  let failure = "sandbox_unavailable";
+  let failure: QualifiedTrialFailure = "sandbox_unavailable";
   const result = await observeUntilAbort(signal, async () => {
     try {
       const { connection } = await loadRequiredWorkspaceSandboxConnection(
@@ -119,6 +136,8 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
         connection.revision !== trial.sandboxConnectionRevision
       )
         throw new Error("The pinned live sandbox connection is unavailable.");
+      failure = "inference_relay_unavailable";
+      const proxyUrl = benchmarkRelayUrl();
       failure = "replay_unavailable";
       const staged = await withQualifiedBenchmarkReplay(
         {
@@ -139,7 +158,10 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
             model: candidate.nativeModel,
             definitionDigest: candidate.definitionDigest,
           },
-          profile: { image: candidate.toolchain.image, proxyUrl: benchmarkRelayUrl() },
+          profile: { image: candidate.toolchain.image, proxyUrl },
+          onSetupPhase(phase) {
+            failure = setupFailureByPhase[phase];
+          },
           async onSandboxCreated({ sandboxId }) {
             const attached = await admin
               .from("agent_runs")
@@ -164,7 +186,9 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
           },
         },
         async ({ sandbox, signal, snapshot, plan, repositoryFullName, baseBranch }) => {
+          failure = "cli_pin_mismatch";
           const executablePath = await verifyQualifiedCli(sandbox, trial, signal);
+          failure = "sandbox_binding_unavailable";
           const signedSandboxId = await bindQualifiedSandbox({
             admin,
             sandbox,
@@ -172,6 +196,7 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
             deadlineAt: trial.deadlineAt,
             signal,
           });
+          failure = "replay_prompt_unavailable";
           const { prompt, promptSha256, effort } = await renderQualifiedReplayPrompt({
             admin,
             trial,
@@ -180,6 +205,7 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
             baseBranch,
             signal,
           });
+          failure = "inference_relay_unavailable";
           const ready = await admin
             .rpc("enable_factory_benchmark_live_inference", {
               ...scope,
@@ -205,11 +231,14 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
               prompt,
             });
           } finally {
-            const closed = await admin
-              .rpc("close_factory_benchmark_live_inference", scope)
-              .abortSignal(AbortSignal.timeout(5000));
-            const parsed = qualifiedInferenceReceiptSchema.safeParse(closed.data);
+            const closed = await Promise.resolve(
+              admin
+                .rpc("close_factory_benchmark_live_inference", scope)
+                .abortSignal(AbortSignal.timeout(5000)),
+            ).catch(() => null);
+            const parsed = qualifiedInferenceReceiptSchema.safeParse(closed?.data);
             if (
+              closed &&
               !closed.error &&
               parsed.success &&
               parsed.data.observedModel === candidate.upstreamModel
@@ -217,6 +246,7 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
               receipt = parsed.data;
           }
           signal.throwIfAborted();
+          failure = "provider_receipt_unavailable";
           if (!receipt) throw new Error("The exact provider receipt is unavailable.");
 
           failure = "checkpoint_unavailable";
@@ -250,7 +280,7 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
           signal.throwIfAborted();
           if (upload.error || !upload.operationId)
             throw new Error("The private replay checkpoint could not be stored.");
-          return qualifiedTrialResultSchema.parse({
+          const completed = qualifiedTrialResultSchema.parse({
             input: {
               restorationReceiptSha256: snapshot.restorationReceiptSha256,
               inputBundleSha256: snapshot.inputBundleSha256,
@@ -279,6 +309,8 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
             },
             inferenceReceiptId: receipt.inferenceReceiptId,
           });
+          failure = "sandbox_unavailable";
+          return completed;
         },
       );
       return staged;

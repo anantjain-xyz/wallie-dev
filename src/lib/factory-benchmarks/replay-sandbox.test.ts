@@ -15,6 +15,7 @@ import {
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import type { SandboxConnection } from "@/lib/sandbox/types";
+import { createVercelQualifiedBenchmarkReplaySandbox } from "@/lib/sandbox/vercel";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/database.types";
 import type { WorkspaceAccessContext } from "@/lib/workspaces/access";
@@ -30,6 +31,7 @@ import { openBenchmarkReplayPolicy } from "./replay-policy";
 import {
   stageBenchmarkReplay,
   withIsolatedBenchmarkReplay,
+  withQualifiedBenchmarkReplay,
   withRestoredBenchmarkInputs,
 } from "./replay-sandbox";
 
@@ -43,6 +45,10 @@ vi.mock(import("@/lib/sandbox"), async (importOriginal) => ({
   createUtilitySandbox: vi.fn(),
   sealBenchmarkReplaySandbox: vi.fn(),
   stopSandboxById: vi.fn(),
+}));
+vi.mock(import("@/lib/sandbox/vercel"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  createVercelQualifiedBenchmarkReplaySandbox: vi.fn(),
 }));
 vi.mock(import("@/lib/workspaces/resource-operations"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -439,6 +445,50 @@ it.each(["firewall", "policy"] as const)(
     }
   },
 );
+
+it("reports the qualified firewall phase before a seal rejection and still cleans up", async () => {
+  const fixture = await acquiredReplay();
+  const failure = new Error("Synthetic seal failure");
+  const phases: string[] = [];
+  const execute = vi.fn<() => Promise<void>>();
+  vi.mocked(createVercelQualifiedBenchmarkReplaySandbox).mockImplementationOnce(async (request) => {
+    await request.onSandboxCreated({ provider: "vercel", sandboxId: fixture.sandbox.id });
+    return Object.assign(fixture.sandbox, {
+      async sealBenchmarkInference() {
+        expect(phases.at(-1)).toBe("sealing_network");
+        throw failure;
+      },
+    });
+  });
+  try {
+    await expect(
+      withQualifiedBenchmarkReplay(
+        {
+          ...fixture.input,
+          executionId: id(30),
+          policyRevisionId: id(31),
+          expectedPolicyDigest: replaySha256("blocked replay profile"),
+          profile: {
+            image: `vcr.vercel.com/fixture/sandbox@sha256:${"a".repeat(64)}`,
+            proxyUrl: "https://replay.example.test/api/internal/benchmark-openai",
+          },
+          onSetupPhase: (phase) => phases.push(phase),
+        },
+        execute,
+      ),
+    ).rejects.toBe(failure);
+    expect(phases).toEqual(["acquiring_sandbox", "restoring_inputs", "sealing_network"]);
+    expect(openBenchmarkReplayPolicy).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(
+      fixture.admin,
+      fixture.operationId,
+      true,
+    );
+  } finally {
+    await fixture.teardown();
+  }
+});
 
 it("runs only after isolation and exposes approved context separately from snapshot evidence", async () => {
   const fixture = await acquiredReplay();

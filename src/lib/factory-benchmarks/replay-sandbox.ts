@@ -377,9 +377,15 @@ export async function withIsolatedBenchmarkReplay<T>(
   });
 }
 
+type QualifiedReplaySetupPhase = "acquiring_sandbox" | "restoring_inputs" | "sealing_network";
+
 /** Keep the restored source in a fresh, nonpersistent sandbox with one brokered inference origin. */
 export async function withQualifiedBenchmarkReplay<T>(
-  input: BenchmarkSandboxInput & ReplayPolicyPin & { profile: QualifiedSandboxProfile },
+  input: BenchmarkSandboxInput &
+    ReplayPolicyPin & {
+      profile: QualifiedSandboxProfile;
+      onSetupPhase?: (phase: QualifiedReplaySetupPhase) => void;
+    },
   execute: (
     live: VerifiedReplayInputs & {
       sandbox: SandboxHandle;
@@ -397,24 +403,29 @@ export async function withQualifiedBenchmarkReplay<T>(
           workspaceId: input.access.workspace.id,
           actorUserId: input.access.user.id,
         };
-  return withBenchmarkSandbox(input, input.profile, async (restored, admin, inputs) => {
-    const { sandbox, signal, receipt } = restored;
-    const snapshot = exportReplaySnapshot(receipt);
-    await openBenchmarkReplayPolicy({
-      admin,
-      workspaceId,
-      actorUserId,
-      factoryId: input.factoryId,
-      taskRevisionId: input.taskRevisionId,
-      executionId: input.executionId,
-      policyRevisionId: input.policyRevisionId,
-      expectedPolicyDigest: input.expectedPolicyDigest,
-      restorationReceiptSha256: snapshot.restorationReceiptSha256,
-      signal,
-    });
-    signal.throwIfAborted();
-    return execute({ ...inputs, sandbox, signal, snapshot });
-  });
+  return withBenchmarkSandbox(
+    input,
+    input.profile,
+    async (restored, admin, inputs) => {
+      const { sandbox, signal, receipt } = restored;
+      const snapshot = exportReplaySnapshot(receipt);
+      await openBenchmarkReplayPolicy({
+        admin,
+        workspaceId,
+        actorUserId,
+        factoryId: input.factoryId,
+        taskRevisionId: input.taskRevisionId,
+        executionId: input.executionId,
+        policyRevisionId: input.policyRevisionId,
+        expectedPolicyDigest: input.expectedPolicyDigest,
+        restorationReceiptSha256: snapshot.restorationReceiptSha256,
+        signal,
+      });
+      signal.throwIfAborted();
+      return execute({ ...inputs, sandbox, signal, snapshot });
+    },
+    input.onSetupPhase,
+  );
 }
 
 async function withBenchmarkSandbox<T>(
@@ -425,6 +436,7 @@ async function withBenchmarkSandbox<T>(
     admin: ReturnType<typeof createSupabaseAdminClient>,
     inputs: VerifiedReplayInputs,
   ) => Promise<T>,
+  onSetupPhase?: (phase: QualifiedReplaySetupPhase) => void,
 ) {
   const signal = AbortSignal.any([input.signal, AbortSignal.timeout(lifetimeMs)]);
   const { plan, repository, baseBranch, recheckAccess } = await resolveBenchmarkReplay({
@@ -446,6 +458,7 @@ async function withBenchmarkSandbox<T>(
   const workspaceId =
     "principal" in input ? input.principal.workspaceId : input.access.workspace.id;
   const admin = "principal" in input ? input.principal.admin : createSupabaseAdminClient();
+  onSetupPhase?.("acquiring_sandbox");
   const operationId = await reserveWorkspaceSandbox(admin, {
     workspaceId,
     provider: connection.provider,
@@ -477,6 +490,7 @@ async function withBenchmarkSandbox<T>(
     sandboxId = sandbox.id;
     dispose = sandbox[Symbol.asyncDispose]?.bind(sandbox);
     result = await observeUntilAbort(signal, async () => {
+      onSetupPhase?.("restoring_inputs");
       await recheckAccess();
       signal.throwIfAborted();
       const readContext = await materializeFactoryRepositoryContext({
@@ -509,8 +523,10 @@ async function withBenchmarkSandbox<T>(
         signal.throwIfAborted();
       }
       staged = restored;
+      onSetupPhase?.("sealing_network");
       await acquired.seal?.(signal);
       signal.throwIfAborted();
+      onSetupPhase?.("restoring_inputs");
       await recheckAccess();
       signal.throwIfAborted();
       return inspect(
