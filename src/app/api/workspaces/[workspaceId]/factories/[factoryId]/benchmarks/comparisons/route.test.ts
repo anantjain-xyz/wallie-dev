@@ -143,6 +143,9 @@ const trialRows: BenchmarkComparisonTrial[] = trialStatus.map((status, index) =>
     trialId: id(20 + index),
     task: { id: id(11), revisionId: id(12), revisionNumber: 1, name: "Captured checkout α" },
     candidateKey,
+    candidatePosition: null,
+    plannedHarness: "codex",
+    plannedModel: "gpt-4.1-2025-04-14",
     repetition: index + 1,
     seed: 100 + index,
     timeoutMs: 120_000,
@@ -393,12 +396,18 @@ describe("benchmark comparison endpoints", () => {
       Object.entries(counts).map(([key, value]) => [key, value * candidateCount]),
     );
     const offPageCandidate = "f".repeat(64);
+    const offPageLabel = {
+      candidateKey: offPageCandidate,
+      candidatePosition: 42,
+      plannedHarness: "opencode",
+      plannedModel: "openai/gpt-4.1-2025-04-14",
+    };
     const rpc = setup(() =>
       Response.json({
         ...fullComparison,
         candidateCount,
         counts: totals,
-        trialRows: [{ ...trialRows[1], candidateKey: offPageCandidate }],
+        trialRows: [{ ...trialRows[1], ...offPageLabel }],
         nextCursor: { trialId: id(21) },
         nextCandidateCursor: { candidateKey },
       }),
@@ -418,7 +427,7 @@ describe("benchmark comparison endpoints", () => {
       candidateCount,
       counts: { planned: 528 },
       candidates: [{ candidateKey }],
-      trialRows: [{ trialId: id(21), candidateKey: offPageCandidate }],
+      trialRows: [{ trialId: id(21), ...offPageLabel }],
       nextCursor: { trialId: id(21) },
       nextCandidateCursor: { candidateKey },
     });

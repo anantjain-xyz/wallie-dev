@@ -270,10 +270,10 @@ create function pg_temp.comparison(
   from experiment_scope scope where scope.is_default
 $$;
 
-create function pg_temp.create_comparison_export(p_slot integer, p_request integer)
+create function pg_temp.create_comparison_export(p_slot integer, p_request integer, p_actor integer default 1)
 returns jsonb language sql as $$
   select public.create_factory_benchmark_comparison_export(scope.workspace_id, scope.factory_id,
-    pg_temp.schedule_id(p_slot), scope.owner_id, pg_temp.schedule_id(p_request))
+    pg_temp.schedule_id(p_slot), pg_temp.schedule_id(p_actor), pg_temp.schedule_id(p_request))
   from experiment_scope scope where scope.is_default
 $$;
 
@@ -405,6 +405,20 @@ select is(jsonb_array_length(pg_temp.comparison(81,p_limit => 2,p_candidate_limi
   'candidate cursor reaches the remaining exact configurations');
 select is(jsonb_array_length((select payload->'trialRows' from large_comparison_page)),2,
   'separate candidate paging does not change the trial page');
+with page as (
+  select pg_temp.comparison(81,p_limit => 2,p_candidate_limit => 1,
+    p_after_candidate => (select payload#>>'{nextCandidateCursor,candidateKey}' from large_comparison_page)) as payload
+)
+select is((select count(*) from page
+  cross join lateral jsonb_array_elements(page.payload->'trialRows') trial(value)
+  join public.factory_benchmark_experiment_candidates candidate
+    on candidate.experiment_id=pg_temp.schedule_id(81) and candidate.candidate_key=trial.value->>'candidateKey'
+  join experiment_scope scope on (scope.workspace_id,scope.factory_id)=(candidate.workspace_id,candidate.factory_id)
+  where scope.is_default and trial.value->>'plannedHarness'=candidate.harness and trial.value->>'plannedModel'=candidate.model
+    and trial.value->'candidatePosition'=coalesce(to_jsonb(candidate.comparison_position),'null'::jsonb)
+    and not exists (select 1 from jsonb_array_elements(page.payload->'candidates') visible(value)
+      where visible.value->>'candidateKey'=candidate.candidate_key)),2::bigint,
+  'off-page trial configurations retain their exact frozen harness, model, and position');
 
 create temp table immutable_small as
 select receipt->>'exportId' as id,receipt from (select pg_temp.create_comparison_export(80,900) as receipt) captured;
@@ -469,6 +483,43 @@ select throws_ok($$update internal.factory_benchmark_comparison_exports set mani
   where id=(select id::uuid from immutable_small)$$,'23514',null,'a captured manifest is immutable');
 select throws_ok($$update internal.factory_benchmark_comparison_export_pages set payload='{}'
   where export_id=(select id::uuid from immutable_small)$$,'23514',null,'captured page bytes are immutable');
+
+select public.grant_factory_membership(workspace_id,factory_id,owner_id,pg_temp.schedule_id(21),'manager')
+from experiment_scope where is_default;
+select public.grant_factory_membership(workspace_id,factory_id,owner_id,pg_temp.schedule_id(22),'manager')
+from experiment_scope where is_default;
+create temp table revocable_export as
+select (pg_temp.create_comparison_export(80,902,p_actor => 2)->>'exportId')::uuid as id;
+select is((pg_temp.read_comparison_export(80,id,p_actor => 2)::jsonb->>'exportId')::uuid,id,
+  'the requester downloads a captured manifest with its current manager grant') from revocable_export;
+select is(pg_temp.read_comparison_export(80,id,1,p_actor => 2)::jsonb->>'kind','trials',
+  'the requester downloads trial bytes with its current manager grant') from revocable_export;
+select is(pg_temp.read_comparison_export(80,id,1,'candidates',p_actor => 2)::jsonb->>'kind','candidates',
+  'the requester downloads configuration bytes with its current manager grant') from revocable_export;
+select throws_ok($$select pg_temp.read_comparison_export(80,(select id from revocable_export))$$,
+  'P0002',null,'a different current manager cannot download the requester’s manifest');
+select public.revoke_factory_membership(workspace_id,factory_id,owner_id,pg_temp.schedule_id(22),'Qualification fixture')
+from experiment_scope where is_default;
+select throws_ok($$select pg_temp.read_comparison_export(80,(select id from revocable_export),p_actor => 2)$$,
+  'P0002',null,'the requester loses manifest access when its grant is revoked');
+select throws_ok($$select pg_temp.read_comparison_export(80,(select id from revocable_export),1,p_actor => 2)$$,
+  'P0002',null,'the requester loses trial part access when its grant is revoked');
+select throws_ok($$select pg_temp.read_comparison_export(80,(select id from revocable_export),1,'candidates',p_actor => 2)$$,
+  'P0002',null,'the requester loses configuration part access when its grant is revoked');
+
+-- Advance the persisted capture clock in this rollback-only fixture and restore
+-- its write guard before exercising the real read boundary.
+alter table internal.factory_benchmark_comparison_exports disable trigger preserve_factory_benchmark_comparison_export;
+update internal.factory_benchmark_comparison_exports
+set captured_at = captured_at - interval '25 hours', expires_at = expires_at - interval '25 hours'
+where id = (select id::uuid from immutable_large);
+alter table internal.factory_benchmark_comparison_exports enable trigger preserve_factory_benchmark_comparison_export;
+select throws_ok($$select pg_temp.read_comparison_export(81,(select id::uuid from immutable_large))$$,
+  'PT410',null,'the current requester cannot download an expired manifest');
+select throws_ok($$select pg_temp.read_comparison_export(81,(select id::uuid from immutable_large),1)$$,
+  'PT410',null,'the current requester cannot download an expired trial part');
+select throws_ok($$select pg_temp.read_comparison_export(81,(select id::uuid from immutable_large),1,'candidates')$$,
+  'PT410',null,'the current requester cannot download an expired configuration part');
 
 select is(pg_temp.schedule_control(80,'cancel')->>'state','canceled','the live comparison can continue after capture');
 select public.save_factory_benchmark_suite_revision(previous.workspace_id,previous.factory_id,scope.owner_id,

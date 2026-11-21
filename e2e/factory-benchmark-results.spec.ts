@@ -128,6 +128,32 @@ test("comparison pages and immutable exports reconcile every frozen trial", asyn
       );
       expect(ids).toEqual(report.trialRows.map(({ trialId }) => trialId));
       shownIds.push(...ids);
+
+      if (index === 0) {
+        const [trial] = report.trialRows;
+        const configuration = report.candidates.find(
+          ({ candidateKey }) => candidateKey === trial.candidateKey,
+        );
+        if (!configuration) throw new Error("The first trial has no frozen configuration.");
+        const offPageUrl = new URL(page.url());
+        offPageUrl.searchParams.set("afterCandidateKey", configuration.candidateKey);
+        await page.goto(offPageUrl.toString());
+        await expect(configurations.getByRole("row")).toHaveCount(2);
+        await expect(
+          configurations.getByText(configuration.plannedModel, { exact: true }),
+        ).toHaveCount(0);
+        await expect(rows.first().locator("th dl dd").first()).toHaveText(trial.trialId);
+        await expect(
+          rows
+            .first()
+            .getByText(`Codex · ${configuration.plannedModel} · Repetition ${trial.repetition}`, {
+              exact: true,
+            }),
+        ).toBeVisible();
+        await page.getByRole("link", { name: "First configurations", exact: true }).click();
+        await expect(configurations.getByRole("row")).toHaveCount(3);
+      }
+
       const next = page.getByRole("link", { name: "Next trials", exact: true });
       if (report.nextCursor) {
         const cursor = report.nextCursor.trialId;

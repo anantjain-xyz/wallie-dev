@@ -176,10 +176,9 @@ function Pin({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function candidateLabel(candidate: Candidate) {
-  if (candidate.position === 1) return "Baseline";
-  if (candidate.position !== null) return `Candidate ${candidate.position - 1}`;
-  return harnessNames[candidate.plannedHarness] ?? candidate.plannedHarness;
+function candidateRole(position: number | null) {
+  if (position === null) return null;
+  return position === 1 ? "Baseline" : `Candidate ${position - 1}`;
 }
 
 function CandidatePins({ candidate }: { candidate: Candidate }) {
@@ -285,7 +284,11 @@ function Configurations({
               {candidates.map((candidate) => (
                 <tr className="border-t border-border align-top" key={candidate.candidateKey}>
                   <th className="space-y-1 px-4 py-4 font-normal sm:px-5" scope="row">
-                    <p className="type-label">{candidateLabel(candidate)}</p>
+                    <p className="type-label">
+                      {candidateRole(candidate.position) ??
+                        harnessNames[candidate.plannedHarness] ??
+                        candidate.plannedHarness}
+                    </p>
                     {candidate.position !== null ? (
                       <p>{harnessNames[candidate.plannedHarness] ?? candidate.plannedHarness}</p>
                     ) : null}
@@ -346,13 +349,11 @@ function Configurations({
 
 function TrialRows({
   rows,
-  candidates,
   scorers,
   firstHref,
   nextHref,
 }: {
   rows: BenchmarkComparison["trialRows"];
-  candidates: ReadonlyMap<string, Candidate>;
   scorers: ReadonlyMap<string, Scorer>;
   firstHref?: string;
   nextHref?: string;
@@ -375,20 +376,20 @@ function TrialRows({
             </thead>
             <tbody>
               {rows.map((trial) => {
-                const candidate = candidates.get(trial.candidateKey);
                 const status = trialStatuses[trial.status];
                 return (
                   <tr className="border-t border-border align-top" key={trial.trialId}>
                     <th className="space-y-1 px-4 py-3 font-normal sm:px-5" scope="row">
                       <p className="type-label">{trial.task.name}</p>
                       <p className="text-muted">
-                        {candidate
-                          ? candidate.position === null
-                            ? candidate.plannedModel
-                            : candidateLabel(candidate)
-                          : `Configuration ${trial.candidateKey.slice(0, 12)}`}
-                        {" · "}
-                        Repetition {trial.repetition}
+                        {[
+                          candidateRole(trial.candidatePosition),
+                          harnessNames[trial.plannedHarness] ?? trial.plannedHarness,
+                          trial.plannedModel,
+                          `Repetition ${trial.repetition}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </p>
                       <details>
                         <summary className="type-label w-fit cursor-pointer">Trial pins</summary>
@@ -512,9 +513,6 @@ export function BenchmarkComparisonResults({
 }) {
   const { counts, candidates, scorers, spend, suite } = comparison;
   const scorerByRevision = new Map(scorers.map((scorer) => [scorer.id, scorer]));
-  const candidateByKey = new Map(
-    candidates.map((candidate) => [candidate.candidateKey, candidate]),
-  );
 
   return (
     <>
@@ -569,7 +567,6 @@ export function BenchmarkComparisonResults({
       />
       <TrialRows
         rows={comparison.trialRows}
-        candidates={candidateByKey}
         scorers={scorerByRevision}
         firstHref={firstTrialsHref}
         nextHref={nextTrialsHref}

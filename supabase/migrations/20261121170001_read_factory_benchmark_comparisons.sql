@@ -177,7 +177,9 @@ create function internal.factory_benchmark_comparison_projection(
     select trial.sort_position, trial.candidate_key, trial.trial_id, jsonb_build_object(
       'trialId', trial.trial_id, 'task', jsonb_build_object('id', trial.task_id, 'revisionId', trial.task_revision_id,
         'revisionNumber', trial.task_revision_number, 'name', trial.task_name),
-      'candidateKey', trial.candidate_key, 'repetition', trial.repetition, 'seed', trial.seed, 'timeoutMs', trial.timeout_ms,
+      'candidateKey', trial.candidate_key, 'candidatePosition', candidate.comparison_position,
+      'plannedHarness', candidate.harness, 'plannedModel', candidate.model,
+      'repetition', trial.repetition, 'seed', trial.seed, 'timeoutMs', trial.timeout_ms,
       'eligibility', trial.eligibility, 'eligibilityReason', trial.eligibility_reason, 'status', trial.disposition, 'reason', trial.reason,
       'admitted', trial.admitted, 'started', trial.started, 'runId', trial.run_id, 'startedAt', trial.started_at,
       'finishedAt', trial.finished_at, 'deadlineAt', trial.deadline_at, 'wallRuntimeMs', trial.wall_runtime_ms,
@@ -187,6 +189,7 @@ create function internal.factory_benchmark_comparison_projection(
       'spend', coalesce(spend.value, internal.factory_benchmark_comparison_spend()),
       'scores', coalesce(row_scores.value, '[]'::jsonb)
     ) as item from visible trial
+    join candidates candidate on candidate.candidate_key = trial.candidate_key
     left join spend on spend.trial_id = trial.trial_id
     left join row_scores on row_scores.trial_id = trial.trial_id
   )
