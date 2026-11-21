@@ -1,6 +1,6 @@
 # Model routing policies
 
-The factory definition accepts an optional `modelRouting` policy in JSON mode. The policy is included in the factory definition’s canonical digest. Publishing another draft creates a separate immutable revision. Production execution continues to use the factory’s existing profile during this increment.
+The factory definition accepts an optional `modelRouting` policy in JSON mode. The policy is included in the factory definition’s canonical digest. Publishing another draft creates a separate immutable revision. Shadow routing records the recommended configuration while production execution uses the factory’s admitted profile.
 
 | Field           | Contract                                                                                                                                                                                                              |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -23,7 +23,13 @@ The compiler resolves primary and fallback configurations against frozen candida
 | `maxLatencyMs`      | Latency ceiling in milliseconds. Set to `null` to omit the ceiling.              | If configured, treat the configuration as unavailable. |
 | `minConfidenceBps`  | Confidence floor from 0 to 10,000 basis points. Set to `null` to omit the floor. | If configured, treat the configuration as unavailable. |
 
-Missing evidence follows `onUnavailable`. A configured zero floor or cost ceiling still requires a measured value.
+Missing evidence follows `onUnavailable`. A configured zero floor or cost ceiling still requires a measured value. Shadow admission uses the full eligible cohort. The evidence must identify a frozen scorer, or the experiment must have exactly one. Admission checks the p95 of measured trial runtimes when a latency ceiling is configured. The current benchmark facts have no confidence measure, so a configured confidence floor makes the configuration unavailable.
+
+## Admission receipts
+
+- The first selected stage’s slug comes from the pinned factory definition. Admission matches that slug to a configured task class. An absent match follows `onUnmatched`. An ambiguous match escalates.
+- Admission checks the exact candidate’s current capability profile and the session’s scoped credential authority. It records the result, policy revision and digest, rule, and candidate identity before it queues the first run.
+- Each attempt manifest links to the original admission receipt. Publishing a later policy or retrying a run preserves that receipt. The manifest’s model and worker runtime continue to describe actual execution.
 
 ## Benchmark-backed drafts
 

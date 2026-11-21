@@ -28,17 +28,18 @@ insert into public.github_repositories(id, workspace_id, factory_id, github_inst
   private, html_url, default_branch)
 select pg_temp.live_id(42), workspace_id, factory_id, pg_temp.live_id(35), 62300002,
   'live-fixture', 'fixture/live', true, 'https://example.test/fixture', 'main' from live_scope;
+insert into public.factory_agents(id, workspace_id, factory_id, name, slug, created_by)
+select pg_temp.live_id(47), workspace_id, factory_id, 'Benchmarked agent', 'benchmarked-agent', owner_id from live_scope;
+insert into public.factory_agent_prompt_revisions(id,workspace_id,factory_id,agent_id,revision_number,prompt_md,prompt_sha256,created_by)
+select pg_temp.live_id(48),workspace_id,factory_id,pg_temp.live_id(47),1,'',encode(sha256(''::bytea),'hex'),owner_id
+from live_scope;
 with definition as (
   select scope.*, jsonb_build_object(
     'schemaVersion', 1, 'kind', 'serial', 'pipelineId', pg_temp.live_id(40), 'repositoryId', pg_temp.live_id(42),
-    'implementationAgent', (select jsonb_build_object('agentId', agent.id, 'promptRevisionId', prompt.id,
-      'promptMd', prompt.prompt_md, 'promptSha256', prompt.prompt_sha256)
-      from public.factory_agents agent
-      join public.factory_agent_prompt_revisions prompt using (workspace_id, factory_id)
-      where (agent.workspace_id, agent.factory_id, agent.id) = (scope.workspace_id, scope.factory_id, prompt.agent_id)
-        and agent.is_default and prompt.revision_number = 1),
     'sandboxProvider', 'vercel', 'agent', jsonb_build_object(
       'provider','codex','model','gpt-4.1-2025-04-14','concurrencyLimit',2),
+    'implementationAgent', jsonb_build_object('agentId',pg_temp.live_id(47),
+      'promptRevisionId',pg_temp.live_id(48),'promptMd','','promptSha256',encode(sha256(''::bytea),'hex')),
     'stages', jsonb_build_array(jsonb_build_object('id', pg_temp.live_id(41), 'slug','review'))
   )::text as body from live_scope scope
 )
@@ -333,6 +334,126 @@ select is(pg_temp.read_frontier(83)#>>'{recommendation,reason}','mixed_judge_pro
   'a candidate with full scores and missing execution price still participates in judge compatibility');
 select ok(pg_temp.frontier_result(2,83)->'exclusions' @> '["unavailable_cost","mixed_judge_profile"]'::jsonb,
   'an unpriced candidate retains its cost and judge exclusions');
+
+create function pg_temp.routing_configuration(p_position integer) returns jsonb language sql as $$
+  select jsonb_build_object('agentId',pg_temp.live_id(47),'experimentId',candidate.experiment_id,
+    'definitionRevisionId',candidate.definition_revision_id,'qualificationId',candidate.qualification_id,
+    'modelKey',candidate.canonical_model_key,'harness',candidate.harness,'workerRuntime',candidate.worker_runtime)
+  from public.factory_benchmark_experiment_candidates candidate
+  join live_scope scope using(workspace_id,factory_id)
+  where candidate.experiment_id = pg_temp.live_id(80) and candidate.comparison_position = p_position;
+$$;
+
+create function pg_temp.resolve_frontier_policy(policy jsonb, slug text default 'review')
+returns jsonb language plpgsql as $$
+declare
+  admitted public.session_factory_admission_inputs;
+  original public.sessions;
+  definition public.factory_definition_revisions;
+  document text;
+  digest text;
+begin
+  select * into strict original from public.sessions where id = pg_temp.live_id(44);
+  select (base.definition_json::jsonb || jsonb_build_object('modelRouting',policy))::text into strict document
+  from public.factory_definition_revisions base where base.id = pg_temp.live_id(43);
+  digest := encode(sha256(convert_to(document,'UTF8')),'hex');
+  select * into definition from public.factory_definition_revisions stored
+  where (stored.workspace_id,stored.factory_id,stored.canonical_digest) = (original.workspace_id,original.factory_id,digest);
+  if not found then
+    insert into public.factory_definition_revisions(workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+    values(original.workspace_id,original.factory_id,1,document,digest,pg_temp.live_id(1)) returning * into definition;
+  end if;
+  admitted.workspace_id := original.workspace_id;
+  admitted.factory_id := original.factory_id;
+  admitted.definition_revision_id := definition.id;
+  admitted.definition_digest := definition.canonical_digest;
+  admitted.github_repository_id := pg_temp.live_id(42);
+  admitted.credential_owner_member_id := pg_temp.live_id(21);
+  return internal.resolve_factory_model_routing(admitted,original,slug);
+end;
+$$;
+
+create temp table frontier_routing_policy as
+select jsonb_build_object('version',1,
+  'taskClasses',jsonb_build_array(jsonb_build_object('id',pg_temp.live_id(201),'slug','review','name','Review')),
+  'rules',jsonb_build_array(jsonb_build_object('id',pg_temp.live_id(202),'taskClassId',pg_temp.live_id(201),
+    'configuration',pg_temp.routing_configuration(1),'onUnavailable','{"kind":"escalate"}'::jsonb,
+    'constraints','{"qualityFloorBps":8000,"maxMeanCostUsd":0.09,"maxLatencyMs":null,
+      "minResolvedTrials":5,"minConfidenceBps":null}'::jsonb)),
+  'onUnmatched','{"kind":"escalate"}'::jsonb) as policy;
+
+select set_eq($$
+  select fact.* from live_scope scope cross join frontier_scorer scorer
+  cross join lateral internal.factory_benchmark_frontier_trial_facts(scope.workspace_id,scope.factory_id,
+    pg_temp.live_id(80),scorer.id,pg_temp.frontier_result(1)->>'candidateKey') fact
+$$, $$
+  select fact.* from live_scope scope cross join frontier_scorer scorer
+  cross join lateral internal.factory_benchmark_frontier_trial_facts(scope.workspace_id,scope.factory_id,
+    pg_temp.live_id(80),scorer.id) fact
+  where fact.candidate_key = pg_temp.frontier_result(1)->>'candidateKey'
+$$, 'candidate-scoped evidence matches the existing whole-experiment projection');
+
+select is((select pg_temp.resolve_frontier_policy(policy)->>'reason' from frontier_routing_policy),
+  'credential_unavailable','an exact frozen configuration cannot supply a missing current credential');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(1),'platform_api_key','synthetic-routing-key');
+select ok((select decision->>'disposition' = 'selected' and decision->>'source' = 'primary'
+  and decision->>'benchmarkCandidateKey' = pg_temp.frontier_result(1)->>'candidateKey'
+  and decision = pg_temp.resolve_frontier_policy(policy)
+  from frontier_routing_policy cross join lateral (select pg_temp.resolve_frontier_policy(policy) as decision) resolved),
+  'identical inputs resolve the exact candidate and its measured quality and cost');
+select is((select pg_temp.resolve_frontier_policy(policy,'build')->>'reason' from frontier_routing_policy),
+  'unmatched_class','unmatched trusted classes follow the explicit escalation');
+select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules}',
+  (policy->'rules') || (policy->'rules')))->>'reason' from frontier_routing_policy),
+  'ambiguous_rule','a malformed historical rule conflict escalates without choosing the first rule');
+select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,configuration,workerRuntime}',
+  '"node"'))->>'reason' from frontier_routing_policy),
+  'configuration_unavailable','unsupported runtime cannot borrow the exact qualification');
+select ok((select decision->>'source' = 'rule_fallback' and decision->>'initialReason' = 'configuration_unavailable'
+  and decision->>'benchmarkCandidateKey' = pg_temp.frontier_result(1)->>'candidateKey'
+  from frontier_routing_policy cross join lateral (select pg_temp.resolve_frontier_policy(
+    jsonb_set(jsonb_set(policy,'{rules,0,configuration,workerRuntime}','"node"'),'{rules,0,onUnavailable}',
+      jsonb_build_object('kind','fallback','configuration',pg_temp.routing_configuration(1)))) as decision) resolved),
+  'only the configured qualified fallback is considered after a primary failure');
+select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,configuration}',pg_temp.routing_configuration(4)))
+    ->>'reason' from frontier_routing_policy), 'cost_unavailable', 'unmeasured spend cannot qualify a cost-constrained rule');
+select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,configuration,scorerRevisionId}',
+    to_jsonb(pg_temp.live_id(975))))->>'reason' from frontier_routing_policy),
+  'evidence_unavailable', 'an explicit scorer must be frozen in the chosen comparison');
+select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,constraints,minConfidenceBps}','0'))
+    ->>'reason' from frontier_routing_policy), 'confidence_unavailable', 'even a zero floor requires a known confidence metric');
+select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,constraints,qualityFloorBps}','9000'))
+    ->>'reason' from frontier_routing_policy), 'threshold_not_met', 'known non-pass executions count against the quality threshold');
+
+insert into public.factory_benchmark_evaluation_dimensions(workspace_id,factory_id,experiment_id,scorer_revision_id)
+select scope.workspace_id,scope.factory_id,pg_temp.live_id(80),scorer.id
+from live_scope scope cross join lateral public.create_factory_scorer(
+  scope.workspace_id,scope.factory_id,scope.owner_id,'Additional quality','additional-quality',
+  '{"schemaVersion":1,"rubric":"Inspect another aspect.","requiredEvidence":["artifact"],"scoring":{"kind":"boolean","passValue":true}}') scorer;
+select is((select pg_temp.resolve_frontier_policy(policy)->>'reason' from frontier_routing_policy),
+  'evidence_unavailable','multiple frozen scorers require an explicit selection');
+select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,configuration,scorerRevisionId}',
+    to_jsonb(scorer.id)))->>'disposition' from frontier_routing_policy cross join frontier_scorer scorer),
+  'selected','an explicit frozen scorer resolves when an experiment has multiple scorers');
+delete from public.user_codex_credentials where user_id = pg_temp.live_id(1);
+select is((select pg_temp.resolve_frontier_policy(policy)->>'reason' from frontier_routing_policy),
+  'credential_unavailable','revoking the credential blocks new shadow selections');
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '62300000-0000-4000-9000-000000000001';
+select is((select count(*) from public.factory_benchmark_evaluation_dimensions
+  where experiment_id = '62300000-0000-4000-9000-000000000080'),
+  2::bigint,'a factory manager can resolve frozen scorers through the preview client');
+set local request.jwt.claim.sub = '62300000-0000-4000-9000-000000000975';
+select is((select count(*) from public.factory_benchmark_evaluation_dimensions
+  where experiment_id = '62300000-0000-4000-9000-000000000080'),
+  0::bigint,'a user outside the factory cannot inspect its frozen scorers');
+reset role;
+
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
 
 create function pg_temp.apply_routing_finding(
   p_position integer, p_request integer, p_floor integer default 8000,

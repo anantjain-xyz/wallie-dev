@@ -1,8 +1,3 @@
-grant select on public.factory_benchmark_evaluation_dimensions to authenticated;
-create policy factory_benchmark_evaluation_dimensions_read_manager
-  on public.factory_benchmark_evaluation_dimensions for select to authenticated
-  using (internal.can_manage_factory(workspace_id, factory_id));
-
 create table public.factory_routing_draft_evidence (
   workspace_id uuid not null,
   factory_id uuid not null,

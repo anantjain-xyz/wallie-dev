@@ -81,25 +81,25 @@ export async function loadQualifiedModelRoutingConfigurations(
     }),
   );
   const candidates = batches.flat();
-  const requestedScorers = [
+
+  const scorerFilters = [
     ...new Set(
-      [...selected.values()].flatMap(({ configuration }) =>
-        configuration.scorerRevisionId
-          ? [
-              `and(experiment_id.eq.${configuration.experimentId},scorer_revision_id.eq.${configuration.scorerRevisionId})`,
-            ]
-          : [],
-      ),
+      [...selected.values()].flatMap(({ configuration }) => {
+        const { experimentId, scorerRevisionId } = configuration;
+        return scorerRevisionId
+          ? [`and(experiment_id.eq.${experimentId},scorer_revision_id.eq.${scorerRevisionId})`]
+          : [];
+      }),
     ),
   ];
   const scorerMatches = new Set<string>();
-  for (let index = 0; index < requestedScorers.length; index += candidateBatchSize) {
+  for (let index = 0; index < scorerFilters.length; index += candidateBatchSize) {
     const dimensions = await client
       .from("factory_benchmark_evaluation_dimensions")
       .select("experiment_id,scorer_revision_id")
       .eq("workspace_id", workspaceId)
       .eq("factory_id", factoryId)
-      .or(requestedScorers.slice(index, index + candidateBatchSize).join(","));
+      .or(scorerFilters.slice(index, index + candidateBatchSize).join(","));
     if (dimensions.error) throw dimensions.error;
     for (const { experiment_id, scorer_revision_id } of dimensions.data) {
       scorerMatches.add(`${experiment_id}:${scorer_revision_id}`);
