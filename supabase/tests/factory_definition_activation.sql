@@ -445,8 +445,9 @@ select throws_ok(pg_temp.factory_activation_command('rollback',1,(select revisio
   'PT409',null,'rollback cannot append the already active revision');
 
 create temp table factory_activation_publish_race as
-select (pg_temp.factory_activation_save(1,pg_temp.factory_activation_bundle(
-  'Concurrent winner','54200000-0002-4000-8000-000000000002'))).id as winner_draft,
+select (pg_temp.factory_activation_save(1,jsonb_set(pg_temp.factory_activation_bundle(
+  'Concurrent winner','54200000-0002-4000-8000-000000000002')::jsonb,'{modelRouting}',
+  '{"version":1,"taskClasses":[],"rules":[],"onUnmatched":{"kind":"escalate"}}')::text)).id as winner_draft,
   (pg_temp.factory_activation_save(1,pg_temp.factory_activation_bundle('Concurrent loser'))).id as loser_draft;
 select pg_temp.seed_factory_smoke('draft',1,winner_draft) from factory_activation_publish_race;
 commit;
@@ -516,6 +517,11 @@ select ok((select s.factory_definition_provenance='pinned' and s.factory_definit
   join public.factory_definition_activations a on a.revision_id=winner.revision_id
   join public.factory_definition_revisions r on r.id=a.revision_id),
   'session admission racing a publication waits for and captures its committed activation and exact definition');
+select ok((select input.routing_decision @> jsonb_build_object('policyRevisionId',winner.revision_id,
+    'policyDigest',input.definition_digest,'taskClassSlug','compiled-handoff','mode','shadow','disposition','escalated')
+  from factory_admission_after_publish fixture join public.session_factory_admission_inputs input using (session_id)
+  cross join factory_activation_second winner),
+  'the waiting admission resolves routing from the committed policy and immutable first stage');
 select ok((select s.execute_pinned_definition and input.pipeline_id=s.pipeline_id and input.github_repository_id=s.github_repository_id
     and input.github_repository_id = (r.definition_json::jsonb ->> 'repositoryId')::uuid
     and input.model_name=run.model_name and input.model_name = (r.definition_json::jsonb #>> '{agent,model}')
@@ -627,6 +633,12 @@ select ok((select (input.activation_number,input.definition_revision_id)=(a.acti
 select ok((select input.activation_number=a.activation_number and input.definition_revision_id=a.revision_id
   from factory_admission_after_publish fixture join public.session_factory_admission_inputs input using(session_id)
   cross join factory_activation_second a),'idempotent creation replay leaves the original admission receipt intact');
+select ok((select input.routing_decision->>'policyRevisionId'=a.revision_id::text
+  from factory_admission_after_publish fixture join public.session_factory_admission_inputs input using(session_id)
+  cross join factory_activation_second a), 'creation replay retains its routing decision after rollback');
+select is((select input.routing_decision from factory_admission_after_rollback fixture
+  join public.session_factory_admission_inputs input using(session_id)), null::jsonb,
+  'a fresh admission through the rolled-back definition has no routing decision');
 select is((select count(*) from public.factory_definition_revisions r join factory_activation_scope s on s.factory_id=r.factory_id),
   2::bigint,'rollback and its losing publisher create no duplicate or orphan revision');
 select throws_ok(pg_temp.factory_activation_command('rollback',1,(select revision_id from factory_activation_second)),

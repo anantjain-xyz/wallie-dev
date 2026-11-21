@@ -161,6 +161,7 @@ function compileSerialDefinition(
           entry.experimentId === configuration.experimentId &&
           entry.definitionRevisionId === configuration.definitionRevisionId &&
           entry.qualificationId === configuration.qualificationId &&
+          entry.scorerRevisionId === configuration.scorerRevisionId &&
           entry.agentId === configuration.agentId &&
           entry.modelKey === configuration.modelKey &&
           entry.harness === configuration.harness &&

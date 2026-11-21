@@ -14,6 +14,7 @@ export const modelRoutingConfigurationSchema = z.strictObject({
   definitionRevisionId: id,
   experimentId: id,
   qualificationId: id,
+  scorerRevisionId: id.optional(),
   modelKey: z
     .string()
     .max(200)
