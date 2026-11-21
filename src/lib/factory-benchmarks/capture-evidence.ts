@@ -75,7 +75,10 @@ export async function verifyBenchmarkGitStart(
   }
 }
 
-async function readConnectedRepository(scope: Scope, repositoryId: string) {
+export async function readConnectedRepository(
+  scope: Pick<Scope, "admin" | "access" | "factoryId">,
+  repositoryId: string,
+) {
   const { data, error } = await scope.admin
     .from("github_repositories")
     .select(
@@ -84,6 +87,7 @@ async function readConnectedRepository(scope: Scope, repositoryId: string) {
     .eq("id", repositoryId)
     .eq("workspace_id", scope.access.workspace.id)
     .eq("factory_id", scope.factoryId)
+    .eq("is_archived", false)
     .eq("github_installations.workspace_id", scope.access.workspace.id)
     .eq("github_installations.suspended", false)
     .maybeSingle();
@@ -270,6 +274,49 @@ async function verifyContext(scope: Scope, manifest: RunManifest): Promise<strin
   return reasons;
 }
 
+export async function verifyBenchmarkRepositoryInput(
+  scope: Pick<Scope, "admin" | "access" | "factoryId">,
+  { grantId, grantVersion }: { grantId?: string | null; grantVersion?: number | null },
+  {
+    repositoryId,
+    commitSha,
+    sha256,
+    utf8Bytes,
+  }: {
+    repositoryId: string;
+    commitSha: string;
+    sha256: string;
+    utf8Bytes: number;
+  },
+) {
+  if (!grantId || grantVersion == null) return false;
+  const grant = await scope.admin
+    .from("factory_execution_grants")
+    .select("id")
+    .eq("workspace_id", scope.access.workspace.id)
+    .eq("factory_id", scope.factoryId)
+    .eq("id", grantId)
+    .eq("version", grantVersion)
+    .contains("read_context_repository_ids", [repositoryId])
+    .is("revoked_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+  if (grant.error) throw grant.error;
+  if (!grant.data) return false;
+  const repository = await readConnectedRepository(scope, repositoryId);
+  if (!repository) return false;
+  const expected = fingerprintRunContextInput(
+    [repository.repositoryFullName, repository.repositoryId].join("\n"),
+  );
+  if (expected.sha256 !== sha256 || expected.utf8Bytes !== utf8Bytes) return false;
+  return (
+    (await verifyBenchmarkGitStart(repository, {
+      input_sha: commitSha,
+      input_ref: null,
+    })) === "verified"
+  );
+}
+
 export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> {
   const { workspace } = scope.access;
   const { run } = scope;
@@ -362,35 +409,15 @@ export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> 
           },
           parsedContext.data.required,
           { title: original?.original_title ?? null, prompt: originalPrompt },
-          async ({ repositoryId, commitSha, sha256, utf8Bytes }) => {
-            if (!original?.execution_grant_id || original.execution_grant_version === null)
-              return false;
-            const grant = await scope.admin
-              .from("factory_execution_grants")
-              .select("id")
-              .eq("workspace_id", workspace.id)
-              .eq("factory_id", scope.factoryId)
-              .eq("id", original.execution_grant_id)
-              .eq("version", original.execution_grant_version)
-              .contains("read_context_repository_ids", [repositoryId])
-              .is("revoked_at", null)
-              .gt("expires_at", new Date().toISOString())
-              .maybeSingle();
-            if (grant.error) throw grant.error;
-            if (!grant.data) return false;
-            const repository = await readConnectedRepository(scope, repositoryId);
-            if (!repository) return false;
-            const expected = fingerprintRunContextInput(
-              [repository.repositoryFullName, repository.repositoryId].join("\n"),
-            );
-            if (expected.sha256 !== sha256 || expected.utf8Bytes !== utf8Bytes) return false;
-            return (
-              (await verifyBenchmarkGitStart(repository, {
-                input_sha: commitSha,
-                input_ref: null,
-              })) === "verified"
-            );
-          },
+          (reference) =>
+            verifyBenchmarkRepositoryInput(
+              scope,
+              {
+                grantId: original?.execution_grant_id,
+                grantVersion: original?.execution_grant_version,
+              },
+              reference,
+            ),
         )
       : [],
   ]);

@@ -111,6 +111,19 @@ create function pg_temp.capture(
     null, p_expected, p_new_name, p_new_purpose, p_expected_task) from capture_scope
 $$;
 
+create function pg_temp.replay_access(
+  p_capture text, p_actor integer default 1, p_factory_id uuid default null
+) returns boolean language sql as $$
+  select public.assert_factory_benchmark_replay_access(workspace_id, coalesce(p_factory_id, factory_id),
+    pg_temp.capture_id(p_actor), (receipt->>'taskRevisionId')::uuid)
+  from capture_scope cross join capture_results where key = p_capture
+$$;
+
+select ok(has_function_privilege('service_role', command, 'EXECUTE')
+  and not has_function_privilege('authenticated', command, 'EXECUTE')
+  and not has_function_privilege('anon', command, 'EXECUTE'), 'replay access assertion is service-only')
+from (values ('public.assert_factory_benchmark_replay_access(uuid,uuid,uuid,uuid)')) access(command);
+
 select ok(not has_table_privilege('authenticated', 'public.factory_benchmark_task_inputs', 'SELECT')
   and not has_table_privilege('anon', 'public.factory_benchmark_task_inputs', 'SELECT')
   and has_table_privilege('service_role', 'public.factory_benchmark_task_inputs', 'SELECT')
@@ -251,6 +264,14 @@ select results_eq($$select revision.acceptance_criteria, revision.replay_eligibi
   $$values ('Updated benchmark criteria.', 'ineligible',
     'The original session image inputs do not have a retained integrity receipt.')$$,
   'an otherwise eligible capture with an unverified image input preserves its criteria and records the limit');
+select ok(pg_temp.replay_access('created'),
+  'the original eligible task revision can pass authorization after a later ineligible revision');
+select throws_ok($$select pg_temp.replay_access('image')$$, 'P0002', null,
+  'replay cannot use an ineligible revision of an otherwise captured task');
+select throws_ok($$select pg_temp.replay_access('created', p_actor => 2)$$, '42501', null,
+  'a factory reader cannot authorize retained replay inputs');
+select throws_ok($$select pg_temp.replay_access('created', p_factory_id => pg_temp.capture_id(31))$$, 'P0002', null,
+  'a workspace owner cannot authorize replay through another factory scope');
 reset role;
 
 select results_eq($$select input.source_job_id, input.source_attempt_count, input.checkout_sha, input.input_ref,
@@ -262,6 +283,24 @@ select results_eq($$select input.source_job_id, input.source_attempt_count, inpu
   'the private receipt pins exact dispatch and admission references instead of the current session prompt');
 select throws_ok($$update public.factory_benchmark_task_inputs set checkout_sha = repeat('a', 40)
   where source_run_id = pg_temp.capture_id(44)$$, '23514', null, 'capture receipts are immutable');
+select public.archive_session_job_attempts(pg_temp.capture_id(42), pg_temp.capture_id(11),
+  'Archive the replay source to erase retained inputs');
+create temp table captured_source_archive as
+select workspace_id, factory_id, id as session_id, archived_at from public.sessions
+where id = pg_temp.capture_id(42);
+grant select on captured_source_archive to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '61200000-0000-4000-8000-000000000001';
+select is((select (public.erase_session_retained_content(workspace_id, factory_id, session_id, archived_at)).session_id
+  from captured_source_archive), pg_temp.capture_id(42), 'the owner erases retained source content');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local role service_role;
+select throws_ok($$select pg_temp.replay_access('created')$$, 'P0002', null,
+  'erasure blocks replay of the previously eligible historical task revision');
+reset role;
+
 delete from public.sessions where id = pg_temp.capture_id(42);
 select is(pg_temp.capture(44, 90, p_new_name => 'Frozen run suite', p_new_purpose => 'regression'),
   (select jsonb_set(receipt, '{added}', 'false') from capture_results where key = 'created'),

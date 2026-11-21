@@ -53,6 +53,7 @@ export async function checkoutSandboxCheckpoint(input: {
   sandbox: SandboxHandle;
   branch: string;
   checkpoint: SandboxCheckpoint;
+  gitEnvironment?: Record<string, string>;
   signal?: AbortSignal;
 }): Promise<void> {
   assertValidSandboxCheckpoint(input.checkpoint);
@@ -82,7 +83,7 @@ export async function checkoutSandboxCheckpoint(input: {
   const process = await input.sandbox.exec("bash", ["-lc", script], {
     cwd: input.sandbox.repoPath,
     signal: input.signal,
-    env: { GIT_TERMINAL_PROMPT: "0" },
+    env: { ...input.gitEnvironment, GIT_TERMINAL_PROMPT: "0" },
   });
   const [, code] = await Promise.all([process.output(), process.exitCode]);
   input.signal?.throwIfAborted();

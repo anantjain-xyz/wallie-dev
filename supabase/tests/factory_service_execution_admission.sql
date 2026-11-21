@@ -217,8 +217,35 @@ select throws_ok($$select pg_temp.activate_fixture(2, pg_temp.definition_for_gra
 
 select pg_temp.activate_fixture(2, pg_temp.definition_for_grant(id, 2)) from grant_v2;
 create temp table session_v2 as select * from pg_temp.create_fixture();
+create temp table replay_attempt as
+select session_id, job_id, pg_temp.start_fixture(job_id, 1) as run_id from pg_temp.create_fixture();
+select public.cancel_session_job_attempts(attempt.session_id, principal.workspace_id, 'Complete the replay source fixture')
+from replay_attempt attempt cross join principal;
+
+-- Seed only the captured locator. The replay gate's separate byte validation
+-- is covered by the benchmark resolver tests.
+create temp table replay_revision as
+select revision.* from replay_attempt attempt cross join principal
+cross join lateral public.create_factory_benchmark_task(principal.workspace_id, principal.factory_id,
+  '55500100-0000-4000-8000-000000000001', attempt.run_id, 'Grant-bound benchmark',
+  'Verify the retained execution authority.', '{}', 'eligible') revision;
+insert into public.factory_benchmark_task_inputs(task_id, workspace_id, factory_id,
+  source_run_id, source_session_id, source_job_id, source_attempt_count, definition_revision_id)
+select revision.task_id, revision.workspace_id, revision.factory_id, attempt.run_id, attempt.session_id,
+  attempt.job_id, 1, source.factory_definition_revision_id
+from replay_revision revision cross join replay_attempt attempt
+join public.sessions source on source.id = attempt.session_id;
+create function pg_temp.replay_grant_access() returns boolean language sql as $$
+  select public.assert_factory_benchmark_replay_access(workspace_id, factory_id,
+    '55500100-0000-4000-8000-000000000001', id) from replay_revision
+$$;
+select ok(pg_temp.replay_grant_access(), 'the exact source attempt authorizes replay while its original grant is live');
+
 select public.revoke_factory_execution_grant(workspace_id, factory_id, '55500100-0000-4000-8000-000000000001',
   id, 2, 'Fixture revoked') from grant_v2;
+select throws_ok($$select pg_temp.replay_grant_access()$$,
+  '42501', 'Execution grant is unavailable or does not authorize these resources.',
+  'revoking the original execution grant blocks replay of an otherwise eligible historical revision');
 select throws_ok($$select pg_temp.start_fixture(job_id, 1) from session_v2$$,
   '42501', 'Execution grant is unavailable or does not authorize these resources.',
   'revocation after queueing blocks the first worker attempt');
