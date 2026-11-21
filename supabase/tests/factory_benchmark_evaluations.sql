@@ -433,5 +433,134 @@ select is((select count(*) from jsonb_array_elements(pg_temp.read_scores(82)->'c
 
 select is(pg_temp.freeze_scored(83, pg_temp.scoring_plan(0, array['artifact']))#>>'{evaluation,budgetLimitUsd}',
   '0.000000', 'zero is an explicit evaluation ceiling');
+select pg_temp.freeze_scored(86, pg_temp.scoring_plan(1, array['artifact']));
+select pg_temp.configure_schedule(86, p_budget => 1, p_execution => 0.1, p_evaluation => 0.1, p_max => 1);
+select is(public.reconcile_factory_benchmark_schedules(10), 1, 'the last-attempt case admits an execution');
+select ok(pg_temp.finish_fixture_trial(86, 0.05), 'the last-attempt case retains the exact output');
+select is(public.reconcile_factory_benchmark_evaluations(10), 1, 'the last-attempt case queues a judge job');
+
+create function pg_temp.record_retryable_judge_failure() returns uuid language plpgsql as $$
+declare claim record;
+begin
+  select * into strict claim from public.claim_factory_judge_job();
+  if pg_temp.authorize_evaluation(claim.workspace_id, claim.factory_id, claim.job_id, claim.attempt_id, claim.lease_id)
+    ->>'status' is distinct from 'authorized' then raise exception 'Expected a paid judge attempt.'; end if;
+  if public.finish_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id, claim.attempt_id, claim.lease_id,
+    'provider_unavailable', p_cost_usd => 0.01, p_cost_provenance => 'measured') is distinct from true
+  then raise exception 'Expected the exact retryable failure to settle.'; end if;
+  update public.factory_evaluation_jobs set available_at = clock_timestamp() where id = claim.job_id and status = 'queued';
+  return claim.job_id;
+end;
+$$;
+create temp table final_retry_job as select pg_temp.record_retryable_judge_failure() as id;
+select is(pg_temp.record_retryable_judge_failure(), (select id from final_retry_job),
+  'two actual retryable failures consume two attempts from the same judge job');
+create temp table final_paused_claim as select * from public.claim_factory_judge_job();
+select is((select attempt_number from final_paused_claim), 3, 'the next claim reaches the final provider retry allowance');
+
+select pg_temp.schedule_control(86, 'pause');
+select is(public.prepare_factory_judge_invocation(workspace_id, factory_id, job_id, attempt_id, lease_id),
+  '{"status":"benchmark_blocked","reason":"schedule_paused"}'::jsonb,
+  'the final allowed claim is deferred before reaching the provider')
+from final_paused_claim;
+select is((select status from public.factory_evaluation_jobs where id = (select id from final_retry_job)),
+  'queued', 'pausing an unstarted final claim leaves the judge job recoverable');
+select pg_temp.schedule_control(86, 'resume');
+
+create function pg_temp.repeat_schedule_deferral(p_job_id uuid) returns boolean language plpgsql as $$
+declare claim record; blocked jsonb;
+begin
+  update public.factory_evaluation_jobs set available_at = statement_timestamp() where id = p_job_id and status = 'queued';
+  select * into claim from public.claim_factory_judge_job();
+  if not found then return false; end if;
+  if claim.job_id is distinct from p_job_id then raise exception 'Another job entered the retry fixture.'; end if;
+  perform pg_temp.schedule_control(86, 'pause');
+  blocked := public.prepare_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id, claim.attempt_id, claim.lease_id);
+  perform pg_temp.schedule_control(86, 'resume');
+  return blocked->>'reason' = 'schedule_paused';
+end;
+$$;
+select is((select count(*) from generate_series(1,3) where pg_temp.repeat_schedule_deferral((select id from final_retry_job))),
+  3::bigint, 'later pre-provider deferrals retain the untouched final provider allowance');
+select is((select count(*) from internal.factory_benchmark_evaluation_blocks blocked
+  join public.factory_evaluation_attempts attempt on attempt.id = blocked.attempt_id
+  where attempt.job_id = (select id from final_retry_job) and blocked.reason = 'schedule_paused'),
+  4::bigint, 'all deferred identities remain in the audit trail');
+select is((select count(*) from public.factory_evaluation_receipts receipt
+  where receipt.job_id = (select id from final_retry_job) and receipt.started_at is null),
+  4::bigint, 'deferral receipts show the judge never started');
+
+update public.factory_evaluation_jobs set available_at = clock_timestamp()
+where id = (select id from final_retry_job) and status = 'queued';
+create temp table final_resumed_claim as select * from public.claim_factory_judge_job();
+select is((select attempt_number from final_resumed_claim), 7,
+  'resuming takes a fresh ordinal beyond the physical six-attempt limit');
+select is(pg_temp.authorize_evaluation(workspace_id, factory_id, job_id, attempt_id, lease_id)->>'status',
+  'stale_claim', 'the original paused identity cannot authorize a new provider attempt')
+from final_paused_claim;
+select is((select pg_temp.authorize_evaluation(workspace_id, factory_id, job_id, attempt_id, lease_id)->>'status'
+  from final_resumed_claim), 'authorized', 'resume preserves the genuinely remaining judge allowance');
+select ok((select public.finish_factory_judge_invocation(claim.workspace_id, claim.factory_id, claim.job_id, claim.attempt_id,
+  claim.lease_id, 'completed', jsonb_build_object('schemaVersion',1,'status','pass','evidence',sample.evidence,
+    'score',jsonb_build_object('kind','boolean','value',true)), p_provider_model => 'openai/gpt-example',
+  p_cost_usd => 0.01, p_cost_provenance => 'measured')
+  from final_resumed_claim claim join public.factory_scorer_sample_receipts sample on sample.id = claim.sample_receipt_id),
+  'the fresh seventh claim settles its immutable judgment receipt');
+select is((pg_temp.read_scores(86)#>>'{spend,evaluation,spentUsd}')::numeric, 0.03::numeric,
+  'each real provider attempt is charged and all temporary deferrals remain uncharged');
+
+select pg_temp.freeze_scored(87, pg_temp.scoring_plan(1, array['artifact']));
+select pg_temp.configure_schedule(87, p_budget => 0.4, p_execution => 0.3, p_evaluation => 0.1, p_max => 2);
+select is(public.reconcile_factory_benchmark_schedules(10), 1, 'the temporary budget case admits the first execution');
+select ok(pg_temp.finish_fixture_trial(87, 0.05), 'the first execution completes under its reserve');
+select pg_temp.read_scores(87);
+select is(public.reconcile_factory_benchmark_evaluations(10), 1, 'an exact evaluation is queued with budget headroom');
+create temp table wait_budget_claim as select * from public.claim_factory_judge_job();
+select is((select count(*) from wait_budget_claim), 1::bigint, 'the judge claims while the scoring reserve fits');
+select is(public.reconcile_factory_benchmark_schedules(10), 1,
+  'a later execution hold can temporarily consume the shared cap between claim and permit');
+select is((select pg_temp.authorize_evaluation(workspace_id, factory_id, job_id, attempt_id, lease_id) from wait_budget_claim),
+  '{"status":"benchmark_blocked","reason":"evaluation_budget_wait"}'::jsonb,
+  'a temporary budget wait settles the exact lease before acquiring a provider permit');
+select is((select to_jsonb(job)->>'benchmark_deferral_count' from public.factory_evaluation_jobs job
+  where job.id = (select job_id from wait_budget_claim)), '1', 'a temporary budget wait preserves the actual retry allowance');
+select ok(public.cancel_factory_benchmark_trial(trial.workspace_id, trial.factory_id, trial.actor_user_id, trial.id, trial.run_id),
+  'canceling the unstarted execution can release the temporary competing hold')
+from pg_temp.last_scheduled_trial(87) trial;
+select pg_temp.schedule_control(87, 'cancel');
+select public.reconcile_factory_benchmark_evaluations(10);
+
+-- An archived factory's completed output stays in history, but must not
+-- occupy the only slot in an admission batch.
+create temp table archived_scorer as
+select scorer.* from experiment_scope scope
+cross join lateral public.create_factory_scorer(scope.workspace_id, scope.factory_id, scope.owner_id,
+  'Archived artifact', 'archived-artifact',
+  '{"schemaVersion":1,"rubric":"Read the retained fixture.","requiredEvidence":["artifact"],"scoring":{"kind":"boolean","passValue":true}}') scorer
+where not scope.is_default;
+select pg_temp.freeze_scored(84, (select jsonb_build_object('scorerRevisionIds', jsonb_build_array(id),
+  'budgetLimitUsd', 1) from archived_scorer), p_primary => false);
+select pg_temp.configure_schedule(84, p_budget => 1, p_execution => 0.1, p_evaluation => 0.1, p_max => 1, p_primary => false);
+select is(public.reconcile_factory_benchmark_schedules(10), 1, 'the older sibling fixture receives exact execution work');
+select ok(pg_temp.finish_fixture_trial(84, 0.05), 'the older sibling has a successful output eligible for scoring before archive');
+select is((public.archive_factory(scope.workspace_id, scope.factory_id, scope.owner_id, 'Archive older scoring fixture')).status,
+  'archived', 'the manager archives the sibling before its scoring work is admitted')
+from experiment_scope scope where not scope.is_default;
+
+select pg_temp.freeze_scored(85, pg_temp.scoring_plan(1, array['artifact']));
+select pg_temp.configure_schedule(85, p_budget => 1, p_execution => 0.1, p_evaluation => 0.1, p_max => 1);
+select is(public.reconcile_factory_benchmark_schedules(10), 1, 'the active factory receives later execution work');
+select ok(pg_temp.finish_fixture_trial(85, 0.05), 'the active factory has a newer successful output');
+select ok((pg_temp.last_scheduled_trial(84)).finished_at < (pg_temp.last_scheduled_trial(85)).finished_at,
+  'the archived output would otherwise sort ahead of the active output');
+select is(public.reconcile_factory_benchmark_evaluations(1), 1,
+  'an older archived factory cannot occupy the only evaluation admission slot');
+select is((select count(*) from public.factory_scorer_sample_receipts
+  where benchmark_trial_id = (pg_temp.last_scheduled_trial(84)).id), 0::bigint,
+  'the archived output does not acquire an evaluation receipt');
+select is((select count(*) from public.factory_scorer_sample_receipts
+  where benchmark_trial_id = (pg_temp.last_scheduled_trial(85)).id), 1::bigint,
+  'the batch admits the exact eligible output from the active factory');
+
 select * from finish();
 rollback;

@@ -28,7 +28,7 @@ type PreflightFailure =
 const maxClaims = 4;
 const maxEvaluationMs = 55_000;
 const rpcTimeoutMs = 5_000;
-// A job can record up to six attempts. Its total still fits the API's number range.
+// A job can record usage on up to six attempts. Its total fits the API's number range.
 const maxAttemptUsage = Math.floor(Number.MAX_SAFE_INTEGER / 6);
 
 function claimIdentity(claim: FactoryJudgeClaim) {

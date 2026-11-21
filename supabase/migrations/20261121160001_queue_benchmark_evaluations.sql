@@ -109,6 +109,10 @@ begin
     select result.workspace_id, result.factory_id, result.experiment_id, result.trial_id, result.run_id,
       dimension.scorer_revision_id, ready.evidence
     from internal.factory_benchmark_evaluation_outputs result
+    join public.workspaces available_workspace on available_workspace.id = result.workspace_id
+      and available_workspace.deletion_requested_at is null
+    join public.factories active_factory on (active_factory.workspace_id, active_factory.id) =
+      (result.workspace_id, result.factory_id) and active_factory.status = 'active'
     join public.factory_benchmark_schedules schedule on
       (schedule.workspace_id, schedule.factory_id, schedule.experiment_id) =
       (result.workspace_id, result.factory_id, result.experiment_id)
