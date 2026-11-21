@@ -62,6 +62,7 @@ const mocked = vi.hoisted(() => ({
   materializeSessionAttachments: vi.fn().mockResolvedValue([]),
   formatSessionAttachmentPromptData: vi.fn(() => ""),
   loadWorkspaceAgentConfig: vi.fn(),
+  runRecordedBenchmarkTrial: vi.fn(),
   loadRunAgentPrompt: vi.fn(),
   loadRequiredWorkspaceSandboxConnection: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
@@ -90,6 +91,10 @@ vi.mock("@/lib/run-context/server", async (importOriginal) => ({
 
 vi.mock("@/lib/validation-evidence/service", () => ({
   validateCheckpoint: mocked.validateCheckpoint,
+}));
+
+vi.mock("@/lib/factory-benchmarks/trial-runner", () => ({
+  runRecordedBenchmarkTrial: mocked.runRecordedBenchmarkTrial,
 }));
 
 vi.mock("@/lib/factory-memory/proposal", async (importOriginal) => ({
@@ -298,6 +303,7 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     execution_exhausted_at: null,
     execution_exhaustion_code: null,
     execution_exhaustion_detail: null,
+    execution_purpose: "production",
     factory_definition_provenance: "legacy",
     factory_definition_revision_id: null,
     execute_pinned_definition: false,
@@ -1139,6 +1145,35 @@ describe("processPipelineJob (generic stage runner)", () => {
       ]),
     );
   });
+
+  it.each(["node", "workerd"] as const)(
+    "dispatches a benchmark claim before resolving production stage or credentials on %s",
+    async (workerRuntime) => {
+      const job = baseJob();
+      const { admin, rpc } = buildAdminMock({
+        session: baseSession({ execution_purpose: "benchmark" }),
+      });
+      const signal = new AbortController().signal;
+      const deadlineAt = new Date(Date.now() + 5000).toISOString();
+      const result = { jobId: job.id, processed: true, result: "idle", runId: null };
+      mocked.runRecordedBenchmarkTrial.mockResolvedValueOnce(result);
+      await expect(
+        processPipelineJob({ admin, job, deadlineAt, signal, workerRuntime }),
+      ).resolves.toBe(result);
+      expect(mocked.runRecordedBenchmarkTrial).toHaveBeenCalledExactlyOnceWith({
+        admin,
+        job,
+        deadlineAt,
+        signal,
+        workerRuntime,
+      });
+      expect(mocked.loadStageById).not.toHaveBeenCalled();
+      expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+      expect(mocked.resolveFactoryMcpCredentials).not.toHaveBeenCalled();
+      expect(mocked.publishSessionCheckpoint).not.toHaveBeenCalled();
+      expect(rpc).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { trigger: "manual_run", scope: "human" },

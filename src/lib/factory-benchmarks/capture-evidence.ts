@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import type { PostgrestSingleResponse } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import {
@@ -18,12 +19,20 @@ import type { WorkspaceAccessContext } from "@/lib/workspaces/access";
 import type { BenchmarkCapturePreview } from "./capture-contracts";
 import { verifyRequiredRunInputs } from "./capture-required";
 
-type Scope = {
+type WorkerContextAccess = {
+  workspace: { id: string };
+  listSourceAccess: (
+    sourceIds: string[],
+  ) => PromiseLike<PostgrestSingleResponse<{ source_id: string; status: string }[]>>;
+};
+
+export type BenchmarkSourceScope = {
   admin: ReturnType<typeof createSupabaseAdminClient>;
-  access: WorkspaceAccessContext;
+  access: WorkspaceAccessContext | WorkerContextAccess;
   factoryId: string;
   run: Pick<Tables<"agent_runs">, "id" | "session_id" | "agent_job_id" | "attempt_count">;
 };
+type Scope = BenchmarkSourceScope;
 type SourcePreview = BenchmarkCapturePreview["source"];
 type RunManifest = z.infer<typeof runContextManifestSchema>;
 type SourceManifest = Pick<
@@ -57,7 +66,7 @@ export async function verifyBenchmarkGitStart(
       repository,
       AbortSignal.timeout(gitReadTimeoutMs),
     );
-    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
     if (refSegments && ref) {
       const bytes = await read(
         `git/ref/${refSegments.map(encodeURIComponent).join("/")}`,
@@ -132,6 +141,15 @@ async function verifyBase(scope: Scope, manifest: SourceManifest): Promise<strin
   return receipt.error || !receipt.data ? "The original retry checkpoint is unavailable." : null;
 }
 
+export function listBenchmarkContextSourceAccess(scope: Scope, sourceIds: string[]) {
+  if ("listSourceAccess" in scope.access) return scope.access.listSourceAccess(sourceIds);
+  return scope.access.supabase.rpc("list_factory_context_source_access", {
+    target_workspace_id: scope.access.workspace.id,
+    target_factory_id: scope.factoryId,
+    target_source_ids: sourceIds,
+  });
+}
+
 async function verifyDocuments(scope: Scope, manifest: RunManifest): Promise<string | null> {
   const documents = manifest.documents.filter((document) => document.status === "selected");
   if (!documents.length) return null;
@@ -139,11 +157,7 @@ async function verifyDocuments(scope: Scope, manifest: RunManifest): Promise<str
   const workspaceId = scope.access.workspace.id;
   const sourceIds = documents.map(({ sourceId }) => sourceId);
   const [access, sources, revisions] = await Promise.all([
-    scope.access.supabase.rpc("list_factory_context_source_access", {
-      target_workspace_id: workspaceId,
-      target_factory_id: scope.factoryId,
-      target_source_ids: sourceIds,
-    }),
+    listBenchmarkContextSourceAccess(scope, sourceIds),
     scope.admin
       .from("factory_context_sources")
       .select("id, repository_id, github_installation_id, upstream_repository_id, file_path")

@@ -218,6 +218,7 @@ function setup(
     checkoutSha?: string;
     documentBody?: string;
     role?: "owner" | "member";
+    worker?: boolean;
   } = {},
 ) {
   const state = {
@@ -271,7 +272,7 @@ function setup(
         expect(params.get("workspace_id")).toBe("eq." + workspaceId);
         return Response.json({ ...member, role: overrides.role ?? member.role });
       case "factory_benchmark_task_revisions":
-        expect(key).toBe("signed-in");
+        expect(key).toBe(overrides.worker ? "service" : "signed-in");
         expect(params.get("workspace_id")).toBe("eq." + workspaceId);
         expect(params.get("id")).toBe("eq." + taskRevisionId);
         if (params.get("factory_id") !== "eq." + factoryId) return Response.json(null);
@@ -392,6 +393,16 @@ function setup(
           }),
         );
         return Response.json([{ source_id: documentId, status: state.documentStatus }]);
+      case "benchmark_list_factory_context_source_access":
+        expect(key).toBe("service");
+        expect(typeof init?.body === "string" ? JSON.parse(init.body) : null).toEqual({
+          p_workspace_id: workspaceId,
+          p_factory_id: factoryId,
+          p_actor_user_id: userId,
+          p_task_revision_id: taskRevisionId,
+          p_source_ids: [documentId],
+        });
+        return Response.json([{ source_id: documentId, status: state.documentStatus }]);
       case "factory_context_sources":
         return Response.json([
           {
@@ -463,8 +474,16 @@ function setup(
     user: { id: userId },
     workspace: { id: workspaceId, slug: "benchmark", name: "Benchmark", avatar_path: null },
   };
-  vi.mocked(createSupabaseAdminClient).mockReturnValue(client("service"));
-  return { access, factoryId, taskRevisionId, signal: AbortSignal.timeout(5000), state, paths };
+  const admin = client("service");
+  vi.mocked(createSupabaseAdminClient).mockReturnValue(admin);
+  const target = { factoryId, taskRevisionId, signal: AbortSignal.timeout(5000) };
+  return {
+    access,
+    ...target,
+    workerInput: { ...target, principal: { admin, workspaceId, actorUserId: userId } },
+    state,
+    paths,
+  };
 }
 
 describe("resolving recorded benchmark inputs", () => {
@@ -536,6 +555,21 @@ describe("resolving recorded benchmark inputs", () => {
     expect(plan.text.documents).toEqual([]);
     expect(plan.limits).not.toContain("candidate_inputs_changed");
     expect(reader).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores the admitted worker's exact documents without a browser session and rechecks authorization", async () => {
+    const fixture = setup({ worker: true });
+    const restored = await resolveBenchmarkReplay(fixture.workerInput);
+    expect(restored.plan.text.documents).toEqual([
+      { revisionId: documentRevisionId, body: documentText },
+    ]);
+    expect(fixture.paths).toContain("benchmark_list_factory_context_source_access");
+    expect(fixture.paths).not.toContain("list_factory_context_source_access");
+    expect(fixture.paths).not.toContain("get_session_retained_content_erasure");
+    fixture.state.replayAccessRevoked = true;
+    await expect(restored.recheckAccess()).rejects.toThrow(
+      "The original benchmark execution scope is no longer authorized.",
+    );
   });
 
   it("rejects missing attempt receipts before checking upstream sources", async () => {

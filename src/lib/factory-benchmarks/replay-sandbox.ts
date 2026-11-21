@@ -16,7 +16,12 @@ import {
 } from "@/lib/sandbox";
 import { checkoutSandboxCheckpoint } from "@/lib/sandbox/checkout";
 import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
-import type { SandboxConnection, SandboxExecOptions, SandboxHandle } from "@/lib/sandbox/types";
+import type {
+  CreateUtilitySandboxInput,
+  SandboxConnection,
+  SandboxExecOptions,
+  SandboxHandle,
+} from "@/lib/sandbox/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   recordWorkspaceSandbox,
@@ -254,6 +259,7 @@ export async function withRestoredBenchmarkInputs<T>(
 
 type BenchmarkSandboxInput = Parameters<typeof resolveBenchmarkReplay>[0] & {
   connection: SandboxConnection;
+  onSandboxCreated?: CreateUtilitySandboxInput["onSandboxCreated"];
 };
 
 type StagedReplay = Awaited<ReturnType<typeof stageBenchmarkReplay>>;
@@ -310,15 +316,18 @@ export async function withIsolatedBenchmarkReplay<T>(
 ) {
   if (input.connection.provider !== "vercel")
     throw new BenchmarkReplayUnavailable("This replay policy requires a Vercel sandbox.");
-  const { access, factoryId, taskRevisionId, executionId, policyRevisionId, expectedPolicyDigest } =
-    input;
+  const { factoryId, taskRevisionId, executionId, policyRevisionId, expectedPolicyDigest } = input;
+  const { workspaceId, actorUserId } =
+    "principal" in input
+      ? input.principal
+      : { workspaceId: input.access.workspace.id, actorUserId: input.access.user.id };
   return withBenchmarkSandbox(input, "isolated", async (restored, admin) => {
     const { sandbox, signal, inputPath, receipt, readContext } = restored;
     const snapshot = exportReplaySnapshot(receipt);
     const broker = await openBenchmarkReplayPolicy({
       admin,
-      workspaceId: access.workspace.id,
-      actorUserId: access.user.id,
+      workspaceId,
+      actorUserId,
       factoryId,
       taskRevisionId,
       executionId,
@@ -375,10 +384,12 @@ async function withBenchmarkSandbox<T>(
     signal,
   });
   signal.throwIfAborted();
-  const { connection, access } = input;
-  const admin = createSupabaseAdminClient();
+  const { connection } = input;
+  const workspaceId =
+    "principal" in input ? input.principal.workspaceId : input.access.workspace.id;
+  const admin = "principal" in input ? input.principal.admin : createSupabaseAdminClient();
   const operationId = await reserveWorkspaceSandbox(admin, {
-    workspaceId: access.workspace.id,
+    workspaceId,
     provider: connection.provider,
     connection,
     acquisitionTimeoutMs: 60_000,
@@ -393,15 +404,17 @@ async function withBenchmarkSandbox<T>(
       purpose === "isolated" ? createBenchmarkReplaySandbox : createUtilitySandbox;
     const sandbox = await createSandbox(
       {
-        workspaceId: access.workspace.id,
+        workspaceId,
         ownerId: randomUUID(),
         timeoutMs: lifetimeMs,
         signal,
-        onSandboxCreated: async ({ sandboxId: id }) => {
+        onSandboxCreated: async (acquisition) => {
+          const { sandboxId: id } = acquisition;
           sandboxId = id;
           if (!(await recordWorkspaceSandbox(admin, operationId, id))) {
             throw new WorkspaceDeletingError();
           }
+          await input.onSandboxCreated?.(acquisition);
         },
       },
       connection,
@@ -413,7 +426,7 @@ async function withBenchmarkSandbox<T>(
       signal.throwIfAborted();
       const readContext = await materializeFactoryRepositoryContext({
         admin,
-        workspaceId: access.workspace.id,
+        workspaceId,
         factoryId: input.factoryId,
         sandbox,
         repositoryIds: [...plan.readRepositories.keys()],

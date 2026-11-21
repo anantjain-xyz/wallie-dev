@@ -4,10 +4,10 @@ import { formatRunContextMessage } from "@/lib/run-context/conversation";
 import type { RunContextManifest } from "@/lib/run-context/contracts";
 import { fingerprintRunContextInput } from "@/lib/run-context/packing";
 
-import type { resolveBenchmarkCapture } from "./capture";
+import { listBenchmarkContextSourceAccess, type BenchmarkSourceScope } from "./capture-evidence";
 import { BenchmarkReplayUnavailable, replaySha256 } from "./replay-contracts";
 
-type Scope = Awaited<ReturnType<typeof resolveBenchmarkCapture>>;
+type Scope = BenchmarkSourceScope;
 
 function verifyBody(body: string, expected: { sha256: string; utf8Bytes: number }) {
   const actual = fingerprintRunContextInput(body);
@@ -29,11 +29,7 @@ async function restoreDocuments(
   const workspaceId = scope.access.workspace.id;
   const sourceIds = documents.map(({ sourceId }) => sourceId);
   const [access, sources, revisions] = await Promise.all([
-    scope.access.supabase.rpc("list_factory_context_source_access", {
-      target_workspace_id: workspaceId,
-      target_factory_id: scope.factoryId,
-      target_source_ids: sourceIds,
-    }),
+    listBenchmarkContextSourceAccess(scope, sourceIds),
     scope.admin
       .from("factory_context_sources")
       .select("id, grant_id, grant_version, file_path")

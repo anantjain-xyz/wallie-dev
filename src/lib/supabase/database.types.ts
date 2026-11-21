@@ -1850,6 +1850,226 @@ export type Database = {
           },
         ]
       }
+      factory_benchmark_trial_results: {
+        Row: {
+          artifact_markdown: string
+          artifact_sha256: string
+          checkpoint_bundle_sha256: string
+          checkpoint_storage_path: string
+          created_at: string
+          factory_id: string
+          fixture_operation_id: string
+          fixture_response_sha256: string
+          fixture_revision_id: string
+          input_bundle_sha256: string
+          input_commit_sha: string
+          input_tree_sha: string
+          output_commit_sha: string
+          output_tree_sha: string
+          replay_execution_id: string
+          restoration_receipt_sha256: string
+          result_digest: string
+          run_id: string
+          runtime: string
+          trial_id: string
+          validation: Json
+          workspace_id: string
+        }
+        Insert: {
+          artifact_markdown: string
+          artifact_sha256: string
+          checkpoint_bundle_sha256: string
+          checkpoint_storage_path: string
+          created_at?: string
+          factory_id: string
+          fixture_operation_id: string
+          fixture_response_sha256: string
+          fixture_revision_id: string
+          input_bundle_sha256: string
+          input_commit_sha: string
+          input_tree_sha: string
+          output_commit_sha: string
+          output_tree_sha: string
+          replay_execution_id: string
+          restoration_receipt_sha256: string
+          result_digest: string
+          run_id: string
+          runtime: string
+          trial_id: string
+          validation: Json
+          workspace_id: string
+        }
+        Update: {
+          artifact_markdown?: string
+          artifact_sha256?: string
+          checkpoint_bundle_sha256?: string
+          checkpoint_storage_path?: string
+          created_at?: string
+          factory_id?: string
+          fixture_operation_id?: string
+          fixture_response_sha256?: string
+          fixture_revision_id?: string
+          input_bundle_sha256?: string
+          input_commit_sha?: string
+          input_tree_sha?: string
+          output_commit_sha?: string
+          output_tree_sha?: string
+          replay_execution_id?: string
+          restoration_receipt_sha256?: string
+          result_digest?: string
+          run_id?: string
+          runtime?: string
+          trial_id?: string
+          validation?: Json
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_trial_resul_replay_execution_id_fixture__fkey"
+            columns: ["replay_execution_id", "fixture_operation_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_replay_operations"
+            referencedColumns: ["execution_id", "operation_id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_trial_resul_workspace_id_factory_id_tria_fkey"
+            columns: ["workspace_id", "factory_id", "trial_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_trials"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_trials: {
+        Row: {
+          actor_user_id: string
+          attempt_count: number | null
+          created_at: string
+          deadline_at: string | null
+          factory_id: string
+          failure_code: string | null
+          finished_at: string | null
+          fixture_key: string
+          fixture_revision_id: string
+          id: string
+          job_id: string
+          policy_digest: string
+          policy_revision_id: string
+          replay_execution_id: string
+          run_id: string
+          runner_revision: string
+          sandbox_connection_revision: string
+          session_id: string
+          status: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_user_id: string
+          attempt_count?: number | null
+          created_at?: string
+          deadline_at?: string | null
+          factory_id: string
+          failure_code?: string | null
+          finished_at?: string | null
+          fixture_key: string
+          fixture_revision_id: string
+          id: string
+          job_id: string
+          policy_digest: string
+          policy_revision_id: string
+          replay_execution_id?: string
+          run_id: string
+          runner_revision?: string
+          sandbox_connection_revision: string
+          session_id: string
+          status?: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        Update: {
+          actor_user_id?: string
+          attempt_count?: number | null
+          created_at?: string
+          deadline_at?: string | null
+          factory_id?: string
+          failure_code?: string | null
+          finished_at?: string | null
+          fixture_key?: string
+          fixture_revision_id?: string
+          id?: string
+          job_id?: string
+          policy_digest?: string
+          policy_revision_id?: string
+          replay_execution_id?: string
+          run_id?: string
+          runner_revision?: string
+          sandbox_connection_revision?: string
+          session_id?: string
+          status?: string
+          task_id?: string
+          task_revision_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_trials_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_trials_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "pinned_job_recovery_settings"
+            referencedColumns: ["job_id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_trials_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_trials_session_id_workspace_id_factory_i_fkey"
+            columns: ["session_id", "workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id", "workspace_id", "factory_id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_trials_workspace_id_factory_id_fixture_r_fkey"
+            columns: ["workspace_id", "factory_id", "fixture_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_replay_fixture_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_trials_workspace_id_factory_id_policy_re_fkey"
+            columns: ["workspace_id", "factory_id", "policy_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_replay_policy_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_trials_workspace_id_factory_id_task_id_t_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "task_id",
+              "task_revision_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_task_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "task_id", "id"]
+          },
+        ]
+      }
       factory_context_source_revisions: {
         Row: {
           content: string | null
@@ -7623,6 +7843,7 @@ export type Database = {
           execution_exhaustion_code: string | null
           execution_exhaustion_detail: Json | null
           execution_policy_revision_id: string | null
+          execution_purpose: string
           execution_repair_attempts: number
           factory_definition_provenance: string
           factory_definition_revision_id: string | null
@@ -7658,6 +7879,7 @@ export type Database = {
           execution_exhaustion_code?: string | null
           execution_exhaustion_detail?: Json | null
           execution_policy_revision_id?: string | null
+          execution_purpose?: string
           execution_repair_attempts?: number
           factory_definition_provenance?: string
           factory_definition_revision_id?: string | null
@@ -7693,6 +7915,7 @@ export type Database = {
           execution_exhaustion_code?: string | null
           execution_exhaustion_detail?: Json | null
           execution_policy_revision_id?: string | null
+          execution_purpose?: string
           execution_repair_attempts?: number
           factory_definition_provenance?: string
           factory_definition_revision_id?: string | null
@@ -8999,6 +9222,49 @@ export type Database = {
         }
         Returns: Json
       }
+      admit_factory_benchmark_trial: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_fixture_key: string
+          p_policy_digest: string
+          p_policy_revision_id: string
+          p_sandbox_connection_revision: string
+          p_task_revision_id: string
+          p_trial_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          actor_user_id: string
+          attempt_count: number | null
+          created_at: string
+          deadline_at: string | null
+          factory_id: string
+          failure_code: string | null
+          finished_at: string | null
+          fixture_key: string
+          fixture_revision_id: string
+          id: string
+          job_id: string
+          policy_digest: string
+          policy_revision_id: string
+          replay_execution_id: string
+          run_id: string
+          runner_revision: string
+          sandbox_connection_revision: string
+          session_id: string
+          status: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_trials"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       admit_factory_command:
         | {
             Args: {
@@ -9512,6 +9778,19 @@ export type Database = {
         }
         Returns: string
       }
+      benchmark_list_factory_context_source_access: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_source_ids: string[]
+          p_task_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          source_id: string
+          status: string
+        }[]
+      }
       bind_session_conversation_source_once: {
         Args: {
           p_actor_member_id: string
@@ -9542,6 +9821,16 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      cancel_factory_benchmark_trial: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_run_id: string
+          p_factory_id: string
+          p_trial_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       cancel_factory_definition_smoke_test: {
         Args: {
@@ -9748,36 +10037,70 @@ export type Database = {
         Args: { p_workspace_id?: string }
         Returns: Json
       }
-      claim_next_agent_job: {
-        Args: { default_concurrency_limit?: number }
-        Returns: {
-          attempt_count: number
-          created_at: string
-          dedupe_key: string | null
-          finished_at: string | null
-          git_continuity_release_revision: number | null
-          id: string
-          is_repair: boolean
-          last_error: string | null
-          requested_by_member_id: string | null
-          scheduled_at: string | null
-          session_id: string
-          stage_id: string | null
-          stage_name: string | null
-          stage_slug: string | null
-          started_at: string | null
-          status: Database["public"]["Enums"]["agent_job_status"]
-          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
-          updated_at: string
-          workspace_id: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "agent_jobs"
-          isOneToOne: false
-          isSetofReturn: true
-        }
-      }
+      claim_next_agent_job:
+        | {
+            Args: {
+              accept_benchmark_trials: boolean
+              default_concurrency_limit?: number
+            }
+            Returns: {
+              attempt_count: number
+              created_at: string
+              dedupe_key: string | null
+              finished_at: string | null
+              git_continuity_release_revision: number | null
+              id: string
+              is_repair: boolean
+              last_error: string | null
+              requested_by_member_id: string | null
+              scheduled_at: string | null
+              session_id: string
+              stage_id: string | null
+              stage_name: string | null
+              stage_slug: string | null
+              started_at: string | null
+              status: Database["public"]["Enums"]["agent_job_status"]
+              trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+              updated_at: string
+              workspace_id: string
+            }[]
+            SetofOptions: {
+              from: "*"
+              to: "agent_jobs"
+              isOneToOne: false
+              isSetofReturn: true
+            }
+          }
+        | {
+            Args: { default_concurrency_limit?: number }
+            Returns: {
+              attempt_count: number
+              created_at: string
+              dedupe_key: string | null
+              finished_at: string | null
+              git_continuity_release_revision: number | null
+              id: string
+              is_repair: boolean
+              last_error: string | null
+              requested_by_member_id: string | null
+              scheduled_at: string | null
+              session_id: string
+              stage_id: string | null
+              stage_name: string | null
+              stage_slug: string | null
+              started_at: string | null
+              status: Database["public"]["Enums"]["agent_job_status"]
+              trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+              updated_at: string
+              workspace_id: string
+            }[]
+            SetofOptions: {
+              from: "*"
+              to: "agent_jobs"
+              isOneToOne: false
+              isSetofReturn: true
+            }
+          }
       claim_next_worker_auth_dispatch: {
         Args: never
         Returns: {
@@ -9796,29 +10119,54 @@ export type Database = {
           isSetofReturn: true
         }
       }
-      claim_next_worker_dispatch: {
-        Args: {
-          p_default_workspace_limit?: number
-          p_max_concurrent?: number
-          p_timeout_ms?: number
-        }
-        Returns: {
-          attempt_count: number
-          created_at: string
-          deadline_at: string
-          dispatched_at: string | null
-          execution_started_at: string | null
-          job_id: string
-          workflow_id: string
-          workspace_id: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "worker_dispatches"
-          isOneToOne: false
-          isSetofReturn: true
-        }
-      }
+      claim_next_worker_dispatch:
+        | {
+            Args: {
+              accept_benchmark_trials: boolean
+              p_default_workspace_limit?: number
+              p_max_concurrent?: number
+              p_timeout_ms?: number
+            }
+            Returns: {
+              attempt_count: number
+              created_at: string
+              deadline_at: string
+              dispatched_at: string | null
+              execution_started_at: string | null
+              job_id: string
+              workflow_id: string
+              workspace_id: string
+            }[]
+            SetofOptions: {
+              from: "*"
+              to: "worker_dispatches"
+              isOneToOne: false
+              isSetofReturn: true
+            }
+          }
+        | {
+            Args: {
+              p_default_workspace_limit?: number
+              p_max_concurrent?: number
+              p_timeout_ms?: number
+            }
+            Returns: {
+              attempt_count: number
+              created_at: string
+              deadline_at: string
+              dispatched_at: string | null
+              execution_started_at: string | null
+              job_id: string
+              workflow_id: string
+              workspace_id: string
+            }[]
+            SetofOptions: {
+              from: "*"
+              to: "worker_dispatches"
+              isOneToOne: false
+              isSetofReturn: true
+            }
+          }
       claim_run_evidence_purges: {
         Args: { p_limit?: number }
         Returns: {
@@ -10752,6 +11100,16 @@ export type Database = {
         }
         Returns: Json
       }
+      fail_factory_benchmark_trial: {
+        Args: {
+          p_attempt_count: number
+          p_failure_code: string
+          p_job_id: string
+          p_run_id: string
+          p_trial_id: string
+        }
+        Returns: boolean
+      }
       fail_session_checkpoint_cleanup: {
         Args: { p_claim_id: string; p_error_code: string; p_run_id: string }
         Returns: boolean
@@ -10820,6 +11178,16 @@ export type Database = {
           session_number: number
           workspace_slug: string
         }[]
+      }
+      finish_factory_benchmark_trial: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_result: Json
+          p_run_id: string
+          p_trial_id: string
+        }
+        Returns: boolean
       }
       finish_factory_definition_smoke_test: {
         Args: {
@@ -14042,6 +14410,43 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: boolean
+      }
+      start_factory_benchmark_trial: {
+        Args: {
+          p_attempt_count: number
+          p_deadline_at?: string
+          p_job_id: string
+        }
+        Returns: {
+          actor_user_id: string
+          attempt_count: number | null
+          created_at: string
+          deadline_at: string | null
+          factory_id: string
+          failure_code: string | null
+          finished_at: string | null
+          fixture_key: string
+          fixture_revision_id: string
+          id: string
+          job_id: string
+          policy_digest: string
+          policy_revision_id: string
+          replay_execution_id: string
+          run_id: string
+          runner_revision: string
+          sandbox_connection_revision: string
+          session_id: string
+          status: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_trials"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       start_factory_definition_capability_check: {
         Args: {

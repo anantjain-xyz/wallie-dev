@@ -148,6 +148,7 @@ export async function dispatchWork(
         p_max_concurrent: config.maxConcurrent,
         p_default_workspace_limit: 2,
         p_timeout_ms: config.timeoutMs,
+        accept_benchmark_trials: true,
       });
       if (claimed.error) throw new Error("Could not claim workflow dispatch.");
       const dispatch = claimed.data?.[0];

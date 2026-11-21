@@ -294,6 +294,10 @@ describe("durable workspace deletion", () => {
       path: `${workspaceId}/11111111-1111-4111-8111-111111111111-retry-1-22222222-2222-4222-8222-222222222222.bundle`,
     },
     {
+      bucket: "session-source-checkpoints",
+      path: `${workspaceId}/benchmark/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/${"a".repeat(64)}.bundle`,
+    },
+    {
       bucket: "session-validation-evidence",
       path: `${workspaceId}/11111111-1111-4111-8111-111111111111/browser/22222222-2222-4222-8222-222222222222.png`,
     },

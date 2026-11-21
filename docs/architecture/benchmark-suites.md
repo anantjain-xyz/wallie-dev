@@ -132,3 +132,28 @@ node --env-file="$WALLIE_VERCEL_SMOKE_ENV" \
   --import ./scripts/register-server-only.mjs --import tsx \
   scripts/smoke-benchmark-replay-isolation.ts
 ```
+
+## Run one isolated trial
+
+- Admission pins the task revision, policy and approved fixture, Vercel connection,
+  and runner version. The internal session uses the ordinary queue and exact
+  job/run claim. Updated Node and Workerd workers opt in to benchmark claims.
+- The worker rechecks current access as the admitted actor. The
+  `recorded-fixture-v1` runner reads a pinned Git blob in the sealed sandbox,
+  commits its result locally, and validates the produced commit and tree.
+- One terminal transaction binds the restored input receipt, approved tool
+  response receipt, private artifact and checkpoint to the exact attempt.
+  Cancellation or an expired claim prevents a late result from being adopted.
+- Trial sessions stay outside production session numbers, totals, notifications,
+  scorer sampling, and Git or pull-request publication.
+
+Run the live fixture against disposable Supabase and the Vercel test project:
+
+```sh
+WALLIE_BENCHMARK_TRIAL_SMOKE_WORKDIR=/path/to/disposable-supabase \
+  node --env-file="$WALLIE_VERCEL_SMOKE_ENV" node_modules/vitest/vitest.mjs \
+  run src/lib/factory-benchmarks/trial-live.fixture.test.ts
+```
+
+The fixture uses anonymous read access to the archived public Wallie ref.
+It checks the private bundle in Storage and removes the temporary trial data.

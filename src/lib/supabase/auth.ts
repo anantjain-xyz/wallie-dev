@@ -131,7 +131,7 @@ function roundDuration(durationMs: number) {
 function claimsVerificationMethod(header: Record<string, unknown>) {
   const algorithm = typeof header.alg === "string" ? header.alg : null;
   const hasKeyId = typeof header.kid === "string" && header.kid.length > 0;
-  const hasWebCrypto = "crypto" in globalThis && Boolean(globalThis.crypto?.subtle);
+  const hasWebCrypto = typeof crypto !== "undefined" && Boolean(crypto.subtle);
 
   return algorithm && !algorithm.startsWith("HS") && hasKeyId && hasWebCrypto
     ? ("claims-jwks" as const)

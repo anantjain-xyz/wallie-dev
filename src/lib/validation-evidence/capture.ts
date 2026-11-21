@@ -133,9 +133,10 @@ child.once('close',(code)=>finish(code,false));
 `;
 
 type Identity = { commitSha: string; treeSha: string; clean: boolean };
+type ValidationSandbox = Pick<SandboxHandle, "exec" | "repoPath">;
 
 async function boundedNode(
-  sandbox: SandboxHandle,
+  sandbox: ValidationSandbox,
   script: string,
   args: string[],
   signal?: AbortSignal,
@@ -153,7 +154,7 @@ async function boundedNode(
 }
 
 export async function readValidationIdentity(
-  sandbox: SandboxHandle,
+  sandbox: ValidationSandbox,
   signal?: AbortSignal,
 ): Promise<Identity> {
   const value = JSON.parse(await boundedNode(sandbox, PROBE, [], signal)) as Identity;
@@ -215,7 +216,7 @@ function safeText(bytes: Buffer, secrets: readonly string[]): Buffer | null {
 
 /** Independently execute configured validation after the agent has stopped. */
 export async function captureValidationEvidence(input: {
-  sandbox: SandboxHandle;
+  sandbox: ValidationSandbox;
   commitSha: string;
   plan: ValidationPlan;
   secrets?: readonly string[];
