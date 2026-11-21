@@ -5770,6 +5770,7 @@ export type Database = {
           repository_full_name: string
           repository_id: string
           retry_source_run_id: string | null
+          routing_decision_session_id: string | null
           run_id: string
           run_type: string
           sandbox_connection_revision: string | null
@@ -5809,6 +5810,7 @@ export type Database = {
           repository_full_name: string
           repository_id: string
           retry_source_run_id?: string | null
+          routing_decision_session_id?: string | null
           run_id: string
           run_type: string
           sandbox_connection_revision?: string | null
@@ -5848,6 +5850,7 @@ export type Database = {
           repository_full_name?: string
           repository_id?: string
           retry_source_run_id?: string | null
+          routing_decision_session_id?: string | null
           run_id?: string
           run_type?: string
           sandbox_connection_revision?: string | null
@@ -5872,6 +5875,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "pinned_job_recovery_settings"
             referencedColumns: ["job_id"]
+          },
+          {
+            foreignKeyName: "session_attempt_manifests_routing_decision_session_id_fkey"
+            columns: ["routing_decision_session_id"]
+            isOneToOne: false
+            referencedRelation: "session_factory_admission_inputs"
+            referencedColumns: ["session_id"]
           },
           {
             foreignKeyName: "session_attempt_manifests_run_id_fkey"
@@ -6447,6 +6457,7 @@ export type Database = {
           original_title: string | null
           pipeline_id: string
           prompt_sha256: string
+          routing_decision: Json | null
           selected_stage_ids: string[]
           session_id: string
           title_sha256: string
@@ -6473,6 +6484,7 @@ export type Database = {
           original_title?: string | null
           pipeline_id: string
           prompt_sha256: string
+          routing_decision?: Json | null
           selected_stage_ids: string[]
           session_id: string
           title_sha256: string
@@ -6499,6 +6511,7 @@ export type Database = {
           original_title?: string | null
           pipeline_id?: string
           prompt_sha256?: string
+          routing_decision?: Json | null
           selected_stage_ids?: string[]
           session_id?: string
           title_sha256?: string

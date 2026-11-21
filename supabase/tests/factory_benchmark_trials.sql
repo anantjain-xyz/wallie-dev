@@ -137,6 +137,10 @@ select ok((select owner.number < 0 and owner.execution_purpose = 'benchmark'
 select is((select count(*) from public.session_git_continuity_enrollments e
   join public.factory_benchmark_trials t on t.session_id = e.session_id where t.id = pg_temp.replay_id(60)), 0::bigint,
   'the internal session does not enter Git continuity publication enrollment');
+select is((select count(*) from public.session_factory_admission_inputs receipt
+  join public.factory_benchmark_trials trial on trial.session_id = receipt.session_id
+  where trial.id = pg_temp.replay_id(60)), 0::bigint,
+  'isolated replay does not create a production routing admission receipt');
 select throws_ok($$update public.sessions set execution_purpose = 'production'
   where id = (select session_id from public.factory_benchmark_trials where id = pg_temp.replay_id(60))$$, '23514', null,
   'purpose cannot change after creating a session');

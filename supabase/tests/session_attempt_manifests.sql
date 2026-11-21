@@ -413,5 +413,98 @@ select is(public.get_run_skill_revisions(workspace_id, run_id, 1), expected,
 from inspector_skill_evidence;
 reset role;
 
+set local request.jwt.claim.role = 'service_role';
+
+select is((select manifest.routing_decision_session_id from public.session_attempt_manifests manifest
+  join approval_target target using (run_id)), null::uuid,
+  'an attempt from a definition without routing has no decision link');
+select is((select routing_decision_session_id from first_manifest), null::uuid,
+  'legacy attempt evidence has no routing decision link');
+
+create function pg_temp.activate_manifest_routing(p_activation bigint, p_policy jsonb)
+returns uuid language sql as $$
+  with revision as (
+    insert into public.factory_definition_revisions(workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+    select prior.workspace_id,prior.factory_id,prior.schema_version,body.definition,
+      encode(sha256(convert_to(body.definition,'UTF8')),'hex'),prior.created_by
+    from public.factory_definition_activations activation join public.factory_definition_revisions prior on prior.id=activation.revision_id
+    cross join lateral (select (jsonb_set(prior.definition_json::jsonb,'{agent,maxRetries}','3')
+      || jsonb_build_object('skillIds','[]'::jsonb,'modelRouting',p_policy))::text definition) body
+    where activation.workspace_id='b1b2c3d4-0001-4000-8000-000000000001'
+      and activation.activation_number=p_activation-1
+    returning workspace_id,factory_id,id,created_by
+  )
+  insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+  select workspace_id,factory_id,id,p_activation,created_by from revision
+  returning revision_id;
+$$;
+
+create temp table routing_fixture as select '{
+  "version":1,
+  "taskClasses":[{"id":"54400000-0010-4000-8000-000000000001","slug":"plan","name":"Planning"}],
+  "rules":[{"id":"54400000-0011-4000-8000-000000000001","taskClassId":"54400000-0010-4000-8000-000000000001",
+    "configuration":{"agentId":"54400000-0012-4000-8000-000000000001",
+      "definitionRevisionId":"54400000-0012-4000-8000-000000000002","experimentId":"54400000-0012-4000-8000-000000000003",
+      "qualificationId":"54400000-0012-4000-8000-000000000004","modelKey":"openai/gpt-5.4","harness":"codex","workerRuntime":"node"},
+    "constraints":{"qualityFloorBps":8000,"maxMeanCostUsd":0.375,"maxLatencyMs":null,"minResolvedTrials":2,"minConfidenceBps":null},
+    "onUnavailable":{"kind":"escalate"}}],
+  "onUnmatched":{"kind":"escalate"}
+}'::jsonb policy;
+create temp table first_routing_revision as select pg_temp.activate_manifest_routing(4,policy) as revision_id from routing_fixture;
+create temp table routing_first_attempt as select * from pg_temp.manifest_fixture('Routed admission uses frozen stage');
+create temp table pinned_routing_decision as select receipt.routing_decision,receipt.session_id
+from public.session_factory_admission_inputs receipt join routing_first_attempt attempt using (session_id);
+select ok((select receipt.routing_decision @> jsonb_build_object('version',1,'mode','shadow',
+    'policyRevisionId',revision.revision_id,'taskClassSlug','plan','disposition','escalated',
+    'taskClassId','54400000-0010-4000-8000-000000000001','ruleId','54400000-0011-4000-8000-000000000001')
+  from pinned_routing_decision receipt cross join first_routing_revision revision),
+  'admission matches the pinned stage slug and records escalation for a choice without qualified evidence');
+select ok(pg_temp.pin_manifest(job_id,run_id),'the exact first attempt pins its admission decision') from routing_first_attempt;
+select ok((select manifest.routing_decision_session_id=decision.session_id
+    and manifest.model_name='gpt-5.5' and manifest.worker_runtime='workerd'
+  from routing_first_attempt attempt join public.session_attempt_manifests manifest using (run_id)
+  cross join pinned_routing_decision decision), 'the manifest preserves the shadow decision and the actual runtime profile');
+
+create temp table next_routing_revision as
+select pg_temp.activate_manifest_routing(5,jsonb_set(policy,'{taskClasses,0,slug}','"maintenance"')) as revision_id
+from routing_fixture;
+create temp table routing_next_attempt as select * from pg_temp.manifest_fixture('Later admission uses updated policy');
+select ok((select receipt.routing_decision @> jsonb_build_object('policyRevisionId',revision.revision_id,
+    'taskClassSlug','plan','taskClassId',null::text,'ruleId',null::text,'disposition','escalated')
+  from public.session_factory_admission_inputs receipt join routing_next_attempt attempt using (session_id)
+  cross join next_routing_revision revision), 'a fresh admission sees the changed revision and explicit unmatched path');
+
+select is(public.fail_session_job_attempt(job_id,1,'Retry the routed attempt',true,8,run_id),'queued',
+  'a dispatched routed attempt can retry after another revision activates') from routing_first_attempt;
+update public.agent_jobs set status='running',attempt_count=2 where id=(select job_id from routing_first_attempt);
+create temp table routing_retry_attempt as
+select attempt.session_id,attempt.job_id,public.start_session_job_attempt(attempt.job_id,2,owner.current_stage_id,
+  owner.current_artifact_version,'codex','gpt-5.5','project','wallie/manifest-' || attempt.job_id::text) as run_id
+from routing_first_attempt attempt join public.sessions owner on owner.id=attempt.session_id;
+select public.pin_session_job_git_input(job_id,2,run_id,
+  '12b2c3d4-0001-4000-8000-000000000001','main',repeat('a',40)) from routing_retry_attempt;
+select ok(pg_temp.pin_manifest(job_id,run_id,attempt => 2),'a retry pins its own manifest') from routing_retry_attempt;
+select ok((select attempt.run_id<>first.run_id and manifest.routing_decision_session_id=first.session_id
+    and receipt.routing_decision=original.routing_decision and manifest.definition_revision_id=revision.revision_id
+  from routing_retry_attempt attempt join public.session_attempt_manifests manifest using (run_id)
+  join public.session_factory_admission_inputs receipt on receipt.session_id=manifest.routing_decision_session_id
+  cross join first_routing_revision revision cross join pinned_routing_decision original cross join routing_first_attempt first),
+  'the retry links to the exact unchanged receipt and earlier factory revision');
+
+select throws_ok($$update public.session_factory_admission_inputs set routing_decision=null
+  where session_id=(select session_id from pinned_routing_decision)$$,'23514',
+  'Session factory admission inputs are immutable.','the recommendation cannot be rewritten');
+set local role authenticated;
+select throws_ok($$select routing_decision from public.session_factory_admission_inputs$$,
+  '42501',null,'browser roles cannot read the private routing decision');
+select throws_ok($$select routing_decision_session_id from public.session_attempt_manifests$$,
+  '42501',null,'browser roles cannot read the private attempt link');
+reset role;
+
+select lives_ok($$delete from public.sessions where id=(select session_id from routing_first_attempt)$$,
+  'deleting an owning session cascades the routing receipt and its manifest links');
+select is((select count(*) from public.session_attempt_manifests manifest join routing_first_attempt attempt using (session_id)),
+  0::bigint,'the deleted routing session retains no linked attempt manifests');
+
 select * from finish();
 rollback;
