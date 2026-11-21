@@ -104,3 +104,31 @@ node --env-file="$WALLIE_VERCEL_SMOKE_ENV" \
 The smoke verifies the same tree and bundle receipt in two fresh sandboxes.
 It confirms the original sandbox is stopped and its source removed before
 starting the second.
+
+## Isolate replay tools
+
+| Policy profile      | Tool behavior                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `blocked`           | Deny every call.                                                                                         |
+| `recorded_fixtures` | Serve an approved, pinned fixture for an exact tool read. Deny other calls.                              |
+| `isolated_test`     | Serve an approved, pinned local response for an exact recognized operation, including a simulated write. |
+
+- Each execution pins the task revision, restoration receipt, and policy
+  revision. Wallie records the decision before returning a denial or the
+  digest-checked fixture bytes. Revocation stops future fixture responses.
+- Trusted restoration uses repository-scoped read credentials and GitHub-only
+  egress. Before the trial can run, Wallie removes the checkout remote, verifies
+  Vercel's `deny-all` policy, and rechecks access. Trial commands cannot inject
+  environment variables. The replay broker has no production transport.
+- The isolated runtime receives approved task context for local processing.
+  Snapshot exports contain IDs, digests, and qualification codes. Private
+  context, raw fixture responses, endpoints, and credentials are outside that
+  export.
+
+Run the hosted smoke with the dedicated Vercel test project:
+
+```sh
+node --env-file="$WALLIE_VERCEL_SMOKE_ENV" \
+  --import ./scripts/register-server-only.mjs --import tsx \
+  scripts/smoke-benchmark-replay-isolation.ts
+```

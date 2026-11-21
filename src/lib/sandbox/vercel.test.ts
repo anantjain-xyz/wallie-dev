@@ -4,7 +4,12 @@ import { APIError } from "@vercel/sandbox";
 import { vercelSandboxFetch } from "@/lib/vercel-sandbox/errors";
 
 import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
-import { createSessionSandbox } from "./index";
+import {
+  createBenchmarkReplaySandbox,
+  createSessionSandbox,
+  createUtilitySandbox,
+  sealBenchmarkReplaySandbox,
+} from "./index";
 import {
   createVercelSessionSandbox,
   hasRecoverableVercelSandboxSource,
@@ -207,6 +212,143 @@ describe("createVercelSessionSandbox", () => {
       runCommand.mock.calls[0] as unknown as [{ args?: string[] }] | undefined
     )?.[0];
     expect(setupCall?.args?.[1] ?? "").toContain("npm install -g opencode-ai@1");
+  });
+});
+
+describe("Vercel benchmark replay isolation", () => {
+  function replayInput() {
+    return {
+      workspaceId: "workspace",
+      ownerId: "trial",
+      timeoutMs: 60_000,
+      onSandboxCreated: vi.fn(),
+    };
+  }
+
+  function replayProvider(sessionSealPolicy = "deny-all") {
+    let networkPolicy: unknown = { allow: ["github.com"] };
+    let sessionPolicy: unknown = networkPolicy;
+    const native = {
+      ...sandbox(),
+      get networkPolicy() {
+        return networkPolicy;
+      },
+      currentSession: () => ({ networkPolicy: sessionPolicy }),
+      update: vi.fn(async () => {
+        networkPolicy = "deny-all";
+        sessionPolicy = sessionSealPolicy;
+      }),
+    };
+    mocked.sandboxCreate.mockResolvedValueOnce(native);
+    return native;
+  }
+
+  it("confirms bootstrap egress, seals the native session, and rejects command env injection", async () => {
+    const native = replayProvider();
+    const request = replayInput();
+    const signal = new AbortController().signal;
+    const handle = await createBenchmarkReplaySandbox(request, vercelConnection);
+
+    expect(request.onSandboxCreated).toHaveBeenCalledWith({
+      provider: "vercel",
+      sandboxId: "sandbox-1",
+    });
+    expect(mocked.sandboxCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ persistent: false, networkPolicy: { allow: ["github.com"] } }),
+    );
+    const [creation] = mocked.sandboxCreate.mock.calls;
+    expect(creation?.[0]).not.toHaveProperty("env");
+    await expect((await handle.exec("git", ["fetch"])).exitCode).resolves.toBe(0);
+
+    await sealBenchmarkReplaySandbox(handle, signal);
+
+    expect(native.update).toHaveBeenCalledWith({ networkPolicy: "deny-all" }, { signal });
+    await expect(handle.exec("node", [], { env: { API_TOKEN: "secret" } })).rejects.toThrow(
+      "cannot inject environment variables",
+    );
+    expect(native.runCommand).toHaveBeenCalledTimes(1);
+    await expect((await handle.exec("cat", ["fixture"], { signal })).exitCode).resolves.toBe(0);
+    await expect(sealBenchmarkReplaySandbox(handle, signal)).rejects.toThrow("once");
+  });
+
+  it("rejects other providers and ordinary utility handles", async () => {
+    const request = replayInput();
+    await expect(
+      createBenchmarkReplaySandbox(request, {
+        provider: "e2b",
+        revision: "other-provider",
+        credentials: { apiKey: "test-key" },
+      }),
+    ).rejects.toThrow("requires Vercel Sandbox");
+    expect(mocked.sandboxCreate).not.toHaveBeenCalled();
+
+    const utility = await createUtilitySandbox(request, vercelConnection);
+    const [creation] = mocked.sandboxCreate.mock.calls;
+    expect(creation?.[0]).not.toHaveProperty("networkPolicy");
+    await expect(sealBenchmarkReplaySandbox(utility, new AbortController().signal)).rejects.toThrow(
+      "benchmark replay sandbox is required",
+    );
+  });
+
+  it("leaves the hosted provider untouched in fake sandbox mode", async () => {
+    vi.stubEnv("WALLIE_SANDBOX_IMPL", "fake");
+    try {
+      await expect(createBenchmarkReplaySandbox(replayInput(), vercelConnection)).rejects.toThrow(
+        "Hosted benchmark replay is disabled in fake sandbox mode.",
+      );
+      expect(mocked.sandboxCreate).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("stops a sandbox whose active bootstrap policy is too broad", async () => {
+    const native = sandbox({
+      networkPolicy: { allow: ["github.com"] },
+      currentSession: () => ({ networkPolicy: { allow: ["github.com", "example.com"] } }),
+    });
+    mocked.sandboxCreate.mockResolvedValueOnce(native);
+
+    await expect(createBenchmarkReplaySandbox(replayInput(), vercelConnection)).rejects.toThrow(
+      "bootstrap network policy has not been verified",
+    );
+    expect(native.stop).toHaveBeenCalledOnce();
+    expect(native.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps commands blocked if the provider update does not seal the active session", async () => {
+    const native = replayProvider("allow-all");
+    const handle = await createBenchmarkReplaySandbox(replayInput(), vercelConnection);
+
+    await expect(sealBenchmarkReplaySandbox(handle, new AbortController().signal)).rejects.toThrow(
+      "network seal has not been verified",
+    );
+    await expect(handle.exec("node", [])).rejects.toThrow("network seal has not been verified");
+    expect(native.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("blocks commands during seal and keeps them blocked after cancellation and late success", async () => {
+    const native = replayProvider();
+    const handle = await createBenchmarkReplaySandbox(replayInput(), vercelConnection);
+    const complete = Promise.withResolvers<void>();
+    const originalUpdate = native.update.getMockImplementation();
+    native.update.mockImplementationOnce(async () => {
+      await complete.promise;
+      await originalUpdate?.();
+    });
+    const controller = new AbortController();
+    const canceled = new Error("Trial canceled");
+    const sealing = sealBenchmarkReplaySandbox(handle, controller.signal);
+    await vi.waitFor(() => expect(native.update).toHaveBeenCalledOnce());
+    await expect(handle.exec("node", [])).rejects.toThrow("network seal has not been verified");
+
+    controller.abort(canceled);
+    await expect(sealing).rejects.toBe(canceled);
+    complete.resolve();
+    await vi.waitFor(() => expect(native.networkPolicy).toBe("deny-all"));
+
+    await expect(handle.exec("node", [])).rejects.toThrow("network seal has not been verified");
+    expect(native.runCommand).not.toHaveBeenCalled();
   });
 });
 

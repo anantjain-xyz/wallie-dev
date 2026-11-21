@@ -1343,6 +1343,213 @@ export type Database = {
           },
         ]
       }
+      factory_benchmark_replay_executions: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          policy_digest: string
+          policy_revision_id: string
+          profile: Database["public"]["Enums"]["benchmark_replay_profile"]
+          restoration_receipt_sha256: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id: string
+          policy_digest: string
+          policy_revision_id: string
+          profile: Database["public"]["Enums"]["benchmark_replay_profile"]
+          restoration_receipt_sha256: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          policy_digest?: string
+          policy_revision_id?: string
+          profile?: Database["public"]["Enums"]["benchmark_replay_profile"]
+          restoration_receipt_sha256?: string
+          task_id?: string
+          task_revision_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_replay_exec_workspace_id_factory_id_poli_fkey"
+            columns: ["workspace_id", "factory_id", "policy_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_replay_policy_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_replay_exec_workspace_id_factory_id_task_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "task_id",
+              "task_revision_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_task_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "task_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_replay_fixture_revisions: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          fixture_key: string
+          id: string
+          operation: Database["public"]["Enums"]["benchmark_replay_operation"]
+          response_json: string
+          response_sha256: string
+          revision_number: number
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          fixture_key: string
+          id?: string
+          operation: Database["public"]["Enums"]["benchmark_replay_operation"]
+          response_json: string
+          response_sha256: string
+          revision_number: number
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          fixture_key?: string
+          id?: string
+          operation?: Database["public"]["Enums"]["benchmark_replay_operation"]
+          response_json?: string
+          response_sha256?: string
+          revision_number?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_replay_fixture_r_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_replay_operations: {
+        Row: {
+          created_at: string
+          decision: string
+          execution_id: string
+          factory_id: string
+          fixture_key: string | null
+          fixture_response_sha256: string | null
+          fixture_revision_id: string | null
+          operation: Database["public"]["Enums"]["benchmark_replay_operation"]
+          operation_id: string
+          reason: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          decision: string
+          execution_id: string
+          factory_id: string
+          fixture_key?: string | null
+          fixture_response_sha256?: string | null
+          fixture_revision_id?: string | null
+          operation: Database["public"]["Enums"]["benchmark_replay_operation"]
+          operation_id: string
+          reason: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          decision?: string
+          execution_id?: string
+          factory_id?: string
+          fixture_key?: string | null
+          fixture_response_sha256?: string | null
+          fixture_revision_id?: string | null
+          operation?: Database["public"]["Enums"]["benchmark_replay_operation"]
+          operation_id?: string
+          reason?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_replay_oper_workspace_id_factory_id_exec_fkey"
+            columns: ["workspace_id", "factory_id", "execution_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_replay_executions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_replay_oper_workspace_id_factory_id_fixt_fkey"
+            columns: ["workspace_id", "factory_id", "fixture_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_replay_fixture_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_benchmark_replay_policy_revisions: {
+        Row: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          policy_digest: string
+          profile: Database["public"]["Enums"]["benchmark_replay_profile"]
+          revision_number: number
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          factory_id: string
+          id?: string
+          policy_digest: string
+          profile: Database["public"]["Enums"]["benchmark_replay_profile"]
+          revision_number: number
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          factory_id?: string
+          id?: string
+          policy_digest?: string
+          profile?: Database["public"]["Enums"]["benchmark_replay_profile"]
+          revision_number?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_replay_policy_re_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       factory_benchmark_suite_members: {
         Row: {
           factory_id: string
@@ -11734,6 +11941,37 @@ export type Database = {
           transcripts_expired: number
         }[]
       }
+      open_factory_benchmark_replay_execution: {
+        Args: {
+          p_actor_user_id: string
+          p_execution_id: string
+          p_expected_policy_digest: string
+          p_factory_id: string
+          p_policy_revision_id: string
+          p_restoration_receipt_sha256: string
+          p_task_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          policy_digest: string
+          policy_revision_id: string
+          profile: Database["public"]["Enums"]["benchmark_replay_profile"]
+          restoration_receipt_sha256: string
+          task_id: string
+          task_revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_replay_executions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       persist_codex_auth_json: {
         Args: {
           new_account_email: string
@@ -11975,6 +12213,48 @@ export type Database = {
           authorizations_deleted: number
           token_pairs_deleted: number
         }[]
+      }
+      publish_factory_benchmark_replay_fixture: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision_id?: string
+          p_factory_id: string
+          p_fixture_key: string
+          p_operation: Database["public"]["Enums"]["benchmark_replay_operation"]
+          p_response_json: string
+          p_workspace_id: string
+        }
+        Returns: {
+          id: string
+          response_sha256: string
+          revision_number: number
+        }[]
+      }
+      publish_factory_benchmark_replay_policy: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision_id?: string
+          p_factory_id: string
+          p_fixture_revision_ids?: string[]
+          p_profile: Database["public"]["Enums"]["benchmark_replay_profile"]
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          policy_digest: string
+          profile: Database["public"]["Enums"]["benchmark_replay_profile"]
+          revision_number: number
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_replay_policy_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       publish_factory_definition_draft: {
         Args: {
@@ -12247,6 +12527,17 @@ export type Database = {
           run_id: string
           source_asset_id: string
         }[]
+      }
+      record_factory_benchmark_replay_operation: {
+        Args: {
+          p_execution_id: string
+          p_factory_id: string
+          p_fixture_key?: string
+          p_operation: Database["public"]["Enums"]["benchmark_replay_operation"]
+          p_operation_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       record_factory_revert_coverage: {
         Args: {
@@ -12819,6 +13110,16 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      revoke_factory_benchmark_replay_revision: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_fixture_revision_id?: string
+          p_policy_revision_id?: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       revoke_factory_deployment_source: {
         Args: {
@@ -14086,6 +14387,18 @@ export type Database = {
         | "manual_retry"
         | "assignment"
         | "comment_retry"
+      benchmark_replay_operation:
+        | "tool_read"
+        | "tool_write"
+        | "git_write"
+        | "chat_write"
+        | "issue_write"
+        | "deployment_write"
+        | "external_tool"
+      benchmark_replay_profile:
+        | "blocked"
+        | "recorded_fixtures"
+        | "isolated_test"
       factory_command_admission_status:
         | "admitted"
         | "unauthorized"
@@ -14315,6 +14628,20 @@ export const Constants = {
         "manual_retry",
         "assignment",
         "comment_retry",
+      ],
+      benchmark_replay_operation: [
+        "tool_read",
+        "tool_write",
+        "git_write",
+        "chat_write",
+        "issue_write",
+        "deployment_write",
+        "external_tool",
+      ],
+      benchmark_replay_profile: [
+        "blocked",
+        "recorded_fixtures",
+        "isolated_test",
       ],
       factory_command_admission_status: [
         "admitted",

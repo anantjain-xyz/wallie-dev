@@ -7,7 +7,7 @@ import {
   vercelSandboxFetch,
 } from "@/lib/vercel-sandbox/errors";
 
-import { finalizeSandboxAcquisition } from "./lifecycle";
+import { finalizeSandboxAcquisition, observeUntilAbort } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
   CreateUtilitySandboxInput,
@@ -107,14 +107,16 @@ async function waitForVercelCommand(
  */
 class VercelSandboxHandle implements SandboxHandle {
   readonly repoPath = REPO_PATH;
+  readonly #sandbox: Sandbox;
+  readonly #secrets: Array<string | undefined>;
 
-  constructor(
-    private readonly sandbox: Sandbox,
-    private readonly secrets: Array<string | undefined>,
-  ) {}
+  constructor(sandbox: Sandbox, secrets: Array<string | undefined>) {
+    this.#sandbox = sandbox;
+    this.#secrets = secrets;
+  }
 
   get id(): string {
-    return this.sandbox.name;
+    return this.#sandbox.name;
   }
 
   async exec(
@@ -124,7 +126,7 @@ class VercelSandboxHandle implements SandboxHandle {
   ): Promise<SandboxExecHandle> {
     let command;
     try {
-      command = await this.sandbox.runCommand({
+      command = await this.#sandbox.runCommand({
         cmd,
         args,
         cwd: opts.cwd ?? REPO_PATH,
@@ -133,10 +135,10 @@ class VercelSandboxHandle implements SandboxHandle {
         signal: opts.signal,
       });
     } catch (error) {
-      rethrowVercelSandboxError(error, this.secrets);
+      rethrowVercelSandboxError(error, this.#secrets);
     }
 
-    const secrets = this.secrets;
+    const secrets = this.#secrets;
     const waitPromise = waitForVercelCommand(command, secrets, opts.signal);
     // Callers drain logs before awaiting exitCode, so a cancellation or budget
     // rejection can land first. Handle it here as well; awaiting the original
@@ -187,28 +189,90 @@ class VercelSandboxHandle implements SandboxHandle {
   ): Promise<void> {
     const content = typeof data === "string" ? Buffer.from(data, "utf8") : data;
     try {
-      await this.sandbox.writeFiles([{ path, content, mode: opts.mode }]);
+      await this.#sandbox.writeFiles([{ path, content, mode: opts.mode }]);
     } catch (error) {
-      rethrowVercelSandboxError(error, this.secrets);
+      rethrowVercelSandboxError(error, this.#secrets);
     }
   }
 
   async readFile(path: string): Promise<string | null> {
     try {
-      const buf = await this.sandbox.readFileToBuffer({ path });
+      const buf = await this.#sandbox.readFileToBuffer({ path });
       return buf ? buf.toString("utf8") : null;
     } catch (error) {
-      rethrowVercelSandboxError(error, this.secrets);
+      rethrowVercelSandboxError(error, this.#secrets);
     }
   }
 
   async stop(): Promise<void> {
     try {
-      await this.sandbox.stop();
+      await this.#sandbox.stop();
     } catch {
       // Already stopped or network hiccup; stop() is supposed to be idempotent.
     }
   }
+}
+
+class VercelBenchmarkReplaySandboxHandle extends VercelSandboxHandle {
+  #phase: "bootstrap" | "sealing" | "sealed" = "bootstrap";
+  readonly #sandbox: Sandbox;
+
+  constructor(sandbox: Sandbox, secrets: Array<string | undefined>) {
+    super(sandbox, secrets);
+    this.#sandbox = sandbox;
+  }
+
+  override async exec(cmd: string, args: string[], opts: SandboxExecOptions = {}) {
+    if (this.#phase === "sealing") {
+      throw new Error("The benchmark replay network seal has not been verified.");
+    }
+    if (this.#phase === "sealed" && opts.env !== undefined) {
+      throw new Error("Benchmark replay commands cannot inject environment variables.");
+    }
+    return super.exec(cmd, args, opts);
+  }
+
+  async seal(signal: AbortSignal) {
+    if (this.#phase !== "bootstrap") {
+      throw new Error("A benchmark replay sandbox can only be sealed once.");
+    }
+    this.#phase = "sealing";
+    try {
+      await observeUntilAbort(signal, () =>
+        this.#sandbox.update({ networkPolicy: "deny-all" }, { signal }),
+      );
+      if (
+        this.#sandbox.networkPolicy !== "deny-all" ||
+        this.#sandbox.currentSession().networkPolicy !== "deny-all"
+      ) {
+        throw new Error("Unexpected Vercel Sandbox network policy.");
+      }
+      this.#phase = "sealed";
+    } catch {
+      signal.throwIfAborted();
+      throw new Error("The benchmark replay network seal has not been verified.");
+    }
+  }
+}
+
+export async function sealVercelBenchmarkReplaySandbox(
+  sandbox: SandboxHandle,
+  signal: AbortSignal,
+) {
+  if (!(sandbox instanceof VercelBenchmarkReplaySandboxHandle)) {
+    throw new Error("A Vercel benchmark replay sandbox is required to seal egress.");
+  }
+  await sandbox.seal(signal);
+}
+
+function isBenchmarkBootstrapPolicy(policy: Sandbox["networkPolicy"]) {
+  return (
+    typeof policy === "object" &&
+    Array.isArray(policy.allow) &&
+    policy.allow.length === 1 &&
+    policy.allow[0] === "github.com" &&
+    !policy.subnets?.allow?.length
+  );
 }
 
 /**
@@ -392,30 +456,54 @@ export async function hasRecoverableVercelSandboxSource(
   return recoverable;
 }
 
+async function createVercelUtilitySandbox(
+  input: CreateUtilitySandboxInput,
+  connection: VercelConnection,
+  purpose: "utility" | "benchmark-replay",
+): Promise<SandboxHandle> {
+  const benchmarkReplay = purpose === "benchmark-replay";
+  const secrets = [connection.credentials.token];
+  const sandbox = await Sandbox.create({
+    ...vercelClientOptions(connection.credentials),
+    runtime: "node22",
+    persistent: false,
+    timeout: input.timeoutMs,
+    resources: { vcpus: 2 },
+    signal: input.signal,
+    ...(benchmarkReplay ? { networkPolicy: { allow: ["github.com"] } } : {}),
+  }).catch((error: unknown) => {
+    rethrowVercelSandboxError(error, secrets);
+  });
+  const handle = benchmarkReplay
+    ? new VercelBenchmarkReplaySandboxHandle(sandbox, secrets)
+    : new VercelSandboxHandle(sandbox, secrets);
+  try {
+    await input.onSandboxCreated({ provider: "vercel", sandboxId: handle.id });
+    input.signal?.throwIfAborted();
+    if (
+      benchmarkReplay &&
+      (!isBenchmarkBootstrapPolicy(sandbox.networkPolicy) ||
+        !isBenchmarkBootstrapPolicy(sandbox.currentSession().networkPolicy))
+    ) {
+      throw new Error("The benchmark replay bootstrap network policy has not been verified.");
+    }
+    return handle;
+  } catch (error) {
+    await handle.stop();
+    throw error;
+  }
+}
+
+export function createVercelBenchmarkReplaySandbox(
+  input: CreateUtilitySandboxInput,
+  connection: VercelConnection,
+) {
+  return createVercelUtilitySandbox(input, connection, "benchmark-replay");
+}
+
 export const vercelSandboxDriver: SandboxProviderDriver<VercelConnection> = {
   create: createVercelSessionSandbox,
-  createUtility: async (input: CreateUtilitySandboxInput, connection) => {
-    const secrets = [connection.credentials.token];
-    const sandbox = await Sandbox.create({
-      ...vercelClientOptions(connection.credentials),
-      runtime: "node22",
-      persistent: false,
-      timeout: input.timeoutMs,
-      resources: { vcpus: 2 },
-      signal: input.signal,
-    }).catch((error: unknown) => {
-      rethrowVercelSandboxError(error, secrets);
-    });
-    const handle = new VercelSandboxHandle(sandbox, secrets);
-    try {
-      await input.onSandboxCreated({ provider: "vercel", sandboxId: handle.id });
-      input.signal?.throwIfAborted();
-      return handle;
-    } catch (error) {
-      await handle.stop();
-      throw error;
-    }
-  },
+  createUtility: (input, connection) => createVercelUtilitySandbox(input, connection, "utility"),
   hasRecoverableSource: hasRecoverableVercelSandboxSource,
   listRunning: (connection, options) =>
     listRunningVercelSandboxes(connection, { throwOnError: true, ...options }),

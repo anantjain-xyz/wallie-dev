@@ -50,27 +50,30 @@ describe("sandbox repository tokens", () => {
     );
   });
 
-  it("limits read context to a numeric repository and contents read permission", async () => {
-    await mintSandboxRepositoryToken({
-      installationId: 123,
-      repositoryFullName: "acme/docs",
-      repositoryId: 777,
-      purpose: "read-context",
-    });
-    expect(request).toHaveBeenCalledExactlyOnceWith(
-      "POST /app/installations/{installation_id}/access_tokens",
-      { installation_id: 123, repository_ids: [777], permissions: { contents: "read" } },
-    );
-    request.mockClear();
-    await expect(
-      mintSandboxRepositoryToken({
+  it.each(["read-context", "benchmark-checkout"] as const)(
+    "limits %s to a numeric repository and contents read permission",
+    async (purpose) => {
+      await mintSandboxRepositoryToken({
         installationId: 123,
         repositoryFullName: "acme/docs",
-        purpose: "read-context",
-      }),
-    ).rejects.toThrow("numeric repository identity");
-    expect(request).not.toHaveBeenCalled();
-  });
+        repositoryId: 777,
+        purpose,
+      });
+      expect(request).toHaveBeenCalledExactlyOnceWith(
+        "POST /app/installations/{installation_id}/access_tokens",
+        { installation_id: 123, repository_ids: [777], permissions: { contents: "read" } },
+      );
+      request.mockClear();
+      await expect(
+        mintSandboxRepositoryToken({
+          installationId: 123,
+          repositoryFullName: "acme/docs",
+          purpose,
+        }),
+      ).rejects.toThrow("numeric repository identity");
+      expect(request).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([undefined, 777])(
     "gives agent checkout read-only access without pull-request permissions (repository id: %j)",

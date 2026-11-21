@@ -6,7 +6,12 @@ import { createClient } from "@supabase/supabase-js";
 import { expect, it, vi } from "vitest";
 
 import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
-import { createUtilitySandbox, stopSandboxById } from "@/lib/sandbox";
+import {
+  createBenchmarkReplaySandbox,
+  createUtilitySandbox,
+  sealBenchmarkReplaySandbox,
+  stopSandboxById,
+} from "@/lib/sandbox";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import type { SandboxConnection } from "@/lib/sandbox/types";
@@ -21,14 +26,22 @@ import {
 
 import { replaySha256, type ReplayPlan } from "./replay-contracts";
 import { resolveBenchmarkReplay } from "./replay-inputs";
-import { stageBenchmarkReplay, withRestoredBenchmarkInputs } from "./replay-sandbox";
+import { openBenchmarkReplayPolicy } from "./replay-policy";
+import {
+  stageBenchmarkReplay,
+  withIsolatedBenchmarkReplay,
+  withRestoredBenchmarkInputs,
+} from "./replay-sandbox";
 
 vi.mock("@/features/github/sandbox-token", () => ({ mintSandboxRepositoryToken: vi.fn() }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
 vi.mock("./replay-inputs", () => ({ resolveBenchmarkReplay: vi.fn() }));
+vi.mock("./replay-policy", () => ({ openBenchmarkReplayPolicy: vi.fn() }));
 vi.mock(import("@/lib/sandbox"), async (importOriginal) => ({
   ...(await importOriginal()),
+  createBenchmarkReplaySandbox: vi.fn(),
   createUtilitySandbox: vi.fn(),
+  sealBenchmarkReplaySandbox: vi.fn(),
   stopSandboxById: vi.fn(),
 }));
 vi.mock(import("@/lib/workspaces/resource-operations"), async (importOriginal) => ({
@@ -314,6 +327,14 @@ async function acquiredReplay() {
     await request.onSandboxCreated?.({ provider: "vercel", sandboxId: sandbox.id });
     return sandbox;
   });
+  vi.mocked(createBenchmarkReplaySandbox)
+    .mockClear()
+    .mockImplementation(async (request) => {
+      await request.onSandboxCreated?.({ provider: "vercel", sandboxId: sandbox.id });
+      return sandbox;
+    });
+  vi.mocked(sealBenchmarkReplaySandbox).mockReset().mockResolvedValue(undefined);
+  vi.mocked(openBenchmarkReplayPolicy).mockReset();
   vi.mocked(stopSandboxById)
     .mockClear()
     .mockImplementation(async (sandboxId) => {
@@ -375,6 +396,121 @@ it("removes staged inputs and settles the lease when an inspection ignores cance
     );
   } finally {
     completion.resolve("Late inspection success");
+    await fixture.teardown();
+  }
+});
+
+it.each(["firewall", "policy"] as const)(
+  "tears down the sandbox without running a candidate when %s verification fails",
+  async (barrier) => {
+    const fixture = await acquiredReplay();
+    const failure = new Error("Replay isolation unavailable");
+    const execute = vi.fn<() => Promise<void>>();
+    if (barrier === "firewall") {
+      vi.mocked(sealBenchmarkReplaySandbox).mockRejectedValueOnce(failure);
+    } else {
+      vi.mocked(openBenchmarkReplayPolicy).mockRejectedValueOnce(failure);
+    }
+    try {
+      await expect(
+        withIsolatedBenchmarkReplay(
+          {
+            ...fixture.input,
+            executionId: id(30),
+            policyRevisionId: id(31),
+            expectedPolicyDigest: replaySha256("approved replay profile"),
+          },
+          execute,
+        ),
+      ).rejects.toBe(failure);
+      expect(execute).not.toHaveBeenCalled();
+      expect(createBenchmarkReplaySandbox).toHaveBeenCalledOnce();
+      expect(sealBenchmarkReplaySandbox).toHaveBeenCalledOnce();
+      expect(openBenchmarkReplayPolicy).toHaveBeenCalledTimes(barrier === "firewall" ? 0 : 1);
+      expect(stopSandboxById).toHaveBeenCalledOnce();
+      expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(
+        fixture.admin,
+        fixture.operationId,
+        true,
+      );
+    } finally {
+      await fixture.teardown();
+    }
+  },
+);
+
+it("runs only after isolation and exposes approved context separately from snapshot evidence", async () => {
+  const fixture = await acquiredReplay();
+  const endpoint = "https://unapproved-provider.invalid/mcp";
+  const historicalKey = "synthetic-historical-credential";
+  const policyRevisionId = id(31);
+  const executionId = id(30);
+  const expectedPolicyDigest = replaySha256("approved replay profile");
+  fixture.plan.text.definitionJson = JSON.stringify({ endpoint, historicalKey });
+  fixture.plan.identity.definitionDigest = replaySha256(fixture.plan.text.definitionJson);
+  fixture.plan.text.contextManifestJson = JSON.stringify({ endpoint });
+  fixture.plan.identity.contextManifestSha256 = replaySha256(fixture.plan.text.contextManifestJson);
+  fixture.plan.runtime.model = endpoint;
+  const events: string[] = [];
+  vi.mocked(sealBenchmarkReplaySandbox).mockImplementation(async () => {
+    events.push("sealed");
+  });
+  vi.mocked(openBenchmarkReplayPolicy).mockImplementation(async (input) => {
+    events.push("pinned");
+    return {
+      permit: {
+        version: 1,
+        executionId: input.executionId,
+        workspaceId: input.workspaceId,
+        factoryId: input.factoryId,
+        taskRevisionId: input.taskRevisionId,
+        policyRevisionId: input.policyRevisionId,
+        policyDigest: input.expectedPolicyDigest,
+        restorationReceiptSha256: input.restorationReceiptSha256,
+        profile: "recorded_fixtures",
+      },
+      invoke: vi.fn(),
+    };
+  });
+  try {
+    const snapshot = await withIsolatedBenchmarkReplay(
+      { ...fixture.input, executionId, policyRevisionId, expectedPolicyDigest },
+      async ({ sandbox, broker, inputPath, snapshot }) => {
+        events.push("executed");
+        expect(sandbox).not.toHaveProperty("stop");
+        expect(git(sandbox.repoPath, "remote")).toBe("");
+        const staged = await sandbox.readFile(inputPath);
+        if (staged === null) throw new Error("The staged replay context is missing.");
+        expect(staged).not.toContain(endpoint);
+        expect(staged).not.toContain(historicalKey);
+        expect(JSON.parse(staged)).toMatchObject({
+          version: 1,
+          text: {
+            originalPrompt,
+            documents: fixture.plan.text.documents,
+            skills: fixture.plan.text.skills,
+          },
+        });
+        expect(snapshot.inputBundleSha256).toBe(replaySha256(staged));
+        expect(broker.permit).toMatchObject({
+          executionId,
+          policyRevisionId,
+          restorationReceiptSha256: snapshot.restorationReceiptSha256,
+        });
+        return snapshot;
+      },
+    );
+    expect(events).toEqual(["sealed", "pinned", "executed"]);
+    expect(mintSandboxRepositoryToken).toHaveBeenLastCalledWith(
+      expect.objectContaining({ purpose: "benchmark-checkout", repositoryId: 2 }),
+    );
+    const exported = JSON.stringify(snapshot);
+    expect(exported).not.toContain(endpoint);
+    expect(exported).not.toContain(historicalKey);
+    expect(exported).not.toContain(originalPrompt);
+    expect(exported).not.toContain("Frozen document");
+    expect(existsSync(fixture.sandbox.repoPath)).toBe(false);
+  } finally {
     await fixture.teardown();
   }
 });
