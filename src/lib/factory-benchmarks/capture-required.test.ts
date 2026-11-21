@@ -164,3 +164,112 @@ it("reports changed retained Markdown, unsupported inputs and missing original r
     "A required run input could not be verified from retained history.",
   ]);
 });
+
+const recordedAt = "2026-11-20T12:00:00.000Z";
+const priorDraft = "# Specification\n\nUse audited invoices.";
+const specificationInputs = [
+  ...originalInputs,
+  input("specification/clarification-available", "false"),
+  input("specification/prior-draft", priorDraft),
+  input(
+    "specification/clarification-history",
+    "Round 1\nQuestion: Which invoices?\nAnswer: Paid invoices.\n\n" +
+      "Round 2\nQuestion: What period?\nAnswer: Last month.",
+  ),
+];
+
+function specificationFixture(secondAnswer: "retained" | "moved" | "missing") {
+  const earlier = "2026-11-20T11:00:00.000Z";
+  const later = "2026-11-20T13:00:00.000Z";
+  const drafts = [
+    { version: 4, created_at: later, artifact_json: "This draft was made after the capture." },
+    {
+      version: 3,
+      created_at: earlier,
+      artifact_json:
+        '<!-- wallie-clarification: {"question":"Include drafts?"} -->\r\n' + priorDraft,
+    },
+  ];
+  const answers = [
+    {
+      ordinal: 1,
+      question: "Which invoices?",
+      answer_text: "Paid invoices.",
+      answered_at: earlier,
+      artifact_version: 1,
+    },
+    ...(secondAnswer === "missing"
+      ? []
+      : [
+          {
+            ordinal: 2,
+            question: "What period?",
+            answer_text: "Last month.",
+            answered_at: secondAnswer === "moved" ? later : earlier,
+            artifact_version: 2,
+          },
+        ]),
+    {
+      ordinal: 3,
+      question: "Include drafts?",
+      answer_text: "No.",
+      answered_at: earlier,
+      artifact_version: 3,
+    },
+  ];
+  const admin = createClient<Database>("https://capture.example.test", "synthetic-test-key", {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      async fetch(request) {
+        const url = new URL(String(request));
+        const query = url.searchParams;
+        expect(query.get("workspace_id")).toBe(`eq.${workspaceId}`);
+        expect(query.get("session_id")).toBe(`eq.${sessionId}`);
+        expect(query.get("stage_id")).toBe(`eq.${stageId}`);
+        if (url.pathname.endsWith("/session_artifacts")) {
+          expect(query.get("created_at")).toBe(`lt.${recordedAt}`);
+          expect(query.get("order")).toBe("version.desc");
+          expect(query.get("limit")).toBe("1");
+          const boundary = query.get("created_at")?.slice(3) ?? "";
+          return Response.json(drafts.find(({ created_at: createdAt }) => createdAt < boundary));
+        }
+        expect(url.pathname.endsWith("/session_specification_clarifications")).toBe(true);
+        expect(query.get("status")).toBe("eq.answered");
+        expect(query.get("artifact_version")).toBe("lt.3");
+        expect(query.get("answered_at")).toBe(`lt.${recordedAt}`);
+        expect(query.get("order")).toBe("ordinal.asc");
+        const boundary = query.get("answered_at")?.slice(3) ?? "";
+        const version = Number(query.get("artifact_version")?.slice(3));
+        return Response.json(
+          answers.filter(
+            ({ answered_at: answeredAt, artifact_version: artifactVersion }) =>
+              answeredAt < boundary && artifactVersion < version,
+          ),
+        );
+      },
+    },
+  });
+  return { admin, workspaceId, sessionId, stageId, recordedAt };
+}
+
+it("verifies the exact draft and ordered clarification history at the attempt boundary", async () => {
+  await expect(
+    verifyRequiredRunInputs(
+      specificationFixture("retained"),
+      specificationInputs,
+      original,
+      async () => true,
+    ),
+  ).resolves.toEqual([]);
+});
+
+it.each(["moved", "missing"] as const)("rejects %s clarification answers", async (secondAnswer) => {
+  await expect(
+    verifyRequiredRunInputs(
+      specificationFixture(secondAnswer),
+      specificationInputs,
+      original,
+      async () => true,
+    ),
+  ).resolves.toEqual(["A recorded specification input is unavailable."]);
+});

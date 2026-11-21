@@ -104,11 +104,11 @@ grant select, insert on capture_results to service_role;
 create function pg_temp.capture(
   p_run integer, p_suite integer, p_expected uuid default null, p_new_name text default null,
   p_new_purpose text default null, p_actor integer default 1, p_factory_id uuid default null,
-  p_criteria text default 'Original benchmark criteria.'
+  p_criteria text default 'Original benchmark criteria.', p_expected_task uuid default null
 ) returns jsonb language sql as $$
   select public.capture_factory_benchmark_run(workspace_id, coalesce(p_factory_id, factory_id), pg_temp.capture_id(p_actor),
     pg_temp.capture_id(p_run), p_criteria, 'Review behavior', 'eligible', pg_temp.capture_id(p_suite),
-    null, p_expected, p_new_name, p_new_purpose) from capture_scope
+    null, p_expected, p_new_name, p_new_purpose, p_expected_task) from capture_scope
 $$;
 
 select ok(not has_table_privilege('authenticated', 'public.factory_benchmark_task_inputs', 'SELECT')
@@ -119,7 +119,7 @@ select ok(not has_table_privilege('authenticated', 'public.factory_benchmark_tas
 select ok(has_function_privilege('service_role', command, 'EXECUTE')
   and not has_function_privilege('authenticated', command, 'EXECUTE')
   and not has_function_privilege('anon', command, 'EXECUTE'), 'capture command is service-only')
-from (values ('public.capture_factory_benchmark_run(uuid,uuid,uuid,uuid,text,text,text,uuid,text,uuid,text,text)')) access(command);
+from (values ('public.capture_factory_benchmark_run(uuid,uuid,uuid,uuid,text,text,text,uuid,text,uuid,text,text,uuid)')) access(command);
 
 set local role service_role;
 select public.grant_factory_membership(workspace_id, factory_id, pg_temp.capture_id(1), pg_temp.capture_id(22), 'member')
@@ -132,6 +132,10 @@ select throws_ok($$select pg_temp.capture(45, 91, p_new_name => 'Pending suite',
   'PT422', null, 'a pending run cannot be captured');
 select throws_ok($$select pg_temp.capture(44, 91, p_new_name => 'Criteria suite', p_new_purpose => 'holdout', p_criteria => '')$$,
   '22023', null, 'a new task requires acceptance criteria');
+select throws_ok($$select pg_temp.capture(44, 91, p_new_name => 'Unknown revision', p_new_purpose => 'holdout',
+  p_expected_task => pg_temp.capture_id(99))$$,
+  'PT409', 'The benchmark task changed. Reload its revision before saving.',
+  'a task that no longer matches the preview cannot be recreated implicitly');
 
 insert into capture_results values ('created', pg_temp.capture(44, 90, p_new_name => 'Frozen run suite', p_new_purpose => 'regression'));
 select is((select receipt->>'suiteId' from capture_results where key = 'created'), pg_temp.capture_id(90)::text,
@@ -159,11 +163,48 @@ select public.save_factory_benchmark_task_revision(workspace_id, factory_id, pg_
   (receipt->>'taskId')::uuid, (receipt->>'taskRevisionId')::uuid, 'Changed task', 'New criteria.', '{}', 'unverified')
 from capture_scope cross join capture_results where key = 'tagged-task';
 
+select throws_ok($$select public.capture_factory_benchmark_run(workspace_id, factory_id, pg_temp.capture_id(1), pg_temp.capture_id(44),
+  'An unsaved task', 'Review behavior', 'eligible', (receipt->>'suiteId')::uuid,
+  p_expected_revision_id => (receipt->>'suiteRevisionId')::uuid)
+from capture_scope cross join capture_results where key = 'tagged-suite'$$,
+  'PT409', 'The benchmark task changed. Reload its revision before saving.',
+  'a task created after preview cannot replace the criteria entered for a new task');
+
+insert into capture_results
+select 'edited', jsonb_build_object('taskId', revision.task_id, 'taskRevisionId', revision.id)
+from capture_scope join capture_results original on original.key = 'created'
+cross join lateral public.save_factory_benchmark_task_revision(workspace_id, factory_id, pg_temp.capture_id(1),
+  (original.receipt->>'taskId')::uuid, (original.receipt->>'taskRevisionId')::uuid, 'Review behavior',
+  'Updated benchmark criteria.', '{}', 'eligible') revision;
+select throws_ok($$select public.capture_factory_benchmark_run(workspace_id, factory_id, pg_temp.capture_id(1), pg_temp.capture_id(44),
+  'Outdated criteria', 'Review behavior', 'eligible', (suite.receipt->>'suiteId')::uuid,
+  p_expected_revision_id => (suite.receipt->>'suiteRevisionId')::uuid,
+  p_expected_task_revision_id => (original.receipt->>'taskRevisionId')::uuid)
+from capture_scope join capture_results suite on suite.key = 'tagged-suite'
+join capture_results original on original.key = 'created'$$,
+  'PT409', 'The benchmark task changed. Reload its revision before saving.',
+  'a stale preview cannot add an edited task to an otherwise current suite');
+select is((select count(*) from public.factory_benchmark_suite_revisions revision
+  join capture_results suite on revision.suite_id = (suite.receipt->>'suiteId')::uuid where suite.key = 'tagged-suite'),
+  1::bigint, 'stale task conflicts leave the selected suite revision unchanged');
+select results_eq($$select revision.revision_number, revision.acceptance_criteria
+  from public.factory_benchmark_task_revisions revision
+  join capture_results original on revision.task_id = (original.receipt->>'taskId')::uuid
+  where original.key = 'created' order by revision.revision_number$$,
+  $$values (1, 'Original benchmark criteria.'), (2, 'Updated benchmark criteria.')$$,
+  'stale task conflicts preserve the original and edited acceptance criteria');
+select is(pg_temp.capture(44, 90, p_new_name => 'Frozen run suite', p_new_purpose => 'regression',
+  p_expected_task => (select (receipt->>'taskRevisionId')::uuid from capture_results where key = 'created')),
+  (select jsonb_set(receipt, '{added}', 'false') from capture_results where key = 'created'),
+  'retrying a committed add returns the original frozen member despite a subsequent task revision');
+
 insert into capture_results
 select 'appended', public.capture_factory_benchmark_run(workspace_id, factory_id, pg_temp.capture_id(1), pg_temp.capture_id(44),
-  'Unused criteria', 'Review behavior', 'eligible', (receipt->>'suiteId')::uuid,
-  p_expected_revision_id => (receipt->>'suiteRevisionId')::uuid)
-from capture_scope cross join capture_results where key = 'tagged-suite';
+  'Unused criteria', 'Review behavior', 'eligible', (suite.receipt->>'suiteId')::uuid,
+  p_expected_revision_id => (suite.receipt->>'suiteRevisionId')::uuid,
+  p_expected_task_revision_id => (current_task.receipt->>'taskRevisionId')::uuid)
+from capture_scope join capture_results suite on suite.key = 'tagged-suite'
+join capture_results current_task on current_task.key = 'edited';
 select throws_ok($$select public.capture_factory_benchmark_run(workspace_id, factory_id, pg_temp.capture_id(1), pg_temp.capture_id(48),
   'No orphan criteria', 'Review behavior', 'eligible', (receipt->>'suiteId')::uuid,
   p_expected_revision_id => (receipt->>'suiteRevisionId')::uuid)
@@ -174,7 +215,7 @@ select is((select appended.receipt->>'taskId' from capture_results appended wher
 select set_eq($$select member.task_revision_id from public.factory_benchmark_suite_members member
   join capture_results suite on member.suite_revision_id = (suite.receipt->>'suiteRevisionId')::uuid
   where suite.key = 'appended'$$,
-  $$select (receipt->>'taskRevisionId')::uuid from capture_results where key in ('tagged-task', 'created')$$,
+  $$select (receipt->>'taskRevisionId')::uuid from capture_results where key in ('tagged-task', 'edited')$$,
   'manual add copies exact earlier member revisions even when the prior tag no longer matches');
 select is((select count(*) from public.factory_benchmark_tasks where source_run_id = pg_temp.capture_id(48)),
   0::bigint, 'conflicting or stale requests leave no orphan task');
@@ -192,6 +233,24 @@ select results_eq($$select result.key, revision.replay_eligibility, revision.eli
   $$values ('unavailable-document', 'ineligible', 'A recorded context document was deleted or is unavailable.'),
     ('unavailable-memory', 'ineligible', 'A recorded memory revision is no longer available to this factory.')$$,
   'capture rechecks retained documents and memories before accepting a positive assessment');
+reset role;
+
+insert into public.session_attachments(id, workspace_id, session_id, uploaded_by_member_id,
+  original_filename, content_type, size_bytes, storage_path, position, status, attached_at)
+values (pg_temp.capture_id(80), pg_temp.capture_id(11), pg_temp.capture_id(42), pg_temp.capture_id(21),
+  'benchmark-fixture.png', 'image/png', 12, pg_temp.capture_id(11)::text || '/benchmark-fixture.png',
+  1, 'attached', clock_timestamp());
+set local role service_role;
+insert into capture_results
+select 'image', pg_temp.capture(44, 95, p_new_name => 'Image input', p_new_purpose => 'holdout',
+  p_expected_task => (receipt->>'taskRevisionId')::uuid)
+from capture_results where key = 'edited';
+select results_eq($$select revision.acceptance_criteria, revision.replay_eligibility, revision.eligibility_reason
+  from public.factory_benchmark_task_revisions revision
+  join capture_results result on revision.id = (result.receipt->>'taskRevisionId')::uuid where result.key = 'image'$$,
+  $$values ('Updated benchmark criteria.', 'ineligible',
+    'The original session image inputs do not have a retained integrity receipt.')$$,
+  'an otherwise eligible capture with an unverified image input preserves its criteria and records the limit');
 reset role;
 
 select results_eq($$select input.source_job_id, input.source_attempt_count, input.checkout_sha, input.input_ref,

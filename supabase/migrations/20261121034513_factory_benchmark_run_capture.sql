@@ -98,7 +98,8 @@ create function public.capture_factory_benchmark_run(
   p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_source_run_id uuid,
   p_acceptance_criteria text, p_task_name text, p_replay_eligibility text, p_suite_id uuid,
   p_eligibility_reason text default null, p_expected_revision_id uuid default null,
-  p_new_suite_name text default null, p_new_suite_purpose text default null
+  p_new_suite_name text default null, p_new_suite_purpose text default null,
+  p_expected_task_revision_id uuid default null
 ) returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   source_run public.agent_runs;
@@ -145,6 +146,14 @@ begin
   end if;
   if not creating_suite and p_expected_revision_id is distinct from current_suite.id then
     raise exception 'The benchmark suite changed. Reload its revision before saving.' using errcode = 'PT409';
+  end if;
+  if source_task.id is not null then
+    select * into strict task_revision from public.factory_benchmark_task_revisions revision
+    where (revision.workspace_id, revision.factory_id, revision.task_id) = (p_workspace_id, p_factory_id, source_task.id)
+    order by revision.revision_number desc limit 1;
+  end if;
+  if p_expected_task_revision_id is distinct from task_revision.id then
+    raise exception 'The benchmark task changed. Reload its revision before saving.' using errcode = 'PT409';
   end if;
 
   select run.* into source_run
@@ -209,6 +218,14 @@ begin
     replay_eligibility := 'ineligible';
     eligibility_reason := 'One or more original run inputs are unavailable.';
   end if;
+  if replay_eligibility = 'eligible' and exists (
+    select 1 from public.session_attachments attachment
+    where (attachment.workspace_id, attachment.session_id) = (p_workspace_id, source_run.session_id)
+      and attachment.status = 'attached'
+  ) then
+    replay_eligibility := 'ineligible';
+    eligibility_reason := 'The original session image inputs do not have a retained integrity receipt.';
+  end if;
   if replay_eligibility = 'eligible' then
     eligibility_reason := internal.benchmark_run_context_unavailable_reason(p_workspace_id, p_factory_id,
       source_run.session_id, evidence.context_manifest, evidence.execution_grant_id, evidence.execution_grant_version);
@@ -223,16 +240,11 @@ begin
     end if;
     task_revision := public.create_factory_benchmark_task(p_workspace_id, p_factory_id, p_actor_user_id,
       p_source_run_id, p_task_name, p_acceptance_criteria, '{}', replay_eligibility, eligibility_reason);
-  else
-    select * into strict task_revision from public.factory_benchmark_task_revisions revision
-    where (revision.workspace_id, revision.factory_id, revision.task_id) = (p_workspace_id, p_factory_id, source_task.id)
-    order by revision.revision_number desc limit 1;
-    if (task_revision.replay_eligibility, task_revision.eligibility_reason)
-      is distinct from (replay_eligibility, eligibility_reason) then
-      task_revision := public.save_factory_benchmark_task_revision(p_workspace_id, p_factory_id, p_actor_user_id,
-        source_task.id, task_revision.id, task_revision.name, task_revision.acceptance_criteria, task_revision.tags,
-        replay_eligibility, eligibility_reason);
-    end if;
+  elsif (task_revision.replay_eligibility, task_revision.eligibility_reason)
+    is distinct from (replay_eligibility, eligibility_reason) then
+    task_revision := public.save_factory_benchmark_task_revision(p_workspace_id, p_factory_id, p_actor_user_id,
+      source_task.id, task_revision.id, task_revision.name, task_revision.acceptance_criteria, task_revision.tags,
+      replay_eligibility, eligibility_reason);
   end if;
 
   insert into public.factory_benchmark_task_inputs(
@@ -276,7 +288,7 @@ begin
 end;
 $$;
 
-revoke all on function public.capture_factory_benchmark_run(uuid, uuid, uuid, uuid, text, text, text, uuid, text, uuid, text, text)
+revoke all on function public.capture_factory_benchmark_run(uuid, uuid, uuid, uuid, text, text, text, uuid, text, uuid, text, text, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function public.capture_factory_benchmark_run(uuid, uuid, uuid, uuid, text, text, text, uuid, text, uuid, text, text)
+grant execute on function public.capture_factory_benchmark_run(uuid, uuid, uuid, uuid, text, text, text, uuid, text, uuid, text, text, uuid)
   to service_role;

@@ -21,12 +21,13 @@ export const benchmarkCapturePreviewSchema = z.object({
     eligibility: eligibilitySchema,
   }),
   suites: z.array(z.object({ id, revisionId: id, name: z.string(), purpose })),
-  existingTask: z.object({ id, acceptanceCriteria: z.string() }).nullable(),
+  existingTask: z.object({ id, revisionId: id, acceptanceCriteria: z.string() }).nullable(),
 });
 
 export const benchmarkCaptureRequestSchema = z
   .object({
     acceptanceCriteria: z.string().trim().min(1).max(20_000).optional(),
+    expectedTaskRevisionId: id.optional(),
     suite: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("existing"), id, revisionId: id }).strict(),
       z

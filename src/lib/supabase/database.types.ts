@@ -9427,6 +9427,7 @@ export type Database = {
           p_actor_user_id: string
           p_eligibility_reason?: string
           p_expected_revision_id?: string
+          p_expected_task_revision_id?: string
           p_factory_id: string
           p_new_suite_name?: string
           p_new_suite_purpose?: string

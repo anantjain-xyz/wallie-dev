@@ -48,7 +48,8 @@ const encoder = new TextEncoder();
 function fixture({
   documentAccess = "available",
   role = "owner",
-}: { documentAccess?: string; role?: "owner" | "member" } = {}) {
+  attachedImage = false,
+}: { documentAccess?: string; role?: "owner" | "member"; attachedImage?: boolean } = {}) {
   const requests: Array<{ path: string; body: unknown }> = [];
   const selectedDocument = {
     sourceId,
@@ -115,6 +116,11 @@ function fixture({
     expect(url.searchParams.get("workspace_id")).toBe("eq." + workspaceId);
     if (path === "agent_runs") return Response.json(run);
     if (path === "factories") return Response.json({ status: "active", factory_members: [] });
+    if (path === "session_attachments") {
+      expect(url.searchParams.get("session_id")).toBe("eq." + sessionId);
+      expect(url.searchParams.get("status")).toBe("eq.attached");
+      return Response.json(attachedImage ? [{ id: id(18) }] : []);
+    }
     if (path === "session_factory_admission_inputs") {
       expect(url.searchParams.get("factory_id")).toBe("eq." + factoryId);
       return Response.json({
@@ -253,6 +259,26 @@ describe("historical benchmark capture", () => {
       status: 403,
     });
     expect(requests.map(({ path }) => path)).toEqual(["agent_runs", "factories"]);
+  });
+
+  it("reports that a historical image cannot be verified without its original integrity receipt", async () => {
+    const { scope } = fixture({ attachedImage: true });
+    const result = await loadBenchmarkSource(scope);
+    expect(result.eligibility).toEqual({
+      status: "ineligible",
+      reasons: ["The original session image inputs do not have a retained integrity receipt."],
+    });
+  });
+
+  it("passes the reviewed task revision when adding a previously captured task", async () => {
+    const { scope, requests } = fixture();
+    await saveBenchmarkCapture(scope, {
+      expectedTaskRevisionId: id(11),
+      suite: { kind: "existing", id: id(12), revisionId: id(17) },
+    });
+    expect(
+      requests.find(({ path }) => path === "capture_factory_benchmark_run")?.body,
+    ).toMatchObject({ p_expected_task_revision_id: id(11), p_acceptance_criteria: "" });
   });
 
   it("returns the same receipt for a duplicate request and sends only server-derived eligibility", async () => {

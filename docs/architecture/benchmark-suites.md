@@ -37,10 +37,12 @@ retained inputs and current access to their contents.
 - Capture checks the historical Git reference and current access to recorded
   context before assigning eligibility. Missing inputs leave an inspectable
   task with a reason. Replay will verify retained bytes again when it restores
-  the task.
+  the task. Historical image inputs without an integrity receipt make the
+  task ineligible.
 - The capture command writes the task and suite membership in one transaction.
   Adding the same run to a suite returns its existing member. An explicit
   addition copies the suite's latest frozen members before appending the new
-  task revision.
+  task revision. If the previewed task or suite changed, the save returns a
+  conflict so the manager can review the new revision.
 - Private input receipts keep references and digests. Original prompt and
   context bodies stay under their existing retention and access controls.

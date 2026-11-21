@@ -2,6 +2,11 @@ import "server-only";
 
 import { z } from "zod";
 
+import {
+  SPECIFICATION_CLARIFICATION_LIMIT,
+  formatSpecificationClarificationHistory,
+  specificationDraftText,
+} from "@/lib/pipeline/specification-context";
 import type { RunContextManifest } from "@/lib/run-context/contracts";
 import { fingerprintRunContextInput } from "@/lib/run-context/packing";
 import type { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -10,6 +15,8 @@ type Scope = {
   admin: ReturnType<typeof createSupabaseAdminClient>;
   workspaceId: string;
   sessionId: string;
+  stageId?: string;
+  recordedAt?: string;
 };
 type RequiredInput = RunContextManifest["required"][number];
 type VerifyRepository = (input: {
@@ -97,6 +104,47 @@ async function verifyFeedback(scope: Scope, input: RequiredInput, key: string[])
   return hasFingerprint(data?.feedback_text, input);
 }
 
+async function verifySpecificationInputs(
+  scope: Scope,
+  priorDraft: RequiredInput | undefined,
+  clarificationHistory: RequiredInput | undefined,
+) {
+  if (!priorDraft && !clarificationHistory) return true;
+  const { admin, workspaceId, sessionId, stageId, recordedAt } = scope;
+  if (!stageId || !recordedAt) return false;
+
+  const { data: draft, error: draftError } = await admin
+    .from("session_artifacts")
+    .select("version,artifact_json")
+    .eq("workspace_id", workspaceId)
+    .eq("session_id", sessionId)
+    .eq("stage_id", stageId)
+    .lt("created_at", recordedAt)
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (draftError) throw draftError;
+  if (typeof draft?.artifact_json !== "string") return false;
+  if (priorDraft && !hasFingerprint(specificationDraftText(draft.artifact_json), priorDraft)) {
+    return false;
+  }
+  if (!clarificationHistory) return true;
+
+  const { data: answers, error } = await admin
+    .from("session_specification_clarifications")
+    .select("ordinal,question,answer_text")
+    .eq("workspace_id", workspaceId)
+    .eq("session_id", sessionId)
+    .eq("stage_id", stageId)
+    .eq("status", "answered")
+    .lt("artifact_version", draft.version)
+    .lt("answered_at", recordedAt)
+    .order("ordinal", { ascending: true })
+    .limit(SPECIFICATION_CLARIFICATION_LIMIT);
+  if (error) throw error;
+  return hasFingerprint(formatSpecificationClarificationHistory(answers), clarificationHistory);
+}
+
 export async function verifyRequiredRunInputs(
   scope: Scope,
   required: RunContextManifest["required"],
@@ -105,6 +153,11 @@ export async function verifyRequiredRunInputs(
 ): Promise<string[]> {
   const title = required.find(({ key }) => key === "session/title");
   const prompt = required.find(({ key }) => key === "session/prompt");
+  const priorDraft = required.find(({ key }) => key === "specification/prior-draft");
+  const clarificationHistory = required.find(
+    ({ key }) => key === "specification/clarification-history",
+  );
+  const specificationVerified = verifySpecificationInputs(scope, priorDraft, clarificationHistory);
   const dependentReasons = await Promise.all(
     required.map(async (input) => {
       if (input === title || input === prompt) return null;
@@ -134,17 +187,19 @@ export async function verifyRequiredRunInputs(
           }
           return "A recorded repository context or its exact commit is unavailable.";
         }
-        case "specification":
-          return input.key === "specification/clarification-available" &&
-            (hasFingerprint("true", input) || hasFingerprint("false", input))
-            ? null
-            : "A recorded specification input is unavailable.";
+        case "specification": {
+          const verified =
+            input === priorDraft || input === clarificationHistory
+              ? await specificationVerified
+              : input.key === "specification/clarification-available" &&
+                (hasFingerprint("true", input) || hasFingerprint("false", input));
+          return verified ? null : "A recorded specification input is unavailable.";
+        }
         default:
           return "A required run input could not be verified from retained history.";
       }
     }),
   );
-
   return [
     ...new Set(
       [

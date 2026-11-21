@@ -172,6 +172,7 @@ export function CaptureBenchmarkRun({
     const suite = view.preview.suites.find(({ id }) => id === choice);
     const request = benchmarkCaptureRequestSchema.safeParse({
       acceptanceCriteria: view.preview.existingTask ? undefined : fields.get("acceptanceCriteria"),
+      expectedTaskRevisionId: view.preview.existingTask?.revisionId,
       suite:
         choice === "new"
           ? {

@@ -275,7 +275,7 @@ export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> 
   const { run } = scope;
   const noAttempt =
     run.agent_job_id === null || run.attempt_count === null || run.attempt_count < 1;
-  const [admission, attempt, context] = await Promise.all([
+  const [admission, attempt, context, attachment] = await Promise.all([
     scope.admin
       .from("session_factory_admission_inputs")
       .select(
@@ -290,7 +290,7 @@ export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> 
       : scope.admin
           .from("session_attempt_manifests")
           .select(
-            "repository_id, input_ref, input_sha, checkout_sha, retry_source_run_id, definition_revision_id, definition_digest, prompt_sha256",
+            "repository_id, input_ref, input_sha, checkout_sha, retry_source_run_id, definition_revision_id, definition_digest, prompt_sha256, stage_id, created_at",
           )
           .eq("workspace_id", workspace.id)
           .eq("session_id", run.session_id)
@@ -309,10 +309,19 @@ export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> 
           .eq("job_id", run.agent_job_id ?? "")
           .eq("attempt_count", run.attempt_count ?? 0)
           .maybeSingle(),
+    scope.admin
+      .from("session_attachments")
+      .select("id")
+      .eq("workspace_id", workspace.id)
+      .eq("session_id", run.session_id)
+      .eq("status", "attached")
+      .limit(1)
+      .maybeSingle(),
   ]);
   if (admission.error) throw admission.error;
   if (attempt?.error) throw attempt.error;
   if (context?.error) throw context.error;
+  if (attachment.error) throw attachment.error;
 
   const original = admission.data;
   const manifest = attempt?.data ?? null;
@@ -328,6 +337,8 @@ export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> 
   if (!originalPrompt) reasons.push("The original task request was not retained.");
   if (!manifest) reasons.push("The original attempt inputs were not retained.");
   if (!parsedContext.success) reasons.push("The original context manifest was not retained.");
+  if (attachment.data)
+    reasons.push("The original session image inputs do not have a retained integrity receipt.");
   if (
     manifest &&
     (!manifest.definition_revision_id ||
@@ -342,7 +353,13 @@ export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> 
     parsedContext.success ? verifyContext(scope, parsedContext.data) : [],
     parsedContext.success
       ? verifyRequiredRunInputs(
-          { admin: scope.admin, workspaceId: workspace.id, sessionId: run.session_id },
+          {
+            admin: scope.admin,
+            workspaceId: workspace.id,
+            sessionId: run.session_id,
+            stageId: manifest?.stage_id,
+            recordedAt: manifest?.created_at,
+          },
           parsedContext.data.required,
           { title: original?.original_title ?? null, prompt: originalPrompt },
           async ({ repositoryId, commitSha, sha256, utf8Bytes }) => {

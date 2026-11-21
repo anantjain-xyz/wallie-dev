@@ -7,13 +7,31 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { untrustedPromptValue } from "./prompt-safety";
 
-const CLARIFICATION_LIMIT = 3;
+export const SPECIFICATION_CLARIFICATION_LIMIT = 3;
 const LEADING_CLARIFICATION_DIRECTIVE = /^<!-- wallie-clarification: [^\r\n]* -->\r?(?:\n|$)/;
 
 type SpecificationSession = Pick<
   Tables<"sessions">,
   "id" | "workspace_id" | "factory_id" | "current_artifact_id" | "current_artifact_version"
 >;
+type ClarificationText = Pick<
+  Tables<"session_specification_clarifications">,
+  "ordinal" | "question" | "answer_text"
+>;
+
+export function specificationDraftText(artifact: string) {
+  return artifact.replace(LEADING_CLARIFICATION_DIRECTIVE, "");
+}
+
+export function formatSpecificationClarificationHistory(
+  clarifications: readonly ClarificationText[],
+) {
+  return clarifications
+    .flatMap(({ ordinal, question, answer_text: answer }) =>
+      answer === null ? [] : [`Round ${ordinal}\nQuestion: ${question}\nAnswer: ${answer}`],
+    )
+    .join("\n\n");
+}
 
 export async function loadSpecificationPromptContext(
   admin: SupabaseClient<Database>,
@@ -35,7 +53,7 @@ export async function loadSpecificationPromptContext(
     if (error || count === null) {
       throw error ?? new Error("Specification clarification history is unavailable.");
     }
-    return { canAskClarification: count < CLARIFICATION_LIMIT };
+    return { canAskClarification: count < SPECIFICATION_CLARIFICATION_LIMIT };
   }
 
   const [countResult, historyResult, draftResult] = await Promise.all([
@@ -50,7 +68,7 @@ export async function loadSpecificationPromptContext(
       .eq("status", "answered")
       .lt("artifact_version", version)
       .order("ordinal", { ascending: true })
-      .limit(CLARIFICATION_LIMIT),
+      .limit(SPECIFICATION_CLARIFICATION_LIMIT),
     admin
       .from("session_artifacts")
       .select("artifact_json, session:sessions!session_artifacts_session_id_fkey!inner(factory_id)")
@@ -71,14 +89,10 @@ export async function loadSpecificationPromptContext(
     throw new Error("The exact prior specification draft is unavailable.");
   }
 
-  const draft = draftResult.data.artifact_json.replace(LEADING_CLARIFICATION_DIRECTIVE, "");
-  const history = historyResult.data
-    .flatMap(({ ordinal, question, answer_text: answer }) =>
-      answer === null ? [] : [`Round ${ordinal}\nQuestion: ${question}\nAnswer: ${answer}`],
-    )
-    .join("\n\n");
+  const draft = specificationDraftText(draftResult.data.artifact_json);
+  const history = formatSpecificationClarificationHistory(historyResult.data);
   return {
-    canAskClarification: countResult.count < CLARIFICATION_LIMIT,
+    canAskClarification: countResult.count < SPECIFICATION_CLARIFICATION_LIMIT,
     ...(draft.trim()
       ? { priorDraft: untrustedPromptValue("specification.priorDraft", draft) }
       : {}),

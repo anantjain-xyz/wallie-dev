@@ -89,7 +89,7 @@ async function readSuites(scope: CaptureScope) {
 async function readExistingTask(scope: CaptureScope) {
   const { data, error } = await scope.access.supabase
     .from("factory_benchmark_tasks")
-    .select("id, factory_benchmark_task_revisions(acceptance_criteria)")
+    .select("id, factory_benchmark_task_revisions(id, acceptance_criteria)")
     .eq("workspace_id", scope.access.workspace.id)
     .eq("factory_id", scope.factoryId)
     .eq("source_run_id", scope.run.id)
@@ -102,7 +102,7 @@ async function readExistingTask(scope: CaptureScope) {
   if (error) throw error;
   const revision = data?.factory_benchmark_task_revisions[0];
   return data && revision
-    ? { id: data.id, acceptanceCriteria: revision.acceptance_criteria }
+    ? { id: data.id, revisionId: revision.id, acceptanceCriteria: revision.acceptance_criteria }
     : null;
 }
 
@@ -129,6 +129,9 @@ export async function saveBenchmarkCapture(scope: CaptureScope, request: Benchma
       `Historical run ${scope.run.id.slice(0, 8)}`,
     p_replay_eligibility: source.eligibility.status,
     p_suite_id: suite.id,
+    ...(request.expectedTaskRevisionId
+      ? { p_expected_task_revision_id: request.expectedTaskRevisionId }
+      : {}),
     ...(source.eligibility.status === "ineligible"
       ? { p_eligibility_reason: source.eligibility.reasons.join(" ") }
       : {}),
@@ -147,7 +150,7 @@ export async function saveBenchmarkCapture(scope: CaptureScope, request: Benchma
     if (error.code === "PT409" || error.code === "P0011") {
       throw new BenchmarkCaptureError(
         409,
-        "The suite or factory changed. Reload the preview and try again.",
+        "The task, suite, or factory changed. Reload the preview and try again.",
       );
     }
     if (error.code === "22023") {
