@@ -270,7 +270,7 @@ select pg_temp.experiment_id(config.slot), pg_temp.experiment_id(11), pg_temp.ex
   (select jsonb_object_agg(key, jsonb_build_object('ok', true, 'detail', config.cli))
     from unnest(array['agentCli','git','node','packageManager','playwrightPackage','chromium',
       'screenshotSmoke','codexExternalSandbox']) capability(key))
-from (values (501, 'codex', 'gpt-4.1-2025-04-14', 'codex-cli 0.88.0'),
+from (values (501, 'codex', 'gpt-4.1-2025-04-14', E'/opt/node-v22.23.1/bin/codex\ncodex-cli 0.88.0'),
   (502, 'opencode', 'openai/gpt-4.1-2025-04-14', '1.2.27')) config(slot, harness, model, cli);
 create function pg_temp.qualified_candidate(definition integer, qualification integer, worker text default 'node')
 returns jsonb language sql as $$

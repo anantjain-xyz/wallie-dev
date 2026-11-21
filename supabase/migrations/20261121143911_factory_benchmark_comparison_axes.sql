@@ -77,12 +77,15 @@ create function internal.factory_benchmark_axis_profiles(
         or (probe.agent_provider = 'opencode' and probe.agent_model ~ '^openai/gpt-[a-z0-9.-]+-[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
     order by revision.id, probe.agent_provider, probe.agent_model,
       (probe.factory_definition_digest is not null) desc, probe.checked_at desc, probe.id desc
+  ), toolchains as (
+    select latest.*, substring(btrim(split_part(capabilities#>>'{agentCli,detail}', E'\n', -1)) from
+      '^(?:codex(?:-cli)?[[:space:]]+|opencode[[:space:]]+)?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?)$') as cli_version
+    from latest
   )
   select latest.id, latest.definition_id, canonical_digest,
     case when agent_provider = 'codex' then 'openai/' || agent_model else agent_model end,
     agent_provider, agent_model, 'node'::text, 'vercel'::text, latest.sandbox_connection_revision,
-    concat_ws(' ', case when agent_provider = 'codex' then 'Codex' else 'OpenCode' end,
-      substring(capabilities#>>'{agentCli,detail}' from '[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9.-]*')),
+    concat_ws(' ', case when agent_provider = 'codex' then 'Codex' else 'OpenCode' end, cli_version),
     encode(sha256(convert_to(capabilities::text, 'UTF8')), 'hex'),
     case
       when status <> 'success' or exists (
@@ -90,7 +93,7 @@ create function internal.factory_benchmark_axis_profiles(
           || case when agent_provider = 'codex' then array['codexExternalSandbox'] else '{}'::text[] end) required(key)
         where capabilities->required.key->'ok' is distinct from 'true'::jsonb
       ) then 'Run a successful capability check for this model, harness, and connection.'
-      when substring(capabilities#>>'{agentCli,detail}' from '[0-9]+\.[0-9]+\.[0-9]+') is null
+      when cli_version is null
         then 'The capability check did not record the CLI version.'
       when exists (select 1 from suite_repositories where suite_repositories.repository_id <> latest.repository_id)
         then 'An eligible task was captured from a different repository than this factory revision.'
@@ -105,7 +108,7 @@ create function internal.factory_benchmark_axis_profiles(
         )
       ) then 'A stage in this definition is unavailable.'
     end
-  from latest
+  from toolchains latest
 $$;
 revoke all on function internal.factory_benchmark_axis_profiles(uuid, uuid, uuid, uuid[])
   from public, anon, authenticated, service_role;
