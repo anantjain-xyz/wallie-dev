@@ -1,3 +1,4 @@
+import { CaptureBenchmarkRun } from "@/features/factory-benchmarks/capture-run.client";
 import { RunScoreSection } from "@/features/factory-scorers/run-score-section";
 import { RunInspector } from "@/features/wallie/run-inspector";
 import { loadRunInspectorData } from "@/features/wallie/run-inspector-data";
@@ -12,9 +13,23 @@ export default async function RunInspectorPage({
 }) {
   const [{ workspaceSlug, runId }, query] = await Promise.all([params, searchParams]);
   const data = await loadRunInspectorData(workspaceSlug, runId);
+  const canCaptureBenchmark =
+    (data.run.status === "success" ||
+      data.run.status === "error" ||
+      data.run.status === "canceled") &&
+    (data.frozenContext.kind !== "recorded" || data.frozenContext.context.canManage);
   return (
     <RunInspector
       artifact={data.artifact}
+      benchmarkCapture={
+        canCaptureBenchmark ? (
+          <CaptureBenchmarkRun
+            key={data.run.id}
+            workspaceId={data.workspaceId}
+            runId={data.run.id}
+          />
+        ) : undefined
+      }
       credential={data.credential}
       executionProfile={data.executionProfile}
       frozenContext={data.frozenContext}
