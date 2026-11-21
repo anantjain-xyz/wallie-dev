@@ -1,8 +1,9 @@
 /** Run both real worker entry points against a disposable local database. */
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 class FixtureConfigurationError extends Error {}
@@ -39,7 +40,10 @@ async function waitForWallie(app: ChildProcess, url: string) {
   const deadline = Date.now() + 35_000;
   while (Date.now() < deadline && app.exitCode === null && app.signalCode === null) {
     try {
-      const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(1_000) });
+      const response = await fetch(url, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(1_000),
+      });
       await response.body?.cancel();
       if (response.status < 500) return;
     } catch {
@@ -57,9 +61,10 @@ async function runFactoryRuntime() {
     const m05 = extra.length === 1 && extra[0] === "--m05";
     const m06 = extra.length === 1 && extra[0] === "--m06";
     const m07 = extra.length === 1 && extra[0] === "--m07";
-    if (flag !== "--workdir" || !directory || (extra.length > 0 && !m05 && !m06 && !m07)) {
+    const m08 = extra.length === 1 && extra[0] === "--m08";
+    if (flag !== "--workdir" || !directory || (extra.length > 0 && !m05 && !m06 && !m07 && !m08)) {
       throw new FixtureConfigurationError(
-        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, or --m07.",
+        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, --m07, or --m08.",
       );
     }
     const status = JSON.parse(
@@ -103,8 +108,9 @@ async function runFactoryRuntime() {
       return;
     }
 
+    const fixture = { url, serviceKey, publishableKey };
     const env: NodeJS.ProcessEnv = {
-      ...(m07
+      ...(m07 || m08
         ? {
             NODE_ENV: "test",
             PATH: process.env.PATH,
@@ -118,9 +124,7 @@ async function runFactoryRuntime() {
       SUPABASE_SECRET_KEY: serviceKey,
       WALLIE_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
       WALLIE_FACTORY_RUNTIME_FIXTURE: JSON.stringify({
-        url,
-        serviceKey,
-        publishableKey,
+        ...fixture,
         ...(m05 ? { m05: true } : {}),
         ...(m07 ? { m07: true } : {}),
       }),
@@ -133,15 +137,28 @@ async function runFactoryRuntime() {
     delete env.WALLIE_NATIVE_HISTORY_FIXTURE;
     delete env.OPENROUTER_API_KEY;
 
-    if (m05 || m07) {
+    if (m08 && !status.JWT_SECRET) {
+      throw new FixtureConfigurationError(
+        "The disposable database's local JWT secret is unavailable.",
+      );
+    }
+    if (m05 || m07 || m08) {
       const port = await loopbackPort();
-      const appUrl = `http://127.0.0.1:${port}`;
+      const host = m08 ? "localhost" : "127.0.0.1";
+      const appUrl = `http://${host}:${port}`;
       const next = resolve("node_modules/next/dist/bin/next");
-      if (m07) env.NEXT_PUBLIC_APP_URL = appUrl;
+      if (m07 || m08) env.NEXT_PUBLIC_APP_URL = appUrl;
       const appEnv: NodeJS.ProcessEnv = {
         ...env,
         NEXT_PUBLIC_APP_URL: appUrl,
         NODE_ENV: "production",
+        ...(m08
+          ? {
+              WALLIE_WORKER_WAKE_URL: "",
+              WALLIE_WORKER_WAKE_SECRET: "",
+              OPENROUTER_API_KEY: "",
+            }
+          : {}),
       };
       const build = spawnSync(process.execPath, [next, "build"], {
         env: appEnv,
@@ -153,7 +170,7 @@ async function runFactoryRuntime() {
       }
       const localApp = spawn(
         process.execPath,
-        [next, "start", "--hostname", "127.0.0.1", "--port", String(port)],
+        [next, "start", "--hostname", host, "--port", String(port)],
         {
           env: appEnv,
           stdio: "inherit",
@@ -167,12 +184,90 @@ async function runFactoryRuntime() {
         env.WALLIE_FACTORY_SCORER_PROOF_DIR = resolve(
           process.env.WALLIE_FACTORY_SCORER_PROOF_DIR ?? ".wallie/m07-qualification",
         );
-      } else {
+      } else if (m05) {
         env.WALLIE_FACTORY_MEDIA_BROWSER_URL = appUrl;
         env.WALLIE_FACTORY_MEDIA_PROOF_DIR = resolve(
           process.env.WALLIE_FACTORY_MEDIA_PROOF_DIR ?? ".wallie/m05-qualification",
         );
       }
+    }
+
+    if (m08) {
+      const outputRoot = resolve(".wallie/m08-qualification");
+      mkdirSync(outputRoot, { recursive: true, mode: 0o700 });
+      const proof = mkdtempSync(join(outputRoot, "run-"));
+      const witnessPath = join(proof, "witness.json");
+      const nodeTest = "test/release/factory-benchmark-qualification.node.fixture.ts";
+      const nativeTest = "cloudflare/tests/factory-benchmark-qualification.fixture.test.ts";
+      const fixtureEnv = {
+        ...env,
+        WALLIE_M08_DATABASE_URL: databaseUrl,
+        WALLIE_M08_LOCAL_JWT_SECRET: status.JWT_SECRET,
+        WALLIE_M08_FIXTURE_PASSWORD: randomBytes(32).toString("hex"),
+        WALLIE_M08_WITNESS_PATH: witnessPath,
+      };
+      for (const phase of ["prepare", "native", "abandon", "recover", "browser"]) {
+        const native = phase === "native";
+        const result = spawnSync(
+          process.execPath,
+          [
+            resolve("node_modules/vitest/vitest.mjs"),
+            "run",
+            native ? nativeTest : nodeTest,
+            "--config",
+            native ? "cloudflare/vitest.config.mts" : "vitest.factory-runtime.config.ts",
+            "--testTimeout=180000",
+          ],
+          {
+            env: {
+              ...fixtureEnv,
+              // The native runtime only receives the loopback client configuration and public witness.
+              ...(native
+                ? {
+                    WALLIE_M08_LOCAL_JWT_SECRET: undefined,
+                    WALLIE_M08_FIXTURE_PASSWORD: undefined,
+                  }
+                : {}),
+              WALLIE_M08_PHASE: phase,
+              WALLIE_FACTORY_RUNTIME_FIXTURE: JSON.stringify({
+                ...fixture,
+                ...(native ? { m08Witness: readFileSync(witnessPath, "utf8") } : {}),
+              }),
+            },
+            stdio: "inherit",
+            timeout: 240_000,
+          },
+        );
+        if (result.status !== 0) {
+          throw new FixtureConfigurationError(
+            `M08 ${phase} failed. Local evidence is in ${proof}.`,
+          );
+        }
+      }
+      for (const directory of ["export", "browser"]) {
+        const parts = join(proof, directory);
+        const manifest = readdirSync(parts).find((name) => name.endsWith("-manifest.json"));
+        if (!manifest) throw new FixtureConfigurationError(`M08 ${directory} manifest is absent.`);
+        const verifier = spawnSync(
+          "python3",
+          [
+            "scripts/verify-benchmark-qualification-export.py",
+            join(parts, manifest),
+            "--expected-trials",
+            "8",
+            "--original-snapshot",
+            join(proof, "original-comparison.json"),
+          ],
+          { env: { NODE_ENV: "test", PATH: env.PATH }, stdio: "inherit", timeout: 30_000 },
+        );
+        if (verifier.status !== 0) {
+          throw new FixtureConfigurationError(
+            `M08 ${directory} export verification failed. Local evidence is in ${proof}.`,
+          );
+        }
+      }
+      console.log(`M08 local qualification evidence is in ${proof}.`);
+      return;
     }
 
     const entries = [

@@ -5,7 +5,28 @@ create function pg_temp.fixture_id(slot integer) returns uuid language sql as $$
   select (current_setting('wallie.benchmark_smoke_namespace') || '-0000-4000-8000-' || lpad(slot::text, 12, '0'))::uuid
 $$;
 
+-- The browser qualification opts in to a real local password session.
+\if :{?fixture_login}
+\getenv fixture_password WALLIE_M08_SQL_FIXTURE_PASSWORD
+insert into auth.users (
+  instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, confirmation_token, recovery_token,
+  email_change_token_new, email_change_token_current, reauthentication_token,
+  email_change, created_at, updated_at, is_sso_user, is_anonymous
+) values (
+  '00000000-0000-0000-0000-000000000000', pg_temp.fixture_id(1), 'authenticated',
+  'authenticated', :'fixture_email', extensions.crypt(:'fixture_password', extensions.gen_salt('bf')),
+  now(), '{"provider":"email","providers":["email"]}',
+  jsonb_build_object('sub', pg_temp.fixture_id(1)::text, 'email', :'fixture_email',
+    'email_verified', true, 'phone_verified', false),
+  '', '', '', '', '', '', now(), now(), false, false
+);
+insert into auth.identities (id, provider_id, user_id, identity_data, provider, created_at, updated_at)
+select gen_random_uuid(), id::text, id, raw_user_meta_data, 'email', now(), now()
+from auth.users where id = pg_temp.fixture_id(1);
+\else
 insert into auth.users(id, email) values (pg_temp.fixture_id(1), :'fixture_email');
+\endif
 insert into public.workspaces(id, slug, name)
 values (pg_temp.fixture_id(2), :'fixture_slug', 'Disposable benchmark trial smoke');
 insert into public.workspace_members(id, workspace_id, user_id, kind, role)
