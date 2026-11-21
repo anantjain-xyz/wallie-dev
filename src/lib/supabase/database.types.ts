@@ -2765,6 +2765,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id: string
+          routing_evidence_source_draft_id: string | null
           schema_version: number
           settings_metadata: Json
           workspace_id: string
@@ -2777,6 +2778,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id?: string
+          routing_evidence_source_draft_id?: string | null
           schema_version: number
           settings_metadata?: Json
           workspace_id: string
@@ -2789,6 +2791,7 @@ export type Database = {
           definition_json?: string
           factory_id?: string
           id?: string
+          routing_evidence_source_draft_id?: string | null
           schema_version?: number
           settings_metadata?: Json
           workspace_id?: string
@@ -2804,6 +2807,17 @@ export type Database = {
               "factory_id",
               "activation_number",
             ]
+          },
+          {
+            foreignKeyName: "factory_definition_drafts_routing_evidence_source_fk"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "routing_evidence_source_draft_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_routing_draft_evidence"
+            referencedColumns: ["workspace_id", "factory_id", "draft_id"]
           },
           {
             foreignKeyName: "factory_definition_drafts_workspace_id_factory_id_fkey"
@@ -15045,6 +15059,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id: string
+          routing_evidence_source_draft_id: string | null
           schema_version: number
           settings_metadata: Json
           workspace_id: string
@@ -15129,6 +15144,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id: string
+          routing_evidence_source_draft_id: string | null
           schema_version: number
           settings_metadata: Json
           workspace_id: string
@@ -15306,6 +15322,7 @@ export type Database = {
           definition_json: string
           factory_id: string
           id: string
+          routing_evidence_source_draft_id: string | null
           schema_version: number
           settings_metadata: Json
           workspace_id: string

@@ -78,7 +78,9 @@ export function selectStoredFactoryDefinition(
     target.kind === "draft"
       ? admin
           .from("factory_definition_drafts")
-          .select("id, definition_json, canonical_digest, settings_metadata, created_at")
+          .select(
+            "id, definition_json, canonical_digest, settings_metadata, created_at, routing_evidence_source_draft_id",
+          )
       : admin
           .from("factory_definition_revisions")
           .select("id, definition_json, canonical_digest, source_draft_id, created_at");

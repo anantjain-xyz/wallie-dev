@@ -72,6 +72,7 @@ async function editorDocument(
     canonical_digest: string;
     created_at: string;
     source_draft_id?: string | null;
+    routing_evidence_source_draft_id?: string | null;
   },
   kind: FactoryDefinitionTarget["kind"],
 ): Promise<FactoryEditorDocument> {
@@ -87,15 +88,18 @@ async function editorDocument(
     bundle,
   };
   if (kind === "draft" && bundle.modelRouting) {
+    const evidenceDraftIds = [row.id];
+    if (row.routing_evidence_source_draft_id)
+      evidenceDraftIds.push(row.routing_evidence_source_draft_id);
     const { data, error } = await client
       .from("factory_routing_draft_evidence")
-      .select("evidence")
+      .select("draft_id, evidence")
       .eq("workspace_id", scope.workspaceId)
       .eq("factory_id", scope.factoryId)
-      .eq("draft_id", row.id)
-      .maybeSingle();
+      .in("draft_id", evidenceDraftIds);
     if (error) throw error;
-    if (data) document.routingDraftEvidence = routingDraftEvidenceSchema.parse(data.evidence);
+    const receipt = data.find(({ draft_id }) => draft_id === row.id) ?? data[0];
+    if (receipt) document.routingDraftEvidence = routingDraftEvidenceSchema.parse(receipt.evidence);
   }
   return document;
 }

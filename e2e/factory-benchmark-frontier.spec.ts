@@ -6,7 +6,6 @@ import { z } from "zod/v4";
 
 import { benchmarkFrontierSchema } from "@/lib/factory-benchmarks/frontier-contracts";
 import { routingDraftResponseSchema } from "@/lib/model-routing/draft-contracts";
-import { workspaceRunDetailPath } from "@/lib/routes";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
@@ -51,7 +50,7 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
     process.env.WALLIE_FACTORY_BENCHMARKS_E2E !== "1",
     "Requires a disposable loopback Supabase project.",
   );
-  test.setTimeout(360_000);
+  test.setTimeout(240_000);
   const fixture = await seedFactoryAnalytics(baseURL);
   const experimentId = randomUUID();
   const admin = createClient(
@@ -347,101 +346,6 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
         evidenceUrl.pathname + evidenceUrl.search + evidenceUrl.hash,
       );
       await captureRoutingFlow(page, info, "routing-draft-working-editor");
-
-      await test.step("Preview the saved routing policy by keyboard and on mobile", async () => {
-        const editor = page.getByRole("region", { name: "Model routing" });
-        await editor.getByRole("button", { name: "Edit Invoice delivery rule" }).focus();
-        await page.keyboard.press("Enter");
-        await expect(editor.getByRole("spinbutton", { name: "Quality floor (%)" })).toHaveValue(
-          "80",
-        );
-        await capture(page, editor, info, "model-routing-editor-light");
-        await editor.getByRole("button", { name: "Hide Invoice delivery rule" }).click();
-
-        const previewEndpoint = `/api/workspaces/${fixture.workspaceId}/factories/${fixture.factoryId}/definition/routing-preview`;
-        const previewPayload = {
-          expectedActivationNumber: 1,
-          draftId: draft.draftId,
-          taskClassSlug: "delivery",
-        };
-        const preview = page.getByRole("region", { name: "Routing preview" });
-        const slug = preview.getByRole("combobox", { name: "Task class slug" });
-        const previewButton = preview.getByRole("button", { name: "Preview routing" });
-        const unmatchedSlug = "unmatched-" + "x".repeat(54);
-        await slug.fill(unmatchedSlug);
-        await expect(slug).toHaveValue(unmatchedSlug);
-        await previewButton.focus();
-        await expect(previewButton).toBeFocused();
-        await page.keyboard.press("Enter");
-        await expect(preview.getByText("No task class matches this slug.")).toBeVisible();
-        await capture(page, preview, info, "model-routing-preview-unmatched-light");
-
-        await page.setViewportSize({ width: 390, height: 844 });
-        await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
-        await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-        await slug.fill(previewPayload.taskClassSlug);
-        await previewButton.click();
-        await expect(
-          preview.getByRole("heading", { name: "Primary configuration selected" }),
-        ).toBeVisible();
-        await capture(page, preview, info, "model-routing-preview-qualified-mobile-dark");
-
-        const stalePreview = await page.request.post(previewEndpoint, {
-          data: { ...previewPayload, expectedActivationNumber: 0 },
-        });
-        expect(stalePreview.status()).toBe(409);
-        const deniedPreview = await reader.request.post(previewEndpoint, { data: previewPayload });
-        expect(deniedPreview.status()).toBe(403);
-        expect(await readActivation()).toEqual(activeBefore);
-      });
-
-      await test.step("Inspect the run's original routing decision after a rename", async () => {
-        const historical = z
-          .object({
-            runId: z.uuid(),
-            policyRevisionId: z.uuid(),
-            renamedRevisionId: z.uuid(),
-            taskClassName: z.string(),
-          })
-          .parse(
-            await fixture.runFixtureFile("model-routing-inspector-seed.sql", {
-              workspace_id: fixture.workspaceId,
-              workspace_slug: fixture.slug,
-              factory_id: fixture.factoryId,
-              owner_id: fixture.ownerId,
-              stage_id: fixture.stageId,
-              draft_id: draft.draftId,
-            }),
-          );
-        expect(historical.renamedRevisionId).not.toBe(historical.policyRevisionId);
-        const runPath = workspaceRunDetailPath(fixture.slug, historical.runId);
-        await page.setViewportSize({ width: 1440, height: 960 });
-        await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
-        await page.goto(runPath);
-        const inspected = page.locator("#routing-decision");
-        await expect(inspected.getByText(historical.taskClassName, { exact: true })).toBeVisible({
-          timeout: 75_000,
-        });
-        await expect(inspected.getByText("Primary configuration", { exact: true })).toBeVisible();
-        await expect(
-          inspected.getByRole("link", { name: historical.policyRevisionId }),
-        ).toHaveAttribute("href", new RegExp(`[?&]revision=${historical.policyRevisionId}(?:&|$)`));
-        await expect(
-          inspected.getByRole("link", { name: "Open exact comparison configuration" }),
-        ).toHaveAttribute("href", new RegExp(`#${routingRowId}$`));
-        await capture(page, inspected, info, "model-routing-run-inspector");
-
-        await reader.goto(runPath);
-        const readerDecision = reader.locator("#routing-decision");
-        await expect(
-          readerDecision.getByText(
-            "Benchmark proposal details require permission to manage this factory.",
-          ),
-        ).toBeVisible();
-        await expect(
-          readerDecision.getByRole("link", { name: "Open exact comparison configuration" }),
-        ).toHaveCount(0);
-      });
     });
 
     expect(

@@ -163,12 +163,91 @@ revoke all on function public.preview_factory_model_routing(uuid, uuid, uuid, bi
   from public, anon, authenticated, service_role;
 grant execute on function public.preview_factory_model_routing(uuid, uuid, uuid, bigint, uuid, text) to service_role;
 
+alter table public.factory_definition_drafts add column routing_evidence_source_draft_id uuid,
+  add constraint factory_definition_drafts_routing_evidence_source_fk
+  foreign key (workspace_id, factory_id, routing_evidence_source_draft_id)
+  references public.factory_routing_draft_evidence(workspace_id, factory_id, draft_id)
+  deferrable initially deferred;
+create index factory_definition_drafts_routing_evidence_source_idx
+  on public.factory_definition_drafts(workspace_id, factory_id, routing_evidence_source_draft_id)
+  where routing_evidence_source_draft_id is not null;
+comment on column public.factory_definition_drafts.routing_evidence_source_draft_id is
+  'Original benchmark proposal carried by an equivalent routing rule in the preceding draft or published base.';
+
+create function internal.inherit_factory_routing_draft_evidence()
+returns trigger language plpgsql set search_path = '' as $$
+declare
+  previous_draft_id uuid;
+  previous_draft public.factory_definition_drafts;
+  proposal public.factory_routing_draft_evidence;
+  previous_definition jsonb;
+  definition jsonb := new.definition_json::jsonb;
+  rule_matches jsonb;
+begin
+  new.routing_evidence_source_draft_id := null;
+  if jsonb_typeof(definition#>'{modelRouting,rules}') is distinct from 'array'
+    or jsonb_typeof(definition#>'{modelRouting,taskClasses}') is distinct from 'array' then
+    return new;
+  end if;
+  previous_draft_id := internal.latest_factory_draft_id(new.workspace_id, new.factory_id,
+    coalesce(new.base_activation_number, 0));
+  if previous_draft_id is null and new.base_activation_number is not null then
+    select revision.source_draft_id, revision.definition_json::jsonb into previous_draft_id, previous_definition
+    from public.factory_definition_activations activation
+    join public.factory_definition_revisions revision
+      on (revision.workspace_id, revision.factory_id, revision.id) =
+         (activation.workspace_id, activation.factory_id, activation.revision_id)
+    where (activation.workspace_id, activation.factory_id, activation.activation_number) =
+      (new.workspace_id, new.factory_id, new.base_activation_number);
+  end if;
+  select * into previous_draft from public.factory_definition_drafts previous
+  where (previous.workspace_id, previous.factory_id, previous.id) = (new.workspace_id, new.factory_id, previous_draft_id);
+  if not found then return new; end if;
+  select * into proposal from public.factory_routing_draft_evidence evidence
+  where (evidence.workspace_id, evidence.factory_id) = (previous_draft.workspace_id, previous_draft.factory_id)
+    and evidence.draft_id in (previous_draft.id, previous_draft.routing_evidence_source_draft_id)
+  order by (evidence.draft_id = previous_draft.id) desc limit 1;
+  if not found then return new; end if;
+
+  previous_definition := coalesce(previous_definition, previous_draft.definition_json::jsonb);
+  if (previous_definition->'repositoryId', previous_definition->'pipelineId') is distinct from
+    (definition->'repositoryId', definition->'pipelineId') then
+    return new;
+  end if;
+  -- Evidence qualifies the primary configuration and constraints. A display
+  -- name or the response to an unavailable primary can change independently.
+  select jsonb_agg(exact.match) into rule_matches
+  from (values (previous_definition), (definition)) policy(body)
+  cross join lateral (
+    select (jsonb_agg(jsonb_build_object('rule', rule.value - 'onUnavailable', 'classSlug', task_class.value->>'slug')))->0 as match
+    from jsonb_array_elements(case when jsonb_typeof(policy.body#>'{modelRouting,rules}') = 'array'
+      then policy.body#>'{modelRouting,rules}' else '[]'::jsonb end) rule(value)
+    join jsonb_array_elements(case when jsonb_typeof(policy.body#>'{modelRouting,taskClasses}') = 'array'
+      then policy.body#>'{modelRouting,taskClasses}' else '[]'::jsonb end) task_class(value)
+      on task_class.value->>'id' = rule.value->>'taskClassId'
+    where rule.value->>'id' = proposal.evidence->>'ruleId'
+      and rule.value#>>'{configuration,experimentId}' = proposal.experiment_id::text
+      and rule.value->'constraints' = proposal.evidence->'constraints'
+      and task_class.value->>'slug' is not null
+    having count(*) = 1
+  ) exact;
+  if jsonb_array_length(rule_matches) = 2 and rule_matches->0 = rule_matches->1 then
+    new.routing_evidence_source_draft_id := proposal.draft_id;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function internal.inherit_factory_routing_draft_evidence() from public, anon, authenticated, service_role;
+create trigger inherit_factory_routing_draft_evidence before insert on public.factory_definition_drafts
+  for each row execute function internal.inherit_factory_routing_draft_evidence();
+
 create function internal.get_run_routing_decision(
   target_workspace_id uuid, target_run_id uuid, target_attempt_count integer
 ) returns jsonb language sql stable security definer set search_path = '' as $$
   with recorded as (
     select admission.workspace_id, admission.factory_id, admission.routing_decision as decision,
-      revision.source_draft_id, revision.definition_json::jsonb->'modelRouting' as policy,
+      revision.source_draft_id, draft.routing_evidence_source_draft_id,
+      revision.definition_json::jsonb->'modelRouting' as policy,
       internal.can_manage_factory(admission.workspace_id, admission.factory_id) as can_manage_factory
     from public.session_attempt_manifests manifest
     join public.agent_runs run
@@ -181,6 +260,9 @@ create function internal.get_run_routing_decision(
     join public.factory_definition_revisions revision
       on (revision.workspace_id, revision.factory_id, revision.id, revision.canonical_digest) =
          (admission.workspace_id, admission.factory_id, admission.definition_revision_id, admission.definition_digest)
+    left join public.factory_definition_drafts draft
+      on (draft.workspace_id, draft.factory_id, draft.id) =
+         (revision.workspace_id, revision.factory_id, revision.source_draft_id)
     where manifest.workspace_id = target_workspace_id and manifest.run_id = target_run_id
       and manifest.attempt_count = target_attempt_count and admission.routing_decision is not null
       and auth.uid() is not null and internal.can_access_session(owner.id)
@@ -195,7 +277,11 @@ create function internal.get_run_routing_decision(
     ), 'benchmarkEvidence', case when history.can_manage_factory and history.decision->>'source' = 'primary' then (
       select receipt.evidence from public.factory_routing_draft_evidence receipt
       where (receipt.workspace_id, receipt.factory_id, receipt.draft_id) =
-        (history.workspace_id, history.factory_id, history.source_draft_id)
+        (history.workspace_id, history.factory_id, coalesce((
+          select direct.draft_id from public.factory_routing_draft_evidence direct
+          where (direct.workspace_id, direct.factory_id, direct.draft_id) =
+            (history.workspace_id, history.factory_id, history.source_draft_id)
+        ), history.routing_evidence_source_draft_id))
         and receipt.experiment_id::text = history.decision#>>'{configuration,experimentId}'
         and receipt.candidate_key = history.decision->>'benchmarkCandidateKey'
         and receipt.evidence->>'ruleId' = history.decision->>'ruleId'
@@ -204,6 +290,7 @@ create function internal.get_run_routing_decision(
           select 1 from jsonb_array_elements(history.policy->'rules') rule(value)
           where rule.value->>'id' = history.decision->>'ruleId'
             and rule.value->'constraints' = receipt.evidence->'constraints'
+            and rule.value->'configuration' = history.decision->'configuration'
         )
     ) end)
   from recorded history

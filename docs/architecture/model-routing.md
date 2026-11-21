@@ -1,6 +1,6 @@
 # Model routing policies
 
-The factory definition accepts an optional `modelRouting` policy in JSON mode. The policy is included in the factory definition’s canonical digest. Publishing another draft creates a separate immutable revision. Shadow routing records the recommended configuration while production execution uses the factory’s admitted profile.
+Use the Model routing controls or JSON mode in Factory Definition to configure an optional `modelRouting` policy. The policy is part of the factory definition’s canonical digest. Publishing a draft creates an immutable revision. Shadow routing records the recommended configuration while production execution uses the factory’s admitted profile.
 
 | Field           | Contract                                                                                                                                                                                                              |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,7 +35,7 @@ Missing evidence follows `onUnavailable`. A configured zero floor or cost ceilin
 
 - Edit routing rules in Factory Definition and save the draft. Preview a task class slug against that saved draft. A change to the draft or active definition requires a fresh preview.
 - Preview and admission share the same resolver. Preview uses the manager’s authority and the draft’s writer repository. An admitted session uses its own authority and writer repository.
-- Run Inspector reads the exact attempt’s routing receipt and original policy label. Factory managers can follow the retained benchmark evidence when the published rule matches its source draft.
+- Run Inspector reads the exact attempt’s routing receipt and original policy label. Factory managers can follow the retained benchmark evidence for the exact selected configuration.
 
 ## Benchmark-backed drafts
 
@@ -49,4 +49,4 @@ Workspace owners and admins can apply a comparison configuration to a task class
 | Wall latency        | A configured ceiling requires wall-time observations from every comparable trial. The 95th percentile is rounded up to whole milliseconds.                                                                                  |
 | Confidence          | The comparison currently supplies no confidence value. Leave the confidence floor unset when applying a finding.                                                                                                            |
 
-The save transaction retains an immutable receipt with the draft and the exact experiment, candidate key, suite revision and purpose, scorer revision, and measured tradeoffs. The draft links to the frozen comparison configuration and suite revision. Later suite and scorer edits leave the receipt intact.
+The save transaction retains an immutable receipt with the draft and the exact experiment, candidate key, suite revision and purpose, scorer revision, and measured tradeoffs. The draft links to the frozen comparison configuration and suite revision. A subsequent save keeps that link when the class identity, rule configuration, evidence thresholds, and repository scope still match. A fresh benchmark proposal records its own receipt.
