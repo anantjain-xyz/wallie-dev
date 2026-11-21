@@ -19,7 +19,11 @@ import {
   benchmarkComparisonIdSchema,
   benchmarkComparisonQuerySchema,
 } from "@/lib/factory-benchmarks/comparison-contracts";
-import { workspaceBenchmarkComparisonPath, workspaceBenchmarkSuitePath } from "@/lib/routes";
+import {
+  workspaceBenchmarkComparisonPath,
+  workspaceBenchmarkSuitePath,
+  workspaceBenchmarkTrialPath,
+} from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const comparisonIds = z.object({
@@ -112,6 +116,13 @@ export default async function BenchmarkComparisonPage({
       <div className="space-y-8">
         <BenchmarkComparisonResults
           comparison={comparison}
+          trialHref={(trialId) =>
+            workspaceBenchmarkTrialPath(workspaceSlug, suiteId, experimentId, trialId, {
+              factory: factory.id,
+              afterTrialId: trials.data.afterTrialId,
+              afterCandidateKey: trials.data.afterCandidateKey,
+            })
+          }
           firstTrialsHref={
             trials.data.afterTrialId
               ? `${href({ afterTrialId: undefined })}#comparison-trials`

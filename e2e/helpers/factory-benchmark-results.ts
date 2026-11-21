@@ -14,7 +14,17 @@ export function checked<T>(result: { data: T; error: unknown }): NonNullable<T> 
   return result.data;
 }
 
-export async function seedBenchmarkResults(baseURL: string | undefined) {
+export async function seedBenchmarkResults(
+  baseURL: string | undefined,
+  retained?: {
+    inputCommitSha: string;
+    inputTreeSha: string;
+    outputCommitSha: string;
+    outputTreeSha: string;
+    patch: string;
+    patchSha256: string;
+  },
+) {
   const fixture = await seedFactoryAnalytics(baseURL);
   const admin = createClient<Database>(
     z.url().parse(process.env.NEXT_PUBLIC_SUPABASE_URL),
@@ -98,6 +108,8 @@ export async function seedBenchmarkResults(baseURL: string | undefined) {
         scorerRevisionId: z.uuid(),
         taskRevisionIds: z.array(z.uuid()).length(2),
         storagePath: z.string(),
+        successfulTrialId: z.uuid(),
+        successfulRunId: z.uuid(),
       })
       .parse(
         await fixture.runFixtureFile("factory-benchmark-results-seed.sql", {
@@ -116,6 +128,12 @@ export async function seedBenchmarkResults(baseURL: string | undefined) {
           candidate_definition_id: candidateId,
           candidate_definition_json: candidate.definitionJson,
           candidate_definition_digest: candidate.canonicalDigest,
+          input_commit_sha: retained?.inputCommitSha ?? "a".repeat(40),
+          input_tree_sha: retained?.inputTreeSha ?? "a".repeat(40),
+          output_commit_sha: retained?.outputCommitSha ?? "b".repeat(40),
+          output_tree_sha: retained?.outputTreeSha ?? "b".repeat(40),
+          output_patch: retained?.patch ?? "",
+          output_patch_sha256: retained?.patchSha256 ?? "",
         }),
       );
     storagePath = saved.storagePath;

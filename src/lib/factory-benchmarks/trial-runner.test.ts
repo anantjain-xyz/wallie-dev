@@ -26,11 +26,21 @@ const id = (part: number) => `61600000-0000-4000-8000-${String(part).padStart(12
 const baseSha = "a".repeat(40);
 const headSha = "b".repeat(40);
 const treeSha = "c".repeat(40);
+const outputTreeSha = "7".repeat(40);
 const receiptSha = "d".repeat(64);
 const bundleSha = "e".repeat(64);
 const outputSha = "f".repeat(64);
 const bytes = Buffer.from("a retained fixture checkpoint");
 const checkpointSha = replaySha256(bytes);
+const originalPrompt = "Count lines without exposing this prompt.";
+const patch = [
+  "diff --git a/.wallie-benchmark-result.json b/.wallie-benchmark-result.json",
+  "--- /dev/null",
+  "+++ b/.wallie-benchmark-result.json",
+  "@@ -0,0 +1 @@",
+  '+{"version":1,"path":"README.md","lines":4}',
+  "",
+].join("\n");
 
 function deferred() {
   let resolve!: () => void;
@@ -82,8 +92,9 @@ const fixture = {
 function db({
   staleStart = false,
   staleFinish = false,
+  failDiff = false,
   budgetMs,
-}: { staleStart?: boolean; staleFinish?: boolean; budgetMs?: number } = {}) {
+}: { staleStart?: boolean; staleFinish?: boolean; failDiff?: boolean; budgetMs?: number } = {}) {
   const calls: { path: string; body: unknown }[] = [];
   const admin = createClient<Database>("https://db.example.test", "local-fixture", {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -106,6 +117,10 @@ function db({
             );
           case "agent_runs":
             return Response.json({ id: trial.run_id });
+          case "stage_factory_benchmark_trial_diff":
+            return Response.json(failDiff ? { message: "Test evidence rejection" } : true, {
+              status: failDiff ? 503 : 200,
+            });
           case "finish_factory_benchmark_trial":
             return Response.json(!staleFinish);
           case "fail_factory_benchmark_trial":
@@ -131,12 +146,18 @@ beforeEach(() => {
       sandbox: {
         id: "isolated-test",
         repoPath: "/checkout",
-        exec: vi.fn(),
+        exec: vi.fn(async () => ({
+          logs: async function* () {},
+          exitCode: Promise.resolve(0),
+          output: async () => ({ stdout: patch, stderr: "" }),
+          kill: async () => undefined,
+        })),
         readFile: vi.fn(),
         writeFile: vi.fn(),
       },
       signal: input.signal,
       inputPath: "/tmp/private.json",
+      originalPrompt,
       snapshot: {
         version: 1,
         taskRevisionId: trial.task_revision_id,
@@ -193,7 +214,7 @@ beforeEach(() => {
       key: "recorded-fixture-output",
       status: "passed",
       commitSha: headSha,
-      treeSha,
+      treeSha: outputTreeSha,
       outputSha256: outputSha,
     },
   });
@@ -218,8 +239,21 @@ describe("benchmark worker execution contract", () => {
     expect(calls.map(({ path }) => path)).toEqual([
       "start_factory_benchmark_trial",
       "agent_runs",
+      "stage_factory_benchmark_trial_diff",
       "finish_factory_benchmark_trial",
     ]);
+    expect(calls.at(-2)?.body).toEqual({
+      p_trial_id: trial.id,
+      p_job_id: job.id,
+      p_attempt_count: 1,
+      p_run_id: trial.run_id,
+      p_input_commit_sha: baseSha,
+      p_input_tree_sha: treeSha,
+      p_output_commit_sha: headSha,
+      p_output_tree_sha: outputTreeSha,
+      p_patch: patch,
+      p_patch_sha256: replaySha256(patch),
+    });
     expect(calls.at(-1)?.body).toMatchObject({
       p_trial_id: trial.id,
       p_job_id: job.id,
@@ -231,7 +265,7 @@ describe("benchmark worker execution contract", () => {
         inputCommitSha: baseSha,
         inputTreeSha: treeSha,
         outputCommitSha: headSha,
-        outputTreeSha: treeSha,
+        outputTreeSha,
         fixtureOperationId: operationId,
         checkpointStoragePath: path,
         checkpointBundleSha256: checkpointSha,
@@ -239,6 +273,17 @@ describe("benchmark worker execution contract", () => {
         runtime: "workerd",
       },
     });
+  });
+
+  it("adopts the recorded result when optional diff staging is unavailable", async () => {
+    const { admin, calls } = db({ failDiff: true });
+    await expect(runRecordedBenchmarkTrial({ admin, job })).resolves.toMatchObject({
+      result: "success",
+    });
+    expect(calls.map(({ path }) => path).slice(-2)).toEqual([
+      "stage_factory_benchmark_trial_diff",
+      "finish_factory_benchmark_trial",
+    ]);
   });
 
   it("records a bounded validation failure without uploading or publishing a checkpoint", async () => {
@@ -270,6 +315,7 @@ describe("benchmark worker execution contract", () => {
     expect(finish.calls.map(({ path }) => path)).toEqual([
       "start_factory_benchmark_trial",
       "agent_runs",
+      "stage_factory_benchmark_trial_diff",
       "finish_factory_benchmark_trial",
     ]);
   });

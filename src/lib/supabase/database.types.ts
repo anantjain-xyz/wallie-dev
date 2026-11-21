@@ -13607,6 +13607,16 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_benchmark_trial_evidence: {
+        Args: {
+          p_actor_user_id: string
+          p_experiment_id: string
+          p_factory_id: string
+          p_trial_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_candidate_activation_eligibility: {
         Args: {
           p_actor_user_id: string
@@ -15313,6 +15323,21 @@ export type Database = {
       settle_workspace_resource_operation: {
         Args: { p_operation_id: string; p_transferred: boolean }
         Returns: undefined
+      }
+      stage_factory_benchmark_trial_diff: {
+        Args: {
+          p_attempt_count: number
+          p_input_commit_sha: string
+          p_input_tree_sha: string
+          p_job_id: string
+          p_output_commit_sha: string
+          p_output_tree_sha: string
+          p_patch: string
+          p_patch_sha256: string
+          p_run_id: string
+          p_trial_id: string
+        }
+        Returns: boolean
       }
       stage_factory_run_memory_proposal: {
         Args: {

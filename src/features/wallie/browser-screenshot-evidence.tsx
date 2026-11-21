@@ -8,13 +8,19 @@ import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
 
 import {
   browserScreenshotAnchor,
-  browserScreenshotDownloadPath,
+  browserAssetPathForScope,
+  browserEvidenceAnchorForScope,
+  browserEvidenceHashForScope,
   isBrowserScreenshotHash,
-  type BrowserEvidenceSelection,
+  type BrowserEvidenceInspectorProps,
   type BrowserEvidenceReceipt,
   type BrowserScreenshotRecord,
 } from "./browser-evidence-contracts";
-import { useBrowserEvidence, useBrowserEvidenceHash } from "./browser-evidence-client";
+import {
+  fetchBrowserEvidenceAsset,
+  useBrowserEvidence,
+  useBrowserEvidenceHash,
+} from "./browser-evidence-client";
 
 const reasonLabels = {
   runtime_unavailable: "The trusted capture runtime was unavailable.",
@@ -31,25 +37,23 @@ function isScreenshot(
   return record.kind === "screenshot";
 }
 
-export function BrowserScreenshotInspector({
-  sessionId,
-  runId,
-  artifactId,
-  artifactLinkQuery,
-}: BrowserEvidenceSelection & { sessionId: string; artifactLinkQuery?: string }) {
+export function BrowserScreenshotInspector(scope: BrowserEvidenceInspectorProps) {
   const sectionId = useId();
-  const hash = useBrowserEvidenceHash();
+  const side = scope.trial?.side;
+  const hash = browserEvidenceHashForScope(useBrowserEvidenceHash(), side);
   const [open, setOpen] = useState(false);
   const [dismissedHash, setDismissedHash] = useState("");
   const anchorOpen = hash !== dismissedHash && isBrowserScreenshotHash(hash);
   const expanded = open || anchorOpen;
-  const { result, reset, retry } = useBrowserEvidence({ sessionId, runId, artifactId, expanded });
+  const { result, reset, retry } = useBrowserEvidence(scope, expanded);
 
   useEffect(() => {
     if (anchorOpen && result && result !== "unavailable") {
-      document.getElementById(hash.slice(1))?.scrollIntoView({ block: "nearest" });
+      document
+        .getElementById(browserEvidenceAnchorForScope(hash.slice(1), side))
+        ?.scrollIntoView({ block: "nearest" });
     }
-  }, [anchorOpen, hash, result]);
+  }, [anchorOpen, hash, result, side]);
 
   const evidence = Array.isArray(result) ? result[0] : undefined;
   const screenshots = evidence?.records.filter(isScreenshot) ?? [];
@@ -99,9 +103,7 @@ export function BrowserScreenshotInspector({
                 key={record.key}
                 record={record}
                 evidence={evidence}
-                sessionId={sessionId}
-                artifactId={artifactId}
-                artifactLinkQuery={artifactLinkQuery}
+                scope={scope}
               />
             ))}
           </ul>
@@ -114,18 +116,20 @@ export function BrowserScreenshotInspector({
 function ScreenshotRecord({
   record,
   evidence,
-  sessionId,
-  artifactId,
-  artifactLinkQuery,
+  scope,
 }: {
   record: BrowserScreenshotRecord;
   evidence: BrowserEvidenceReceipt;
-  sessionId: string;
-  artifactId?: string;
-  artifactLinkQuery?: string;
+  scope: BrowserEvidenceInspectorProps;
 }) {
   const captured = record.status === "captured" ? record : null;
-  const anchor = captured ? browserScreenshotAnchor(captured.manifest.assetId) : undefined;
+  const anchor = captured
+    ? browserEvidenceAnchorForScope(
+        browserScreenshotAnchor(captured.manifest.assetId),
+        scope.trial?.side,
+      )
+    : undefined;
+  const { artifactLinkQuery } = scope;
   return (
     <li id={anchor} className="min-w-0 scroll-mt-24 space-y-3 py-3">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
@@ -177,10 +181,12 @@ function ScreenshotRecord({
           <ScreenshotPreview
             label={record.key}
             expectedBytes={record.manifest.sizeBytes}
-            path={browserScreenshotDownloadPath(sessionId, record.manifest.assetId, {
-              runId: evidence.runId,
-              artifactId,
-            })}
+            path={browserAssetPathForScope(
+              scope,
+              "screenshot",
+              evidence.runId,
+              record.manifest.assetId,
+            )}
           />
           <a
             className="text-xs text-accent underline"
@@ -197,11 +203,12 @@ function ScreenshotRecord({
 }
 
 type Preview =
-  | { status: "closed" | "loading" | "unavailable" }
+  | { status: "closed" | "loading" | "unavailable" | "expired" | "erased" }
   | { status: "ready"; url: string; width: number; height: number };
 
 async function loadPng(path: string, expectedBytes: number, signal: AbortSignal) {
-  const response = await fetch(path, { cache: "no-store", signal });
+  const response = await fetchBrowserEvidenceAsset(path, signal);
+  if (typeof response === "string") return response;
   if (!response.ok || response.headers.get("content-type") !== "image/png") return null;
   const blob = await response.blob();
   if (blob.size !== expectedBytes || blob.size < 24) return null;
@@ -251,6 +258,10 @@ function ScreenshotPreview({
     try {
       const png = await loadPng(path, expectedBytes, request.signal);
       if (request.signal.aborted) return;
+      if (typeof png === "string") {
+        setPreview({ status: png });
+        return;
+      }
       if (!png) {
         setPreview({ status: "unavailable" });
         return;
@@ -285,6 +296,13 @@ function ScreenshotPreview({
         {preview.status === "unavailable" ? (
           <p className="text-sm text-muted">
             Screenshot unavailable. The capture receipt is still available.
+          </p>
+        ) : null}
+        {preview.status === "expired" || preview.status === "erased" ? (
+          <p className="text-sm text-muted">
+            {preview.status === "expired"
+              ? "This screenshot expired under the workspace retention policy."
+              : "This screenshot was erased."}
           </p>
         ) : null}
         {preview.status === "ready" ? (

@@ -3,52 +3,11 @@
 import { useEffect, useState } from "react";
 
 import { GitHubIcon } from "@/components/shared/icons/github-icon";
-import type { PrDiffFile } from "./review-evidence-contracts";
+import { ReviewUnifiedDiff } from "./review-unified-diff";
 import { usePrDiff } from "./use-pr-diff";
 
 function shortSha(value: string | null) {
   return value ? value.slice(0, 7) : "unknown";
-}
-
-function patchLineKind(line: string) {
-  if (line.startsWith("@@")) return "hunk";
-  if (line.startsWith("+") && !line.startsWith("+++")) return "added";
-  if (line.startsWith("-") && !line.startsWith("---")) return "removed";
-  return "context";
-}
-
-function DiffPatch({ file }: { file: PrDiffFile }) {
-  if (!file.patch) return null;
-  return (
-    <pre
-      aria-label={`Unified diff for ${file.filename}`}
-      className="mt-2 max-h-[28rem] overflow-auto rounded-[4px] border border-border bg-canvas p-3 text-xs leading-5"
-      tabIndex={0}
-    >
-      <code>
-        {file.patch.split("\n").map((line, index) => {
-          const kind = patchLineKind(line);
-          return (
-            <span
-              key={`${index}:${line.slice(0, 20)}`}
-              className={
-                kind === "added"
-                  ? "block bg-success-soft text-success"
-                  : kind === "removed"
-                    ? "block bg-danger-soft text-danger"
-                    : kind === "hunk"
-                      ? "block text-accent"
-                      : "block text-foreground"
-              }
-            >
-              {line}
-              {"\n"}
-            </span>
-          );
-        })}
-      </code>
-    </pre>
-  );
 }
 
 type SessionReviewDiffProps = {
@@ -250,7 +209,12 @@ function SessionReviewDiffRevision({
                           ) : null}
                         </div>
                       </div>
-                      <DiffPatch file={file} />
+                      {file.patch ? (
+                        <ReviewUnifiedDiff
+                          patch={file.patch}
+                          label={`Unified diff for ${file.filename}`}
+                        />
+                      ) : null}
                       {file.patchUnavailable ? (
                         <p className="mt-2 text-xs text-muted">
                           GitHub did not return a text diff for this file (binary or too large).

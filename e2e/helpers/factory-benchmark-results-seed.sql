@@ -8,7 +8,9 @@ select :'workspace_id'::uuid as workspace_id, :'factory_id'::uuid as factory_id,
   :'experiment_id'::uuid as experiment_id, :'source_definition_id'::uuid as definition_id,
   gen_random_uuid() as sandbox_revision, gen_random_uuid() as source_session_id,
   gen_random_uuid() as source_job_id, gen_random_uuid() as source_run_id,
-  :'excluded_run_id'::uuid as excluded_run_id;
+  :'excluded_run_id'::uuid as excluded_run_id, :'input_commit_sha' as input_commit_sha,
+  :'input_tree_sha' as input_tree_sha, :'output_commit_sha' as output_commit_sha, :'output_tree_sha' as output_tree_sha,
+  nullif(:'output_patch','') as output_patch, nullif(:'output_patch_sha256','') as output_patch_sha256;
 
 insert into public.factory_definition_revisions (
   id, workspace_id, factory_id, schema_version, definition_json, canonical_digest, created_by
@@ -59,7 +61,7 @@ insert into public.factory_benchmark_task_inputs (
   definition_revision_id, repository_id, checkout_sha
 )
 select task.task_id, scope.workspace_id, scope.factory_id, scope.source_run_id, scope.source_session_id,
-  scope.source_job_id, 1, scope.definition_id, scope.repository_id, repeat('a', 40)
+  scope.source_job_id, 1, scope.definition_id, scope.repository_id, scope.input_commit_sha
 from browser_comparison_scope scope cross join browser_comparison_tasks task
 where task.replay_eligibility = 'eligible';
 
@@ -102,7 +104,7 @@ cross join lateral public.configure_factory_judge_profile(
   'v2.' || repeat('a', 16) || '.synthetic.' || repeat('b', 22)
 ) judge;
 
-create temporary table browser_comparison_artifact(path text);
+create temporary table browser_comparison_artifact(path text, trial_id uuid, run_id uuid);
 
 do $$
 declare
@@ -177,17 +179,32 @@ begin
       -- sandbox, retained source bytes or provider credentials are involved.
       insert into storage.objects(bucket_id, name, metadata)
       values ('session-source-checkpoints', path, '{"mimetype":"application/octet-stream","size":8}');
-      insert into browser_comparison_artifact values (path);
+      insert into browser_comparison_artifact values (path, selected_trial.id, selected_trial.run_id);
+      if scope.output_patch is not null then
+        if not public.stage_factory_benchmark_trial_diff(
+          selected_trial.id, selected_trial.job_id, 1, selected_trial.run_id,
+          scope.input_commit_sha, scope.input_tree_sha, scope.output_commit_sha, scope.output_tree_sha,
+          scope.output_patch, scope.output_patch_sha256
+        ) then raise exception 'Could not stage the exact fixture diff.'; end if;
+        for event_number in 1..35 loop
+          if not public.append_agent_run_event(
+            selected_trial.job_id, selected_trial.run_id, 1, event_number, 'text',
+            jsonb_build_object('text', 'Recorded invoice processing step ' || event_number ||
+              case when event_number = 35 then ' API_KEY=synthetic-private-fixture-value' else '' end),
+            false
+          ) then raise exception 'Could not append the fixture transcript.'; end if;
+        end loop;
+      end if;
       if not public.finish_factory_benchmark_trial(
         selected_trial.id, selected_trial.job_id, 1, selected_trial.run_id, jsonb_build_object(
           'restorationReceiptSha256', repeat('d',64), 'inputBundleSha256', repeat('c',64),
-          'inputCommitSha', repeat('a',40), 'inputTreeSha', repeat('a',40),
-          'outputCommitSha', repeat('b',40), 'outputTreeSha', repeat('b',40),
+          'inputCommitSha', scope.input_commit_sha, 'inputTreeSha', scope.input_tree_sha,
+          'outputCommitSha', scope.output_commit_sha, 'outputTreeSha', scope.output_tree_sha,
           'fixtureOperationId', fixture_operation_id, 'artifactMarkdown', '# Saved invoice result',
           'checkpointBundleSha256', repeat('e',64), 'checkpointStoragePath', path,
           'checkpointUploadOperationId', upload_id, 'runtime', 'node',
           'validation', jsonb_build_object('version',1,'key','recorded-fixture-output','status','passed',
-            'commitSha',repeat('b',40),'treeSha',repeat('b',40),'outputSha256',repeat('f',64))
+            'commitSha',scope.output_commit_sha,'treeSha',scope.output_tree_sha,'outputSha256',repeat('f',64))
         )
       ) then raise exception 'Could not retain the successful fixture result.'; end if;
     elsif step = 'timeout' then
@@ -237,7 +254,8 @@ begin
       'evidence',(select sample.evidence from public.factory_scorer_sample_receipts sample
         where sample.id = claim.sample_receipt_id)),
     p_provider_model => 'openai/gpt-example', p_cost_usd => 0.3, p_cost_provenance => 'estimated',
-    p_estimation_revision => 'synthetic-result-cost-v1'
+    p_estimation_revision => 'synthetic-result-cost-v1',
+    p_explanation => 'The isolated invoice output preserves the saved total.'
   ) then raise exception 'Could not retain the synthetic score.'; end if;
 end;
 $$;
@@ -245,7 +263,7 @@ $$;
 select jsonb_build_object(
   'suiteId', suite.suite_id, 'suiteRevisionId', suite.id, 'scorerRevisionId', scorer.id,
   'taskRevisionIds', array(select id from browser_comparison_tasks order by id),
-  'storagePath', artifact.path
+  'storagePath', artifact.path, 'successfulTrialId', artifact.trial_id, 'successfulRunId', artifact.run_id
 )
 from browser_comparison_suite suite cross join browser_comparison_scorer scorer
 cross join browser_comparison_artifact artifact;

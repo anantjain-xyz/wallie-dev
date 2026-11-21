@@ -17,6 +17,11 @@ import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 import { RECORDED_FIXTURE_RUNNER, replayDigestSchema } from "./replay-contracts";
 import { withIsolatedBenchmarkReplay } from "./replay-sandbox";
 import {
+  benchmarkEvidenceSensitiveValues,
+  readPrivateBenchmarkDiff,
+  stagePrivateBenchmarkDiff,
+} from "./trial-diff";
+import {
   RecordedTrialFixtureError,
   recordedTrialFixtureSchema,
   runRecordedTrialFixture,
@@ -68,6 +73,7 @@ export async function runRecordedBenchmarkTrial({
   const deadline = deadlineAt ? Date.parse(deadlineAt) - Date.now() : maxDurationMs;
   if (!Number.isFinite(deadline)) throw new Error("Benchmark attempt deadline is invalid.");
   if (deadline <= 0) throw new WorkerAttemptDeadlineError(deadlineMessage);
+  const startupDeadlineMs = Date.now() + Math.min(deadline, maxDurationMs);
   using budget = createWorkerAttemptDeadline(Math.min(deadline, maxDurationMs), deadlineMessage);
   const startupSignal = workerSignal
     ? AbortSignal.any([workerSignal, budget.signal])
@@ -105,6 +111,7 @@ export async function runRecordedBenchmarkTrial({
   const remaining = Date.parse(trial.deadline_at) - Date.now();
   if (!Number.isFinite(remaining)) throw new Error("Benchmark attempt deadline is invalid.");
   if (remaining <= 0) throw new WorkerAttemptDeadlineError(deadlineMessage);
+  const evidenceDeadlineMs = Math.min(startupDeadlineMs, Date.parse(trial.deadline_at));
   using attemptDeadline = createWorkerAttemptDeadline(
     Math.min(remaining, maxDurationMs),
     deadlineMessage,
@@ -167,7 +174,7 @@ export async function runRecordedBenchmarkTrial({
             }
           },
         },
-        async ({ sandbox, signal: replaySignal, inputPath, snapshot, broker }) => {
+        async ({ sandbox, signal: replaySignal, inputPath, snapshot, broker, originalPrompt }) => {
           failure = "fixture_unavailable";
           if (
             broker.permit.profile !== "recorded_fixtures" &&
@@ -193,12 +200,23 @@ export async function runRecordedBenchmarkTrial({
             inputCommitSha: snapshot.checkoutSha,
             inputTreeSha: snapshot.treeSha,
           });
-          return { snapshot, fixtureOperationId: read.receipt.operationId, ...output };
+          const diff = await readPrivateBenchmarkDiff({
+            sandbox,
+            signal: replaySignal,
+            deadlineMs: evidenceDeadlineMs,
+            commits: {
+              input: { commitSha: snapshot.checkoutSha, treeSha: snapshot.treeSha },
+              output: { commitSha: output.checkpoint.headSha, treeSha: output.validation.treeSha },
+            },
+            sensitiveValues: benchmarkEvidenceSensitiveValues(originalPrompt),
+          });
+          return { snapshot, fixtureOperationId: read.receipt.operationId, diff, ...output };
         },
       );
       signal.throwIfAborted();
       failure = "checkpoint_unavailable";
-      const { checkpoint, snapshot, fixtureOperationId, artifactMarkdown, validation } = result;
+      const { checkpoint, snapshot, fixtureOperationId, artifactMarkdown, validation, diff } =
+        result;
       const path = `${trial.workspace_id}/benchmark/${trial.id}/${trial.run_id}/${checkpoint.sha256}.bundle`;
       const upload = await uploadWorkspaceObject(admin, {
         bucket: SOURCE_CHECKPOINT_BUCKET,
@@ -212,6 +230,8 @@ export async function runRecordedBenchmarkTrial({
       signal.throwIfAborted();
       if (upload.error || !upload.operationId)
         throw new Error("The benchmark checkpoint could not be stored.");
+      await stagePrivateBenchmarkDiff(admin, identity, diff, signal, evidenceDeadlineMs);
+      signal.throwIfAborted();
       return {
         restorationReceiptSha256: snapshot.restorationReceiptSha256,
         inputBundleSha256: snapshot.inputBundleSha256,

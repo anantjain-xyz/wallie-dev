@@ -126,14 +126,15 @@ export class RunEventCapture {
     };
   }
 
-  async record(event: AgentEvent): Promise<void> {
+  async record(event: AgentEvent, signal?: AbortSignal): Promise<void> {
     if (!this.captureOrderedEvents) {
       const { jobId, runId, attemptCount } = this.identity;
-      const { data, error } = await this.admin.rpc("touch_agent_run_activity", {
+      const request = this.admin.rpc("touch_agent_run_activity", {
         p_job_id: jobId,
         p_run_id: runId,
         p_attempt_count: attemptCount,
       });
+      const { data, error } = await (signal ? request.abortSignal(signal) : request);
       if (error) throw error;
       if (!data) throw new ExecutionOwnershipLostError();
       return;
@@ -145,7 +146,7 @@ export class RunEventCapture {
       (event.type === "tool_result" || event.type === "capture_gap") && event.callId
         ? this.toolCallSequences.get(event.callId)
         : undefined;
-    const sequence = await this.append(projected, { causationSequence });
+    const sequence = await this.append(projected, { causationSequence, signal });
     if (event.type === "tool_use" && event.callId && !this.earlyToolResults.delete(event.callId)) {
       this.toolCallSequences.set(event.callId, sequence);
     }
@@ -178,7 +179,7 @@ export class RunEventCapture {
     }
     if (event.type === "completion" && event.usage) {
       const usage = projectUsage(event.usage, redact);
-      await this.append(usage, { causationSequence: sequence });
+      await this.append(usage, { causationSequence: sequence, signal });
       if (coverage && usage.truncated) coverage.truncatedEvents++;
     }
   }

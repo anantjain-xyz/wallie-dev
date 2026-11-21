@@ -322,6 +322,7 @@ type IsolatedBenchmarkInputs = {
     "repositoryId" | "commitSha" | "snapshotPath"
   >[];
   broker: BenchmarkReplayBroker;
+  originalPrompt: string;
 };
 
 export async function withIsolatedBenchmarkReplay<T>(
@@ -335,7 +336,7 @@ export async function withIsolatedBenchmarkReplay<T>(
     "principal" in input
       ? input.principal
       : { workspaceId: input.access.workspace.id, actorUserId: input.access.user.id };
-  return withBenchmarkSandbox(input, "isolated", async (restored, admin) => {
+  return withBenchmarkSandbox(input, "isolated", async (restored, admin, { plan }) => {
     const { sandbox, signal, inputPath, receipt, readContext } = restored;
     const snapshot = exportReplaySnapshot(receipt);
     const broker = await openBenchmarkReplayPolicy({
@@ -373,6 +374,7 @@ export async function withIsolatedBenchmarkReplay<T>(
         snapshotPath,
       })),
       broker,
+      originalPrompt: plan.text.originalPrompt,
     });
   });
 }

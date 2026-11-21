@@ -95,9 +95,10 @@ cross join lateral public.save_factory_benchmark_suite_revision(scope.workspace_
     where task.factory_id = scope.factory_id and task.key <> 'unverified'
   )) suite;
 insert into public.factory_benchmark_task_inputs(task_id, workspace_id, factory_id, source_run_id, source_session_id,
-  source_job_id, source_attempt_count, definition_revision_id, checkout_sha)
+  source_job_id, source_attempt_count, definition_revision_id, checkout_sha, repository_id)
 select task.task_id, task.workspace_id, task.factory_id, pg_temp.schedule_id(scope.slot + 8),
-  pg_temp.schedule_id(scope.slot + 7), pg_temp.schedule_id(scope.slot + 13), 1, pg_temp.schedule_id(scope.slot + 3), repeat('a', 40)
+  pg_temp.schedule_id(scope.slot + 7), pg_temp.schedule_id(scope.slot + 13), 1, pg_temp.schedule_id(scope.slot + 3), repeat('a', 40),
+  pg_temp.schedule_id(scope.slot + 2)
 from experiment_tasks task join experiment_scope scope on task.factory_id = scope.factory_id
 where task.replay_eligibility = 'eligible';
 insert into public.workspace_vercel_sandbox_connections(workspace_id, connection_revision, encrypted_token, team_id, project_id)
@@ -216,6 +217,22 @@ returns jsonb language sql as $$
   from experiment_scope scope where scope.is_default
 $$;
 
+create function pg_temp.trial_evidence(p_trial_id uuid,p_actor integer default 1,p_slot integer default 80,p_primary boolean default true)
+returns jsonb language sql as $$
+  select public.read_factory_benchmark_trial_evidence(scope.workspace_id,scope.factory_id,pg_temp.schedule_id(p_slot),
+    p_trial_id,pg_temp.schedule_id(p_actor)) from experiment_scope scope where is_default = p_primary
+$$;
+
+create function pg_temp.stage_evidence_patch(trial public.factory_benchmark_trials,p_patch text,p_attempt integer default 1)
+returns boolean language sql as $$
+  select public.stage_factory_benchmark_trial_diff(trial.id,trial.job_id,p_attempt,trial.run_id,
+    repeat('a',40),repeat('a',40),repeat('b',40),repeat('b',40),p_patch,encode(sha256(convert_to(p_patch,'UTF8')),'hex'));
+$$;
+
+create temp table staged_evidence_proof (
+  initial boolean,retry boolean,stale_attempt boolean,changed_patch boolean,before_adoption jsonb,
+  mismatched_result_hidden boolean
+);
 create function pg_temp.finish_fixture_trial(p_slot integer, p_cost numeric)
 returns boolean language plpgsql as $$
 declare
@@ -223,6 +240,11 @@ declare
   fixture_operation_id uuid := gen_random_uuid();
   path text;
   upload_id uuid;
+  payload jsonb;
+  wrong_patch text := 'Private content from a different output commit';
+  wrong_patch_staged boolean;
+  wrong_patch_adopted boolean;
+  mismatched_result_hidden boolean;
 begin
   perform id from public.claim_next_agent_job(true, 4);
   trial := public.start_factory_benchmark_trial(trial.job_id, 1);
@@ -238,7 +260,7 @@ begin
   -- Synthetic private storage metadata in this rollback-only fixture.
   insert into storage.objects(bucket_id, name, metadata)
   values ('session-source-checkpoints', path, '{"mimetype":"application/octet-stream","size":8}');
-  return public.finish_factory_benchmark_trial(trial.id, trial.job_id, 1, trial.run_id, jsonb_build_object(
+  payload := jsonb_build_object(
     'restorationReceiptSha256', repeat('d', 64), 'inputBundleSha256', repeat('c', 64),
     'inputCommitSha', repeat('a', 40), 'inputTreeSha', repeat('a', 40),
     'outputCommitSha', repeat('b', 40), 'outputTreeSha', repeat('b', 40),
@@ -247,7 +269,25 @@ begin
     'validation', jsonb_build_object('version',1,'key','recorded-fixture-output','status','passed',
       'commitSha',repeat('b',40),'treeSha',repeat('b',40),'outputSha256',repeat('f',64)),
     'runtime', 'node'
-  ));
+  );
+  begin
+    wrong_patch_staged := public.stage_factory_benchmark_trial_diff(trial.id,trial.job_id,1,trial.run_id,
+      repeat('a',40),repeat('a',40),repeat('c',40),repeat('c',40),wrong_patch,encode(sha256(convert_to(wrong_patch,'UTF8')),'hex'));
+    wrong_patch_adopted := public.finish_factory_benchmark_trial(trial.id,trial.job_id,1,trial.run_id,payload);
+    mismatched_result_hidden := wrong_patch_staged and wrong_patch_adopted
+      and pg_temp.trial_evidence(trial.id)#>>'{diff,availability}' = 'unavailable';
+    raise exception using errcode = 'QE001', message = 'Restore the same attempt before staging its exact patch.';
+  exception when sqlstate 'QE001' then
+    null;
+  end;
+  insert into staged_evidence_proof(initial,mismatched_result_hidden)
+  values (pg_temp.stage_evidence_patch(trial,E'@@ -1 +1 @@\n-before\n+after\n'),mismatched_result_hidden);
+  update staged_evidence_proof set
+    retry = pg_temp.stage_evidence_patch(trial,E'@@ -1 +1 @@\n-before\n+after\n'),
+    stale_attempt = pg_temp.stage_evidence_patch(trial,E'@@ -1 +1 @@\n-before\n+after\n',2),
+    changed_patch = pg_temp.stage_evidence_patch(trial,'A contradictory patch'),
+    before_adoption = pg_temp.trial_evidence(trial.id);
+  return public.finish_factory_benchmark_trial(trial.id,trial.job_id,1,trial.run_id,payload);
 end;
 $$;
 
@@ -309,6 +349,58 @@ select pg_temp.configure_schedule(80,p_budget => 2,p_execution => 0.1,p_evaluati
 select is(public.reconcile_factory_benchmark_schedules(10),1,'execution admits a first comparison cell');
 select ok(pg_temp.finish_fixture_trial(80,0.07),'the first result retains exact execution evidence');
 create temp table succeeded_comparison_trial as select (pg_temp.last_scheduled_trial(80)).id as id;
+select ok(initial and retry and not stale_attempt and not changed_patch,
+  'only the exact running attempt stages the digest and a retry cannot replace it') from staged_evidence_proof;
+select is(before_adoption#>>'{diff,availability}','unavailable','staging does not disclose an unadopted patch') from staged_evidence_proof;
+select ok(mismatched_result_hidden,'an adopted result cannot disclose a patch staged for another output commit') from staged_evidence_proof;
+select is(pg_temp.trial_evidence(id)#>>'{diff,patch}',E'@@ -1 +1 @@\n-before\n+after\n',
+  'adopted evidence exposes exactly the bounded staged diff') from succeeded_comparison_trial;
+select is(pg_temp.trial_evidence(id)#>>'{source,owner,runId}',pg_temp.schedule_id(48)::text,
+  'the exact production source maintains its own run identity') from succeeded_comparison_trial;
+select is(pg_temp.trial_evidence(id)#>>'{output,owner,commitSha}',repeat('b',40),
+  'only the adopted output supplies its exact commit') from succeeded_comparison_trial;
+select is(pg_temp.trial_evidence(id)#>>'{output,owner,runStatus}','success',
+  'the evidence owner reports the exact run state for transcript paging') from succeeded_comparison_trial;
+select is(pg_temp.trial_evidence(id)#>>'{frozenInputs,checkoutSha}',repeat('a',40),
+  'the frozen checkout identity remains separate from both evidence owners') from succeeded_comparison_trial;
+select is(pg_temp.trial_evidence(id)#>>'{diff,sha256}',encode(sha256(convert_to(E'@@ -1 +1 @@\n-before\n+after\n','UTF8')),'hex'),
+  'the authorized patch carries the digest of its exact UTF-8 bytes') from succeeded_comparison_trial;
+select throws_ok($$select pg_temp.stage_evidence_patch(pg_temp.last_scheduled_trial(80),repeat('é',32769))$$,
+  '22023',null,'the private patch limit counts UTF-8 bytes');
+select throws_ok($$select pg_temp.trial_evidence((select id from succeeded_comparison_trial),p_actor => 2)$$,
+  '42501',null,'factory members without current manager access cannot open evidence');
+select throws_ok($$select pg_temp.trial_evidence((select id from succeeded_comparison_trial),p_primary => false)$$,
+  'P0002',null,'a valid manager cannot resolve a trial through another factory');
+select throws_ok($$select pg_temp.trial_evidence((select id from succeeded_comparison_trial),p_slot => 81)$$,
+  'P0002',null,'a trial cannot be resolved through another comparison');
+select is((select pg_temp.trial_evidence(trial_id)#>>'{trial,status}' from public.factory_benchmark_experiment_trials
+  where experiment_id = pg_temp.schedule_id(80) and replay_eligibility = 'ineligible' limit 1),'excluded',
+  'an excluded matrix cell still opens its frozen evidence metadata');
+select ok(not has_function_privilege('authenticated','public.read_factory_benchmark_trial_evidence(uuid,uuid,uuid,uuid,uuid)','EXECUTE')
+  and not has_function_privilege('authenticated','public.stage_factory_benchmark_trial_diff(uuid,uuid,integer,uuid,text,text,text,text,text,text)','EXECUTE')
+  and not has_table_privilege('service_role','internal.factory_benchmark_trial_diffs','SELECT'),
+  'private evidence requires its exact privileged RPC boundary');
+
+create function pg_temp.evidence_plan_matches(p_commit text,p_tree text) returns boolean language plpgsql as $$
+declare matched boolean;
+begin
+  insert into public.session_validation_plans(run_id,workspace_id,session_id,job_id,attempt_count,repository_id,
+    commit_sha,validation_tree_sha,plan)
+  select trial.run_id,trial.workspace_id,trial.session_id,trial.job_id,trial.attempt_count,pg_temp.schedule_id(42),p_commit,p_tree,
+    '{"version":1,"commands":[]}'::jsonb
+  from public.factory_benchmark_trials trial join succeeded_comparison_trial chosen on chosen.id = trial.id;
+  select (pg_temp.trial_evidence(id)#>>'{output,mediaPlanMatched}')::boolean into matched from succeeded_comparison_trial;
+  raise exception using errcode = 'QE001', message = 'Restore the fixture to compare another media plan identity.';
+exception when sqlstate 'QE001' then
+  return matched;
+end;
+$$;
+select is(pg_temp.evidence_plan_matches(repeat('b',40),repeat('b',40)),true,
+  'an exact output attempt, commit, and tree can resolve its media plan');
+select is(pg_temp.evidence_plan_matches(repeat('c',40),repeat('b',40)),false,
+  'the same attempt cannot use media planned for another commit');
+select is(pg_temp.evidence_plan_matches(repeat('b',40),repeat('c',40)),false,
+  'the same attempt and commit cannot use media planned for another tree');
 
 select is(public.reconcile_factory_benchmark_schedules(10),1,'execution admits a second comparison cell');
 select id from public.claim_next_agent_job(true,4);
@@ -415,6 +507,9 @@ begin
     jsonb_build_object('kind','boolean','value',true),'evidence',sample.evidence) end;
   if public.finish_factory_judge_invocation(claim.workspace_id,claim.factory_id,claim.job_id,claim.attempt_id,claim.lease_id,
     p_status,verdict,p_provider_model => case when p_status = 'completed' then 'openai/gpt-example' end,
+    p_explanation => case when p_status = 'completed' then 'The isolated fixture satisfies its exact evidence.' end,
+    p_evidence_locations => case when p_status = 'completed' then jsonb_build_array(jsonb_build_object(
+      'reference',sample.evidence->0,'location',jsonb_build_object('kind','whole'))) end,
     p_cost_usd => p_cost,p_cost_provenance => case when p_cost is not null then 'measured' else 'unavailable' end)
     is distinct from true then raise exception 'The comparison scorer could not settle.'; end if;
   return row(claim.job_id,claim.attempt_id);
@@ -425,6 +520,12 @@ create temp table first_unknown_score as
 select * from pg_temp.score_comparison('provider_unavailable',null) as scored(job_id uuid,attempt_id uuid);
 update public.factory_evaluation_jobs set available_at = clock_timestamp() where id in (select job_id from first_unknown_score);
 select * from pg_temp.score_comparison('invalid_output',null) as scored(job_id uuid,attempt_id uuid);
+select is((select score->>'explanation' from succeeded_comparison_trial
+  cross join lateral jsonb_array_elements(pg_temp.trial_evidence(id)->'scores') score where score->>'status' = 'pass'),
+  'The isolated fixture satisfies its exact evidence.','the exact selected scorer can explain the adopted result');
+select is((select score->'evidenceLocations' from succeeded_comparison_trial
+  cross join lateral jsonb_array_elements(pg_temp.trial_evidence(id)->'scores') score where score->>'status' = 'pass'),
+  '[{"kind":"artifact","location":{"kind":"whole"}}]'::jsonb,'the exact explanation exposes bounded locations without paths');
 
 select is(pg_temp.comparison(80)#>>'{spend,evaluation,measuredUsd}', '0.04', 'exact evaluation spend excludes fixture execution spend');
 select is(pg_temp.comparison(80)#>>'{spend,evaluation,unavailableAttemptCount}', '2', 'both unknown judge attempts are counted');
@@ -547,6 +648,10 @@ select public.grant_factory_membership(workspace_id,factory_id,owner_id,pg_temp.
 from experiment_scope where is_default;
 select public.grant_factory_membership(workspace_id,factory_id,owner_id,pg_temp.schedule_id(22),'manager')
 from experiment_scope where is_default;
+select is(pg_temp.trial_evidence(id,p_actor => 2)#>>'{diff,availability}','available',
+  'an explicit current factory manager can open exact evidence') from succeeded_comparison_trial;
+select is(pg_temp.trial_evidence(id,p_actor => 2)#>>'{task,acceptanceCriteria}','Keep the frozen acceptance criteria.',
+  'a current manager can read the retained frozen acceptance text') from succeeded_comparison_trial;
 create temp table revocable_export as
 select (pg_temp.create_comparison_export(80,902,p_actor => 2)->>'exportId')::uuid as id;
 select is((pg_temp.read_comparison_export(80,id,p_actor => 2)::jsonb->>'exportId')::uuid,id,
@@ -559,6 +664,8 @@ select throws_ok($$select pg_temp.read_comparison_export(80,(select id from revo
   'P0002',null,'a different current manager cannot download the requester’s manifest');
 select public.revoke_factory_membership(workspace_id,factory_id,owner_id,pg_temp.schedule_id(22),'Qualification fixture')
 from experiment_scope where is_default;
+select throws_ok($$select pg_temp.trial_evidence((select id from succeeded_comparison_trial),p_actor => 2)$$,
+  '42501',null,'a prior manager loses private evidence immediately after revocation');
 select throws_ok($$select pg_temp.read_comparison_export(80,(select id from revocable_export),p_actor => 2)$$,
   'P0002',null,'the requester loses manifest access when its grant is revoked');
 select throws_ok($$select pg_temp.read_comparison_export(80,(select id from revocable_export),1,p_actor => 2)$$,
@@ -604,6 +711,32 @@ from experiment_scope scope where is_default;
 select is(jsonb_array_length(public.list_factory_benchmark_comparisons(scope.workspace_id,scope.factory_id,
   scope.owner_id,p_limit => 1)->'items'),1,'the comparison index is bounded for an archived factory')
 from experiment_scope scope where is_default;
+
+select is(pg_temp.trial_evidence(id)#>>'{diff,availability}','available',
+  'current manager access to exact evidence survives factory archive') from succeeded_comparison_trial;
+insert into public.agent_run_transcript_expirations(run_id,workspace_id,expired_at)
+values (pg_temp.schedule_id(48),pg_temp.schedule_id(11),transaction_timestamp()-interval '1 hour');
+select ok((pg_temp.trial_evidence(id)#>>'{source,transcriptExpiredAt}') is not null
+  and pg_temp.trial_evidence(id)#>>'{source,owner,runId}' = pg_temp.schedule_id(48)::text,
+  'the scoped source preserves identity while explicitly marking the expired transcript') from succeeded_comparison_trial;
+
+select set_config('request.jwt.claim.sub',pg_temp.schedule_id(1)::text,true);
+update public.sessions set archived_at = clock_timestamp() where id = pg_temp.schedule_id(47);
+select public.erase_session_retained_content(owner.workspace_id,owner.factory_id,owner.id,owner.archived_at)
+from public.sessions owner where owner.id = pg_temp.schedule_id(47);
+select ok(pg_temp.trial_evidence(id)#>>'{source,availability}' = 'withheld'
+  and pg_temp.trial_evidence(id)#>'{source,owner}' = 'null'::jsonb
+  and pg_temp.trial_evidence(id)#>'{output,owner}' = 'null'::jsonb
+  and pg_temp.trial_evidence(id)#>'{diff,patch}' = 'null'::jsonb,
+  'erasing the source invalidates both private run locators and removes output patch content') from succeeded_comparison_trial;
+select ok(pg_temp.trial_evidence(id)#>'{task,acceptanceCriteria}' = 'null'::jsonb
+  and pg_temp.trial_evidence(id)#>'{task,acceptanceTruncated}' = 'false'::jsonb
+  and pg_temp.trial_evidence(id)#>>'{task,name}' = 'eligible'
+  and pg_temp.trial_evidence(id)#>>'{task,revisionId}' is not null,
+  'withholding private source text preserves the frozen task identity without its acceptance text') from succeeded_comparison_trial;
+select is((select count(*) from succeeded_comparison_trial
+  cross join lateral jsonb_array_elements(pg_temp.trial_evidence(id)->'scores') score where score->>'explanation' is not null),0::bigint,
+  'a withheld source also removes explanations derived from its adopted evidence');
 
 select * from finish();
 rollback;
