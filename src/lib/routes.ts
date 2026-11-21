@@ -125,6 +125,19 @@ export function workspaceBenchmarkComparisonPath(
   );
 }
 
+export function workspaceBenchmarkTrialPath(
+  workspaceSlug: string,
+  suiteId: string,
+  experimentId: string,
+  trialId: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(
+    `${workspaceBenchmarkComparisonPath(workspaceSlug, suiteId, experimentId)}/trials/${encodeURIComponent(trialId)}`,
+    query,
+  );
+}
+
 export function workspaceContextPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/context`, query);
 }

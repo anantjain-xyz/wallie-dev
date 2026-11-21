@@ -23,6 +23,7 @@ type Props = {
   workspaceId: string;
   runId: string;
   initialPage: RunTranscriptPage;
+  trialEndpoint?: string;
 };
 
 const FORWARD_PAGES_PER_REFRESH = 3;
@@ -46,17 +47,17 @@ class TranscriptAccessError extends Error {}
 class TranscriptSourceChanged extends Error {}
 
 export function RunTranscriptLive(props: Props) {
-  const key = `${props.workspaceId}:${props.runId}:${props.initialPage.expiredAt ?? ""}`;
+  const key = `${props.workspaceId}:${props.runId}:${props.trialEndpoint ?? ""}:${props.initialPage.expiredAt ?? ""}`;
   return <TranscriptPanel key={key} {...props} />;
 }
 
-function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
+function TranscriptPanel({ workspaceId, runId, initialPage, trialEndpoint }: Props) {
   const router = useRouter();
   const supabaseConfig = useSupabasePublicConfig();
   const { connection, recovery } = useRealtimeRecovery();
   const [state, setState] = useState(initialPage);
   const [needsLive, setNeedsLive] = useState(
-    () => !isWallieRunTerminalStatus(initialPage.runStatus),
+    () => !trialEndpoint && !isWallieRunTerminalStatus(initialPage.runStatus),
   );
   const current = useRef(state);
   const repairedOlderCursor = useRef<string | null>(null);
@@ -70,7 +71,7 @@ function TranscriptPanel({ workspaceId, runId, initialPage }: Props) {
   const [unavailable, setUnavailable] = useState(false);
   const accessLost = useRef(false);
   const olderRequest = useRef<AbortController | null>(null);
-  const endpoint = `/api/workspaces/${workspaceId}/runs/${runId}/transcript`;
+  const endpoint = trialEndpoint ?? `/api/workspaces/${workspaceId}/runs/${runId}/transcript`;
   const getSupabase = useCallback(
     () => loadSupabaseBrowserClient(supabaseConfig),
     [supabaseConfig],

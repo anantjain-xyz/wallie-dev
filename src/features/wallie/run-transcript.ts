@@ -20,6 +20,16 @@ import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type Client = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type Input = { supabase: Client; workspaceId: string; runId: string; query?: RunTranscriptQuery };
+export type RunTranscriptOwner = {
+  run_id: string;
+  attempt_count: number | null;
+  status: RunTranscriptPage["runStatus"];
+  transcript_expired_at: string | null;
+};
+type ScopedInput = Omit<Input, "runId"> & {
+  readOwner: () => Promise<RunTranscriptOwner | null>;
+  signal?: AbortSignal;
+};
 const cursorSchema = z
   .object({
     version: z.literal(1),
@@ -44,8 +54,15 @@ export class RunTranscriptResetError extends Error {
   }
 }
 
-export async function loadRunTranscript(input: Input): Promise<RunTranscriptPage | null> {
-  const owner = await readOwner(input);
+export function loadRunTranscript(input: Input): Promise<RunTranscriptPage | null> {
+  return loadScopedRunTranscript({ ...input, readOwner: () => readOwner(input) });
+}
+
+/** Read a transcript using a caller's current authorization for its exact owner. */
+export async function loadScopedRunTranscript(
+  input: ScopedInput,
+): Promise<RunTranscriptPage | null> {
+  const owner = await input.readOwner();
   if (!owner) return null;
   const scope = {
     version: 1,
@@ -83,7 +100,7 @@ export async function loadRunTranscript(input: Input): Promise<RunTranscriptPage
         ? query.gt("sequence", cursor.sequence)
         : query.lt("sequence", cursor.sequence);
     }
-    const { data, error } = await query;
+    const { data, error } = await (input.signal ? query.abortSignal(input.signal) : query);
     if (error) throw error;
     const rows = data ?? [];
     hasMore = rows.length > limit;
@@ -109,9 +126,10 @@ export async function loadRunTranscript(input: Input): Promise<RunTranscriptPage
   }
 
   // Recheck current ownership before disclosing event bodies.
-  const current = await readOwner(input);
+  const current = await input.readOwner();
   if (!current) return null;
-  if ((current.attempt_count ?? null) !== attemptCount) throw new RunTranscriptResetError();
+  if (current.run_id !== scope.runId || (current.attempt_count ?? null) !== attemptCount)
+    throw new RunTranscriptResetError();
   if (current.transcript_expired_at || attemptCount === null) {
     return emptyPage(scope, current.status, current.transcript_expired_at ?? null);
   }
@@ -155,7 +173,7 @@ function isTerminal(status: RunTranscriptPage["runStatus"]): boolean {
   return status === "success" || status === "error" || status === "canceled";
 }
 
-async function readOwner(input: Input) {
+async function readOwner(input: Input): Promise<RunTranscriptOwner | null> {
   const { data, error } = await input.supabase.rpc("list_workspace_run_catalog", {
     p_workspace_id: input.workspaceId,
     p_run_id: input.runId,

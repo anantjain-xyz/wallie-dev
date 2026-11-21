@@ -198,6 +198,7 @@ export async function processPipelineJob(input: {
       return runBenchmarkTrial({
         admin,
         job,
+        captureOrderedEvents: input.captureOrderedEvents,
         deadlineAt: input.deadlineAt,
         signal: input.signal,
         workerRuntime: input.workerRuntime ?? "node",

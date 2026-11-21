@@ -10,6 +10,48 @@ const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const selectionSchema = z.object({ runId: uuid.optional(), artifactId: uuid.optional() });
 export type BrowserEvidenceSelection = z.infer<typeof selectionSchema>;
 
+type TrialBrowserEvidenceScope = {
+  endpoint: string;
+  side: "original" | "output";
+  runId: string;
+  attemptCount: number;
+  commitSha: string;
+  treeSha: string;
+};
+
+export type BrowserEvidenceScope =
+  | (BrowserEvidenceSelection & { sessionId: string; trial?: never })
+  | { trial: TrialBrowserEvidenceScope; sessionId?: never; runId?: never; artifactId?: never };
+
+export type BrowserEvidenceInspectorProps = BrowserEvidenceScope & { artifactLinkQuery?: string };
+
+export function browserEvidenceAnchorForScope(
+  anchor: string,
+  side?: TrialBrowserEvidenceScope["side"],
+) {
+  return side ? `${side}-${anchor}` : anchor;
+}
+
+export function browserEvidenceHashForScope(
+  hash: string,
+  side?: TrialBrowserEvidenceScope["side"],
+) {
+  if (!side) return hash;
+  return hash.startsWith(`#${side}-`) ? `#${hash.slice(side.length + 2)}` : "";
+}
+
+export function browserAssetPathForScope(
+  scope: BrowserEvidenceScope,
+  kind: "screenshot" | "video",
+  runId: string,
+  assetId: string,
+) {
+  if (scope.trial) return `${scope.trial.endpoint}/assets/${encodeURIComponent(assetId)}`;
+  const downloadPath =
+    kind === "screenshot" ? browserScreenshotDownloadPath : browserRecordingDownloadPath;
+  return downloadPath(scope.sessionId, assetId, { runId, artifactId: scope.artifactId });
+}
+
 export function browserEvidenceSelection(url: string) {
   const params = new URL(url).searchParams;
   return selectionSchema.parse({

@@ -2,11 +2,19 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { MetadataItem, MetadataList, PageSection } from "@/components/ui/page-shell";
-import { Status, type StatusValue } from "@/components/ui/status";
+import { Status } from "@/components/ui/status";
 import type {
   BenchmarkComparison,
   BenchmarkComparisonTrial,
 } from "@/lib/factory-benchmarks/comparison-contracts";
+
+import {
+  benchmarkCandidateRole,
+  benchmarkHarnessNames,
+  benchmarkReasonLabel,
+  benchmarkRuntimeNames,
+  benchmarkTrialStatuses,
+} from "./benchmark-trial-labels";
 
 type Candidate = BenchmarkComparison["candidates"][number];
 type Counts = BenchmarkComparison["counts"];
@@ -19,23 +27,6 @@ const datetime = new Intl.DateTimeFormat("en-US", {
   timeStyle: "short",
   timeZone: "UTC",
 });
-const harnessNames: Record<string, string> = {
-  codex: "Codex",
-  "claude-code": "Claude Code",
-  cursor: "Cursor",
-  opencode: "OpenCode",
-};
-const runtimeNames: Record<string, string> = { node: "Node.js", workerd: "Cloudflare Workers" };
-const trialStatuses = {
-  excluded: { label: "Excluded", value: "skipped" },
-  pending: { label: "Pending", value: "queued" },
-  running: { label: "Running", value: "running" },
-  succeeded: { label: "Completed", value: "complete" },
-  failed: { label: "Failed", value: "failed" },
-  timed_out: { label: "Timed out", value: "failed" },
-  canceled: { label: "Canceled", value: "canceled" },
-  unavailable: { label: "Unavailable", value: "blocked" },
-} satisfies Record<BenchmarkComparisonTrial["status"], { label: string; value: StatusValue }>;
 const qualityLabels = {
   pass: "Pass",
   fail: "Fail",
@@ -54,12 +45,6 @@ function usd(value: string) {
 
 function duration(ms: number) {
   return ms < 1_000 ? `${number.format(ms)} ms` : `${number.format(ms / 1_000)} s`;
-}
-
-function reasonLabel(reason: string) {
-  return /^[a-z][a-z_]+$/.test(reason)
-    ? reason.charAt(0).toUpperCase() + reason.slice(1).replaceAll("_", " ")
-    : reason;
 }
 
 function TrialCounts({ counts }: { counts: Counts }) {
@@ -176,11 +161,6 @@ function Pin({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function candidateRole(position: number | null) {
-  if (position === null) return null;
-  return position === 1 ? "Baseline" : `Candidate ${position - 1}`;
-}
-
 function CandidatePins({ candidate }: { candidate: Candidate }) {
   return (
     <details className="mt-2">
@@ -285,16 +265,19 @@ function Configurations({
                 <tr className="border-t border-border align-top" key={candidate.candidateKey}>
                   <th className="space-y-1 px-4 py-4 font-normal sm:px-5" scope="row">
                     <p className="type-label">
-                      {candidateRole(candidate.position) ??
-                        harnessNames[candidate.plannedHarness] ??
+                      {benchmarkCandidateRole(candidate.position) ??
+                        benchmarkHarnessNames[candidate.plannedHarness] ??
                         candidate.plannedHarness}
                     </p>
                     {candidate.position !== null ? (
-                      <p>{harnessNames[candidate.plannedHarness] ?? candidate.plannedHarness}</p>
+                      <p>
+                        {benchmarkHarnessNames[candidate.plannedHarness] ??
+                          candidate.plannedHarness}
+                      </p>
                     ) : null}
                     <p className="text-muted">{candidate.plannedModel}</p>
                     <p className="text-muted">
-                      {runtimeNames[candidate.plannedRuntime] ?? candidate.plannedRuntime}
+                      {benchmarkRuntimeNames[candidate.plannedRuntime] ?? candidate.plannedRuntime}
                     </p>
                     <CandidatePins candidate={candidate} />
                   </th>
@@ -350,10 +333,12 @@ function Configurations({
 function TrialRows({
   rows,
   scorers,
+  trialHref,
   firstHref,
   nextHref,
 }: {
   rows: BenchmarkComparison["trialRows"];
+  trialHref: (trialId: string) => string;
   scorers: ReadonlyMap<string, Scorer>;
   firstHref?: string;
   nextHref?: string;
@@ -376,15 +361,29 @@ function TrialRows({
             </thead>
             <tbody>
               {rows.map((trial) => {
-                const status = trialStatuses[trial.status];
+                const status = benchmarkTrialStatuses[trial.status];
                 return (
                   <tr className="border-t border-border align-top" key={trial.trialId}>
                     <th className="space-y-1 px-4 py-3 font-normal sm:px-5" scope="row">
-                      <p className="type-label">{trial.task.name}</p>
+                      <Link
+                        className="type-label underline decoration-border underline-offset-4 hover:text-accent"
+                        href={trialHref(trial.trialId)}
+                        prefetch={false}
+                      >
+                        {trial.task.name}
+                        <span className="sr-only">
+                          {" · "}
+                          {benchmarkCandidateRole(trial.candidatePosition) ??
+                            benchmarkHarnessNames[trial.plannedHarness] ??
+                            trial.plannedHarness}
+                          {" · "}
+                          {trial.plannedModel} · Repetition {trial.repetition}
+                        </span>
+                      </Link>
                       <p className="text-muted">
                         {[
-                          candidateRole(trial.candidatePosition),
-                          harnessNames[trial.plannedHarness] ?? trial.plannedHarness,
+                          benchmarkCandidateRole(trial.candidatePosition),
+                          benchmarkHarnessNames[trial.plannedHarness] ?? trial.plannedHarness,
                           trial.plannedModel,
                           `Repetition ${trial.repetition}`,
                         ]
@@ -428,7 +427,7 @@ function TrialRows({
                         <p className="text-muted">{trial.eligibilityReason}</p>
                       ) : null}
                       {trial.reason && trial.reason !== trial.eligibilityReason ? (
-                        <p className="text-muted">{reasonLabel(trial.reason)}</p>
+                        <p className="text-muted">{benchmarkReasonLabel(trial.reason)}</p>
                       ) : null}
                       {trial.deadlineElapsed && trial.status !== "timed_out" ? (
                         <p className="text-muted">Deadline elapsed</p>
@@ -459,7 +458,9 @@ function TrialRows({
                                     {score.score ? ` · ${String(score.score.value)}` : null}
                                   </p>
                                   {score.reason ? (
-                                    <p className="text-muted">{reasonLabel(score.reason)}</p>
+                                    <p className="text-muted">
+                                      {benchmarkReasonLabel(score.reason)}
+                                    </p>
                                   ) : null}
                                 </li>
                               );
@@ -500,12 +501,14 @@ function TrialRows({
 
 export function BenchmarkComparisonResults({
   comparison,
+  trialHref,
   firstTrialsHref,
   nextTrialsHref,
   firstConfigurationsHref,
   nextConfigurationsHref,
 }: {
   comparison: BenchmarkComparison;
+  trialHref: (trialId: string) => string;
   firstTrialsHref?: string;
   nextTrialsHref?: string;
   firstConfigurationsHref?: string;
@@ -525,7 +528,10 @@ export function BenchmarkComparisonResults({
           <div className="px-4 py-4 sm:px-5">
             <MetadataList>
               <MetadataItem label="Suite revision" value={`Revision ${suite.revisionNumber}`} />
-              <MetadataItem label="Schedule" value={reasonLabel(comparison.scheduleState)} />
+              <MetadataItem
+                label="Schedule"
+                value={benchmarkReasonLabel(comparison.scheduleState)}
+              />
               <MetadataItem label="Repetitions" value={comparison.repetitions} />
               <MetadataItem label="Configurations" value={comparison.candidateCount} />
               <MetadataItem
@@ -567,6 +573,7 @@ export function BenchmarkComparisonResults({
       />
       <TrialRows
         rows={comparison.trialRows}
+        trialHref={trialHref}
         scorers={scorerByRevision}
         firstHref={firstTrialsHref}
         nextHref={nextTrialsHref}

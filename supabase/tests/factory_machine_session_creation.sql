@@ -298,8 +298,24 @@ select ok((select receipt.service_principal_id=(select id from creation_principa
   where receipt.run_id=(select id from owned_machine_run)),
   'the exact attempt’s credential receipt remains attributable to the named service principal');
 
+create function pg_temp.can_read_archived_benchmark_source() returns boolean language plpgsql as $$
+declare readable boolean;
+begin
+  perform public.archive_factory(pg_temp.creation_id(2),pg_temp.creation_factory_id(),pg_temp.creation_id(1));
+  select internal.can_read_factory_benchmark_source(source) into readable from public.sessions source
+  join original_machine_create created on source.id = (created.receipt->>'sessionId')::uuid;
+  raise exception using errcode = 'QE001', message = 'Restore the factory before revoking the grant.';
+exception when sqlstate 'QE001' then
+  return readable;
+end;
+$$;
+select ok(pg_temp.can_read_archived_benchmark_source(),
+  'archiving the factory preserves historical evidence access under the exact current source grant');
 select public.revoke_factory_execution_grant(pg_temp.creation_id(2),pg_temp.creation_factory_id(),pg_temp.creation_id(1),
   (select id from creation_grant),(select version from creation_grant),'Test revocation');
+select is((select internal.can_read_factory_benchmark_source(source) from public.sessions source
+  join original_machine_create created on source.id = (created.receipt->>'sessionId')::uuid),false,
+  'the original grant must still authorize private benchmark source evidence');
 select throws_ok($q$select resolved.encrypted_value from original_machine_create created cross join owned_machine_run run
   cross join lateral public.resolve_factory_run_credential(pg_temp.creation_id(2),(created.receipt->>'jobId')::uuid,run.id,1) resolved$q$,
   '42501',null,'current execution grant revocation still fences worker credential release');

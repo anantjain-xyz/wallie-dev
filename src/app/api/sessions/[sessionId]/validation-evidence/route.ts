@@ -1,13 +1,8 @@
-import { z } from "zod";
-import {
-  browserCaptureReceiptSchema,
-  browserVerificationPlanSchema,
-} from "@/lib/validation-evidence/browser-contract";
 import { loadArtifactEvidenceCheckpoint } from "@/lib/validation-evidence/artifact-links";
+import { projectBrowserEvidenceReceipt } from "@/lib/validation-evidence/browser-evidence-view";
 import {
   browserEvidenceSelection,
   browserScreenshotDownloadPath,
-  type BrowserRecordingFindings,
 } from "@/features/wallie/browser-evidence-contracts";
 
 import {
@@ -72,63 +67,17 @@ export async function GET(request: Request, { params }: RouteContext) {
     const { data: evidence, error } = commands;
     if (error) throw error;
     if (browser.error) throw browser.error;
-    const browserEvidence = (browser.data ?? []).flatMap(
-      ({ records, plan, run_id, created_at }) => {
-        const parsed = z.array(browserCaptureReceiptSchema).max(10).safeParse(records);
-        if (!parsed.success || !plan) return [];
-        const browserPlan = browserVerificationPlanSchema.safeParse(plan.browser_plan);
-        const videoFindings: BrowserRecordingFindings[] = [];
-        const scopedRecords = parsed.data.map((record) => {
-          if (record.status !== "captured") return record;
-          const { key, kind, path, policy } = record;
-          if (checkpoint && plan.commit_sha !== checkpoint.commitSha) {
-            return { key, kind, path, policy, status: "failed", reason: "source_changed" };
-          }
-          if (record.kind === "video") {
-            const check = browserPlan.data?.find((item) => item.key === key && item.path === path);
-            const [entry, ...offsets] = record.manifest.frameOffsetsMs;
-            if (
-              entry !== 0 ||
-              !check?.evidence.some((item) => item.kind === "video") ||
-              offsets.length !== check.interactions.length ||
-              record.manifest.durationMs > check.timeoutSeconds * 1000 ||
-              Date.parse(record.completedAt) < Date.parse(record.startedAt)
-            ) {
-              return { key, kind, path, policy, status: "failed", reason: "capture_failed" };
-            }
-            videoFindings.push({
-              assetId: record.manifest.assetId,
-              steps: [
-                { action: "entry", offsetMs: entry },
-                ...check.interactions.map((action, index) => ({
-                  ...action,
-                  offsetMs: offsets[index]!,
-                })),
-              ],
-            });
-            return record;
-          }
-          return {
-            ...record,
-            downloadUrl: browserScreenshotDownloadPath(session.id, record.manifest.assetId, {
-              runId: exactRunId,
-              artifactId: selection.artifactId,
-            }),
-          };
-        });
-        return [
-          {
-            runId: run_id,
-            attemptCount: plan.attempt_count,
-            commitSha: plan.commit_sha,
-            treeSha: plan.validation_tree_sha,
-            createdAt: created_at,
-            records: scopedRecords,
-            ...(videoFindings.length ? { videoFindings } : {}),
-          },
-        ];
-      },
-    );
+    const browserEvidence = (browser.data ?? []).flatMap((row) => {
+      const projected = projectBrowserEvidenceReceipt(row, {
+        expectedCommitSha: checkpoint?.commitSha,
+        screenshotUrl: (assetId) =>
+          browserScreenshotDownloadPath(session.id, assetId, {
+            runId: exactRunId,
+            artifactId: selection.artifactId,
+          }),
+      });
+      return projected ? [projected] : [];
+    });
     if (!evidence?.length) return reviewJson({ evidence: [], assets: [], browserEvidence });
 
     // Ten receipts with at most 100 manifests each fit within PostgREST's

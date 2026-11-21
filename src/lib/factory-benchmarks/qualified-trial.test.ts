@@ -40,6 +40,18 @@ const artifact = "Updated the local fixture.";
 const upstreamModel = "gpt-4.1-2025-04-14";
 const checkpoint = Buffer.from("private benchmark fixture");
 const privateDiagnostic = "synthetic sensitive provider and replay context";
+const syntheticToken = "sk-synthetic-secret-value";
+const privatePatch = [
+  "diff --git a/README.md b/README.md",
+  "--- a/README.md",
+  "+++ b/README.md",
+  "@@ -1 +1,3 @@",
+  " unchanged",
+  `+${prompt}`,
+  `+OPENAI_API_KEY=${syntheticToken}`,
+  "",
+].join("\n");
+const safePatch = privatePatch.replace(prompt, "[REDACTED]").replace(syntheticToken, "[redacted]");
 
 function fixture(
   harness: "codex" | "opencode",
@@ -58,6 +70,8 @@ function fixture(
     | "stale-start"
     | "invalid-start"
     | "canceled"
+    | "evidence-unavailable"
+    | "log-flood"
     | "oversize",
   deadlineOffsetMs = 60_000,
 ) {
@@ -117,6 +131,11 @@ function fixture(
         return Response.json(problem === "stale-start" ? null : trial);
       case "agent_runs":
         return Response.json({ id: identity.runId });
+      case "append_agent_run_event":
+      case "stage_factory_benchmark_trial_diff":
+        if (problem === "evidence-unavailable")
+          return Response.json({ message: "Test evidence rejection" }, { status: 503 });
+        return Response.json(true);
       case "arm_factory_benchmark_live_sandbox_binding":
         nonceDigest = body.p_nonce_sha256;
         return Response.json(true);
@@ -182,10 +201,40 @@ function fixture(
       sandbox.files.set(output, {
         data: Buffer.from(problem === "oversize" ? "é".repeat(128 * 1024 + 1) : artifact),
       });
+      const shell = { id: "shell-1", type: "command_execution", command: privateDiagnostic };
       return [
         {
           stream: "stdout",
-          data: '{"type":"turn.completed","usage":{"input_tokens":9,"output_tokens":4}}\n',
+          data:
+            [
+              { type: "item.started", item: { ...shell, status: "in_progress" } },
+              ...(problem === "log-flood"
+                ? Array.from({ length: 100 }, (_, count) => ({
+                    type: "item.completed",
+                    item: { type: "agent_message", text: `Progress ${count + 1}` },
+                  }))
+                : []),
+              {
+                type: "item.completed",
+                item: { type: "agent_message", text: prompt.slice(0, 10) },
+              },
+              {
+                type: "item.completed",
+                item: { type: "agent_message", text: prompt.slice(10) + " Planned local edit." },
+              },
+              {
+                type: "item.completed",
+                item: {
+                  ...shell,
+                  status: "completed",
+                  aggregated_output: privateDiagnostic,
+                  exit_code: 0,
+                },
+              },
+              { type: "turn.completed", usage: { input_tokens: 9, output_tokens: 4 } },
+            ]
+              .map((event) => JSON.stringify(event))
+              .join("\n") + "\n",
         },
       ];
     }
@@ -200,6 +249,9 @@ function fixture(
           .join("\n"),
       },
     ];
+  });
+  sandbox.scriptExec((call) => call.cmd === "env" && call.args[0] === "-i", [], {
+    output: { stdout: privatePatch, stderr: "" },
   });
 
   vi.mocked(loadRequiredWorkspaceSandboxConnection).mockResolvedValue({
@@ -287,15 +339,60 @@ describe("qualified live benchmark execution", () => {
       await expect(
         runQualifiedBenchmarkTrial({ admin, job, workerRuntime: "workerd" }),
       ).resolves.toMatchObject({ result: "success", runId: id(3) });
-      expect(requests.map(({ name }) => name)).toEqual([
+      expect(
+        requests.filter(({ name }) => name !== "append_agent_run_event").map(({ name }) => name),
+      ).toEqual([
         "start_factory_benchmark_live_trial",
         "agent_runs",
         "arm_factory_benchmark_live_sandbox_binding",
         "read_factory_benchmark_live_sandbox_binding",
         "enable_factory_benchmark_live_inference",
         "close_factory_benchmark_live_inference",
+        "stage_factory_benchmark_trial_diff",
         "finish_factory_benchmark_live_trial",
       ]);
+      expect(requests.at(-2)?.body).toEqual({
+        p_trial_id: id(1),
+        p_job_id: id(2),
+        p_run_id: id(3),
+        p_attempt_count: 1,
+        p_input_commit_sha: base,
+        p_input_tree_sha: tree,
+        p_output_commit_sha: head,
+        p_output_tree_sha: outputTree,
+        p_patch: safePatch,
+        p_patch_sha256: replaySha256(safePatch),
+      });
+      const events = requests
+        .filter(({ name }) => name === "append_agent_run_event")
+        .map(({ body }) => body);
+      expect(events.at(-1)).toMatchObject({
+        p_kind: "capture_end",
+        p_payload: { status: "complete" },
+      });
+      expect(
+        events.every(
+          ({ p_job_id, p_run_id, p_attempt_count, p_sequence }, index) =>
+            p_job_id === id(2) &&
+            p_run_id === id(3) &&
+            p_attempt_count === 1 &&
+            p_sequence === index + 1,
+        ),
+      ).toBe(true);
+      expect(JSON.stringify(events)).not.toContain(prompt);
+      expect(JSON.stringify(events)).not.toContain(privateDiagnostic);
+      if (harness === "codex") {
+        expect(events[0]).toMatchObject({
+          p_kind: "tool_call",
+          p_payload: { input: "[Tool input withheld.]" },
+        });
+        expect(events.find(({ p_kind }) => p_kind === "tool_result")).toMatchObject({
+          p_causation_sequence: 1,
+          p_payload: { output: "[Tool output withheld.]" },
+        });
+        expect(JSON.stringify(events)).toContain("Planned local edit.");
+        expect(JSON.stringify(events)).not.toContain(prompt.slice(0, 10));
+      }
       expect(requests.at(-1)?.body).toMatchObject({
         p_result: {
           input: {
@@ -321,6 +418,47 @@ describe("qualified live benchmark execution", () => {
       );
     },
   );
+
+  it("can still adopt a qualified result when transcript and diff persistence fail", async () => {
+    const { admin, job, requests } = fixture("codex", "evidence-unavailable");
+    await expect(
+      runQualifiedBenchmarkTrial({ admin, job, workerRuntime: "workerd" }),
+    ).resolves.toMatchObject({
+      result: "success",
+    });
+    expect(requests.filter(({ name }) => name === "append_agent_run_event")).toHaveLength(1);
+    expect(requests.at(-2)?.name).toBe("stage_factory_benchmark_trial_diff");
+    expect(requests.at(-1)?.name).toBe("finish_factory_benchmark_live_trial");
+  });
+
+  it("keeps qualified capture bounded and marks dropped events as an interrupted transcript", async () => {
+    const { admin, job, requests } = fixture("codex", "log-flood");
+    await expect(
+      runQualifiedBenchmarkTrial({ admin, job, workerRuntime: "workerd" }),
+    ).resolves.toMatchObject({ result: "success" });
+    const events = requests.filter(({ name }) => name === "append_agent_run_event");
+    expect(events.length).toBeLessThan(40);
+    expect(events.at(-1)?.body).toMatchObject({
+      p_kind: "capture_end",
+      p_payload: { status: "interrupted" },
+    });
+    expect(JSON.stringify(events)).toContain("Progress 1");
+    expect(JSON.stringify(events)).not.toContain("Progress 100");
+  });
+
+  it("honors the worker's ordered transcript capture setting", async () => {
+    const { admin, job, requests } = fixture("codex");
+    await expect(
+      runQualifiedBenchmarkTrial({
+        admin,
+        job,
+        workerRuntime: "workerd",
+        captureOrderedEvents: false,
+      }),
+    ).resolves.toMatchObject({ result: "success" });
+    expect(requests.some(({ name }) => name === "append_agent_run_event")).toBe(false);
+    expect(requests.at(-2)?.name).toBe("stage_factory_benchmark_trial_diff");
+  });
 
   it.each([
     ["missing-source", "replay_unavailable", false],

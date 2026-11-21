@@ -5,14 +5,20 @@ import { useEffect, useId, useRef, useState } from "react";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
 
-import { useBrowserEvidence, useBrowserEvidenceHash } from "./browser-evidence-client";
+import {
+  fetchBrowserEvidenceAsset,
+  useBrowserEvidence,
+  useBrowserEvidenceHash,
+} from "./browser-evidence-client";
 import {
   browserRecordingAnchor,
-  browserRecordingDownloadPath,
+  browserAssetPathForScope,
+  browserEvidenceAnchorForScope,
+  browserEvidenceHashForScope,
   parseBrowserRecordingHash,
   RECORDING_EVIDENCE_PARAM,
   SCREENSHOT_EVIDENCE_PARAM,
-  type BrowserEvidenceSelection,
+  type BrowserEvidenceInspectorProps,
   type BrowserRecordingFinding,
   type BrowserEvidenceReceipt,
   type BrowserVideoRecord,
@@ -65,19 +71,16 @@ function recordingLink(artifactLinkQuery: string | undefined, anchor: string) {
   return `?${query}#${anchor}`;
 }
 
-export function BrowserVideoInspector({
-  sessionId,
-  runId,
-  artifactId,
-  artifactLinkQuery,
-}: BrowserEvidenceSelection & { sessionId: string; artifactLinkQuery?: string }) {
+export function BrowserVideoInspector(scope: BrowserEvidenceInspectorProps) {
   const sectionId = useId();
-  const hash = useBrowserEvidenceHash();
+  const side = scope.trial?.side;
+  const locationHash = useBrowserEvidenceHash();
+  const hash = browserEvidenceHashForScope(locationHash, side);
   const [open, setOpen] = useState(false);
   const [dismissedHash, setDismissedHash] = useState("");
   const target = hash === dismissedHash ? null : parseBrowserRecordingHash(hash);
   const expanded = open || target !== null;
-  const { result, reset, retry } = useBrowserEvidence({ sessionId, runId, artifactId, expanded });
+  const { result, reset, retry } = useBrowserEvidence(scope, expanded);
   const evidence = Array.isArray(result) ? result[0] : undefined;
   const recordings =
     evidence?.records.filter((record): record is BrowserVideoRecord => record.kind === "video") ??
@@ -98,8 +101,8 @@ export function BrowserVideoInspector({
 
   useEffect(() => {
     if (linkedRecording)
-      document.getElementById(hash.slice(1))?.scrollIntoView({ block: "nearest" });
-  }, [hash, linkedRecording]);
+      document.getElementById(locationHash.slice(1))?.scrollIntoView({ block: "nearest" });
+  }, [locationHash, linkedRecording]);
 
   return (
     <section className="mt-2 min-w-0">
@@ -152,11 +155,9 @@ export function BrowserVideoInspector({
                 key={record.key}
                 record={record}
                 evidence={evidence}
-                sessionId={sessionId}
-                artifactId={artifactId}
-                artifactLinkQuery={artifactLinkQuery}
+                scope={scope}
                 citationAnchor={
-                  linkedRecording === record && target?.citation ? hash.slice(1) : undefined
+                  linkedRecording === record && target?.citation ? locationHash.slice(1) : undefined
                 }
                 offsetMs={linkedRecording === record ? target?.offsetMs : undefined}
                 findingHash={linkedRecording === record ? hash : undefined}
@@ -173,9 +174,7 @@ export function BrowserVideoInspector({
 function RecordingReceipt({
   record,
   evidence,
-  sessionId,
-  artifactId,
-  artifactLinkQuery,
+  scope,
   citationAnchor,
   offsetMs,
   findingHash,
@@ -183,9 +182,7 @@ function RecordingReceipt({
 }: {
   record: BrowserVideoRecord;
   evidence: BrowserEvidenceReceipt;
-  sessionId: string;
-  artifactId?: string;
-  artifactLinkQuery?: string;
+  scope: BrowserEvidenceInspectorProps;
   citationAnchor?: string;
   offsetMs?: number;
   findingHash?: string;
@@ -258,23 +255,28 @@ function RecordingReceipt({
             key={captured.manifest.assetId}
             label={record.key}
             manifest={captured.manifest}
-            path={browserRecordingDownloadPath(sessionId, captured.manifest.assetId, {
-              runId: evidence.runId,
-              artifactId,
-            })}
+            path={browserAssetPathForScope(
+              scope,
+              "video",
+              evidence.runId,
+              captured.manifest.assetId,
+            )}
             offsetMs={offsetMs}
             findingKey={findingHash === undefined ? undefined : `${findingHash}:${seekRequest}`}
             seekRequest={seekRequest}
           />
           <ol aria-label="Recorded steps" className="min-w-0 space-y-1">
             {steps.map((step) => {
-              const anchor = browserRecordingAnchor(captured.manifest.assetId, step.offsetMs);
+              const anchor = browserEvidenceAnchorForScope(
+                browserRecordingAnchor(captured.manifest.assetId, step.offsetMs),
+                scope.trial?.side,
+              );
               return (
                 <li key={step.offsetMs} className="min-w-0">
                   <a
                     id={anchor}
                     className="inline-flex min-h-11 max-w-full scroll-mt-24 items-center gap-2 text-sm text-accent underline aria-[current=location]:font-semibold"
-                    href={recordingLink(artifactLinkQuery, anchor)}
+                    href={recordingLink(scope.artifactLinkQuery, anchor)}
                     aria-current={step.offsetMs === offsetMs ? "location" : undefined}
                     onClick={(event) => {
                       if (
@@ -359,7 +361,8 @@ function RecordingPreview({
 }
 
 async function loadRecording(path: string, expectedBytes: number, signal: AbortSignal) {
-  const response = await fetch(path, { cache: "no-store", signal });
+  const response = await fetchBrowserEvidenceAsset(path, signal);
+  if (typeof response === "string") return response;
   if (!response.ok || response.headers.get("content-type") !== "video/webm") return null;
   const blob = await response.blob();
   if (blob.size !== expectedBytes || blob.size < 4) return null;
@@ -397,6 +400,10 @@ function RecordingPlayer({
       try {
         const blob = await loadRecording(path, manifest.sizeBytes, signal);
         if (controller.signal.aborted) return;
+        if (typeof blob === "string") {
+          setUrl(blob);
+          return;
+        }
         if (!blob || signal.aborted) {
           setUrl("unavailable");
           return;
@@ -432,6 +439,15 @@ function RecordingPlayer({
         Loading private recording…
       </p>
     );
+  if (url === "expired" || url === "erased") {
+    return (
+      <p role="status" className="text-sm text-muted">
+        {url === "expired"
+          ? "This recording expired under the workspace retention policy."
+          : "This recording was erased."}
+      </p>
+    );
+  }
   if (url === "unavailable") {
     return (
       <div className="space-y-2">

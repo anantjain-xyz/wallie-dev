@@ -281,3 +281,18 @@ The API base is `/api/workspaces/{workspaceId}/factories/{factoryId}/benchmarks`
 | `GET /experiments/{experimentId}/exports/{exportId}`                           | Download the manifest.                                                                                                                                  |
 | `GET /experiments/{experimentId}/exports/{exportId}/parts/{ordinal}`           | Download a numbered trial part.                                                                                                                         |
 | `GET /experiments/{experimentId}/exports/{exportId}/candidate-parts/{ordinal}` | Download a numbered candidate part.                                                                                                                     |
+
+## Inspect trial evidence
+
+Open a trial row to see its frozen task, configuration, repetition, and
+checkout. The original run and replay output show their own commit and tree
+identities. Browser evidence requires the corresponding exact run, attempt,
+validation plan, receipt, and retained bytes.
+
+- The output diff is a bounded capture of the two exact commits in the
+  replay sandbox. Older trials and unsupported changes can lack a diff.
+- Qualified runs can retain paginated, redacted activity. Recorded fixtures
+  run a fixed operation and have no conversational transcript.
+- Score explanations refer to the selected scorer revision and its exact
+  retained output. Current access and retention checks govern metadata,
+  transcript pages, and downloads, including saved links.

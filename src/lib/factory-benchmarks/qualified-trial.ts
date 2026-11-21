@@ -33,7 +33,13 @@ import {
   type QualifiedTrialClaim,
 } from "./qualified-trial-contracts";
 import { withQualifiedBenchmarkReplay } from "./replay-sandbox";
+import {
+  benchmarkEvidenceSensitiveValues,
+  readPrivateBenchmarkDiff,
+  stagePrivateBenchmarkDiff,
+} from "./trial-diff";
 import { runRecordedBenchmarkTrial } from "./trial-runner";
+import { BenchmarkTrialTranscript } from "./trial-transcript";
 
 type Admin = SupabaseClient<Database>;
 type BenchmarkJob = {
@@ -42,6 +48,7 @@ type BenchmarkJob = {
   workerRuntime: AttemptWorkerRuntime;
   deadlineAt?: string;
   signal?: AbortSignal;
+  captureOrderedEvents?: boolean;
 };
 
 const maxDurationMs = 180_000;
@@ -94,6 +101,7 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
   const remaining = Date.parse(deadlineAt) - Date.now();
   if (!Number.isFinite(remaining)) throw new Error("The live benchmark deadline is invalid.");
   if (remaining <= 0) throw new WorkerAttemptDeadlineError(deadlineMessage);
+  const startupDeadlineMs = Date.now() + Math.min(remaining, maxDurationMs);
   using startupBudget = createWorkerAttemptDeadline(
     Math.min(remaining, maxDurationMs),
     deadlineMessage,
@@ -127,6 +135,7 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
     throw new Error("The live benchmark claim does not match this worker.");
   const attemptRemaining = Date.parse(trial.deadlineAt) - Date.now();
   if (attemptRemaining <= 0) throw new WorkerAttemptDeadlineError(deadlineMessage);
+  const evidenceDeadlineMs = Math.min(startupDeadlineMs, Date.parse(trial.deadlineAt));
   using attemptDeadline = createWorkerAttemptDeadline(
     Math.min(attemptRemaining, maxDurationMs),
     deadlineMessage,
@@ -232,6 +241,13 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
           signal.throwIfAborted();
 
           failure = "candidate_failed";
+          const runner = benchmarkRunner(candidate, executablePath, effort);
+          const sensitiveValues = benchmarkEvidenceSensitiveValues(prompt);
+          sensitiveValues?.push(BENCHMARK_REPLAY_API_PLACEHOLDER);
+          const transcript =
+            input.captureOrderedEvents !== false && sensitiveValues
+              ? new BenchmarkTrialTranscript()
+              : undefined;
           let artifactMarkdown: string;
           let receipt: ReturnType<typeof qualifiedInferenceReceiptSchema.parse> | undefined;
           try {
@@ -239,15 +255,26 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
               sandbox,
               identity,
               signal,
-              runner: benchmarkRunner(candidate, executablePath, effort),
+              runner,
               prompt,
+              transcript,
             });
           } finally {
-            const closed = await Promise.resolve(
-              admin
-                .rpc("close_factory_benchmark_live_inference", scope)
-                .abortSignal(AbortSignal.timeout(5000)),
-            ).catch(() => null);
+            const [closed] = await Promise.all([
+              Promise.resolve(
+                admin
+                  .rpc("close_factory_benchmark_live_inference", scope)
+                  .abortSignal(AbortSignal.timeout(5000)),
+              ).catch(() => null),
+              transcript?.persist({
+                admin,
+                identity,
+                adapter: runner.provider,
+                sensitiveValues,
+                signal,
+                deadlineMs: evidenceDeadlineMs,
+              }),
+            ]);
             const parsed = qualifiedInferenceReceiptSchema.safeParse(closed?.data);
             if (
               closed &&
@@ -292,6 +319,18 @@ export async function runQualifiedBenchmarkTrial(input: BenchmarkJob) {
           signal.throwIfAborted();
           if (upload.error || !upload.operationId)
             throw new Error("The private replay checkpoint could not be stored.");
+          const diff = await readPrivateBenchmarkDiff({
+            sandbox: local,
+            signal,
+            deadlineMs: evidenceDeadlineMs,
+            commits: {
+              input: { commitSha: snapshot.checkoutSha, treeSha: snapshot.treeSha },
+              output: source,
+            },
+            sensitiveValues,
+          });
+          await stagePrivateBenchmarkDiff(admin, scope, diff, signal, evidenceDeadlineMs);
+          signal.throwIfAborted();
           const completed = qualifiedTrialResultSchema.parse({
             input: {
               restorationReceiptSha256: snapshot.restorationReceiptSha256,
@@ -410,6 +449,7 @@ async function collectQualifiedArtifact(input: {
   runner: AgentRunner;
   prompt: string;
   signal: AbortSignal;
+  transcript?: BenchmarkTrialTranscript;
 }) {
   const { sandbox, identity, runner, prompt, signal } = input;
   for await (const event of runner.start({
@@ -421,6 +461,7 @@ async function collectQualifiedArtifact(input: {
     secrets: [BENCHMARK_REPLAY_API_PLACEHOLDER],
   })) {
     signal.throwIfAborted();
+    input.transcript?.record(event);
     if (event.type === "error") break;
     if (event.type === "completion" && event.taskComplete && event.finalOutput?.trim()) {
       if (Buffer.byteLength(event.finalOutput, "utf8") > 256 * 1024) break;
