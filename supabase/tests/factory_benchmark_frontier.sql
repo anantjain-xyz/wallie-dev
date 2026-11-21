@@ -148,7 +148,7 @@ select throws_ok($$select public.read_factory_benchmark_frontier(workspace_id,fa
 select ok(not has_function_privilege('authenticated','public.read_factory_benchmark_frontier(uuid,uuid,uuid,uuid,uuid,text,integer,integer,integer)','EXECUTE'),
   'browsers cannot impersonate the current authorized manager');
 
-create function pg_temp.frontier_execute() returns void language plpgsql as $$
+create function pg_temp.frontier_execute(p_unpriced_position integer default null) returns void language plpgsql as $$
 declare
   dispatch record;
   trial record;
@@ -189,7 +189,8 @@ begin
   then raise exception 'Could not retain exact frontier provider outcome.'; end if;
   cost := case trial.comparison_position when 1 then 0.06 when 2 then 0.14 when 3 then 0.18
     when 4 then case when trial.repetition = 5 then null else 0.001 end when 5 then 0.068 end;
-  if cost is not null and not (select accepted from public.record_session_run_usage(trial.job_id,trial.attempt_count,
+  if cost is not null and trial.comparison_position is distinct from p_unpriced_position
+    and not (select accepted from public.record_session_run_usage(trial.job_id,trial.attempt_count,
     trial.run_id,null,null,'unavailable',cost,'measured')) then raise exception 'Could not record exact frontier measured dollars.'; end if;
   inference := public.close_factory_benchmark_live_inference(trial.id,trial.job_id,trial.run_id,trial.attempt_count);
   if trial.repetition = 5 and trial.comparison_position in (1,5) then
@@ -216,7 +217,8 @@ begin
 end;
 $$;
 
-create function pg_temp.frontier_score(p_mixed boolean default false) returns void language plpgsql as $$
+create function pg_temp.frontier_score(p_mixed boolean default false,p_fail_position integer default null)
+returns void language plpgsql as $$
 declare
   claim record;
   slot record;
@@ -247,7 +249,8 @@ begin
       update public.factory_evaluation_jobs set available_at = statement_timestamp() where id = claim.job_id;
       continue;
     end if;
-    passed := not (slot.comparison_position = 3 and slot.repetition = 5);
+    passed := not ((slot.comparison_position = 3 and slot.repetition = 5)
+      or (slot.comparison_position is not distinct from p_fail_position and slot.repetition = 1));
     cost := case slot.comparison_position when 1 then 0.015 when 3 then 0.02 when 5 then 0.015 else 0.01 end;
     provider := case when p_mixed and slot.comparison_position = 2 then 'Different routing provider' else 'OpenAI' end;
     if not public.finish_factory_judge_invocation(claim.workspace_id,claim.factory_id,claim.job_id,claim.attempt_id,
@@ -263,6 +266,8 @@ update public.agent_jobs set scheduled_at = clock_timestamp() + interval '1 hour
 select pg_temp.configure_frontier(80,25);
 select is(pg_temp.read_frontier()#>>'{recommendation,reason}','comparison_in_progress','an open frozen cohort cannot give a premature global recommendation');
 select pg_temp.frontier_execute() from generate_series(1,25);
+select is(pg_temp.read_frontier()#>>'{recommendation,reason}','comparison_in_progress',
+  'score-ready adopted results remain in progress before the selected evaluator jobs are enqueued');
 select is(public.reconcile_factory_benchmark_evaluations(100),23,'only adopted live outputs admit the exact frozen rubric');
 select is(pg_temp.read_frontier()#>>'{recommendation,reason}','comparison_in_progress',
   'selected exact judge work also withholds a premature global recommendation');
@@ -305,10 +310,23 @@ select pg_temp.freeze_frontier(81,array[101,102],2);
 select pg_temp.configure_frontier(81,4);
 select pg_temp.frontier_execute() from generate_series(1,4);
 select is(public.reconcile_factory_benchmark_evaluations(100),4,'the next frozen matrix admits its own exact scores');
-select pg_temp.frontier_score(p_mixed => true);
+select pg_temp.frontier_score(p_mixed => true,p_fail_position => 2);
 select is(pg_temp.read_frontier(81)#>>'{recommendation,reason}','mixed_judge_profile',
-  'distinct observed judge provider signatures cannot produce a like-for-like frontier');
-select is(pg_temp.read_frontier(81)->>'frontierCount','0','mixed judge signatures are never ranked together');
+  'a below-floor candidate with another exact judge still prevents an incompatible recommendation');
+select is(pg_temp.read_frontier(81,p_floor => 5000)->>'frontierCount','0',
+  'changing the floor cannot make mixed judge signatures comparable');
+select ok(pg_temp.frontier_result(2,81)->'exclusions' @> '["below_quality_floor","mixed_judge_profile"]'::jsonb,
+  'the affected row explains both its below-floor score and the incompatible judge');
+
+select pg_temp.freeze_frontier(83,array[101,102],2);
+select pg_temp.configure_frontier(83,4);
+select pg_temp.frontier_execute(p_unpriced_position => 2) from generate_series(1,4);
+select is(public.reconcile_factory_benchmark_evaluations(100),4,'unpriced executions can still produce exact scores');
+select pg_temp.frontier_score(p_mixed => true);
+select is(pg_temp.read_frontier(83)#>>'{recommendation,reason}','mixed_judge_profile',
+  'a candidate with full scores and missing execution price still participates in judge compatibility');
+select ok(pg_temp.frontier_result(2,83)->'exclusions' @> '["unavailable_cost","mixed_judge_profile"]'::jsonb,
+  'an unpriced candidate retains its cost and judge exclusions');
 
 select * from finish();
 rollback;

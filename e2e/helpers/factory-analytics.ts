@@ -87,6 +87,7 @@ export async function seedFactoryAnalytics(baseURL: string | undefined, windowDa
     file:
       | "factory-analytics-seed.sql"
       | "factory-benchmark-comparison-seed.sql"
+      | "factory-benchmark-frontier-seed.sql"
       | "factory-benchmark-results-seed.sql"
       | "factory-benchmark-trial-media-seed.sql"
       | "factory-outcome-release.sql"

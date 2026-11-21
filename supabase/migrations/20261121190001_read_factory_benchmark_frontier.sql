@@ -82,6 +82,8 @@ begin
   ), candidates as materialized (
     select candidate.comparison_position as position,candidate.harness,candidate.model,candidate.worker_runtime,
       observed.*,frozen.slot_count,
+      frozen.slot_count > 0 and observed.comparable = frozen.slot_count and observed.resolved = frozen.slot_count
+        and observed.unverified_profiles = 0 as judge_coverage_complete,
       case when frozen.slot_count > 0 and observed.comparable = frozen.slot_count and observed.resolved = frozen.slot_count
         and observed.measured_trials = frozen.slot_count then observed.measured_usd / frozen.slot_count end as mean_usd,
       coalesce(spread.quality_repetitions,0) as quality_repetitions,coalesce(spread.cost_repetitions,0) as cost_repetitions,
@@ -106,11 +108,14 @@ begin
     cross join scope_counts frozen
     where (candidate.workspace_id,candidate.factory_id,candidate.experiment_id) = (p_workspace_id,p_factory_id,p_experiment_id)
   ), judge_scope as (
-    select count(distinct candidate.judge_signature) > 1 as mixed
-    from candidates candidate where cardinality(candidate.reasons) = 0
+    -- A user's floor or missing price cannot change whether complete results used comparable judges.
+    select coalesce(bool_or(candidate.profile_count > 1),false)
+      or count(distinct candidate.judge_signature) > 1 as mixed
+    from candidates candidate where candidate.judge_coverage_complete
   ), decisions as materialized (
-    select candidate.*,case when calibration.mixed and cardinality(candidate.reasons) = 0
-      then array['mixed_judge_profile'] else candidate.reasons end as exclusions
+    select candidate.*,case when calibration.mixed and candidate.judge_coverage_complete
+        and not ('mixed_judge_profile' = any(candidate.reasons))
+      then candidate.reasons || array['mixed_judge_profile'] else candidate.reasons end as exclusions
     from candidates candidate cross join judge_scope calibration
   ), rankable as materialized (
     select candidate.* from decisions candidate where cardinality(candidate.exclusions) = 0 and candidate.mean_usd is not null

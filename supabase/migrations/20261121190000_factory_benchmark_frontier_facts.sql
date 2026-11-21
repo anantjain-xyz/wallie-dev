@@ -7,7 +7,18 @@ create function internal.factory_benchmark_frontier_trial_facts(
   started boolean,comparable boolean,verdict text,judge_signature text,known_nonpass boolean,open_work boolean,
   measured_usd numeric,estimated_usd numeric,cost_state text
 ) language sql stable set search_path = '' as $$
-  with cells as materialized (
+  with judge_admission as materialized (
+    select scorer.definition
+    from public.factory_benchmark_schedules schedule
+    join public.factory_benchmark_evaluation_plans plan using (workspace_id,factory_id,experiment_id)
+    join public.factories factory on (factory.workspace_id,factory.id) = (schedule.workspace_id,schedule.factory_id)
+    join public.factory_scorer_revisions scorer on (scorer.workspace_id,scorer.factory_id,scorer.id) =
+      (schedule.workspace_id,schedule.factory_id,p_scorer_revision_id)
+    where (schedule.workspace_id,schedule.factory_id,schedule.experiment_id) = (p_workspace_id,p_factory_id,p_experiment_id)
+      and factory.status = 'active' and schedule.state in ('active','paused')
+      and internal.factory_benchmark_evaluation_budget_block(schedule,plan.budget_limit_usd)
+        is distinct from 'evaluation_budget_exhausted'
+  ), cells as materialized (
     select fact.*,trial.attempt_count,trial.session_id,
       coalesce(trial.runner_revision = 'openai-responses-v1' and fact.started and trial.attempt_count is not null
         and (trial.effective_execution_digest,trial.inference_connection_revision) =
@@ -87,20 +98,32 @@ create function internal.factory_benchmark_frontier_trial_facts(
     cell.started,cell.comparable,case when cell.comparable then judge.verdict end,
     case when cell.comparable then judge.signature end,
     cell.comparable and cell.disposition in ('failed','timed_out'),
-    cell.disposition in ('pending','running') or coalesce(selected.job_status in ('queued','claimed'),false),
+    cell.disposition in ('pending','running') or coalesce(selected.job_status in ('queued','claimed'),false) or admission.pending,
     case when cell.execution_provenance = 'measured' then cell.execution_actual_usd + coalesce(judge.measured_usd,0)
       else judge.measured_usd end,
     case when cell.execution_provenance = 'estimated' then cell.execution_actual_usd + coalesce(judge.estimated_usd,0)
       else judge.estimated_usd end,
     case
       when cell.execution_provenance = 'unavailable' or judge.unavailable then 'unavailable'
-      when cell.disposition in ('pending','running') or judge.pending or selected.job_status in ('queued','claimed') then 'pending'
+      when cell.disposition in ('pending','running') or judge.pending or selected.job_status in ('queued','claimed')
+        or admission.pending then 'pending'
       when not cell.started then 'never_started'
       when p_scorer_revision_id is not null and cell.disposition = 'succeeded' and selected.job_id is null then 'unavailable'
       when cell.execution_provenance = 'estimated' or judge.estimated then 'estimated'
       when cell.execution_provenance = 'measured' then 'measured'
       else 'unavailable' end
-  from cells cell left join selected_jobs selected using (trial_id) left join judge using (trial_id);
+  from cells cell left join selected_jobs selected using (trial_id) left join judge using (trial_id)
+  cross join lateral (
+    -- Result adoption and judge admission are separate transactions. A ready
+    -- exact output is still pending in the interval between them.
+    select case when cell.comparable and cell.disposition = 'succeeded' and selected.job_id is null then exists (
+      select 1 from internal.factory_benchmark_evaluation_outputs output cross join judge_admission policy
+      where (output.workspace_id,output.factory_id,output.experiment_id,output.trial_id,output.run_id,output.result_digest) =
+        (p_workspace_id,p_factory_id,p_experiment_id,cell.trial_id,cell.run_id,cell.result_digest)
+        and jsonb_array_length(internal.factory_benchmark_evaluation_evidence(output,policy.definition,false)) =
+          jsonb_array_length(policy.definition->'requiredEvidence')
+    ) else false end as pending
+  ) admission;
 $$;
 revoke all on function internal.factory_benchmark_frontier_trial_facts(uuid,uuid,uuid,uuid)
   from public, anon, authenticated, service_role;
