@@ -258,6 +258,163 @@ select is((select eligibility_reason from public.factory_benchmark_experiment_tr
   where experiment_id = pg_temp.experiment_id(81) and replay_eligibility = 'unverified'),
   'Waiting for source verification.', 'unverified status and reason survive planning');
 
+insert into public.workspace_vercel_sandbox_connections(workspace_id, encrypted_token, team_id, project_id,
+  connection_revision, status)
+values (pg_temp.experiment_id(11), 'fixture', 'team_factory_benchmark', 'prj_factory_benchmark',
+  pg_temp.experiment_id(500), 'connected');
+insert into public.sandbox_capability_checks(id, workspace_id, github_repository_id, agent_provider, agent_model,
+  sandbox_provider, sandbox_id, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, status, capabilities)
+select pg_temp.experiment_id(config.slot), pg_temp.experiment_id(11), pg_temp.experiment_id(42),
+  config.harness, config.model, 'vercel', 'sbx_factory_benchmark', pg_temp.experiment_id(500), 'team_factory_benchmark',
+  'prj_factory_benchmark', 'success',
+  (select jsonb_object_agg(key, jsonb_build_object('ok', true, 'detail', config.cli))
+    from unnest(array['agentCli','git','node','packageManager','playwrightPackage','chromium',
+      'screenshotSmoke','codexExternalSandbox']) capability(key))
+from (values (501, 'codex', 'gpt-4.1-2025-04-14', E'/opt/node-v22.23.1/bin/codex\ncodex-cli 0.88.0'),
+  (502, 'opencode', 'openai/gpt-4.1-2025-04-14', '1.2.27')) config(slot, harness, model, cli);
+create function pg_temp.qualified_candidate(definition integer, qualification integer, worker text default 'node')
+returns jsonb language sql as $$
+  select jsonb_build_object('definitionRevisionId', pg_temp.experiment_id(definition),
+    'qualificationId', pg_temp.experiment_id(qualification), 'workerRuntime', worker)
+$$;
+create function pg_temp.freeze_axes(p_slot integer, p_candidates jsonb, p_actor integer default 1,
+  p_suite uuid default null)
+returns jsonb language sql as $$
+  select public.freeze_factory_benchmark_experiment_axes(scope.workspace_id, scope.factory_id,
+    pg_temp.experiment_id(p_actor), pg_temp.experiment_id(p_slot), coalesce(p_suite, suite.id), policy.id,
+    p_candidates, 3, 2147483647, 120000)
+  from experiment_scope scope
+  join experiment_suites suite on suite.is_default = scope.is_default
+  join experiment_policies policy on policy.is_default = scope.is_default
+  where scope.is_default and suite.revision_number = 1
+$$;
+select ok(not has_function_privilege('authenticated',
+  'public.freeze_factory_benchmark_experiment_axes(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,integer,integer,integer)',
+  'EXECUTE'), 'qualified candidates are frozen by the scoped service only');
+select throws_ok($$select pg_temp.freeze_axes(83, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(43,502)), 2)$$,
+  '42501', null, 'factory readers cannot freeze a qualified comparison');
+select throws_ok($$select pg_temp.freeze_axes(83, '[0,0]')$$,
+  '22023', null, 'nonobject candidate axes are rejected before casting');
+select throws_ok($$select pg_temp.freeze_axes(83, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(43,501)))$$,
+  '22023', null, 'a qualified configuration cannot be reused as its own baseline');
+select throws_ok($$select pg_temp.freeze_axes(83, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(43,502,'workerd')))$$,
+  'PT422', null, 'no runtime is substituted for the requested runtime');
+select throws_ok($$select pg_temp.freeze_axes(83, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(46,502)))$$,
+  'PT422', null, 'a receipt for a harness cannot qualify an unavailable declared stage');
+insert into public.factory_benchmark_task_inputs (task_id, workspace_id, factory_id, source_run_id, source_session_id,
+  repository_id)
+select revision.task_id, scope.workspace_id, scope.factory_id, root.source_run_id, root.source_session_id,
+  pg_temp.experiment_id(62)
+from revised_task revision join experiment_scope scope using (workspace_id, factory_id)
+join public.factory_benchmark_tasks root on root.id = revision.task_id;
+select throws_ok($$select pg_temp.freeze_axes(83, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(43,502)), p_suite => (select id from revised_suite))$$,
+  'PT422', null, 'an eligible frozen checkout cannot use a toolchain checked for another repository');
+select is(pg_temp.freeze_axes(83, jsonb_build_array(pg_temp.qualified_candidate(43,501),
+  pg_temp.qualified_candidate(43,502)))->>'expectedTrialCount', '12',
+  'one model and factory revision can be frozen across two harnesses');
+select results_eq($$select harness, canonical_model_key, definition_revision_id, sandbox_connection_revision
+  from public.factory_benchmark_experiment_candidates where experiment_id = pg_temp.experiment_id(83)
+  order by comparison_position$$, $$values
+    ('codex', 'openai/gpt-4.1-2025-04-14', pg_temp.experiment_id(43), pg_temp.experiment_id(500)),
+    ('opencode', 'openai/gpt-4.1-2025-04-14', pg_temp.experiment_id(43), pg_temp.experiment_id(500))$$,
+  'positions, native harnesses, canonical model and connection revision remain distinct pins');
+select ok((select count(*) = 6 and bool_and(cells = 2 and seeds = 1)
+  from (select count(*) as cells, count(distinct seed) as seeds
+    from public.factory_benchmark_experiment_trials where experiment_id = pg_temp.experiment_id(83)
+    group by task_revision_id, repetition) pairs), 'harness pairs use exactly the same task revisions and seeds');
+select throws_ok($$select pg_temp.freeze_axes(83, jsonb_build_array(
+  pg_temp.qualified_candidate(43,502), pg_temp.qualified_candidate(43,501)))$$,
+  'PT409', null, 'reversing baseline and candidate changes the request');
+select lives_ok($$select pg_temp.freeze_axes(84, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(44,501)))$$,
+  'two factory revisions can use the same qualified model and harness');
+select results_eq($$select candidate.definition_digest, candidate.toolchain, length(candidate.toolchain_digest)
+  from public.factory_benchmark_experiment_candidates candidate
+  where experiment_id = pg_temp.experiment_id(84) order by comparison_position$$,
+  $$select revision.canonical_digest, 'Codex 0.88.0'::text, 64 from public.factory_definition_revisions revision
+    where revision.id in (pg_temp.experiment_id(43), pg_temp.experiment_id(44)) order by revision.id$$,
+  'baseline and candidate retain the precise revision digest and toolchain identity');
+select throws_ok($$select pg_temp.retry_experiment(84, array[43,44])$$,
+  'PT409', null, 'the legacy retry command cannot reinterpret a qualified comparison');
+select throws_ok($$insert into public.factory_benchmark_schedules (workspace_id, factory_id, experiment_id, actor_user_id,
+  runner_revision, sandbox_connection_revision, task_fixtures, execution_reserve_usd, evaluation_reserve_usd,
+  budget_limit_usd, factory_concurrency_limit, max_admitted_trials)
+  select workspace_id, factory_id, pg_temp.experiment_id(84), owner_id, 'recorded-fixture-v1',
+    pg_temp.experiment_id(500), '{}'::jsonb, 0, 0, 0, 1, 1 from experiment_scope where is_default$$,
+  'PT412', null, 'a qualified comparison cannot schedule the historical fixture runner');
+create temp table axis_skill as
+select revision.* from experiment_scope scope
+cross join lateral public.create_factory_skill(scope.workspace_id, scope.factory_id, scope.owner_id,
+  'Comparison skill', 'comparison-skill', 'Follow the frozen comparison exercise.') revision
+where scope.is_default;
+-- Model retained revisions that predate the compiled resource-scope guard.
+alter table public.factory_definition_revisions disable trigger factory_definition_revisions_resource_scope;
+with variants as (
+  select revision.workspace_id, revision.factory_id, revision.created_by, variant.slot,
+    (revision.definition_json::jsonb || variant.changes)::text as compiled
+  from public.factory_definition_revisions revision
+  cross join axis_skill skill
+  cross join lateral (values
+    (54, jsonb_build_object('skillIds', jsonb_build_array(skill.id))),
+    (55, jsonb_build_object('pipelineId', pg_temp.experiment_id(60), 'stages',
+      jsonb_build_array(revision.definition_json::jsonb->'stages'->0 || jsonb_build_object('id', pg_temp.experiment_id(61))))),
+    (56, jsonb_build_object('stages', '[]'::jsonb)),
+    (57, jsonb_build_object('schemaVersion', 2))
+  ) variant(slot, changes)
+  where revision.id = pg_temp.experiment_id(43)
+)
+insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version, definition_json,
+  canonical_digest, created_by)
+select pg_temp.experiment_id(slot), workspace_id, factory_id, 1, compiled,
+  encode(sha256(convert_to(compiled, 'UTF8')), 'hex'), created_by from variants;
+alter table public.factory_definition_revisions enable trigger factory_definition_revisions_resource_scope;
+
+create temp table frozen_skill_comparison as
+select pg_temp.freeze_axes(86, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(54,501))) as receipt;
+select is((select receipt->>'expectedTrialCount' from frozen_skill_comparison), '12',
+  'a qualified definition can pin an available exact skill revision');
+select public.revoke_factory_skill_revision(scope.workspace_id, scope.factory_id, scope.owner_id, skill.skill_id, skill.id)
+from experiment_scope scope join axis_skill skill using (workspace_id, factory_id) where scope.is_default;
+set local request.jwt.claim.sub = '61700000-0000-4000-8000-000000000001';
+select is((select profile.unavailable_reason from experiment_scope scope
+  join experiment_suites suite using (is_default)
+  cross join lateral public.list_factory_benchmark_axis_profiles(scope.workspace_id, scope.factory_id, suite.id) profile
+  where scope.is_default and profile.definition_id = pg_temp.experiment_id(54) and profile.id = pg_temp.experiment_id(501)),
+  'A selected skill revision is missing, revoked, or unavailable in this factory.',
+  'the axis catalog marks the exact profile unavailable after skill revocation');
+select throws_ok($$select pg_temp.freeze_axes(87, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(54,501)))$$,
+  'PT422', 'A selected skill revision is missing, revoked, or unavailable in this factory.',
+  'a revoked skill revision cannot be frozen into a new comparison');
+select is(pg_temp.freeze_axes(86, jsonb_build_array(pg_temp.qualified_candidate(43,501),
+  pg_temp.qualified_candidate(54,501))), (select receipt from frozen_skill_comparison),
+  'an exact retry returns the original matrix receipt after its selected skill is revoked');
+select throws_ok($$select pg_temp.freeze_axes(88, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(55,501)))$$,
+  'PT422', null, 'a compiled revision pointing to a sibling factory pipeline cannot be frozen');
+select throws_ok($$select pg_temp.freeze_axes(89, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(56,501)))$$,
+  'PT422', null, 'a compiled revision with no stages cannot be frozen');
+select throws_ok($$select pg_temp.freeze_axes(90, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(57,501)))$$,
+  'PT422', null, 'a compiled schema version must agree with the revision before freezing');
+reset request.jwt.claim.sub;
+
+update public.workspace_vercel_sandbox_connections set connection_revision = pg_temp.experiment_id(503)
+  where workspace_id = pg_temp.experiment_id(11);
+select throws_ok($$select pg_temp.freeze_axes(85, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(43,502)))$$,
+  'PT422', null, 'stale capability receipts cannot create a new comparison');
+select is(pg_temp.freeze_axes(83, jsonb_build_array(pg_temp.qualified_candidate(43,501),
+  pg_temp.qualified_candidate(43,502)))->>'expectedTrialCount', '12',
+  'an exact retry still returns the frozen matrix after the connection changes');
+
 select public.revoke_factory_benchmark_replay_revision(workspace_id, factory_id, created_by, p_policy_revision_id => id)
 from experiment_policies where is_default;
 select is(pg_temp.retry_experiment(80, array[44,43]), (select receipt from first_freeze),

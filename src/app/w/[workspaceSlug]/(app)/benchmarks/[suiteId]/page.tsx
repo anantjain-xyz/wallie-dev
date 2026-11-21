@@ -11,6 +11,7 @@ import {
   PageSection,
 } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
+import { BenchmarkComparisonForm } from "@/features/factory-benchmarks/benchmark-comparison-form";
 import {
   benchmarkEligibilityLabel,
   benchmarkPurposeLabel,
@@ -21,6 +22,7 @@ import {
   loadBenchmarkSuiteDetail,
 } from "@/features/factory-benchmarks/suites-data";
 import { TaskCurationEditor } from "@/features/factory-benchmarks/task-curation-editor";
+import { loadBenchmarkExperimentAxes } from "@/lib/factory-benchmarks/experiment-axes";
 import {
   workspaceBenchmarksPath,
   workspaceBenchmarkSuitePath,
@@ -50,6 +52,7 @@ export default async function BenchmarkSuitePage({
   if (!suiteId.success || !page.success) notFound();
   const scope = await loadBenchmarkScope(workspaceSlug, query.factory, suiteId.data);
   if (!scope) notFound();
+  const comparing = scope.canEdit && query.compare === "1";
   const detail = await loadBenchmarkSuiteDetail(scope, {
     suiteId: suiteId.data,
     revisionId: page.data.revision,
@@ -60,6 +63,14 @@ export default async function BenchmarkSuitePage({
   const { factory, workspaceId } = scope;
   const { selected, latest, editable, members, latestTasks, choices, revisions, nextBefore } =
     detail;
+  const comparisonOptions = comparing
+    ? await loadBenchmarkExperimentAxes({
+        workspaceId,
+        factoryId: factory.id,
+        suiteRevisionId: selected.id,
+        supabase: scope.supabase,
+      })
+    : null;
   const editing = editable && query.edit === "suite";
   const factoryQuery = { factory: factory.id };
   const suitePath = (extra?: Parameters<typeof workspaceBenchmarkSuitePath>[2]) =>
@@ -82,21 +93,42 @@ export default async function BenchmarkSuitePage({
         eyebrowAsPlain
         actionsRightOnDesktop
         actions={
-          editable ? (
-            <Link
-              className="ui-button ui-button-primary"
-              href={`${suitePath({ edit: "suite" })}#edit-suite`}
-            >
-              Edit suite
-            </Link>
-          ) : historical ? (
-            <Link className="ui-button" href={suitePath()}>
-              View latest revision
-            </Link>
-          ) : null
+          <>
+            {scope.canEdit ? (
+              <Link
+                className="ui-button ui-button-primary"
+                href={`${suitePath({ revision: selected.id, compare: "1" })}#compare-configurations`}
+                aria-current={comparing ? "location" : undefined}
+              >
+                Compare configurations
+              </Link>
+            ) : null}
+            {editable ? (
+              <Link className="ui-button" href={`${suitePath({ edit: "suite" })}#edit-suite`}>
+                Edit suite
+              </Link>
+            ) : historical ? (
+              <Link className="ui-button" href={suitePath()}>
+                View latest revision
+              </Link>
+            ) : null}
+          </>
         }
       />
       <div className="space-y-8">
+        {comparisonOptions ? (
+          <PageSection anchorId="compare-configurations" title="Compare configurations">
+            <BenchmarkComparisonForm
+              key={`${factory.id}:${selected.id}`}
+              workspaceId={workspaceId}
+              factoryId={factory.id}
+              suiteRevisionId={selected.id}
+              suiteRevisionNumber={selected.revision_number}
+              taskCount={members.length}
+              options={comparisonOptions}
+            />
+          </PageSection>
+        ) : null}
         <PageSection
           title="Suite membership"
           statusBadge={

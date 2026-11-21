@@ -1346,37 +1346,55 @@ export type Database = {
       factory_benchmark_experiment_candidates: {
         Row: {
           candidate_key: string
+          canonical_model_key: string | null
+          comparison_position: number | null
           definition_digest: string
           definition_revision_id: string
           experiment_id: string
           factory_id: string
           harness: string
           model: string
+          qualification_id: string | null
+          sandbox_connection_revision: string | null
           sandbox_provider: string
+          toolchain: string | null
+          toolchain_digest: string | null
           worker_runtime: string
           workspace_id: string
         }
         Insert: {
           candidate_key: string
+          canonical_model_key?: string | null
+          comparison_position?: number | null
           definition_digest: string
           definition_revision_id: string
           experiment_id: string
           factory_id: string
           harness: string
           model: string
+          qualification_id?: string | null
+          sandbox_connection_revision?: string | null
           sandbox_provider: string
+          toolchain?: string | null
+          toolchain_digest?: string | null
           worker_runtime: string
           workspace_id: string
         }
         Update: {
           candidate_key?: string
+          canonical_model_key?: string | null
+          comparison_position?: number | null
           definition_digest?: string
           definition_revision_id?: string
           experiment_id?: string
           factory_id?: string
           harness?: string
           model?: string
+          qualification_id?: string | null
+          sandbox_connection_revision?: string | null
           sandbox_provider?: string
+          toolchain?: string | null
+          toolchain_digest?: string | null
           worker_runtime?: string
           workspace_id?: string
         }
@@ -11797,6 +11815,21 @@ export type Database = {
         }
         Returns: Json
       }
+      freeze_factory_benchmark_experiment_axes: {
+        Args: {
+          p_actor_user_id: string
+          p_candidates: Json
+          p_experiment_id: string
+          p_factory_id: string
+          p_policy_revision_id: string
+          p_repetitions: number
+          p_seed: number
+          p_suite_revision_id: string
+          p_timeout_ms: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_cost_summary: {
         Args: {
           p_factory_id: string
@@ -12259,6 +12292,27 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      list_factory_benchmark_axis_profiles: {
+        Args: {
+          p_factory_id: string
+          p_suite_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          definition_digest: string
+          definition_id: string
+          harness: string
+          harness_model: string
+          id: string
+          model_key: string
+          sandbox_connection_revision: string
+          sandbox_provider: string
+          toolchain: string
+          toolchain_digest: string
+          unavailable_reason: string
+          worker_runtime: string
+        }[]
       }
       list_factory_bindable_workspace_secrets: {
         Args: {

@@ -95,7 +95,7 @@ type ScheduleScope = {
 
 export class BenchmarkScheduleError extends Error {
   constructor(
-    readonly status: 403 | 404 | 409 | 422,
+    readonly status: 403 | 404 | 409 | 412 | 422,
     message: string,
   ) {
     super(message);
@@ -116,6 +116,11 @@ function scheduleRpcError(code: string) {
     case "P0011":
     case "PT409":
       return new BenchmarkScheduleError(409, "The benchmark schedule cannot make this change.");
+    case "PT412":
+      return new BenchmarkScheduleError(
+        412,
+        "This comparison requires a runner that uses its pinned configurations.",
+      );
     case "22023":
     case "23514":
     case "PT422":

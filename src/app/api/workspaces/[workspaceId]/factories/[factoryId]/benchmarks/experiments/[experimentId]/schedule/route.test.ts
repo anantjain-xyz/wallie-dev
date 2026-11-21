@@ -211,4 +211,21 @@ describe("benchmark schedule route", () => {
     });
     expect(mocks.wake).not.toHaveBeenCalled();
   });
+
+  it("rejects recorded fixtures for comparisons with qualified configuration pins", async () => {
+    const rpc = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        Response.json({ code: "PT412", message: "private database diagnostic" }, { status: 412 }),
+      );
+    setup(rpc);
+
+    const response = await POST(post(configure), context);
+
+    expect(response.status).toBe(412);
+    await expect(response.json()).resolves.toEqual({
+      error: "This comparison requires a runner that uses its pinned configurations.",
+    });
+    expect(mocks.wake).not.toHaveBeenCalled();
+  });
 });
