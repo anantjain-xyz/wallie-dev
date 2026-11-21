@@ -43,8 +43,9 @@ async function runRestoreCommand(
   cmd: string,
   args: string[],
   signal: AbortSignal,
+  cwd = sandbox.repoPath,
 ) {
-  const process = await sandbox.exec(cmd, args, { signal, env: gitEnvironment });
+  const process = await sandbox.exec(cmd, args, { cwd, signal, env: gitEnvironment });
   const [code, output] = await Promise.all([process.exitCode, process.output()]);
   signal.throwIfAborted();
   if (code !== 0)
@@ -98,6 +99,7 @@ export async function stageBenchmarkReplay(input: {
   let complete = false;
   try {
     // An ephemeral command environment keeps installation credentials off disk.
+    await runRestoreCommand(sandbox, "mkdir", ["-p", "--", sandbox.repoPath], signal, "/tmp");
     await runRestoreCommand(sandbox, "git", ["init", "--quiet", "--template="], signal);
     await runRestoreCommand(sandbox, "git", ["remote", "add", "origin", repositoryUrl], signal);
     await checkoutSandboxCheckpoint({
@@ -199,7 +201,7 @@ export async function stageBenchmarkReplay(input: {
       inputPath,
       receipt: { ...receipt, receiptSha256: replaySha256(JSON.stringify(receipt)) },
       cleanup: () =>
-        runRestoreCommand(sandbox, "rm", ["-rf", directory], AbortSignal.timeout(5_000)),
+        runRestoreCommand(sandbox, "rm", ["-rf", directory], AbortSignal.timeout(5_000), "/tmp"),
     };
   } catch (error) {
     signal.throwIfAborted();
@@ -207,9 +209,13 @@ export async function stageBenchmarkReplay(input: {
     throw new BenchmarkReplayUnavailable("The exact starting source could not be restored.");
   } finally {
     if (!complete)
-      await runRestoreCommand(sandbox, "rm", ["-rf", directory], AbortSignal.timeout(5_000)).catch(
-        () => undefined,
-      );
+      await runRestoreCommand(
+        sandbox,
+        "rm",
+        ["-rf", directory],
+        AbortSignal.timeout(5_000),
+        "/tmp",
+      ).catch(() => undefined);
   }
 }
 

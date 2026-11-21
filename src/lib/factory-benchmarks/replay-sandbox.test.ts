@@ -103,7 +103,8 @@ it("stages verified inputs in a fresh sandbox after teardown and leaves the remo
   const sandbox = new FakeSandbox(undefined, { passthroughExec: true });
   try {
     expect(existsSync(originalPath)).toBe(false);
-    expect(existsSync(join(sandbox.repoPath, "fixture.txt"))).toBe(false);
+    rmSync(sandbox.repoPath, { recursive: true, force: true });
+    expect(existsSync(sandbox.repoPath)).toBe(false);
     const plan = replayPlan(sha);
     const result = await stageBenchmarkReplay({
       sandbox,
