@@ -12,6 +12,7 @@ declare
   repository public.github_repositories;
   original_revision public.factory_definition_revisions;
   renamed_revision public.factory_definition_revisions;
+  original_default_factory_id uuid;
   head_number bigint;
   definition jsonb;
   renamed_body text;
@@ -66,6 +67,17 @@ begin
     activation_number, created_by)
   values (p_workspace_id, p_factory_id, original_revision.id, head_number + 1, p_owner_id);
 
+  -- Personal-credential session creation uses the workspace's default factory.
+  -- Route that intake to the validated fixture factory for this transaction.
+  select factory.id into strict original_default_factory_id from public.factories factory
+  where factory.workspace_id = p_workspace_id and factory.is_default for update;
+  if original_default_factory_id <> p_factory_id then
+    update public.factories set is_default = false
+    where workspace_id = p_workspace_id and id = original_default_factory_id;
+    update public.factories set is_default = true
+    where workspace_id = p_workspace_id and id = p_factory_id and slug = 'product-delivery';
+    if not found then raise exception 'Unexpected factory for disposable routing admission.'; end if;
+  end if;
   select * into strict proof from public.create_session_command_once(
     p_workspace_id, member_id, gen_random_uuid(), repeat('a', 64), original_revision.canonical_digest,
     'Verify historical model routing', 'Use the pinned invoice routing policy.',
@@ -75,6 +87,12 @@ begin
     selected_stage_ids => array[p_stage_id], target_factory_id => p_factory_id,
     draft_specification => false
   );
+  if original_default_factory_id <> p_factory_id then
+    update public.factories set is_default = false
+    where workspace_id = p_workspace_id and id = p_factory_id;
+    update public.factories set is_default = true
+    where workspace_id = p_workspace_id and id = original_default_factory_id;
+  end if;
   select * into strict receipt from public.session_factory_admission_inputs admission
   where (admission.workspace_id, admission.factory_id, admission.session_id) =
     (p_workspace_id, p_factory_id, proof.session_id);
