@@ -8,14 +8,15 @@ export async function mintSandboxRepositoryToken(input: {
   repositoryId?: number;
   signal?: AbortSignal;
   /** Execution is reserved for trusted publication. */
-  purpose: "checkout" | "execution" | "capability-check" | "read-context";
+  purpose: "checkout" | "execution" | "capability-check" | "read-context" | "benchmark-checkout";
 }): Promise<string> {
   const [owner, repository, extra] = input.repositoryFullName.split("/");
   if (!owner || !repository || extra !== undefined || /\s/.test(input.repositoryFullName)) {
     throw new Error("A sandbox token requires one owner/repository name.");
   }
   if (
-    (input.purpose === "read-context" && input.repositoryId === undefined) ||
+    ((input.purpose === "read-context" || input.purpose === "benchmark-checkout") &&
+      input.repositoryId === undefined) ||
     (input.repositoryId !== undefined &&
       (!Number.isSafeInteger(input.repositoryId) || input.repositoryId <= 0))
   )

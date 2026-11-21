@@ -8,10 +8,15 @@ import {
   type FactoryRepositoryContextSnapshot,
 } from "@/lib/pipeline/repository-context";
 import { restoreRetryCheckpoint } from "@/lib/pipeline/retry-checkpoint-git";
-import { createUtilitySandbox, stopSandboxById } from "@/lib/sandbox";
+import {
+  createBenchmarkReplaySandbox,
+  createUtilitySandbox,
+  sealBenchmarkReplaySandbox,
+  stopSandboxById,
+} from "@/lib/sandbox";
 import { checkoutSandboxCheckpoint } from "@/lib/sandbox/checkout";
 import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
-import type { SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
+import type { SandboxConnection, SandboxExecOptions, SandboxHandle } from "@/lib/sandbox/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   recordWorkspaceSandbox,
@@ -27,6 +32,7 @@ import {
   type ReplayPlan,
 } from "./replay-contracts";
 import { resolveBenchmarkReplay } from "./replay-inputs";
+import { openBenchmarkReplayPolicy, type BenchmarkReplayBroker } from "./replay-policy";
 
 const lifetimeMs = 180_000;
 const gitEnvironment = {
@@ -47,7 +53,11 @@ async function runRestoreCommand(
   cwd = sandbox.repoPath,
 ) {
   signal.throwIfAborted();
-  const process = await sandbox.exec(cmd, args, { cwd, signal, env: gitEnvironment });
+  const process = await sandbox.exec(cmd, args, {
+    cwd,
+    signal,
+    ...(cmd === "git" ? { env: gitEnvironment } : {}),
+  });
   const [code, output] = await Promise.all([process.exitCode, process.output()]);
   signal.throwIfAborted();
   if (code !== 0)
@@ -64,6 +74,7 @@ export async function stageBenchmarkReplay(input: {
   token?: string;
   plan: ReplayPlan;
   readContext?: readonly Pick<FactoryRepositoryContextSnapshot, "repositoryId" | "commitSha">[];
+  payloadKind?: "isolated_context";
   signal: AbortSignal;
 }) {
   const { sandbox, provider, connectionRevision, repositoryUrl, token, plan, signal } = input;
@@ -150,17 +161,29 @@ export async function stageBenchmarkReplay(input: {
         "The restored checkout does not match the recorded clean source.",
       );
 
+    if (input.payloadKind) {
+      await runRestoreCommand(sandbox, "git", ["remote", "remove", "origin"], signal);
+    }
     const readRepositories = [...plan.readRepositories].map(([id, commitSha]) => ({
       id,
       commitSha,
     }));
-    const payload = JSON.stringify({
-      version: 1,
-      identity,
-      runtime: plan.runtime,
-      readRepositories,
-      text,
-    });
+    const payload = JSON.stringify(
+      input.payloadKind
+        ? {
+            version: 1,
+            text: {
+              originalPrompt: text.originalPrompt,
+              required: text.required,
+              documents: text.documents,
+              memories: text.memories,
+              conversation: text.conversation,
+              skills: text.skills,
+              agentPrompt: text.agentPrompt,
+            },
+          }
+        : { version: 1, identity, runtime: plan.runtime, readRepositories, text },
+    );
     const bundleSha256 = replaySha256(payload);
     await runRestoreCommand(sandbox, "mkdir", ["-m", "700", directory], signal);
     signal.throwIfAborted();
@@ -202,6 +225,7 @@ export async function stageBenchmarkReplay(input: {
         checkoutSha,
         treeSha,
         bundleSha256,
+        ...(input.payloadKind ? { bundleKind: input.payloadKind } : {}),
         readRepositories,
       },
       qualification: { limits, candidateChanges: plan.candidateChanges },
@@ -222,13 +246,120 @@ export async function stageBenchmarkReplay(input: {
 }
 
 export async function withRestoredBenchmarkInputs<T>(
-  input: Parameters<typeof resolveBenchmarkReplay>[0] & { connection: SandboxConnection },
+  input: BenchmarkSandboxInput,
+  inspect: (result: RestoredBenchmarkInputs) => Promise<T>,
+) {
+  return withBenchmarkSandbox(input, "restore", inspect);
+}
+
+type BenchmarkSandboxInput = Parameters<typeof resolveBenchmarkReplay>[0] & {
+  connection: SandboxConnection;
+};
+
+type StagedReplay = Awaited<ReturnType<typeof stageBenchmarkReplay>>;
+type RestoredBenchmarkInputs = Omit<StagedReplay, "cleanup"> & {
+  sandbox: SandboxHandle;
+  signal: AbortSignal;
+  readContext: FactoryRepositoryContextSnapshot[];
+};
+
+type ReplayPolicyPin = {
+  executionId: string;
+  policyRevisionId: string;
+  expectedPolicyDigest: string;
+};
+
+function exportReplaySnapshot(receipt: StagedReplay["receipt"]) {
+  return {
+    version: receipt.version,
+    taskRevisionId: receipt.identity.taskRevisionId,
+    sourceRunId: receipt.identity.sourceRunId,
+    definitionRevisionId: receipt.identity.definitionRevisionId,
+    definitionDigest: receipt.identity.definitionDigest,
+    contextManifestSha256: receipt.identity.contextManifestSha256,
+    checkoutSha: receipt.restored.checkoutSha,
+    treeSha: receipt.restored.treeSha,
+    inputBundleSha256: receipt.restored.bundleSha256,
+    restorationReceiptSha256: receipt.receiptSha256,
+    limits: receipt.qualification.limits,
+    candidateChanges: receipt.qualification.candidateChanges,
+  };
+}
+
+type IsolatedBenchmarkInputs = {
+  sandbox: Pick<SandboxHandle, "id" | "repoPath" | "readFile" | "writeFile"> & {
+    exec(
+      command: string,
+      args: string[],
+      options?: Omit<SandboxExecOptions, "env">,
+    ): ReturnType<SandboxHandle["exec"]>;
+  };
+  signal: AbortSignal;
+  inputPath: string;
+  snapshot: ReturnType<typeof exportReplaySnapshot>;
+  readContext: Pick<
+    FactoryRepositoryContextSnapshot,
+    "repositoryId" | "commitSha" | "snapshotPath"
+  >[];
+  broker: BenchmarkReplayBroker;
+};
+
+export async function withIsolatedBenchmarkReplay<T>(
+  input: BenchmarkSandboxInput & ReplayPolicyPin,
+  execute: (result: IsolatedBenchmarkInputs) => Promise<T>,
+) {
+  if (input.connection.provider !== "vercel")
+    throw new BenchmarkReplayUnavailable("This replay policy requires a Vercel sandbox.");
+  const { access, factoryId, taskRevisionId, executionId, policyRevisionId, expectedPolicyDigest } =
+    input;
+  return withBenchmarkSandbox(input, "isolated", async (restored, admin) => {
+    const { sandbox, signal, inputPath, receipt, readContext } = restored;
+    const snapshot = exportReplaySnapshot(receipt);
+    const broker = await openBenchmarkReplayPolicy({
+      admin,
+      workspaceId: access.workspace.id,
+      actorUserId: access.user.id,
+      factoryId,
+      taskRevisionId,
+      executionId,
+      policyRevisionId,
+      expectedPolicyDigest,
+      restorationReceiptSha256: snapshot.restorationReceiptSha256,
+      signal,
+    });
+    signal.throwIfAborted();
+    return execute({
+      sandbox: {
+        id: sandbox.id,
+        repoPath: sandbox.repoPath,
+        exec: (cmd, args, options) =>
+          sandbox.exec(cmd, args, {
+            ...options,
+            signal: options?.signal ? AbortSignal.any([signal, options.signal]) : signal,
+          }),
+        readFile: (path) => observeUntilAbort(signal, () => sandbox.readFile(path)),
+        writeFile: (path, contents, options) =>
+          observeUntilAbort(signal, () => sandbox.writeFile(path, contents, options)),
+      },
+      signal,
+      inputPath,
+      snapshot,
+      readContext: readContext.map(({ repositoryId, commitSha, snapshotPath }) => ({
+        repositoryId,
+        commitSha,
+        snapshotPath,
+      })),
+      broker,
+    });
+  });
+}
+
+async function withBenchmarkSandbox<T>(
+  input: BenchmarkSandboxInput,
+  purpose: "restore" | "isolated",
   inspect: (
-    result: Omit<Awaited<ReturnType<typeof stageBenchmarkReplay>>, "cleanup"> & {
-      sandbox: SandboxHandle;
-      signal: AbortSignal;
-      readContext: Awaited<ReturnType<typeof materializeFactoryRepositoryContext>>;
-    },
+    result: RestoredBenchmarkInputs,
+    admin: ReturnType<typeof createSupabaseAdminClient>,
   ) => Promise<T>,
 ) {
   const signal = AbortSignal.any([input.signal, AbortSignal.timeout(lifetimeMs)]);
@@ -240,7 +371,7 @@ export async function withRestoredBenchmarkInputs<T>(
     installationId,
     repositoryId,
     repositoryFullName,
-    purpose: "checkout",
+    purpose: purpose === "isolated" ? "benchmark-checkout" : "checkout",
     signal,
   });
   signal.throwIfAborted();
@@ -258,7 +389,9 @@ export async function withRestoredBenchmarkInputs<T>(
   let staged: Awaited<ReturnType<typeof stageBenchmarkReplay>> | undefined;
   let result: T;
   try {
-    const sandbox = await createUtilitySandbox(
+    const createSandbox =
+      purpose === "isolated" ? createBenchmarkReplaySandbox : createUtilitySandbox;
+    const sandbox = await createSandbox(
       {
         workspaceId: access.workspace.id,
         ownerId: randomUUID(),
@@ -297,6 +430,7 @@ export async function withRestoredBenchmarkInputs<T>(
         plan,
         readContext,
         signal,
+        ...(purpose === "isolated" ? { payloadKind: "isolated_context" } : {}),
       });
       // Provider writes cannot always be canceled. Discard a bundle that arrives
       // after the owning operation has moved on to sandbox teardown.
@@ -305,15 +439,14 @@ export async function withRestoredBenchmarkInputs<T>(
         signal.throwIfAborted();
       }
       staged = restored;
+      if (purpose === "isolated") await sealBenchmarkReplaySandbox(sandbox, signal);
+      signal.throwIfAborted();
       await recheckAccess();
       signal.throwIfAborted();
-      return inspect({
-        sandbox,
-        signal,
-        inputPath: restored.inputPath,
-        receipt: restored.receipt,
-        readContext,
-      });
+      return inspect(
+        { sandbox, signal, inputPath: restored.inputPath, receipt: restored.receipt, readContext },
+        admin,
+      );
     });
   } finally {
     await staged?.cleanup().catch(() => undefined);

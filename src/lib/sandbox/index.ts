@@ -40,6 +40,37 @@ export async function createUtilitySandbox(
   input: CreateUtilitySandboxInput,
   connection: SandboxConnection,
 ): Promise<SandboxHandle> {
+  return acquireUtilitySandbox(input, connection, async (request) =>
+    (await loadProviderDriver(connection)).createUtility(request, connection),
+  );
+}
+
+/** Acquire a disposable sandbox for trusted Git restoration before sealing replay egress. */
+export async function createBenchmarkReplaySandbox(
+  input: CreateUtilitySandboxInput,
+  connection: SandboxConnection,
+): Promise<SandboxHandle> {
+  if (connection.provider !== "vercel") {
+    throw new Error("Benchmark replay isolation requires Vercel Sandbox.");
+  }
+  if (process.env.WALLIE_SANDBOX_IMPL === "fake") {
+    throw new Error("Hosted benchmark replay is disabled in fake sandbox mode.");
+  }
+  return acquireUtilitySandbox(input, connection, async (request) =>
+    (await import("./vercel")).createVercelBenchmarkReplaySandbox(request, connection),
+  );
+}
+
+/** Close replay egress before handing the handle to an untrusted operation. */
+export async function sealBenchmarkReplaySandbox(sandbox: SandboxHandle, signal: AbortSignal) {
+  await (await import("./vercel")).sealVercelBenchmarkReplaySandbox(sandbox, signal);
+}
+
+async function acquireUtilitySandbox(
+  input: CreateUtilitySandboxInput,
+  connection: SandboxConnection,
+  create: (input: CreateUtilitySandboxInput) => Promise<SandboxHandle>,
+): Promise<SandboxHandle> {
   try {
     return await runBoundedSandboxProviderOperation({
       operation: "acquire",
@@ -50,8 +81,7 @@ export async function createUtilitySandbox(
         getSandboxProviderContract(connection.provider).deadlines.acquire,
       ),
       onLateSuccess: (sandbox) => sandbox.stop(),
-      run: async (signal) =>
-        (await loadProviderDriver(connection)).createUtility({ ...input, signal }, connection),
+      run: (signal) => create({ ...input, signal }),
     });
   } catch (error) {
     throw sanitizedSandboxError(error, connection, []);
