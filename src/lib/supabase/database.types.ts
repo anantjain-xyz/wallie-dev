@@ -1757,6 +1757,178 @@ export type Database = {
           },
         ]
       }
+      factory_benchmark_schedule_evaluations: {
+        Row: {
+          accounted_at: string | null
+          actual_usd: number | null
+          attempt_id: string
+          cost_provenance: string | null
+          reserve_usd: number
+          trial_id: string
+        }
+        Insert: {
+          accounted_at?: string | null
+          actual_usd?: number | null
+          attempt_id: string
+          cost_provenance?: string | null
+          reserve_usd: number
+          trial_id: string
+        }
+        Update: {
+          accounted_at?: string | null
+          actual_usd?: number | null
+          attempt_id?: string
+          cost_provenance?: string | null
+          reserve_usd?: number
+          trial_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_schedule_evaluations_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: true
+            referencedRelation: "factory_evaluation_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_schedule_evaluations_trial_id_fkey"
+            columns: ["trial_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_schedule_trials"
+            referencedColumns: ["trial_id"]
+          },
+        ]
+      }
+      factory_benchmark_schedule_trials: {
+        Row: {
+          accounted_at: string | null
+          actual_usd: number | null
+          cost_provenance: string | null
+          experiment_id: string
+          factory_id: string
+          reserve_usd: number
+          run_id: string
+          trial_id: string
+          workspace_id: string
+        }
+        Insert: {
+          accounted_at?: string | null
+          actual_usd?: number | null
+          cost_provenance?: string | null
+          experiment_id: string
+          factory_id: string
+          reserve_usd: number
+          run_id: string
+          trial_id: string
+          workspace_id: string
+        }
+        Update: {
+          accounted_at?: string | null
+          actual_usd?: number | null
+          cost_provenance?: string | null
+          experiment_id?: string
+          factory_id?: string
+          reserve_usd?: number
+          run_id?: string
+          trial_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_schedule_tr_workspace_id_factory_id_expe_fkey"
+            columns: ["workspace_id", "factory_id", "experiment_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_schedules"
+            referencedColumns: ["workspace_id", "factory_id", "experiment_id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_schedule_tr_workspace_id_factory_id_tria_fkey"
+            columns: ["workspace_id", "factory_id", "trial_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_trials"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_schedule_trials_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: true
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_schedule_trials_trial_id_fkey"
+            columns: ["trial_id"]
+            isOneToOne: true
+            referencedRelation: "factory_benchmark_experiment_trials"
+            referencedColumns: ["trial_id"]
+          },
+        ]
+      }
+      factory_benchmark_schedules: {
+        Row: {
+          actor_user_id: string
+          admission_issue: string | null
+          budget_limit_usd: number
+          created_at: string
+          evaluation_reserve_usd: number
+          execution_reserve_usd: number
+          experiment_id: string
+          factory_concurrency_limit: number
+          factory_id: string
+          last_reconciled_at: string | null
+          max_admitted_trials: number
+          runner_revision: string
+          sandbox_connection_revision: string
+          state: string
+          task_fixtures: Json
+          workspace_id: string
+        }
+        Insert: {
+          actor_user_id: string
+          admission_issue?: string | null
+          budget_limit_usd: number
+          created_at?: string
+          evaluation_reserve_usd: number
+          execution_reserve_usd: number
+          experiment_id: string
+          factory_concurrency_limit: number
+          factory_id: string
+          last_reconciled_at?: string | null
+          max_admitted_trials: number
+          runner_revision: string
+          sandbox_connection_revision: string
+          state?: string
+          task_fixtures: Json
+          workspace_id: string
+        }
+        Update: {
+          actor_user_id?: string
+          admission_issue?: string | null
+          budget_limit_usd?: number
+          created_at?: string
+          evaluation_reserve_usd?: number
+          execution_reserve_usd?: number
+          experiment_id?: string
+          factory_concurrency_limit?: number
+          factory_id?: string
+          last_reconciled_at?: string | null
+          max_admitted_trials?: number
+          runner_revision?: string
+          sandbox_connection_revision?: string
+          state?: string
+          task_fixtures?: Json
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_schedules_workspace_id_factory_id_experi_fkey"
+            columns: ["workspace_id", "factory_id", "experiment_id"]
+            isOneToOne: true
+            referencedRelation: "factory_benchmark_experiments"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_benchmark_suite_members: {
         Row: {
           factory_id: string
@@ -10440,6 +10612,23 @@ export type Database = {
         Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
         Returns: boolean
       }
+      configure_factory_benchmark_schedule: {
+        Args: {
+          p_actor_user_id: string
+          p_budget_limit_usd: number
+          p_evaluation_reserve_usd: number
+          p_execution_reserve_usd: number
+          p_experiment_id: string
+          p_factory_concurrency_limit: number
+          p_factory_id: string
+          p_max_admitted_trials: number
+          p_runner_revision: string
+          p_sandbox_connection_revision: string
+          p_task_fixtures: Json
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       configure_factory_command_quotas: {
         Args: {
           p_actor_user_id: string
@@ -10527,6 +10716,16 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: boolean
+      }
+      control_factory_benchmark_schedule: {
+        Args: {
+          p_action: string
+          p_actor_user_id: string
+          p_experiment_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       control_factory_flow_projection: {
         Args: { p_action: string; p_factory_id: string; p_workspace_id: string }
@@ -12954,6 +13153,15 @@ export type Database = {
         }
         Returns: string
       }
+      read_factory_benchmark_schedule: {
+        Args: {
+          p_actor_user_id: string
+          p_experiment_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_candidate_activation_eligibility: {
         Args: {
           p_actor_user_id: string
@@ -13133,6 +13341,10 @@ export type Database = {
           run_id: string
           source_asset_id: string
         }[]
+      }
+      reconcile_factory_benchmark_schedules: {
+        Args: { p_limit: number }
+        Returns: number
       }
       record_factory_benchmark_replay_operation: {
         Args: {
@@ -13565,6 +13777,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      reserve_factory_benchmark_evaluation_attempt: {
+        Args: { p_attempt_id: string; p_trial_id: string }
+        Returns: boolean
       }
       resolve_factory_run_credential: {
         Args: {

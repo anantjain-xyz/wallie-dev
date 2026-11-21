@@ -65,6 +65,7 @@ it.each([
   },
   { scenario: "scorer sampling fails", samplingFailure: true },
   { scenario: "evaluation maintenance fails", evaluationFailure: true },
+  { scenario: "benchmark scheduling fails", benchmarkFailure: true },
   { scenario: "a judge dispatch fails", judgeFailure: true },
 ])(
   "runs independent maintenance when $scenario",
@@ -76,6 +77,7 @@ it.each([
     projectionFailure,
     samplingFailure,
     evaluationFailure,
+    benchmarkFailure,
     judgeFailure,
   }) => {
     const bindings = env as unknown as Env;
@@ -113,6 +115,16 @@ it.each([
           },
     );
     const rpc = vi.fn((name: string) => {
+      if (name === "reconcile_factory_benchmark_schedules") {
+        return {
+          abortSignal: () =>
+            Promise.resolve(
+              benchmarkFailure
+                ? { data: null, error: { message: "Benchmark scheduling temporarily unavailable" } }
+                : { data: 3, error: null },
+            ),
+        };
+      }
       if (name === "process_factory_scorer_sampling") {
         return { abortSignal: () => ({ single: sample }) };
       }
@@ -187,14 +199,20 @@ it.each([
       expect(pruneFactoryCommandAdmissions).toHaveBeenCalledExactlyOnceWith(admin);
       expect(requestFactoryEventDispatch).toHaveBeenCalledOnce();
       expect(pruneFactoryEventOutbox).toHaveBeenCalledExactlyOnceWith(admin);
-      expect(rpc).toHaveBeenNthCalledWith(1, "process_factory_flow_projection", {
+      expect(rpc).toHaveBeenNthCalledWith(1, "reconcile_factory_benchmark_schedules", {
         p_limit: 25,
       });
-      expect(rpc).toHaveBeenNthCalledWith(2, "process_factory_scorer_sampling", { p_limit: 25 });
+      expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
+        rpc.mock.invocationCallOrder[0],
+      );
+      expect(rpc).toHaveBeenNthCalledWith(2, "process_factory_flow_projection", {
+        p_limit: 25,
+      });
+      expect(rpc).toHaveBeenNthCalledWith(3, "process_factory_scorer_sampling", { p_limit: 25 });
       expect(sample).toHaveBeenCalledOnce();
-      expect(rpc).toHaveBeenNthCalledWith(3, "maintain_factory_evaluation_queue", { p_limit: 25 });
+      expect(rpc).toHaveBeenNthCalledWith(4, "maintain_factory_evaluation_queue", { p_limit: 25 });
       expect(evaluations).toHaveBeenCalledOnce();
-      expect(rpc).toHaveBeenNthCalledWith(4, "prune_factory_analytics_exports", { p_limit: 100 });
+      expect(rpc).toHaveBeenNthCalledWith(5, "prune_factory_analytics_exports", { p_limit: 100 });
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );

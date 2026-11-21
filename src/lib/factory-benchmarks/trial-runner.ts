@@ -10,10 +10,9 @@ import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 
-import { replayDigestSchema } from "./replay-contracts";
+import { RECORDED_FIXTURE_RUNNER, replayDigestSchema } from "./replay-contracts";
 import { withIsolatedBenchmarkReplay } from "./replay-sandbox";
 import {
-  RECORDED_FIXTURE_RUNNER,
   RecordedTrialFixtureError,
   recordedTrialFixtureSchema,
   runRecordedTrialFixture,
