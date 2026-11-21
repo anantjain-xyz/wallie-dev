@@ -16,7 +16,7 @@ import {
   readVerifiedFactoryDefinition,
 } from "@/lib/factory-definitions/stored-definition";
 
-import { modelRoutingConfigurationSchema } from "./contracts";
+import { modelRoutingConfigurationSchema, routingFailureAfterPromotion } from "./contracts";
 import type { RoutingDraftRequest } from "./draft-contracts";
 
 async function readRoutingRequestDraft(
@@ -145,7 +145,10 @@ export async function createRoutingDraft(
     taskClassId,
     configuration: configuration.data,
     constraints: request.constraints,
-    onUnavailable: priorRule?.onUnavailable ?? { kind: "escalate" },
+    onUnavailable: routingFailureAfterPromotion({
+      configuration: configuration.data,
+      previous: priorRule?.onUnavailable,
+    }),
   };
   const rules = policy?.rules ?? [];
   const result = await mutateFactoryDefinition({

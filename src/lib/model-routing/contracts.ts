@@ -59,6 +59,7 @@ const rule = z.strictObject({
 });
 
 export type ModelRoutingConfiguration = z.infer<typeof modelRoutingConfigurationSchema>;
+type RoutingFailure = z.infer<typeof rule>["onUnavailable"];
 
 function sameConfiguration(
   primary: ModelRoutingConfiguration,
@@ -71,6 +72,19 @@ function sameConfiguration(
     primary.harness === alternative.harness &&
     primary.workerRuntime === alternative.workerRuntime
   );
+}
+
+export function routingFailureAfterPromotion({
+  configuration,
+  previous,
+}: {
+  configuration: ModelRoutingConfiguration;
+  previous: RoutingFailure | undefined;
+}): RoutingFailure {
+  if (previous?.kind === "fallback" && !sameConfiguration(configuration, previous.configuration)) {
+    return previous;
+  }
+  return { kind: "escalate" };
 }
 
 export const modelRoutingPolicySchema = z

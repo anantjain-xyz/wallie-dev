@@ -63,7 +63,9 @@ async function loadEditorHead(client: Client, workspaceId: string, factoryId?: s
   return { factory, activation, activationNumber, draft };
 }
 
-function editorDocument(
+async function editorDocument(
+  client: Client,
+  scope: { workspaceId: string; factoryId: string },
   row: {
     id: string;
     definition_json: string;
@@ -72,10 +74,10 @@ function editorDocument(
     source_draft_id?: string | null;
   },
   kind: FactoryDefinitionTarget["kind"],
-): FactoryEditorDocument {
+): Promise<FactoryEditorDocument> {
   const bundle = readCompiledFactoryDefinition(row.definition_json);
   if (!bundle) throw new Error("Stored factory definition is invalid.");
-  return {
+  const document: FactoryEditorDocument = {
     id: row.id,
     kind,
     createdAt: row.created_at,
@@ -84,6 +86,18 @@ function editorDocument(
     source: factoryDefinitionFromBundle(bundle),
     bundle,
   };
+  if (kind === "draft" && bundle.modelRouting) {
+    const { data, error } = await client
+      .from("factory_routing_draft_evidence")
+      .select("evidence")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("factory_id", scope.factoryId)
+      .eq("draft_id", row.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) document.routingDraftEvidence = routingDraftEvidenceSchema.parse(data.evidence);
+  }
+  return document;
 }
 
 async function readEditorDocument(
@@ -99,21 +113,7 @@ async function readEditorDocument(
     target,
   );
   if (error) throw error;
-  if (!data) return null;
-  const document = editorDocument(data, target.kind);
-  if (target.kind === "draft" && document.bundle.modelRouting) {
-    const receipt = await client
-      .from("factory_routing_draft_evidence")
-      .select("evidence")
-      .eq("workspace_id", workspaceId)
-      .eq("factory_id", factoryId)
-      .eq("draft_id", target.id)
-      .maybeSingle();
-    if (receipt.error) throw receipt.error;
-    if (receipt.data)
-      document.routingDraftEvidence = routingDraftEvidenceSchema.parse(receipt.data.evidence);
-  }
-  return document;
+  return data ? editorDocument(client, { workspaceId, factoryId }, data, target.kind) : null;
 }
 
 export async function loadFactoryEditorDocument(
@@ -165,13 +165,14 @@ export async function loadFactoryEditorSnapshot(
   const head = await loadEditorHead(client, workspaceId, factoryId);
   if (!head) return null;
   const { activation, activationNumber, draft, factory } = head;
-  const [published, baseline, sandbox] = await Promise.all([
+  const [published, workingDraft, baseline, sandbox] = await Promise.all([
     activation
       ? readEditorDocument(client, workspaceId, factory.id, {
           kind: "revision",
           id: activation.revision_id,
         })
       : null,
+    draft ? editorDocument(client, { workspaceId, factoryId: factory.id }, draft, "draft") : null,
     !activation && !draft ? loadEditorBaseline(client, workspaceId, factory) : null,
     loadWorkspaceSandboxOverview(client, workspaceId),
   ]);
@@ -180,7 +181,7 @@ export async function loadFactoryEditorSnapshot(
   return {
     activationNumber,
     published,
-    draft: draft ? editorDocument(draft, "draft") : null,
+    draft: workingDraft,
     baseline,
     readySandboxProviders: sandbox.enabledProviders.filter(
       (provider) => sandbox.connections[provider]?.status === "connected",

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { modelRoutingPolicySchema, modelRoutingTargets } from "./contracts";
+import {
+  modelRoutingConfigurationSchema,
+  modelRoutingPolicySchema,
+  modelRoutingTargets,
+  routingFailureAfterPromotion,
+} from "./contracts";
 
 const repairClass = {
   id: "aaaaaaaa-0000-4000-8000-000000000001",
@@ -162,6 +167,57 @@ describe("model routing policy contract", () => {
     expect(result.error?.issues).toEqual([
       expect.objectContaining({ path: ["rules", 0, "onUnavailable", "configuration"] }),
     ]);
+  });
+
+  it("escalates after promotion to the previous fallback even when the evidence IDs differ", () => {
+    const oldPolicy = modelRoutingPolicySchema.parse({
+      ...policy,
+      rules: [
+        {
+          ...repairRule,
+          onUnavailable: {
+            kind: "fallback",
+            configuration: {
+              ...configuration,
+              workerRuntime: "node",
+              scorerRevisionId: "aaaaaaaa-0000-4000-8000-000000000009",
+            },
+          },
+        },
+      ],
+    });
+    const [prior] = oldPolicy.rules;
+    const promoted = modelRoutingConfigurationSchema.parse({
+      ...configuration,
+      workerRuntime: "node",
+      experimentId: "aaaaaaaa-0000-4000-8000-000000000010",
+      qualificationId: "aaaaaaaa-0000-4000-8000-000000000011",
+      scorerRevisionId: "aaaaaaaa-0000-4000-8000-000000000012",
+    });
+
+    const updated = modelRoutingPolicySchema.parse({
+      ...oldPolicy,
+      rules: [
+        {
+          ...prior,
+          configuration: promoted,
+          onUnavailable: routingFailureAfterPromotion({
+            configuration: promoted,
+            previous: prior.onUnavailable,
+          }),
+        },
+      ],
+    });
+
+    expect(updated.rules).toEqual([
+      { ...prior, configuration: promoted, onUnavailable: { kind: "escalate" } },
+    ]);
+    expect(
+      routingFailureAfterPromotion({
+        configuration: prior.configuration,
+        previous: prior.onUnavailable,
+      }),
+    ).toEqual(prior.onUnavailable);
   });
 
   it("supplies reference validation paths for primary, unavailable, and unmatched choices", () => {

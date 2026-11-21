@@ -219,6 +219,7 @@ export function FactoryDefinitionEditor({
       : null;
   const selectedRevision = selected?.kind === "revision" ? selected.id : null;
   const draft = snapshot?.draft ?? null;
+  const routingDraftEvidence = (selected ?? draft)?.routingDraftEvidence;
   const selectedMatchesDraft =
     draft !== null && selected?.kind === "draft" && selected.id === draft.id;
   const historyCandidate = selectedMatchesDraft ? null : selected;
@@ -555,9 +556,9 @@ export function FactoryDefinitionEditor({
           </button>
         }
       />
-      {selected?.routingDraftEvidence ? (
+      {!loading && routingDraftEvidence ? (
         <RoutingDraftEvidencePanel
-          evidence={selected.routingDraftEvidence}
+          evidence={routingDraftEvidence}
           factoryId={factoryId}
           workspaceSlug={workspaceSlug}
         />

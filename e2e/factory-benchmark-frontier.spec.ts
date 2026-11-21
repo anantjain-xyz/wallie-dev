@@ -309,6 +309,9 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
 
       await dialog.getByRole("link", { name: "Open routing draft" }).click();
       await expect(page).toHaveURL(new RegExp(`[?&]draft=${draft.draftId}(?:&|$)`));
+      const workingDraftUrl = new URL(page.url());
+      workingDraftUrl.searchParams.delete("draft");
+      workingDraftUrl.hash = "";
       await expect(page.getByRole("heading", { name: "Routing draft evidence" })).toBeVisible({
         timeout: 75_000,
       });
@@ -333,6 +336,16 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
       await expect(routingRow).toBeVisible({ timeout: 75_000 });
       await expect(table.getByRole("row")).toHaveCount(2);
       await expect(page).toHaveURL(new RegExp(`#${routingRowId}$`));
+
+      await page.goto(workingDraftUrl.href);
+      await expect(page.getByRole("heading", { name: "Routing draft evidence" })).toBeVisible({
+        timeout: 75_000,
+      });
+      await expect(evidenceLink).toHaveAttribute(
+        "href",
+        evidenceUrl.pathname + evidenceUrl.search + evidenceUrl.hash,
+      );
+      await captureRoutingFlow(page, info, "routing-draft-working-editor");
     });
 
     expect(
