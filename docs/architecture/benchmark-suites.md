@@ -46,3 +46,13 @@ retained inputs and current access to their contents.
   conflict so the manager can review the new revision.
 - Private input receipts keep references and digests. Original prompt and
   context bodies stay under their existing retention and access controls.
+
+## Curate a suite
+
+- Open **Benchmarks** and select a factory. Use tags to collect tasks by work
+  type and set the suite purpose to **Regression** or **Holdout**.
+- Open a suite revision to inspect its members, criteria, and recorded
+  eligibility. Use revision history to inspect a previous selection.
+- Editing a task saves a new task revision. To change a suite's criteria,
+  select that task revision and save the suite. The previous suite revision
+  remains available with its original criteria.

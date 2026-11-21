@@ -3,6 +3,7 @@ import {
   workspaceAgentsPath,
   workspaceAnalyticsPath,
   workspaceBasePath,
+  workspaceBenchmarksPath,
   workspaceContextPath,
   workspaceGovernancePath,
   workspaceInboxPath,
@@ -103,6 +104,7 @@ export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
     isFactoryAggregatePath(pathname, workspaceSlug) ||
     pathname === workspaceAgentsPath(workspaceSlug) ||
     pathname === workspaceScorersPath(workspaceSlug) ||
+    pathname === workspaceBenchmarksPath(workspaceSlug) ||
     isFactoryOutcomePath(pathname, workspaceSlug) ||
     isManagedFactoryPath(pathname, workspaceSlug)
   );
@@ -144,7 +146,7 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
     ])
       params.delete(key);
   }
-  if (pathname.endsWith("/scorers")) params.delete("revision");
+  if (pathname.endsWith("/scorers") || pathname.endsWith("/benchmarks")) params.delete("revision");
   if (pathname.endsWith("/governance")) {
     for (const key of [
       "principal",

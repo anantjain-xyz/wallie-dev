@@ -12,6 +12,7 @@ export type WorkspaceNavItem = {
     | "runs"
     | "activity"
     | "analytics"
+    | "benchmarks"
     | "context"
     | "memory"
     | "agents"
@@ -95,6 +96,21 @@ export function workspaceActivityPath(workspaceSlug: string, query?: Record<stri
 
 export function workspaceAnalyticsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/analytics`, query);
+}
+
+export function workspaceBenchmarksPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/benchmarks`, query);
+}
+
+export function workspaceBenchmarkSuitePath(
+  workspaceSlug: string,
+  suiteId: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(
+    `${workspaceBenchmarksPath(workspaceSlug)}/${encodeURIComponent(suiteId)}`,
+    query,
+  );
 }
 
 export function workspaceContextPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
@@ -187,6 +203,12 @@ export function getWorkspaceNavItems(
       id: "analytics",
       href: workspaceAnalyticsPath(workspaceSlug),
       label: "Analytics",
+      section: "Improve",
+    },
+    {
+      id: "benchmarks",
+      href: workspaceBenchmarksPath(workspaceSlug),
+      label: "Benchmarks",
       section: "Improve",
     },
     {
