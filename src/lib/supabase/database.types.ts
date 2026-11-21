@@ -1343,6 +1343,77 @@ export type Database = {
           },
         ]
       }
+      factory_benchmark_evaluation_dimensions: {
+        Row: {
+          experiment_id: string
+          factory_id: string
+          scorer_revision_id: string
+          workspace_id: string
+        }
+        Insert: {
+          experiment_id: string
+          factory_id: string
+          scorer_revision_id: string
+          workspace_id: string
+        }
+        Update: {
+          experiment_id?: string
+          factory_id?: string
+          scorer_revision_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_evaluation__workspace_id_factory_id_scor_fkey"
+            columns: ["workspace_id", "factory_id", "scorer_revision_id"]
+            isOneToOne: false
+            referencedRelation: "factory_scorer_revisions"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+          {
+            foreignKeyName: "factory_benchmark_evaluation_workspace_id_factory_id_expe_fkey1"
+            columns: ["workspace_id", "factory_id", "experiment_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_evaluation_plans"
+            referencedColumns: ["workspace_id", "factory_id", "experiment_id"]
+          },
+        ]
+      }
+      factory_benchmark_evaluation_plans: {
+        Row: {
+          budget_limit_usd: number
+          created_at: string
+          created_by: string
+          experiment_id: string
+          factory_id: string
+          workspace_id: string
+        }
+        Insert: {
+          budget_limit_usd: number
+          created_at?: string
+          created_by: string
+          experiment_id: string
+          factory_id: string
+          workspace_id: string
+        }
+        Update: {
+          budget_limit_usd?: number
+          created_at?: string
+          created_by?: string
+          experiment_id?: string
+          factory_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_benchmark_evaluation__workspace_id_factory_id_expe_fkey"
+            columns: ["workspace_id", "factory_id", "experiment_id"]
+            isOneToOne: true
+            referencedRelation: "factory_benchmark_experiments"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_benchmark_experiment_candidates: {
         Row: {
           candidate_key: string
@@ -2890,6 +2961,7 @@ export type Database = {
           attempt_count: number
           attempt_limit: number
           available_at: string | null
+          benchmark_deferral_count: number
           canceled_recorded_xact_id: unknown
           created_at: string
           factory_id: string
@@ -2909,6 +2981,7 @@ export type Database = {
           attempt_count?: number
           attempt_limit?: number
           available_at?: string | null
+          benchmark_deferral_count?: number
           canceled_recorded_xact_id?: unknown
           created_at?: string
           factory_id: string
@@ -2928,6 +3001,7 @@ export type Database = {
           attempt_count?: number
           attempt_limit?: number
           available_at?: string | null
+          benchmark_deferral_count?: number
           canceled_recorded_xact_id?: unknown
           created_at?: string
           factory_id?: string
@@ -4429,6 +4503,8 @@ export type Database = {
       factory_scorer_sample_receipts: {
         Row: {
           attempt_count: number | null
+          benchmark_result_digest: string | null
+          benchmark_trial_id: string | null
           created_at: string
           definition_revision_id: string
           evidence: Json
@@ -4448,6 +4524,8 @@ export type Database = {
         }
         Insert: {
           attempt_count?: number | null
+          benchmark_result_digest?: string | null
+          benchmark_trial_id?: string | null
           created_at?: string
           definition_revision_id: string
           evidence: Json
@@ -4467,6 +4545,8 @@ export type Database = {
         }
         Update: {
           attempt_count?: number | null
+          benchmark_result_digest?: string | null
+          benchmark_trial_id?: string | null
           created_at?: string
           definition_revision_id?: string
           evidence?: Json
@@ -4501,6 +4581,13 @@ export type Database = {
               "id",
               "scorer_revision_id",
             ]
+          },
+          {
+            foreignKeyName: "factory_scorer_sample_receipts_benchmark_trial_id_fkey"
+            columns: ["benchmark_trial_id"]
+            isOneToOne: false
+            referencedRelation: "factory_benchmark_schedule_trials"
+            referencedColumns: ["trial_id"]
           },
           {
             foreignKeyName: "factory_scorer_sample_receipts_run_id_fkey"
@@ -10272,6 +10359,7 @@ export type Database = {
           attempt_count: number
           attempt_limit: number
           available_at: string | null
+          benchmark_deferral_count: number
           canceled_recorded_xact_id: unknown
           created_at: string
           factory_id: string
@@ -11586,6 +11674,23 @@ export type Database = {
         }
         Returns: Json
       }
+      find_factory_benchmark_experiment_retry_with_evaluation: {
+        Args: {
+          p_actor_user_id: string
+          p_definition_revision_ids: string[]
+          p_evaluation_plan: Json
+          p_experiment_id: string
+          p_factory_id: string
+          p_policy_revision_id: string
+          p_repetitions: number
+          p_seed: number
+          p_suite_revision_id: string
+          p_timeout_ms: number
+          p_worker_runtime: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       find_session_creation_command: {
         Args: {
           creator_member_id: string
@@ -11819,6 +11924,38 @@ export type Database = {
         Args: {
           p_actor_user_id: string
           p_candidates: Json
+          p_experiment_id: string
+          p_factory_id: string
+          p_policy_revision_id: string
+          p_repetitions: number
+          p_seed: number
+          p_suite_revision_id: string
+          p_timeout_ms: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      freeze_factory_benchmark_experiment_axes_with_evaluation: {
+        Args: {
+          p_actor_user_id: string
+          p_candidates: Json
+          p_evaluation_plan: Json
+          p_experiment_id: string
+          p_factory_id: string
+          p_policy_revision_id: string
+          p_repetitions: number
+          p_seed: number
+          p_suite_revision_id: string
+          p_timeout_ms: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      freeze_factory_benchmark_experiment_with_evaluation: {
+        Args: {
+          p_actor_user_id: string
+          p_candidates: Json
+          p_evaluation_plan: Json
           p_experiment_id: string
           p_factory_id: string
           p_policy_revision_id: string
@@ -13207,6 +13344,18 @@ export type Database = {
         }
         Returns: string
       }
+      read_factory_benchmark_evaluation: {
+        Args: {
+          p_actor_user_id: string
+          p_after_scorer_revision_id?: string
+          p_after_trial_id?: string
+          p_experiment_id: string
+          p_factory_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_benchmark_schedule: {
         Args: {
           p_actor_user_id: string
@@ -13396,6 +13545,10 @@ export type Database = {
           source_asset_id: string
         }[]
       }
+      reconcile_factory_benchmark_evaluations: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       reconcile_factory_benchmark_schedules: {
         Args: { p_limit: number }
         Returns: number
@@ -13433,6 +13586,8 @@ export type Database = {
         }
         Returns: {
           attempt_count: number | null
+          benchmark_result_digest: string | null
+          benchmark_trial_id: string | null
           created_at: string
           definition_revision_id: string
           evidence: Json

@@ -13,6 +13,11 @@ import {
   type BenchmarkAxisRequest,
   type BenchmarkAxisSnapshot,
 } from "@/lib/factory-benchmarks/experiment-axes-contracts";
+import {
+  BENCHMARK_EVALUATION_BUDGET_STEP_USD,
+  MAX_BENCHMARK_EVALUATION_BUDGET_USD,
+  MAX_BENCHMARK_SCORER_REVISIONS,
+} from "@/lib/factory-benchmarks/experiment-evaluation-contracts";
 
 type Selection = {
   definitionRevisionId: string;
@@ -32,6 +37,7 @@ const blankSelection: Selection = {
 
 type Definition = BenchmarkAxisCatalog["definitions"][number];
 type Profile = BenchmarkAxisCatalog["profiles"][number];
+type ScorerRevision = BenchmarkAxisCatalog["scorerRevisions"][number];
 type Option = { value: string; label: string };
 type Axis = {
   name: Exclude<keyof Selection, "qualificationId">;
@@ -52,6 +58,16 @@ const policyLabels = {
   recorded_fixtures: "Recorded fixtures",
   isolated_test: "Isolated test",
 };
+const comparisonDraftSchema = freezeBenchmarkAxesRequestSchema.omit({ experimentId: true });
+const evaluationBudgetFormat = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 6,
+});
+
+function scorerRevisionLabel({ scorerName, revisionNumber }: ScorerRevision) {
+  return `${scorerName} · Revision ${revisionNumber}`;
+}
 
 function axisOptions(values: string[], labels: Record<string, string> = {}): Option[] {
   return [...new Set(values)].sort().map((value) => ({ value, label: labels[value] ?? value }));
@@ -204,6 +220,78 @@ function CandidateFields({
   );
 }
 
+function ScoringFields({
+  revisions,
+  selected,
+  onSelect,
+}: {
+  revisions: ScorerRevision[];
+  selected: ReadonlySet<string>;
+  onSelect: (id: string, selected: boolean) => void;
+}) {
+  const budgetHintId = useId();
+  const limitReached = selected.size === MAX_BENCHMARK_SCORER_REVISIONS;
+  return (
+    <details className="rounded-md border border-border">
+      <summary className="type-label cursor-pointer px-3 py-2.5">
+        Scoring {selected.size ? `· ${selected.size} selected` : "(optional)"}
+      </summary>
+      {revisions.length ? (
+        <div className="space-y-3 px-3 pb-3">
+          <fieldset className="min-w-0 space-y-1">
+            <legend className="type-label">Scorer revisions</legend>
+            <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border p-2">
+              {revisions.map((scorer) => (
+                <label className="flex items-start gap-2 px-1 py-1" key={scorer.id}>
+                  <input
+                    checked={selected.has(scorer.id)}
+                    className="mt-1 shrink-0 accent-accent"
+                    disabled={limitReached && !selected.has(scorer.id)}
+                    onChange={(event) => onSelect(scorer.id, event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span className="type-secondary min-w-0 [overflow-wrap:anywhere]">
+                    {scorerRevisionLabel(scorer)}
+                  </span>
+                </label>
+              ))}
+            </div>
+            {limitReached ? (
+              <p className="type-secondary text-muted" role="status">
+                {MAX_BENCHMARK_SCORER_REVISIONS} scorer revisions selected.
+              </p>
+            ) : null}
+          </fieldset>
+          {selected.size ? (
+            <div className="space-y-1">
+              <label className="block min-w-0 space-y-1 sm:max-w-xs">
+                <span className="type-label">Evaluation budget (USD)</span>
+                <input
+                  aria-describedby={budgetHintId}
+                  className="ui-input"
+                  max={MAX_BENCHMARK_EVALUATION_BUDGET_USD}
+                  min={0}
+                  name="evaluationBudgetUsd"
+                  required
+                  step={BENCHMARK_EVALUATION_BUDGET_STEP_USD}
+                  type="number"
+                />
+              </label>
+              <p className="type-secondary text-muted" id={budgetHintId}>
+                This budget covers scoring. A zero budget prevents judge calls.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="type-secondary px-3 pb-3 text-muted">
+          This factory has no published scorer revisions.
+        </p>
+      )}
+    </details>
+  );
+}
+
 export function BenchmarkComparisonForm({
   workspaceId,
   factoryId,
@@ -223,6 +311,7 @@ export function BenchmarkComparisonForm({
   const [baseline, setBaseline] = useState(blankSelection);
   const [candidate, setCandidate] = useState(blankSelection);
   const [policyRevisionId, setPolicyRevisionId] = useState("");
+  const [selectedScorers, setSelectedScorers] = useState(() => new Set<string>());
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [receipt, setReceipt] = useState<BenchmarkAxisSnapshot | null>(null);
   const lastRequest = useRef<{ key: string; experimentId: string } | null>(null);
@@ -276,11 +365,21 @@ export function BenchmarkComparisonForm({
     !sameConfiguration &&
     !receipt;
 
+  function selectScorer(id: string, checked: boolean) {
+    setSelectedScorers((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canFreeze || !baselineResult.profile || !candidateResult.profile) return;
     const fields = new FormData(event.currentTarget);
-    const command = {
+    const budget = fields.get("evaluationBudgetUsd");
+    const parsed = comparisonDraftSchema.safeParse({
       suiteRevisionId,
       policyRevisionId,
       candidates: [
@@ -298,21 +397,25 @@ export function BenchmarkComparisonForm({
       repetitions: Number(fields.get("repetitions")),
       seed: Number(fields.get("seed")),
       timeoutMs: Number(fields.get("timeoutSeconds")) * 1_000,
-    };
-    const key = JSON.stringify(command);
-    if (lastRequest.current?.key !== key) {
-      lastRequest.current = { key, experimentId: crypto.randomUUID() };
-    }
-    const parsed = freezeBenchmarkAxesRequestSchema.safeParse({
-      ...command,
-      experimentId: lastRequest.current.experimentId,
+      ...(selectedScorers.size
+        ? {
+            evaluation: {
+              scorerRevisionIds: [...selectedScorers],
+              budgetLimitUsd: typeof budget === "string" && budget.trim() ? Number(budget) : null,
+            },
+          }
+        : {}),
     });
     if (!parsed.success) {
       setMessage({ kind: "error", text: "Check the comparison settings and try again." });
       return;
     }
+    const key = JSON.stringify(parsed.data);
+    if (lastRequest.current?.key !== key) {
+      lastRequest.current = { key, experimentId: crypto.randomUUID() };
+    }
     setMessage(null);
-    void action.run(parsed.data);
+    void action.run({ experimentId: lastRequest.current.experimentId, ...parsed.data });
   }
 
   return (
@@ -383,6 +486,11 @@ export function BenchmarkComparisonForm({
         <p className="type-secondary text-muted" id={policyHelpId}>
           Freezing saves a trial plan. The replay policy controls execution.
         </p>
+        <ScoringFields
+          revisions={options.scorerRevisions}
+          selected={selectedScorers}
+          onSelect={selectScorer}
+        />
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block min-w-0 space-y-1">
             <span className="type-label">Repetitions</span>
@@ -440,6 +548,20 @@ export function BenchmarkComparisonForm({
             <p className="type-secondary text-muted">
               Experiment <span className="font-mono">{receipt.experimentId}</span>
             </p>
+            {receipt.evaluation ? (
+              <div className="type-secondary space-y-1 pt-1">
+                <p>
+                  Evaluation budget{" "}
+                  {evaluationBudgetFormat.format(receipt.evaluation.budgetLimitUsd)}
+                </p>
+                <ul aria-label="Frozen scorer revisions" className="list-disc pl-4">
+                  {receipt.evaluation.scorerRevisionIds.map((id) => {
+                    const scorer = options.scorerRevisions.find((revision) => revision.id === id);
+                    return <li key={id}>{scorer ? scorerRevisionLabel(scorer) : id}</li>;
+                  })}
+                </ul>
+              </div>
+            ) : null}
           </div>
         ) : null}
         <button className="ui-button ui-button-primary" disabled={!canFreeze} type="submit">

@@ -93,6 +93,41 @@ describe("freezing a benchmark experiment", () => {
     });
   });
 
+  it("passes the normalized exact scorer revision set and evaluation budget", async () => {
+    const admin = configureScope();
+    const evaluation = { scorerRevisionIds: [id(9), id(10)], budgetLimitUsd: 12.345678 };
+    mocks.freeze.mockResolvedValueOnce({ ...snapshot, evaluation });
+    const request = post({
+      ...command,
+      evaluation: { ...evaluation, scorerRevisionIds: [id(10), id(9)] },
+    });
+
+    const result = await POST(request, { params });
+
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ ...snapshot, evaluation });
+    expect(mocks.freeze).toHaveBeenCalledExactlyOnceWith({
+      admin,
+      workspaceId,
+      factoryId,
+      actorUserId,
+      request: { ...command, evaluation },
+      signal: request.signal,
+    });
+  });
+
+  it.each([
+    { scorerRevisionIds: [], budgetLimitUsd: 1 },
+    { scorerRevisionIds: [id(9), id(9)], budgetLimitUsd: 1 },
+    { scorerRevisionIds: [id(9)], budgetLimitUsd: 1.2345678 },
+  ])("rejects an invalid evaluation plan before a privileged call", async (evaluation) => {
+    configureScope();
+    const result = await POST(post({ ...command, evaluation }), { params });
+    expect(result.status).toBe(400);
+    expect(mocks.admin).not.toHaveBeenCalled();
+    expect(mocks.freeze).not.toHaveBeenCalled();
+  });
+
   it("rejects client-supplied actor and candidate details before a privileged call", async () => {
     configureScope();
     const result = await POST(post({ ...command, actorUserId: id(9), model: "unknown" }), {

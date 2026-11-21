@@ -43,7 +43,7 @@ const privateAsset = {
   sha256,
   size_bytes: natural,
 };
-const evidence = z.discriminatedUnion("kind", [
+const evidence = z.union([
   z.object({
     kind: z.literal("code_diff"),
     id,
@@ -59,6 +59,13 @@ const evidence = z.discriminatedUnion("kind", [
     kind: z.literal("validation_report"),
     ...privateAsset,
     content_type: z.enum(["text/plain", "application/json"]),
+  }),
+  z.object({
+    kind: z.literal("validation_report"),
+    id,
+    source: z.literal("benchmark_result"),
+    content_text: z.string(),
+    sha256,
   }),
   z.object({
     kind: z.literal("browser_screenshot"),
@@ -88,6 +95,16 @@ const preflightStatus = z.enum([
   "already_started",
 ]);
 
+const benchmarkBlocked = z.object({
+  status: z.literal("benchmark_blocked"),
+  reason: z.enum([
+    "schedule_paused",
+    "schedule_canceled",
+    "evaluation_budget_exhausted",
+    "evaluation_budget_wait",
+  ]),
+});
+
 export const factoryJudgePreparationSchema = z.union([
   z.object({
     status: z.literal("ready"),
@@ -99,10 +116,13 @@ export const factoryJudgePreparationSchema = z.union([
     session_id: id,
     run_id: id,
     evidence: z.array(evidence).min(1).max(5),
+    benchmark_source: z.object({ trial_id: id, result_digest: sha256 }).optional(),
   }),
+  benchmarkBlocked,
   z.object({ status: preflightStatus }),
 ]);
 export const factoryJudgePermitSchema = z.union([
   z.object({ status: z.literal("authorized"), encrypted_api_key: z.string().min(1).max(8192) }),
+  benchmarkBlocked,
   z.object({ status: preflightStatus }),
 ]);

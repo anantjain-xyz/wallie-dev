@@ -73,6 +73,12 @@ async function materializeEvidence(
       ? { status: "unsupported_evidence" }
       : failedAsset(diff.status);
   }
+  if ("source" in descriptor) {
+    const input = textInput({ id, kind: descriptor.kind }, descriptor.content_text);
+    if (input.status !== "available") return input;
+    const hash = createHash("sha256").update(descriptor.content_text).digest("hex");
+    return hash === descriptor.sha256 ? input : { status: "unsupported_evidence" };
+  }
   if (
     descriptor.workspace_id !== claim.workspace_id ||
     descriptor.session_id !== claim.session_id ||
