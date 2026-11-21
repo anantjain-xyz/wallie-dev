@@ -291,7 +291,7 @@ describe("factory model routing", () => {
     });
   });
 
-  it("resolves an exact frozen candidate receipt against its definition bytes and agent", async () => {
+  it("batch-resolves exact frozen candidate receipts against their definition bytes and agent", async () => {
     const fixture = mcpFixture();
     const source = compile(fixture.input, fixture.references);
     expect(source.ok).toBe(true);
@@ -314,14 +314,22 @@ describe("factory model routing", () => {
         ]);
       }
       expect(url.pathname.endsWith("/factory_benchmark_experiment_candidates")).toBe(true);
-      expect(url.searchParams.get("experiment_id")).toBe(`eq.${experimentId}`);
-      expect(url.searchParams.get("definition_revision_id")).toBe(`eq.${sourceRevisionId}`);
-      expect(url.searchParams.get("definition_digest")).toBe(`eq.${source.canonicalDigest}`);
-      expect(url.searchParams.get("qualification_id")).toBe(`eq.${qualificationId}`);
-      expect(url.searchParams.get("canonical_model_key")).toBe(`eq.${configuration.modelKey}`);
-      expect(url.searchParams.get("harness")).toBe("eq.codex");
-      expect(url.searchParams.get("worker_runtime")).toBe("eq.node");
-      return Response.json([{ candidate_key: "qualified" }]);
+      const filters = [configuration, fallback].map(
+        (target) =>
+          `and(experiment_id.eq.${experimentId},definition_revision_id.eq.${sourceRevisionId},qualification_id.eq.${target.qualificationId},worker_runtime.eq.node)`,
+      );
+      expect(url.searchParams.get("or")).toBe(`(${filters.join(",")})`);
+      return Response.json(
+        [configuration, fallback].map((target) => ({
+          experiment_id: experimentId,
+          definition_revision_id: sourceRevisionId,
+          definition_digest: source.canonicalDigest,
+          qualification_id: target.qualificationId,
+          canonical_model_key: target.modelKey,
+          harness: target.harness,
+          worker_runtime: target.workerRuntime,
+        })),
+      );
     };
     const client = createClient<Database>("http://factory.test", "test-service-key", {
       auth: { persistSession: false },
@@ -331,9 +339,11 @@ describe("factory model routing", () => {
       loadQualifiedModelRoutingConfigurations(client, scope, [
         configuration,
         configuration,
+        fallback,
         { ...configuration, agentId: otherFactoryId },
+        { ...configuration, modelKey: "openai/gpt-incompatible" },
       ]),
-    ).resolves.toEqual([qualified[0]]);
+    ).resolves.toEqual(qualified);
     expect(queries).toHaveLength(2);
   });
 });

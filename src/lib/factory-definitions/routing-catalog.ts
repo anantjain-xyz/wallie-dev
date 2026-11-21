@@ -43,34 +43,56 @@ export async function loadQualifiedModelRoutingConfigurations(
     }
   }
   const selected = new Map(
-    configurations.map((configuration) => [JSON.stringify(configuration), configuration]),
+    configurations.flatMap((configuration) => {
+      const definition = definitions.get(configuration.definitionRevisionId);
+      return definition?.agentId === configuration.agentId
+        ? [[JSON.stringify(configuration), { configuration, definition }] as const]
+        : [];
+    }),
   );
-  const unique = [...selected.values()];
-  const qualified: QualifiedModelRoutingConfiguration[] = [];
-  const batchSize = 8;
-  for (let index = 0; index < unique.length; index += batchSize) {
-    const batch = await Promise.all(
-      unique.slice(index, index + batchSize).map(async (configuration) => {
-        const definition = definitions.get(configuration.definitionRevisionId);
-        if (definition?.agentId !== configuration.agentId) return null;
-        const candidate = await client
-          .from("factory_benchmark_experiment_candidates")
-          .select("candidate_key")
-          .eq("workspace_id", workspaceId)
-          .eq("factory_id", factoryId)
-          .eq("experiment_id", configuration.experimentId)
-          .eq("definition_revision_id", configuration.definitionRevisionId)
-          .eq("definition_digest", definition.digest)
-          .eq("qualification_id", configuration.qualificationId)
-          .eq("canonical_model_key", configuration.modelKey)
-          .eq("harness", configuration.harness)
-          .eq("worker_runtime", configuration.workerRuntime)
-          .limit(2);
-        if (candidate.error) throw candidate.error;
-        return candidate.data.length === 1 ? { ...configuration, ...scope } : null;
+
+  // Use only validated UUIDs and enum values in the raw PostgREST filter.
+  const candidateFilters = [
+    ...new Set(
+      [...selected.values()].map(({ configuration }) => {
+        const { experimentId, definitionRevisionId, qualificationId, workerRuntime } =
+          configuration;
+        return `and(experiment_id.eq.${experimentId},definition_revision_id.eq.${definitionRevisionId},qualification_id.eq.${qualificationId},worker_runtime.eq.${workerRuntime})`;
       }),
-    );
-    for (const configuration of batch) if (configuration) qualified.push(configuration);
+    ),
+  ];
+  const filterBatches: string[] = [];
+  const candidateBatchSize = 20;
+  for (let index = 0; index < candidateFilters.length; index += candidateBatchSize) {
+    filterBatches.push(candidateFilters.slice(index, index + candidateBatchSize).join(","));
   }
-  return qualified;
+  const batches = await Promise.all(
+    filterBatches.map(async (filter) => {
+      const candidates = await client
+        .from("factory_benchmark_experiment_candidates")
+        .select(
+          "experiment_id,definition_revision_id,definition_digest,qualification_id,canonical_model_key,harness,worker_runtime",
+        )
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .or(filter);
+      if (candidates.error) throw candidates.error;
+      return candidates.data;
+    }),
+  );
+  const candidates = batches.flat();
+
+  return [...selected.values()].flatMap(({ configuration, definition }) => {
+    const matches = candidates.filter(
+      (candidate) =>
+        candidate.experiment_id === configuration.experimentId &&
+        candidate.definition_revision_id === configuration.definitionRevisionId &&
+        candidate.definition_digest === definition.digest &&
+        candidate.qualification_id === configuration.qualificationId &&
+        candidate.canonical_model_key === configuration.modelKey &&
+        candidate.harness === configuration.harness &&
+        candidate.worker_runtime === configuration.workerRuntime,
+    );
+    return matches.length === 1 ? [{ ...configuration, ...scope }] : [];
+  });
 }
