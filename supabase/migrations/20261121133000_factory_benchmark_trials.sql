@@ -344,7 +344,9 @@ returns public.factory_benchmark_trials language plpgsql security definer set se
 declare
   trial public.factory_benchmark_trials;
   owner public.sessions;
+  budget record;
   started_run_id uuid;
+  run_started_at timestamptz;
   effective_deadline timestamptz;
 begin
   perform internal.assert_checkpoint_publication_service();
@@ -359,19 +361,36 @@ begin
   ) then return null; end if;
   if trial.status <> 'queued' then return null; end if;
   select * into strict owner from public.sessions where id = trial.session_id;
-  if not internal.session_execution_admissible(owner.id, owner.workspace_id) then return null; end if;
   effective_deadline := least(
     p_deadline_at, clock_timestamp() + interval '180 seconds',
     (select dispatch.deadline_at from public.worker_dispatches dispatch
       where (dispatch.job_id, dispatch.attempt_count) = (p_job_id, p_attempt_count))
   );
-  if effective_deadline <= clock_timestamp() then return null; end if;
+  select * into budget from public.get_session_execution_budget(owner.id);
+  if not found or budget.exhaustion_code is not null
+    or (owner.execution_policy_revision_id is not null and budget.remaining_execution_ms is null)
+    or coalesce(budget.remaining_execution_ms <= 0, false)
+    or effective_deadline <= clock_timestamp() then
+    perform public.fail_session_job_attempt(p_job_id, p_attempt_count,
+      'Benchmark trial deadline or execution budget unavailable.', false, 0);
+    return null;
+  end if;
 
   started_run_id := internal.start_session_job_attempt_before_release(
     p_job_id, p_attempt_count, owner.current_stage_id, 0, 'benchmark', trial.runner_revision, 'project'
   );
   if started_run_id is distinct from trial.run_id then
     raise exception 'The isolated claim did not match the admitted run.' using errcode = 'PT409';
+  end if;
+  -- The shared budget charges time from the run's stored start, including
+  -- sandbox setup. The pre-run balance includes any prior elapsed usage.
+  select started_at into strict run_started_at from public.agent_runs where id = started_run_id;
+  effective_deadline := least(effective_deadline,
+    run_started_at + budget.remaining_execution_ms * interval '1 millisecond');
+  if effective_deadline <= clock_timestamp() then
+    perform public.fail_session_job_attempt(p_job_id, p_attempt_count,
+      'Benchmark trial deadline elapsed before start.', false, 0, started_run_id);
+    return null;
   end if;
   update public.factory_benchmark_trials t
   set status = 'running', attempt_count = p_attempt_count, deadline_at = effective_deadline

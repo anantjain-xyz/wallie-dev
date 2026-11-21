@@ -147,8 +147,6 @@ select is((select id from public.claim_next_agent_job(true)),
   (select job_id from public.factory_benchmark_trials where id = pg_temp.replay_id(60)),
   'the opt-in worker claims the existing session job');
 select is(pg_temp.start_trial(60, 2), null::uuid, 'a stale attempt cannot start the trial');
-select is(pg_temp.start_trial(60, 1, clock_timestamp() - interval '1 second'), null::uuid,
-  'an already expired worker deadline supplies no execution authority');
 select is(pg_temp.start_trial(60, 1, clock_timestamp() + interval '60 seconds'),
   (select run_id from public.factory_benchmark_trials where id = pg_temp.replay_id(60)),
   'exact start binds the admitted session, job, and queued run');
@@ -264,6 +262,72 @@ select results_eq($$select t.failure_code, j.status::text, r.status::text from p
   $$values ('attempt_lost', 'error', 'error')$$,
   'the common stall recovery retires the trial, claimed job, and unbound run');
 select is(pg_temp.start_trial(63), null::uuid, 'a recovered trial claim cannot execute later');
+
+select pg_temp.admit_trial(65);
+select id from public.claim_next_agent_job(true);
+select is(pg_temp.start_trial(65, 1, clock_timestamp() - interval '1 second'), null::uuid,
+  'an already expired worker deadline supplies no execution authority');
+select results_eq($$select t.status, j.status::text, r.status::text from public.factory_benchmark_trials t
+  join public.agent_jobs j on j.id = t.job_id join public.agent_runs r on r.id = t.run_id where t.id = pg_temp.replay_id(65)$$,
+  $$values ('error', 'error', 'error')$$,
+  'the exact expired claim retires its trial, job, and unbound run immediately');
+
+insert into public.execution_policy_revisions(id, workspace_id, revision, requirements, created_by)
+values (pg_temp.replay_id(52), pg_temp.replay_id(11), 1,
+  '{"version":1,"maxRepairAttempts":0,"maxExecutionMs":1000,"maxTotalTokens":null,"maxCostUsd":null}',
+  pg_temp.replay_id(1));
+insert into public.sessions(id, workspace_id, factory_id, number, title, pipeline_id, current_stage_id,
+  factory_definition_provenance, factory_definition_revision_id, execution_policy_revision_id)
+select pg_temp.replay_id(54), workspace_id, factory_id, 2, 'Budgeted replay source',
+  pg_temp.replay_id(40), pg_temp.replay_id(41), 'pinned', pg_temp.replay_id(49), pg_temp.replay_id(52)
+from replay_scope where key = 'primary';
+insert into public.agent_jobs(id, workspace_id, session_id, stage_id, stage_slug, trigger_type, status, attempt_count, finished_at)
+values (pg_temp.replay_id(55), pg_temp.replay_id(11), pg_temp.replay_id(54), pg_temp.replay_id(41), 'review',
+  'manual_run', 'success', 1, clock_timestamp());
+insert into public.agent_runs(id, workspace_id, session_id, agent_job_id, stage_id, stage_slug, run_type,
+  model_provider, model_name, status, attempt_count, started_at, finished_at)
+values (pg_temp.replay_id(56), pg_temp.replay_id(11), pg_temp.replay_id(54), pg_temp.replay_id(55), pg_temp.replay_id(41),
+  'review', 'project', 'codex', 'gpt-5.5', 'success', 1, clock_timestamp() - interval '2 seconds', clock_timestamp());
+truncate replay_task;
+insert into replay_task
+select revision.id, revision.task_id, revision.workspace_id, revision.factory_id
+from replay_scope scope cross join lateral public.create_factory_benchmark_task(
+  scope.workspace_id, scope.factory_id, scope.owner_id, pg_temp.replay_id(56), 'Budgeted replay',
+  'Retain the result within the budget.', '{}', 'eligible'
+) revision where scope.key = 'primary';
+insert into public.factory_benchmark_task_inputs(task_id, workspace_id, factory_id, source_run_id, source_session_id,
+  source_job_id, source_attempt_count, definition_revision_id, checkout_sha)
+select task_id, workspace_id, factory_id, pg_temp.replay_id(56), pg_temp.replay_id(54), pg_temp.replay_id(55),
+  1, pg_temp.replay_id(49), repeat('a', 40) from replay_task;
+
+select pg_temp.admit_trial(64);
+select id from public.claim_next_agent_job(true);
+select is(pg_temp.start_trial(64, 1, clock_timestamp() + interval '30 seconds'),
+  (select run_id from public.factory_benchmark_trials where id = pg_temp.replay_id(64)),
+  'the pinned elapsed budget applies to the new trial attempt without charging the source run');
+select is((select trial.deadline_at - run.started_at from public.factory_benchmark_trials trial
+  join public.agent_runs run on run.id = trial.run_id where trial.id = pg_temp.replay_id(64)),
+  interval '1 second', 'the exact trial run start anchors its 1000ms pinned budget');
+select public.record_factory_benchmark_replay_operation(trial.workspace_id, trial.factory_id, opened.id,
+  pg_temp.replay_id(704), 'tool_read', trial.fixture_key)
+from public.factory_benchmark_trials trial cross join lateral public.open_factory_benchmark_replay_execution(
+  trial.workspace_id, trial.factory_id, trial.actor_user_id, trial.replay_execution_id, trial.task_revision_id,
+  trial.policy_revision_id, trial.policy_digest, repeat('d', 64)
+) opened where trial.id = pg_temp.replay_id(64);
+update trial_upload upload set path = trial.workspace_id::text || '/benchmark/' || trial.id::text || '/' ||
+  trial.run_id::text || '/' || repeat('e', 64) || '.bundle'
+from public.factory_benchmark_trials trial where trial.id = pg_temp.replay_id(64);
+update result_fixture fixture set payload = fixture.payload || jsonb_build_object(
+  'fixtureOperationId', pg_temp.replay_id(704), 'checkpointStoragePath', upload.path,
+  'checkpointUploadOperationId', public.begin_workspace_resource_operation(upload.workspace_id, 'upload', '',
+    upload.path, 'session-source-checkpoints', clock_timestamp() + interval '5 minutes')
+) from trial_upload upload;
+insert into storage.objects(bucket_id, name, metadata)
+select 'session-source-checkpoints', path, '{"mimetype":"application/octet-stream","size":8}'::jsonb from trial_upload;
+select pg_sleep(1.1);
+select is(pg_temp.finish_trial(64), false, 'a result after the pinned deadline cannot be adopted');
+select is((select count(*) from public.factory_benchmark_trial_results where trial_id = pg_temp.replay_id(64)),
+  0::bigint, 'the expired trial retains no late output');
 
 select * from finish();
 rollback;

@@ -30,6 +30,15 @@ const bundleSha = "e".repeat(64);
 const outputSha = "f".repeat(64);
 const bytes = Buffer.from("a retained fixture checkpoint");
 const checkpointSha = replaySha256(bytes);
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 const connection = {
   provider: "vercel",
   revision: id(11),
@@ -72,7 +81,8 @@ const fixture = {
 function db({
   staleStart = false,
   staleFinish = false,
-}: { staleStart?: boolean; staleFinish?: boolean } = {}) {
+  budgetMs,
+}: { staleStart?: boolean; staleFinish?: boolean; budgetMs?: number } = {}) {
   const calls: { path: string; body: unknown }[] = [];
   const admin = createClient<Database>("https://db.example.test", "local-fixture", {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -83,7 +93,16 @@ function db({
         calls.push({ path, body: typeof init?.body === "string" ? JSON.parse(init.body) : null });
         switch (path) {
           case "start_factory_benchmark_trial":
-            return Response.json(staleStart ? null : trial);
+            return Response.json(
+              staleStart
+                ? null
+                : {
+                    ...trial,
+                    ...(budgetMs === undefined
+                      ? {}
+                      : { deadline_at: new Date(Date.now() + budgetMs).toISOString() }),
+                  },
+            );
           case "agent_runs":
             return Response.json({ id: trial.run_id });
           case "finish_factory_benchmark_trial":
@@ -269,5 +288,55 @@ describe("benchmark worker execution contract", () => {
     );
     expect(uploadWorkspaceObject).not.toHaveBeenCalled();
     expect(calls.at(-1)?.path).toBe("agent_runs");
+  });
+
+  it("aborts candidate work at the earlier database deadline and discards late output", async () => {
+    const { admin, calls } = db({ budgetMs: 1000 });
+    const worker = new AbortController();
+    const deadlineAt = new Date(Date.now() + 60_000).toISOString();
+    const candidate = vi.mocked(runRecordedTrialFixture).getMockImplementation()!;
+    const releaseProvider = deferred();
+    const sentLateOutput = deferred();
+    vi.mocked(runRecordedTrialFixture).mockImplementationOnce(async (input) => {
+      const output = await candidate(input);
+      await releaseProvider.promise;
+      expect(input.signal.reason).toMatchObject({ name: "TimeoutError" });
+      sentLateOutput.resolve();
+      return output;
+    });
+
+    const terminal = runRecordedBenchmarkTrial({
+      admin,
+      job,
+      signal: worker.signal,
+      deadlineAt,
+    }).catch((error: unknown) => error);
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      expect(
+        await Promise.race([
+          terminal,
+          new Promise((resolve) => {
+            watchdog = setTimeout(() => resolve("The worker still owns canceled work"), 3000);
+          }),
+        ]),
+      ).toMatchObject({ name: "TimeoutError" });
+    } finally {
+      clearTimeout(watchdog);
+      releaseProvider.resolve();
+      await terminal;
+    }
+    await sentLateOutput.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.signal.aborted).toBe(false);
+    expect(runRecordedTrialFixture).toHaveBeenCalledOnce();
+    expect(uploadWorkspaceObject).not.toHaveBeenCalled();
+    expect(calls).toEqual([
+      {
+        path: "start_factory_benchmark_trial",
+        body: { p_job_id: job.id, p_attempt_count: 1, p_deadline_at: deadlineAt },
+      },
+      { path: "agent_runs", body: expect.anything() },
+    ]);
   });
 });

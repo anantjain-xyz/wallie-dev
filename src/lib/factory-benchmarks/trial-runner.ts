@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { AttemptWorkerRuntime } from "@/lib/pipeline/attempt-manifest";
 import { SOURCE_CHECKPOINT_BUCKET } from "@/lib/pipeline/source-checkpoint";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
+import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { uploadWorkspaceObject } from "@/lib/workspaces/resource-operations";
 
@@ -108,7 +109,7 @@ export async function runRecordedBenchmarkTrial({
   };
 
   let failure: TrialFailure = "sandbox_unavailable";
-  const staged = await (async () => {
+  const staged = await observeUntilAbort(signal, async () => {
     try {
       const { connection } = await loadRequiredWorkspaceSandboxConnection(
         admin,
@@ -222,7 +223,7 @@ export async function runRecordedBenchmarkTrial({
       if (error instanceof RecordedTrialFixtureError) failure = error.code;
       return null;
     }
-  })();
+  });
 
   signal.throwIfAborted();
   if (!staged) {
