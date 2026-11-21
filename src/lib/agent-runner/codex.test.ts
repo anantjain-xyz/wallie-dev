@@ -495,6 +495,32 @@ describe("CodexRunner", () => {
     );
   });
 
+  it("uses the dated snapshot and config-based feature restrictions for qualified replay", () => {
+    const args = codexExecArgs(
+      "gpt-4.1-2025-04-14",
+      "/vercel/sandbox",
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(args.slice(0, 3)).toEqual(["exec", "--model", "gpt-4.1-2025-04-14"]);
+    expect(args).toEqual(
+      expect.arrayContaining([
+        'model_providers.wallie_benchmark.wire_api="responses"',
+        "model_providers.wallie_benchmark.supports_websockets=false",
+        "mcp_servers={}",
+        "features.apps=false",
+        "features.plugins=false",
+        "features.skill_mcp_dependency_install=false",
+        "features.web_search_request=false",
+        'web_search="disabled"',
+      ]),
+    );
+    expect(args).not.toContain("--ignore-user-config");
+    expect(args).not.toContain("--disable");
+  });
+
   it("launches with only the approved stdio tools and records verified readiness", async () => {
     const sandbox = new FakeSandbox();
     const loadCredential = vi.fn(async () => launchCredentials[0]!);

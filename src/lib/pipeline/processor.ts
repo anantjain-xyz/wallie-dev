@@ -46,7 +46,7 @@ import {
   type PinnedFactoryExecution,
 } from "@/lib/factory-definitions/runtime-definition";
 import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
-import { runRecordedBenchmarkTrial } from "@/lib/factory-benchmarks/trial-runner";
+import { runBenchmarkTrial } from "@/lib/factory-benchmarks/qualified-trial";
 import {
   AGENT_PROVIDERS,
   agentProviderSupportsEffort,
@@ -195,12 +195,12 @@ export async function processPipelineJob(input: {
     const loaded = await loadSessionById(admin, job.session_id);
     session = loaded ? { ...loaded } : null;
     if (session?.execution_purpose === "benchmark") {
-      return runRecordedBenchmarkTrial({
+      return runBenchmarkTrial({
         admin,
         job,
         deadlineAt: input.deadlineAt,
         signal: input.signal,
-        workerRuntime: input.workerRuntime,
+        workerRuntime: input.workerRuntime ?? "node",
       });
     }
     if (session) pinned = await loadPinnedFactoryExecution(admin, session);

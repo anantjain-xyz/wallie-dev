@@ -62,6 +62,7 @@ describe("claimNextJob", () => {
     expect(admin.rpc).toHaveBeenCalledWith("claim_next_agent_job", {
       default_concurrency_limit: 2,
       accept_benchmark_trials: true,
+      p_worker_runtime: "node",
     });
     expect(admin.from).not.toHaveBeenCalled();
   });
@@ -87,6 +88,7 @@ describe("claimNextJob", () => {
     expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("claim_next_agent_job", {
       default_concurrency_limit: 2,
       accept_benchmark_trials: false,
+      p_worker_runtime: "node",
     });
   });
 

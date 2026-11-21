@@ -17,6 +17,7 @@ export async function loadFactorySkillBundle(
     workspaceId: string;
     factoryId: string;
     skillRevisionIds: readonly string[];
+    requireCurrent?: true;
     signal?: AbortSignal;
   },
 ): Promise<PromptValue[]> {
@@ -28,6 +29,7 @@ export async function loadFactorySkillBundle(
     .eq("workspace_id", input.workspaceId)
     .eq("factory_id", input.factoryId)
     .in("id", input.skillRevisionIds);
+  if (input.requireCurrent) query.is("revoked_at", null);
   const { data, error } = await (input.signal ? query.abortSignal(input.signal) : query);
   if (error) throw error;
   const revisions = new Map(data.map((row) => [row.id, row]));

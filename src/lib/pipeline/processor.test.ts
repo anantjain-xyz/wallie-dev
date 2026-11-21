@@ -62,7 +62,7 @@ const mocked = vi.hoisted(() => ({
   materializeSessionAttachments: vi.fn().mockResolvedValue([]),
   formatSessionAttachmentPromptData: vi.fn(() => ""),
   loadWorkspaceAgentConfig: vi.fn(),
-  runRecordedBenchmarkTrial: vi.fn(),
+  runBenchmarkTrial: vi.fn(),
   loadRunAgentPrompt: vi.fn(),
   loadRequiredWorkspaceSandboxConnection: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
@@ -93,8 +93,8 @@ vi.mock("@/lib/validation-evidence/service", () => ({
   validateCheckpoint: mocked.validateCheckpoint,
 }));
 
-vi.mock("@/lib/factory-benchmarks/trial-runner", () => ({
-  runRecordedBenchmarkTrial: mocked.runRecordedBenchmarkTrial,
+vi.mock("@/lib/factory-benchmarks/qualified-trial", () => ({
+  runBenchmarkTrial: mocked.runBenchmarkTrial,
 }));
 
 vi.mock("@/lib/factory-memory/proposal", async (importOriginal) => ({
@@ -1156,11 +1156,11 @@ describe("processPipelineJob (generic stage runner)", () => {
       const signal = new AbortController().signal;
       const deadlineAt = new Date(Date.now() + 5000).toISOString();
       const result = { jobId: job.id, processed: true, result: "idle", runId: null };
-      mocked.runRecordedBenchmarkTrial.mockResolvedValueOnce(result);
+      mocked.runBenchmarkTrial.mockResolvedValueOnce(result);
       await expect(
         processPipelineJob({ admin, job, deadlineAt, signal, workerRuntime }),
       ).resolves.toBe(result);
-      expect(mocked.runRecordedBenchmarkTrial).toHaveBeenCalledExactlyOnceWith({
+      expect(mocked.runBenchmarkTrial).toHaveBeenCalledExactlyOnceWith({
         admin,
         job,
         deadlineAt,
