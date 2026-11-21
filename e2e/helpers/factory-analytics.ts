@@ -86,6 +86,7 @@ export async function seedFactoryAnalytics(baseURL: string | undefined, windowDa
   async function runFixtureFile(
     file:
       | "factory-analytics-seed.sql"
+      | "factory-benchmark-comparison-seed.sql"
       | "factory-outcome-release.sql"
       | "factory-score-trends-seed.sql",
     fields: Record<string, string>,

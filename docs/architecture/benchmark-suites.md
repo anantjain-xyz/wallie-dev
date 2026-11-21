@@ -161,9 +161,18 @@ It checks the private bundle in Storage and removes the temporary trial data.
 ## Freeze a comparison
 
 - An experiment pins the suite revision, replay policy revision, and exact
-  candidate factory revisions. Model, harness, and sandbox settings come
-  from the verified revisions. The initial matrix uses Node as its planned
-  worker runtime.
+  candidate factory revisions. In the suite’s comparison form, choose the
+  model, harness, worker runtime, and whole factory revision for each side.
+- Qualified comparisons currently use exact OpenAI model snapshots through
+  Codex or OpenCode on Node with Vercel. A capability check must match the
+  repository, harness, native model ID, and active connection. A repository
+  mismatch with an eligible task, unresolved stage, remote tool, or unsupported
+  runtime blocks the freeze.
+- The baseline and candidate positions retain the definition digest, model and
+  harness IDs, capability receipt, connection revision, CLI version, and
+  toolchain digest. The check qualifies the configured tools. Actual replay
+  results require a runner that uses those exact pins. The recorded-fixture
+  scheduler rejects comparisons with these pins.
 - The freeze command materializes one identity per task, candidate, and
   repetition. Repeated candidates share the planned seed for each repetition.
   Each cell retains its exact task revision, timeout, and recorded eligibility.
