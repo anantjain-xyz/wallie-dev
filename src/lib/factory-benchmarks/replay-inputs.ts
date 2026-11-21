@@ -530,6 +530,7 @@ export async function resolveBenchmarkReplay(input: BenchmarkReplayInput) {
   return {
     plan,
     repository,
+    baseBranch: observed.base_branch,
     async recheckAccess() {
       signal.throwIfAborted();
       const currentScope = await authorize();

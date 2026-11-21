@@ -163,9 +163,10 @@ It checks the private bundle in Storage and removes the temporary trial data.
 - An experiment pins the suite revision, replay policy revision, and exact
   candidate factory revisions. In the suite’s comparison form, choose the
   model, harness, worker runtime, and whole factory revision for each side.
-- Qualified comparisons currently use exact OpenAI model snapshots through
-  Codex or OpenCode on Node with Vercel. A capability check must match the
-  repository, harness, native model ID, and active connection. A repository
+- Qualified comparisons use exact OpenAI model snapshots through Codex or
+  OpenCode with Vercel. A capability check must match the repository, harness,
+  native model ID, and active connection. Managed live replay uses the Workerd
+  runtime and a digest-pinned image. A repository
   mismatch with an eligible task, unresolved stage, unavailable skill, remote
   tool, or unsupported runtime blocks a new freeze.
 - The baseline and candidate positions retain the definition digest, model and
@@ -203,6 +204,10 @@ factory concurrency limit, and a maximum number of admitted trials.
 The recorded runner exercises the frozen matrix through the isolated fixture
 path. The matrix describes the planned factory revision, model, harness, and
 runtime. Each execution records its actual runner revision and worker runtime.
+
+To run a qualified OpenAI comparison, configure `openai-responses-v1` with its
+pinned inference connection, a positive execution reserve, and a blocked
+replay policy. See [qualified live replay](./qualified-benchmark-replay.md).
 
 - Node and Workerd run the same bounded reconciliation. Admission reserves
   spend and enqueues the exact frozen trial identity in one transaction.

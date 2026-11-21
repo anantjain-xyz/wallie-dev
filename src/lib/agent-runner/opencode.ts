@@ -10,6 +10,7 @@ import { withRunnerCredentials, type ScopedRunnerMaterial } from "./scoped-crede
 import { ToolEventTracker } from "./tool-event-tracker";
 import { DEFAULT_OPENCODE_MODEL } from "./types";
 import { isTokenCount, normalizeMeasuredUsage } from "./usage";
+import { BENCHMARK_REPLAY_API_PLACEHOLDER, launchBenchmarkCli } from "./benchmark-replay";
 
 export type OpenCodeRunnerAuth = {
   /** User-supplied OpenCode Zen API key, if connected. */
@@ -18,12 +19,22 @@ export type OpenCodeRunnerAuth = {
   providerCredentials?: Readonly<Record<string, OpenCodeCredential>>;
 };
 
-export interface OpenCodeRunnerOptions extends OpenCodeRunnerAuth {
-  /** Load current credentials immediately before writing sandbox authentication. */
-  loadAuth?: () => Promise<OpenCodeRunnerAuth>;
-  /** OpenCode model identifier in provider/model form. */
-  model?: string;
-}
+export type OpenCodeRunnerOptions =
+  | (OpenCodeRunnerAuth & {
+      isolatedBenchmark?: false;
+      /** Load current credentials immediately before writing sandbox authentication. */
+      loadAuth?: () => Promise<OpenCodeRunnerAuth>;
+      /** OpenCode model identifier in provider/model form. */
+      model?: string;
+    })
+  | {
+      isolatedBenchmark: true;
+      model: string;
+      executablePath: string;
+      credential?: never;
+      providerCredentials?: never;
+      loadAuth?: never;
+    };
 
 export type ParsedOpenCodeLine = {
   events: AgentEvent[];
@@ -60,6 +71,7 @@ export class OpenCodeRunner implements AgentRunner {
   readonly requiresSandbox = true;
 
   private readonly model: string;
+  private readonly modelId: string;
   private readonly modelProviderId: string;
 
   constructor(private readonly options: OpenCodeRunnerOptions) {
@@ -70,8 +82,16 @@ export class OpenCodeRunner implements AgentRunner {
         `OpenCodeRunner requires a "<provider-id>/<model-id>" model, got "${this.model}".`,
       );
     }
+    this.modelId = parsed.modelId;
     this.modelProviderId = parsed.providerId;
-    if (!options.loadAuth && !secretForProvider(options, parsed.providerId)) {
+    if (options.isolatedBenchmark && parsed.providerId !== "openai") {
+      throw new Error("Isolated OpenCode replay requires the OpenAI provider.");
+    }
+    if (
+      !options.isolatedBenchmark &&
+      !options.loadAuth &&
+      !secretForProvider(options, parsed.providerId)
+    ) {
       throw missingProviderCredentialError(parsed.providerId);
     }
   }
@@ -97,6 +117,9 @@ export class OpenCodeRunner implements AgentRunner {
     if (input.mcp && input.continueSessionId) {
       throw new McpAdapterError("OpenCode cannot resume a run with pinned MCP operations.");
     }
+    const replay = this.options.isolatedBenchmark === true;
+    if (replay && (input.mcp || input.scopedCredential || input.continueSessionId))
+      throw new Error("Isolated OpenCode replay requires a fresh local task.");
 
     const root = await prepareRunnerDirectory(this.provider, sandbox, input.signal);
     const dataHome = `${root}/data`;
@@ -133,12 +156,37 @@ export class OpenCodeRunner implements AgentRunner {
           share: "disabled",
         })}\n`,
       );
+    } else if (replay) {
+      await sandbox.writeFile(
+        configFile,
+        JSON.stringify({
+          mcp: {},
+          enabled_providers: ["openai"],
+          model: this.model,
+          small_model: this.model,
+          share: "disabled",
+          provider: {
+            openai: {
+              npm: "@ai-sdk/openai",
+              options: { baseURL: "https://api.openai.com/v1" },
+              whitelist: [this.modelId],
+              models: { [this.modelId]: { name: this.modelId } },
+            },
+          },
+          permission: { webfetch: "deny", websearch: "deny", external_directory: "deny" },
+        }),
+        { mode: 0o600 },
+      );
     } else {
       await sandbox.writeFile(configFile, '{"mcp":{}}\n', { mode: 0o600 });
     }
 
     input.signal?.throwIfAborted();
-    const auth = this.options.loadAuth ? await this.options.loadAuth() : this.options;
+    const auth: OpenCodeRunnerAuth = replay
+      ? { providerCredentials: { openai: { secret: BENCHMARK_REPLAY_API_PLACEHOLDER } } }
+      : this.options.loadAuth
+        ? await this.options.loadAuth()
+        : this.options;
     input.signal?.throwIfAborted();
     const modelKey = secretForProvider(auth, this.modelProviderId);
     if (!modelKey) {
@@ -214,14 +262,23 @@ export class OpenCodeRunner implements AgentRunner {
     ].join("\n");
     const options = {
       cwd: sandbox.repoPath,
-      ...(mcp ? {} : { env: environment }),
+      ...(mcp || replay ? {} : { env: environment }),
       signal: input.signal,
     };
     const shellArgs = mcp ? ["-c", shellCmd] : ["-lc", shellCmd];
     const shell = mcp ? "sh" : "bash";
-    const proc = material
-      ? await material.exec(shell, shellArgs, options)
-      : await sandbox.exec(shell, shellArgs, options);
+    const proc = replay
+      ? await launchBenchmarkCli({
+          sandbox,
+          executablePath: this.options.executablePath,
+          args: cliArgs,
+          promptFile,
+          signal: input.signal,
+          environment: { ...isolatedEnvironment, OPENCODE_DISABLE_MODELS_FETCH: "1" },
+        })
+      : material
+        ? await material.exec(shell, shellArgs, options)
+        : await sandbox.exec(shell, shellArgs, options);
 
     const secrets = [
       auth.credential?.secret,

@@ -42,7 +42,7 @@ async function handleRequest(request: Request, { params }: RouteContext, mode: "
         : await readBenchmarkCommand(
             request,
             benchmarkScheduleCommandSchema,
-            "Provide a valid benchmark schedule command with exact runner and fixture selections.",
+            "Provide a valid benchmark schedule command with exact runner and connection selections.",
             maxScheduleBodyBytes,
           );
     if (!command.ok) return command.response;
