@@ -78,6 +78,18 @@ describe("claimNextJob", () => {
     expect(admin.from).not.toHaveBeenCalled();
   });
 
+  it("asks the shared claimant for production only when benchmarks are excluded", async () => {
+    const admin = { rpc: vi.fn(async () => ({ data: [], error: null })) };
+
+    const result = await claimNextJob(admin as never, config, { acceptBenchmarkTrials: false });
+
+    expect(result).toEqual({ outcome: "idle" });
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("claim_next_agent_job", {
+      default_concurrency_limit: 2,
+      accept_benchmark_trials: false,
+    });
+  });
+
   it("returns the claimed job", async () => {
     const claimedJob = { ...baseJob, status: "running" };
     const admin = {

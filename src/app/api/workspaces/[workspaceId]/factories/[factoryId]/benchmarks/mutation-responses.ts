@@ -4,12 +4,11 @@ import { factoryResponseHeaders as headers } from "@/lib/factories/route-context
 import { factoryErrorStatus } from "@/lib/factories/scope";
 import { readBoundedJsonBody } from "@/lib/http/bounded-json-body";
 
-const maxBodyBytes = 256 * 1024;
-
 export async function readBenchmarkCommand<T>(
   request: Request,
   schema: z.ZodType<T>,
   validationMessage: string,
+  maxBodyBytes = 256 * 1024,
 ) {
   const raw = await readBoundedJsonBody(request, maxBodyBytes);
   if (!raw.ok && raw.code === "request_too_large") {

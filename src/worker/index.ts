@@ -12,6 +12,7 @@ import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
+import { reconcileBenchmarkSchedules } from "@/lib/factory-benchmarks/schedule-maintenance";
 import {
   processFactoryFlowProjection,
   pruneFactoryAnalyticsExports,
@@ -203,6 +204,7 @@ async function main() {
     let samplingFactoryScorers = false;
     let maintainingEvaluationQueue = false;
     let evaluatingFactoryJudges = false;
+    let reconcilingBenchmarkSchedules = false;
     maintenanceTimers.push(
       setInterval(() => {
         if (!deliveringFactoryEvents) {
@@ -252,6 +254,16 @@ async function main() {
               await drainFactoryJudges(admin, "node");
             } finally {
               evaluatingFactoryJudges = false;
+            }
+          });
+        }
+        if (!reconcilingBenchmarkSchedules) {
+          reconcilingBenchmarkSchedules = true;
+          timerTasks.run("benchmark schedules", async () => {
+            try {
+              await reconcileBenchmarkSchedules(admin);
+            } finally {
+              reconcilingBenchmarkSchedules = false;
             }
           });
         }

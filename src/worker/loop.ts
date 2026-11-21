@@ -21,18 +21,20 @@ export type ClaimNextResult =
 
 /**
  * Atomic concurrency-aware claim via Postgres RPC. The function selects and
- * claims the oldest ready job whose workspace still has capacity in one
- * transaction, so one saturated workspace cannot hide ready work for another.
+ * claims a ready job whose workspace still has capacity in one transaction,
+ * preferring production work. One saturated workspace cannot hide ready work
+ * for another.
  * Returns at most one job per call; the scheduler calls it repeatedly to fill
  * its remaining capacity.
  */
 export async function claimNextJob(
   admin: AdminClient,
   config: WorkerConfig,
+  { acceptBenchmarkTrials = true }: { acceptBenchmarkTrials?: boolean } = {},
 ): Promise<ClaimNextResult> {
   const { data, error } = await admin.rpc("claim_next_agent_job", {
     default_concurrency_limit: config.defaultConcurrencyLimit,
-    accept_benchmark_trials: true,
+    accept_benchmark_trials: acceptBenchmarkTrials,
   });
 
   if (error) {

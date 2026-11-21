@@ -14,7 +14,6 @@ import { validationPlanSchema } from "@/lib/validation-evidence/contracts";
 
 import { replayCommitSchema, replayDigestSchema, replaySha256 } from "./replay-contracts";
 
-export const RECORDED_FIXTURE_RUNNER = "recorded-fixture-v1";
 export const RECORDED_FIXTURE_VALIDATION = "recorded-fixture-output";
 const resultPath = ".wallie-benchmark-result.json";
 const maxSourceBytes = 256 * 1024;

@@ -179,6 +179,62 @@ describe("createScheduler", () => {
     expect(mocked.sendHeartbeat).toHaveBeenLastCalledWith(admin, "worker-test", []);
   });
 
+  it("can claim production arriving while the benchmark lane is full", async () => {
+    const benchmark = deferred();
+    const production = deferred();
+    const limitedConfig = { ...config, maxConcurrentJobs: 2 };
+    let productionReady = false;
+    let productionClaimed = false;
+    mocked.claimNextJob.mockImplementation(
+      async (_admin, _config, options: { acceptBenchmarkTrials: boolean }) => {
+        if (options.acceptBenchmarkTrials) return job("benchmark");
+        if (!productionReady) return { outcome: "idle" };
+        productionClaimed = true;
+        return job("production");
+      },
+    );
+    mocked.runClaimedJob.mockImplementation((_admin, claimed: { id: string }) =>
+      claimed.id === "benchmark" ? benchmark.promise : production.promise,
+    );
+    mocked.sendHeartbeat.mockResolvedValue(undefined);
+    const scheduler = createScheduler(admin, limitedConfig, {
+      isShuttingDown: () => productionClaimed || mocked.claimNextJob.mock.calls.length > 3,
+      delay: async () => {
+        productionReady = true;
+      },
+    });
+
+    await scheduler.run();
+
+    expect(scheduler.getActiveJobIds()).toEqual(["benchmark", "production"]);
+    expect(mocked.claimNextJob.mock.calls.map((call) => call[2])).toEqual([
+      { acceptBenchmarkTrials: true },
+      { acceptBenchmarkTrials: false },
+      { acceptBenchmarkTrials: false },
+    ]);
+    benchmark.resolve();
+    production.resolve();
+    await scheduler.waitForIdle();
+  });
+
+  it("allows the shared priority queue to fill a single-slot worker", async () => {
+    const limitedConfig = { ...config, maxConcurrentJobs: 1 };
+    let shuttingDown = false;
+    mocked.claimNextJob.mockResolvedValue({ outcome: "idle" });
+    const scheduler = createScheduler(admin, limitedConfig, {
+      isShuttingDown: () => shuttingDown,
+      delay: async () => {
+        shuttingDown = true;
+      },
+    });
+
+    await scheduler.run();
+
+    expect(mocked.claimNextJob).toHaveBeenCalledExactlyOnceWith(admin, limitedConfig, {
+      acceptBenchmarkTrials: true,
+    });
+  });
+
   it("waits on the poll interval when there is no work", async () => {
     mocked.claimNextJob.mockResolvedValue({ outcome: "idle" });
     let shuttingDown = false;

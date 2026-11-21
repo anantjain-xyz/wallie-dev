@@ -91,7 +91,11 @@ export function createScheduler(
 
       // Fill phase: claim until we hit the per-process cap or run out of work.
       while (inFlight.size < config.maxConcurrentJobs && !options.isShuttingDown()) {
-        const result = await claimNextJob(admin, config);
+        // Keep the final slot available for production on multi-slot workers.
+        const result = await claimNextJob(admin, config, {
+          acceptBenchmarkTrials:
+            config.maxConcurrentJobs === 1 || inFlight.size < config.maxConcurrentJobs - 1,
+        });
         if (result.outcome === "error") {
           hadError = true;
           break;
