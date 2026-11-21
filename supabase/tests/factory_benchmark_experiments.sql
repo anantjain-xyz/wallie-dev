@@ -347,6 +347,65 @@ select throws_ok($$insert into public.factory_benchmark_schedules (workspace_id,
   select workspace_id, factory_id, pg_temp.experiment_id(84), owner_id, 'recorded-fixture-v1',
     pg_temp.experiment_id(500), '{}'::jsonb, 0, 0, 0, 1, 1 from experiment_scope where is_default$$,
   'PT412', null, 'a qualified comparison cannot schedule the historical fixture runner');
+create temp table axis_skill as
+select revision.* from experiment_scope scope
+cross join lateral public.create_factory_skill(scope.workspace_id, scope.factory_id, scope.owner_id,
+  'Comparison skill', 'comparison-skill', 'Follow the frozen comparison exercise.') revision
+where scope.is_default;
+-- Model retained revisions that predate the compiled resource-scope guard.
+alter table public.factory_definition_revisions disable trigger factory_definition_revisions_resource_scope;
+with variants as (
+  select revision.workspace_id, revision.factory_id, revision.created_by, variant.slot,
+    (revision.definition_json::jsonb || variant.changes)::text as compiled
+  from public.factory_definition_revisions revision
+  cross join axis_skill skill
+  cross join lateral (values
+    (54, jsonb_build_object('skillIds', jsonb_build_array(skill.id))),
+    (55, jsonb_build_object('pipelineId', pg_temp.experiment_id(60), 'stages',
+      jsonb_build_array(revision.definition_json::jsonb->'stages'->0 || jsonb_build_object('id', pg_temp.experiment_id(61))))),
+    (56, jsonb_build_object('stages', '[]'::jsonb)),
+    (57, jsonb_build_object('schemaVersion', 2))
+  ) variant(slot, changes)
+  where revision.id = pg_temp.experiment_id(43)
+)
+insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version, definition_json,
+  canonical_digest, created_by)
+select pg_temp.experiment_id(slot), workspace_id, factory_id, 1, compiled,
+  encode(sha256(convert_to(compiled, 'UTF8')), 'hex'), created_by from variants;
+alter table public.factory_definition_revisions enable trigger factory_definition_revisions_resource_scope;
+
+create temp table frozen_skill_comparison as
+select pg_temp.freeze_axes(86, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(54,501))) as receipt;
+select is((select receipt->>'expectedTrialCount' from frozen_skill_comparison), '12',
+  'a qualified definition can pin an available exact skill revision');
+select public.revoke_factory_skill_revision(scope.workspace_id, scope.factory_id, scope.owner_id, skill.skill_id, skill.id)
+from experiment_scope scope join axis_skill skill using (workspace_id, factory_id) where scope.is_default;
+set local request.jwt.claim.sub = '61700000-0000-4000-8000-000000000001';
+select is((select profile.unavailable_reason from experiment_scope scope
+  join experiment_suites suite using (is_default)
+  cross join lateral public.list_factory_benchmark_axis_profiles(scope.workspace_id, scope.factory_id, suite.id) profile
+  where scope.is_default and profile.definition_id = pg_temp.experiment_id(54) and profile.id = pg_temp.experiment_id(501)),
+  'A selected skill revision is missing, revoked, or unavailable in this factory.',
+  'the axis catalog marks the exact profile unavailable after skill revocation');
+select throws_ok($$select pg_temp.freeze_axes(87, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(54,501)))$$,
+  'PT422', 'A selected skill revision is missing, revoked, or unavailable in this factory.',
+  'a revoked skill revision cannot be frozen into a new comparison');
+select is(pg_temp.freeze_axes(86, jsonb_build_array(pg_temp.qualified_candidate(43,501),
+  pg_temp.qualified_candidate(54,501))), (select receipt from frozen_skill_comparison),
+  'an exact retry returns the original matrix receipt after its selected skill is revoked');
+select throws_ok($$select pg_temp.freeze_axes(88, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(55,501)))$$,
+  'PT422', null, 'a compiled revision pointing to a sibling factory pipeline cannot be frozen');
+select throws_ok($$select pg_temp.freeze_axes(89, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(56,501)))$$,
+  'PT422', null, 'a compiled revision with no stages cannot be frozen');
+select throws_ok($$select pg_temp.freeze_axes(90, jsonb_build_array(
+  pg_temp.qualified_candidate(43,501), pg_temp.qualified_candidate(57,501)))$$,
+  'PT422', null, 'a compiled schema version must agree with the revision before freezing');
+reset request.jwt.claim.sub;
+
 update public.workspace_vercel_sandbox_connections set connection_revision = pg_temp.experiment_id(503)
   where workspace_id = pg_temp.experiment_id(11);
 select throws_ok($$select pg_temp.freeze_axes(85, jsonb_build_array(

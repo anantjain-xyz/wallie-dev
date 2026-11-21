@@ -166,8 +166,8 @@ It checks the private bundle in Storage and removes the temporary trial data.
 - Qualified comparisons currently use exact OpenAI model snapshots through
   Codex or OpenCode on Node with Vercel. A capability check must match the
   repository, harness, native model ID, and active connection. A repository
-  mismatch with an eligible task, unresolved stage, remote tool, or unsupported
-  runtime blocks the freeze.
+  mismatch with an eligible task, unresolved stage, unavailable skill, remote
+  tool, or unsupported runtime blocks a new freeze.
 - The baseline and candidate positions retain the definition digest, model and
   harness IDs, capability receipt, connection revision, CLI version, and
   toolchain digest. The check qualifies the configured tools. Actual replay

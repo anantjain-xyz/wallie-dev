@@ -50,13 +50,13 @@ create function internal.factory_benchmark_axis_profiles(
       (p_workspace_id, p_factory_id, p_suite_revision_id)
       and task.replay_eligibility = 'eligible' and inputs.repository_id is not null
   ), revisions as (
-    select revision.id, revision.canonical_digest, revision.definition_json::jsonb as definition
+    select revision.id, revision.canonical_digest, revision.schema_version, revision.definition_json::jsonb as definition
     from public.factory_definition_revisions revision
     where (revision.workspace_id, revision.factory_id) = (p_workspace_id, p_factory_id)
       and (p_definition_ids is null or revision.id = any(p_definition_ids))
   ), latest as (
     select distinct on (revision.id, probe.agent_provider, probe.agent_model)
-      probe.id, revision.id as definition_id, revision.canonical_digest,
+      probe.id, revision.id as definition_id, revision.canonical_digest, revision.schema_version,
       revision.definition, repository.id as repository_id, probe.agent_provider, probe.agent_model, probe.capabilities, probe.status,
       probe.sandbox_connection_revision
     from revisions revision
@@ -97,10 +97,31 @@ create function internal.factory_benchmark_axis_profiles(
         then 'The capability check did not record the CLI version.'
       when exists (select 1 from suite_repositories where suite_repositories.repository_id <> latest.repository_id)
         then 'An eligible task was captured from a different repository than this factory revision.'
+      when latest.schema_version not in (1, 2)
+        or definition->>'schemaVersion' is distinct from latest.schema_version::text
+        or definition->>'kind' is distinct from 'serial'
+        then 'This comparison requires an exact compiled factory definition.'
+      when not exists (
+        select 1 from public.pipelines pipeline
+        where (pipeline.workspace_id, pipeline.factory_id, pipeline.id::text) =
+          (p_workspace_id, p_factory_id, definition->>'pipelineId')
+      ) then 'The pipeline in this definition is unavailable.'
+      when case
+        when not definition ? 'skillIds' then false
+        when jsonb_typeof(definition->'skillIds') is distinct from 'array' then true
+        else jsonb_array_length(definition->'skillIds') > 20
+          or jsonb_array_length(definition->'skillIds') <> (
+            select count(*) from public.factory_skill_revisions skill
+            where (skill.workspace_id, skill.factory_id) = (p_workspace_id, p_factory_id) and skill.revoked_at is null
+              and skill.id::text in (select jsonb_array_elements_text(definition->'skillIds'))
+          )
+      end then 'A selected skill revision is missing, revoked, or unavailable in this factory.'
       when jsonb_array_length(coalesce(definition#>'{mcpManifest,servers}', '[]'::jsonb)) > 0
         then 'This definition declares remote tools. This comparison profile supports local tools.'
+      when jsonb_typeof(definition->'stages') is distinct from 'array' or definition->'stages' = '[]'::jsonb
+        then 'This definition does not have any stages.'
       when exists (
-        select 1 from jsonb_array_elements(coalesce(definition->'stages', '[]'::jsonb)) stage
+        select 1 from jsonb_array_elements(definition->'stages') stage
         where not exists (
           select 1 from public.pipeline_stages active
           where active.workspace_id = p_workspace_id and active.pipeline_id::text = definition->>'pipelineId'
@@ -134,6 +155,7 @@ declare
   experiment public.factory_benchmark_experiments;
   requested jsonb;
   resolved jsonb;
+  unavailable_reason text;
   definition_ids uuid[];
   canonical_request text;
   selected_policy public.factory_benchmark_replay_policy_revisions;
@@ -193,13 +215,14 @@ begin
   if not found then raise exception 'The replay policy revision is unavailable in this factory.' using errcode = 'PT422'; end if;
 
   select jsonb_agg(to_jsonb(profile) || jsonb_build_object('position', choice.position))
-  into resolved from internal.factory_benchmark_axis_profiles(p_workspace_id, p_factory_id, p_suite_revision_id, definition_ids) profile
+      filter (where profile.unavailable_reason is null),
+    min(profile.unavailable_reason)
+  into resolved, unavailable_reason from internal.factory_benchmark_axis_profiles(p_workspace_id, p_factory_id, p_suite_revision_id, definition_ids) profile
   join jsonb_array_elements(requested) with ordinality as choice(value, position)
     on (profile.definition_id, profile.id, profile.worker_runtime) =
-      ((choice.value->>0)::uuid, (choice.value->>1)::uuid, choice.value->>2)
-  where profile.unavailable_reason is null;
+      ((choice.value->>0)::uuid, (choice.value->>1)::uuid, choice.value->>2);
   if coalesce(jsonb_array_length(resolved), 0) <> num_candidates then
-    raise exception 'A candidate lacks a current compatible capability check.' using errcode = 'PT422';
+    raise exception '%', coalesce(unavailable_reason, 'A candidate lacks a current compatible capability check.') using errcode = 'PT422';
   end if;
 
   select count(*), count(*) filter (where task.replay_eligibility = 'eligible')

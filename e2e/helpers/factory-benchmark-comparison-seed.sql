@@ -8,7 +8,9 @@ with definitions as (
     id, workspace_id, factory_id, schema_version, definition_json, canonical_digest, created_by
   ) values
     (:'baseline_id', :'workspace_id', :'factory_id', 1, :'baseline_json', :'baseline_digest', :'owner_id'),
-    (:'candidate_id', :'workspace_id', :'factory_id', 1, :'candidate_json', :'candidate_digest', :'owner_id')
+    (:'candidate_id', :'workspace_id', :'factory_id', 1, :'candidate_json', :'candidate_digest', :'owner_id'),
+    (:'revoked_skill_definition_id', :'workspace_id', :'factory_id', 1, :'revoked_skill_definition_json',
+      :'revoked_skill_definition_digest', :'owner_id')
   returning id
 ),
 connection as (

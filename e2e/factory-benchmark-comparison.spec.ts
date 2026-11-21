@@ -74,8 +74,19 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
       .single();
     if (repository.error) throw repository.error;
     const repositoryId = repository.data.id;
-    const [baselineId, candidateId, codexId, opencodeId] = Array.from({ length: 4 }, randomUUID);
-    function definition(promptTemplateMd: string) {
+    const [baselineId, candidateId, revokedSkillDefinitionId, codexId, opencodeId] = Array.from(
+      { length: 5 },
+      randomUUID,
+    );
+    const skill = checked(
+      await admin.rpc("create_factory_skill", {
+        ...scope,
+        p_name: "Invoice review checklist",
+        p_slug: "invoice-review-checklist",
+        p_content_md: "Verify that the invoice totals match the saved records.",
+      }),
+    );
+    function definition(promptTemplateMd: string, skillIds: string[] = []) {
       const bundle = compiledFactoryDefinitionSchema.parse({
         schemaVersion: 1,
         kind: "serial",
@@ -93,7 +104,7 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
         },
         executionPolicyRevisionId: null,
         deliveryPolicyRevisionId: null,
-        skillIds: [],
+        skillIds,
         toolIds: [],
         operatingRulesMd: "",
         operatingRuleStageIds: [],
@@ -112,11 +123,13 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
       });
       return serializeFactoryDefinition(bundle);
     }
-    const baselineDefinition = definition("Reconcile the invoice and verify the saved totals.");
+    const baselinePrompt = "Reconcile the invoice and verify the saved totals.";
+    const baselineDefinition = definition(baselinePrompt);
     const candidateDefinition = definition("Reconcile the invoice and verify the retry audit.");
+    const revokedSkillDefinition = definition(baselinePrompt, [skill.id]);
     const { connectionRevision } = z
       .object({
-        definitions: z.literal(2),
+        definitions: z.literal(3),
         qualifications: z.literal(2),
         connectionRevision: z.uuid(),
       })
@@ -132,10 +145,20 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
           candidate_id: candidateId,
           candidate_json: candidateDefinition.definitionJson,
           candidate_digest: candidateDefinition.canonicalDigest,
+          revoked_skill_definition_id: revokedSkillDefinitionId,
+          revoked_skill_definition_json: revokedSkillDefinition.definitionJson,
+          revoked_skill_definition_digest: revokedSkillDefinition.canonicalDigest,
           codex_id: codexId,
           opencode_id: opencodeId,
         }),
       );
+    checked(
+      await admin.rpc("revoke_factory_skill_revision", {
+        ...scope,
+        p_skill_id: skill.skill_id,
+        p_revision_id: skill.id,
+      }),
+    );
 
     const [eligibleResult, ineligibleResult, policyResult] = await Promise.all([
       admin.rpc("create_factory_benchmark_task", {
@@ -223,16 +246,32 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
     ).toHaveValue(baselineId);
     await expect(runtime).toHaveValue("workerd");
     await expect(freeze).toBeDisabled();
+    await baseline.getByText("Exact configuration pins", { exact: true }).click();
+    await screenshot(page, info, "02-benchmark-unsupported-runtime-mobile-dark");
+    await runtime.selectOption("node");
+    await expect(freeze).toBeEnabled();
+
+    const candidateRevision = candidate.getByRole("combobox", { name: "Factory revision" });
+    await candidateRevision.selectOption(revokedSkillDefinitionId);
+    await expect(
+      candidate.getByText(
+        "A selected skill revision is missing, revoked, or unavailable in this factory.",
+        {
+          exact: true,
+        },
+      ),
+    ).toBeVisible();
+    await expect(candidateRevision).toHaveValue(revokedSkillDefinitionId);
+    await expect(runtime).toHaveValue("node");
+    await expect(freeze).toBeDisabled();
     const beforeFreeze = await admin
       .from("factory_benchmark_experiments")
       .select("id", { count: "exact", head: true })
       .eq("workspace_id", fixture.workspaceId);
     if (beforeFreeze.error) throw beforeFreeze.error;
     expect(beforeFreeze.count).toBe(0);
-    await baseline.getByText("Exact configuration pins", { exact: true }).click();
-    await screenshot(page, info, "02-benchmark-unsupported-runtime-mobile-dark");
-    await runtime.selectOption("node");
-    const candidateRevision = candidate.getByRole("combobox", { name: "Factory revision" });
+    await screenshot(page, info, "04-benchmark-revoked-skill-mobile-dark");
+
     await candidateRevision.selectOption(candidateId);
     const multiAxisNote = form.getByText("Results describe the combined configuration change.");
     await expect(multiAxisNote).toBeVisible();
