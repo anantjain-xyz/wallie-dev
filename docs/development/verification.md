@@ -286,6 +286,33 @@ adapter, credential permit, citation validation, and settlement. Node saves brow
 `.wallie/m07-qualification`. Set `WALLIE_FACTORY_SCORER_PROOF_DIR` to change
 that directory. See [enrollment and rollback](../architecture/factory-scorer-evaluation.md#enrollment-and-rollback).
 
+### Benchmark replay qualification
+
+Use an isolated checkout without deployment environment files and an exclusive
+disposable Supabase project. Install Chromium, Python 3, and the repository's
+normal Node, Git, and Supabase CLI tools. Run the SQL suite separately against
+a disposable project with the demo seed.
+
+```sh
+pnpm exec playwright install chromium
+supabase db reset --local --no-seed --workdir /path/to/disposable-runtime-project
+pnpm check:factory-runtime --workdir /path/to/disposable-runtime-project --m08
+pnpm check:db-tests --workdir /path/to/seeded-disposable-project
+pnpm check
+```
+
+| Evidence                 | What the fixture verifies                                                                                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Capture and freeze       | An eligible run and a run with missing history produce two tasks. Two configurations over two repetitions retain eight slots after a live suite edit.                                                                    |
+| Isolation                | Node restores the archived Git bytes and publishes a private result. Git, issue, chat, and deploy write attempts are denied. Native Workerd refuses an exact ref that became unavailable after capture.                  |
+| Restart and cancellation | A fresh process retires the interrupted claim and admits only the next frozen ID. Cancellation preserves all eight dispositions and the exact cost provenance and reserves.                                              |
+| Browser and export       | Signed-in review opens the original trial evidence. A sibling factory is denied. The export verifier independently checks file hashes, each trial ID, configuration totals, and execution and evaluation usage coverage. |
+
+The fixture uses disposable data and synthetic Git and sandbox transport. Its
+artifacts are under `.wallie/m08-qualification/`. Run the hosted provider
+rehearsal separately with the test factory and dedicated OpenAI project in
+[benchmark replay qualification](../architecture/benchmark-qualification.md).
+
 ## Browser and benchmark commands
 
 The checked-in Playwright suites are targeted rather than one universal E2E

@@ -326,3 +326,8 @@ validation plan, receipt, and retained bytes.
 - Score explanations refer to the selected scorer revision and its exact
   retained output. Current access and retention checks govern metadata,
   transcript pages, and downloads, including saved links.
+
+## Qualify replay
+
+Use the [local replay qualification fixture](../development/verification.md#benchmark-replay-qualification) and the
+[production rehearsal runbook](benchmark-qualification.md) to verify isolation, recovery, and frozen result accounting.
