@@ -180,3 +180,42 @@ It checks the private bundle in Storage and removes the temporary trial data.
   Unverified tasks count as ineligible and keep their recorded status in the
   matrix. A matching retry returns the same comparison. Scheduling uses these
   frozen identities as the input to trial admission.
+
+## Schedule a frozen experiment
+
+Factory managers use `GET` and `POST` at
+`/api/workspaces/{workspaceId}/factories/{factoryId}/benchmarks/experiments/{experimentId}/schedule`.
+`GET` returns the schedule state, trial counts, known spend, outstanding
+reserves, and counts of attempts with unavailable spend.
+
+| `POST` action | Behavior                                                                              |
+| ------------- | ------------------------------------------------------------------------------------- |
+| `configure`   | Save the schedule's pins and limits. An exact retry reads the existing schedule.      |
+| `pause`       | Stop new admissions and claims. Already claimed executions can finish.                |
+| `resume`      | Continue with the same pins, limits, and queued trial identities.                     |
+| `cancel`      | Permanently stop admission and retire the experiment's queued and running executions. |
+
+Configure with `runnerRevision` set to `recorded-fixture-v1`, a connected
+Vercel revision, and one approved `tool_read` fixture key per eligible task
+revision. Supply an execution reserve, an evaluation reserve, a budget, a
+factory concurrency limit, and a maximum number of admitted trials.
+
+The recorded runner exercises the frozen matrix through the isolated fixture
+path. The matrix describes the planned factory revision, model, harness, and
+runtime. Each execution records its actual runner revision and worker runtime.
+
+- Node and Workerd run the same bounded reconciliation. Admission reserves
+  spend and enqueues the exact frozen trial identity in one transaction.
+  Worker recovery retires interrupted attempts. Reconciliation can then
+  admit a different eligible cell within the limits.
+- The shared claimant gives ready production jobs priority. Multi-slot
+  workers and workspaces preserve capacity for production. A shared cap
+  bounds concurrently claimed benchmark jobs within a factory.
+- A reservation fits when the budget covers reported execution and evaluation
+  spend, outstanding reserves, and the proposed reserve. Evaluation work can
+  reserve against the same budget by exact attempt ID before invocation.
+- Reconciliation records measured or estimated spend once for each terminal
+  attempt, including failures. An attempt that never starts releases its
+  reserve. When a started attempt has unavailable spend, the full reserve
+  stays held. Late charges can exceed the budget and leave no capacity for
+  further reservations.

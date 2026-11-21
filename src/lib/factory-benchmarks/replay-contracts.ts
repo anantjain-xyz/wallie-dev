@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
+export const RECORDED_FIXTURE_RUNNER = "recorded-fixture-v1";
 export const replayCommitSchema = z.string().regex(/^[a-f0-9]{40}$/);
 export const replayDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const replayCandidateSchema = z.strictObject({
