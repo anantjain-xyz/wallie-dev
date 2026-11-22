@@ -119,7 +119,11 @@ function ConnectionBadge({
   const isInteractive = !!(href || onClick);
   const classes = cn(
     "inline-flex max-w-full items-center gap-1.5 font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
-    compact ? "h-5 type-annotation" : "h-6 text-xs",
+    isInteractive
+      ? "ui-touch-target min-h-6 text-xs"
+      : compact
+        ? "h-5 type-annotation"
+        : "h-6 text-xs",
     quiet ? "text-muted hover:text-foreground" : "rounded-[4px] text-foreground hover:text-accent",
     !quiet &&
       (tone === "linked"

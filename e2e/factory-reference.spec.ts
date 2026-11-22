@@ -42,7 +42,7 @@ async function capture(page: Page, info: TestInfo, name: string) {
   await info.attach(name, { contentType: "image/png", path });
 }
 
-async function expectAccessible(page: Page, { sessionsLedger = false } = {}) {
+async function expectAccessible(page: Page) {
   await page.addScriptTag({ content: axe.source });
   const violations = await page.evaluate(async () => {
     const engine = Reflect.get(window, "axe") as typeof axe;
@@ -51,25 +51,7 @@ async function expectAccessible(page: Page, { sessionsLedger = false } = {}) {
     });
     return violations.map(({ id, nodes }) => ({ id, targets: nodes.map(({ target }) => target) }));
   });
-  // Baseline the compact issue-link target size until it is fixed.
-  // Keep axe active on every other element and rule.
-  const unexpected = violations.flatMap(({ id, targets }) =>
-    targets
-      .filter(
-        (target) =>
-          !(
-            sessionsLedger &&
-            id === "target-size" &&
-            page.viewportSize()?.width === 390 &&
-            target.some(
-              (selector) =>
-                typeof selector === "string" && /^a\[href\$="OP-\d+"\]$/u.test(selector),
-            )
-          ),
-      )
-      .map((target) => ({ id, target })),
-  );
-  expect(unexpected).toEqual([]);
+  expect(violations).toEqual([]);
 }
 
 for (const viewport of viewports) {
@@ -126,7 +108,22 @@ for (const viewport of viewports) {
           page.getByRole("link", { name: "Open session #2: Seeded ledger session 2", exact: true }),
         ).toHaveAttribute("href", "/w/fixture/sessions/2");
         await capture(page, info, "sessions-populated");
-        await expectAccessible(page, { sessionsLedger: true });
+        await expectAccessible(page);
+
+        const minimumConnectionHeight = (page.viewportSize()?.width ?? 1440) < 768 ? 44 : 24;
+        for (const [name, href] of [
+          ["OP-7", "https://linear.app/issue/OP-7"],
+          ["PR #1005", "https://github.com/example/repo/pull/1005"],
+        ] as const) {
+          const link = page.getByRole("link", { name, exact: true });
+          await expect(link).toBeVisible();
+          await expect(link).toHaveAttribute("href", href);
+          const box = await link.boundingBox();
+          expect(box).not.toBeNull();
+          expect(box!.width).toBeGreaterThanOrEqual(24);
+          expect(box!.height).toBeGreaterThanOrEqual(minimumConnectionHeight);
+        }
+
         await search.fill("checkpoints");
         const clear = page.getByRole("button", { name: "Clear search", exact: true });
         await clear.focus();
