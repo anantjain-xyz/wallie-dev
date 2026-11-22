@@ -156,7 +156,20 @@ test("activates a reviewed routing draft, audits a one-task override and preserv
 
     const reviewed =
       await test.step("Save the distinct qualified fallback against the current head", async () => {
-        const proposed = await proposeRouting("Reviewed invoice delivery");
+        const { document: activeDocument } = factoryEditorDocumentResponseSchema.parse(
+          await checkedJson(
+            await page.request.get(
+              `${definitionApi}/editor?revisionId=${historical.renamedRevisionId}`,
+            ),
+            200,
+          ),
+        );
+        const activeClass = activeDocument.source.modelRouting?.taskClasses.find(
+          ({ slug }) => slug === "delivery",
+        );
+        if (!activeClass) throw new Error("The original routing class identity is unavailable.");
+        expect(activeClass.name).not.toBe(historical.taskClassName);
+        const proposed = await proposeRouting(activeClass.name);
         const { document } = factoryEditorDocumentResponseSchema.parse(
           await checkedJson(
             await page.request.get(`${definitionApi}/editor?draftId=${proposed.draftId}`),
