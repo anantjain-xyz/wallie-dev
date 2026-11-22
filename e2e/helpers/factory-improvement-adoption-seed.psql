@@ -1,0 +1,162 @@
+-- An isolated browser fixture. It records synthetic provider observations in the real RPCs.
+\set ON_ERROR_STOP on
+\set workspace_id '62300000-0000-4000-9000-000000000011'
+\set owner_id '62300000-0000-4000-9000-000000000001'
+\set manager_id '62300000-0000-4000-9000-000000000641'
+\set proposal_id '62300000-0000-4000-9000-000000000300'
+\set revision_id '62300000-0000-4000-9000-000000000312'
+select 'adoption-browser-' || (:'run_id')::uuid::text as workspace_slug,
+  'adoption-owner-' || (:'run_id')::uuid::text || '@example.test' as owner_email,
+  'adoption-manager-' || (:'run_id')::uuid::text || '@example.test' as manager_email \gset
+
+begin;
+set local request.jwt.claim.role = 'service_role';
+
+\if :{?seed}
+select not exists (select 1 from public.workspaces where id = :'workspace_id')
+  and not exists (select 1 from auth.users where id in (:'owner_id', :'manager_id'))
+  and not exists (select 1 from public.agent_jobs where status = 'queued')
+  and not exists (select 1 from public.factory_benchmark_schedules where state = 'active')
+  as empty_fixture \gset
+\if :empty_fixture
+\else
+\echo 'The adoption browser fixture requires an empty, isolated workload.'
+select 1 / 0;
+\endif
+
+-- The shared benchmark fixture uses abbreviated receipts. Complete their display fields
+-- as those two records are inserted, keeping the same exact evidence and definition identities.
+create function pg_temp.browser_diagnosis() returns trigger language plpgsql as $$
+begin
+  new.evidence := jsonb_build_array((new.evidence->0) || jsonb_build_object(
+    'run_id', pg_temp.live_id(2208), 'run_attempt_count', 1,
+    'stage_id', pg_temp.live_id(41), 'stage_slug', 'review', 'producing_agent_id', new.agent_id,
+    'agent_prompt_revision_id', new.prompt_revision_id, 'definition_revision_id', pg_temp.live_id(43),
+    'execution_revision_id', null, 'source_kind', 'validation', 'evaluation_attempt_id', null,
+    'scorer_revision_id', null, 'validation_record_key', 'tests',
+    'target_commit_sha', repeat('a',40), 'target_tree_sha', repeat('b',40)));
+  new.evidence_digest := encode(sha256(convert_to(new.evidence::text, 'UTF8')), 'hex');
+  new.result := new.result || jsonb_build_object(
+    'summary', 'The review missed a required acceptance check.',
+    'uncertainty', 'The attribution comes from one retained session.');
+  return new;
+end;
+$$;
+create trigger fixture_browser_diagnosis before insert on internal.factory_diagnoses
+for each row when (new.id = '62300000-0000-4000-9000-000000000301')
+execute function pg_temp.browser_diagnosis();
+
+create function pg_temp.browser_proposal_revision() returns trigger language plpgsql as $$
+begin
+  new.intent := new.intent || jsonb_build_object(
+    'rationale', 'Review the task against the acceptance criteria',
+    'expectedBenefit', 'Catch missed checks before a change reaches production.',
+    'regressionRisks', 'Review may take longer on tasks with several criteria.');
+  new.diff := '{"fields":[],"stages":[]}'::jsonb;
+  if new.revision_number = 2 then
+    new.diff := jsonb_build_object('fields', jsonb_build_array(), 'stages', jsonb_build_array(
+      jsonb_build_object('kind', 'changed', 'id', pg_temp.live_id(41), 'name', 'Review',
+        'beforePosition', 1, 'afterPosition', 1, 'orderChanged', false,
+        'fields', jsonb_build_array(jsonb_build_object('label', 'Prompt',
+          'before', 'Review the task.', 'after', 'Review the task against the acceptance criteria.',
+          'multiline', true)))));
+  end if;
+  return new;
+end;
+$$;
+create trigger fixture_browser_proposal before insert on internal.factory_improvement_proposal_revisions
+for each row when (new.proposal_id = '62300000-0000-4000-9000-000000000300')
+execute function pg_temp.browser_proposal_revision();
+
+\o /dev/null
+\ir ../../supabase/tests/fixtures/factory_improvement_adoption.psql
+drop trigger fixture_order_frontier_drafts on public.factory_definition_drafts;
+drop trigger fixture_browser_diagnosis on internal.factory_diagnoses;
+drop trigger fixture_browser_proposal on internal.factory_improvement_proposal_revisions;
+\o
+
+update public.workspaces set slug = :'workspace_slug', name = 'Factory improvement review'
+where id = :'workspace_id';
+insert into auth.users(id, email) values (:'manager_id', :'manager_email');
+update auth.users
+set instance_id = '00000000-0000-0000-0000-000000000000',
+  role = 'authenticated', aud = 'authenticated',
+  email = case when id = :'owner_id' then :'owner_email' else :'manager_email' end,
+  encrypted_password = '', email_confirmed_at = now(),
+  raw_app_meta_data = '{"provider":"email","providers":["email"]}', raw_user_meta_data = '{}',
+  confirmation_token = '', recovery_token = '', email_change_token_new = '',
+  email_change_token_current = '', reauthentication_token = '', email_change = '',
+  created_at = now(), updated_at = now(), is_sso_user = false, is_anonymous = false
+where id in (:'owner_id', :'manager_id');
+insert into auth.identities(id, provider_id, user_id, identity_data, provider, created_at, updated_at)
+select gen_random_uuid(), id::text, id, jsonb_build_object('sub', id, 'email', email), 'email', now(), now()
+from auth.users where id in (:'owner_id', :'manager_id');
+
+insert into public.workspace_members(id, workspace_id, user_id, kind, role)
+values (pg_temp.live_id(642), :'workspace_id', :'manager_id', 'human', 'member');
+\o /dev/null
+select public.grant_factory_membership(workspace_id, factory_id, owner_id, pg_temp.live_id(642), 'manager')
+from live_scope;
+\o
+
+select jsonb_build_object(
+  'workspaceId', workspace_id, 'workspaceSlug', :'workspace_slug', 'factoryId', factory_id,
+  'ownerEmail', :'owner_email', 'managerEmail', :'manager_email', 'previousRevisionId', pg_temp.live_id(311),
+  'publication', public.get_factory_improvement_publication(workspace_id, factory_id, owner_id,
+    :'proposal_id', :'revision_id'))
+from live_scope;
+
+\elif :{?adopt}
+with scoped as (
+  select factory.workspace_id, factory.id as factory_id
+  from public.factories factory
+  join public.workspaces workspace on workspace.id = factory.workspace_id
+  where workspace.id = :'workspace_id' and workspace.slug = :'workspace_slug' and factory.is_default
+), published as (
+  select scoped.*, public.get_factory_improvement_publication(
+    workspace_id, factory_id, :'owner_id', :'proposal_id', :'revision_id') as receipt
+  from scoped
+)
+select public.adopt_factory_improvement(
+  publication.workspace_id, publication.factory_id, :'owner_id', :'proposal_id', :'revision_id',
+  (publication.receipt->>'id')::uuid, (publication.receipt#>>'{base,activationNumber}')::bigint,
+  definition.canonical_digest, publication.receipt->>'headCommitSha', definition.definition_json,
+  jsonb_build_object(
+    'repositoryNumericId', publication.receipt#>'{target,repositoryNumericId}',
+    'pullNumber', publication.receipt#>'{pullRequest,number}',
+    'pullUrl', publication.receipt#>'{pullRequest,url}',
+    'baseCommitSha', publication.receipt->'baseCommitSha', 'headCommitSha', publication.receipt->'headCommitSha',
+    'mergeCommitSha', repeat('e',40), 'reviewerId', 6401, 'reviewerLogin', 'fixture-reviewer', 'reviewId', '6402',
+    'reviewedAt', statement_timestamp() - interval '10 seconds',
+    'mergedAt', statement_timestamp() - interval '5 seconds',
+    'observedAt', statement_timestamp()),
+  array['vercel'], array['agentCli','git','node','packageManager'])
+from published publication
+join public.factory_definition_revisions definition on
+  (definition.workspace_id, definition.factory_id, definition.id) =
+  (publication.workspace_id, publication.factory_id, (publication.receipt#>>'{candidate,revisionId}')::uuid);
+
+\elif :{?cleanup}
+set local storage.allow_delete_query = 'true';
+select exists (
+  select 1 from public.workspaces where id = :'workspace_id' and slug = :'workspace_slug'
+) as owns_fixture \gset
+\if :owns_fixture
+delete from public.workspaces where id = :'workspace_id' and slug = :'workspace_slug';
+delete from storage.objects where bucket_id = 'session-source-checkpoints'
+  and name like :'workspace_id' || '/benchmark/%';
+delete from auth.users where (id, email) in ((:'owner_id'::uuid, :'owner_email'), (:'manager_id'::uuid, :'manager_email'));
+\endif
+select jsonb_build_object('cleaned', not exists (
+  select 1 from public.workspaces where id = :'workspace_id' and slug = :'workspace_slug'
+) and not exists (
+  select 1 from auth.users where (id, email) in
+    ((:'owner_id'::uuid, :'owner_email'), (:'manager_id'::uuid, :'manager_email'))
+) and (
+  not (:'owns_fixture')::boolean or not exists (
+    select 1 from storage.objects where bucket_id = 'session-source-checkpoints'
+      and name like :'workspace_id' || '/benchmark/%'
+  )
+));
+\endif
+commit;

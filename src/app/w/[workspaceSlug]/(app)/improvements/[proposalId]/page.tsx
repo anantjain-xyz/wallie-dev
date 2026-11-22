@@ -5,6 +5,7 @@ import { z } from "zod";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { FactorySemanticDiffComparison } from "@/features/factory-definition/semantic-diff";
+import { ImprovementAdoption } from "@/features/factory-proposals/improvement-adoption";
 import { ImprovementEvidence } from "@/features/factory-proposals/improvement-evidence";
 import { ImprovementReviewForm } from "@/features/factory-proposals/improvement-review-form";
 import { loadImprovementScope } from "@/features/factory-proposals/improvement-scope";
@@ -217,6 +218,14 @@ export default async function ImprovementPage({
             )}
           </div>
         </PageSection>
+
+        <ImprovementAdoption
+          scope={scope}
+          workspaceSlug={workspaceSlug}
+          proposalId={proposal.proposalId}
+          proposalRevisionId={proposal.revisionId}
+          historical={historical}
+        />
 
         <PageSection anchorId="discussion" title="Discussion">
           <div className="ui-sheet min-w-0 space-y-4 p-4 sm:p-5">

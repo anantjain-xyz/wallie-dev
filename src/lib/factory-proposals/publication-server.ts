@@ -31,7 +31,7 @@ type FactoryScope = {
   actorUserId: string;
   signal: AbortSignal;
 };
-type PublicationScope = FactoryScope & { proposalId: string; proposalRevisionId: string };
+export type PublicationScope = FactoryScope & { proposalId: string; proposalRevisionId: string };
 type PublicationDependencies = {
   getToken: (publication: FactoryImprovementPublication) => Promise<string>;
   fetcher: typeof fetch;
@@ -84,7 +84,7 @@ function normalizedFactoryScope(scope: FactoryScope): FactoryScope {
   };
 }
 
-function normalizedPublicationScope(scope: PublicationScope): PublicationScope {
+export function normalizedPublicationScope(scope: PublicationScope): PublicationScope {
   return {
     ...normalizedFactoryScope(scope),
     proposalId: scope.proposalId.toLowerCase(),
@@ -96,7 +96,7 @@ function factoryArguments({ workspaceId, factoryId, actorUserId }: FactoryScope)
   return { p_workspace_id: workspaceId, p_factory_id: factoryId, p_actor_user_id: actorUserId };
 }
 
-function proposalArguments(scope: PublicationScope) {
+export function proposalArguments(scope: PublicationScope) {
   return {
     ...factoryArguments(scope),
     p_proposal_id: scope.proposalId,
