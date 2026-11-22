@@ -275,10 +275,12 @@ test("replays the retained canary alert and rolls back the exact baseline while 
         evidence.getByRole("link", { name: "Open frozen suite revision" }),
       ).toHaveAttribute("href", new RegExp(`[?&]revision=${seeded.suiteRevisionId}(?:&|$)`));
       await page.setViewportSize({ width: 390, height: 844 });
-      await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+      await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
       await capture(page, evidence, info, "routing-retained-alert-mobile-dark");
       await page.setViewportSize({ width: 1440, height: 960 });
-      await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+      await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
       const restore = evidence.getByRole("link", { name: "Review rollback" });
       await expect(restore).toHaveAttribute("href", rollbackHref);
       await restore.click();
