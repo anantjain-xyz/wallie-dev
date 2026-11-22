@@ -332,10 +332,11 @@ export function StructuredFactoryDefinitionEditor({
             />
             {skillOptions?.length ? (
               <SelectField
+                disabled={disabled}
                 emptyOption={{ label: "Choose a skill revision", value: "" }}
                 label="Add a skill revision"
                 onValueChange={(next) => {
-                  if (next) update("skills", [...value.skills, next]);
+                  if (!disabled && next) update("skills", [...value.skills, next]);
                 }}
                 options={skillOptions.map(({ id, label }) => ({ label, value: id }))}
                 value=""
@@ -380,11 +381,11 @@ export function StructuredFactoryDefinitionEditor({
         )}
         {availableScorers.length > 0 ? (
           <SelectField
-            disabled={scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS}
+            disabled={disabled || scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS}
             emptyOption={{ label: "Choose a scorer revision", value: "" }}
             label="Add a scorer revision"
             onValueChange={(next) => {
-              if (next) updateScorers([...scorerRevisionIds, next]);
+              if (!disabled && next) updateScorers([...scorerRevisionIds, next]);
             }}
             options={availableScorers.map(({ id, label }) => ({ label, value: id }))}
             value=""
@@ -520,8 +521,10 @@ export function StructuredFactoryDefinitionEditor({
         </h3>
         <div className="grid gap-4 sm:grid-cols-2">
           <SelectField
+            disabled={disabled}
             label="Sandbox provider"
             onValueChange={(next) => {
+              if (disabled) return;
               const provider = sandboxProviderSchema.safeParse(next);
               if (provider.success) update("sandboxProvider", provider.data);
             }}
@@ -532,8 +535,10 @@ export function StructuredFactoryDefinitionEditor({
             value={value.sandboxProvider}
           />
           <SelectField
+            disabled={disabled}
             label="Agent provider"
             onValueChange={(next) => {
+              if (disabled) return;
               const provider = agentConfigValueSchemas.agent_provider.safeParse(next);
               if (!provider.success || provider.data === agent.provider) return;
               updateAgent({
@@ -554,10 +559,13 @@ export function StructuredFactoryDefinitionEditor({
             value={agent.model}
           />
           <SelectField
-            disabled={!agentProviderSupportsEffort(agent.provider) && agent.effort === null}
+            disabled={
+              disabled || (!agentProviderSupportsEffort(agent.provider) && agent.effort === null)
+            }
             emptyOption={AGENT_EFFORT_EMPTY_OPTION}
             label="Reasoning effort"
             onValueChange={(effort) => {
+              if (disabled) return;
               if (!effort) {
                 updateAgent({ effort: null });
                 return;

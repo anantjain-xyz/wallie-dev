@@ -116,7 +116,10 @@ function FailureChoice({
   return (
     <SelectField
       label={label}
-      onValueChange={(next) => onChange(next === "fallback" ? "fallback" : "escalate")}
+      onValueChange={(next) => {
+        const mapped: FailureKind = next === "fallback" ? "fallback" : "escalate";
+        if (mapped !== value) onChange(mapped);
+      }}
       options={[
         { label: "Escalate", value: "escalate" },
         { label: "Use fallback", value: "fallback" },
@@ -161,7 +164,7 @@ function ConfigurationFields({
           label="Harness"
           onValueChange={(next) => {
             const harness = modelRoutingConfigurationSchema.shape.harness.parse(next);
-            onChange({ ...value, harness });
+            if (harness !== value.harness) onChange({ ...value, harness });
           }}
           options={AGENT_PROVIDERS.map((provider) => ({
             label: AGENT_PROVIDER_LABELS[provider],
@@ -173,7 +176,7 @@ function ConfigurationFields({
           label="Worker runtime"
           onValueChange={(next) => {
             const workerRuntime = modelRoutingConfigurationSchema.shape.workerRuntime.parse(next);
-            onChange({ ...value, workerRuntime });
+            if (workerRuntime !== value.workerRuntime) onChange({ ...value, workerRuntime });
           }}
           options={[
             { label: "Node.js", value: "node" },
@@ -516,7 +519,9 @@ export function ModelRoutingEditor({
                         label="Rule task class"
                         onValueChange={(next) => {
                           const match = taskClasses.find(({ id }) => id === next);
-                          if (match) updateRule(index, { ...rule, taskClassId: match.id });
+                          if (match && match.id !== rule.taskClassId) {
+                            updateRule(index, { ...rule, taskClassId: match.id });
+                          }
                         }}
                         options={taskClasses
                           .filter(({ id }) => id === rule.taskClassId || !usedClasses.has(id))

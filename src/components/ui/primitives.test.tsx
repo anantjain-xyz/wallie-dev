@@ -963,10 +963,79 @@ describe("accessible overlay primitives", () => {
 
     await user.click(screen.getByRole("button", { name: "Register" }));
     expect(onSubmit).not.toHaveBeenCalled();
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    expect(trigger).toHaveAccessibleDescription("Please select an option.");
+    expect(screen.getByText("Please select an option.")).toHaveAttribute("role", "alert");
+
+    const invalidResults = await axe.run(document.body, {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(invalidResults.violations).toEqual([]);
 
     await user.click(trigger);
     await user.click(await screen.findByRole("option", { name: "wallie/app" }));
+    expect(trigger).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("Please select an option.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Register" }));
     expect(onSubmit).toHaveBeenCalledWith("repo-1");
+  });
+
+  it("resets an externally form-associated SelectField and ignores commits when a fieldset disables", async () => {
+    const user = userEvent.setup();
+    const onValueChange = vi.fn();
+
+    function Harness() {
+      const [fieldsetDisabled, setFieldsetDisabled] = useState(false);
+      return (
+        <>
+          <form id="external-select-form">
+            <button type="reset">Reset external form</button>
+          </form>
+          <SelectField
+            defaultValue="source"
+            form="external-select-form"
+            label="External dimension"
+            name="dimension"
+            options={[
+              { label: "Request source", value: "source" },
+              { label: "Model", value: "model" },
+            ]}
+          />
+          <button onClick={() => setFieldsetDisabled(true)} type="button">
+            Disable fieldset
+          </button>
+          <fieldset disabled={fieldsetDisabled}>
+            <SelectField
+              label="Guarded field"
+              onValueChange={onValueChange}
+              options={[
+                { label: "One", value: "one" },
+                { label: "Two", value: "two" },
+              ]}
+              value="one"
+            />
+          </fieldset>
+        </>
+      );
+    }
+
+    renderWithOverlays(<Harness />);
+
+    const external = screen.getByRole("combobox", { name: "External dimension" });
+    await user.click(external);
+    await user.click(await screen.findByRole("option", { name: "Model" }));
+    expect(external).toHaveAttribute("data-value", "model");
+
+    await user.click(screen.getByRole("button", { name: "Reset external form" }));
+    expect(external).toHaveAttribute("data-value", "source");
+    expect(external).toHaveTextContent("Request source");
+
+    const guarded = screen.getByRole("combobox", { name: "Guarded field" });
+    await user.click(guarded);
+    const twoOption = await screen.findByRole("option", { name: "Two" });
+    fireEvent.click(screen.getByRole("button", { name: "Disable fieldset" }));
+    fireEvent.click(twoOption);
+    expect(onValueChange).not.toHaveBeenCalled();
   });
 });

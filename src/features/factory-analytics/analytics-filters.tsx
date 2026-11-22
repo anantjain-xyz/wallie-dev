@@ -48,6 +48,7 @@ export function AnalyticsFilters({
         <SelectField
           className="min-w-44"
           defaultValue={query.dimension}
+          key={query.dimension}
           label="Break down throughput by"
           labelClassName="type-label"
           name="dimension"

@@ -149,6 +149,7 @@ function FilterSelect({
       className="flex-1 basis-[140px] space-y-1"
       defaultValue={value ?? ""}
       groups={groups}
+      key={value ?? ""}
       label={label}
       labelClassName="text-xs font-normal text-muted"
       name={name}

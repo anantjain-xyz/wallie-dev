@@ -281,6 +281,7 @@ function CohortRows({
           <SelectField
             className="min-w-44"
             defaultValue={query.evaluationStatus ?? ""}
+            key={query.evaluationStatus ?? ""}
             label="Result state"
             labelClassName="type-label"
             name="evaluationStatus"
@@ -470,6 +471,12 @@ export function ScorerTrends({
   const showRevisionOptions =
     selectRevision && (revisions.length > 0 || Boolean(query?.beforeRevisionPolicy));
   const showCohortOptions = cohorts.length > 0 || Boolean(query?.beforeCohortPolicy);
+  const hasRevisionOption = revisions.some(
+    ({ scorer_revision_id }) => scorer_revision_id === revision,
+  );
+  const defaultRevision = hasRevisionOption ? (revision ?? "") : "";
+  const hasCohortOption = cohorts.some(({ policy_id }) => policy_id === data?.policyId);
+  const defaultCohort = hasCohortOption ? (data?.policyId ?? "") : (cohorts[0]?.policy_id ?? "");
   return (
     <PageSection anchorId="scorer-trends" className="min-w-0" title="Scorer trends">
       <div className="min-w-0 space-y-4">
@@ -498,12 +505,13 @@ export function ScorerTrends({
                     <HiddenFields values={fields} />
                     <SelectField
                       className="min-w-52 max-w-full"
-                      defaultValue={revision ?? ""}
+                      defaultValue={defaultRevision}
                       emptyOption={
-                        revisions.some(({ scorer_revision_id }) => scorer_revision_id === revision)
+                        hasRevisionOption
                           ? undefined
                           : { disabled: true, label: "Choose a revision", value: "" }
                       }
+                      key={defaultRevision || "__missing__"}
                       label="Scorer revision"
                       labelClassName="type-label"
                       name="scorerRevision"
@@ -550,7 +558,8 @@ export function ScorerTrends({
                     />
                     <SelectField
                       className="min-w-52 max-w-full"
-                      defaultValue={data.policyId ?? ""}
+                      defaultValue={defaultCohort}
+                      key={defaultCohort}
                       label="Sampling cohort"
                       labelClassName="type-label"
                       name="cohort"

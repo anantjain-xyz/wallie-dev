@@ -175,7 +175,10 @@ function CandidateFields({
           key={name}
           label={axisLabel}
           labelClassName="type-label"
-          onValueChange={(value) => onChange({ ...selection, [name]: value, qualificationId: "" })}
+          onValueChange={(value) => {
+            if (value === selection[name]) return;
+            onChange({ ...selection, [name]: value, qualificationId: "" });
+          }}
           options={options}
           required
           value={selection[name]}
@@ -188,7 +191,10 @@ function CandidateFields({
           emptyOption={{ label: "Select a toolchain", value: "" }}
           label="Qualified toolchain"
           labelClassName="type-label"
-          onValueChange={(value) => onChange({ ...selection, qualificationId: value })}
+          onValueChange={(value) => {
+            if (value === (profile?.id ?? selection.qualificationId)) return;
+            onChange({ ...selection, qualificationId: value });
+          }}
           options={profiles.map((choice) => ({
             label: `${choice.toolchain} · ${choice.sandboxProvider} · ${choice.id.slice(0, 8)}${choice.unavailableReason ? " · Unavailable" : ""}`,
             value: choice.id,
@@ -416,14 +422,16 @@ export function BenchmarkComparisonForm({
     void action.run({ experimentId: lastRequest.current.experimentId, ...parsed.data });
   }
 
+  function clearFormFeedback() {
+    setMessage(null);
+    setReceipt(null);
+  }
+
   return (
     <form
       aria-label="Benchmark comparison"
       className="ui-sheet space-y-4 p-4 sm:p-5"
-      onChange={() => {
-        setMessage(null);
-        setReceipt(null);
-      }}
+      onChange={clearFormFeedback}
       onSubmit={submit}
     >
       <div className="space-y-1">
@@ -447,14 +455,20 @@ export function BenchmarkComparisonForm({
             axes={axes}
             selection={baseline}
             resolved={baselineResult}
-            onChange={setBaseline}
+            onChange={(next) => {
+              clearFormFeedback();
+              setBaseline(next);
+            }}
           />
           <CandidateFields
             label="Candidate"
             axes={axes}
             selection={candidate}
             resolved={candidateResult}
-            onChange={setCandidate}
+            onChange={(next) => {
+              clearFormFeedback();
+              setCandidate(next);
+            }}
           />
         </div>
         {comparesMultipleAxes ? (
@@ -473,7 +487,11 @@ export function BenchmarkComparisonForm({
           }}
           label="Replay policy revision"
           labelClassName="type-label"
-          onValueChange={setPolicyRevisionId}
+          onValueChange={(value) => {
+            if (value === policyRevisionId) return;
+            clearFormFeedback();
+            setPolicyRevisionId(value);
+          }}
           options={options.policies.map(({ id, profile, revisionNumber }) => ({
             label: `Revision ${revisionNumber} · ${policyLabels[profile]}`,
             value: id,

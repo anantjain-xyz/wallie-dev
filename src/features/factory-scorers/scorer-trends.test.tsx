@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { ScoreTrend } from "@/lib/factory-evaluations/score-trend-contracts";
@@ -188,5 +188,41 @@ describe("scorer trends", () => {
     expect(revisionForm.has("beforeCohortPolicy")).toBe(false);
     expect(revisionForm.has("cohort")).toBe(false);
     expect(revisionForm.has("scoreSnapshot")).toBe(false);
+  });
+
+  it("clears the revision default when the active revision is absent from the listed page", () => {
+    const absentRevisionId = "608a0000-0000-4000-8000-000000000099";
+    render(
+      <ScorerTrends
+        data={{
+          cohorts: [cohort],
+          revisions: [cohort],
+          policyId,
+          revisionId: absentRevisionId,
+          nextCohort: null,
+          nextRevision: null,
+          trend: null,
+        }}
+        path="/w/wallie/analytics"
+        preserved={{ factory: factoryId }}
+        query={{ from, to, scorerRevision: absentRevisionId }}
+        selectRevision
+        workspaceSlug="wallie"
+      />,
+    );
+
+    const picker = screen.getByRole("combobox", { name: "Scorer revision" });
+    expect(picker.getAttribute("data-value")).toBe("");
+    expect(picker.textContent).toContain("Choose a revision");
+    expect(picker.textContent).not.toContain(absentRevisionId);
+    const showRevision = screen.getByRole("button", { name: "Show revision" });
+    if (!(showRevision instanceof HTMLButtonElement) || !showRevision.form)
+      throw new Error("Revision selector form is missing.");
+    expect(new FormData(showRevision.form).get("scorerRevision")).toBe("");
+    let valid = true;
+    act(() => {
+      valid = showRevision.form!.checkValidity();
+    });
+    expect(valid).toBe(false);
   });
 });

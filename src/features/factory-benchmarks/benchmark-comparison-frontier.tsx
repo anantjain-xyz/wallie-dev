@@ -104,6 +104,7 @@ function Constraints({
           <SelectField
             className="col-span-2 sm:min-w-48"
             defaultValue={scorer.id}
+            key={scorer.id}
             label="Frozen scorer"
             labelClassName="type-label"
             name="scorerRevisionId"

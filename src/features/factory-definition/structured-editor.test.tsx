@@ -336,6 +336,18 @@ it("adds and orders routing classes and rules through the structured definition"
     constraints: { qualityFloorBps: 8_325 },
     onUnavailable: { kind: "fallback", configuration: { modelKey: "openai/gpt-5.5" } },
   });
+  // Re-confirming the current fallback option must not reset the configured fallback model.
+  fireEvent.click(routing.getByRole("combobox", { name: "When the primary is unavailable" }));
+  fireEvent.click(
+    within(screen.getByRole("listbox", { name: "When the primary is unavailable" })).getByRole(
+      "option",
+      { name: "Use fallback" },
+    ),
+  );
+  expect(current().modelRouting?.rules[0]).toMatchObject({
+    constraints: { qualityFloorBps: 8_325 },
+    onUnavailable: { kind: "fallback", configuration: { modelKey: "openai/gpt-5.5" } },
+  });
   expect(current().modelRouting?.rules[1]?.onUnavailable).toEqual({ kind: "escalate" });
 
   fireEvent.click(routing.getByRole("combobox", { name: "When no rule matches" }));

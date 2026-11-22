@@ -46,6 +46,7 @@ export type SelectFieldProps = {
   disabled?: boolean;
   emptyOption?: SelectOption;
   fallbackLabel?: string;
+  form?: string;
   groups?: readonly SelectOptionGroup[];
   id?: string;
   label: ReactNode;
@@ -68,7 +69,10 @@ type SelectItemDescriptor = {
 type SelectContextValue = {
   applyTypeahead: (key: string, mode: "highlight" | "select") => void;
   disabled: boolean;
+  errorId: string;
+  form?: string;
   highlightedValue: string | null;
+  invalidMessage: string | null;
   items: readonly SelectItemDescriptor[];
   listboxId: string;
   onValueChange: (value: string) => void;
@@ -167,6 +171,22 @@ function isNonNoneCss(value: string) {
   return Boolean(value) && value !== "none";
 }
 
+function firstInvalidFormControl(form: HTMLFormElement): Element | null {
+  for (const element of Array.from(form.elements)) {
+    if (
+      (element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLButtonElement) &&
+      element.willValidate &&
+      !element.validity.valid
+    ) {
+      return element;
+    }
+  }
+  return null;
+}
+
 /** Viewport offset when the portal target is a `position: fixed` containing block. */
 function portalFixedContainingBlock(container: HTMLElement) {
   const style = getComputedStyle(container);
@@ -215,21 +235,33 @@ export function Select({
   value?: string;
 }) {
   const listboxId = useId();
+  const errorId = useId();
   const typeaheadRef = useRef({ buffer: "", timeout: 0 });
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
+  const [inputElement, setInputElement] = useState<HTMLInputElement | null>(null);
   const [uncontrolledValue, setUncontrolledValue] = useState(defaultValue ?? "");
+  const [invalidMessage, setInvalidMessage] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [highlightedValue, setHighlightedValue] = useState<string | null>(null);
   const value = valueProp ?? uncontrolledValue;
+  const isOpen = !disabled && open;
+  const activeInvalidMessage = required && value === "" ? invalidMessage : null;
   const items = useMemo(() => collectItems(children), [children]);
   const enabledItems = useMemo(() => items.filter((item) => !item.disabled), [items]);
 
+  const isControlDisabled = useCallback(
+    () => disabled || Boolean(trigger?.matches(":disabled")),
+    [disabled, trigger],
+  );
+
   const commitValue = useCallback(
     (nextValue: string) => {
+      if (isControlDisabled()) return;
+      if (nextValue !== "") setInvalidMessage(null);
       if (valueProp === undefined) setUncontrolledValue(nextValue);
       onValueChange?.(nextValue);
     },
-    [onValueChange, valueProp],
+    [isControlDisabled, onValueChange, valueProp],
   );
 
   const optionId = useCallback(
@@ -274,11 +306,11 @@ export function Select({
   );
 
   const openList = useCallback(() => {
-    if (disabled) return;
+    if (isControlDisabled()) return;
     const selected = items.find((item) => item.value === value && !item.disabled);
     setHighlightedValue((selected ?? firstEnabled(items))?.value ?? null);
     setOpen(true);
-  }, [disabled, items, value]);
+  }, [isControlDisabled, items, value]);
 
   const moveHighlight = useCallback(
     (step: 1 | -1) => {
@@ -304,7 +336,7 @@ export function Select({
   }, [close, commitValue, highlightedValue, items]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!isOpen) return;
 
     function onPointerDown(event: PointerEvent) {
       const target = event.target;
@@ -369,9 +401,9 @@ export function Select({
     applyTypeahead,
     close,
     enabledItems,
+    isOpen,
     listboxId,
     moveHighlight,
-    open,
     selectHighlighted,
     trigger,
   ]);
@@ -382,27 +414,35 @@ export function Select({
   }, []);
 
   useEffect(() => {
-    const ownerForm = trigger?.form;
-    if (!ownerForm || valueProp !== undefined) return;
+    const formById = form ? document.getElementById(form) : null;
+    const ownerForm =
+      inputElement?.form ??
+      trigger?.form ??
+      (formById instanceof HTMLFormElement ? formById : null);
+    if (!ownerForm) return;
     function onReset() {
-      setUncontrolledValue(defaultValue ?? "");
+      setInvalidMessage(null);
+      if (valueProp === undefined) setUncontrolledValue(defaultValue ?? "");
     }
     ownerForm.addEventListener("reset", onReset);
     return () => ownerForm.removeEventListener("reset", onReset);
-  }, [defaultValue, trigger, valueProp]);
+  }, [defaultValue, form, inputElement, trigger, valueProp]);
 
   const context = useMemo<SelectContextValue>(
     () => ({
       applyTypeahead,
       disabled,
+      errorId,
+      form,
       highlightedValue,
+      invalidMessage: activeInvalidMessage,
       items,
       listboxId,
       onValueChange: (nextValue) => {
         commitValue(nextValue);
         close();
       },
-      open,
+      open: isOpen,
       optionId,
       required,
       setHighlightedValue,
@@ -415,14 +455,17 @@ export function Select({
       value,
     }),
     [
+      activeInvalidMessage,
       applyTypeahead,
       close,
       commitValue,
       disabled,
+      errorId,
+      form,
       highlightedValue,
+      isOpen,
       items,
       listboxId,
-      open,
       openList,
       optionId,
       required,
@@ -441,14 +484,40 @@ export function Select({
           form={form}
           name={name}
           onChange={() => undefined}
+          onFocus={() => trigger?.focus()}
+          onInvalid={(event) => {
+            const input = event.currentTarget;
+            const message = input.validity.valueMissing
+              ? "Please select an option."
+              : input.validationMessage || "Please select an option.";
+            setInvalidMessage(message);
+            event.preventDefault();
+            const ownerForm = input.form;
+            if (!ownerForm || firstInvalidFormControl(ownerForm) === input) {
+              trigger?.focus();
+            }
+          }}
+          ref={setInputElement}
           required
           tabIndex={-1}
           value={value}
         />
       ) : name ? (
-        <input disabled={disabled} form={form} name={name} type="hidden" value={value} />
+        <input
+          disabled={disabled}
+          form={form}
+          name={name}
+          ref={setInputElement}
+          type="hidden"
+          value={value}
+        />
       ) : null}
       {children}
+      {activeInvalidMessage ? (
+        <p className="text-xs font-medium text-danger" id={errorId} role="alert">
+          {activeInvalidMessage}
+        </p>
+      ) : null}
     </SelectContext>
   );
 }
@@ -490,17 +559,25 @@ export function SelectTrigger({
     context.applyTypeahead(event.key, "select");
   }
 
+  const describedBy =
+    [props["aria-describedby"], context.invalidMessage ? context.errorId : undefined]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
   return (
     <button
       data-value={context.value}
       {...props}
       aria-controls={context.listboxId}
+      aria-describedby={describedBy}
       aria-expanded={context.open}
       aria-haspopup="listbox"
+      aria-invalid={context.invalidMessage ? true : props["aria-invalid"]}
       aria-label={accessibleLabel ?? props["aria-label"]}
       aria-required={context.required || undefined}
-      className={cn("ui-select-trigger", className)}
+      className={cn("ui-select-trigger", context.invalidMessage && "border-danger", className)}
       disabled={context.disabled}
+      form={context.form ?? props.form}
       onClick={(event) => {
         props.onClick?.(event);
         if (event.defaultPrevented) return;
@@ -795,6 +872,7 @@ export function SelectField({
   disabled = false,
   emptyOption,
   fallbackLabel,
+  form,
   groups,
   id,
   label,
@@ -850,6 +928,7 @@ export function SelectField({
       <Select
         defaultValue={defaultValue}
         disabled={disabled}
+        form={form}
         name={name}
         onValueChange={onValueChange}
         required={required}
