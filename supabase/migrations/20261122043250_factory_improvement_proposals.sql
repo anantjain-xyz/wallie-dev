@@ -7,20 +7,9 @@ create table internal.factory_improvement_proposals (
   workspace_id uuid not null,
   factory_id uuid not null,
   diagnosis_id uuid not null,
-  base_activation_number bigint not null check (base_activation_number > 0),
-  base_revision_id uuid not null,
-  base_digest text not null check (base_digest ~ '^[a-f0-9]{64}$'),
   unique (workspace_id, factory_id, id),
-  foreign key (workspace_id, factory_id) references public.factories(workspace_id, id) on delete cascade,
-  foreign key (workspace_id, factory_id, base_activation_number)
-    references public.factory_definition_activations(workspace_id, factory_id, activation_number) deferrable initially deferred,
-  foreign key (workspace_id, factory_id, base_revision_id)
-    references public.factory_definition_revisions(workspace_id, factory_id, id) deferrable initially deferred
+  foreign key (workspace_id, factory_id) references public.factories(workspace_id, id) on delete cascade
 );
-create index factory_improvement_proposals_base_idx
-  on internal.factory_improvement_proposals(workspace_id, factory_id, base_activation_number);
-create index factory_improvement_proposals_definition_idx
-  on internal.factory_improvement_proposals(workspace_id, factory_id, base_revision_id);
 
 create table internal.factory_improvement_proposal_revisions (
   id uuid primary key default gen_random_uuid(),
@@ -505,7 +494,9 @@ begin
   prepared := public.prepare_factory_improvement_proposal(p_workspace_id, p_factory_id, p_actor_user_id,
     p_diagnosis_id, p_activation_number, p_base_revision_id, p_base_digest, p_request_id, p_rationale,
     p_expected_benefit, p_regression_risks, p_edits, p_proposal_id, p_expected_revision_id);
-  if prepared ? 'replay' then return prepared->'replay'; end if;
+  if prepared ? 'replay' then
+    return jsonb_build_object('proposal', prepared->'replay', 'replay', true);
+  end if;
 
   if jsonb_typeof(p_diagnostics) is distinct from 'array' or pg_column_size(p_diagnostics) > 65536 then
     raise exception 'Invalid compilation diagnostics.' using errcode = '22023';
@@ -545,9 +536,8 @@ begin
   end if;
 
   if proposal_id is null then
-    insert into internal.factory_improvement_proposals(workspace_id, factory_id, diagnosis_id,
-      base_activation_number, base_revision_id, base_digest)
-    values (p_workspace_id, p_factory_id, p_diagnosis_id, p_activation_number, p_base_revision_id, p_base_digest)
+    insert into internal.factory_improvement_proposals(workspace_id, factory_id, diagnosis_id)
+    values (p_workspace_id, p_factory_id, p_diagnosis_id)
     returning id into proposal_id;
   else
     select revision.revision_number + 1 into strict proposal_revision_number
@@ -570,7 +560,7 @@ begin
     diagnosis.evidence_digest, internal.factory_improvement_cited_members(diagnosis),
     candidate_id, p_candidate_digest, p_diff, p_diagnostics)
   returning * into receipt;
-  return internal.project_factory_improvement_revision(receipt);
+  return jsonb_build_object('proposal', internal.project_factory_improvement_revision(receipt), 'replay', false);
 end;
 $$;
 

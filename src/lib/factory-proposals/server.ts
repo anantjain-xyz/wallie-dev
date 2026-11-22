@@ -98,6 +98,7 @@ const receiptSchema = z.discriminatedUnion("status", [
   }),
 ]);
 type ProposalReceipt = z.infer<typeof receiptSchema>;
+const saveReceiptSchema = z.object({ proposal: receiptSchema, replay: z.boolean() });
 
 const preparationSchema = z.union([
   z.object({ replay: receiptSchema }),
@@ -186,7 +187,8 @@ export async function saveFactoryImprovementProposal(
     })
     .abortSignal(signal);
   if (saved.error) throw saved.error;
-  return { proposal: receiptForCommand(receiptSchema.parse(saved.data), command), replay: false };
+  const result = saveReceiptSchema.parse(saved.data);
+  return { proposal: receiptForCommand(result.proposal, command), replay: result.replay };
 }
 
 export async function readFactoryImprovementProposal(

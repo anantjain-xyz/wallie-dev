@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { GET } from "./[proposalId]/route";
 import { POST } from "./route";
 import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
+import { checkRateLimit, clearRateLimitsForTesting, RATE_LIMITS } from "@/lib/rate-limit";
 import type { Database } from "@/lib/supabase/database.types";
 
 const mocks = vi.hoisted(() => ({ access: vi.fn(), admin: vi.fn(), compile: vi.fn() }));
@@ -131,7 +132,7 @@ const detailParams = { params: Promise.resolve({ ...scope, proposalId }) };
 type RpcRequest = { name: string; body: unknown; authorization: string | null };
 
 function transport(
-  response: (name: string) => Response,
+  response: (name: string) => Response | Promise<Response>,
   { factoryVisible = true }: { factoryVisible?: boolean } = {},
 ) {
   const requests: RpcRequest[] = [];
@@ -178,6 +179,7 @@ function request(
 
 beforeEach(() => {
   vi.resetAllMocks();
+  clearRateLimitsForTesting();
   vi.stubEnv("NEXT_PUBLIC_APP_URL", appOrigin);
   mocks.compile.mockResolvedValue({ ok: true, ...editedDefinition, diff });
 });
@@ -185,7 +187,9 @@ afterEach(() => vi.unstubAllEnvs());
 
 it("compiles and saves against the exact scoped base using only server-derived identity", async () => {
   const { admin, requests } = transport((name) =>
-    Response.json(name === "prepare_factory_improvement_proposal" ? prep : receipt),
+    Response.json(
+      name === "prepare_factory_improvement_proposal" ? prep : { proposal: receipt, replay: false },
+    ),
   );
 
   const response = await POST(request(), listParams);
@@ -259,6 +263,36 @@ it("returns a saved retry after head drift without recompiling or saving another
   });
 });
 
+it("returns 200 for the save-time replay when identical requests both preflight before writing", async () => {
+  const preparationsReady = Promise.withResolvers<void>();
+  let prepared = 0;
+  let saves = 0;
+  const { requests } = transport(async (name) => {
+    if (name === "prepare_factory_improvement_proposal") {
+      prepared += 1;
+      if (prepared === 2) preparationsReady.resolve();
+      await preparationsReady.promise;
+      return Response.json(prep);
+    }
+    const replay = saves > 0;
+    saves += 1;
+    return Response.json({ proposal: receipt, replay });
+  });
+
+  const responses = await Promise.all([POST(request(), listParams), POST(request(), listParams)]);
+  expect(responses.map(({ status }) => status).sort()).toEqual([200, 201]);
+  expect(await Promise.all(responses.map((response) => response.json()))).toEqual([
+    { proposal: receipt },
+    { proposal: receipt },
+  ]);
+  expect(requests.map(({ name }) => name)).toEqual([
+    "prepare_factory_improvement_proposal",
+    "prepare_factory_improvement_proposal",
+    "save_factory_improvement_proposal",
+    "save_factory_improvement_proposal",
+  ]);
+});
+
 it("persists scoped compiler diagnostics without sending a candidate", async () => {
   const diagnostics = [
     {
@@ -270,7 +304,9 @@ it("persists scoped compiler diagnostics without sending a candidate", async () 
   const invalid = { ...receipt, status: "invalid", diagnostics, candidate: null, diff: null };
   mocks.compile.mockResolvedValueOnce({ ok: false, diagnostics });
   const { requests } = transport((name) =>
-    Response.json(name === "prepare_factory_improvement_proposal" ? prep : invalid),
+    Response.json(
+      name === "prepare_factory_improvement_proposal" ? prep : { proposal: invalid, replay: false },
+    ),
   );
 
   const response = await POST(request(), listParams);
@@ -336,6 +372,25 @@ it.each([null, "https://unrelated.test"])(
     expect(mocks.admin).not.toHaveBeenCalled();
   },
 );
+
+it("limits proposal compilation by workspace and signed-in user before reading the body", async () => {
+  const { requests } = transport(() => Response.json(receipt));
+  const cap = RATE_LIMITS.improvementProposals.max;
+  for (let requestNumber = 0; requestNumber < cap; requestNumber += 1) {
+    await checkRateLimit("improvementProposals", `${workspaceId}:${signedIn}`);
+  }
+  const incoming = request();
+  const readBody = vi.spyOn(incoming, "body", "get");
+
+  const response = await POST(incoming, listParams);
+
+  expect(response.status).toBe(429);
+  expect(response.headers.get("Retry-After")).toMatch(/^\d+$/);
+  expect(readBody).not.toHaveBeenCalled();
+  expect(mocks.admin).not.toHaveBeenCalled();
+  expect(mocks.compile).not.toHaveBeenCalled();
+  expect(requests).toEqual([]);
+});
 
 it("rejects oversized, non-JSON, forged, and wrong-factory requests before privileged access", async () => {
   const fixture = transport(() => Response.json(receipt));

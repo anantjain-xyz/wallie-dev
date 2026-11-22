@@ -66,10 +66,12 @@ select throws_ok($$select pg_temp.prepare_improvement(62, 3)$$, '42501', null,
   'a reader cannot authorize proposal compilation');
 select throws_ok($$select pg_temp.prepare_improvement(62, 4)$$, '42501', null,
   'an unrelated user cannot authorize proposal compilation');
-select ok(pg_temp.prepare_improvement(62)->'grant' @> jsonb_build_object(
-  'stageIds', jsonb_build_array(pg_temp.diagnosis_fixture_id(32)), 'skillRevisionIds', '[]'::jsonb,
-  'scorerRevisionIds', '[]'::jsonb, 'routingRuleIds', '[]'::jsonb),
-  'the grant includes the cited stage and excludes skills, scorers and routing that were not captured');
+select is(pg_temp.prepare_improvement(62)->'grant', jsonb_build_object(
+  'stageIds', jsonb_build_array(pg_temp.diagnosis_fixture_id(32)),
+  'agentIds', jsonb_build_array(receipt#>>'{evidence,0,producing_agent_id}'),
+  'skillRevisionIds', '[]'::jsonb, 'scorerRevisionIds', '[]'::jsonb, 'routingRuleIds', '[]'::jsonb),
+  'the grant contains exactly the cited stage and agent, with empty uncited skill, scorer, and routing arrays')
+from improvement_diagnosis;
 select throws_ok($$select pg_temp.prepare_improvement(62, p_edits => pg_temp.improvement_prompt_edit(
   p_stage_id => pg_temp.diagnosis_fixture_id(99)))$$, 'PT422', null,
   'a cited run cannot authorize edits to another stage');
@@ -91,10 +93,24 @@ select throws_ok($$select pg_temp.save_improvement(62,
   p_candidate => jsonb_set(expected, '{stages,0,previousStageIds}', jsonb_build_array(pg_temp.diagnosis_fixture_id(99)))::text)
   from improvement_candidates$$, 'PT422', null, 'a compiled bundle cannot add an undeclared predecessor');
 
-create temp table improvement_receipts(label text primary key, value jsonb);
+-- Two callers prepare the same request before either saves. The second save
+-- must report replay based on the receipt that appeared since preparation.
+select ok(pg_temp.prepare_improvement(62) ? 'grant', 'the first caller prepares without a saved request');
+select ok(pg_temp.prepare_improvement(62) ? 'grant', 'the second caller also prepares before either save');
+create temp table improvement_save_results(label text primary key, result jsonb);
+create temp view improvement_receipts as select label, result->'proposal' as value from improvement_save_results;
 grant select on improvement_receipts to authenticated;
-insert into improvement_receipts select 'first', pg_temp.save_improvement(62, p_candidate => expected::text)
+insert into improvement_save_results select 'first', pg_temp.save_improvement(62, p_candidate => expected::text)
 from improvement_candidates;
+select is((select result->'replay' from improvement_save_results where label = 'first'), 'false'::jsonb,
+  'the first save reports a newly written receipt');
+select is(pg_temp.save_improvement(62, p_candidate => '{"ignored":true}'),
+  (select jsonb_build_object('proposal', value, 'replay', true) from improvement_receipts where label = 'first'),
+  'the save after a competing write reports replay and returns the stored receipt');
+select ok((select count(*) = 1 and count(candidate_revision_id) = 1
+  from internal.factory_improvement_proposal_revisions where workspace_id = pg_temp.diagnosis_fixture_id(11))
+  and (select count(*) = 2 from public.factory_definition_revisions where workspace_id = pg_temp.diagnosis_fixture_id(11)),
+  'the competing saves create one proposal revision and one inactive candidate');
 select ok((select value @> jsonb_build_object('status', 'compiled', 'revisionNumber', 1, 'baseCurrent', true,
     'authorMemberId', pg_temp.diagnosis_fixture_id(22), 'requestId', pg_temp.diagnosis_fixture_id(62))
   and value#>>'{candidate,digest}' = encode(sha256(convert_to(value#>>'{candidate,definitionJson}', 'UTF8')), 'hex')
@@ -113,7 +129,7 @@ select throws_ok($$select pg_temp.prepare_improvement(62, p_rationale => 'Differ
 select throws_ok($$select pg_temp.prepare_improvement(62, 1)$$, 'PT409', null,
   'a different authorized manager cannot replay another author request');
 
-insert into improvement_receipts
+insert into improvement_save_results
 select 'invalid', pg_temp.save_improvement(63, p_edits => pg_temp.improvement_prompt_edit('{{artifact.previousStages.build}}'),
   p_proposal_id => (value->>'proposalId')::uuid, p_predecessor => (value->>'revisionId')::uuid,
   p_diagnostics => '[{"path":["stages",0,"promptTemplateMd"],"code":"unreachable_stage","message":"Build must precede this stage."}]')
@@ -181,7 +197,7 @@ select throws_ok($$
   cross join public.factory_definition_revisions revision
   where label = 'invalid' and revision.id = pg_temp.diagnosis_fixture_id(66)
 $$, 'PT422', null, 'a rebase must author the exact expected old binding from its new base');
-insert into improvement_receipts
+insert into improvement_save_results
 select 'rebased', pg_temp.save_improvement(65,
   p_edits => jsonb_set(pg_temp.improvement_prompt_edit(), '{0,expectedPromptSha256}',
     to_jsonb(encode(sha256(convert_to('Newly active prompt.', 'UTF8')), 'hex'))),

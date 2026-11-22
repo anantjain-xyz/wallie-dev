@@ -8,6 +8,7 @@ import {
   saveFactoryImprovementProposal,
 } from "@/lib/factory-proposals/server";
 import { readBoundedJsonBody } from "@/lib/http/bounded-json-body";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type ProposalRoute = { params: Promise<{ workspaceId: string; factoryId: string }> };
@@ -21,6 +22,12 @@ export async function POST(request: Request, { params }: ProposalRoute) {
   try {
     const context = await resolveFactoryRouteContext(params);
     if (!context.ok) return context.response;
+
+    const limit = await enforceRateLimit(
+      "improvementProposals",
+      `${context.access.workspace.id}:${context.access.user.id}`,
+    );
+    if (limit.response) return limit.response;
 
     const body = await readBoundedJsonBody(request, maximumRequestBytes);
     if (!body.ok) {

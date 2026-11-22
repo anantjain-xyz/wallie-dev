@@ -120,13 +120,7 @@ describe("rate-limit", () => {
   it("describeRateLimits surfaces every configured bucket", () => {
     const summary = describeRateLimits();
     const scopes = summary.map((s) => s.scope).sort();
-    expect(scopes).toEqual([
-      "agentRuns",
-      "maintenance",
-      "phaseAction",
-      "sessionAttachments",
-      "workspaceInvites",
-    ]);
+    expect(scopes).toEqual(Object.keys(RATE_LIMITS).sort());
     expect(summary.find((entry) => entry.scope === "agentRuns")?.endpoint).toBe(
       "POST /api/agent-runs/:id/retry",
     );
