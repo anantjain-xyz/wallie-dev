@@ -14,13 +14,18 @@ type SessionPin = Pick<
   "workspace_id" | "factory_definition_revision_id" | "execute_pinned_definition"
 >;
 
-export async function loadPinnedFactoryExecution(client: DefinitionClient, session: SessionPin) {
+export async function loadPinnedFactoryExecution(
+  client: DefinitionClient,
+  session: SessionPin,
+  signal?: AbortSignal,
+) {
   if (!session.execute_pinned_definition) return null;
   if (!session.factory_definition_revision_id) throw new Error("Session has no factory revision.");
   return loadExecutionRevision(
     client,
     session.workspace_id,
     session.factory_definition_revision_id,
+    signal,
   );
 }
 
@@ -47,13 +52,16 @@ async function loadExecutionRevision(
   client: DefinitionClient,
   workspaceId: string,
   revisionId: string,
+  signal?: AbortSignal,
 ) {
-  const { data, error } = await client
+  signal?.throwIfAborted();
+  const revision = client
     .from("factory_definition_revisions")
     .select("definition_json, canonical_digest")
     .eq("workspace_id", workspaceId)
-    .eq("id", revisionId)
-    .maybeSingle();
+    .eq("id", revisionId);
+  const { data, error } = await (signal ? revision.abortSignal(signal) : revision).maybeSingle();
+  signal?.throwIfAborted();
   if (error) throw error;
   if (!data) throw new Error("The factory revision is unavailable in this workspace.");
 
