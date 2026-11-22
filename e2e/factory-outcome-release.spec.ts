@@ -151,7 +151,8 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
       .getByRole("navigation", { name: "Workspace navigation" })
       .getByRole("link", { name: "Overview", exact: true })
       .click();
-    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveValue(
+    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveAttribute(
+      "data-value",
       fixture.factoryId,
     );
     await page.getByLabel("From date", { exact: true }).fill(fixture.from);

@@ -166,11 +166,11 @@ function portalFixedContainingBlock(container: HTMLElement) {
     willChangeTokens.includes("perspective");
 
   if (!createsContainingBlock) {
-    return { bottom: window.innerHeight, left: 0, top: 0 };
+    return { bottom: window.innerHeight, left: 0, right: window.innerWidth, top: 0 };
   }
 
   const rect = container.getBoundingClientRect();
-  return { bottom: rect.bottom, left: rect.left, top: rect.top };
+  return { bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top };
 }
 
 /**
@@ -461,10 +461,12 @@ export function SelectTrigger({
 }
 
 export function SelectContent({
+  align = "start",
   children,
   className,
   container: containerOverride,
 }: {
+  align?: "start" | "end";
   children: ReactNode;
   className?: string;
   container?: HTMLElement | null;
@@ -508,19 +510,46 @@ export function SelectContent({
       const availableHeight = overlayTrigger
         ? boundaryHeight
         : Math.max(placeAbove ? spaceAbove : spaceBelow, boundaryRect ? 0 : 96);
-      const availableWidth = Math.max(window.innerWidth - rect.left - gutter, rect.width);
 
       listbox.style.setProperty("--radix-select-trigger-width", `${rect.width}px`);
+      listbox.style.removeProperty("--radix-select-content-available-width");
+
+      const measuredWidth = listbox.getBoundingClientRect().width;
+      const preferredWidth = measuredWidth > 0 ? measuredWidth : Math.max(rect.width, 192);
+      const maxViewportWidth = Math.max(window.innerWidth - gutter * 2, 0);
+      const spaceRight = window.innerWidth - rect.left - gutter;
+      const spaceLeft = rect.right - gutter;
+      const alignEnd =
+        align === "end"
+          ? !(spaceLeft < preferredWidth && spaceRight > spaceLeft)
+          : spaceRight < preferredWidth && spaceLeft > spaceRight;
+      const fitsAligned = alignEnd ? spaceLeft >= preferredWidth : spaceRight >= preferredWidth;
+      const clampedLeft = Math.max(
+        gutter,
+        Math.min(
+          rect.left,
+          window.innerWidth - gutter - Math.min(preferredWidth, maxViewportWidth),
+        ),
+      );
+      const availableWidth = fitsAligned
+        ? Math.max(alignEnd ? spaceLeft : spaceRight, rect.width)
+        : Math.max(maxViewportWidth, rect.width);
+
       listbox.style.setProperty("--radix-select-content-available-width", `${availableWidth}px`);
       listbox.style.setProperty("--radix-select-content-available-height", `${availableHeight}px`);
       listbox.style.setProperty(
         "--radix-select-content-transform-origin",
-        placeAbove && !overlayTrigger ? "bottom left" : "top left",
+        `${placeAbove && !overlayTrigger ? "bottom" : "top"} ${alignEnd ? "right" : "left"}`,
       );
       setPosition({
         bottom: placeAbove && !overlayTrigger ? origin.bottom - rect.top + sideOffset : undefined,
-        left: rect.left - origin.left,
+        left: !fitsAligned
+          ? clampedLeft - origin.left
+          : alignEnd
+            ? undefined
+            : rect.left - origin.left,
         position: "fixed",
+        right: fitsAligned && alignEnd ? origin.right - rect.right : undefined,
         top: overlayTrigger
           ? boundaryTop - origin.top
           : placeAbove
@@ -544,7 +573,7 @@ export function SelectContent({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [container, open, trigger]);
+  }, [align, container, open, trigger]);
 
   useLayoutEffect(() => {
     if (!open || highlightedValue == null) return;
@@ -590,6 +619,7 @@ type SelectItemProps = {
   disabled?: boolean;
   leading?: ReactNode;
   value: string;
+  wrap?: boolean;
 };
 
 export function SelectItem({
@@ -598,6 +628,7 @@ export function SelectItem({
   disabled = false,
   leading,
   value,
+  wrap = false,
 }: SelectItemProps) {
   const context = useSelectContext();
   const highlighted = context.highlightedValue === value;
@@ -607,9 +638,10 @@ export function SelectItem({
     <div
       aria-disabled={disabled || undefined}
       aria-selected={selected}
-      className={cn("ui-select-item", className)}
+      className={cn("ui-select-item", wrap && "items-start", className)}
       data-disabled={disabled ? "" : undefined}
       data-highlighted={highlighted ? "" : undefined}
+      data-value={value}
       id={context.optionId(value)}
       onClick={() => {
         if (disabled) return;
@@ -622,12 +654,14 @@ export function SelectItem({
       tabIndex={highlighted ? 0 : -1}
     >
       {selected ? (
-        <span aria-hidden="true" className="absolute left-2.5">
+        <span aria-hidden="true" className={cn("absolute left-2.5", wrap && "top-2.5")}>
           <CheckIcon />
         </span>
       ) : null}
       {leading}
-      <span className="min-w-0 truncate">{children}</span>
+      <span className={wrap ? "min-w-0 whitespace-normal break-words" : "min-w-0 truncate"}>
+        {children}
+      </span>
     </div>
   );
 }

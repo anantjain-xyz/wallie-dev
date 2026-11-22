@@ -913,10 +913,12 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     const siblingAgents = `/w/${workspace.slug}/agents?factory=${sibling.id}`;
     await page.goto(`/w/${workspace.slug}/agents?factory=${factory.id}`);
     const factoryPicker = page.getByRole("combobox", { name: "Factory", exact: true });
-    await expect(
-      factoryPicker.getByRole("option", { name: sibling.name, exact: true }),
-    ).toHaveCount(1);
-    await factoryPicker.selectOption(sibling.id);
+    await factoryPicker.click();
+    const siblingOption = page
+      .getByRole("listbox", { name: "Factory", exact: true })
+      .getByRole("option", { name: sibling.name, exact: true });
+    await expect(siblingOption).toHaveCount(1);
+    await siblingOption.click();
     await expect(page).toHaveURL(`${app}${siblingAgents}`);
     await expect(
       page.getByRole("link", { name: "Implementation reviewer", exact: true }),
