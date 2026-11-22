@@ -182,7 +182,7 @@ test("mobile keyboard navigation reaches every destination and header action", a
   await expect(page.locator("#main-content")).toBeFocused();
 });
 
-test("desktop sidebar remembers collapse and retains existing workbench, run and Settings links", async ({
+test("desktop sidebar stays expanded and retains existing workbench, run and Settings links", async ({
   page,
 }, info) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -195,6 +195,10 @@ test("desktop sidebar remembers collapse and retains existing workbench, run and
   const main = page.getByRole("main");
   const artifact = main.getByRole("region", { name: "Artifact text", exact: true });
   await expect(artifact).toBeVisible();
+  await expect(sidebar).toBeVisible();
+  await expect(sidebar).not.toHaveAttribute("data-collapsed");
+  await expect(page.getByRole("button", { name: "Collapse sidebar" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toHaveCount(0);
   await expect(sessions).toHaveAttribute("aria-current", "page");
   await expect(navigation.getByText("Work", { exact: true })).toBeVisible();
   await expect(
@@ -213,19 +217,7 @@ test("desktop sidebar remembers collapse and retains existing workbench, run and
   await expect(page.getByRole("button", { name: "Workspace navigation: Sessions" })).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  const collapse = page.getByRole("button", { name: "Collapse sidebar" });
-  await collapse.press("Enter");
-  await expect(sidebar).toHaveAttribute("data-collapsed", "");
   await expect(sessions).toBeVisible();
-  await page.reload();
-  const expand = page.getByRole("button", { name: "Expand sidebar" });
-  await expect(artifact).toBeVisible();
-  await expect(expand).toBeVisible();
-  await expect(sessions).toHaveAttribute("aria-current", "page");
-  await page.screenshot({
-    path: info.outputPath("desktop-light-collapsed-sidebar.png"),
-    fullPage: true,
-  });
   await runs.click();
   await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
   await expect(runs).toHaveAttribute("aria-current", "page");
@@ -240,8 +232,6 @@ test("desktop sidebar remembers collapse and retains existing workbench, run and
   await page.goto("/w/acme-corp/settings?category=workspace#coding-agent");
   await expect(page).toHaveURL(/\/settings\?category=integrations#runtime$/u);
   await expect(page.locator("#runtime")).toBeVisible();
-  await expand.press("Enter");
-  await expect(collapse).toBeVisible();
   await expect(navigation.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute(
     "aria-current",
     "page",

@@ -1,50 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useSyncExternalStore, type ComponentProps, type ReactNode, type Ref } from "react";
+import type { ComponentProps, ReactNode, Ref } from "react";
 
 import { WorkspaceNavigation } from "@/components/app-shell/navigation-motion";
-import { Tooltip } from "@/components/ui/tooltip";
 import { workspaceNavSections, type WorkspaceNavItem } from "@/lib/routes";
 import { cn } from "@/lib/utils";
-
-const sidebarStorageKey = "wallie-sidebar:v1";
-const sidebarListeners = new Set<() => void>();
-let sidebarStorageFallback = false;
-
-function subscribeSidebar(listener: () => void) {
-  sidebarListeners.add(listener);
-  function handleStorage(event: StorageEvent) {
-    if (event.key === sidebarStorageKey || event.key === null) listener();
-  }
-  window.addEventListener("storage", handleStorage);
-  return () => {
-    sidebarListeners.delete(listener);
-    window.removeEventListener("storage", handleStorage);
-  };
-}
-
-function readSidebarPreference() {
-  try {
-    return window.localStorage.getItem(sidebarStorageKey) === "collapsed";
-  } catch {
-    return sidebarStorageFallback;
-  }
-}
-
-function writeSidebarPreference(collapsed: boolean) {
-  sidebarStorageFallback = collapsed;
-  try {
-    window.localStorage.setItem(sidebarStorageKey, collapsed ? "collapsed" : "expanded");
-  } catch {
-    // The sidebar still responds when the browser blocks persistence.
-  }
-  for (const listener of sidebarListeners) listener();
-}
-
-function getServerSidebarPreference() {
-  return false;
-}
 
 const navIconPaths = {
   overview: "M3 3.5h10v9H3zM3 7h10M7 7v5.5",
@@ -105,11 +66,10 @@ type WorkspaceNavLinksProps = {
 
 export function WorkspaceNavLinks({
   activeItem,
-  collapsed = false,
   getLinkProps,
   items,
   mobile = false,
-}: WorkspaceNavLinksProps & { collapsed?: boolean; mobile?: boolean }) {
+}: WorkspaceNavLinksProps & { mobile?: boolean }) {
   return workspaceNavSections.map((section) => {
     const sectionItems = items.filter((item) => item.section === section);
     if (sectionItems.length === 0) return null;
@@ -117,33 +77,27 @@ export function WorkspaceNavLinks({
     const footer = section === "Footer";
     return (
       <div key={section} className={cn(footer && "mt-auto border-t border-border pt-2")}>
-        {footer || collapsed ? null : (
-          <p className="px-2.5 pb-1.5 type-label text-muted">{section}</p>
-        )}
-        <ul aria-label={footer || collapsed ? undefined : section} className="space-y-0.5">
+        {footer ? null : <p className="px-2.5 pb-1.5 type-label text-muted">{section}</p>}
+        <ul aria-label={footer ? undefined : section} className="space-y-0.5">
           {sectionItems.map((item) => {
             const active = item.id === activeItem?.id;
-            const link = (
-              <Link
-                {...getLinkProps(item)}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "ui-shell-nav-link w-full min-w-0 gap-2.5",
-                  active && "ui-shell-nav-link-active",
-                  collapsed && "justify-center px-0 lg:px-0",
-                  mobile && "min-h-11",
-                )}
-              >
-                <NavigationIcon>
-                  <path d={navIconPaths[item.id]} />
-                </NavigationIcon>
-                <span className={collapsed ? "sr-only" : "min-w-0 break-words"}>{item.label}</span>
-              </Link>
-            );
 
             return (
               <li key={item.id}>
-                {collapsed ? <Tooltip content={item.label}>{link}</Tooltip> : link}
+                <Link
+                  {...getLinkProps(item)}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "ui-shell-nav-link w-full min-w-0 gap-2.5",
+                    active && "ui-shell-nav-link-active",
+                    mobile && "min-h-11",
+                  )}
+                >
+                  <NavigationIcon>
+                    <path d={navIconPaths[item.id]} />
+                  </NavigationIcon>
+                  <span className="min-w-0 break-words">{item.label}</span>
+                </Link>
               </li>
             );
           })}
@@ -165,48 +119,18 @@ export function WorkspaceSidebar({
   sidebarRef: Ref<HTMLElement>;
   wideContent: boolean;
 }) {
-  const collapsed = useSyncExternalStore(
-    subscribeSidebar,
-    readSidebarPreference,
-    getServerSidebarPreference,
-  );
-  const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
-
   return (
     <aside
       className={cn(
-        "sticky top-[var(--shell-scroll-padding)] hidden h-[calc(100svh-var(--shell-scroll-padding))] shrink-0 self-start border-r border-border bg-canvas",
+        "sticky top-[var(--shell-scroll-padding)] hidden h-[calc(100svh-var(--shell-scroll-padding))] w-44 shrink-0 self-start border-r border-border bg-canvas",
         wideContent ? "xl:block" : "lg:block",
-        collapsed ? "w-14" : "w-44",
       )}
-      data-collapsed={collapsed ? "" : undefined}
       data-shell-rail=""
       ref={sidebarRef}
     >
-      <div className="flex h-full flex-col overflow-y-auto overscroll-contain p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))]">
-        <div className={cn("mb-2 flex", collapsed ? "justify-center" : "justify-end")}>
-          <Tooltip content={label}>
-            <button
-              type="button"
-              aria-expanded={!collapsed}
-              aria-label={label}
-              className="ui-icon-button"
-              onClick={() => writeSidebarPreference(!collapsed)}
-            >
-              <NavigationIcon>
-                <path d="M2.5 3h11v10h-11zM6 3v10" />
-                <path d={collapsed ? "m9 6 2 2-2 2" : "m11 6-2 2 2 2"} />
-              </NavigationIcon>
-            </button>
-          </Tooltip>
-        </div>
+      <div className="flex h-full flex-col overflow-y-auto overscroll-contain p-2 pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))]">
         <WorkspaceNavigation pathname={pathname} className="flex flex-1 flex-col gap-4">
-          <WorkspaceNavLinks
-            activeItem={activeItem}
-            collapsed={collapsed}
-            getLinkProps={getLinkProps}
-            items={items}
-          />
+          <WorkspaceNavLinks activeItem={activeItem} getLinkProps={getLinkProps} items={items} />
         </WorkspaceNavigation>
       </div>
     </aside>
