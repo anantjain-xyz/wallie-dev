@@ -225,7 +225,8 @@ $$;
 
 create function pg_temp.failure_summary(p_kind text) returns jsonb language sql stable as $$
   select cohort from jsonb_array_elements(pg_temp.list_failures()->'cohorts') cohort
-  where cohort->>'symptom_kind' = p_kind and cohort->>'task_class_slug' = 'build';
+  where cohort->>'symptom_kind' = p_kind and cohort->>'task_class_slug' = 'build'
+    and cohort->>'parent_cohort_id' is null;
 $$;
 
 create function pg_temp.failure_detail(p_kind text, p_limit integer default 25, p_after uuid default null)
@@ -236,7 +237,7 @@ $$;
 
 select ok(not has_table_privilege('authenticated', 'internal.factory_failure_cohorts', 'SELECT,INSERT,UPDATE,DELETE')
   and not has_table_privilege('authenticated', 'internal.factory_failure_cohort_members', 'SELECT,INSERT,UPDATE,DELETE')
-  and not has_function_privilege('anon', 'public.list_factory_failure_cohorts(uuid,uuid,integer,uuid)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.list_factory_failure_cohorts(uuid,uuid,integer,uuid,text,uuid,text)', 'EXECUTE')
   and not has_function_privilege('authenticated', 'public.process_factory_failure_cohorts(integer)', 'EXECUTE'),
   'browser roles cannot forge or read raw memberships or run backfill');
 
@@ -350,6 +351,72 @@ select ok(pg_temp.failure_summary('scorer') @> '{"failure_count":3,"support_coun
 select ok((select count(*) = 3 from jsonb_array_elements(pg_temp.failure_detail('validation')->'members') member
   where member#>>'{configuration,definition_revision_id}' = pg_temp.cohort_fixture_id(51)::text),
   'historical members still point to their original producing definition after activation changes');
+
+select ok((select page @> '{"cohorts":[{"symptom_kind":"validation","failure_count":1,"support_count":0,
+    "version_count":1}],"next_cohort_id":null}' and jsonb_array_length(page->'cohorts') = 1
+  from (select public.list_factory_failure_cohorts(workspace_id, factory_id, 1,
+    p_symptom_kind => 'validation', p_definition_revision_id => pg_temp.cohort_fixture_id(52)) as page from failure_scope) query),
+  'symptom and exact producing definition filters run before list pagination and scope counts');
+select ok((select detail @> '{"cohort":{"failure_count":3,"support_count":3,"version_count":1,"qualification":"qualified"}}'
+    and jsonb_array_length(detail->'members') = 2 and detail->>'next_member_id' is not null
+    and detail->>'membership_digest' = pg_temp.failure_detail('validation')->>'membership_digest'
+  from (select public.get_factory_failure_cohort(workspace_id, factory_id,
+    (pg_temp.failure_summary('validation')->>'id')::uuid, 2,
+    p_definition_revision_id => pg_temp.cohort_fixture_id(51)) as detail from failure_scope) query),
+  'detail paginates only matching producing versions while retaining the full review snapshot');
+select throws_ok($$select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('validation')->>'id')::uuid, 0, pg_temp.cohort_fixture_id(71), 'label', 'Delivery checks')
+  from failure_scope$$, '42501', null, 'a factory member can inspect review state but cannot write it');
+
+set local request.jwt.claim.sub = '63300000-0000-4000-8000-000000000001';
+select ok((select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('validation')->>'id')::uuid, 0, pg_temp.cohort_fixture_id(71), 'label', 'Delivery checks')
+  @> '{"review":{"revision":1,"label":"Delivery checks","disposition":"open","can_review":true},"split_cohort_ids":[]}'
+  from failure_scope), 'an authorized label creates one reviewed revision');
+select ok((select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('validation')->>'id')::uuid, 0, pg_temp.cohort_fixture_id(71), 'label', 'Delivery checks')
+  @> '{"review":{"revision":1,"label":"Delivery checks"}}' from failure_scope),
+  'an exact retry returns the original label receipt before checking the current revision');
+select throws_ok($$select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('validation')->>'id')::uuid, 0, pg_temp.cohort_fixture_id(71), 'label', 'Different label')
+  from failure_scope$$, 'PT409', null, 'a request ID cannot be reused with a different label');
+select throws_ok($$select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('validation')->>'id')::uuid, 0, pg_temp.cohort_fixture_id(72), 'dismiss')
+  from failure_scope$$, 'PT409', null, 'a stale revision cannot dismiss a reviewed cohort');
+select ok((select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('validation')->>'id')::uuid, 1, pg_temp.cohort_fixture_id(72), 'dismiss')
+  @> '{"review":{"revision":2,"label":"Delivery checks","disposition":"dismissed","can_review":false}}'
+  from failure_scope), 'dismissal records a decision separately from the reviewed label');
+select ok((select public.list_factory_failure_cohorts(workspace_id, factory_id, p_disposition => 'dismissed')
+  @> '{"cohorts":[{"failure_count":4,"qualification":"inconclusive","review":{"disposition":"dismissed"}}]}'
+  from failure_scope) and jsonb_array_length(pg_temp.failure_detail('validation')->'members') = 4,
+  'dismissed cohorts remain directly inspectable with their original attribution and qualification');
+
+select throws_ok($$select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('scorer')->>'id')::uuid, 0, pg_temp.cohort_fixture_id(73), 'split',
+  p_selected_run_ids => array[(select run_id from failure_runs where key = 'first')],
+  p_expected_membership_digest => repeat('0', 64)) from failure_scope$$, 'PT409', null,
+  'a split waits for the user to review current membership');
+select throws_ok($$select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('scorer')->>'id')::uuid, 0, pg_temp.cohort_fixture_id(73), 'split',
+  p_selected_run_ids => array[(select run_id from failure_runs where key = 'changed')],
+  p_expected_membership_digest => pg_temp.failure_detail('scorer')->>'membership_digest') from failure_scope$$,
+  '22023', null, 'a split cannot import another cohort member');
+select ok((select public.review_factory_failure_cohort(workspace_id, factory_id,
+  (pg_temp.failure_summary('scorer')->>'id')::uuid, 0, pg_temp.cohort_fixture_id(73), 'split',
+  p_selected_run_ids => array[(select run_id from failure_runs where key = 'first')],
+  p_expected_membership_digest => pg_temp.failure_detail('scorer')->>'membership_digest')
+  @> '{"review":{"revision":1,"disposition":"split","can_review":false}}' from failure_scope),
+  'a split records the investigated subset in one reviewed revision');
+select ok((select count(*) = 2 and bool_and(jsonb_array_length(detail->'members') = 2)
+    and sum((detail#>>'{cohort,failure_count}')::integer) = 3
+    and bool_and((detail#>>'{cohort,parent_cohort_id}') = parent->>'id')
+  from failure_scope
+  cross join lateral (select pg_temp.failure_summary('scorer') as parent) original
+  cross join lateral jsonb_array_elements_text(parent->'split_cohort_ids') split(cohort_id)
+  cross join lateral (select public.get_factory_failure_cohort(workspace_id, factory_id, split.cohort_id::uuid) as detail) child
+  ) and jsonb_array_length(pg_temp.failure_detail('scorer')->'members') = 4,
+  'both sides use frozen source references and repeated receipts for one run stay in the same partition');
 reset role;
 
 insert into public.session_validation_asset_withholdings(asset_id, state)
@@ -387,6 +454,8 @@ select ok(not exists (select 1 from jsonb_array_elements(pg_temp.failure_detail(
   join erased_fixture fixture on member->>'session_id' = fixture.session_id::text)
   and pg_temp.failure_summary('scorer') @> '{"failure_count":2,"support_count":1}',
   'content erasure immediately hides source members and adjusts displayed support');
+select is(jsonb_array_length(pg_temp.failure_summary('scorer')->'split_cohort_ids'), 1,
+  'erasure hides a reviewed partition whose original source members are all withheld');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '';

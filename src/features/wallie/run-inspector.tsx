@@ -33,6 +33,7 @@ export function RunInspector({
   canOpenRoutingPolicy = false,
   credential,
   executionProfile,
+  executionProfileAttempt,
   frozenContext,
   memoryProposalHref,
   mcp,
@@ -50,6 +51,7 @@ export function RunInspector({
   canOpenRoutingPolicy?: boolean;
   credential?: RunInspectorCredential | null;
   executionProfile?: RunInspectorExecutionProfile;
+  executionProfileAttempt?: number;
   frozenContext?: RunInspectorContext;
   memoryProposalHref?: string | null;
   mcp?: RunInspectorMcpManifest | null;
@@ -65,6 +67,8 @@ export function RunInspector({
   const active = run.status === "started" || run.status === "running";
   const recovery = recoveryAction(run);
   const recorded = executionProfile?.kind === "recorded" ? executionProfile.profile : null;
+  const currentProfile =
+    executionProfileAttempt === undefined || executionProfileAttempt === run.attemptCount;
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
@@ -116,7 +120,7 @@ export function RunInspector({
                 value={`${RUN_PROVIDER_LABELS[run.modelProvider] ?? run.modelProvider} · ${run.modelName}`}
               />
             )}
-            {credential && recorded?.authority.kind !== "service" && (
+            {credential && (!currentProfile || recorded?.authority.kind !== "service") && (
               <RunCredentialFields credential={credential} initialNow={initialNow} />
             )}
             <MetadataItem
@@ -197,7 +201,10 @@ export function RunInspector({
             anchorId="execution-profile"
             title={recorded ? "Recorded execution profile" : "Execution profile"}
           >
-            <div className="ui-sheet px-4 py-5 sm:px-5">
+            <div className="ui-sheet space-y-2 px-4 py-5 sm:px-5">
+              {executionProfileAttempt !== undefined ? (
+                <p className="type-secondary text-muted">Attempt {executionProfileAttempt}</p>
+              ) : null}
               {recorded ? (
                 <MetadataList>
                   <ExecutionProfileFields profile={recorded} />
@@ -295,7 +302,7 @@ export function RunInspector({
                           </span>
                         }
                       />
-                      {credential ? (
+                      {credential && currentProfile ? (
                         <RunCredentialFields credential={credential} initialNow={initialNow} />
                       ) : (
                         <>
