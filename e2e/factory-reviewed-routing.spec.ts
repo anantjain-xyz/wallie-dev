@@ -272,7 +272,10 @@ test("activates a reviewed routing draft, audits a one-task override and preserv
         );
         await expect(
           confirmation.getByRole("link", { name: /Passing configuration test/ }),
-        ).toHaveAttribute("href", new RegExp(`[?&]test=${reviewed.testId}#candidate-tests$`));
+        ).toHaveAttribute(
+          "href",
+          `${workspaceFactoryDefinitionPath(fixture.slug, { draft: reviewed.id, test: reviewed.testId, factory: fixture.factoryId })}#candidate-tests`,
+        );
         await capture(page, confirmation, info, "reviewed-routing-activation-light");
         const [response] = await Promise.all([
           page.waitForResponse(
