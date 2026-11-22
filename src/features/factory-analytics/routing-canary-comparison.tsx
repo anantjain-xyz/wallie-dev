@@ -162,16 +162,18 @@ export function RoutingCanaryComparison({
   const report = state.kind === "retained" ? state.alert.report : state.report;
   const { baseline, candidate, canary, outsideClassSessions, reasons, status, window } = report;
   const baselineHref = canManageFactory
-    ? workspaceFactoryDefinitionPath(workspaceSlug, {
+    ? `${workspaceFactoryDefinitionPath(workspaceSlug, {
         factory: factoryId,
         revision: canary.baselineRevisionId,
-      })
+        activation: canary.baselineActivationNumber,
+      })}#revision-history`
     : undefined;
   const candidateHref = canManageFactory
-    ? workspaceFactoryDefinitionPath(workspaceSlug, {
+    ? `${workspaceFactoryDefinitionPath(workspaceSlug, {
         factory: factoryId,
         revision: canary.candidateRevisionId,
-      })
+        activation: canary.activationNumber,
+      })}#revision-history`
     : undefined;
 
   return (

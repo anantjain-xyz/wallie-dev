@@ -17,6 +17,20 @@ create temp table live_scope as
 select workspace_id, id as factory_id, pg_temp.live_id(1) as owner_id
 from public.factories where workspace_id = pg_temp.live_id(11) and is_default;
 
+-- Keep these sequential CAS fixtures deterministic if the local VM clock shifts.
+create function pg_temp.order_frontier_drafts() returns trigger language plpgsql as $$
+begin
+  select greatest(new.created_at,max(draft.created_at)+interval '1 microsecond') into new.created_at
+  from public.factory_definition_drafts draft
+  where (draft.workspace_id,draft.factory_id) = (new.workspace_id,new.factory_id)
+    and draft.base_activation_number is not distinct from new.base_activation_number;
+  return new;
+end;
+$$;
+create trigger fixture_order_frontier_drafts before insert on public.factory_definition_drafts
+for each row when (new.workspace_id = '62300000-0000-4000-9000-000000000011')
+execute function pg_temp.order_frontier_drafts();
+
 insert into public.pipelines(id, workspace_id, factory_id, name)
 select pg_temp.live_id(40), workspace_id, factory_id, 'Live replay pipeline' from live_scope;
 insert into public.pipeline_stages(id, workspace_id, pipeline_id, position, slug, name, prompt_template_md)

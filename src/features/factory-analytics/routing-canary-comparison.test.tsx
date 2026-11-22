@@ -128,11 +128,11 @@ it("shows assigned arms, support, retry-inclusive usage and links to exact revis
   expect(region.getByText("Comparable")).toBeVisible();
   expect(region.getByRole("link", { name: "Activation #7" })).toHaveAttribute(
     "href",
-    `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.baselineRevisionId}`,
+    `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.baselineRevisionId}&activation=7#revision-history`,
   );
   expect(region.getByRole("link", { name: "Activation #8" })).toHaveAttribute(
     "href",
-    `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.candidateRevisionId}`,
+    `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.candidateRevisionId}&activation=8#revision-history`,
   );
   const attempts = within(region.getByRole("row", { name: /Run attempts/ }));
   expect(attempts.getAllByText("14")).toHaveLength(2);
