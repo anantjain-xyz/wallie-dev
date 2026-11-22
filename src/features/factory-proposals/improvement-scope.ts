@@ -8,10 +8,18 @@ export async function loadImprovementScope(
   workspaceSlug: string,
   requestedFactory: string | string[] | undefined,
 ) {
-  const [{ supabase, workspace }, factories] = await Promise.all([
+  const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const factory = resolveAnalyticsFactory(factories, requestedFactory);
-  return factory ? { supabase, factory, workspaceId: workspace.id, factoryId: factory.id } : null;
+  return factory
+    ? {
+        supabase,
+        factory,
+        workspaceId: workspace.id,
+        factoryId: factory.id,
+        reviewerMemberId: currentMember.id,
+      }
+    : null;
 }

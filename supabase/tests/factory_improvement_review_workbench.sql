@@ -1,6 +1,69 @@
 begin;
 create extension if not exists pgtap with schema extensions;
+create extension if not exists dblink with schema extensions;
 select no_plan();
+
+select extensions.dblink_connect(peer.name, coalesce(nullif(current_setting('wallie.test_db_connection', true), ''),
+  'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'))
+from (values ('workbench_factory_holder'), ('workbench_factory_writer')) peer(name);
+select extensions.dblink_exec('workbench_factory_writer', $setup$
+  set request.jwt.claim.role = 'service_role';
+  set role service_role;
+  set lock_timeout = '1s';
+  create function pg_temp.workbench_writer_sqlstate(command text) returns text language plpgsql as $$
+  begin
+    execute command;
+    return '00000';
+  exception when others then return sqlstate;
+  end;
+  $$;
+$setup$);
+
+-- Keep the contention fixture separate from the rollback-only proposal data.
+create temp table workbench_writer_scope as
+select gen_random_uuid() as workspace_id, gen_random_uuid() as user_id, null::uuid as factory_id;
+insert into auth.users(id, email)
+select user_id, 'workbench-fence-' || user_id || '@example.test' from workbench_writer_scope;
+insert into public.workspaces(id, slug, name)
+select workspace_id, 'workbench-fence-' || workspace_id, 'Workbench writer fence' from workbench_writer_scope;
+insert into public.workspace_members(workspace_id, user_id, kind, role)
+select workspace_id, user_id, 'human', 'owner' from workbench_writer_scope;
+update workbench_writer_scope scope set factory_id = factory.id
+from public.factories factory where factory.workspace_id = scope.workspace_id and factory.is_default;
+commit;
+
+select extensions.dblink_exec('workbench_factory_holder', 'begin');
+select locked.id from workbench_writer_scope scope
+cross join lateral extensions.dblink('workbench_factory_holder', format(
+  'select id from public.factories where id = %L for key share', scope.factory_id)) locked(id uuid);
+
+-- KEY SHARE conflicts with FOR UPDATE, while allowing weaker row locks.
+-- Both production writers must encounter that exact factory fence before
+-- looking up the missing proposal/diagnosis or writing a review event.
+select is(response.code, '55P03', writer.label)
+from workbench_writer_scope scope
+cross join lateral (values
+  ('review append takes the exclusive factory writer fence', format(
+    'select public.save_factory_improvement_review_event(%L,%L,%L,%L,%L,0,%L,''comment'',''Lock fixture'')',
+    scope.workspace_id, scope.factory_id, scope.user_id, gen_random_uuid(), gen_random_uuid(), gen_random_uuid())),
+  ('proposal revision save takes the same exclusive factory writer fence', format(
+    'select public.save_factory_improvement_proposal(%L,%L,%L,%L,1,%L,%L,%L,
+      ''Lock fixture'',''Lock fixture'','''',''[]'',''[]'',%L,%L)', scope.workspace_id, scope.factory_id, scope.user_id,
+    gen_random_uuid(), gen_random_uuid(), repeat('a', 64), gen_random_uuid(), gen_random_uuid(), gen_random_uuid()))
+) writer(label, command)
+cross join lateral extensions.dblink('workbench_factory_writer', format(
+  'select pg_temp.workbench_writer_sqlstate(%L)', writer.command)) response(code text);
+
+select extensions.dblink_exec('workbench_factory_holder', 'rollback');
+select extensions.dblink_disconnect(peer.name)
+from (values ('workbench_factory_holder'), ('workbench_factory_writer')) peer(name);
+
+begin;
+delete from public.workspaces where id = (select workspace_id from workbench_writer_scope);
+delete from auth.users where id = (select user_id from workbench_writer_scope);
+commit;
+
+begin;
 \set diagnosis_fixture_prefix 63700000
 \set diagnosis_inference_ciphertext v2.AAAAAAAAAAAAAAAA.YWJj.AAAAAAAAAAAAAAAAAAAAAA
 \ir fixtures/factory_diagnosis_source.psql

@@ -6,6 +6,10 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { z } from "zod/v4";
 
 import { ERASE_RETAINED_CONTENT_CONFIRMATION } from "../src/lib/run-retention/session-contracts";
+import {
+  proposalReviewCommandSchema,
+  proposalReviewSaveSchema,
+} from "../src/lib/factory-proposals/workbench-contracts";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
 
@@ -77,7 +81,7 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
   const rationale = "Make reconciliation checks explicit";
   const invalidRationale = "Reference an unavailable artifact";
   const reviewNote = "Please cite the exact receipt. Keep <b>this detail</b> in the revision.";
-  const main = page.locator("#main-content");
+  const main = page.locator("#main-content:visible");
   let workflowError: unknown;
 
   try {
@@ -169,7 +173,7 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await expect(drawer).toHaveCount(0);
     await capture(page, info, "02-improvement-evidence-dark-mobile");
 
-    const diff = page.locator("#candidate-diff");
+    const diff = main.locator("#candidate-diff:visible");
     await diff.getByText("Delivery", { exact: true }).click();
     await expect(diff.getByText("Active configuration", { exact: true })).toBeVisible();
     await expect(diff.getByText(command.edits[0].promptTemplateMd, { exact: true })).toBeVisible();
@@ -186,7 +190,7 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     ]);
     expect(reviewResponse.status()).toBe(201);
     const saved = await reviewResponse.json();
-    const discussion = page.locator("#discussion");
+    const discussion = main.locator("#discussion:visible");
     const note = discussion.getByText(reviewNote, { exact: true });
     await expect(note).toBeVisible();
     await expect(note.locator("b")).toHaveCount(0);
@@ -200,6 +204,62 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     expect(replay.status()).toBe(200);
     expect(await replay.json()).toMatchObject({ event: saved.event, replay: true });
     await expect(note).toHaveCount(1);
+
+    const unconfirmedNote = "Confirm the exact review after the response is lost.";
+    const reviewRequest = (url: string, method: string) =>
+      new URL(url).pathname === reviewPath && method === "POST";
+    await page.evaluate((path) => {
+      const originalFetch = window.fetch;
+      window.fetch = async (input, init) => {
+        if (input === path && init?.method === "POST") {
+          window.fetch = originalFetch;
+          await originalFetch.call(window, input, init);
+          return Response.json({ error: "Review response unavailable." }, { status: 503 });
+        }
+        return originalFetch.call(window, input, init);
+      };
+    }, reviewPath);
+    await page.getByRole("textbox", { name: "Review note" }).fill(unconfirmedNote);
+    const [committedReview] = await Promise.all([
+      page.waitForResponse((response) =>
+        reviewRequest(response.url(), response.request().method()),
+      ),
+      page.getByRole("button", { name: "Add comment", exact: true }).click(),
+    ]);
+    expect(committedReview.status()).toBe(201);
+    const committedCommand = proposalReviewCommandSchema.parse(
+      committedReview.request().postDataJSON(),
+    );
+    await expect(discussion.getByRole("alert")).toContainText("Could not confirm the review", {
+      timeout: 55_000,
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const unconfirmed = discussion.getByText(unconfirmedNote, { exact: true });
+    const retryReview = discussion.getByRole("button", { name: "Retry review", exact: true });
+    await expect(unconfirmed).toHaveCount(1);
+    await expect(retryReview).toBeVisible();
+    await expect(discussion.getByRole("button", { name: "Add comment", exact: true })).toHaveCount(
+      0,
+    );
+    await capture(page, info, "06-review-retry-after-reload-dark-mobile");
+    const [retriedReview] = await Promise.all([
+      page.waitForResponse((response) =>
+        reviewRequest(response.url(), response.request().method()),
+      ),
+      retryReview.press("Enter"),
+    ]);
+    expect(retriedReview.status()).toBe(200);
+    expect(retriedReview.request().postDataJSON()).toEqual(committedCommand);
+    expect(proposalReviewSaveSchema.parse(await retriedReview.json())).toMatchObject({
+      replay: true,
+      event: {
+        action: "comment",
+        note: unconfirmedNote,
+        version: committedCommand.expectedReviewVersion + 1,
+      },
+    });
+    await expect(retryReview).toHaveCount(0);
+    await expect(unconfirmed).toHaveCount(1);
 
     const stale = await page.context().newPage();
     let second: z.infer<typeof proposalResponse>["proposal"];

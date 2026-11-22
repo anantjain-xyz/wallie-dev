@@ -273,14 +273,14 @@ export default async function ImprovementPage({
                 ) : null}
               </nav>
             ) : null}
-            {review.canReview && !historical && review.disposition !== "dismissed" ? (
-              <ImprovementReviewForm
-                key={proposal.revisionId}
-                endpoint={endpoint}
-                proposalRevisionId={proposal.revisionId}
-                reviewVersion={review.version}
-              />
-            ) : null}
+            <ImprovementReviewForm
+              key={`${scope.reviewerMemberId}:${proposal.revisionId}`}
+              endpoint={endpoint}
+              proposalRevisionId={proposal.revisionId}
+              reviewerMemberId={scope.reviewerMemberId}
+              reviewVersion={review.version}
+              canReview={review.canReview && !historical && review.disposition !== "dismissed"}
+            />
           </div>
         </PageSection>
       </div>

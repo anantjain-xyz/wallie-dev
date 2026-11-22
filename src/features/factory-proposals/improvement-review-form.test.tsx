@@ -11,20 +11,24 @@ const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 const proposalRevisionId = "63700000-0000-4000-8000-000000000001";
+const reviewerMemberId = "63700000-0000-4000-8000-000000000003";
 const endpoint = "/api/test/improvement-proposals/example/review";
 
 afterEach(() => {
   cleanup();
+  window.sessionStorage.clear();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 
-function review() {
+function review({ version = 2, member = reviewerMemberId, canReview = true } = {}) {
   return render(
     <ImprovementReviewForm
       endpoint={endpoint}
       proposalRevisionId={proposalRevisionId}
-      reviewVersion={2}
+      reviewerMemberId={member}
+      reviewVersion={version}
+      canReview={canReview}
     />,
   );
 }
@@ -58,7 +62,7 @@ it("submits feedback for the displayed revision and stops writes when that revis
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
 });
 
-it("reuses the exact request identity when a review response is lost", async () => {
+it("replays the original request after a reload updates the displayed review version", async () => {
   const request = vi
     .fn()
     .mockRejectedValueOnce(new Error("Response lost"))
@@ -70,14 +74,14 @@ it("reuses the exact request identity when a review response is lost", async () 
           version: 3,
           action: "revise",
           note: "Cite the retained result.",
-          actorMemberId: "63700000-0000-4000-8000-000000000003",
+          actorMemberId: reviewerMemberId,
           actorName: "Reviewer",
           createdAt: "2026-11-21T21:00:00Z",
         },
       }),
     );
   vi.stubGlobal("fetch", request);
-  review();
+  const firstReview = review();
 
   fireEvent.change(screen.getByRole("textbox", { name: "Review note" }), {
     target: { value: "Cite the retained result." },
@@ -85,11 +89,19 @@ it("reuses the exact request identity when a review response is lost", async () 
   fireEvent.click(screen.getByRole("button", { name: "Request revision" }));
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
-    "Could not confirm the review was saved. Retry the same action.",
+    "Could not confirm the review was saved. Retry this review.",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Request revision" }));
-  expect(await screen.findByRole("status")).toHaveProperty("textContent", "Review saved.");
+  firstReview.unmount();
+  const anotherReviewer = review({ member: "63700000-0000-4000-8000-000000000004" });
+  expect(screen.queryByRole("button", { name: "Retry review" })).toBeNull();
+  anotherReviewer.unmount();
+
+  review({ version: 3, canReview: false });
+  expect(screen.queryByRole("button", { name: "Request revision" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry review" }));
+  expect(await screen.findByText("Review saved.")).toHaveProperty("role", "status");
   const [first, replay] = request.mock.calls;
   expect(first[1].body).toBe(replay[1].body);
+  expect(screen.queryByRole("button", { name: "Retry review" })).toBeNull();
   expect(refresh).toHaveBeenCalledOnce();
 });
