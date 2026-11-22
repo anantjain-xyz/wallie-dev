@@ -315,6 +315,7 @@ function setup({
   selection = null,
   initialDraftPasses = true,
   initialDraft = draft,
+  initialPublished = published,
   repositories = [{ id: id(3), fullName: "acme/project", isArchived: false }],
   credentials,
   routingPreview,
@@ -322,20 +323,21 @@ function setup({
   selection?: { draft: string; test: string } | null;
   initialDraftPasses?: boolean;
   initialDraft?: FactoryEditorDocument;
+  initialPublished?: FactoryEditorDocument;
   repositories?: CapabilityRepository[];
   credentials?: FactorySecretBindingResponse;
   routingPreview?: (body: Record<string, unknown>) => Response;
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
     activationNumber: 2,
-    published,
+    published: initialPublished,
     draft: initialDraft,
     baseline: null,
     readySandboxProviders: ["vercel"],
   };
   const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
   const records = new Map(
-    [published, previous, initialDraft].map((document) => [document.id, document]),
+    [initialPublished, previous, initialDraft].map((document) => [document.id, document]),
   );
   const reads: string[] = [];
   const capabilityReads: string[] = [];
@@ -738,6 +740,32 @@ it("shows stale qualification and disables reviewed activation despite passing s
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Publish in shadow mode" })).toBeEnabled(),
   );
+});
+
+it("identifies the exact baseline activation when only its qualification is stale", async () => {
+  setup({
+    initialPublished: {
+      ...published,
+      routingQualification: {
+        activationNumber: 2,
+        draftId: null,
+        revisionId: published.id,
+        definitionDigest: published.digest,
+        status: "stale",
+        reasons: [],
+        targets: [],
+        baseline: {
+          activationNumber: 1,
+          revisionId: previous.id,
+          status: "stale",
+          reasons: ["suite_revision_changed"],
+        },
+      },
+    },
+  });
+  expect(await screen.findByText("Published routing needs requalification")).toBeVisible();
+  expect(screen.getByText("Baseline activation #1")).toBeVisible();
+  expect(screen.getByText("The benchmark suite has a newer revision.")).toBeVisible();
 });
 
 it("confirms the exact reviewed draft and smoke receipt before activating routing", async () => {

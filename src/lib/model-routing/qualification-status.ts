@@ -11,6 +11,14 @@ export const routingQualificationStatusSchema = z.strictObject({
   definitionDigest: z.string().regex(/^[a-f0-9]{64}$/),
   status: z.enum(["current", "stale"]),
   reasons: z.array(z.string()),
+  baseline: z
+    .strictObject({
+      activationNumber: z.number().int().safe().positive(),
+      revisionId: id,
+      status: z.enum(["current", "stale"]),
+      reasons: z.array(z.string()),
+    })
+    .optional(),
   targets: z.array(
     z.strictObject({
       ruleId: id.nullable(),

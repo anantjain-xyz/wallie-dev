@@ -130,7 +130,8 @@ create temp table frontier_judge as
 select * from public.configure_factory_judge_profile(pg_temp.live_id(11),pg_temp.live_id(1),0,
   'openai/gpt-example','openai',false,false,'v2.' || repeat('a',16) || '.synthetic.' || repeat('b',22));
 
-create function pg_temp.freeze_frontier(p_slot integer,p_definitions integer[],p_repetitions integer,p_scored boolean default true)
+create function pg_temp.freeze_frontier(p_slot integer,p_definitions integer[],p_repetitions integer,
+  p_scored boolean default true,p_policy_revision_id uuid default null)
 returns jsonb language sql as $$
   with pinned as (
     select jsonb_agg(jsonb_build_object('definitionRevisionId',pg_temp.live_id(revision.slot),
@@ -138,10 +139,11 @@ returns jsonb language sql as $$
     from unnest(p_definitions) with ordinality revision(slot,position)
   )
   select case when p_scored then public.freeze_factory_benchmark_experiment_axes_with_evaluation(
-      scope.workspace_id,scope.factory_id,scope.owner_id,pg_temp.live_id(p_slot),suite.id,policy.id,pinned.candidates,p_repetitions,211,120000,
+      scope.workspace_id,scope.factory_id,scope.owner_id,pg_temp.live_id(p_slot),suite.id,coalesce(p_policy_revision_id,policy.id),
+      pinned.candidates,p_repetitions,211,120000,
       jsonb_build_object('scorerRevisionIds',(select jsonb_agg(id) from frontier_scorer),'budgetLimitUsd',20))
     else public.freeze_factory_benchmark_experiment_axes(scope.workspace_id,scope.factory_id,scope.owner_id,
-      pg_temp.live_id(p_slot),suite.id,policy.id,pinned.candidates,p_repetitions,211,120000) end
+      pg_temp.live_id(p_slot),suite.id,coalesce(p_policy_revision_id,policy.id),pinned.candidates,p_repetitions,211,120000) end
   from live_scope scope cross join live_suite suite cross join live_policy policy cross join pinned;
 $$;
 create function pg_temp.configure_frontier(p_slot integer,p_cap integer) returns jsonb language sql as $$
@@ -351,6 +353,16 @@ select is(pg_temp.read_frontier(83)#>>'{recommendation,reason}','mixed_judge_pro
   'a candidate with full scores and missing execution price still participates in judge compatibility');
 select ok(pg_temp.frontier_result(2,83)->'exclusions' @> '["unavailable_cost","mixed_judge_profile"]'::jsonb,
   'an unpriced candidate retains its cost and judge exclusions');
+
+create temp table independent_routing_replay_policy as
+select revision.* from live_scope scope cross join live_policy base
+cross join lateral public.publish_factory_benchmark_replay_policy(scope.workspace_id,scope.factory_id,
+  scope.owner_id,'blocked',base.id) revision;
+select pg_temp.freeze_frontier(85,array[101,102],2,p_policy_revision_id=>id) from independent_routing_replay_policy;
+select pg_temp.configure_frontier(85,4);
+select pg_temp.frontier_execute() from generate_series(1,4);
+select public.reconcile_factory_benchmark_evaluations(100);
+select pg_temp.frontier_score();
 
 create function pg_temp.routing_configuration(p_position integer) returns jsonb language sql as $$
   select jsonb_build_object('agentId',pg_temp.live_id(47),'experimentId',candidate.experiment_id,
@@ -1494,6 +1506,54 @@ select ok((select receipt.activation_number=6 and receipt.routing_canary_id is n
   and receipt.routing_decision->>'mode'='active' and receipt.routing_execution->>'benchmarkCandidateKey'=pg_temp.frontier_result(1)->>'candidateKey'
   from rolled_back_admission admitted join public.session_factory_admission_inputs receipt using(session_id)),
   'new sessions use the restored reviewed profile without inheriting the old canary');
+
+create function pg_temp.independent_baseline_drift() returns jsonb language plpgsql as $$
+declare
+  scope live_scope := (select live_scope from live_scope);
+  candidate public.factory_benchmark_experiment_candidates;
+  body jsonb;
+  draft_id uuid;
+  observed jsonb;
+begin
+  begin
+    select frozen.* into strict candidate from public.factory_benchmark_experiment_candidates frozen
+    where (frozen.workspace_id,frozen.factory_id,frozen.experiment_id,frozen.comparison_position) =
+      (scope.workspace_id,scope.factory_id,pg_temp.live_id(85),2);
+    select jsonb_set(restored.definition_json::jsonb,'{modelRouting,rules,0,configuration}',
+      pg_temp.routing_configuration(2) || jsonb_build_object('experimentId',candidate.experiment_id,
+        'scorerRevisionId',(select id from frontier_scorer))) into strict body
+    from public.factory_definition_activations head join public.factory_definition_revisions restored
+      on (restored.workspace_id,restored.factory_id,restored.id)=(head.workspace_id,head.factory_id,head.revision_id)
+    where (head.workspace_id,head.factory_id,head.activation_number) = (scope.workspace_id,scope.factory_id,6);
+    body := jsonb_set(body,'{modelRouting,rules,0,constraints,maxMeanCostUsd}','0.30');
+    body := jsonb_set(body,'{modelRouting,rules,0,onUnavailable}','{"kind":"escalate"}');
+    draft_id := (public.save_factory_routing_draft(scope.workspace_id,scope.factory_id,scope.owner_id,6,
+      body::text,encode(sha256(convert_to(body::text,'UTF8')),'hex'),'{"newStageIds":[]}',
+      candidate.experiment_id,candidate.candidate_key,(select id from live_suite),(select id from frontier_scorer),
+      pg_temp.live_id(202),pg_temp.live_id(645),repeat('f',64),null)).id;
+    perform pg_temp.seed_canary_activation_checks(draft_id,6);
+    perform pg_temp.activate_routing_canary(6,draft_id);
+    perform public.revoke_factory_benchmark_replay_revision(scope.workspace_id,scope.factory_id,scope.owner_id,
+      p_policy_revision_id=>(select id from live_policy));
+    perform set_config('request.jwt.claim.role','authenticated',true);
+    perform set_config('request.jwt.claim.sub',scope.owner_id::text,true);
+    observed := pg_temp.routing_qualification_status();
+    if observed is distinct from pg_temp.routing_qualification_status(7) then
+      raise exception 'The exact canary lookup differs from the current activation.';
+    end if;
+    -- Roll back this independent rollout before continuing the shared fixture.
+    raise exception using errcode='PZ632';
+  exception when sqlstate 'PZ632' then
+    return observed;
+  end;
+end;
+$$;
+select is(jsonb_build_object('status',status->'status','reasons',status->'reasons','baseline',status->'baseline'),
+  jsonb_build_object('status','stale','reasons','[]'::jsonb,'baseline',jsonb_build_object(
+    'activationNumber',6,'revisionId',prior.result->'revisionId','status','stale',
+    'reasons',jsonb_build_array('replay_policy_revoked'))),
+  'revoking only the reviewed control replay evidence marks the canary stale with no candidate reasons')
+from reviewed_activation prior cross join lateral (select pg_temp.independent_baseline_drift() as status) observed;
 
 create temp table post_canary_proposal as
 select pg_temp.apply_routing_finding(1,20,p_activation => 6) as draft_id;
