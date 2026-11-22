@@ -44,18 +44,24 @@ const review = {
   hasBlockingFeedback: true,
 } as const;
 
-function renderInbox(inbox: FactoryInbox) {
+function renderInbox(inbox: FactoryInbox | null, initialNow = happenedAt) {
   return render(
     <FactoryInboxPage
       cursor={null}
       factoryId={factoryId}
       initialInbox={inbox}
-      initialNow={happenedAt}
+      initialNow={initialNow}
       memberId="88888888-8888-4888-8888-888888888888"
       workspaceId={workspaceId}
       workspaceSlug="acme"
     />,
   );
+}
+
+function recoverySource() {
+  const source = recovery.register.mock.calls[0]?.[0];
+  if (!source) throw new Error("Inbox did not register its recovery source.");
+  return source;
 }
 
 afterEach(() => {
@@ -114,8 +120,7 @@ describe("FactoryInboxPage", () => {
       .mockResolvedValueOnce(Response.json({}, { status: 404 }));
     renderInbox({ items: [review], counts: { review: 1, clarification: 0 }, nextCursor: null });
 
-    const source = recovery.register.mock.calls[0]?.[0];
-    if (!source) throw new Error("Inbox did not register its recovery source.");
+    const source = recoverySource();
     const signal = new AbortController().signal;
     await act(() => source.refresh(signal));
     expect(fetchInbox).toHaveBeenCalledWith(
@@ -148,8 +153,7 @@ describe("FactoryInboxPage", () => {
         }),
       );
     renderInbox(empty);
-    const source = recovery.register.mock.calls[0]?.[0];
-    if (!source) throw new Error("Inbox did not register its recovery source.");
+    const source = recoverySource();
 
     const starting = new AbortController();
     const first = source.refresh(starting.signal).catch(() => {});
@@ -161,5 +165,168 @@ describe("FactoryInboxPage", () => {
     });
     expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
     expect(screen.getByText("1 awaiting review · 0 clarifications")).toBeVisible();
+  });
+
+  it("hides rows and counts behind a checking state when the access check is stale", () => {
+    renderInbox(
+      { items: [review], counts: { review: 1, clarification: 0 }, nextCursor: null },
+      "2020-01-01T00:00:00.000Z",
+    );
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(screen.getByText("Checking Inbox access…")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
+    expect(screen.queryByText("1 awaiting review · 0 clarifications")).toBeNull();
+    expect(recovery.invalidate).toHaveBeenCalled();
+  });
+
+  it("shows the offline state and hides protected rows when the browser goes offline", () => {
+    renderInbox({ items: [review], counts: { review: 1, clarification: 0 }, nextCursor: null });
+
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+
+    expect(screen.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
+    expect(screen.queryByText("1 awaiting review · 0 clarifications")).toBeNull();
+  });
+
+  it("hides server-rendered rows when mounting while offline", () => {
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    renderInbox({ items: [review], counts: { review: 1, clarification: 0 }, nextCursor: null });
+
+    expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
+    expect(screen.queryByText("1 awaiting review · 0 clarifications")).toBeNull();
+    expect(screen.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
+  });
+
+  it("reports offline on mount and keeps it through rechecks while the browser stays offline", () => {
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    renderInbox(null, "2020-01-01T00:00:00.000Z");
+
+    expect(screen.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
+    expect(screen.queryByText("Checking Inbox access…")).toBeNull();
+    expect(screen.queryByText("Inbox unavailable. Refresh to check your access.")).toBeNull();
+    expect(recovery.invalidate).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(screen.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
+    expect(screen.queryByText("Checking Inbox access…")).toBeNull();
+    expect(recovery.invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores rows when a refresh succeeds after coming back online", async () => {
+    const onLine = vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      Response.json({
+        items: [review],
+        counts: { review: 1, clarification: 0 },
+        nextCursor: null,
+      }),
+    );
+    renderInbox(null);
+    const source = recoverySource();
+    expect(screen.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
+
+    onLine.mockReturnValue(true);
+    await act(() => source.refresh(new AbortController().signal));
+
+    expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
+    expect(screen.queryByText("You’re offline. Reconnect to refresh your Inbox.")).toBeNull();
+  });
+
+  it.each([401, 403, 404])(
+    "treats a %i response as unavailable without confirming the resource exists",
+    async (status) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({}, { status }));
+      renderInbox(null);
+      const source = recoverySource();
+
+      await act(async () => {
+        await expect(source.refresh(new AbortController().signal)).rejects.toThrow(
+          "Inbox unavailable.",
+        );
+      });
+      expect(screen.getByText("Inbox unavailable. Refresh to check your access.")).toBeVisible();
+      expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
+    },
+  );
+
+  it("reports a failed read distinctly from denied access and restores rows on success", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({}, { status: 500 }))
+      .mockResolvedValueOnce(
+        Response.json({
+          items: [review],
+          counts: { review: 1, clarification: 0 },
+          nextCursor: null,
+        }),
+      );
+    renderInbox(null);
+    const source = recoverySource();
+
+    await act(async () => {
+      await expect(source.refresh(new AbortController().signal)).rejects.toThrow(
+        "Inbox unavailable.",
+      );
+    });
+    expect(screen.getByText("Couldn’t load Inbox. Refresh to try again.")).toBeVisible();
+    expect(screen.queryByText("Inbox unavailable. Refresh to check your access.")).toBeNull();
+
+    await act(() => source.refresh(new AbortController().signal));
+    expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
+    expect(screen.getByText("1 awaiting review · 0 clarifications")).toBeVisible();
+  });
+
+  it("keeps fresh rows visible while a refresh revalidates, then updates them", async () => {
+    const pending = Promise.withResolvers<Response>();
+    vi.spyOn(globalThis, "fetch").mockImplementationOnce(() => pending.promise);
+    renderInbox({ items: [review], counts: { review: 1, clarification: 0 }, nextCursor: null });
+    const source = recoverySource();
+
+    let refresh!: Promise<void>;
+    await act(async () => {
+      refresh = source.refresh(new AbortController().signal);
+    });
+    expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
+    expect(screen.getByText("1 awaiting review · 0 clarifications")).toBeVisible();
+    expect(screen.queryByText("Checking Inbox access…")).toBeNull();
+
+    pending.resolve(Response.json(empty));
+    await act(() => refresh);
+    expect(screen.getByText("You’re all caught up.")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
+  });
+
+  it("moves a hidden view to checking while the first read is in flight", async () => {
+    const pending = Promise.withResolvers<Response>();
+    vi.spyOn(globalThis, "fetch").mockImplementationOnce(() => pending.promise);
+    renderInbox(null);
+    const source = recoverySource();
+
+    expect(screen.getByText("Inbox unavailable. Refresh to check your access.")).toBeVisible();
+
+    let refresh!: Promise<void>;
+    await act(async () => {
+      refresh = source.refresh(new AbortController().signal);
+    });
+    expect(screen.getByText("Checking Inbox access…")).toBeVisible();
+
+    pending.resolve(
+      Response.json({
+        items: [review],
+        counts: { review: 1, clarification: 0 },
+        nextCursor: null,
+      }),
+    );
+    await act(() => refresh);
+    expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
   });
 });
