@@ -8,6 +8,7 @@ export default defineConfig({
     ...base.test,
     include: [
       "test/release/factory-runtime.node.fixture.ts",
+      "test/release/factory-diagnosis.node.fixture.ts",
       "test/release/factory-benchmark-qualification.node.fixture.ts",
     ],
     fileParallelism: false,
