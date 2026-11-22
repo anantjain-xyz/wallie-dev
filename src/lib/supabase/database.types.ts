@@ -10199,6 +10199,19 @@ export type Database = {
         }
         Returns: Json
       }
+      acquire_factory_workflow_ownership: {
+        Args: {
+          p_candidate_ownership_token: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          execution_generation: number
+          ownership_token: string
+        }[]
+      }
       activate_factory_routing_canary: {
         Args: {
           p_actor_user_id: string

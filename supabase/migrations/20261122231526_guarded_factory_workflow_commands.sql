@@ -150,6 +150,7 @@ declare
   execution internal.factory_workflow_executions;
   input_job_id uuid;
   input_attempt_count integer;
+  input_publication public.session_checkpoint_publications;
   plan jsonb;
   entry jsonb;
 begin
@@ -194,6 +195,21 @@ begin
   if not internal.is_bounded_factory_workflow_next_path(plan) then
     raise exception 'The graph must form one next-only path with at most 128 nodes.' using errcode = 'PT422';
   end if;
+  if exists (select 1 from jsonb_array_elements(plan->'nodes') node where node->>'operation' = 'validation')
+    and not exists (
+      select 1 from public.sessions session
+      join public.delivery_policy_revisions policy
+        on (policy.id, policy.workspace_id, policy.pipeline_id) =
+          (session.pinned_delivery_policy_revision_id, session.workspace_id, session.pipeline_id)
+      where session.id = p_root_session_id and jsonb_array_length(policy.requirements->'requiredEvidence') > 0
+        and not exists (
+          select 1 from jsonb_array_elements_text(policy.requirements->'requiredEvidence') evidence(key)
+          where evidence.key collate "C" !~
+            '^([A-Za-z0-9][A-Za-z0-9._/-]{0,199}|browser:(screenshot|video):[A-Za-z0-9][A-Za-z0-9._-]{0,99})$'
+        )
+    ) then
+    raise exception 'The graph requires a pinned delivery policy with valid required evidence.' using errcode = 'PT422';
+  end if;
   if p_input_run_id is null and exists (
     select 1 from jsonb_array_elements(plan->'nodes') node
     where node->>'kind' = 'human-gate' or node->>'operation' in ('validation', 'checkpoint')
@@ -217,12 +233,17 @@ begin
       (p_input_run_id, input_job_id, p_root_session_id, p_workspace_id, input_attempt_count)
     for share;
     if found then
-      perform 1 from public.session_checkpoint_publications publication
+      select publication.* into input_publication from public.session_checkpoint_publications publication
       where (publication.run_id, publication.job_id, publication.session_id, publication.workspace_id, publication.attempt_count) =
         (p_input_run_id, input_job_id, p_root_session_id, p_workspace_id, input_attempt_count)
-      for key share;
+      for share;
     end if;
-    if not found then
+    if input_publication.run_id is null or not (
+      input_publication.status = 'adopted'
+      or (input_publication.status in ('pending', 'claimed')
+        and input_publication.deadline_at > clock_timestamp()
+        and internal.checkpoint_publication_is_current(input_publication))
+    ) then
       raise exception 'The graph input run has no current scoped checkpoint publication intent.' using errcode = 'PT409';
     end if;
   end if;
@@ -243,6 +264,33 @@ begin
       returning occurrence_id
     )
     select enrolled.generation, admitted.occurrence_id, true, enrolled.ownership_token from enrolled cross join admitted;
+end;
+$$;
+
+create function public.acquire_factory_workflow_ownership(
+  p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
+  p_candidate_ownership_token uuid
+) returns table (execution_generation bigint, ownership_token uuid)
+language plpgsql security definer set search_path = '' as $$
+declare execution internal.factory_workflow_executions;
+begin
+  perform internal.lock_factory_workflow_root(p_root_session_id, p_workspace_id, p_factory_id);
+  if p_candidate_ownership_token is null or p_expected_generation is null
+    or p_expected_generation not between 1 and 9007199254740990 then return; end if;
+
+  select workflow.* into execution from internal.factory_workflow_executions workflow
+  where workflow.root_session_id = p_root_session_id for no key update;
+  if not found then return; end if;
+
+  if execution.generation = p_expected_generation + 1 and execution.ownership_token = p_candidate_ownership_token then
+    return query select execution.generation, execution.ownership_token;
+  elsif execution.generation = p_expected_generation and execution.ownership_token <> p_candidate_ownership_token then
+    return query
+      update internal.factory_workflow_executions workflow
+      set generation = workflow.generation + 1, ownership_token = p_candidate_ownership_token
+      where workflow.root_session_id = p_root_session_id
+      returning workflow.generation, workflow.ownership_token;
+  end if;
 end;
 $$;
 
@@ -284,6 +332,7 @@ create or replace function public.read_factory_workflow_execution(
         cross join lateral jsonb_array_elements(execution.workflow_json::jsonb->'edges') edge
        where occurrence.root_session_id = execution.root_session_id and result.outcome = 'succeeded'
          and workspace.deletion_requested_at is null and factory.status = 'active'
+         and (execution.graph_revision_id is null or root.execution_exhaustion_code is null)
          and edge->>'kind' = 'next' and edge->>'from' = occurrence.node_id
          and not exists (
            select 1 from internal.factory_workflow_transition_receipts transition
@@ -293,6 +342,8 @@ create or replace function public.read_factory_workflow_execution(
     ), '[]'::jsonb)
   )
   from internal.factory_workflow_executions execution
+  join public.sessions root on (root.id, root.workspace_id, root.factory_id) =
+    (execution.root_session_id, execution.workspace_id, execution.factory_id)
   join public.workspaces workspace on workspace.id = execution.workspace_id
   join public.factories factory on (factory.workspace_id, factory.id) = (execution.workspace_id, execution.factory_id)
   where (execution.root_session_id, execution.workspace_id, execution.factory_id) =
@@ -300,9 +351,11 @@ create or replace function public.read_factory_workflow_execution(
 $$;
 
 revoke all on function public.register_factory_workflow_graph_revision(uuid, uuid, uuid, text, text, text),
-  public.start_factory_workflow_graph_execution(uuid, uuid, uuid, uuid, uuid) from public, anon, authenticated, service_role;
+  public.start_factory_workflow_graph_execution(uuid, uuid, uuid, uuid, uuid),
+  public.acquire_factory_workflow_ownership(uuid, uuid, uuid, bigint, uuid) from public, anon, authenticated, service_role;
 grant execute on function public.register_factory_workflow_graph_revision(uuid, uuid, uuid, text, text, text),
-  public.start_factory_workflow_graph_execution(uuid, uuid, uuid, uuid, uuid) to service_role;
+  public.start_factory_workflow_graph_execution(uuid, uuid, uuid, uuid, uuid),
+  public.acquire_factory_workflow_ownership(uuid, uuid, uuid, bigint, uuid) to service_role;
 
 -- The command kind comes from the root's frozen plan and admitted occurrence.
 create function internal.factory_workflow_occurrence_command(

@@ -25,6 +25,7 @@ const transitionId = "10000000-0000-4000-8000-000000000008";
 const targetOccurrenceId = "10000000-0000-4000-8000-000000000009";
 const ownershipToken = "10000000-0000-4000-8000-000000000010";
 const inputRunId = "10000000-0000-4000-8000-000000000011";
+const terminalResultId = "10000000-0000-4000-8000-000000000012";
 const nodeId = "check-policy";
 const edgeId = "continue-to-checkpoint";
 const generation = 2;
@@ -33,10 +34,7 @@ const ownership = {
   p_expected_generation: generation,
   p_ownership_token: ownershipToken,
 };
-const handoff = {
-  execution_generation: generation + 1,
-  ownership_token: "10000000-0000-4000-8000-000000000012",
-};
+const handoffGeneration = generation + 1;
 const admitted = {
   status: "admitted",
   resultId,
@@ -72,20 +70,23 @@ function policyFixture({
   observedPolicy = policyRevisionId,
   resultCanBeRecorded = true,
   persisted,
+  loseHandoffResponse = false,
 }: {
   observedPolicy?: string | null;
   resultCanBeRecorded?: boolean;
-  persisted?: "result" | "transition";
+  persisted?: "result" | "transition" | "terminal";
+  loseHandoffResponse?: boolean;
 } = {}) {
   const requests: Array<{ name: string; args: unknown }> = [];
   const origin = "https://workflow-fixture.supabase.test";
   let currentGeneration = generation;
+  let acceptedOwner: string | undefined;
   const transport: typeof fetch = async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     const url = new URL(request.url);
     expect(url.origin).toBe(origin);
     if (url.pathname === "/rest/v1/sessions" && request.method === "GET") {
-      expect(persisted).not.toBe("transition");
+      expect(["transition", "terminal"]).not.toContain(persisted);
       expect(url.searchParams.get("id")).toBe("eq." + scope.p_root_session_id);
       expect(url.searchParams.get("workspace_id")).toBe("eq." + scope.p_workspace_id);
       expect(url.searchParams.get("factory_id")).toBe("eq." + scope.p_factory_id);
@@ -93,7 +94,8 @@ function policyFixture({
     }
     expect(request.method).toBe("POST");
     const name = url.pathname.replace(/^\/rest\/v1\/rpc\//, "");
-    requests.push({ name, args: await request.json() });
+    const args: unknown = await request.json();
+    requests.push({ name, args });
     switch (name) {
       case "read_factory_workflow_execution":
         return Response.json({
@@ -107,7 +109,12 @@ function policyFixture({
             workflow_digest: graph.canonicalDigest,
             generation: currentGeneration,
           },
-          occurrences: [{ occurrence_id: occurrenceId, node_id: nodeId }],
+          occurrences: [
+            { occurrence_id: occurrenceId, node_id: nodeId },
+            ...(persisted === "terminal"
+              ? [{ occurrence_id: targetOccurrenceId, node_id: "checkpoint" }]
+              : []),
+          ],
           results: persisted
             ? [
                 {
@@ -116,10 +123,20 @@ function policyFixture({
                   outcome: "succeeded",
                   evidence_ref: resultRef,
                 },
+                ...(persisted === "terminal"
+                  ? [
+                      {
+                        occurrence_id: targetOccurrenceId,
+                        result_id: terminalResultId,
+                        outcome: "succeeded",
+                        evidence_ref: "checkpoint:" + inputRunId,
+                      },
+                    ]
+                  : []),
               ]
             : [],
           transitions:
-            persisted === "transition"
+            persisted === "transition" || persisted === "terminal"
               ? [
                   {
                     source_occurrence_id: occurrenceId,
@@ -129,9 +146,28 @@ function policyFixture({
                 ]
               : [],
         });
-      case "advance_factory_workflow_generation":
-        currentGeneration = handoff.execution_generation;
-        return Response.json(handoff);
+      case "acquire_factory_workflow_ownership": {
+        if (
+          typeof args !== "object" ||
+          args === null ||
+          !("p_candidate_ownership_token" in args) ||
+          typeof args.p_candidate_ownership_token !== "string"
+        )
+          throw new Error("Missing candidate ownership token.");
+        const candidate = args.p_candidate_ownership_token;
+        if (acceptedOwner === undefined) {
+          currentGeneration = handoffGeneration;
+          acceptedOwner = candidate;
+          if (loseHandoffResponse)
+            throw new TypeError("Connection closed after ownership changed.");
+        } else {
+          expect(candidate).toBe(acceptedOwner);
+        }
+        return Response.json({
+          execution_generation: currentGeneration,
+          ownership_token: acceptedOwner,
+        });
+      }
       case "check_factory_workflow_execution_policy":
         return Response.json({ policy_revision_id: observedPolicy, exhaustion_code: null });
       case "record_factory_workflow_command_result":
@@ -226,30 +262,58 @@ it("resumes from the persisted result through guarded successor admission", asyn
   ]);
 });
 
-it("rotates ownership before replaying an admitted transition in Workerd", async () => {
-  const { admin, requests } = policyFixture({ persisted: "transition" });
+it.each([
+  { scenario: "the first response arrives", loseHandoffResponse: false },
+  { scenario: "the response is lost after acquiring ownership", loseHandoffResponse: true },
+])(
+  "replays an admitted transition with the new owner when $scenario",
+  async ({ loseHandoffResponse }) => {
+    const { admin, requests } = policyFixture({ persisted: "transition", loseHandoffResponse });
 
-  await expect(resumeFactoryWorkflowOccurrence(admin, observedMetadata)).resolves.toEqual({
-    ownership: handoff,
-    progress: admitted,
-  });
-  expect(requests).toEqual([
-    { name: "read_factory_workflow_execution", args: scope },
-    {
-      name: "advance_factory_workflow_generation",
-      args: { ...scope, p_expected_generation: generation },
-    },
-    { name: "read_factory_workflow_execution", args: scope },
-    {
-      name: "admit_factory_workflow_next",
+    const recovered = await resumeFactoryWorkflowOccurrence(admin, observedMetadata);
+    const token = recovered.ownership?.ownership_token;
+    expect(token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(token).not.toBe(ownershipToken);
+    expect(recovered).toEqual({
+      ownership: { execution_generation: handoffGeneration, ownership_token: token },
+      progress: admitted,
+    });
+    const acquire = {
+      name: "acquire_factory_workflow_ownership",
       args: {
         ...scope,
-        p_expected_generation: handoff.execution_generation,
-        p_ownership_token: handoff.ownership_token,
-        p_source_occurrence_id: occurrenceId,
-        p_edge_id: edgeId,
-        p_expected_result_id: resultId,
+        p_expected_generation: generation,
+        p_candidate_ownership_token: token,
       },
-    },
-  ]);
+    };
+    expect(requests).toEqual([
+      { name: "read_factory_workflow_execution", args: scope },
+      acquire,
+      ...(loseHandoffResponse ? [acquire] : []),
+      { name: "read_factory_workflow_execution", args: scope },
+      {
+        name: "admit_factory_workflow_next",
+        args: {
+          ...scope,
+          p_expected_generation: handoffGeneration,
+          p_ownership_token: token,
+          p_source_occurrence_id: occurrenceId,
+          p_edge_id: edgeId,
+          p_expected_result_id: resultId,
+        },
+      },
+    ]);
+  },
+);
+
+it("reads a terminal checkpoint receipt after its source rows are gone", async () => {
+  const { admin, requests } = policyFixture({ persisted: "terminal" });
+  await expect(
+    executeFactoryWorkflowOccurrence(admin, {
+      ...pin,
+      nodeId: "checkpoint",
+      occurrenceId: targetOccurrenceId,
+    }),
+  ).resolves.toEqual({ status: "terminal", outcome: "succeeded", resultId: terminalResultId });
+  expect(requests).toEqual([{ name: "read_factory_workflow_execution", args: scope }]);
 });

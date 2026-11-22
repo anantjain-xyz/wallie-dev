@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
@@ -22,6 +22,11 @@ import { observeWorkflowCheckpoint, observeWorkflowHumanApproval } from "./obser
 type Admin = SupabaseClient<Database>;
 type CommandTarget = DeterministicWorkflowOccurrence["command"];
 type GraphNode = z.output<typeof workflowGraphSchema>["nodes"][number];
+type WorkflowScope = Pick<
+  WorkflowOccurrenceMetadata,
+  "p_root_session_id" | "p_workspace_id" | "p_factory_id"
+>;
+type ValidationPolicyBlocker = { status: "blocked"; code: "validation_policy_required" };
 
 const snapshotSchema = z.object({
   execution: z.object({
@@ -34,32 +39,49 @@ const snapshotSchema = z.object({
     workflow_digest: z.string().regex(/^[0-9a-f]{64}$/),
     generation: z.number().int().positive().safe(),
   }),
-  occurrences: z.array(z.object({ occurrence_id: z.string().uuid(), node_id: z.string() })),
+  occurrences: z.array(
+    z.object({
+      occurrence_id: z.string().uuid(),
+      node_id: z.string(),
+      is_entry: z.boolean().optional(),
+    }),
+  ),
   results: z.array(
     z.object({
       occurrence_id: z.string().uuid(),
       result_id: z.string().uuid(),
       outcome: z.enum(["succeeded", "failed", "canceled"]),
-      evidence_ref: z.string().nullable(),
     }),
   ),
-  transitions: z
-    .array(
-      z.object({
-        source_occurrence_id: z.string().uuid(),
-        source_result_id: z.string().uuid(),
-        edge_id: z.string(),
-      }),
-    )
-    .default([]),
 });
+
+async function readRequiredValidationKeys(admin: Admin, scope: WorkflowScope) {
+  const session = await admin
+    .from("sessions")
+    .select("pinned_delivery_policy_revision_id")
+    .eq("id", scope.p_root_session_id)
+    .eq("workspace_id", scope.p_workspace_id)
+    .eq("factory_id", scope.p_factory_id)
+    .maybeSingle();
+  if (session.error) throw session.error;
+  if (!session.data?.pinned_delivery_policy_revision_id) return [];
+  const policy = await admin
+    .from("delivery_policy_revisions")
+    .select("requirements")
+    .eq("id", session.data.pinned_delivery_policy_revision_id)
+    .eq("workspace_id", scope.p_workspace_id)
+    .maybeSingle();
+  if (policy.error) throw policy.error;
+  const requirements = deliveryRequirementsSchema.safeParse(policy.data?.requirements);
+  return requirements.success ? requirements.data.requiredEvidence : [];
+}
 
 async function loadCommandTarget(
   admin: Admin,
   node: GraphNode,
   pin: WorkflowOccurrencePin,
   inputRunId: string | null | undefined,
-): Promise<CommandTarget | null> {
+): Promise<CommandTarget | ValidationPolicyBlocker | null> {
   if (node.kind === "deterministic" && node.operation === "policy") {
     const { data, error } = await admin
       .from("sessions")
@@ -78,6 +100,12 @@ async function loadCommandTarget(
       },
     };
   }
+  const validationKeys =
+    node.kind === "deterministic" && node.operation === "validation"
+      ? await readRequiredValidationKeys(admin, pin)
+      : null;
+  if (validationKeys?.length === 0)
+    return { status: "blocked", code: "validation_policy_required" };
   if (!inputRunId || (node.kind !== "deterministic" && node.kind !== "human-gate")) return null;
 
   const { data: source, error: sourceError } = await admin
@@ -101,48 +129,30 @@ async function loadCommandTarget(
   if (node.kind === "deterministic" && node.operation === "checkpoint")
     return { kind: "checkpoint", target: run };
 
-  if (node.kind === "deterministic") {
-    const [plan, session] = await Promise.all([
-      admin
-        .from("session_validation_plans")
-        .select("validation_tree_sha")
-        .eq("workspace_id", pin.p_workspace_id)
-        .eq("session_id", run.sessionId)
-        .eq("run_id", run.runId)
-        .eq("job_id", run.jobId)
-        .eq("attempt_count", run.attemptCount)
-        .eq("repository_id", run.repositoryId)
-        .eq("commit_sha", run.commitSha)
-        .maybeSingle(),
-      admin
-        .from("sessions")
-        .select("pinned_delivery_policy_revision_id")
-        .eq("id", run.sessionId)
-        .eq("workspace_id", pin.p_workspace_id)
-        .eq("factory_id", pin.p_factory_id)
-        .maybeSingle(),
-    ]);
-    if (plan.error) throw plan.error;
-    if (session.error) throw session.error;
-    if (!plan.data || !session.data?.pinned_delivery_policy_revision_id) return null;
-    const policy = await admin
-      .from("delivery_policy_revisions")
-      .select("requirements")
-      .eq("id", session.data.pinned_delivery_policy_revision_id)
+  if (node.kind === "deterministic" && validationKeys) {
+    const plan = await admin
+      .from("session_validation_plans")
+      .select("validation_tree_sha")
       .eq("workspace_id", pin.p_workspace_id)
+      .eq("session_id", run.sessionId)
+      .eq("run_id", run.runId)
+      .eq("job_id", run.jobId)
+      .eq("attempt_count", run.attemptCount)
+      .eq("repository_id", run.repositoryId)
+      .eq("commit_sha", run.commitSha)
       .maybeSingle();
-    if (policy.error) throw policy.error;
-    const requirements = deliveryRequirementsSchema.safeParse(policy.data?.requirements);
-    if (!requirements.success) return null;
+    if (plan.error) throw plan.error;
+    if (!plan.data) return null;
     return {
       kind: "validation",
       target: {
         ...run,
         treeSha: plan.data.validation_tree_sha,
-        requiredEvidenceKeys: requirements.data.requiredEvidence,
+        requiredEvidenceKeys: validationKeys,
       },
     };
   }
+  if (node.kind !== "human-gate") return null;
 
   const [publication, attempt] = await Promise.all([
     admin
@@ -194,33 +204,40 @@ async function loadCommandTarget(
   };
 }
 
+async function readWorkflowSnapshot(admin: Admin, scope: WorkflowScope) {
+  const { data, error } = await admin.rpc("read_factory_workflow_execution", scope);
+  if (error) throw error;
+  const parsed = snapshotSchema.safeParse(data);
+  if (!parsed.success) return null;
+  const { execution } = parsed.data;
+  const { workflow_json: json } = execution;
+  if (
+    execution.root_session_id !== scope.p_root_session_id ||
+    execution.workspace_id !== scope.p_workspace_id ||
+    execution.factory_id !== scope.p_factory_id ||
+    createHash("sha256").update(json, "utf8").digest("hex") !== execution.workflow_digest
+  )
+    return null;
+  const decoded = parseFactoryDefinitionJson(json);
+  const graph = workflowGraphSchema.safeParse(decoded.ok ? decoded.value : null);
+  return graph.success ? { ...parsed.data, graph: graph.data } : null;
+}
+
 async function readOccurrenceContext(admin: Admin, pin: WorkflowOccurrenceMetadata) {
   const scope = {
     p_workspace_id: pin.p_workspace_id,
     p_factory_id: pin.p_factory_id,
     p_root_session_id: pin.p_root_session_id,
   };
-  const { data, error } = await admin.rpc("read_factory_workflow_execution", scope);
-  if (error) throw error;
-  const parsed = snapshotSchema.safeParse(data);
-  if (!parsed.success) return { status: "unavailable" } as const;
-  const { execution, occurrences, results, transitions } = parsed.data;
-  const { workflow_json: json } = execution;
-  if (
-    execution.root_session_id !== pin.p_root_session_id ||
-    execution.workspace_id !== pin.p_workspace_id ||
-    execution.factory_id !== pin.p_factory_id ||
-    execution.workflow_digest !== pin.workflowDigest ||
-    createHash("sha256").update(json, "utf8").digest("hex") !== pin.workflowDigest
-  )
+  const snapshot = await readWorkflowSnapshot(admin, scope);
+  if (!snapshot || snapshot.execution.workflow_digest !== pin.workflowDigest)
     return { status: "unavailable" } as const;
-  if (execution.generation !== pin.p_expected_generation) return { status: "stale" } as const;
-  const decoded = parseFactoryDefinitionJson(json);
-  const graph = workflowGraphSchema.safeParse(decoded.ok ? decoded.value : null);
+  const { execution, occurrences, results, graph } = snapshot;
   const occurrence = occurrences.find((row) => row.occurrence_id === pin.occurrenceId);
-  if (!graph.success || occurrence?.node_id !== pin.nodeId)
-    return { status: "unavailable" } as const;
-  const node = graph.data.nodes.find((candidate) => candidate.id === pin.nodeId);
+  if (occurrence?.node_id !== pin.nodeId) return { status: "unavailable" } as const;
+  if (execution.generation !== pin.p_expected_generation)
+    return { status: "stale", currentGeneration: execution.generation } as const;
+  const node = graph.nodes.find((candidate) => candidate.id === pin.nodeId);
   if (!node) return { status: "unavailable" } as const;
   return {
     status: "current" as const,
@@ -229,9 +246,33 @@ async function readOccurrenceContext(admin: Admin, pin: WorkflowOccurrenceMetada
     occurrence,
     node,
     results,
-    transitions,
-    edges: graph.data.edges,
+    edges: graph.edges,
   };
+}
+
+export async function resumeEnrolledFactoryWorkflowGraph(
+  admin: Admin,
+  scope: WorkflowScope,
+  generation: number,
+) {
+  const snapshot = await readWorkflowSnapshot(admin, scope);
+  const occurrence = snapshot?.occurrences.find((candidate) => candidate.is_entry);
+  if (!snapshot || !occurrence || occurrence.node_id !== snapshot.graph.entryNodeId)
+    return { entry: null, ownership: null, progress: { status: "unavailable" } } as const;
+  const entry = {
+    ...scope,
+    p_expected_generation: generation,
+    occurrenceId: occurrence.occurrence_id,
+    nodeId: occurrence.node_id,
+    workflowDigest: snapshot.execution.workflow_digest,
+  };
+  const { ownership, progress } = await resumeFactoryWorkflowOccurrence(admin, entry);
+  const currentGeneration =
+    ownership?.execution_generation ??
+    (progress.status === "stale" && "currentGeneration" in progress
+      ? progress.currentGeneration
+      : snapshot.execution.generation);
+  return { entry: { ...entry, p_expected_generation: currentGeneration }, ownership, progress };
 }
 
 /** The recovery controller explicitly hands off an observed occurrence before continuing it. */
@@ -241,13 +282,39 @@ export async function resumeFactoryWorkflowOccurrence(
 ) {
   const observed = await readOccurrenceContext(admin, pin);
   if (observed.status !== "current") return { ownership: null, progress: observed };
-  const { data: ownership, error } = await admin
-    .rpc("advance_factory_workflow_generation", {
-      ...observed.scope,
-      p_expected_generation: pin.p_expected_generation,
-    })
-    .single();
-  if (error) throw error;
+  // A transport failure can follow a committed handoff. Retry the same
+  // candidate capability so recovery cannot take over a competing owner.
+  const candidate = randomUUID();
+  const acquire = async () => {
+    const { data, error } = await admin
+      .rpc("acquire_factory_workflow_ownership", {
+        ...observed.scope,
+        p_expected_generation: pin.p_expected_generation,
+        p_candidate_ownership_token: candidate,
+      })
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  };
+  let ownership;
+  try {
+    ownership = await acquire();
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code) throw error;
+    ownership = await acquire();
+  }
+  if (!ownership) {
+    const latest = await readOccurrenceContext(admin, pin);
+    return {
+      ownership: null,
+      progress: latest.status === "stale" ? latest : { status: "unavailable" as const },
+    };
+  }
+  if (
+    ownership.execution_generation !== pin.p_expected_generation + 1 ||
+    ownership.ownership_token !== candidate
+  )
+    throw new Error("The workflow handoff returned a different ownership receipt.");
   const progress = await executeFactoryWorkflowOccurrence(admin, {
     ...pin,
     p_expected_generation: ownership.execution_generation,
@@ -260,31 +327,34 @@ export async function resumeFactoryWorkflowOccurrence(
 export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: WorkflowOccurrencePin) {
   const observed = await readOccurrenceContext(admin, pin);
   if (observed.status !== "current") return observed;
-  const { scope, execution, occurrence, node, results, transitions, edges } = observed;
+  const { scope, execution, occurrence, node, results, edges } = observed;
   const nextEdge = edges.find((edge) => edge.kind === "next" && edge.from === pin.nodeId);
   const admitNext: DeterministicWorkflowCommands["admitNext"] = async (args) => {
     const result = await admin.rpc("admit_factory_workflow_next", args).maybeSingle();
     if (result.error) throw result.error;
     return result.data ?? { status: "blocked", code: "evidence_stale" };
   };
-  const accepted = transitions.find(
-    (transition) =>
-      transition.source_occurrence_id === pin.occurrenceId && transition.edge_id === nextEdge?.id,
-  );
-  if (accepted && nextEdge) {
+  const stored = results.find((row) => row.occurrence_id === pin.occurrenceId);
+  if (stored) {
+    const terminal = {
+      status: "terminal" as const,
+      resultId: stored.result_id,
+      outcome: stored.outcome,
+    };
+    if (stored.outcome !== "succeeded" || !nextEdge) return terminal;
     const receipt = await admitNext({
       ...scope,
       p_expected_generation: pin.p_expected_generation,
       p_ownership_token: pin.p_ownership_token,
       p_source_occurrence_id: pin.occurrenceId,
-      p_edge_id: accepted.edge_id,
-      p_expected_result_id: accepted.source_result_id,
+      p_edge_id: nextEdge.id,
+      p_expected_result_id: stored.result_id,
     });
     return "status" in receipt
-      ? receipt
+      ? { ...terminal, successorBlocked: receipt.code }
       : {
           status: "admitted" as const,
-          resultId: accepted.source_result_id,
+          resultId: stored.result_id,
           transitionId: receipt.transition_id,
           targetOccurrenceId: receipt.target_occurrence_id,
           nextNodeId: nextEdge.to,
@@ -292,11 +362,7 @@ export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: Workfl
   }
   const command = await loadCommandTarget(admin, node, pin, execution.graph_input_run_id);
   if (!command) return { status: "pending", code: "evidence_missing" } as const;
-  const stored = results.find((row) => row.occurrence_id === pin.occurrenceId);
-  const prefix = command.kind + ":";
-  const proofRef = stored?.evidence_ref?.startsWith(prefix)
-    ? stored.evidence_ref.slice(prefix.length)
-    : null;
+  if ("status" in command) return command;
   const captured: DeterministicWorkflowOccurrence = {
     pin: {
       ...scope,
@@ -307,16 +373,7 @@ export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: Workfl
     },
     command,
     nextEdgeId: nextEdge?.id ?? null,
-    result:
-      stored?.outcome === "succeeded"
-        ? {
-            resultId: stored.result_id,
-            outcome: "succeeded",
-            verifiedProof: proofRef ? { kind: command.kind, receiptRef: proofRef } : null,
-          }
-        : stored
-          ? { resultId: stored.result_id, outcome: stored.outcome }
-          : null,
+    result: null,
   };
 
   const adapters: DeterministicWorkflowCommands = {

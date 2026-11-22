@@ -148,13 +148,24 @@ function fixtureAdmin(overrides: Record<string, unknown> = {}) {
   };
   const from = vi.fn((table: string) => {
     if (!Object.hasOwn(tables, table)) throw new Error("Unknown table " + table);
+    const filters = new Map<string, unknown>();
     const query = {
       select: vi.fn(() => query),
-      eq: vi.fn(() => query),
+      eq: vi.fn((column: string, value: unknown) => {
+        filters.set(column, value);
+        return query;
+      }),
       order: vi.fn(() => query),
       limit: vi.fn(() => query),
       abortSignal: vi.fn(() => query),
-      maybeSingle: async () => ({ data: tables[table], error: null }),
+      maybeSingle: async () => {
+        const fixture = tables[table];
+        const data = Array.isArray(fixture)
+          ? (fixture.find((row) => [...filters].every(([key, value]) => row[key] === value)) ??
+            null)
+          : fixture;
+        return { data, error: null };
+      },
     };
     return query;
   });
@@ -253,6 +264,21 @@ describe("workflow human approval evidence", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("uses the observer deadline to read the pinned approval policy", async () => {
+    const { admin, from } = fixtureAdmin();
+    const signal = new AbortController().signal;
+
+    await expect(
+      observeWorkflowHumanApproval({ admin, pin, target: gate, signal }),
+    ).resolves.toMatchObject({ status: "passed" });
+    const revisionRead = from.mock.calls.findIndex(
+      ([table]) => table === "factory_definition_revisions",
+    );
+    expect(from.mock.results[revisionRead]?.value?.abortSignal).toHaveBeenCalledExactlyOnceWith(
+      signal,
+    );
+  });
+
   it("accepts final approval when the completed stage remains selected", async () => {
     const { admin } = fixtureAdmin({
       sessions: {
@@ -303,9 +329,31 @@ describe("workflow human approval evidence", () => {
     expect(from).not.toHaveBeenCalledWith("session_stage_approval_receipts");
   });
 
+  it("limits blocking review threads to the exact session", async () => {
+    const openBlockingThread = {
+      id: "blocking",
+      workspace_id: pin.p_workspace_id,
+      session_id: gate.sessionId,
+      kind: "blocking",
+      status: "open",
+    };
+    const { admin: otherSession } = fixtureAdmin({
+      artifact_review_threads: [{ ...openBlockingThread, session_id: nextStageId }],
+    });
+    await expect(
+      observeWorkflowHumanApproval({ admin: otherSession, pin, target: gate }),
+    ).resolves.toMatchObject({ status: "passed" });
+
+    const { admin: sameSession } = fixtureAdmin({
+      artifact_review_threads: [openBlockingThread],
+    });
+    await expect(
+      observeWorkflowHumanApproval({ admin: sameSession, pin, target: gate }),
+    ).resolves.toEqual({ status: "blocked", code: "approval_blocked" });
+  });
+
   it.each([
     { session_phase_completions: null },
-    { artifact_review_threads: { id: "blocking" } },
     { session_stage_approval_receipts: { ...approval, artifact_version: 3 } },
     { session_stage_approval_receipts: { ...approval, completion_id: nextStageId } },
     {

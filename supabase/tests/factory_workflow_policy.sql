@@ -67,6 +67,7 @@ select scenario, body, encode(sha256(convert_to(body, 'UTF8')), 'hex') as digest
 from (values
   ('policy', '{"kind":"graph","schemaVersion":1,"entryNodeId":"policy.check","nodes":[{"id":"policy.check","kind":"deterministic","operation":"policy"},{"id":"policy.recheck","kind":"deterministic","operation":"policy"}],"edges":[{"id":"next.policy.check","kind":"next","from":"policy.check","to":"policy.recheck"}],"grants":[]}'),
   ('needs-input', '{"kind":"graph","schemaVersion":1,"entryNodeId":"checkpoint.check","nodes":[{"id":"checkpoint.check","kind":"deterministic","operation":"checkpoint"}],"edges":[],"grants":[]}'),
+  ('validation', '{"kind":"graph","schemaVersion":1,"entryNodeId":"validation.check","nodes":[{"id":"validation.check","kind":"deterministic","operation":"validation"}],"edges":[],"grants":[]}'),
   ('unsupported', '{"kind":"graph","schemaVersion":1,"entryNodeId":"agent.review","nodes":[{"id":"agent.review","kind":"agent","agentPromptRevisionId":"64500000-0000-4000-8000-000000000099"}],"edges":[],"grants":[]}')
 ) inputs(scenario, body);
 
@@ -135,6 +136,9 @@ select throws_ok($$select public.start_factory_workflow_graph_execution(root_ses
 select throws_ok($$select public.start_factory_workflow_graph_execution(root_session_id, workspace_id, factory_id,
   graph_revision_id) from op645_root cross join op645_registered where scenario = 'unsupported'$$,
   'PT422', 'The graph requires workflow capabilities that are unavailable.', 'graph enrollment rejects an unsupported agent node');
+select throws_ok($$select public.start_factory_workflow_graph_execution(root_session_id, workspace_id, factory_id,
+  graph_revision_id) from op645_root cross join op645_registered where scenario = 'validation'$$,
+  'PT422', 'The graph requires a pinned delivery policy with valid required evidence.', 'validation requires a pinned delivery policy');
 select throws_ok($$select public.start_factory_workflow_graph_execution(root_session_id, workspace_id, factory_id,
   graph_revision_id) from op645_root cross join op645_registered where scenario = 'needs-input'$$,
   'PT422', 'The graph requires a scoped checkpoint input run.', 'an evidence-dependent graph requires an immutable input run');
@@ -225,6 +229,37 @@ select ok((select checked.policy_revision_id is null and checked.exhaustion_code
   cross join lateral public.check_factory_workflow_execution_policy(started.root_session_id, started.workspace_id,
     started.factory_id, handoff.execution_generation, handoff.ownership_token, started.entry_occurrence_id) checked),
   'the new owner can evaluate the same admitted occurrence');
+
+select throws_ok($$select public.acquire_factory_workflow_ownership(started.root_session_id, foreign_factory.workspace_id,
+  foreign_factory.id, handoff.execution_generation, pg_temp.op645_id(80))
+  from op645_started started cross join op645_handoff handoff cross join public.factories foreign_factory
+  where foreign_factory.workspace_id = pg_temp.op645_id(12) and foreign_factory.is_default$$,
+  'PT404', 'Workflow root session is unavailable.', 'ownership acquisition respects the exact factory scope');
+create temp table op645_acquired as
+select acquired.* from op645_started started cross join op645_handoff handoff
+cross join lateral public.acquire_factory_workflow_ownership(started.root_session_id, started.workspace_id,
+  started.factory_id, handoff.execution_generation, pg_temp.op645_id(80)) acquired;
+select ok((select acquired.execution_generation = handoff.execution_generation + 1
+    and acquired.ownership_token = pg_temp.op645_id(80)
+  from op645_acquired acquired cross join op645_handoff handoff), 'acquisition rotates ownership to the supplied candidate');
+select ok((select (replay.execution_generation, replay.ownership_token) = (acquired.execution_generation, acquired.ownership_token)
+  from op645_started started cross join op645_handoff handoff cross join op645_acquired acquired
+  cross join lateral public.acquire_factory_workflow_ownership(started.root_session_id, started.workspace_id,
+    started.factory_id, handoff.execution_generation, pg_temp.op645_id(80)) replay), 'the same candidate recovers an exact acquisition replay');
+select is((select count(*) from op645_started started cross join op645_handoff handoff
+  cross join lateral public.acquire_factory_workflow_ownership(started.root_session_id, started.workspace_id,
+    started.factory_id, handoff.execution_generation, pg_temp.op645_id(81)) denied), 0::bigint,
+  'a competing candidate for the previous generation cannot acquire ownership');
+select is((select count(*) from op645_started started cross join op645_acquired acquired
+  cross join lateral public.acquire_factory_workflow_ownership(started.root_session_id, started.workspace_id,
+    started.factory_id, acquired.execution_generation, acquired.ownership_token) denied), 0::bigint,
+  'a new acquisition requires a fresh candidate');
+select ok((select not (public.read_factory_workflow_execution(root_session_id, workspace_id, factory_id)->'execution' ? 'ownership_token')
+  from op645_started), 'acquired ownership stays out of restart reads');
+select ok(has_function_privilege('service_role', 'public.acquire_factory_workflow_ownership(uuid,uuid,uuid,bigint,uuid)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'public.acquire_factory_workflow_ownership(uuid,uuid,uuid,bigint,uuid)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.acquire_factory_workflow_ownership(uuid,uuid,uuid,bigint,uuid)', 'EXECUTE'),
+  'ownership acquisition is restricted to service callers');
 
 -- Admit a second root from a definition that explicitly pins a real execution policy.
 create temp table op645_policy as select * from public.save_execution_policy(pg_temp.op645_id(11), pg_temp.op645_id(1), 0,
@@ -330,6 +365,12 @@ select is((select count(*) from op645_configured_start started cross join op645_
   where started.scenario = 'exhausted'), 0::bigint, 'an exhausted root cannot record a command result even with its exact policy reference');
 select is((select public.read_factory_workflow_execution(session_id, workspace_id, factory_id)->'runnableTransitions'
   from op645_configured_start where scenario = 'exhausted'), '[]'::jsonb, 'exhaustion does not make the successor runnable');
+select ok((select snapshot.value->'runnableTransitions' = '[]'::jsonb
+    and snapshot.value->'results' @> jsonb_build_array(jsonb_build_object('result_id', receipt.result_id))
+  from op645_configured_start started cross join op645_command_result receipt
+  cross join lateral (select public.read_factory_workflow_execution(started.session_id, started.workspace_id,
+    started.factory_id) as value) snapshot where started.scenario = 'receipt'),
+  'a known exhausted root hides its candidate while retaining the exact result receipt');
 select is((select count(*) from op645_configured_start started cross join op645_command_result receipt
   cross join lateral public.admit_factory_workflow_next(started.session_id, started.workspace_id, started.factory_id,
     started.execution_generation, started.ownership_token, started.entry_occurrence_id, 'next.policy.check', receipt.result_id) denied
@@ -339,6 +380,87 @@ select ok((select not replay.created and replay.result_id = receipt.result_id
   cross join lateral public.record_factory_workflow_command_result(started.session_id, started.workspace_id, started.factory_id,
     started.execution_generation, started.ownership_token, started.entry_occurrence_id, receipt.evidence_ref) replay
   where started.scenario = 'receipt'), 'later exhaustion preserves the recorded command result for exact replay');
+
+create function pg_temp.op645_validation_session(p_title text, p_revision bigint, p_evidence jsonb)
+returns table (session_id uuid, job_id uuid, run_id uuid) language plpgsql as $$
+declare policy_id uuid; definition_id uuid := gen_random_uuid();
+begin
+  select policy.id into strict policy_id from public.save_delivery_policy(pg_temp.op645_id(11), pg_temp.op645_id(31),
+    pg_temp.op645_id(1), p_revision, jsonb_build_object('version', 1, 'deliveryMode', 'analysis',
+      'requiredChecks', '[]'::jsonb, 'requiredEvidence', p_evidence, 'freshnessSeconds', 600, 'minimumApprovals', 0,
+      'requireCodeOwnerReview', false, 'requireResolvedThreads', false, 'requireArtifactApprovalForDelivery', false)) policy;
+  with definition as (
+    select base.workspace_id, base.factory_id, base.created_by,
+      jsonb_set(base.definition_json::jsonb, '{deliveryPolicyRevisionId}', to_jsonb(policy_id), false)::text as body
+    from public.factory_definition_revisions base where base.id = pg_temp.op645_id(42)
+  ), revision as (
+    insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version, definition_json,
+      canonical_digest, created_by)
+    select definition_id, workspace_id, factory_id, 1, body, encode(sha256(convert_to(body, 'UTF8')), 'hex'), created_by
+    from definition returning id, workspace_id, factory_id, created_by
+  )
+  insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
+  select workspace_id, factory_id, id, p_revision + 3, created_by from revision;
+  return query select admitted.session_id, admitted.job_id, admitted.run_id from public.create_session_with_first_job(
+    pg_temp.op645_id(11), pg_temp.op645_id(21), p_title, 'Validate the admitted output.', 'codex', 'gpt-5.5') admitted;
+end;
+$$;
+create temp table op645_validation_roots as
+select 'empty-policy'::text as scenario, admitted.* from pg_temp.op645_validation_session('Empty evidence policy', 0, '[]') admitted;
+insert into op645_validation_roots select 'invalid-policy', admitted.*
+from pg_temp.op645_validation_session('Unsupported evidence key', 1, '["browser:trace:smoke"]') admitted;
+insert into op645_validation_roots select 'pending', admitted.*
+from pg_temp.op645_validation_session('Pending publication', 2, '["unit","browser:screenshot:smoke"]') admitted;
+insert into op645_validation_roots
+select fixture.scenario, admitted.session_id, admitted.job_id, admitted.run_id
+from (values ('expired'), ('stale'), ('claimed'), ('adopted')) fixture(scenario)
+cross join lateral public.create_session_with_first_job(pg_temp.op645_id(11), pg_temp.op645_id(21),
+  fixture.scenario || ' publication', 'Validate the admitted output.', 'codex', 'gpt-5.5') admitted;
+create temp table op645_validation_graphs as
+select fixture.*, pin.workspace_id, pin.factory_id, registered.graph_revision_id from op645_validation_roots fixture
+join public.session_factory_admission_inputs pin using (session_id) cross join op645_graphs graph
+cross join lateral public.register_factory_workflow_graph_revision(pin.workspace_id, pin.factory_id, pin.definition_revision_id,
+  pin.definition_digest, graph.body, graph.digest) registered where graph.scenario = 'validation';
+select throws_ok(format('select public.start_factory_workflow_graph_execution(%L,%L,%L,%L)',
+  session_id, workspace_id, factory_id, graph_revision_id), 'PT422',
+  'The graph requires a pinned delivery policy with valid required evidence.', 'validation rejects ' || scenario)
+from op645_validation_graphs where scenario in ('empty-policy', 'invalid-policy') order by scenario;
+
+create function pg_temp.op645_prepare_publication(p_session_id uuid, p_job_id uuid, p_run_id uuid, p_deadline timestamptz)
+returns void language plpgsql as $$
+declare owner public.sessions; started uuid; base_sha text := repeat('a', 40);
+begin
+  select * into strict owner from public.sessions where id = p_session_id;
+  update public.agent_jobs set status = 'running', attempt_count = 1,
+    git_continuity_release_revision = (select revision from public.get_git_continuity_release_state()) where id = p_job_id;
+  started := public.start_session_job_attempt(p_job_id, 1, owner.current_stage_id, owner.current_artifact_version,
+    'codex', 'gpt-5.5', 'project', 'wallie/op645-input-' || p_run_id::text);
+  if started is distinct from p_run_id then raise exception 'Checkpoint fixture did not start its admitted run'; end if;
+  perform public.pin_session_job_git_input(p_job_id, 1, p_run_id, owner.github_repository_id, 'main', base_sha);
+  if not public.prepare_session_source_and_checkpoint_publication(p_run_id, owner.github_repository_id, 'main', base_sha,
+    base_sha, 'Validation checkpoint', 'Validation evidence fixture', '', '', '', owner.current_artifact_version,
+    'Validate the admitted output.', p_deadline) then raise exception 'Checkpoint fixture could not prepare its publication'; end if;
+end;
+$$;
+select pg_temp.op645_prepare_publication(session_id, job_id, run_id, clock_timestamp() +
+  case when scenario in ('expired', 'stale') then interval '-1 second' else interval '1 hour' end)
+from op645_validation_graphs where scenario not in ('empty-policy', 'invalid-policy');
+create temp table op645_publication_claims as
+select scenario, run_id, public.claim_session_checkpoint_publication(run_id) as claim_id
+from op645_validation_graphs where scenario in ('stale', 'claimed', 'adopted');
+select ok((select public.adopt_session_checkpoint_publication(run_id, claim_id, null, null)
+  from op645_publication_claims where scenario = 'adopted'), 'the adopted input fixture uses the checkpoint publication protocol');
+select is((select publication.status from public.session_checkpoint_publications publication
+  join op645_validation_graphs fixture using (run_id) where fixture.scenario = 'stale'), 'stale',
+  'the stale fixture retains the intent after its deadline is processed');
+select throws_ok(format('select public.start_factory_workflow_graph_execution(%L,%L,%L,%L,%L)',
+  session_id, workspace_id, factory_id, graph_revision_id, run_id), 'PT409',
+  'The graph input run has no current scoped checkpoint publication intent.', 'enrollment rejects the ' || scenario || ' intent')
+from op645_validation_graphs where scenario in ('expired', 'stale') order by scenario;
+select ok(started.created and started.ownership_token is not null, 'enrollment accepts the ' || fixture.scenario || ' intent')
+from op645_validation_graphs fixture cross join lateral public.start_factory_workflow_graph_execution(fixture.session_id,
+  fixture.workspace_id, fixture.factory_id, fixture.graph_revision_id, fixture.run_id) started
+where fixture.scenario in ('pending', 'claimed', 'adopted') order by fixture.scenario;
 
 update public.sessions set archived_at = clock_timestamp()
 where id = (select root_session_id from op645_started);

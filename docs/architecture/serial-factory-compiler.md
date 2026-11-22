@@ -123,11 +123,11 @@ The service can enroll a root session with its exact pinned serial projection. E
 
 A graph execution pins the compiled graph revision and its base factory definition. Validation, checkpoint, and human gates require the exact run that supplied the checkpoint intent. The deterministic executor follows the registered graph’s ordered next edges.
 
-| Step       | Evidence for advancing                                                                  |
-| ---------- | --------------------------------------------------------------------------------------- |
-| Validation | Required harness results and accessible assets for the exact commit and validation tree |
-| Policy     | The pinned execution policy with budget available                                       |
-| Checkpoint | An adopted publication and its exact retained source receipt                            |
-| Human gate | A current approval of the exact artifact under the pinned approver policy               |
+| Step       | Evidence for advancing                                                                                               |
+| ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| Validation | Required harness results or browser receipts, with their accessible assets, for the exact commit and validation tree |
+| Policy     | The pinned execution policy with budget available                                                                    |
+| Checkpoint | An adopted publication and its exact retained source receipt                                                         |
+| Human gate | A current approval of the exact artifact under the pinned approver policy                                            |
 
 Pending evidence and open blockers leave the occurrence available for recovery. Success records the verified result before admitting a successor. A recovery handoff issues a fresh token and continues from the original result or transition.

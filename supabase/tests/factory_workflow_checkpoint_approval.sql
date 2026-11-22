@@ -129,6 +129,12 @@ from workflow_proof_graph graph cross join workflow_proof_sources source
 cross join lateral public.start_factory_workflow_graph_execution(source.root_session_id, graph.workspace_id,
   graph.factory_id, graph.graph_revision_id, source.input_run_id) started
 where source.label = 'exact';
+create temp table workflow_proof_other_started as
+select graph.workspace_id, graph.factory_id, source.root_session_id, source.input_run_id, started.*
+from workflow_proof_graph graph cross join workflow_proof_sources source
+cross join lateral public.start_factory_workflow_graph_execution(source.root_session_id, graph.workspace_id,
+  graph.factory_id, graph.graph_revision_id, source.input_run_id) started
+where source.label = 'other';
 select is((select count(*) from workflow_proof_started started
   cross join lateral public.record_factory_workflow_command_result(started.root_session_id, started.workspace_id,
     started.factory_id, started.execution_generation, started.ownership_token, started.entry_occurrence_id,
@@ -207,6 +213,24 @@ select is((select count(*) from workflow_proof_review review cross join lateral 
   0::bigint, 'a graph admission rechecks that the observed approval still has a valid stage completion');
 select is((select jsonb_array_length(public.read_factory_workflow_execution(root_session_id, workspace_id, factory_id)->'transitions')
   from workflow_proof_started), 1, 'the invalidated human result does not admit a successor');
+
+-- The other session still has its own exact approval and completion.
+select is((select count(admitted.target_occurrence_id)
+  from workflow_proof_other_started started
+  join public.session_stage_approval_receipts approval on approval.session_id = started.root_session_id
+  cross join lateral public.record_factory_workflow_command_result(started.root_session_id, started.workspace_id,
+    started.factory_id, started.execution_generation, started.ownership_token, started.entry_occurrence_id,
+    'checkpoint:' || started.input_run_id::text) checkpoint
+  cross join lateral public.admit_factory_workflow_next(started.root_session_id, started.workspace_id,
+    started.factory_id, started.execution_generation, started.ownership_token, started.entry_occurrence_id,
+    'next.checkpoint', checkpoint.result_id) gate
+  cross join lateral public.record_factory_workflow_command_result(started.root_session_id, started.workspace_id,
+    started.factory_id, started.execution_generation, started.ownership_token, gate.target_occurrence_id,
+    'human-gate:' || approval.id::text) result
+  cross join lateral public.admit_factory_workflow_next(started.root_session_id, started.workspace_id,
+    started.factory_id, started.execution_generation, started.ownership_token, gate.target_occurrence_id,
+    'next.human', result.result_id) admitted),
+  1::bigint, 'the exact approval and surviving completion admit a successor');
 
 -- Validation uses a new definition revision so the checkpoint and human cases
 -- above retain their original delivery policy and approval behavior.

@@ -231,7 +231,7 @@ export async function observeWorkflowHumanApproval({
   try {
     const session = await loadRootSession(admin, pin, signal);
     if (!session) return blocked;
-    const definition = await loadPinnedFactoryExecution(admin, session);
+    const definition = await loadPinnedFactoryExecution(admin, session, signal);
     if (!definition) return blocked;
     const position = definition.stages.findIndex(({ id }) => id === target.stageId);
     const currentPosition = definition.stages.findIndex(

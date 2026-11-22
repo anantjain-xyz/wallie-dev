@@ -62,6 +62,7 @@ type NonAdvancingObservation =
       status: "blocked";
       code:
         | "evidence_unavailable"
+        | "validation_policy_required"
         | "evidence_failed"
         | "evidence_stale"
         | "execution_budget_exhausted"
@@ -137,7 +138,7 @@ async function readCommandEvidence(
   switch (command.kind) {
     case "validation":
       if (command.target.requiredEvidenceKeys.length === 0)
-        return { status: "pending", code: "evidence_missing" };
+        return { status: "blocked", code: "validation_policy_required" };
       return commands.readValidationEvidence({ pin, target: command.target });
     case "policy":
       return commands.readExecutionPolicy({ pin, target: command.target });

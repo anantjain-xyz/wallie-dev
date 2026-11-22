@@ -7,7 +7,7 @@ import type { FactoryDefinitionSource } from "@/lib/factory-definitions/compiler
 import { compileWorkflowGraph } from "@/lib/factory-definitions/workflow-compiler";
 import type { Database } from "@/lib/supabase/database.types";
 
-import { executeFactoryWorkflowOccurrence, resumeFactoryWorkflowOccurrence } from "./execute";
+import { executeFactoryWorkflowOccurrence, resumeEnrolledFactoryWorkflowGraph } from "./execute";
 
 type WorkflowScope = {
   rootSessionId: string;
@@ -24,13 +24,47 @@ export async function enrollFactoryWorkflowGraph(
     factoryId,
     inputRunId,
     resumeFromGeneration,
-  }: WorkflowScope & {
-    source: FactoryDefinitionSource;
-    inputRunId?: string;
-    resumeFromGeneration?: number;
-  },
+  }: WorkflowScope &
+    (
+      | { source: FactoryDefinitionSource; inputRunId?: string; resumeFromGeneration?: undefined }
+      | { source?: FactoryDefinitionSource; inputRunId?: string; resumeFromGeneration: number }
+    ),
   signal?: AbortSignal,
 ) {
+  if (resumeFromGeneration !== undefined) {
+    const { entry, ownership, progress } = await resumeEnrolledFactoryWorkflowGraph(
+      admin,
+      {
+        p_root_session_id: rootSessionId,
+        p_workspace_id: workspaceId,
+        p_factory_id: factoryId,
+      },
+      resumeFromGeneration,
+    );
+    if (!entry)
+      return {
+        ok: false as const,
+        diagnostics: [
+          {
+            code: "missing_reference" as const,
+            path: [],
+            message: "The enrolled workflow is unavailable.",
+          },
+        ],
+      };
+    return {
+      ok: true as const,
+      execution: {
+        execution_generation: entry.p_expected_generation,
+        entry_occurrence_id: entry.occurrenceId,
+        created: false,
+        ownership_token: ownership?.ownership_token ?? null,
+      },
+      entry,
+      progress,
+    };
+  }
+
   const { data: pin, error: pinError } = await admin
     .from("session_factory_admission_inputs")
     .select("definition_revision_id, definition_digest")
@@ -87,21 +121,6 @@ export async function enrollFactoryWorkflowGraph(
       p_ownership_token: execution.ownership_token,
     });
     return { ok: true as const, execution, entry, progress };
-  }
-  if (resumeFromGeneration !== undefined) {
-    const { ownership, progress } = await resumeFactoryWorkflowOccurrence(admin, {
-      ...entry,
-      p_expected_generation: resumeFromGeneration,
-    });
-    return {
-      ok: true as const,
-      execution: { ...execution, ...ownership },
-      entry: {
-        ...entry,
-        p_expected_generation: ownership?.execution_generation ?? entry.p_expected_generation,
-      },
-      progress,
-    };
   }
   return {
     ok: true as const,

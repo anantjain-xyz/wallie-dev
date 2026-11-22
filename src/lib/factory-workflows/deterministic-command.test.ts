@@ -301,6 +301,19 @@ describe("guarded deterministic workflow commands", () => {
     expect(policyStep.commands.admitNext).not.toHaveBeenCalled();
   });
 
+  it("blocks a validation step whose pinned policy requires no evidence", async () => {
+    const step = fixture({
+      ...validation,
+      target: { ...validation.target, requiredEvidenceKeys: [] },
+    });
+    await expect(runDeterministicWorkflowCommand(step.commands, pin)).resolves.toEqual({
+      status: "blocked",
+      code: "validation_policy_required",
+    });
+    expect(step.commands.readValidationEvidence).not.toHaveBeenCalled();
+    expect(step.commands.recordResult).not.toHaveBeenCalled();
+  });
+
   it("requires authoritative human evidence and ignores extra agent-supplied proof fields", async () => {
     const target = {
       sessionId: runTarget.sessionId,
