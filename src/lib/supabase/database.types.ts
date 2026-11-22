@@ -10345,6 +10345,7 @@ export type Database = {
           p_expected_generation: number
           p_expected_result_id: string
           p_factory_id: string
+          p_ownership_token: string
           p_root_session_id: string
           p_source_occurrence_id: string
           p_workspace_id: string
@@ -10401,7 +10402,10 @@ export type Database = {
           p_root_session_id: string
           p_workspace_id: string
         }
-        Returns: number
+        Returns: {
+          execution_generation: number
+          ownership_token: string
+        }[]
       }
       answer_session_specification_clarification_once: {
         Args: {
@@ -14739,6 +14743,7 @@ export type Database = {
           p_factory_id: string
           p_occurrence_id: string
           p_outcome: Database["public"]["Enums"]["factory_workflow_node_outcome"]
+          p_ownership_token: string
           p_root_session_id: string
           p_workspace_id: string
         }
@@ -16527,6 +16532,7 @@ export type Database = {
           created: boolean
           entry_occurrence_id: string
           execution_generation: number
+          ownership_token: string
         }[]
       }
       start_sandbox_capability_check: {

@@ -115,6 +115,6 @@ Compilation uses the supplied catalog without external calls. [Publication and a
 The service can enroll a root session with its exact pinned serial projection. Enrollment verifies the definition digest, selected stage order, and approval policies. The execution retains those pins and the submitted workflow digest.
 
 - Mutations check workspace and factory admission, then lock the root session and the workflow execution. Descendant commands take session, job, and run locks after the root locks.
-- A worker captures the execution generation. A handoff advances the generation and retains the accepted results and transition receipts.
+- A worker writes with the generation and its ownership token. A handoff advances the generation, rotates the token, and retains accepted results and transition receipts. Restart reads and enrollment replays exclude the token.
 - Admission requires the exact successful result from the preceding occurrence. Replaying a request returns the same receipt and target occurrence.
 - Restart reads occurrences, results, and ready edges in one snapshot. An active workspace and factory can advance an edge with a successful source result until its transition receipt is recorded.

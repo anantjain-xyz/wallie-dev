@@ -17,6 +17,7 @@ create table internal.factory_workflow_executions (
   workflow_json text not null check (workflow_json is json object with unique keys),
   workflow_digest text not null check (workflow_digest = encode(sha256(convert_to(workflow_json, 'UTF8')), 'hex')),
   generation bigint not null default 1 check (generation between 1 and 9007199254740991),
+  ownership_token uuid not null default gen_random_uuid(),
   created_at timestamptz not null default clock_timestamp(),
   foreign key (root_session_id, workspace_id, factory_id)
     references public.sessions(id, workspace_id, factory_id) on delete cascade,
@@ -131,6 +132,26 @@ end;
 $$;
 revoke all on function internal.lock_factory_workflow_generation(uuid, uuid, uuid, bigint) from public, anon, authenticated, service_role;
 
+create function internal.lock_factory_workflow_owner(
+  p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
+  p_ownership_token uuid
+) returns internal.factory_workflow_executions
+language plpgsql set search_path = '' as $$
+declare
+  execution internal.factory_workflow_executions;
+begin
+  execution := internal.lock_factory_workflow_generation(
+    p_root_session_id, p_workspace_id, p_factory_id, p_expected_generation
+  );
+  if execution.ownership_token is distinct from p_ownership_token then
+    raise exception 'Workflow ownership token is stale.' using errcode = 'PT409';
+  end if;
+  return execution;
+end;
+$$;
+revoke all on function internal.lock_factory_workflow_owner(uuid, uuid, uuid, bigint, uuid)
+  from public, anon, authenticated, service_role;
+
 -- A serial plan must project the exact selected stages and approval policies.
 create function internal.matches_serial_factory_workflow_plan(
   p_plan jsonb, p_definition jsonb, p_selected_stage_ids uuid[]
@@ -172,7 +193,7 @@ create function public.start_factory_workflow_execution(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid,
   p_definition_revision_id uuid, p_definition_digest text,
   p_workflow_json text, p_workflow_digest text
-) returns table (execution_generation bigint, entry_occurrence_id uuid, created boolean)
+) returns table (execution_generation bigint, entry_occurrence_id uuid, created boolean, ownership_token uuid)
 language plpgsql security definer set search_path = '' as $$
 declare
   execution internal.factory_workflow_executions;
@@ -214,7 +235,7 @@ begin
     if execution.workflow_digest <> p_workflow_digest or execution.workflow_json <> p_workflow_json then
       raise exception 'The root session already has a different workflow.' using errcode = 'PT409';
     end if;
-    return query select execution.generation, occurrence.occurrence_id, false
+    return query select execution.generation, occurrence.occurrence_id, false, null::uuid
       from internal.factory_workflow_node_occurrences occurrence
      where occurrence.root_session_id = p_root_session_id and occurrence.is_entry;
     return;
@@ -231,32 +252,35 @@ begin
   ) values (
     p_root_session_id, entry->>'id', (entry->>'kind')::internal.factory_workflow_node_kind, true, execution.generation
   ) returning factory_workflow_node_occurrences.occurrence_id into occurrence_id;
-  return query select execution.generation, occurrence_id, true;
+  return query select execution.generation, occurrence_id, true, execution.ownership_token;
 end;
 $$;
 
 create function public.advance_factory_workflow_generation(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint
-) returns bigint language plpgsql security definer set search_path = '' as $$
-declare
-  next_generation bigint;
+) returns table (execution_generation bigint, ownership_token uuid)
+language plpgsql security definer set search_path = '' as $$
 begin
   perform internal.lock_factory_workflow_generation(p_root_session_id, p_workspace_id, p_factory_id, p_expected_generation);
-  update internal.factory_workflow_executions workflow set generation = workflow.generation + 1
-    where workflow.root_session_id = p_root_session_id returning workflow.generation into next_generation;
-  return next_generation;
+  return query
+    update internal.factory_workflow_executions workflow
+      set generation = workflow.generation + 1, ownership_token = gen_random_uuid()
+      where workflow.root_session_id = p_root_session_id
+      returning workflow.generation, workflow.ownership_token;
 end;
 $$;
 
 create function public.record_factory_workflow_node_result(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
-  p_occurrence_id uuid, p_outcome public.factory_workflow_node_outcome, p_evidence_ref text default null
+  p_ownership_token uuid, p_occurrence_id uuid, p_outcome public.factory_workflow_node_outcome,
+  p_evidence_ref text default null
 ) returns table (result_id uuid, created boolean)
 language plpgsql security definer set search_path = '' as $$
 declare
   receipt internal.factory_workflow_node_results;
 begin
-  perform internal.lock_factory_workflow_generation(p_root_session_id, p_workspace_id, p_factory_id, p_expected_generation);
+  perform internal.lock_factory_workflow_owner(p_root_session_id, p_workspace_id, p_factory_id,
+    p_expected_generation, p_ownership_token);
   perform 1 from internal.factory_workflow_node_occurrences occurrence
    where (occurrence.root_session_id, occurrence.occurrence_id) = (p_root_session_id, p_occurrence_id);
   if not found then
@@ -280,7 +304,7 @@ $$;
 
 create function public.admit_factory_workflow_next(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
-  p_source_occurrence_id uuid, p_edge_id text, p_expected_result_id uuid
+  p_ownership_token uuid, p_source_occurrence_id uuid, p_edge_id text, p_expected_result_id uuid
 ) returns table (transition_id uuid, target_occurrence_id uuid, created boolean)
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -291,7 +315,8 @@ declare
   target_id uuid;
   receipt internal.factory_workflow_transition_receipts;
 begin
-  execution := internal.lock_factory_workflow_generation(p_root_session_id, p_workspace_id, p_factory_id, p_expected_generation);
+  execution := internal.lock_factory_workflow_owner(p_root_session_id, p_workspace_id, p_factory_id,
+    p_expected_generation, p_ownership_token);
   select occurrence.node_id into source_node_id
     from internal.factory_workflow_node_occurrences occurrence
     join internal.factory_workflow_node_results result
@@ -336,7 +361,17 @@ create function public.read_factory_workflow_execution(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid
 ) returns jsonb language sql stable security definer set search_path = '' as $$
   select jsonb_build_object(
-    'execution', to_jsonb(execution),
+    'execution', jsonb_build_object(
+      'root_session_id', execution.root_session_id,
+      'workspace_id', execution.workspace_id,
+      'factory_id', execution.factory_id,
+      'definition_revision_id', execution.definition_revision_id,
+      'definition_digest', execution.definition_digest,
+      'workflow_json', execution.workflow_json,
+      'workflow_digest', execution.workflow_digest,
+      'generation', execution.generation,
+      'created_at', execution.created_at
+    ),
     'occurrences', coalesce((
       select jsonb_agg(to_jsonb(occurrence) order by occurrence.admitted_at, occurrence.occurrence_id)
         from internal.factory_workflow_node_occurrences occurrence where occurrence.root_session_id = execution.root_session_id
@@ -375,11 +410,11 @@ $$;
 
 revoke all on function public.start_factory_workflow_execution(uuid, uuid, uuid, uuid, text, text, text) from public, anon, authenticated, service_role;
 revoke all on function public.advance_factory_workflow_generation(uuid, uuid, uuid, bigint) from public, anon, authenticated, service_role;
-revoke all on function public.record_factory_workflow_node_result(uuid, uuid, uuid, bigint, uuid, public.factory_workflow_node_outcome, text) from public, anon, authenticated, service_role;
-revoke all on function public.admit_factory_workflow_next(uuid, uuid, uuid, bigint, uuid, text, uuid) from public, anon, authenticated, service_role;
+revoke all on function public.record_factory_workflow_node_result(uuid, uuid, uuid, bigint, uuid, uuid, public.factory_workflow_node_outcome, text) from public, anon, authenticated, service_role;
+revoke all on function public.admit_factory_workflow_next(uuid, uuid, uuid, bigint, uuid, uuid, text, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.read_factory_workflow_execution(uuid, uuid, uuid) from public, anon, authenticated, service_role;
 grant execute on function public.start_factory_workflow_execution(uuid, uuid, uuid, uuid, text, text, text) to service_role;
 grant execute on function public.advance_factory_workflow_generation(uuid, uuid, uuid, bigint) to service_role;
-grant execute on function public.record_factory_workflow_node_result(uuid, uuid, uuid, bigint, uuid, public.factory_workflow_node_outcome, text) to service_role;
-grant execute on function public.admit_factory_workflow_next(uuid, uuid, uuid, bigint, uuid, text, uuid) to service_role;
+grant execute on function public.record_factory_workflow_node_result(uuid, uuid, uuid, bigint, uuid, uuid, public.factory_workflow_node_outcome, text) to service_role;
+grant execute on function public.admit_factory_workflow_next(uuid, uuid, uuid, bigint, uuid, uuid, text, uuid) to service_role;
 grant execute on function public.read_factory_workflow_execution(uuid, uuid, uuid) to service_role;
