@@ -42,9 +42,9 @@ vi.mock("@/lib/sandbox", async (original) => ({
 
 const raw = (env as typeof env & { WALLIE_FACTORY_RUNTIME_FIXTURE?: string })
   .WALLIE_FACTORY_RUNTIME_FIXTURE;
-const configured = z
-  .object({ improvementLoopWitness: improvementLoopReplayWitness })
-  .safeParse(raw ? JSON.parse(raw) : null);
+const { improvementLoopWitness: witness } = z
+  .object({ improvementLoopWitness: improvementLoopReplayWitness.optional() })
+  .parse(raw === undefined ? {} : JSON.parse(raw));
 const executablePath = "/opt/wallie-qualification/codex";
 const syntheticMarker = "Fixture acceptance marker";
 const baselineTemplate = "Implement {{session.prompt}}.";
@@ -545,11 +545,10 @@ async function executeExperiment(
   );
 }
 
-it.skipIf(!configured.success)(
+it.skipIf(!witness)(
   "executes and scores both frozen improvement suites in native Workerd",
   async () => {
-    assert(configured.success && raw);
-    const witness = configured.data.improvementLoopWitness;
+    assert(witness && raw);
     const { admin, config } = createQualificationClients(raw);
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://improvement-loop-fixture.example.test");
     vi.stubGlobal("fetch", fixtureTransport(config.url, witness));

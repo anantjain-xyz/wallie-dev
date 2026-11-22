@@ -117,14 +117,14 @@ cross join lateral public.create_session_once_with_first_job(:'workspace_id', :'
     from jsonb_array_elements(bundle->'stages') with ordinality stages(stage,position) order by position)) admitted \gset
 select jsonb_build_object('sessionId',input.session_id,'activationNumber',input.activation_number,
   'revisionId',input.definition_revision_id,'digest',input.definition_digest,
-  'pinHash',encode(sha256(convert_to(to_jsonb(input)::text,'UTF8')),'hex'))
+  'pinHash',encode(sha256(convert_to(to_jsonb(input)::text,'UTF8')),'hex')) as admitted_pin
 from public.session_factory_admission_inputs input
 join public.sessions session on (session.workspace_id,session.factory_id,session.id) =
   (input.workspace_id,input.factory_id,input.session_id)
 where (input.workspace_id,input.factory_id,input.session_id,input.activation_number,input.definition_revision_id,input.definition_digest) =
   (:'workspace_id'::uuid,:'factory_id'::uuid,:'admitted_session_id'::uuid,:'expected_activation'::bigint,
   :'expected_revision_id'::uuid,:'expected_digest')
-  and session.execution_purpose = 'production' and session.execute_pinned_definition;
+  and session.execution_purpose = 'production' and session.execute_pinned_definition \gset
 
 \if :release_was_enabled
 \else
@@ -175,3 +175,6 @@ from result;
 \endif
 
 commit;
+\if :{?admitted_pin}
+\echo :admitted_pin
+\endif

@@ -47,6 +47,7 @@ import {
 } from "./helpers/factory-improvement-loop-qualification";
 
 type Manifest = FactoryImprovementLoopManifest;
+const qualificationSubmitTimeout = 20_000;
 const adoptionRead = z.object({
   publication: factoryImprovementPublicationSchema.nullable(),
   adoption: factoryImprovementAdoptionSchema.nullable(),
@@ -301,6 +302,70 @@ test("aborts the browser POST and drains its checkpoint after route cleanup fail
   await expectCanceledQualificationPost(page, true);
 });
 
+test("blocks a delayed browser action after response observation fails", async ({ page }) => {
+  let receivedPosts = 0;
+  let checkpoints = 0;
+  const server = createServer((request, response) => {
+    if (request.method === "POST") receivedPosts += 1;
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.end(`<button>Submit</button><output></output>
+      <script>
+        const status = document.querySelector("output");
+        document.querySelector("button").onclick = () => {
+          fetch("/submit", { method: "POST", body: '{"test":"qualification"}' }).then(
+            () => { status.textContent = "sent"; },
+            () => { status.textContent = "blocked"; },
+          );
+        };
+      </script>`);
+  });
+  const submitStarted = Promise.withResolvers<void>();
+  const allowSubmit = Promise.withResolvers<void>();
+  const rejectObservation = Promise.withResolvers<never>();
+  const failure = new Error("Simulated response observation failure.");
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing loopback address.");
+    const origin = `http://127.0.0.1:${address.port}`;
+    await page.goto(origin);
+    let observerFinished = false;
+    const operation = observeQualificationPost(
+      {
+        route: page.route.bind(page),
+        unrouteAll: page.unrouteAll.bind(page),
+        waitForResponse: () => rejectObservation.promise,
+      },
+      `${origin}/submit`,
+      { test: "qualification" },
+      async () => {
+        checkpoints += 1;
+      },
+      async () => {
+        submitStarted.resolve();
+        await allowSubmit.promise;
+        await page.getByRole("button", { name: "Submit" }).press("Enter", { timeout: 2_000 });
+      },
+    ).finally(() => {
+      observerFinished = true;
+    });
+    const rejected = expect(operation).rejects.toBe(failure);
+    await submitStarted.promise;
+    rejectObservation.reject(failure);
+    await setImmediate();
+    expect(observerFinished).toBe(false);
+    allowSubmit.resolve();
+    await rejected;
+    await expect(page.getByRole("status")).toHaveText("blocked", { timeout: 2_000 });
+    expect(receivedPosts).toBe(0);
+    expect(checkpoints).toBe(0);
+  } finally {
+    allowSubmit.resolve();
+    await server[Symbol.asyncDispose]();
+  }
+});
+
 test("keeps a browser HTTP error or uncertain delivery when route cleanup fails", async ({
   page,
 }) => {
@@ -389,7 +454,7 @@ const liveTest = test.extend<{ manifestPath: string }>({
 liveTest.describe("Live reviewed qualification", () => {
   liveTest.skip(
     !process.env.WALLIE_FACTORY_IMPROVEMENT_MANIFEST,
-    "Requires the scoped OP642 manifest and a genuinely approved, merged draft.",
+    "Requires the scoped OP642 manifest and a genuinely approved, merged pull request.",
   );
   liveTest("qualifies reviewed adoption and rollback", async ({ page, manifestPath }, info) => {
     liveTest.setTimeout(240_000);
@@ -457,7 +522,7 @@ liveTest.describe("Live reviewed qualification", () => {
       pullRequest: {
         number: manifest.publication.number,
         url: manifest.publication.url,
-        state: "draft",
+        state: expect.stringMatching(/^(draft|open)$/),
       },
     });
     if (!before.adoption) {
@@ -519,7 +584,10 @@ liveTest.describe("Live reviewed qualification", () => {
           async () => {
             progress = await store.save({ ...progress, adoptionRequest });
           },
-          () => confirm.getByRole("button", { name: "Verify GitHub and adopt" }).press("Enter"),
+          () =>
+            confirm.getByRole("button", { name: "Verify GitHub and adopt" }).press("Enter", {
+              timeout: qualificationSubmitTimeout,
+            }),
         );
       } catch (error) {
         if (!(error instanceof QualificationPostResponseLost) || !progress.adoptionRequest)
@@ -633,7 +701,10 @@ liveTest.describe("Live reviewed qualification", () => {
           async () => {
             progress = await store.save({ ...progress, rollbackRequest });
           },
-          () => restoreDialog.getByRole("button", { name: "Activate revision" }).press("Enter"),
+          () =>
+            restoreDialog.getByRole("button", { name: "Activate revision" }).press("Enter", {
+              timeout: qualificationSubmitTimeout,
+            }),
         );
       } catch (error) {
         if (

@@ -376,6 +376,7 @@ export async function publishImprovementLoop({
     existing.status() === 200 ? receiptSchema.parse(await existing.json()).publication : null;
 
   let publication = recorded;
+  let recovered = Boolean(recorded?.pullRequest);
   let base: FixtureBase;
   if (publication?.pullRequest) {
     check(baseProof, "Recovering a publication requires the saved base intent.");
@@ -409,7 +410,15 @@ export async function publishImprovementLoop({
       `The signed publication returned HTTP ${response.status()}.`,
     );
     if (response.status() === 202) return null;
-    publication = receiptSchema.parse(await response.json()).publication;
+    const result = receiptSchema
+      .extend({ state: z.literal("published"), replay: z.boolean() })
+      .parse(await response.json());
+    check(
+      response.status() === (result.replay ? 200 : 201),
+      "The publication status did not match its replay receipt.",
+    );
+    publication = result.publication;
+    recovered = result.replay;
   }
   check(
     publication?.pullRequest &&
@@ -452,7 +461,7 @@ export async function publishImprovementLoop({
       }),
     })
     .parse(await remote.github(`/pulls/${publication.pullRequest.number}`));
-  if (!recorded?.pullRequest) {
+  if (!recovered) {
     check(
       pull.state === "open" && pull.draft,
       "The initial qualification publication must be an open GitHub draft.",

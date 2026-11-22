@@ -123,10 +123,12 @@ export async function observeQualificationPost(
   const failed = Promise.withResolvers<never>();
   const handlers = new Set<Promise<void>>();
   let active = true;
+  let interceptedPost = false;
   let forwardingStarted = false;
   let observedResponse: Response | undefined;
   const handleRoute = async (route: Route) => {
     if (route.request().method() !== "POST") return route.fallback();
+    interceptedPost = true;
     if (!active) return route.abort();
     try {
       expect(route.request().postDataJSON()).toEqual(expected);
@@ -151,21 +153,18 @@ export async function observeQualificationPost(
     });
   });
   let outcome: { response: Response } | { error: unknown } | undefined;
+  let submitting: Promise<void> | undefined;
   try {
-    const [result] = await Promise.race([
-      Promise.all([
-        page.waitForResponse(
-          (entry) => {
-            if (entry.url() !== endpoint || entry.request().method() !== "POST") return false;
-            observedResponse = entry;
-            return true;
-          },
-          { timeout: 110_000 },
-        ),
-        submit(),
-      ]),
-      failed.promise,
-    ]);
+    const response = page.waitForResponse(
+      (entry) => {
+        if (entry.url() !== endpoint || entry.request().method() !== "POST") return false;
+        observedResponse = entry;
+        return true;
+      },
+      { timeout: 110_000 },
+    );
+    submitting = Promise.resolve().then(submit);
+    const [result] = await Promise.race([Promise.all([response, submitting]), failed.promise]);
     outcome = { response: result };
   } catch (error) {
     outcome = observedResponse
@@ -173,9 +172,12 @@ export async function observeQualificationPost(
       : { error: forwardingStarted ? new QualificationPostResponseLost(error) : error };
   } finally {
     active = false;
-    // Disabling interception first releases paused Chromium requests. Let their handlers abort first.
+    // A pending UI action can still dispatch the POST after the response wait fails.
+    if (submitting) await submitting.catch(() => {});
     try {
-      await page.unrouteAll({ behavior: "wait" });
+      // Chromium can report the input action complete before delivering its POST to this route.
+      // If that POST has not arrived yet, leave the inactive route in place until page teardown.
+      if (!submitting || interceptedPost) await page.unrouteAll({ behavior: "wait" });
     } catch (error) {
       if (!outcome) throw error;
     } finally {
