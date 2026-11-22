@@ -3,7 +3,8 @@
 Validation compares an exact proposal revision with its recorded base in two immutable benchmark suites. The targeted suite tests the proposed benefit. The held-out suite checks behavior on separate tasks and source sessions.
 
 - A factory manager supplies the neutral scorer, Workerd execution configuration, and acceptance thresholds. The same definition digests, experiment axes, seed, repetition count, scorer, and replay policy apply to both suites.
-- A single database transaction binds both suites before scheduling either. An exact retry returns the same two experiment IDs. Use the existing benchmark schedule controls to pause, resume, or cancel a comparison.
+- Each frozen suite must have enough distinct source sessions to meet the reviewed minimum. A single database transaction binds both suites before scheduling either.
+- An exact retry returns the same two experiment IDs. Use the existing benchmark schedule controls to pause, resume, or cancel a comparison.
 - The validation read reconciles the complete frozen grid. It checks current source evidence, comparable scorers and restored inputs, independent task support, and the measured cost and latency of both arms.
 
 | Status       | Meaning                                                                                                                    |

@@ -30,11 +30,14 @@ create trigger preserve_factory_improvement_validations before update or delete
   on internal.factory_improvement_validations for each row execute function internal.preserve_factory_improvement_history();
 
 create function internal.assert_factory_improvement_validation_suites(
-  proposal internal.factory_improvement_proposal_revisions, p_targeted uuid, p_holdout uuid
+  proposal internal.factory_improvement_proposal_revisions, p_targeted uuid, p_holdout uuid,
+  p_minimum_independent_tasks integer
 ) returns void language plpgsql set search_path = '' as $$
 declare
   source_count integer;
   member_count integer;
+  targeted_source_count integer;
+  holdout_source_count integer;
 begin
   if not exists (select 1 from public.factory_benchmark_suite_revisions suite
     where (suite.workspace_id, suite.factory_id, suite.id, suite.purpose) =
@@ -44,13 +47,19 @@ begin
       (proposal.workspace_id, proposal.factory_id, p_holdout, 'holdout')) then
     raise exception 'Select frozen targeted regression and held-out suites in this factory.' using errcode = 'PT422';
   end if;
-  select count(distinct task.source_session_id), count(*) into source_count, member_count
+  select count(distinct task.source_session_id), count(*),
+    count(distinct task.source_session_id) filter (where member.suite_revision_id = p_targeted),
+    count(distinct task.source_session_id) filter (where member.suite_revision_id = p_holdout)
+  into source_count, member_count, targeted_source_count, holdout_source_count
   from public.factory_benchmark_suite_members member
   join public.factory_benchmark_tasks task using (workspace_id, factory_id)
   where (member.workspace_id, member.factory_id) = (proposal.workspace_id, proposal.factory_id)
     and member.suite_revision_id in (p_targeted, p_holdout) and member.task_id = task.id;
   if source_count <> member_count then
     raise exception 'The two suites must use distinct source sessions.' using errcode = 'PT422';
+  end if;
+  if least(targeted_source_count, holdout_source_count) < p_minimum_independent_tasks then
+    raise exception 'Both frozen validation suites must meet the minimum independent task count.' using errcode = 'PT422';
   end if;
 
   -- A source may be captured in more than one task revision. Detect prior
@@ -458,7 +467,8 @@ begin
   if not internal.factory_improvement_validation_diagnosis_current(p_workspace_id, p_factory_id, p_proposal_id) then
     raise exception 'Current diagnosis evidence is required to validate this proposal.' using errcode = 'PT422';
   end if;
-  perform internal.assert_factory_improvement_validation_suites(proposal, p_targeted_suite_revision_id, p_holdout_suite_revision_id);
+  perform internal.assert_factory_improvement_validation_suites(proposal, p_targeted_suite_revision_id,
+    p_holdout_suite_revision_id, (p_thresholds->>'minimumIndependentTasks')::integer);
   evaluation_plan := jsonb_build_object('scorerRevisionIds', jsonb_build_array(p_scorer_revision_id),
     'budgetLimitUsd', p_execution->'evaluationBudgetLimitUsd');
 
@@ -508,7 +518,7 @@ end;
 $$;
 
 revoke all on function
-  internal.assert_factory_improvement_validation_suites(internal.factory_improvement_proposal_revisions, uuid, uuid),
+  internal.assert_factory_improvement_validation_suites(internal.factory_improvement_proposal_revisions, uuid, uuid, integer),
   internal.factory_improvement_validation_diagnosis_current(uuid, uuid, uuid),
   internal.factory_improvement_validation_split(internal.factory_improvement_validations, uuid, boolean),
   internal.project_factory_improvement_validation(internal.factory_improvement_validations),

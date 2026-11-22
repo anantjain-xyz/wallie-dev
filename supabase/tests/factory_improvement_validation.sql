@@ -7,13 +7,15 @@ set local request.jwt.claim.role = 'service_role';
 
 create function pg_temp.start_validation(
   p_key integer default 330, p_holdout text default 'holdout', p_reverse boolean default false,
-  p_holdout_budget numeric default 20, p_actor uuid default pg_temp.live_id(1), p_scorer uuid default null
+  p_holdout_budget numeric default 20, p_actor uuid default pg_temp.live_id(1), p_scorer uuid default null,
+  p_minimum_independent_tasks integer default 2, p_targeted text default 'targeted'
 ) returns jsonb language sql as $$
   select public.start_factory_improvement_validation(args.workspace_id, args.factory_id, p_actor, pg_temp.live_id(300),
-    pg_temp.live_id(311), pg_temp.live_id(p_key), args.targeted_suite_id, holdout.id, args.policy_id, coalesce(p_scorer, args.scorer_id),
+    pg_temp.live_id(311), pg_temp.live_id(p_key), targeted.id, holdout.id, args.policy_id, coalesce(p_scorer, args.scorer_id),
     axes.value, axes.value, jsonb_set(args.execution, '{holdoutBudgetLimitUsd}', to_jsonb(p_holdout_budget)),
-    args.thresholds)
+    jsonb_set(args.thresholds, '{minimumIndependentTasks}', to_jsonb(p_minimum_independent_tasks)))
   from validation_arguments args
+  join validation_suites targeted on targeted.label = p_targeted
   join validation_suites holdout on holdout.label = p_holdout
   cross join lateral (select case when p_reverse then jsonb_build_array(args.axes->1, args.axes->0)
     else args.axes end) axes(value);
@@ -39,6 +41,27 @@ select throws_ok($$select pg_temp.start_validation(p_holdout => 'produced')$$, '
   'a held-out input already produced under the exact candidate digest is not blind');
 select throws_ok($$select pg_temp.start_validation(p_key => 333, p_holdout => 'diagnosed')$$, 'PT422', null,
   'a session used in the original diagnosis cannot become held-out evidence');
+
+insert into validation_suites(label, id)
+select split.label, suite.id
+from live_scope scope cross join (values
+  ('larger-targeted', 'regression', array[1,2,5]), ('larger-holdout', 'holdout', array[3,4,5])
+) split(label, purpose, ordinals)
+cross join lateral public.save_factory_benchmark_suite_revision(scope.workspace_id, scope.factory_id,
+  scope.owner_id, 'Improvement ' || split.label, split.purpose,
+  p_task_revision_ids => array(select task.id from validation_source_tasks task
+    where task.ordinal = any(split.ordinals) order by task.ordinal)) suite;
+select throws_ok($$select pg_temp.start_validation(p_minimum_independent_tasks => 3, p_holdout => 'larger-holdout')$$,
+  'PT422', 'Both frozen validation suites must meet the minimum independent task count.',
+  'insufficient independent targeted tasks reject an otherwise large enough holdout');
+select throws_ok($$select pg_temp.start_validation(p_minimum_independent_tasks => 3, p_targeted => 'larger-targeted')$$,
+  'PT422', 'Both frozen validation suites must meet the minimum independent task count.',
+  'insufficient independent holdout tasks reject an otherwise large enough targeted suite');
+select ok(not exists (select 1 from internal.factory_improvement_validations where workspace_id = pg_temp.live_id(11))
+  and not exists (select 1 from public.factory_benchmark_experiments where workspace_id = pg_temp.live_id(11))
+  and not exists (select 1 from public.factory_benchmark_experiment_candidates where workspace_id = pg_temp.live_id(11))
+  and not exists (select 1 from public.factory_benchmark_schedules where workspace_id = pg_temp.live_id(11)),
+  'underpowered requests leave no validation, experiment, candidate arm, or schedule');
 
 create temp table unsupported_validation_scorer as
 select scorer.id from live_scope scope cross join lateral public.create_factory_scorer(
@@ -90,6 +113,8 @@ select ok((select count(*) = 4 and count(distinct candidate.definition_digest) =
   and (select count(*) = 2 from public.factory_benchmark_schedules where workspace_id = pg_temp.live_id(11)),
   'both schedules use the exact same frozen revisions and runner');
 select ok((select replay @> '{"replay":true}' and replay#>>'{validation,id}' = receipt#>>'{validation,id}'
+  and replay#>>'{validation,targeted,experimentId}' = receipt#>>'{validation,targeted,experimentId}'
+  and replay#>>'{validation,holdout,experimentId}' = receipt#>>'{validation,holdout,experimentId}'
   and replay#>'{validation,thresholds}' = receipt#>'{validation,thresholds}'
   from validation_start cross join lateral (select pg_temp.start_validation()) retry(replay)),
   'an exact authorized retry returns the original two experiment IDs and reviewed thresholds');
