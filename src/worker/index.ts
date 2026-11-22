@@ -12,6 +12,7 @@ import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
+import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
   reconcileBenchmarkSchedules,
@@ -207,6 +208,7 @@ async function main() {
     let projectingFactoryFlow = false;
     let samplingFactoryScorers = false;
     let maintainingEvaluationQueue = false;
+    let processingFailureCohorts = false;
     let evaluatingFactoryJudges = false;
     let checkingRoutingCanaries = false;
     let reconcilingBenchmarkSchedules = false;
@@ -250,6 +252,16 @@ async function main() {
               await maintainFactoryEvaluationQueue(admin);
             } finally {
               maintainingEvaluationQueue = false;
+            }
+          });
+        }
+        if (!processingFailureCohorts) {
+          processingFailureCohorts = true;
+          timerTasks.run("factory failure cohorts", async () => {
+            try {
+              await processFactoryFailureCohorts(admin);
+            } finally {
+              processingFailureCohorts = false;
             }
           });
         }

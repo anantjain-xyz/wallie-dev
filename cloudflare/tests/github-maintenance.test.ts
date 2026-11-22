@@ -65,6 +65,7 @@ it.each([
   },
   { scenario: "scorer sampling fails", samplingFailure: true },
   { scenario: "evaluation maintenance fails", evaluationFailure: true },
+  { scenario: "failure cohort processing fails", failureCohortProcessingFailure: true },
   { scenario: "routing canary alert evaluation fails", canaryAlertFailure: true },
   { scenario: "benchmark scheduling fails", benchmarkFailure: true },
   { scenario: "a judge dispatch fails", judgeFailure: true },
@@ -78,6 +79,7 @@ it.each([
     projectionFailure,
     samplingFailure,
     evaluationFailure,
+    failureCohortProcessingFailure,
     canaryAlertFailure,
     benchmarkFailure,
     judgeFailure,
@@ -135,6 +137,16 @@ it.each([
       }
       if (name === "maintain_factory_evaluation_queue") {
         return { abortSignal: () => ({ single: evaluations }) };
+      }
+      if (name === "process_factory_failure_cohorts") {
+        return {
+          abortSignal: () =>
+            Promise.resolve(
+              failureCohortProcessingFailure
+                ? { data: null, error: { message: "Failure cohort processing unavailable" } }
+                : { data: 2, error: null },
+            ),
+        };
       }
       if (name === "process_factory_routing_canary_alerts") {
         return {
@@ -230,10 +242,13 @@ it.each([
       expect(sample).toHaveBeenCalledOnce();
       expect(rpc).toHaveBeenNthCalledWith(5, "maintain_factory_evaluation_queue", { p_limit: 25 });
       expect(evaluations).toHaveBeenCalledOnce();
-      expect(rpc).toHaveBeenNthCalledWith(6, "process_factory_routing_canary_alerts", {
+      expect(rpc).toHaveBeenNthCalledWith(6, "process_factory_failure_cohorts", {
+        p_batch_size: 100,
+      });
+      expect(rpc).toHaveBeenNthCalledWith(7, "process_factory_routing_canary_alerts", {
         p_limit: 8,
       });
-      expect(rpc).toHaveBeenNthCalledWith(7, "prune_factory_analytics_exports", { p_limit: 100 });
+      expect(rpc).toHaveBeenNthCalledWith(8, "prune_factory_analytics_exports", { p_limit: 100 });
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );

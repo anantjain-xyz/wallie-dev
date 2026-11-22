@@ -12706,6 +12706,16 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      get_factory_failure_cohort: {
+        Args: {
+          p_after_member_id?: string
+          p_cohort_id: string
+          p_factory_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_flow_projection_health: {
         Args: { p_factory_id: string; p_workspace_id: string }
         Returns: Json
@@ -13386,6 +13396,15 @@ export type Database = {
           verified_at: string
         }[]
       }
+      list_factory_failure_cohorts: {
+        Args: {
+          p_after_cohort_id?: string
+          p_factory_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_flow_evidence: {
         Args: {
           p_cursor_at?: string
@@ -13932,6 +13951,10 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      process_factory_failure_cohorts: {
+        Args: { p_batch_size?: number }
+        Returns: number
       }
       process_factory_flow_projection: {
         Args: { p_limit?: number }
