@@ -1448,7 +1448,7 @@ begin
   end;
 end;
 $$;
-select like(pg_temp.stale_reviewed_rollback((result->>'revisionId')::uuid),'%suite revision changed%',
+select ok(pg_temp.stale_reviewed_rollback((result->>'revisionId')::uuid) like '%suite revision changed%',
   'rollback cannot restore a prior reviewed target after its original suite changes') from reviewed_activation;
 
 create temp table live_rollback_attempt as
