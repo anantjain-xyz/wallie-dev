@@ -322,7 +322,7 @@ export default async function GovernancePage({
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
   const scope = await loadGovernanceScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Governance" />;
+  if (!scope) return <FactoryUnavailable title="Governance" workspaceSlug={workspaceSlug} />;
 
   const { factory } = scope;
   const overviewHref = workspaceGovernancePath(workspaceSlug, { factory: factory.id });

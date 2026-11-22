@@ -18,7 +18,8 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
   const selection = resolveFactorySelection(factories, search[FACTORY_QUERY_PARAM]);
-  if (selection.kind === "unavailable") return <FactoryUnavailable title="Pipeline" />;
+  if (selection.kind === "unavailable")
+    return <FactoryUnavailable title="Pipeline" workspaceSlug={workspaceSlug} />;
 
   const factory = selection.kind === "factory" ? selection.factory : undefined;
   const data = await loadPipelineDashboardData(workspaceSlug, factory?.id);

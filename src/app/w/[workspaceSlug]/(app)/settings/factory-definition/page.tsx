@@ -44,11 +44,13 @@ export default async function FactoryDefinitionPage({
   }
   const { factory: factoryQuery, implementationAgent, scorerRevision, ...target } = query;
   const factoryId = idSchema.optional().safeParse(factoryQuery);
-  if (!factoryId.success) return <FactoryUnavailable title="Factory definition" />;
+  if (!factoryId.success)
+    return <FactoryUnavailable title="Factory definition" workspaceSlug={workspaceSlug} />;
   const selection = selectionSchema.safeParse(target);
   const { data: factory, error } = await selectFactory(supabase, workspace.id, factoryId.data);
   if (error) throw error;
-  if (!factory) return <FactoryUnavailable title="Factory definition" />;
+  if (!factory)
+    return <FactoryUnavailable title="Factory definition" workspaceSlug={workspaceSlug} />;
 
   const prompt = idSchema.safeParse(implementationAgent);
   const requestedScorer = selection.success ? undefined : idSchema.safeParse(scorerRevision).data;

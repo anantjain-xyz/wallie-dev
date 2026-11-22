@@ -45,7 +45,7 @@ export default async function OverviewPage({
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const factory = resolveAnalyticsFactory(factories, query.factoryId);
-  if (!factory) return <FactoryUnavailable title="Overview" />;
+  if (!factory) return <FactoryUnavailable title="Overview" workspaceSlug={workspaceSlug} />;
   const [periods, health] = await Promise.all([
     loadAnalyticsPeriods({ supabase, workspaceId: workspace.id, factoryId: factory.id, query }),
     supabase.rpc("get_factory_flow_projection_health", {

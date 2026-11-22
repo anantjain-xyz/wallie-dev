@@ -47,7 +47,7 @@ export default async function AgentDetailPage({
   if (!agentKey.success || !selectedKey.success || !before.success) notFound();
 
   const scope = await loadAgentPageScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Agents" />;
+  if (!scope) return <FactoryUnavailable title="Agents" workspaceSlug={workspaceSlug} />;
   const data = await loadAgentDetail(scope, {
     agentId: agentKey.data,
     revisionId: selectedKey.data,
