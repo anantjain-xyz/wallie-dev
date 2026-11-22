@@ -45,7 +45,6 @@ import {
   type WorkspaceNavItem,
   workspaceBasePath,
   workspaceOnboardingPath,
-  workspaceRunsPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
 import {
@@ -324,13 +323,6 @@ export function ShellHeader({
       ? factory.length === 1 && factory[0].toLowerCase() === creationFactory.id
       : !defaultsToAllFactories(pathname, workspace.slug) &&
         !isManagedFactoryPath(pathname, workspace.slug));
-  // Unscoped session/run detail pages can belong to any factory, so creation
-  // stays available but names its default-factory destination up front.
-  const isAmbiguousCreationScope =
-    isDirectCreationScope &&
-    factory.length === 0 &&
-    (pathname.startsWith(`${workspaceSessionsPath(workspace.slug)}/`) ||
-      pathname.startsWith(`${workspaceRunsPath(workspace.slug)}/`));
   const createFromUrl = searchParams?.get("create") === "1";
   const [userCreateOpen, setUserCreateOpen] = useState(false);
   const createScope = `${viewerId}:${workspace.id}`;
@@ -479,6 +471,9 @@ export function ShellHeader({
     }
     if (!creationFactory) return null;
 
+    const createActionClassName =
+      "ui-button-primary inline-flex size-9 items-center justify-center gap-2 whitespace-nowrap px-0 lg:min-h-9 lg:w-auto lg:px-3";
+
     if (!isDirectCreationScope) {
       const creationSwitchHref = workspaceSessionsPath(workspace.slug, {
         factory: creationFactory.id,
@@ -486,8 +481,8 @@ export function ShellHeader({
       });
       return (
         <Link
-          aria-label={`Switch to create in ${creationFactory.name}`}
-          className="ui-button-primary inline-flex min-h-9 items-center justify-center gap-2 whitespace-nowrap px-2.5 text-[13px]"
+          aria-label="New session"
+          className={createActionClassName}
           href={creationSwitchHref}
           onClick={(event) => {
             if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
@@ -495,10 +490,7 @@ export function ShellHeader({
           {...navPrefetchHandlers(creationSwitchHref)}
         >
           <PlusIcon className="h-3.5 w-3.5" />
-          <span className="max-w-48 truncate">
-            Switch to create
-            <span className="hidden lg:inline"> in {creationFactory.name}</span>
-          </span>
+          <span className="hidden lg:inline">New session</span>
         </Link>
       );
     }
@@ -507,15 +499,8 @@ export function ShellHeader({
       <button
         ref={createButtonRef}
         type="button"
-        className={cn(
-          "ui-button-primary inline-flex items-center justify-center gap-2 whitespace-nowrap",
-          isAmbiguousCreationScope
-            ? "min-h-9 w-auto max-w-full px-2.5 text-[13px]"
-            : "size-9 px-0 lg:min-h-9 lg:w-auto lg:px-3",
-        )}
-        aria-label={
-          isAmbiguousCreationScope ? `New session in ${creationFactory.name}` : "New session"
-        }
+        className={createActionClassName}
+        aria-label="New session"
         onClick={() => {
           startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
           setUserCreateOpen(true);
@@ -524,11 +509,7 @@ export function ShellHeader({
         onPointerEnter={preloadCreateDialog}
       >
         <PlusIcon className="h-3.5 w-3.5" />
-        {isAmbiguousCreationScope ? (
-          <span className="max-w-48 truncate">New session in {creationFactory.name}</span>
-        ) : (
-          <span className="hidden lg:inline">New session</span>
-        )}
+        <span className="hidden lg:inline">New session</span>
       </button>
     );
   }
