@@ -10339,6 +10339,22 @@ export type Database = {
               workspace_id: string
             }[]
           }
+      admit_factory_workflow_next: {
+        Args: {
+          p_edge_id: string
+          p_expected_generation: number
+          p_expected_result_id: string
+          p_factory_id: string
+          p_root_session_id: string
+          p_source_occurrence_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          target_occurrence_id: string
+          transition_id: string
+        }[]
+      }
       adopt_factory_improvement: {
         Args: {
           p_actor_user_id: string
@@ -10377,6 +10393,15 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      advance_factory_workflow_generation: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: number
       }
       answer_session_specification_clarification_once: {
         Args: {
@@ -14619,6 +14644,14 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_workflow_execution: {
+        Args: {
+          p_factory_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_run_export_page: {
         Args: { p_export_id: string; p_lease_token: string; p_limit?: number }
         Returns: {
@@ -14698,6 +14731,21 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      record_factory_workflow_node_result: {
+        Args: {
+          p_evidence_ref?: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_occurrence_id: string
+          p_outcome: Database["public"]["Enums"]["factory_workflow_node_outcome"]
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          result_id: string
+        }[]
       }
       record_pr_verification_observation: {
         Args: {
@@ -16465,6 +16513,22 @@ export type Database = {
         }
         Returns: Json
       }
+      start_factory_workflow_execution: {
+        Args: {
+          p_definition_digest: string
+          p_definition_revision_id: string
+          p_factory_id: string
+          p_root_session_id: string
+          p_workflow_digest: string
+          p_workflow_json: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          entry_occurrence_id: string
+          execution_generation: number
+        }[]
+      }
       start_sandbox_capability_check: {
         Args: {
           target_github_repository_id: string
@@ -16805,6 +16869,7 @@ export type Database = {
         | "runs"
         | "run"
         | "artifact"
+      factory_workflow_node_outcome: "succeeded" | "failed" | "canceled"
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
       pipeline_phase_status:
@@ -17057,6 +17122,7 @@ export const Constants = {
         "run",
         "artifact",
       ],
+      factory_workflow_node_outcome: ["succeeded", "failed", "canceled"],
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],
       pipeline_phase_status: [
