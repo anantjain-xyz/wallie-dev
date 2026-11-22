@@ -293,6 +293,51 @@ describe("factory definition commands", () => {
     });
   });
 
+  it("activates reviewed routing through the exact draft and expected head RPC", async () => {
+    const { admin } = fixture(({ url, body }) => {
+      if (url.pathname.endsWith("/factory_definition_drafts")) {
+        assertStoredScope(url, draftId);
+        return Response.json([stored]);
+      }
+      expect(url.pathname).toMatch(/\/rpc\/activate_reviewed_factory_routing$/);
+      expect(body).toEqual({
+        p_workspace_id: workspaceId,
+        p_factory_id: factoryId,
+        p_actor_user_id: actorUserId,
+        p_expected_activation_number: 5,
+        p_draft_id: draftId,
+        p_enabled_sandbox_providers: ["vercel"],
+        p_required_probes: ["git", "codexExternalSandbox"],
+      });
+      return Response.json({
+        activationId: memberId,
+        activationNumber: 6,
+        previousActivationNumber: 5,
+        revisionId,
+        createdAt,
+      });
+    });
+    await expect(
+      mutateFactoryDefinition({
+        admin,
+        workspaceId,
+        actorUserId,
+        command: { action: "activate-routing", expectedActivationNumber: 5, draftId },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      result: {
+        activation: {
+          id: memberId,
+          revisionId,
+          activationNumber: 6,
+          previousActivationNumber: 5,
+          createdAt,
+        },
+      },
+    });
+  });
+
   it("rejects rollback when a stored approver is absent from the live catalog", async () => {
     mocks.loadCatalog.mockResolvedValue({ ...catalog, approvers: [] });
     const { admin, fetch } = fixture(({ url }) => {

@@ -37,11 +37,12 @@ function adminWith(row: Record<string, unknown> | null) {
   return { from: () => builder };
 }
 
-function assertReady(row: Record<string, unknown> | null) {
+function assertReady(row: Record<string, unknown> | null, qualificationId?: string) {
   return assertCurrentSandboxCapabilityCheck({
     admin: adminWith(row) as never,
     agent: { model: "gpt-5.5", provider: "codex" },
     connection,
+    qualificationId,
     repositoryId: "repository-1",
     workspaceId: "workspace-1",
   });
@@ -121,6 +122,22 @@ describe("assertCurrentSandboxCapabilityCheck", () => {
         status: "success",
       }),
     ).rejects.toMatchObject({ provider: "e2b" });
+  });
+
+  it("requires the admitted qualification even when a newer probe used identical settings", async () => {
+    const row = {
+      id: "new-check",
+      agent_model: "gpt-5.5",
+      agent_provider: "codex",
+      capabilities: completeCapabilities,
+      sandbox_connection_revision: connection.revision,
+      sandbox_provider: connection.provider,
+      status: "success",
+    };
+    await expect(assertReady(row, "admitted-check")).rejects.toBeInstanceOf(
+      SandboxCapabilityCheckStaleError,
+    );
+    await expect(assertReady(row, row.id)).resolves.toBeUndefined();
   });
 
   it("rejects legacy checks without agent metadata instead of matching every agent", async () => {

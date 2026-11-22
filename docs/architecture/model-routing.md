@@ -50,3 +50,10 @@ Workspace owners and admins can apply a comparison configuration to a task class
 | Confidence          | The comparison currently supplies no confidence value. Leave the confidence floor unset when applying a finding.                                                                                                            |
 
 The save transaction retains an immutable receipt with the draft and the exact experiment, candidate key, suite revision and purpose, scorer revision, and measured tradeoffs. The draft links to the frozen comparison configuration and suite revision. A subsequent save keeps that link when the class identity, rule configuration, evidence thresholds, and repository scope still match. A fresh benchmark proposal records its own receipt.
+
+## Reviewed activation
+
+- Use **Activate reviewed routing** on a saved draft with frozen benchmark evidence and a passing configuration test. Activation checks the expected head and requalifies the exact targets against current factory authority.
+- A new admission pins its reviewed activation, normal decision, and exact execution configuration. The workflow, repository, grants, approvals, tools, and budgets still come from the admitted factory definition.
+- A workspace owner or admin can choose a reviewed target for one new pipeline session and supply a reason. The admission records the operator, reason, and resolved configuration alongside the policy recommendation. A retry of the creation request replays the recorded result.
+- Worker claims and attempt receipts check the pinned runtime, harness, native model, agent prompt, and sandbox connection. Codex also uses the reasoning effort from the qualified benchmark configuration. Later activations affect future admissions. Retries and later stages reuse the session’s existing pin.

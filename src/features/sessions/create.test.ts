@@ -113,6 +113,39 @@ describe("createSessionPayloadSchema", () => {
       restartOfSessionId: SOURCE_SESSION_ID,
     });
   });
+
+  it("normalizes a reviewed override for a confirmed new pipeline session", () => {
+    const input = {
+      promptMd: "Use an approved fallback.",
+      workspaceId: WORKSPACE_ID,
+      requestId: ATTACHMENT_ID,
+      factoryDefinitionDigest: "a".repeat(64),
+      routingOverride: {
+        expectedActivationNumber: 4,
+        ruleId: SOURCE_SESSION_ID.toUpperCase(),
+        target: "rule_fallback",
+        reason: "  Verify the reviewed fallback.  ",
+      },
+    };
+    expect(normalizeCreateSessionPayload(createSessionPayloadSchema.parse(input))).toMatchObject({
+      routingOverride: {
+        expectedActivationNumber: 4,
+        ruleId: SOURCE_SESSION_ID,
+        target: "rule_fallback",
+        reason: "Verify the reviewed fallback.",
+      },
+    });
+    for (const invalid of [
+      { requestId: undefined },
+      { factoryDefinitionDigest: undefined },
+      { draftSpecification: true },
+      { restartOfSessionId: SOURCE_SESSION_ID },
+      { routingOverride: { ...input.routingOverride, reason: " " } },
+      { routingOverride: { ...input.routingOverride, model: "arbitrary" } },
+    ]) {
+      expect(createSessionPayloadSchema.safeParse({ ...input, ...invalid }).success).toBe(false);
+    }
+  });
 });
 
 describe("normalizeCreateSessionPayload", () => {

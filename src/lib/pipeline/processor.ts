@@ -45,8 +45,12 @@ import {
   loadPinnedSessionPrompt,
   type PinnedFactoryExecution,
 } from "@/lib/factory-definitions/runtime-definition";
-import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
 import { runBenchmarkTrial } from "@/lib/factory-benchmarks/qualified-trial";
+import {
+  loadRoutedFactoryExecution,
+  resolveRoutedFactoryExecutionProfile,
+  type RoutedFactoryExecution,
+} from "@/lib/model-routing/execution";
 import {
   AGENT_PROVIDERS,
   agentProviderSupportsEffort,
@@ -191,6 +195,7 @@ export async function processPipelineJob(input: {
   let session: SessionRow | null;
   let stage: PipelineStage | null;
   let pinned: PinnedFactoryExecution | null = null;
+  let routing: RoutedFactoryExecution | null = null;
   try {
     const loaded = await loadSessionById(admin, job.session_id);
     session = loaded ? { ...loaded } : null;
@@ -204,7 +209,10 @@ export async function processPipelineJob(input: {
         workerRuntime: input.workerRuntime ?? "node",
       });
     }
-    if (session) pinned = await loadPinnedFactoryExecution(admin, session);
+    if (session) {
+      pinned = await loadPinnedFactoryExecution(admin, session);
+      if (pinned?.modelRouting) routing = await loadRoutedFactoryExecution(admin, session);
+    }
     if (session && pinned) {
       const currentStageId = session.current_stage_id;
       const index = pinned.stages.findIndex(({ id }) => id === currentStageId);
@@ -238,6 +246,7 @@ export async function processPipelineJob(input: {
     signal: input.signal,
     stage,
     pinned,
+    routing,
     workerRuntime: input.workerRuntime,
     browserRuntime: input.browserRuntime,
     browserVideoRuntime: input.browserVideoRuntime,
@@ -260,11 +269,13 @@ async function runStage(input: {
   session: SessionRow;
   stage: PipelineStage;
   pinned: PinnedFactoryExecution | null;
+  routing: RoutedFactoryExecution | null;
   workerRuntime?: AttemptWorkerRuntime;
   browserRuntime?: BrowserScreenshotRuntime;
   browserVideoRuntime?: BrowserVideoRuntime;
 }): Promise<ProcessPipelineJobResult> {
-  const { admin, job, session, stage, pinned, captureOrderedEvents = true } = input;
+  const { admin, job, session, stage, pinned, routing, captureOrderedEvents = true } = input;
+  const workerRuntime = input.workerRuntime ?? "node";
   const specificationStage = session.specification_stage_id === stage.id;
   const supervisorSignal = input.signal;
   let signal = input.signal;
@@ -337,14 +348,29 @@ async function runStage(input: {
   let capture: RunEventCapture | undefined;
   let captureOpen = false;
   try {
-    if (specificationStage && !pinned?.implementationAgent) {
+    if (routing && routing.configuration.workerRuntime !== workerRuntime) {
+      throw new FactoryExecutionProfileUnavailableError(
+        "This worker cannot run the pinned routing configuration.",
+      );
+    }
+    const expectedAgent = routing?.implementationAgent ?? pinned?.implementationAgent;
+    if (specificationStage && !expectedAgent) {
       throw new FactoryExecutionProfileUnavailableError(
         "The specification stage requires a pinned named agent.",
       );
     }
 
     const profile =
-      pinned && resolveFactoryExecutionProfile(pinned, session.creator_member_id ?? undefined);
+      pinned && resolveRoutedFactoryExecutionProfile(pinned, routing, session.creator_member_id);
+    if (
+      routing &&
+      pinned?.mcpManifest?.servers.length &&
+      pinned.mcpManifest.agentId !== expectedAgent?.agentId
+    ) {
+      throw new FactoryExecutionProfileUnavailableError(
+        "The pinned routing agent cannot use this session's MCP permissions.",
+      );
+    }
     const gitInputPromise = loadPinnedSessionJobGitInput({
       admin,
       jobId: job.id,
@@ -459,7 +485,7 @@ async function runStage(input: {
         factoryId: session.factory_id,
         sessionId: session.id,
         runId,
-        expected: pinned?.implementationAgent,
+        expected: expectedAgent,
       }),
       loadFactorySkillBundle(admin, {
         workspaceId: session.workspace_id,
@@ -539,12 +565,25 @@ async function runStage(input: {
               profile.sandboxProvider,
             )
           : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
+    if (
+      routing &&
+      (!sandboxSelection ||
+        sandboxSelection.provider !== routing.sandboxProvider ||
+        sandboxSelection.connection.revision !== routing.sandboxConnectionRevision)
+    ) {
+      throw new FactoryExecutionProfileUnavailableError(
+        "The sandbox connection pinned by routing is unavailable.",
+      );
+    }
     if (sandboxSelection) {
       await assertCurrentSandboxCapabilityCheck({
         admin,
         agent: { model, provider },
         connection: sandboxSelection.connection,
-        ...(pinned ? { definitionDigest: pinned.canonicalDigest } : {}),
+        ...(pinned
+          ? { definitionDigest: routing?.definitionDigest ?? pinned.canonicalDigest }
+          : {}),
+        ...(routing ? { qualificationId: routing.configuration.qualificationId } : {}),
         repositoryId: github.repo.id,
         workspaceId: session.workspace_id,
       });
@@ -828,7 +867,7 @@ async function runStage(input: {
             ? authority.memberId
             : null
           : session.creator_member_id,
-        workerRuntime: input.workerRuntime ?? "node",
+        workerRuntime,
         ...(effort ? { effort } : {}),
         maxTurns,
         signal,

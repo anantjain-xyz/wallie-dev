@@ -256,6 +256,10 @@ describe("POST factory definition commands", () => {
       { draft },
     ],
     [{ action: "publish", expectedActivationNumber: 0, draftId }, { activation: activated }],
+    [
+      { action: "activate-routing", expectedActivationNumber: 0, draftId },
+      { activation: activated },
+    ],
     [{ action: "rollback", expectedActivationNumber: 1, revisionId }, { activation: activated }],
   ])(
     "uses signed-in authority and preserves the exact action payload (%j)",
@@ -302,6 +306,7 @@ describe("POST factory definition commands", () => {
     { action: "publish", draftId },
     { action: "publish", expectedActivationNumber: 0.5, draftId },
     { action: "publish", expectedActivationNumber: 0, draftId, actorUserId },
+    { action: "activate-routing", expectedActivationNumber: 0, draftId, reviewedTargets: [] },
     { action: "rollback", expectedActivationNumber: 0, revisionId, definitionJson: "{}" },
     { action: "draft", expectedActivationNumber: 0, source: { kind: "structured" } },
   ])("rejects malformed or caller-authorized commands (%j)", async (command) => {

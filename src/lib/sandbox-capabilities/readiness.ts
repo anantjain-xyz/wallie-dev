@@ -27,6 +27,7 @@ export async function assertCurrentSandboxCapabilityCheck(input: {
   agent: { model: string; provider: AgentProvider };
   connection: Pick<SandboxConnection, "provider" | "revision">;
   definitionDigest?: string;
+  qualificationId?: string;
   repositoryId: string;
   workspaceId: string;
 }): Promise<void> {
@@ -34,7 +35,7 @@ export async function assertCurrentSandboxCapabilityCheck(input: {
     const checks = input.admin
       .from("sandbox_capability_checks")
       .select(
-        "status, capabilities, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision",
+        "id, status, capabilities, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision",
       )
       .eq("workspace_id", input.workspaceId)
       .eq("github_repository_id", input.repositoryId);
@@ -70,6 +71,7 @@ export async function assertCurrentSandboxCapabilityCheck(input: {
       : {};
   const ready =
     data?.status === "success" &&
+    (input.qualificationId === undefined || data.id === input.qualificationId) &&
     data.sandbox_provider === input.connection.provider &&
     data.sandbox_connection_revision === input.connection.revision &&
     agentMatch &&

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
@@ -35,6 +36,7 @@ export type FactoryDefinitionMutation =
       source: FactoryDefinitionSource;
     }
   | { action: "publish"; expectedActivationNumber: number; draftId: string }
+  | { action: "activate-routing"; expectedActivationNumber: number; draftId: string }
   | { action: "rollback"; expectedActivationNumber: number; revisionId: string };
 
 export type FactoryActivationSummary = {
@@ -65,6 +67,13 @@ type FactoryMutationResult =
   | FactoryDefinitionMutationFailure;
 
 type AdminClient = SupabaseClient<Database>;
+const reviewedActivationSchema = z.object({
+  activationId: z.string().uuid(),
+  activationNumber: z.number().int().safe().positive(),
+  previousActivationNumber: z.number().int().safe().positive().nullable(),
+  revisionId: z.string().uuid(),
+  createdAt: z.string().datetime({ offset: true }),
+});
 
 export async function mutateFactoryDefinition({
   admin,
@@ -166,7 +175,7 @@ export async function mutateFactoryDefinition({
       };
     }
 
-    const isPublishing = command.action === "publish";
+    const isPublishing = command.action !== "rollback";
     const { data: stored, error: readError } = await selectStoredFactoryDefinition(
       admin,
       workspaceId,
@@ -198,6 +207,15 @@ export async function mutateFactoryDefinition({
       p_enabled_sandbox_providers: enabledSandboxProviders,
       p_required_probes: requiredProbes,
     };
+    if (command.action === "activate-routing") {
+      const { data, error } = await admin.rpc("activate_reviewed_factory_routing", {
+        ...requirements,
+        p_draft_id: command.draftId,
+      });
+      if (error) return mutationError(error);
+      const { activationId, ...activation } = reviewedActivationSchema.parse(data);
+      return { ok: true, result: { activation: { id: activationId, ...activation } } };
+    }
     const { data, error } = isPublishing
       ? await admin.rpc("publish_factory_definition_draft", {
           ...requirements,

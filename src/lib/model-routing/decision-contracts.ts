@@ -54,7 +54,7 @@ export const routingDecisionEvaluationSchema = z.discriminatedUnion("disposition
 ]);
 
 const admissionFields = {
-  mode: z.literal("shadow"),
+  mode: z.enum(["shadow", "active"]),
   policyRevisionId: id,
   policyDigest: digest,
 };
@@ -63,6 +63,15 @@ export const routingDecisionSchema = z.discriminatedUnion("disposition", [
   selectedEvaluation.extend(admissionFields),
   escalatedEvaluation.extend(admissionFields),
 ]);
+
+export const routingOverrideReceiptSchema = z.strictObject({
+  actorMemberId: id,
+  reason: z.string().trim().min(1).max(500),
+  target: z.enum(["primary", "rule_fallback"]),
+  configuration: modelRoutingConfigurationSchema,
+  benchmarkCandidateKey: digest,
+  createdAt: z.string().datetime({ offset: true }),
+});
 
 export type RoutingDecisionEvaluation = z.infer<typeof routingDecisionEvaluationSchema>;
 

@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { routingDraftEvidenceSchema } from "@/lib/model-routing/draft-contracts";
+import { selectReviewedFactoryRoutingActivation } from "@/lib/model-routing/reviewed-activation";
 import { loadWorkspaceSandboxOverview } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -182,8 +183,19 @@ export async function loadFactoryEditorSnapshot(
   ]);
   // If the workspace is deleted during the load, the observed activation can no longer be resolved.
   if (activation && !published) return null;
+  let routingMode: FactoryEditorSnapshot["routingMode"];
+  if (published?.bundle.modelRouting) {
+    const { data, error } = await selectReviewedFactoryRoutingActivation(client, {
+      workspaceId,
+      factoryId: factory.id,
+      activationNumber,
+    });
+    if (error) throw error;
+    routingMode = data ? "active" : "shadow";
+  }
   return {
     activationNumber,
+    ...(routingMode ? { routingMode } : {}),
     published,
     draft: workingDraft,
     baseline,

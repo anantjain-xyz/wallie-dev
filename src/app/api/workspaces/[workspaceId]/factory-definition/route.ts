@@ -38,7 +38,7 @@ const commandSchema = z.discriminatedUnion("action", [
     .strict(),
   z
     .object({
-      action: z.literal("publish"),
+      action: z.enum(["publish", "activate-routing"]),
       expectedActivationNumber: factoryDefinitionExpectedActivationSchema,
       draftId: z.string().uuid(),
     })

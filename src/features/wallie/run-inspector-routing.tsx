@@ -38,7 +38,7 @@ export function RunRoutingDecisionInspection({
     );
   }
 
-  const { decision, factoryId, canManageFactory, taskClassName, benchmarkEvidence } =
+  const { decision, factoryId, canManageFactory, taskClassName, benchmarkEvidence, override } =
     result.receipt;
   const selected = decision.disposition === "selected";
   const evidence = canManageFactory ? benchmarkEvidence : null;
@@ -51,9 +51,15 @@ export function RunRoutingDecisionInspection({
     <PageSection
       anchorId="routing-decision"
       title="Routing decision"
-      tagline="Shadow evaluation recorded at admission. The execution profile records what ran."
+      tagline={
+        decision.mode === "active"
+          ? "Reviewed routing recorded at admission. The execution profile records what ran."
+          : "Shadow evaluation recorded at admission. The execution profile records what ran."
+      }
       statusBadge={
-        selected ? (
+        override ? (
+          <Status label="Override recorded" value="healthy" />
+        ) : selected ? (
           <Status label={selectedSourceLabels[decision.source]} value="healthy" />
         ) : (
           <Status label="Escalated" value="needs_attention" />
@@ -95,7 +101,9 @@ export function RunRoutingDecisionInspection({
         </div>
         {selected ? (
           <div className="space-y-3 p-4 sm:p-5">
-            <h3 className="type-label">Qualified configuration</h3>
+            <h3 className="type-label">
+              {override ? "Policy recommendation" : "Qualified configuration"}
+            </h3>
             <MetadataList>
               <MetadataItem label="Model" value={decision.configuration.modelKey} />
               <MetadataItem
@@ -123,6 +131,30 @@ export function RunRoutingDecisionInspection({
                 label="Qualification ID"
                 monospace
                 value={decision.configuration.qualificationId}
+              />
+            </MetadataList>
+          </div>
+        ) : null}
+        {override ? (
+          <div className="space-y-3 p-4 sm:p-5">
+            <h3 className="type-label">One-task override</h3>
+            <MetadataList>
+              <MetadataItem label="Reason" value={override.reason} />
+              <MetadataItem label="Actor member ID" monospace value={override.actorMemberId} />
+              <MetadataItem label="Selected target" value={selectedSourceLabels[override.target]} />
+              <MetadataItem label="Model" value={override.configuration.modelKey} />
+              <MetadataItem
+                label="Harness"
+                value={RUN_PROVIDER_LABELS[override.configuration.harness]}
+              />
+              <MetadataItem
+                label="Worker runtime"
+                value={override.configuration.workerRuntime === "node" ? "Node.js" : "Workerd"}
+              />
+              <MetadataItem
+                label="Benchmark candidate key"
+                monospace
+                value={override.benchmarkCandidateKey}
               />
             </MetadataList>
           </div>
