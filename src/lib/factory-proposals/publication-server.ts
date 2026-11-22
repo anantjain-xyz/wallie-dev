@@ -224,6 +224,10 @@ export async function publishFactoryImprovement(
     publication = advanced;
   }
 
+  function resetCreate() {
+    return advance({ action: "reset_create", values: {} }, AbortSignal.timeout(5_000));
+  }
+
   try {
     const token = await (dependencies.getToken
       ? dependencies.getToken(publication)
@@ -341,7 +345,13 @@ export async function publishFactoryImprovement(
     await git.verifyHead({ base, head, candidateDigest, signal });
     if (await pull.find()) throw new PublicationError("PT409");
     await readMatchingBase();
-    await advance({ action: "arm_create", values: {} });
+    try {
+      await advance({ action: "arm_create", values: {} });
+    } catch (error) {
+      // The arm may have committed, but no GitHub create has started.
+      await resetCreate().catch(() => undefined);
+      throw error;
+    }
 
     let created: CanonicalPullRequest;
     try {
@@ -357,14 +367,14 @@ export async function publishFactoryImprovement(
         found = await pull.find();
       } catch (reconcileError) {
         if (!retryCreationSafe) throw reconcileError;
-        await advance({ action: "reset_create", values: {} });
+        await resetCreate();
         throw error;
       }
       if (found) return await verifyAndRecord(found.number, true);
       if (!retryCreationSafe) {
         return { publication, state: "pending", replay: true };
       }
-      await advance({ action: "reset_create", values: {} });
+      await resetCreate();
       throw error;
     }
     return await verifyAndRecord(created.number, false);
