@@ -4,7 +4,7 @@ import { MetadataItem, MetadataList, PageSection } from "@/components/ui/page-sh
 import type { RoutingDraftEvidence } from "@/lib/model-routing/draft-contracts";
 import { workspaceBenchmarkComparisonPath, workspaceBenchmarkSuitePath } from "@/lib/routes";
 
-export function RoutingDraftEvidencePanel({
+export function routingDraftEvidenceHrefs({
   evidence,
   factoryId,
   workspaceSlug,
@@ -26,10 +26,26 @@ export function RoutingDraftEvidencePanel({
       routingCandidateKey: evidence.candidateKey,
     },
   );
-  const suitePath = workspaceBenchmarkSuitePath(workspaceSlug, suite.id, {
-    factory: factoryId,
-    revision: suite.revisionId,
-  });
+  return {
+    comparison: comparisonPath + "#frontier-configuration-" + evidence.candidateKey,
+    suite: workspaceBenchmarkSuitePath(workspaceSlug, suite.id, {
+      factory: factoryId,
+      revision: suite.revisionId,
+    }),
+  };
+}
+
+export function RoutingDraftEvidencePanel({
+  evidence,
+  factoryId,
+  workspaceSlug,
+}: {
+  evidence: RoutingDraftEvidence;
+  factoryId?: string;
+  workspaceSlug: string;
+}) {
+  const { suite, constraints } = evidence;
+  const hrefs = routingDraftEvidenceHrefs({ evidence, factoryId, workspaceSlug });
 
   return (
     <PageSection anchorId="routing-draft-evidence" title="Routing draft evidence" className="mb-6">
@@ -65,13 +81,10 @@ export function RoutingDraftEvidencePanel({
           )}
         </MetadataList>
         <div className="flex flex-wrap gap-2">
-          <Link
-            className="ui-button"
-            href={comparisonPath + "#frontier-configuration-" + evidence.candidateKey}
-          >
+          <Link className="ui-button" href={hrefs.comparison}>
             Open exact comparison configuration
           </Link>
-          <Link className="ui-button" href={suitePath}>
+          <Link className="ui-button" href={hrefs.suite}>
             Open frozen suite revision
           </Link>
         </div>

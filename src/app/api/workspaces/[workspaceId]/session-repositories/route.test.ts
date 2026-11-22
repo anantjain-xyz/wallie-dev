@@ -35,7 +35,10 @@ function routeContext(workspaceId = WORKSPACE_ID) {
   return { params: Promise.resolve({ workspaceId }) };
 }
 
-function grantAccess(selectedGithubRepositoryId: string | null = "repo-selected") {
+function grantAccess(
+  selectedGithubRepositoryId: string | null = "repo-selected",
+  role: "admin" | "member" = "member",
+) {
   const onboardingQuery = {
     eq: vi.fn(() => onboardingQuery),
     maybeSingle: vi.fn(async () => ({
@@ -47,6 +50,7 @@ function grantAccess(selectedGithubRepositoryId: string | null = "repo-selected"
   const supabase = { from: vi.fn<(table: string) => unknown>(() => onboardingQuery) };
   mocked.requireWorkspaceAccessById.mockResolvedValue({
     context: {
+      currentMember: { id: "member-id", kind: "human", is_active: true, role },
       supabase,
       user: { id: "user-1" },
       workspace: { id: WORKSPACE_ID, name: "Wallie", slug: "wallie" },
@@ -180,6 +184,86 @@ describe("session repositories route", () => {
     );
     expect(pinnedQuery.in).toHaveBeenCalledWith("id", ["repo-pinned", "repo-alternate"]);
   });
+
+  it.each(["admin", "member"] as const)(
+    "exposes reviewed stage choices only for an authorized %s",
+    async (role) => {
+      const supabase = grantAccess("repo-pinned", role);
+      const stageId = "00000000-0000-4000-8000-000000000005";
+      const classId = "00000000-0000-4000-8000-000000000006";
+      const ruleId = "00000000-0000-4000-8000-000000000007";
+      const configuration = {
+        agentId: "00000000-0000-4000-8000-000000000008",
+        qualificationId: "00000000-0000-4000-8000-000000000009",
+        definitionRevisionId: "00000000-0000-4000-8000-000000000010",
+        experimentId: "00000000-0000-4000-8000-000000000011",
+        modelKey: "openai/gpt-4.1",
+        workerRuntime: "node",
+        harness: "codex",
+      };
+      const repos = {
+        select: vi.fn(() => repos),
+        eq: vi.fn(() => repos),
+        in: vi.fn(() => repos),
+        order: vi.fn(async () => ({ data: [], error: null })),
+      };
+      const review = {
+        select: vi.fn(() => review),
+        eq: vi.fn(() => review),
+        maybeSingle: vi.fn(async () => ({
+          data: {
+            reviewed_targets: [
+              { ruleId, target: "primary", configuration },
+              { ruleId: null, target: "unmatched_fallback", configuration },
+            ],
+          },
+          error: null,
+        })),
+      };
+      supabase.from.mockImplementation((table) =>
+        table === "factory_routing_activations" ? review : repos,
+      );
+      mocked.loadActiveFactoryExecution.mockResolvedValueOnce({
+        activationNumber: 7,
+        canonicalDigest: "a".repeat(64),
+        factoryId: "factory-1",
+        pipelineId: "compiled-pipeline",
+        repositoryId: "repo-pinned",
+        stages: [{ id: stageId, slug: "compile", name: "Compile", description: "" }],
+        modelRouting: {
+          taskClasses: [{ id: classId, slug: "compile", name: "Compile task" }],
+          rules: [{ id: ruleId, taskClassId: classId }],
+        },
+      });
+
+      const response = await GET(new Request("http://localhost"), routeContext());
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      if (role === "admin") {
+        expect(review.eq.mock.calls).toEqual([
+          ["workspace_id", WORKSPACE_ID],
+          ["factory_id", "factory-1"],
+          ["activation_number", 7],
+        ]);
+        expect(body.routingOverrideOptions).toEqual({
+          activationNumber: 7,
+          targets: [
+            {
+              stageId,
+              ruleId,
+              target: "primary",
+              modelKey: "openai/gpt-4.1",
+              workerRuntime: "node",
+              harness: "codex",
+            },
+          ],
+        });
+      } else {
+        expect(review.select).not.toHaveBeenCalled();
+        expect(body.routingOverrideOptions).toBeUndefined();
+      }
+    },
+  );
 
   it("returns the authorized empty option set", async () => {
     grantAccess(null);

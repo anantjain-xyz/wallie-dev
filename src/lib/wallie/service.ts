@@ -29,6 +29,12 @@ import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { RECOMMENDED_AGENT_EFFORT } from "@/lib/agent-config/contracts";
 import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
 import { checkFactoryProfileCredentialReadiness } from "@/lib/factory-definitions/execution-profile-readiness";
+import type { RoutingOverride } from "@/lib/model-routing/operation-contracts";
+import {
+  loadRoutedFactoryExecution,
+  resolveRoutedFactoryExecutionProfile,
+  type RoutedFactoryExecution,
+} from "@/lib/model-routing/execution";
 import {
   loadPinnedFactoryExecution,
   loadPinnedFactoryRepositoryId,
@@ -233,12 +239,17 @@ export async function assertSessionFactoryCredentialReady(input: {
   creatorMemberId?: string | null;
   definition: PinnedFactoryExecution | null;
   factoryId: string;
+  routing?: RoutedFactoryExecution | null;
   workspaceId: string;
 }) {
   const { definition } = input;
   if (!definition) return null;
 
-  const profile = resolveFactoryExecutionProfile(definition, input.creatorMemberId ?? undefined);
+  const profile = resolveRoutedFactoryExecutionProfile(
+    definition,
+    input.routing,
+    input.creatorMemberId,
+  );
   if (profile.unavailableReason) {
     throw new WallieActionError({
       code: "factory_profile_unavailable",
@@ -261,6 +272,7 @@ export async function assertSessionSandboxCapabilityReady(input: {
   admin?: AdminClient;
   agentConfig: Pick<SessionFirstRunPrerequisites["agentConfig"], "model" | "provider">;
   definitionDigest?: string;
+  qualificationId?: string;
   repository: WallieSessionRepository | null;
   sandboxConnection: WallieVercelSandboxConnectionStatus;
   workspaceId: string;
@@ -284,6 +296,7 @@ export async function assertSessionSandboxCapabilityReady(input: {
       agent: { provider: input.agentConfig.provider, model: input.agentConfig.model },
       connection: { provider, revision },
       ...(input.definitionDigest === undefined ? {} : { definitionDigest: input.definitionDigest }),
+      ...(input.qualificationId === undefined ? {} : { qualificationId: input.qualificationId }),
       repositoryId: input.repository.id,
       workspaceId: input.workspaceId,
     });
@@ -315,6 +328,7 @@ export async function createSessionWithFirstJob(input: {
   pipelineId?: string | null;
   promptMd: string;
   restartOfSessionId?: string;
+  routingOverride?: RoutingOverride;
   selectedStageIds?: string[];
   title: string;
   workspaceId: string;
@@ -361,22 +375,40 @@ export async function createSessionWithFirstJob(input: {
           source_session_id: input.restartOfSessionId,
         }
       : null;
-  const query = confirmationArgs
-    ? input.commandFactoryId !== undefined
-      ? admin.rpc("create_session_command_once", {
+  const commandArgs =
+    confirmationArgs && input.commandFactoryId !== undefined
+      ? {
           ...confirmationArgs,
           target_factory_id: input.commandFactoryId ?? undefined,
           draft_specification: input.draftSpecification || undefined,
+        }
+      : null;
+  if (
+    input.routingOverride &&
+    (!commandArgs ||
+      !input.factoryDefinitionDigest ||
+      input.restartOfSessionId ||
+      input.draftSpecification)
+  ) {
+    throw new Error("A confirmed new pipeline session is required for a routing override.");
+  }
+  const query = commandArgs
+    ? input.routingOverride
+      ? admin.rpc("create_session_command_with_routing_override", {
+          ...commandArgs,
+          p_routing_override: input.routingOverride,
         })
-      : admin.rpc("create_confirmed_factory_session_once_with_first_job", confirmationArgs)
-    : requestArgs
-      ? input.restartOfSessionId
-        ? admin.rpc("restart_session_once_with_first_job", {
-            ...requestArgs,
-            source_session_id: input.restartOfSessionId,
-          })
-        : admin.rpc("create_session_once_with_first_job", requestArgs)
-      : admin.rpc("create_session_with_first_job_and_attachments", args);
+      : admin.rpc("create_session_command_once", commandArgs)
+    : confirmationArgs
+      ? admin.rpc("create_confirmed_factory_session_once_with_first_job", confirmationArgs)
+      : requestArgs
+        ? input.restartOfSessionId
+          ? admin.rpc("restart_session_once_with_first_job", {
+              ...requestArgs,
+              source_session_id: input.restartOfSessionId,
+            })
+          : admin.rpc("create_session_once_with_first_job", requestArgs)
+        : admin.rpc("create_session_with_first_job_and_attachments", args);
   const { data, error } = await query.single();
 
   if (error || !data) {
@@ -581,11 +613,15 @@ async function validateQueuedRunRequest(input: {
   if (activeRun) return { activeRun, session, runType: input.requestedRunType };
 
   const definition = await loadPinnedFactoryExecution(input.admin, session);
+  const routing = definition?.modelRouting
+    ? await loadRoutedFactoryExecution(input.admin, session)
+    : null;
   const profile = await assertSessionFactoryCredentialReady({
     admin: input.admin,
     creatorMemberId: session.creator_member_id,
     definition,
     factoryId: session.factory_id,
+    routing,
     workspaceId: workspace.id,
   });
   const pinnedRepositoryId = definition
@@ -602,6 +638,14 @@ async function validateQueuedRunRequest(input: {
     }),
     loadWallieVercelSandboxConnection(input.admin, workspace.id, profile?.sandboxProvider),
   ]);
+  if (routing && vercelSandboxConnection.connectionRevision !== routing.sandboxConnectionRevision) {
+    throw new WallieActionError({
+      code: "sandbox_capability_check_stale",
+      message: "The sandbox connection pinned by routing is unavailable.",
+      provider: routing.sandboxProvider,
+      statusCode: 422,
+    });
+  }
   const repository: WallieSessionRepository | null = repositoryResolution.repository
     ? {
         defaultBranch: repositoryResolution.repository.defaultBranch,
@@ -631,7 +675,8 @@ async function validateQueuedRunRequest(input: {
   await assertSessionSandboxCapabilityReady({
     admin: input.admin,
     agentConfig,
-    definitionDigest: definition?.canonicalDigest,
+    definitionDigest: routing?.definitionDigest ?? definition?.canonicalDigest,
+    qualificationId: routing?.configuration.qualificationId,
     repository,
     sandboxConnection: vercelSandboxConnection,
     workspaceId: workspace.id,
@@ -681,8 +726,11 @@ export async function resolveQueuedRunConfig(
     .maybeSingle();
   if (error) throw error;
   const definition = data ? await loadPinnedFactoryExecution(admin, data) : null;
-  if (definition) {
-    const profile = resolveFactoryExecutionProfile(definition);
+  if (data && definition) {
+    const routing = definition.modelRouting
+      ? await loadRoutedFactoryExecution(admin, { ...data, id: session.id })
+      : null;
+    const profile = resolveRoutedFactoryExecutionProfile(definition, routing);
     return {
       modelName: profile.model,
       modelProvider: profile.provider,

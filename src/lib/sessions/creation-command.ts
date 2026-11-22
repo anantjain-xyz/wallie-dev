@@ -11,6 +11,7 @@ import { factoryWritableRepositoryIds } from "@/lib/factory-definitions/reposito
 import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
 import { selectDefaultFactory } from "@/lib/factory-definitions/storage";
 import { fetchLinearIssue, type LinearIssue } from "@/lib/linear/client";
+import { selectReviewedFactoryRoutingActivation } from "@/lib/model-routing/reviewed-activation";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { generateSessionTitle } from "@/lib/sessions/generate-title";
 import { fingerprintSessionCreation } from "@/lib/sessions/creation-request";
@@ -305,6 +306,7 @@ export async function createSessionCommand({
     }
   }
   let pinned: Awaited<ReturnType<typeof loadActiveFactoryExecution>>;
+  let reviewedRouting = false;
   try {
     pinned = await loadActiveFactoryExecution(admin, actor.workspaceId);
     if (actor.factoryId) {
@@ -321,6 +323,15 @@ export async function createSessionCommand({
         );
       }
     }
+    if (pinned?.modelRouting) {
+      const { data, error } = await selectReviewedFactoryRoutingActivation(admin, {
+        workspaceId: actor.workspaceId,
+        factoryId: pinned.factoryId,
+        activationNumber: pinned.activationNumber,
+      });
+      if (error) throw error;
+      reviewedRouting = Boolean(data);
+    }
   } catch (error) {
     return creationFailure(
       "failed",
@@ -333,6 +344,13 @@ export async function createSessionCommand({
   ) {
     return sessionOptionsChanged();
   }
+  if (
+    normalized.routingOverride &&
+    (!reviewedRouting ||
+      normalized.routingOverride.expectedActivationNumber !== pinned?.activationNumber)
+  ) {
+    return sessionOptionsChanged();
+  }
 
   if (normalized.draftSpecification && !pinned?.implementationAgent) {
     return creationFailure(
@@ -340,6 +358,8 @@ export async function createSessionCommand({
       "The active factory definition must select a named agent to draft a specification.",
     );
   }
+  // Reviewed intake resolves and authorizes the exact target inside its transaction.
+  const routingAdmission = reviewedRouting ? pinned : null;
 
   let requestedRepositoryId = normalized.githubRepositoryId?.toLowerCase() ?? null;
   if (normalized.restartOfSessionId) {
@@ -380,14 +400,16 @@ export async function createSessionCommand({
       .select("status, selected_github_repository_id")
       .eq("workspace_id", actor.workspaceId)
       .maybeSingle(),
-    loadSessionFirstRunPrerequisites({
-      admin,
-      workspaceId: actor.workspaceId,
-      ...(pinned ? { pinned } : {}),
-    }).then(
-      (data) => ({ data, error: null }),
-      (error: unknown) => ({ data: null, error }),
-    ),
+    routingAdmission
+      ? Promise.resolve({ data: null, error: null })
+      : loadSessionFirstRunPrerequisites({
+          admin,
+          workspaceId: actor.workspaceId,
+          ...(pinned ? { pinned } : {}),
+        }).then(
+          (data) => ({ data, error: null }),
+          (error: unknown) => ({ data: null, error }),
+        ),
     normalized.linearIssueId
       ? loadWorkspaceLinearIssue({
           admin,
@@ -456,31 +478,34 @@ export async function createSessionCommand({
 
   let agentConfig;
   try {
-    if (pinned) {
-      await assertSessionFactoryCredentialReady({
+    if (routingAdmission) {
+      agentConfig = routingAdmission.agent;
+    } else {
+      if (pinned) {
+        await assertSessionFactoryCredentialReady({
+          admin,
+          creatorMemberId: actor.memberId,
+          definition: pinned,
+          factoryId: pinned.factoryId,
+          workspaceId: actor.workspaceId,
+        });
+      }
+      if (firstRunPrereqsResult.error || !firstRunPrereqsResult.data) {
+        throw firstRunPrereqsResult.error ?? new Error("Wallie is not ready to run.");
+      }
+      agentConfig = assertSessionFirstRunReady({
+        ...firstRunPrereqsResult.data,
+        repository: repositoryForPreflight,
+      });
+      await assertSessionSandboxCapabilityReady({
         admin,
-        creatorMemberId: actor.memberId,
-        definition: pinned,
-        factoryId: pinned.factoryId,
+        agentConfig,
+        ...(pinned ? { definitionDigest: pinned.canonicalDigest } : {}),
+        repository: repositoryForPreflight,
+        sandboxConnection: firstRunPrereqsResult.data.vercelSandboxConnection,
         workspaceId: actor.workspaceId,
       });
     }
-    if (firstRunPrereqsResult.error || !firstRunPrereqsResult.data) {
-      throw firstRunPrereqsResult.error ?? new Error("Wallie is not ready to run.");
-    }
-
-    agentConfig = assertSessionFirstRunReady({
-      ...firstRunPrereqsResult.data,
-      repository: repositoryForPreflight,
-    });
-    await assertSessionSandboxCapabilityReady({
-      admin,
-      agentConfig,
-      ...(pinned ? { definitionDigest: pinned.canonicalDigest } : {}),
-      repository: repositoryForPreflight,
-      sandboxConnection: firstRunPrereqsResult.data.vercelSandboxConnection,
-      workspaceId: actor.workspaceId,
-    });
   } catch (error) {
     if (error instanceof WallieActionError) {
       return { ok: false, failure: { kind: "wallie_action", cause: error } };
@@ -515,6 +540,7 @@ export async function createSessionCommand({
       ...(normalized.restartOfSessionId
         ? { restartOfSessionId: normalized.restartOfSessionId }
         : {}),
+      ...(normalized.routingOverride ? { routingOverride: normalized.routingOverride } : {}),
       selectedStageIds: normalized.selectedStageIds,
       title,
       workspaceId: actor.workspaceId,
@@ -546,6 +572,7 @@ export async function createSessionCommand({
           getErrorMessage(error, "The pinned factory is not ready to start."),
         );
       case "PT409":
+        if (normalized.routingOverride) return sessionOptionsChanged();
         if (pinned?.executionGrant) {
           return creationFailure(
             "conflict",

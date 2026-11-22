@@ -92,7 +92,8 @@ export async function seedFactoryAnalytics(baseURL: string | undefined, windowDa
       | "factory-benchmark-trial-media-seed.sql"
       | "factory-outcome-release.sql"
       | "factory-score-trends-seed.sql"
-      | "model-routing-inspector-seed.sql",
+      | "model-routing-inspector-seed.sql"
+      | "reviewed-routing-seed.sql",
     fields: Record<string, string>,
     timeout?: number,
   ): Promise<unknown> {

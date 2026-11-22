@@ -16,6 +16,7 @@ export type PendingSessionSnapshot = {
   linearIssueUrl: string | null;
   prompt: string;
   repositoryName: string | null;
+  routingOverride?: { label: string; reason: string };
   stages: { id: string; name: string }[];
   title: string;
 };
@@ -86,6 +87,15 @@ export function PendingSessionCreation({
             </li>
           ))}
         </ol>
+        {snapshot.routingOverride ? (
+          <section className="mb-6">
+            <h2 className="mb-2 text-sm font-semibold">Routing override</h2>
+            <p className="break-words text-sm">{snapshot.routingOverride.label}</p>
+            <p className="whitespace-pre-wrap break-words text-sm leading-6 text-muted">
+              {snapshot.routingOverride.reason}
+            </p>
+          </section>
+        ) : null}
         {snapshot.prompt ? (
           <section className="mb-6">
             <h2 className="mb-2 text-sm font-semibold">Prompt</h2>

@@ -19,6 +19,10 @@ import {
 import { CandidateTestPanel } from "@/features/factory-definition/candidate-test-panel";
 import { FactoryMcpManifestInspector } from "@/features/factory-definition/mcp-manifest-inspector";
 import { FactoryRevisionHistory } from "@/features/factory-definition/revision-history";
+import {
+  ReviewedRoutingActivation,
+  type ReviewedRoutingActivationTarget,
+} from "@/features/factory-definition/reviewed-routing-activation";
 import { RoutingDraftEvidencePanel } from "@/features/factory-definition/routing-draft-evidence";
 import { FactoryRoutingPreview } from "@/features/factory-definition/routing-preview";
 import { FactoryScorerBindings } from "@/features/factory-definition/scorer-bindings";
@@ -26,6 +30,7 @@ import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff
 import { ServiceCredentialsPanel } from "@/features/factory-definition/service-credentials-panel";
 import { StructuredFactoryDefinitionEditor } from "@/features/factory-definition/structured-editor";
 import { useCandidateTests } from "@/features/factory-definition/use-candidate-tests";
+import { notifySessionRepositoriesChanged } from "@/features/sessions/session-repository-cache-events";
 import type { CapabilityRepository } from "@/features/settings/sandbox-capability-section";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
@@ -63,7 +68,15 @@ type Edit = {
   activationNumber: number;
   draftId: string | null;
 };
-type Operation = "reload" | "preview" | "save" | "publish" | "select" | "history" | "rollback";
+type Operation =
+  | "reload"
+  | "preview"
+  | "save"
+  | "publish"
+  | "activate-routing"
+  | "select"
+  | "history"
+  | "rollback";
 const activationSavedSchema = z.object({ activation: z.object({ revisionId: z.string().uuid() }) });
 
 function sourceText(source: SerialFactoryDefinition) {
@@ -208,6 +221,7 @@ export function FactoryDefinitionEditor({
     [refreshProfile],
   );
   const inFlight = useRef(false);
+  const reloadButtonRef = useRef<HTMLButtonElement>(null);
   const scrolledReceiptUrl = useRef<string | null>(null);
   const dirty = edit ? editChanged(edit) : false;
   const stale =
@@ -241,6 +255,11 @@ export function FactoryDefinitionEditor({
     active: true,
     initialTestId: draft && draft.id === requestedDraft ? selection?.test : undefined,
   });
+  const reviewedRoutingTest = draftTests.eligible
+    ? draftTests.panel.tests.find(
+        ({ baseActivationNumber }) => baseActivationNumber === activationNumber,
+      )
+    : undefined;
   const revisionTests = useCandidateTests({
     api,
     target: historyCandidate,
@@ -428,6 +447,7 @@ export function FactoryDefinitionEditor({
   }
 
   async function refreshAfterActivation() {
+    notifySessionRepositoriesChanged(workspaceId);
     const current = await loadWorkspace();
     setSnapshot(current.snapshot);
     setHistory(current.history);
@@ -450,9 +470,48 @@ export function FactoryDefinitionEditor({
         }),
       );
       await refreshAfterActivation();
-      setFeedback({ kind: "success", text: "Draft published for new sessions." });
+      setFeedback({
+        kind: "success",
+        text: draft.source.modelRouting
+          ? "Draft published in shadow mode."
+          : "Draft published for new sessions.",
+      });
     });
     if (error) draftTests.refresh();
+  }
+
+  async function activateReviewedRouting(target: ReviewedRoutingActivationTarget) {
+    if (
+      !draft?.source.modelRouting ||
+      !draft.routingDraftEvidence ||
+      locked ||
+      dirty ||
+      !draftTests.eligible ||
+      target.activationNumber !== activationNumber ||
+      target.draftId !== draft.id ||
+      target.digest !== draft.digest
+    ) {
+      throw new Error(
+        "Review the current saved draft and configuration test before activating routing.",
+      );
+    }
+    const error = await run("activate-routing", async () => {
+      await fetchFactoryEditor(
+        api,
+        activationSavedSchema,
+        factoryEditorPost({
+          action: "activate-routing",
+          expectedActivationNumber: target.activationNumber,
+          draftId: target.draftId,
+        }),
+      );
+      await refreshAfterActivation();
+      setFeedback({ kind: "success", text: "Reviewed routing activated for new sessions." });
+    });
+    if (error) {
+      draftTests.refresh();
+      throw error;
+    }
   }
 
   async function selectRevision(revision: string) {
@@ -552,7 +611,13 @@ export function FactoryDefinitionEditor({
         }
         eyebrowAsPlain
         actions={
-          <button className="ui-button" disabled={busy} onClick={() => void reload()} type="button">
+          <button
+            className="ui-button"
+            disabled={busy}
+            onClick={() => void reload()}
+            ref={reloadButtonRef}
+            type="button"
+          >
             <ActionButtonLabel
               idle="Reload definition"
               pending={pending === "reload"}
@@ -646,6 +711,9 @@ export function FactoryDefinitionEditor({
                         "None"
                       )}
                     </dd>
+                    {snapshot.routingMode === "active" ? (
+                      <dd className="mt-1 text-success">Routing active for new sessions</dd>
+                    ) : null}
                   </div>
                   <div>
                     <dt className="text-muted">Saved draft</dt>
@@ -761,13 +829,44 @@ export function FactoryDefinitionEditor({
                           type="button"
                         >
                           <ActionButtonLabel
-                            idle="Publish draft"
+                            idle={
+                              draft?.source.modelRouting
+                                ? "Publish in shadow mode"
+                                : "Publish draft"
+                            }
                             pending={pending === "publish"}
                             pendingLabel="Publishing…"
                           />
                         </button>
                       ) : null}
+                      {draft?.source.modelRouting ? (
+                        <ReviewedRoutingActivation
+                          activationNumber={activationNumber}
+                          draft={draft}
+                          eligible={
+                            !locked &&
+                            !dirty &&
+                            draftTests.eligible &&
+                            Boolean(draft.routingDraftEvidence)
+                          }
+                          factoryId={history?.factoryId ?? factoryId}
+                          onActivate={activateReviewedRouting}
+                          pending={pending === "activate-routing"}
+                          restoreFocusRef={reloadButtonRef}
+                          testHref={
+                            reviewedRoutingTest
+                              ? receiptHref(draft, reviewedRoutingTest.id)
+                              : undefined
+                          }
+                          workspaceSlug={workspaceSlug}
+                        />
+                      ) : null}
                     </div>
+                    {draft?.source.modelRouting && !draft.routingDraftEvidence ? (
+                      <p className="type-secondary text-muted">
+                        Apply a qualified benchmark finding before activating routing.
+                      </p>
+                    ) : null}
                   </>
                 ) : (
                   <p className="type-secondary text-muted">

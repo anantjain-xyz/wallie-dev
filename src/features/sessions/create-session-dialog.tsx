@@ -4,6 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react"
 import { usePathname, useRouter } from "next/navigation";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { AGENT_PROVIDER_LABELS } from "@/components/shared/agent-provider-options";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { MultiSelectField } from "@/components/ui/multi-select-field";
 import {
@@ -42,6 +43,10 @@ import {
   type SessionRepositorySnapshot,
 } from "@/features/sessions/session-repository-cache";
 import {
+  routingOverrideSchema,
+  type RoutingOverrideOptions,
+} from "@/lib/model-routing/operation-contracts";
+import {
   allowedSessionAttachmentMimeTypes,
   maxSessionAttachmentBytes,
   maxSessionAttachments,
@@ -59,6 +64,18 @@ type CreateSessionDialogProps = {
   workspaceId: string;
   workspaceSlug: string;
 };
+
+type OverrideTarget = RoutingOverrideOptions["targets"][number];
+
+function routingTargetKey({ ruleId, target }: OverrideTarget) {
+  return `${ruleId}:${target}`;
+}
+
+function routingTargetLabel({ target, modelKey, harness, workerRuntime }: OverrideTarget) {
+  const role = target === "primary" ? "Primary" : "Fallback";
+  const runtime = workerRuntime === "node" ? "Node.js" : "Cloudflare Workers";
+  return `${role} · ${modelKey} · ${AGENT_PROVIDER_LABELS[harness]} · ${runtime}`;
+}
 
 export function getLinearUrlError(value: string) {
   const trimmed = value.trim();
@@ -199,6 +216,10 @@ function CreateSessionDialogBody({
   const [linearUrl, setLinearUrl] = useState("");
   const [githubRepositoryId, setGithubRepositoryId] = useState("");
   const [excludedStageIds, setExcludedStageIds] = useState<string[]>([]);
+  const [overrideChoice, setOverrideChoice] = useState<{ scope: string; target: string } | null>(
+    null,
+  );
+  const [overrideReason, setOverrideReason] = useState("");
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -456,6 +477,38 @@ function CreateSessionDialogBody({
   const factoryRepositorySelectionRequired = Boolean(
     factoryDefinitionDigest && !selectedGithubRepositoryId,
   );
+  const overrideOptions = repositorySnapshot.data?.routingOverrideOptions;
+  const overrideScope = JSON.stringify([
+    overrideOptions?.activationNumber,
+    factoryDefinitionDigest,
+    selectedStageIds[0],
+    selectedGithubRepositoryId,
+  ]);
+  const overrideTargets =
+    !draftSpecification &&
+    factoryDefinitionDigest &&
+    selectedGithubRepositoryId === defaultGithubRepositoryId &&
+    overrideOptions
+      ? overrideOptions.targets.filter(({ stageId }) => stageId === selectedStageIds[0])
+      : [];
+  const overrideTarget =
+    overrideChoice?.scope === overrideScope
+      ? overrideTargets.find((target) => routingTargetKey(target) === overrideChoice.target)
+      : undefined;
+  const overrideRequest = overrideTarget
+    ? routingOverrideSchema.safeParse({
+        expectedActivationNumber: overrideOptions?.activationNumber,
+        ruleId: overrideTarget.ruleId,
+        target: overrideTarget.target,
+        reason: overrideReason,
+      })
+    : null;
+  const overrideNeedsSelection = overrideChoice !== null && !overrideTarget;
+  const overrideBlocksSubmission = overrideChoice !== null && !overrideRequest?.success;
+
+  function invalidateOverrideChoice() {
+    setOverrideChoice((current) => (current ? { ...current, scope: "" } : null));
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -491,6 +544,14 @@ function CreateSessionDialogBody({
     }
 
     if (specificationUnavailable) return;
+    if (overrideBlocksSubmission) {
+      setErrorMessage(
+        overrideNeedsSelection
+          ? "Choose a routing override again or use the routing policy."
+          : "Enter a reason for the routing override.",
+      );
+      return;
+    }
 
     if (!prompt.trim() && !linearUrl.trim()) {
       setErrorMessage("Enter a Linear issue URL or a prompt.");
@@ -528,6 +589,7 @@ function CreateSessionDialogBody({
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
         requestId: crypto.randomUUID(),
+        ...(overrideRequest?.success ? { routingOverride: overrideRequest.data } : {}),
         selectedStageIds,
         title: title.trim() || null,
         workspaceId,
@@ -546,6 +608,14 @@ function CreateSessionDialogBody({
         stages: stageOptions
           .filter((stage) => selectedStageIds.includes(stage.id))
           .map(({ id, name }) => ({ id, name })),
+        ...(overrideTarget && overrideRequest?.success
+          ? {
+              routingOverride: {
+                label: routingTargetLabel(overrideTarget),
+                reason: overrideRequest.data.reason,
+              },
+            }
+          : {}),
         title:
           title.trim() ||
           (linearUrl.trim() ? extractLinearIssueId(linearUrl) : null) ||
@@ -630,6 +700,16 @@ function CreateSessionDialogBody({
       if (rejected) attemptRef.current = null;
       if (isSessionOptionsChangedError(error)) {
         invalidateSessionRepositoryCache(workspaceId);
+        if (attempt.input.routingOverride) invalidateOverrideChoice();
+      }
+      if (
+        attempt.input.routingOverride &&
+        error instanceof Error &&
+        "status" in error &&
+        error.status === 403
+      ) {
+        invalidateSessionRepositoryCache(workspaceId);
+        invalidateOverrideChoice();
       }
       if (
         error instanceof Error &&
@@ -850,7 +930,10 @@ function CreateSessionDialogBody({
             <RepositoryField
               disabled={isSubmitting || unconfirmed}
               cacheKey={repositoryCacheKey}
-              onValueChange={setGithubRepositoryId}
+              onValueChange={(repositoryId) => {
+                if (repositoryId !== selectedGithubRepositoryId) invalidateOverrideChoice();
+                setGithubRepositoryId(repositoryId);
+              }}
               options={repositorySelectOptions}
               selectedGithubRepositoryId={selectedGithubRepositoryId}
               snapshot={repositorySnapshot}
@@ -922,6 +1005,7 @@ function CreateSessionDialogBody({
                   disabled={
                     isSubmitting ||
                     unconfirmed ||
+                    overrideChoice !== null ||
                     (repositorySnapshot.isStale && !draftSpecification)
                   }
                   onChange={(event) => setDraftSpecification(event.target.checked)}
@@ -940,10 +1024,70 @@ function CreateSessionDialogBody({
                   >
                     {specificationUnavailable
                       ? specificationReadiness
-                      : "Review the first stage’s specification before implementation starts."}
+                      : overrideChoice
+                        ? "Use the routing policy to draft a specification."
+                        : "Review the first stage’s specification before implementation starts."}
                   </span>
                 </span>
               </label>
+            ) : null}
+            {overrideTargets.length || overrideChoice ? (
+              <fieldset className="min-w-0 space-y-3 rounded-md border border-border p-3">
+                <legend className="px-1 text-sm font-medium">Routing override</legend>
+                <label className="block space-y-1.5">
+                  <span className="block text-sm font-medium">Configuration for this session</span>
+                  <select
+                    className="ui-select"
+                    disabled={isSubmitting || unconfirmed || repositorySnapshot.isStale}
+                    onChange={(event) => {
+                      const target = event.target.value;
+                      if (target) setOverrideChoice({ scope: overrideScope, target });
+                      else {
+                        setOverrideChoice(null);
+                        setOverrideReason("");
+                      }
+                    }}
+                    value={
+                      overrideTarget
+                        ? routingTargetKey(overrideTarget)
+                        : overrideNeedsSelection
+                          ? "review"
+                          : ""
+                    }
+                  >
+                    <option value="">Use routing policy</option>
+                    {overrideNeedsSelection ? (
+                      <option value="review" disabled>
+                        Choose again
+                      </option>
+                    ) : null}
+                    {overrideTargets.map((target) => (
+                      <option key={routingTargetKey(target)} value={routingTargetKey(target)}>
+                        {routingTargetLabel(target)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {overrideNeedsSelection && !unconfirmed ? (
+                  <p className="type-secondary text-warning" role="status">
+                    Choose a routing override again or use the routing policy.
+                  </p>
+                ) : null}
+                {overrideTarget ? (
+                  <label className="block space-y-1.5">
+                    <span className="block text-sm font-medium">Reason for override</span>
+                    <textarea
+                      className="ui-textarea w-full"
+                      disabled={isSubmitting || unconfirmed || repositorySnapshot.isStale}
+                      maxLength={500}
+                      onChange={(event) => setOverrideReason(event.target.value)}
+                      required
+                      rows={2}
+                      value={overrideReason}
+                    />
+                  </label>
+                ) : null}
+              </fieldset>
             ) : null}
             <p className="text-xs text-muted">
               Closing keeps your draft while you stay in this workspace. Reloading clears it.
@@ -976,6 +1120,7 @@ function CreateSessionDialogBody({
                 unconfirmed
                   ? isSubmitting
                   : specificationUnavailable ||
+                    overrideBlocksSubmission ||
                     isCreateSessionSubmitDisabled({
                       hasRepositoryResult:
                         repositorySnapshot.data !== null && !factoryRepositorySelectionRequired,

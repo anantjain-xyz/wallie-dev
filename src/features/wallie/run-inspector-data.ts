@@ -18,7 +18,10 @@ import {
   type RecordedRunExecutionProfile,
 } from "@/lib/factory-definitions/execution-profile-contracts";
 import { factoryMcpManifestSchema } from "@/lib/factory-mcp/manifest";
-import { routingDecisionSchema } from "@/lib/model-routing/decision-contracts";
+import {
+  routingDecisionSchema,
+  routingOverrideReceiptSchema,
+} from "@/lib/model-routing/decision-contracts";
 import { routingDraftEvidenceSchema } from "@/lib/model-routing/draft-contracts";
 import { runContextInspectionSchema } from "@/lib/run-context/contracts";
 import { workspaceMemoryPath, workspaceSessionDetailPath } from "@/lib/routes";
@@ -81,6 +84,7 @@ const runRoutingDecisionSchema = z
     decision: routingDecisionSchema,
     taskClassName: z.string().nullable(),
     benchmarkEvidence: routingDraftEvidenceSchema.nullable(),
+    override: routingOverrideReceiptSchema.nullable().optional(),
   })
   .refine(
     ({ canManageFactory, decision, benchmarkEvidence }) =>

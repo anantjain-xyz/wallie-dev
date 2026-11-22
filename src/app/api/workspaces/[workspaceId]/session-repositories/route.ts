@@ -5,8 +5,13 @@ import {
   resolveDefaultSessionRepositoryId,
 } from "@/features/sessions/repository-options";
 import type { SessionRepositoryOptionsResult } from "@/features/sessions/client";
+import { isWorkspaceOperator } from "@/features/workspaces/authenticated-context";
 import { factoryWritableRepositoryIds } from "@/lib/factory-definitions/repository-bindings";
 import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
+import {
+  buildRoutingOverrideOptions,
+  selectReviewedFactoryRoutingActivation,
+} from "@/lib/model-routing/reviewed-activation";
 import { loadDefaultPipelineForWorkspace } from "@/lib/pipeline/stages";
 import { workspaceIdParamsSchema } from "@/lib/workspaces";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -39,7 +44,7 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
-  const { supabase, workspace } = access.context;
+  const { currentMember, supabase, workspace } = access.context;
   const pinned = await loadActiveFactoryExecution(supabase, workspace.id);
   if (pinned) {
     const { data: repositories, error } = await supabase
@@ -54,8 +59,25 @@ export async function GET(_request: Request, context: RouteContext) {
       .order("full_name", { ascending: true });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+    let routingOverrideOptions;
+    if (pinned.modelRouting && isWorkspaceOperator(currentMember)) {
+      const { data, error } = await selectReviewedFactoryRoutingActivation(supabase, {
+        workspaceId: workspace.id,
+        factoryId: pinned.factoryId,
+        activationNumber: pinned.activationNumber,
+      });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (data) {
+        routingOverrideOptions = buildRoutingOverrideOptions({
+          definition: pinned,
+          activationNumber: pinned.activationNumber,
+          reviewedTargets: data.reviewed_targets,
+        });
+      }
+    }
     return sessionOptions({
       ...(pinned.implementationAgent ? { canDraftSpecification: true } : {}),
+      ...(routingOverrideOptions ? { routingOverrideOptions } : {}),
       defaultGithubRepositoryId: pinned.repositoryId,
       factoryDefinitionDigest: pinned.canonicalDigest,
       pipelineId: pinned.pipelineId,

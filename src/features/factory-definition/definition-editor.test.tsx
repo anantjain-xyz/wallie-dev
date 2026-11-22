@@ -18,6 +18,7 @@ import {
 } from "@/lib/factory-definitions/schema";
 import { mcpManifestScopeIds, type FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
 import type { FactorySecretBindingResponse } from "@/lib/factory-secret-bindings/contracts";
+import { modelRoutingPolicySchema } from "@/lib/model-routing/contracts";
 
 const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const endpoint = `/api/workspaces/${id(1)}/factory-definition`;
@@ -118,12 +119,68 @@ function document(
       toolIds: tools,
       operatingRuleStageIds: [],
       stages: stages.map((stage) => ({ ...stage, previousStageIds: [] })),
+      ...(source.modelRouting ? { modelRouting: source.modelRouting } : {}),
     },
   };
 }
 
 const published = document(5, "revision", source);
 const draft = document(6, "draft", source);
+const routingPolicyDraft = document(6, "draft", {
+  ...source,
+  modelRouting: modelRoutingPolicySchema.parse({
+    version: 1,
+    taskClasses: [{ id: id(70), slug: "plan", name: "Planning" }],
+    rules: [
+      {
+        id: id(71),
+        taskClassId: id(70),
+        configuration: {
+          agentId: id(72),
+          definitionRevisionId: id(73),
+          experimentId: id(74),
+          qualificationId: id(75),
+          modelKey: "openai/gpt-5.5",
+          harness: "codex",
+          workerRuntime: "node",
+        },
+        constraints: {
+          qualityFloorBps: 8_000,
+          minResolvedTrials: 5,
+          maxMeanCostUsd: null,
+          maxLatencyMs: null,
+          minConfidenceBps: null,
+        },
+        onUnavailable: { kind: "escalate" },
+      },
+    ],
+    onUnmatched: { kind: "escalate" },
+  }),
+});
+
+const reviewedRoutingDraft: FactoryEditorDocument = {
+  ...routingPolicyDraft,
+  routingDraftEvidence: {
+    version: 1,
+    experimentId: id(74),
+    candidateKey: "a".repeat(64),
+    suite: { id: id(78), revisionId: id(79), purpose: "holdout", name: "Delivery suite" },
+    scorerRevisionId: id(80),
+    scorerName: "Delivery scorer",
+    taskClassName: "Planning",
+    definitionDigest: draft.digest,
+    replayPolicyRevisionId: id(81),
+    replayPolicyDigest: "b".repeat(64),
+    ruleId: id(71),
+    capturedAt: createdAt,
+    qualityPassRateBps: 9_000,
+    resolvedTrials: 12,
+    measuredMeanCostUsd: "0.08",
+    constraints: routingPolicyDraft.source.modelRouting!.rules[0].constraints,
+    p95WallLatencyMs: null,
+    isRecommended: true,
+  },
+};
 
 it("shows the working draft's routing evidence until a historical revision is selected", async () => {
   setup({
@@ -410,14 +467,22 @@ function setup({
       };
       return Response.json({ activation: { revisionId: selected.id } });
     }
-    if (body.action === "publish") {
+    if (body.action === "publish" || body.action === "activate-routing") {
       if (body.draftId !== snapshot.draft?.id || !snapshot.draft) {
         return Response.json({ error: "The draft changed." }, { status: 409 });
       }
       const next = { ...snapshot.draft, id: id(11), kind: "revision" as const };
       records.set(next.id, next);
-      snapshot = { ...snapshot, published: next, draft: null, activationNumber: 3 };
-      return Response.json({ snapshot: { activationNumber: 3 } });
+      snapshot = {
+        ...snapshot,
+        published: next,
+        draft: null,
+        activationNumber: 3,
+        ...(body.action === "activate-routing" ? { routingMode: "active" } : {}),
+      };
+      return body.action === "activate-routing"
+        ? Response.json({ activation: activation(next, 3) })
+        : Response.json({ snapshot: { activationNumber: 3 } });
     }
     if (body.expectedDraftId !== (snapshot.draft?.id ?? null)) {
       return Response.json({ error: "The draft changed." }, { status: 409 });
@@ -456,9 +521,9 @@ function setup({
     updateReadyProviders(readySandboxProviders: FactoryEditorSnapshot["readySandboxProviders"]) {
       snapshot = { ...snapshot, readySandboxProviders };
     },
-    advanceActivation() {
+    advanceActivation(refresh = true) {
       snapshot = { ...snapshot, activationNumber: snapshot.activationNumber + 1 };
-      fireEvent(window, new Event("focus"));
+      if (refresh) fireEvent(window, new Event("focus"));
     },
     updateDraft() {
       const next = document(10, "draft", { ...source, operatingRulesMd: "Externally updated." });
@@ -631,6 +696,71 @@ it("activates an immutable selected revision using the displayed activation guar
     path: endpoint,
     body: { action: "rollback", expectedActivationNumber: 2, revisionId: previous.id },
   });
+});
+
+it("confirms the exact reviewed draft and smoke receipt before activating routing", async () => {
+  const { requests } = setup({ initialDraft: reviewedRoutingDraft });
+  const activate = await screen.findByRole("button", { name: "Activate reviewed routing" });
+  await waitFor(() => expect(activate).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Publish in shadow mode" })).toBeEnabled();
+
+  const rules = screen.getByRole("textbox", { name: "Operating rules" });
+  fireEvent.change(rules, { target: { value: "Unsaved edit" } });
+  expect(activate).toBeDisabled();
+  fireEvent.change(rules, { target: { value: source.operatingRulesMd } });
+  fireEvent.click(activate);
+  const dialog = within(
+    await screen.findByRole("alertdialog", { name: "Activate reviewed routing?" }),
+  );
+  expect(dialog.getByText("#2")).toBeVisible();
+  expect(dialog.getByText(reviewedRoutingDraft.digest)).toBeVisible();
+  expect(dialog.getByText("Planning · 90% passed · 12 resolved trials")).toBeVisible();
+  expect(dialog.getByRole("link", { name: /Exact comparison/ })).toHaveAttribute(
+    "href",
+    expect.stringContaining(`#frontier-configuration-${"a".repeat(64)}`),
+  );
+  expect(dialog.getByRole("link", { name: /Passing configuration test/ })).toHaveAttribute(
+    "href",
+    `/w/acme/settings/factory-definition?draft=${reviewedRoutingDraft.id}&test=${id(41)}#candidate-tests`,
+  );
+  expect(requests).toHaveLength(0);
+  fireEvent.click(dialog.getByRole("button", { name: "Activate routing for new sessions" }));
+  await screen.findByText("Reviewed routing activated for new sessions.");
+  expect(screen.getByText("Routing active for new sessions")).toBeVisible();
+  expect(requests).toEqual([
+    {
+      path: endpoint,
+      body: {
+        action: "activate-routing",
+        expectedActivationNumber: 2,
+        draftId: reviewedRoutingDraft.id,
+      },
+    },
+  ]);
+});
+
+it("requires retained benchmark evidence even when a routing draft has a passing smoke test", async () => {
+  setup({ initialDraft: routingPolicyDraft });
+  expect(await screen.findByRole("button", { name: "Activate reviewed routing" })).toBeDisabled();
+  expect(
+    screen.getByText("Apply a qualified benchmark finding before activating routing."),
+  ).toBeVisible();
+});
+
+it("blocks another activation from a stale routing review", async () => {
+  const { advanceActivation, requests } = setup({ initialDraft: reviewedRoutingDraft });
+  const activate = await screen.findByRole("button", { name: "Activate reviewed routing" });
+  await waitFor(() => expect(activate).toBeEnabled());
+  fireEvent.click(activate);
+  const dialog = within(
+    await screen.findByRole("alertdialog", { name: "Activate reviewed routing?" }),
+  );
+  advanceActivation(false);
+  const confirm = dialog.getByRole("button", { name: "Activate routing for new sessions" });
+  fireEvent.click(confirm);
+  expect(await dialog.findByRole("alert")).toHaveTextContent("The activation changed.");
+  expect(confirm).toBeDisabled();
+  expect(requests).toHaveLength(1);
 });
 
 it("explains a newer activation and preserves unsaved input when the reviewer reloads", async () => {

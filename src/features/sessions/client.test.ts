@@ -14,6 +14,7 @@ const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const STAGE_ID = "66666666-6666-4666-8666-666666666666";
 const ATTACHMENT_ID = "77777777-7777-4777-8777-777777777777";
+const ROUTING_RULE_ID = "88888888-8888-4888-8888-888888888888";
 
 function mockFetch(response: { body: Record<string, unknown>; ok: boolean; status?: number }) {
   const fetchMock = vi.fn(async () => ({
@@ -28,6 +29,33 @@ function mockFetch(response: { body: Record<string, unknown>; ok: boolean; statu
 }
 
 describe("createSessionFromClient", () => {
+  it("includes the confirmed override alongside the normal creation token", async () => {
+    const fetchMock = mockFetch({
+      body: { canonicalUrl: "/w/acme/sessions/42", number: 42 },
+      ok: true,
+    });
+    const routingOverride = {
+      expectedActivationNumber: 2,
+      ruleId: ROUTING_RULE_ID,
+      target: "rule_fallback" as const,
+      reason: "Use the reviewed fallback for this task.",
+    };
+    const factoryDefinitionDigest = "d".repeat(64);
+    await createSessionFromClient({
+      factoryDefinitionDigest,
+      promptMd: "Build it",
+      requestId: SESSION_ID,
+      routingOverride,
+      workspaceId: WORKSPACE_ID,
+    });
+    const [, request] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      factoryDefinitionDigest,
+      requestId: SESSION_ID,
+      routingOverride,
+    });
+  });
+
   it.each([400, 401, 403, 409, 429])(
     "identifies a definitive HTTP %s rejection",
     async (status) => {
@@ -267,6 +295,42 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
     await expect(
       loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
     ).rejects.toThrow("Workspace not found.");
+  });
+
+  it("accepts only qualified option shapes attached to a valid active definition", async () => {
+    const routingOverrideOptions = {
+      activationNumber: 3,
+      targets: [
+        {
+          stageId: STAGE_ID,
+          ruleId: ROUTING_RULE_ID,
+          target: "primary",
+          modelKey: "openai/gpt-5.5",
+          harness: "codex",
+          workerRuntime: "node",
+        },
+      ],
+    };
+    const options = {
+      factoryDefinitionDigest: "d".repeat(64),
+      repositoryOptions: [],
+      stageOptions: [],
+      routingOverrideOptions,
+    };
+    mockFetch({ body: options, ok: true });
+    await expect(
+      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
+    ).resolves.toMatchObject({ routingOverrideOptions });
+    mockFetch({
+      body: {
+        ...options,
+        routingOverrideOptions: { ...routingOverrideOptions, activationNumber: 0 },
+      },
+      ok: true,
+    });
+    await expect(
+      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
+    ).rejects.toThrow("Session routing options response was invalid.");
   });
 
   it("rejects malformed repository option responses", async () => {

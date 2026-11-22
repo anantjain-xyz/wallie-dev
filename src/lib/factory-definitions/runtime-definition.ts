@@ -31,7 +31,7 @@ export async function loadActiveFactoryExecution(client: DefinitionClient, works
 
   const { data: activation, error: activationError } = await client
     .from("factory_definition_activations")
-    .select("revision_id")
+    .select("revision_id, activation_number")
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factory.id)
     .order("activation_number", { ascending: false })
@@ -40,7 +40,7 @@ export async function loadActiveFactoryExecution(client: DefinitionClient, works
   if (activationError) throw activationError;
   if (!activation) return null;
   const execution = await loadExecutionRevision(client, workspaceId, activation.revision_id);
-  return { ...execution, factoryId: factory.id };
+  return { ...execution, factoryId: factory.id, activationNumber: activation.activation_number };
 }
 
 async function loadExecutionRevision(

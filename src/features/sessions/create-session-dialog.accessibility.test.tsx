@@ -1033,13 +1033,41 @@ function DraftHarness({
   );
 }
 
-function prepareDraftOptions() {
-  clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+const routingRuleId = "00000000-0000-4000-8000-000000000071";
+const routingTarget = `${routingRuleId}:rule_fallback`;
+const routingReason = "Exercise the reviewed fallback for this task.";
+
+function draftOptions() {
+  return {
     defaultGithubRepositoryId: "repo-1",
     pipelineId: "pipeline-1",
     repositoryOptions: [{ id: "repo-1", fullName: "acme/app" }],
     stageOptions: [{ id: "stage-1", name: "Plan", position: 1, description: "Plan the work" }],
-  });
+  };
+}
+
+function routingOptions(activationNumber: number) {
+  return {
+    ...draftOptions(),
+    factoryDefinitionDigest: "d".repeat(64),
+    routingOverrideOptions: {
+      activationNumber,
+      targets: [
+        {
+          stageId: "stage-1",
+          ruleId: routingRuleId,
+          target: "rule_fallback",
+          modelKey: "openai/gpt-5.5",
+          harness: "codex",
+          workerRuntime: "node",
+        },
+      ],
+    },
+  };
+}
+
+function prepareDraftOptions() {
+  clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(draftOptions());
   clientMocks.uploadSessionAttachmentFromClient.mockResolvedValue({
     contentType: "image/png",
     fileName: "draft.png",
@@ -1177,19 +1205,31 @@ describe("optimistic session creation", () => {
 
   it("replays an uncertain request exactly, even after attachment expiry and an options refresh", async () => {
     prepareDraftOptions();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(routingOptions(2));
     clientMocks.createSessionFromClient.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const user = userEvent.setup();
     render(<OptimisticDraftHarness />);
     await fillImageDraft(user);
+    const choice = await screen.findByRole("combobox", { name: "Configuration for this session" });
+    await user.selectOptions(choice, routingTarget);
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Reason for override"), routingReason);
     await user.click(screen.getByRole("button", { name: "Start session" }));
     await screen.findByText(/Creation unconfirmed/);
     expect(screen.getByLabelText("Prompt")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Discard draft" })).toBeDisabled();
     const original = clientMocks.createSessionFromClient.mock.calls[0]![0];
     expect(original.requestId).toEqual(expect.any(String));
+    expect(original.routingOverride).toEqual({
+      expectedActivationNumber: 2,
+      ruleId: routingRuleId,
+      target: "rule_fallback",
+      reason: routingReason,
+    });
     const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 25 * 60 * 60 * 1000);
     try {
       await user.click(screen.getByRole("button", { name: "Close" }));
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(routingOptions(3));
       act(() => invalidateSessionRepositoryCache("workspace-1"));
       await user.click(screen.getByText("Reopen composer"));
       clientMocks.createSessionFromClient.mockResolvedValueOnce({
@@ -1204,6 +1244,49 @@ describe("optimistic session creation", () => {
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("requires reselecting an override after a stale activation and preserves the reason", async () => {
+    clientMocks.loadSessionRepositoryOptionsFromClient
+      .mockResolvedValueOnce(routingOptions(2))
+      .mockResolvedValue(routingOptions(3));
+    clientMocks.createSessionFromClient
+      .mockRejectedValueOnce(
+        Object.assign(new Error("The factory activation changed."), {
+          code: "session_options_changed",
+        }),
+      )
+      .mockResolvedValueOnce({ canonicalUrl: "/w/acme/sessions/42", number: 42 });
+    const user = userEvent.setup();
+    render(<OptimisticDraftHarness />);
+    const choice = await screen.findByRole("combobox", { name: "Configuration for this session" });
+    expect(choice).toHaveValue("");
+    await user.type(screen.getByLabelText("Prompt"), "Start the routing task");
+    await user.selectOptions(choice, routingTarget);
+    await user.type(screen.getByLabelText("Reason for override"), routingReason);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    expect(
+      await screen.findByText("Choose a routing override again or use the routing policy."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Start the routing task");
+
+    const refreshedChoice = screen.getByRole("combobox", {
+      name: "Configuration for this session",
+    });
+    await waitFor(() => expect(refreshedChoice).toBeEnabled());
+    await user.selectOptions(refreshedChoice, routingTarget);
+    expect(screen.getByLabelText("Reason for override")).toHaveValue(routingReason);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+    await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledTimes(2));
+    const [first, second] = clientMocks.createSessionFromClient.mock.calls.map(
+      ([request]) => request,
+    );
+    expect(first.requestId).not.toEqual(second.requestId);
+    expect(second.routingOverride).toEqual({
+      ...first.routingOverride,
+      expectedActivationNumber: 3,
+    });
   });
 
   it.each(["success", "failure"])(

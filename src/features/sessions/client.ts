@@ -8,6 +8,11 @@ import type {
   SessionCreationStageOption,
   SessionRepositoryOption,
 } from "@/features/sessions/types";
+import {
+  routingOverrideOptionsSchema,
+  type RoutingOverride,
+  type RoutingOverrideOptions,
+} from "@/lib/model-routing/operation-contracts";
 import type { SessionAttachmentUploadResponse } from "@/lib/storage/contracts";
 
 export type CreateSessionInput = {
@@ -18,6 +23,7 @@ export type CreateSessionInput = {
   linearIssueUrl?: string | null;
   promptMd?: string | null;
   requestId?: string;
+  routingOverride?: RoutingOverride;
   selectedStageIds?: string[];
   title?: string | null;
   workspaceId: string;
@@ -66,6 +72,7 @@ export type SessionRepositoryOptionsResult = {
   factoryDefinitionDigest?: string;
   pipelineId: string | null;
   repositoryOptions: SessionRepositoryOption[];
+  routingOverrideOptions?: RoutingOverrideOptions;
   stageOptions: SessionCreationStageOption[];
 };
 
@@ -172,6 +179,7 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
     factoryDefinitionDigest?: string;
     pipelineId?: string | null;
     repositoryOptions?: SessionRepositoryOption[];
+    routingOverrideOptions?: unknown;
     stageOptions?: SessionCreationStageOption[];
   } | null;
 
@@ -190,18 +198,32 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
   }
 
   const { factoryDefinitionDigest } = responsePayload;
+  const overrideOptions = routingOverrideOptionsSchema
+    .optional()
+    .safeParse(responsePayload.routingOverrideOptions);
+  if (!overrideOptions.success) throw new Error("Session routing options response was invalid.");
   return {
     ...(responsePayload.canDraftSpecification === true ? { canDraftSpecification: true } : {}),
     defaultGithubRepositoryId: responsePayload.defaultGithubRepositoryId ?? null,
     ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
     pipelineId: responsePayload.pipelineId ?? null,
     repositoryOptions: responsePayload.repositoryOptions,
+    ...(factoryDefinitionDigest && overrideOptions.data
+      ? { routingOverrideOptions: overrideOptions.data }
+      : {}),
     stageOptions: responsePayload.stageOptions,
   };
 }
 
 export class SessionCreationRejectedError extends Error {
   readonly creationRejected = true;
+
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
 }
 
 export async function createSessionFromClient(
@@ -223,6 +245,7 @@ export async function createSessionFromClient(
     githubRepositoryId: input.githubRepositoryId?.trim() || null,
     linearIssueUrl,
     promptMd: trimmedPrompt,
+    ...(input.routingOverride ? { routingOverride: input.routingOverride } : {}),
     ...(input.selectedStageIds ? { selectedStageIds: input.selectedStageIds } : {}),
     title: input.title?.trim() || null,
     workspaceId: input.workspaceId,
@@ -258,7 +281,7 @@ export async function createSessionFromClient(
       response.status !== 408 &&
       responsePayload?.code !== "session_request_conflict"
     ) {
-      throw new SessionCreationRejectedError(message);
+      throw new SessionCreationRejectedError(message, response.status);
     }
     throw new Error(message);
   }
