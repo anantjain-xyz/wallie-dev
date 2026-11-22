@@ -438,7 +438,7 @@ export async function publishImprovementLoop({
       state: z.enum(["open", "closed"]),
       draft: z.boolean(),
       merged: z.boolean(),
-      merged_at: z.iso.datetime().nullable(),
+      merged_at: z.string().datetime().nullable(),
       merge_commit_sha: sha.nullable(),
       base: z.object({
         ref: z.literal(base.baseBranch),
