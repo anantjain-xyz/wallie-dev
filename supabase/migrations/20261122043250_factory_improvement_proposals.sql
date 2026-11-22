@@ -161,6 +161,9 @@ begin
   perform workspace.id from public.session_validation_assets asset
   join public.workspaces workspace on workspace.id = asset.workspace_id
   where asset.id = new.asset_id for no key update of workspace;
+  if not found then
+    raise exception 'Validation evidence asset is unavailable.' using errcode = '23503';
+  end if;
   return new;
 end;
 $$;

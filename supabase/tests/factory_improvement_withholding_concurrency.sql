@@ -3,9 +3,12 @@ create extension if not exists pgtap with schema extensions;
 create extension if not exists dblink with schema extensions;
 select no_plan();
 set local request.jwt.claim.role = 'service_role';
+-- Serialize setup against the same release row used by the setter. Parallel
+-- runs release it before starting their independent proposal races.
+select revision from internal.git_continuity_release_control where singleton for update;
 create temp table improvement_original_release as select enabled, revision from public.get_git_continuity_release_state();
 
-\set diagnosis_fixture_prefix 63610000
+select (70000000 + floor(random() * 20000000)::integer)::text as diagnosis_fixture_prefix \gset
 \set diagnosis_inference_ciphertext v2.AAAAAAAAAAAAAAAA.YWJj.AAAAAAAAAAAAAAAAAAAAAA
 select set_config('wallie.diagnosis_fixture_prefix', :'diagnosis_fixture_prefix', false);
 \ir fixtures/factory_diagnosis_source.psql
@@ -68,7 +71,7 @@ select extensions.dblink_connect(peer.name, coalesce(nullif(current_setting('wal
   'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'))
 from (values ('proposal_save_race'), ('proposal_marker_race')) peer(name);
 select extensions.dblink_exec(peer.name, format('set application_name=%L; set statement_timeout=''15s'';
-  set request.jwt.claim.role=''service_role''; set role service_role', peer.name))
+  set request.jwt.claim.role=''service_role''; set role service_role', peer.name || '_' || :'diagnosis_fixture_prefix'))
 from (values ('proposal_save_race'), ('proposal_marker_race')) peer(name);
 select extensions.dblink_exec('proposal_save_race', $function$
   create function pg_temp.proposal_race_sqlstate(command text) returns text language plpgsql as $$
@@ -79,6 +82,13 @@ select extensions.dblink_exec('proposal_save_race', $function$
   end;
   $$
 $function$);
+
+begin;
+set local role service_role;
+select throws_ok(format('insert into public.session_validation_asset_withholdings(asset_id,state) values (%L,''redacted'')',
+    pg_temp.diagnosis_fixture_id(99)), '23503', 'Validation evidence asset is unavailable.',
+  'the marker fails before the foreign key can use another snapshot when its workspace cannot be locked');
+commit;
 
 -- Storage deletes its metadata in a transaction. A concurrent save cannot
 -- rely on the still-visible snapshot when that exact row is being removed.
@@ -105,7 +115,8 @@ select extensions.dblink_exec('proposal_marker_race', 'begin');
 select extensions.dblink_send_query('proposal_marker_race', format(
   'insert into public.session_validation_asset_withholdings(asset_id,state) values (%L,''redacted'')', asset_id))
 from diagnosis_source;
-select ok(pg_temp.wait_for_improvement_lock('proposal_marker_race', 'proposal_save_race'),
+select ok(pg_temp.wait_for_improvement_lock('proposal_marker_race_' || :'diagnosis_fixture_prefix',
+  'proposal_save_race_' || :'diagnosis_fixture_prefix'),
   'a direct service marker waits behind the in-flight proposal save');
 select extensions.dblink_exec('proposal_save_race', 'commit');
 select is((select result from extensions.dblink_get_result('proposal_marker_race') reply(result text)),
@@ -115,7 +126,8 @@ select count(*) from extensions.dblink_get_result('proposal_marker_race') reply(
 select extensions.dblink_exec('proposal_save_race', 'begin');
 select extensions.dblink_send_query('proposal_save_race', format('select pg_temp.proposal_race_sqlstate(%L)', command))
 from improvement_race_commands where slot = 63;
-select ok(pg_temp.wait_for_improvement_lock('proposal_save_race', 'proposal_marker_race'),
+select ok(pg_temp.wait_for_improvement_lock('proposal_save_race_' || :'diagnosis_fixture_prefix',
+  'proposal_marker_race_' || :'diagnosis_fixture_prefix'),
   'the next save waits while the marker transaction is still open');
 select extensions.dblink_exec('proposal_marker_race', 'commit');
 select is((select result from extensions.dblink_get_result('proposal_save_race') reply(result text)),
@@ -137,4 +149,13 @@ delete from auth.users where id in (pg_temp.diagnosis_fixture_id(1), pg_temp.dia
   pg_temp.diagnosis_fixture_id(3), pg_temp.diagnosis_fixture_id(4));
 set constraints all immediate;
 commit;
+select ok(not exists (select 1 from public.workspaces where id = pg_temp.diagnosis_fixture_id(11))
+  and not exists (select 1 from internal.factory_improvement_proposal_revisions
+    where workspace_id = pg_temp.diagnosis_fixture_id(11))
+  and not exists (select 1 from storage.objects where bucket_id = 'session-validation-evidence'
+    and name like pg_temp.diagnosis_fixture_id(11)::text || '/%')
+  and not exists (select 1 from auth.users where id in (
+    pg_temp.diagnosis_fixture_id(1), pg_temp.diagnosis_fixture_id(2),
+    pg_temp.diagnosis_fixture_id(3), pg_temp.diagnosis_fixture_id(4))),
+  'teardown removes the run-specific workspace, storage and identities');
 select * from finish();
