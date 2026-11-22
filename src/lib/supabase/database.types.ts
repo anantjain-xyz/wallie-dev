@@ -12783,6 +12783,16 @@ export type Database = {
         }
         Returns: Json
       }
+      get_factory_improvement_validation: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_proposal_id: string
+          p_proposal_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_inbox: {
         Args: {
           p_before_artifact_id?: string
@@ -16352,6 +16362,25 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      start_factory_improvement_validation: {
+        Args: {
+          p_actor_user_id: string
+          p_execution: Json
+          p_factory_id: string
+          p_holdout_candidates: Json
+          p_holdout_suite_revision_id: string
+          p_policy_revision_id: string
+          p_proposal_id: string
+          p_proposal_revision_id: string
+          p_request_id: string
+          p_scorer_revision_id: string
+          p_targeted_candidates: Json
+          p_targeted_suite_revision_id: string
+          p_thresholds: Json
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       start_sandbox_capability_check: {
         Args: {
