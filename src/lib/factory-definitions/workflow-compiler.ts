@@ -65,17 +65,24 @@ export function compileWorkflowGraph(
 
   const bundle = {
     ...graph,
-    nodes: graph.nodes
-      .map((node) =>
-        node.kind === "human-gate"
-          ? { ...node, approverMemberIds: [...new Set(node.approverMemberIds)].sort() }
-          : node,
-      )
-      .sort(compareIds),
+    nodes: graph.nodes.map(canonicalWorkflowNode).sort(compareIds),
     edges: [...graph.edges].sort(compareIds),
     grants: [...graph.grants].sort(compareIds),
   };
   return { ok: true, bundle, ...serializeFactoryDefinition(bundle) };
+}
+
+function canonicalWorkflowNode(
+  node: WorkflowGraphDefinition["nodes"][number],
+): WorkflowGraphDefinition["nodes"][number] {
+  if (node.kind === "human-gate") {
+    return { ...node, approverMemberIds: [...new Set(node.approverMemberIds)].sort() };
+  }
+  if (node.kind === "agent" || node.kind === "route") {
+    const { grantId, ...binding } = node;
+    return grantId === undefined ? binding : node;
+  }
+  return node;
 }
 
 function compareIds(left: { id: string }, right: { id: string }) {

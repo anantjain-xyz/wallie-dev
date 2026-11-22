@@ -133,6 +133,21 @@ describe("workflow graph compiler", () => {
     });
   });
 
+  it("compiles explicitly undefined grant bindings like omitted bindings", () => {
+    const graph = routeGraph();
+    const structured = compile({
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.kind === "agent" || node.kind === "route" ? { ...node, grantId: undefined } : node,
+      ),
+    });
+    const json = compileWorkflowGraph({ kind: "json", text: JSON.stringify(graph) }, catalog);
+    if (!structured.ok || !json.ok) throw new Error("Expected both graph inputs to compile.");
+
+    expect(JSON.parse(structured.definitionJson)).toEqual(json.bundle);
+    expect(structured.canonicalDigest).toBe(json.canonicalDigest);
+  });
+
   it("rejects a reference to an undeclared destination", () => {
     const graph = routeGraph();
     const result = compile({
