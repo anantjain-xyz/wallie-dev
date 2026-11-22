@@ -50,6 +50,7 @@ import {
 import { finishInteraction } from "@/lib/telemetry/interaction-rum";
 
 type CreateSessionDialogProps = {
+  creationFactoryName?: string;
   onClose: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
   onReopen?: () => void;
@@ -115,6 +116,7 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 }
 
 function CreateSessionDialogBody({
+  creationFactoryName,
   onClose,
   onPreviewChange,
   onReopen,
@@ -689,7 +691,11 @@ function CreateSessionDialogBody({
       <DialogContent
         bodyClassName="flex min-h-0 flex-col"
         className="flex max-w-xl flex-col overflow-hidden"
-        description="Describe the work or link a Linear issue, then choose where Wallie should run."
+        description={
+          creationFactoryName
+            ? `This session will run in ${creationFactoryName}, the workspace’s default factory. Describe the work or link a Linear issue.`
+            : "Describe the work or link a Linear issue, then choose where Wallie should run."
+        }
         dismissible={!isSubmitting && !hasActiveAttachmentOperation}
         title="Start a new session"
         onOpenAutoFocus={(event) => {

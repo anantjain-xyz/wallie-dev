@@ -235,6 +235,40 @@ describe("CreateSessionDialog accessibility", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("names the default factory destination in the dialog description", async () => {
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      pipelineId: "00000000-0000-4000-8000-000000000010",
+      repositoryOptions: [],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "00000000-0000-4000-8000-000000000011",
+          name: "Plan",
+          position: 1,
+        },
+      ],
+    });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          creationFactoryName="Default Factory"
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId="00000000-0000-4000-8000-000000000001"
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+    expect(dialog).toHaveAccessibleDescription(
+      "This session will run in Default Factory, the workspace’s default factory. Describe the work or link a Linear issue.",
+    );
+  });
+
   it("labels, focuses, traps, locks, and keyboard-dismisses the shared Dialog", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

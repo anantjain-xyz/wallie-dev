@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { ShellHeader } from "@/components/app-shell/shell-header";
+import { ShellHeader, type CreationFactory } from "@/components/app-shell/shell-header";
 import type { OnboardingResumeState } from "@/features/onboarding/resume";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { getWorkspaceNavItems } from "@/lib/routes";
@@ -8,7 +8,7 @@ import { getWorkspaceNavItems } from "@/lib/routes";
 type AppShellProps = {
   canManageFactoryDefinition?: boolean;
   canManageGovernance?: boolean;
-  canStartDefaultFactorySession?: boolean;
+  creationFactory: CreationFactory | null;
   children: ReactNode;
   factorySelector?: ReactNode;
   onboarding: OnboardingResumeState | null;
@@ -24,7 +24,7 @@ type AppShellProps = {
 export function AppShell({
   canManageFactoryDefinition,
   canManageGovernance,
-  canStartDefaultFactorySession,
+  creationFactory,
   children,
   factorySelector,
   onboarding,
@@ -43,7 +43,7 @@ export function AppShell({
   return (
     <div className="min-h-[100svh] min-w-0 bg-canvas" data-app-shell="">
       <ShellHeader
-        canStartDefaultFactorySession={canStartDefaultFactorySession}
+        creationFactory={creationFactory}
         factorySelector={factorySelector}
         navItems={navItems}
         onboarding={onboarding}
