@@ -14,11 +14,15 @@ import { z } from "zod/v4";
 import { benchmarkFrontierSchema } from "@/lib/factory-benchmarks/frontier-contracts";
 import {
   factoryEditorDocumentResponseSchema,
+  factoryEditorHistoryResponseSchema,
   factoryEditorSnapshotResponseSchema,
 } from "@/lib/factory-definitions/editor-contracts";
+import { routingDecisionSchema } from "@/lib/model-routing/decision-contracts";
 import { routingDraftResponseSchema } from "@/lib/model-routing/draft-contracts";
 import {
   workspaceAnalyticsPath,
+  workspaceBenchmarkComparisonPath,
+  workspaceBenchmarkSuitePath,
   workspaceFactoryDefinitionPath,
   workspaceRunDetailPath,
 } from "@/lib/routes";
@@ -46,12 +50,18 @@ async function capture(page: Page, target: Locator, info: TestInfo, name: string
     await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
   ).toBeLessThanOrEqual(1);
   const path = info.outputPath(`${name}.png`);
-  await target.screenshot({ path, animations: "disabled", caret: "hide" });
+  await target.screenshot({
+    path,
+    animations: "disabled",
+    caret: "hide",
+    style: '[data-shell-header], a[href="#main-content"] { visibility: hidden !important; }',
+  });
   await info.attach(name, { path, contentType: "image/png" });
 }
 
-test("replays the retained canary alert and rolls back the exact baseline while an attempt runs", async ({
+test("qualifies an exact benchmark candidate and rolls back its canary while an attempt runs", async ({
   baseURL,
+  browser,
   page,
 }, info) => {
   test.skip(
@@ -75,6 +85,7 @@ test("replays the retained canary alert and rolls back the exact baseline while 
   const factoryApi = `/api/workspaces/${fixture.workspaceId}/factories/${fixture.factoryId}`;
   const definitionApi = `${factoryApi}/definition`;
   const benchmarkApi = `${factoryApi}/benchmarks/experiments/${experimentId}`;
+  const draftEndpoint = `${benchmarkApi}/routing-drafts`;
   const settings = workspaceFactoryDefinitionPath(fixture.slug, { factory: fixture.factoryId });
   let storagePaths: string[] = [];
   let failed = false;
@@ -82,6 +93,7 @@ test("replays the retained canary alert and rolls back the exact baseline while 
   try {
     const seeded = z
       .object({
+        suiteId: z.uuid(),
         suiteRevisionId: z.uuid(),
         accuracyScorerRevisionId: z.uuid(),
         storagePaths: z.array(z.string()).length(25),
@@ -119,32 +131,38 @@ test("replays the retained canary alert and rolls back the exact baseline while 
       throw new Error("The rollback fixture requires two exact recommended configurations.");
     }
 
+    const taskClassSource = { slug: "delivery", name: "Invoice delivery" };
+    const constraints = {
+      qualityFloorBps: 8_000,
+      maxMeanCostUsd: 0.1,
+      maxLatencyMs: 120_000,
+      minResolvedTrials: 2,
+      minConfidenceBps: null,
+    };
+    const candidateRowId = `frontier-configuration-${candidateConfiguration.candidateKey}`;
+    const comparisonHref = `${workspaceBenchmarkComparisonPath(
+      fixture.slug,
+      seeded.suiteId,
+      experimentId,
+      {
+        factory: fixture.factoryId,
+        scorerRevisionId: seeded.accuracyScorerRevisionId,
+        qualityFloorPercent: constraints.qualityFloorBps / 100,
+        minResolvedTrials: constraints.minResolvedTrials,
+        routingCandidateKey: candidateConfiguration.candidateKey,
+      },
+    )}#${candidateRowId}`;
+    const suiteHref = workspaceBenchmarkSuitePath(fixture.slug, seeded.suiteId, {
+      factory: fixture.factoryId,
+      revision: seeded.suiteRevisionId,
+    });
+
     async function activate(
+      { draftId, canonicalDigest }: ReturnType<typeof routingDraftResponseSchema.parse>,
       candidateKey: string,
       expectedActivationNumber: number,
       canary: boolean,
     ) {
-      const { draftId, canonicalDigest } = routingDraftResponseSchema.parse(
-        await checkedJson(
-          await page.request.post(`${benchmarkApi}/routing-drafts`, {
-            data: {
-              requestId: randomUUID(),
-              candidateKey,
-              scorerRevisionId: seeded.accuracyScorerRevisionId,
-              suiteRevisionId: seeded.suiteRevisionId,
-              taskClass: { slug: "delivery", name: "Invoice delivery" },
-              constraints: {
-                qualityFloorBps: 8_000,
-                maxMeanCostUsd: 0.1,
-                maxLatencyMs: 120_000,
-                minResolvedTrials: 2,
-                minConfidenceBps: null,
-              },
-            },
-          }),
-          201,
-        ),
-      );
       await fixture.runFixtureFile("reviewed-routing-seed.sql", { ...scope, draft_id: draftId });
 
       const { document } = factoryEditorDocumentResponseSchema.parse(
@@ -154,9 +172,23 @@ test("replays the retained canary alert and rolls back the exact baseline while 
         ),
       );
       const taskClass = document.source.modelRouting?.taskClasses.find(
-        ({ slug }) => slug === "delivery",
+        ({ slug }) => slug === taskClassSource.slug,
       );
-      expect(taskClass).toBeDefined();
+      const evidence = document.routingDraftEvidence;
+      if (!taskClass || !evidence)
+        throw new Error("The draft did not retain exact routing evidence.");
+      expect(evidence).toMatchObject({
+        experimentId,
+        candidateKey,
+        scorerRevisionId: seeded.accuracyScorerRevisionId,
+        suite: { revisionId: seeded.suiteRevisionId },
+        constraints,
+      });
+      expect(document.source.modelRouting?.rules).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: evidence.ruleId, taskClassId: taskClass.id }),
+        ]),
+      );
       const { activation } = activationSchema.parse(
         await checkedJson(
           await page.request.post(definitionApi, {
@@ -164,18 +196,67 @@ test("replays the retained canary alert and rolls back the exact baseline while 
               action: "activate-routing",
               expectedActivationNumber,
               draftId,
-              ...(canary ? { canary: { taskClassId: taskClass?.id, candidateBps: 5_000 } } : {}),
+              ...(canary ? { canary: { taskClassId: taskClass.id, candidateBps: 5_000 } } : {}),
             },
           }),
           201,
         ),
       );
       expect(activation.activationNumber).toBe(expectedActivationNumber + 1);
-      return { ...activation, canonicalDigest };
+      return { ...activation, canonicalDigest, ruleId: evidence.ruleId };
     }
 
-    const baseline = await activate(baselineConfiguration.candidateKey, 1, false);
+    const baselineDraft = routingDraftResponseSchema.parse(
+      await checkedJson(
+        await page.request.post(draftEndpoint, {
+          data: {
+            requestId: randomUUID(),
+            candidateKey: baselineConfiguration.candidateKey,
+            scorerRevisionId: seeded.accuracyScorerRevisionId,
+            suiteRevisionId: seeded.suiteRevisionId,
+            taskClass: taskClassSource,
+            constraints,
+          },
+        }),
+        201,
+      ),
+    );
+    const baseline = await activate(baselineDraft, baselineConfiguration.candidateKey, 1, false);
+    const candidateDraft = await test.step("Apply the qualified frozen comparison", async () => {
+      await page.goto(comparisonHref);
+      const section = page.locator("#cost-quality-frontier");
+      const row = section.locator(`#${candidateRowId}`);
+      await expect(row.getByText("Recommended", { exact: true })).toBeVisible({ timeout: 75_000 });
+      await expect(row.getByText("0%–100% across 5 repeats")).toBeVisible();
+      await expect(row.getByText("$0.08–$0.08 across 5 repeats")).toBeVisible();
+      await capture(page, section, info, "routing-frozen-comparison-before-review");
+
+      await row.getByRole("button", { name: "Apply to routing" }).click();
+      const dialog = page.getByRole("dialog", { name: "Apply to routing" });
+      await dialog.getByRole("textbox", { name: "Task class name" }).fill(taskClassSource.name);
+      await dialog.getByRole("textbox", { name: "Task class slug" }).fill(taskClassSource.slug);
+      await expect(dialog.getByRole("spinbutton", { name: "Quality floor (%)" })).toHaveValue("80");
+      await expect(dialog.getByRole("spinbutton", { name: "Minimum resolved trials" })).toHaveValue(
+        "2",
+      );
+      await dialog.getByRole("spinbutton", { name: "Maximum mean cost (USD)" }).fill("0.10");
+      await dialog
+        .getByRole("spinbutton", { name: "Maximum p95 wall latency (ms)" })
+        .fill("120000");
+      const [response] = await Promise.all([
+        page.waitForResponse(
+          (entry) =>
+            new URL(entry.url()).pathname === draftEndpoint && entry.request().method() === "POST",
+          { timeout: 75_000 },
+        ),
+        dialog.getByRole("button", { name: "Create routing draft" }).click(),
+      ]);
+      const saved = routingDraftResponseSchema.parse(await checkedJson(response, 201));
+      await expect(dialog.getByRole("status")).toHaveText("Routing draft created.");
+      return saved;
+    });
     const candidate = await activate(
+      candidateDraft,
       candidateConfiguration.candidateKey,
       baseline.activationNumber,
       true,
@@ -243,7 +324,44 @@ test("replays the retained canary alert and rolls back the exact baseline while 
       routing_canary_arm: "candidate",
       routing_execution: { benchmarkCandidateKey: candidateConfiguration.candidateKey },
     });
+    const decision = routingDecisionSchema.parse(before.admission?.routing_decision);
+    expect(decision).toMatchObject({
+      mode: "active",
+      disposition: "selected",
+      source: "primary",
+      reason: "qualified",
+      taskClassId: canary.taskClassId,
+      ruleId: candidate.ruleId,
+      policyRevisionId: candidate.revisionId,
+      policyDigest: candidate.canonicalDigest,
+      benchmarkCandidateKey: candidateConfiguration.candidateKey,
+      configuration: { experimentId, scorerRevisionId: seeded.accuracyScorerRevisionId },
+    });
 
+    async function inspectRouting() {
+      await page.goto(workspaceRunDetailPath(fixture.slug, active.runId));
+      const routing = page.locator("#routing-decision");
+      await expect(routing.getByText(taskClassSource.name, { exact: true })).toBeVisible({
+        timeout: 75_000,
+      });
+      await expect(routing.getByText(/Reviewed routing recorded at admission/)).toBeVisible();
+      await expect(routing.getByText(candidate.ruleId, { exact: true })).toBeVisible();
+      await expect(
+        routing.getByText(seeded.accuracyScorerRevisionId, { exact: true }),
+      ).toBeVisible();
+      await expect(routing.getByRole("link", { name: candidate.revisionId })).toBeVisible();
+      await expect(
+        routing.getByRole("link", { name: "Open exact comparison configuration" }),
+      ).toHaveAttribute("href", comparisonHref);
+      await expect(
+        routing.getByRole("link", { name: "Open frozen suite revision" }),
+      ).toHaveAttribute("href", suiteHref);
+      return routing;
+    }
+
+    await test.step("Inspect the live candidate's admitted rule and frozen evidence", async () => {
+      await capture(page, await inspectRouting(), info, "routing-active-candidate-before-rollback");
+    });
     const alertHref = `${workspaceAnalyticsPath(fixture.slug, {
       factory: fixture.factoryId,
       routingCanary: canary.id,
@@ -254,26 +372,61 @@ test("replays the retained canary alert and rolls back the exact baseline while 
       revision: baseline.revisionId,
       activation: baseline.activationNumber,
     })}#revision-history`;
-    await test.step("Open retained alert evidence from the active canary", async () => {
-      await page.goto(settings);
-      const link = page.getByRole("link", { name: "Review canary degradation alert" });
-      await expect(link).toHaveAttribute("href", alertHref, { timeout: 75_000 });
-      await link.click();
+    const rollbackCommand = {
+      action: "rollback",
+      expectedActivationNumber: candidate.activationNumber,
+      targetActivationNumber: baseline.activationNumber,
+      revisionId: baseline.revisionId,
+    };
+
+    await test.step("Deny the exact rollback to an authenticated workspace viewer", async () => {
+      const context = await browser.newContext();
+      try {
+        const viewer = await context.newPage();
+        await signInViaMagicLink(viewer, `/w/${fixture.slug}/benchmarks`, {
+          baseURL: fixture.app,
+          email: fixture.viewerEmail,
+        });
+        await checkedJson(
+          await viewer.request.post(new URL(definitionApi, fixture.app).href, {
+            data: rollbackCommand,
+          }),
+          403,
+        );
+      } finally {
+        await context.close();
+      }
+    });
+
+    async function inspectRetainedAlert() {
       const evidence = page.getByRole("region", { name: "Retained routing alert evidence" });
       await expect(evidence).toBeVisible({ timeout: 75_000 });
       await expect(evidence.getByText("$0.20 · 5 supporting sessions")).toBeVisible();
       await expect(evidence.getByText("$0.40 · 5 supporting sessions")).toBeVisible();
       await expect(evidence.getByText("At least 25% higher")).toBeVisible();
-      await expect(evidence.getByText(seeded.accuracyScorerRevisionId)).toBeVisible();
+      await expect(evidence.getByText(candidate.ruleId, { exact: true })).toBeVisible();
+      await expect(
+        evidence.getByText(seeded.accuracyScorerRevisionId, { exact: true }),
+      ).toBeVisible();
       await expect(
         evidence.getByRole("link", { name: "Open exact benchmark configuration" }),
-      ).toHaveAttribute(
-        "href",
-        new RegExp(`#frontier-configuration-${candidateConfiguration.candidateKey}$`),
-      );
+      ).toHaveAttribute("href", comparisonHref);
       await expect(
         evidence.getByRole("link", { name: "Open frozen suite revision" }),
-      ).toHaveAttribute("href", new RegExp(`[?&]revision=${seeded.suiteRevisionId}(?:&|$)`));
+      ).toHaveAttribute("href", suiteHref);
+      await expect(evidence.getByRole("link", { name: "Review rollback" })).toHaveAttribute(
+        "href",
+        rollbackHref,
+      );
+      return evidence;
+    }
+
+    await test.step("Open retained alert evidence from the active canary", async () => {
+      await page.goto(settings);
+      const link = page.getByRole("link", { name: "Review canary degradation alert" });
+      await expect(link).toHaveAttribute("href", alertHref, { timeout: 75_000 });
+      await link.click();
+      const evidence = await inspectRetainedAlert();
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
       await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -281,9 +434,7 @@ test("replays the retained canary alert and rolls back the exact baseline while 
       await page.setViewportSize({ width: 1440, height: 960 });
       await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
       await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-      const restore = evidence.getByRole("link", { name: "Review rollback" });
-      await expect(restore).toHaveAttribute("href", rollbackHref);
-      await restore.click();
+      await evidence.getByRole("link", { name: "Review rollback" }).click();
     });
 
     await test.step("Confirm exact reviewed rollback with the active attempt unchanged", async () => {
@@ -308,12 +459,7 @@ test("replays the retained canary alert and rolls back the exact baseline while 
         ),
         dialog.getByRole("button", { name: "Activate revision" }).click(),
       ]);
-      expect(response.request().postDataJSON()).toEqual({
-        action: "rollback",
-        expectedActivationNumber: candidate.activationNumber,
-        targetActivationNumber: baseline.activationNumber,
-        revisionId: baseline.revisionId,
-      });
+      expect(response.request().postDataJSON()).toEqual(rollbackCommand);
       const { activation } = activationSchema.parse(await checkedJson(response, 201));
       expect(activation).toMatchObject({
         activationNumber: candidate.activationNumber + 1,
@@ -323,27 +469,33 @@ test("replays the retained canary alert and rolls back the exact baseline while 
       await expect(page.getByText("Selected revision activated for new sessions.")).toBeVisible({
         timeout: 75_000,
       });
-
-      await page.goto(workspaceRunDetailPath(fixture.slug, active.runId));
-      const routing = page.locator("#routing-decision");
-      await expect(routing.getByText("Invoice delivery", { exact: true })).toBeVisible({
-        timeout: 75_000,
-      });
-      await expect(routing.getByText(/Reviewed routing recorded at admission/)).toBeVisible();
-      await expect(routing.getByRole("link", { name: candidate.revisionId })).toBeVisible();
-      await expect(
-        routing.getByRole("link", { name: "Open exact comparison configuration" }),
-      ).toHaveAttribute(
-        "href",
-        new RegExp(`#frontier-configuration-${candidateConfiguration.candidateKey}$`),
+      const history = factoryEditorHistoryResponseSchema.parse(
+        await checkedJson(await page.request.get(definitionApi), 200),
       );
-      await capture(page, routing, info, "routing-active-attempt-after-rollback");
+      expect(history.currentActivation).toMatchObject(activation);
+      expect(history.activations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            activationNumber: baseline.activationNumber,
+            revisionId: baseline.revisionId,
+          }),
+          expect.objectContaining({
+            activationNumber: candidate.activationNumber,
+            revisionId: candidate.revisionId,
+          }),
+        ]),
+      );
+
+      await capture(page, await inspectRouting(), info, "routing-active-attempt-after-rollback");
 
       await page.goto(alertHref);
-      const evidence = page.getByRole("region", { name: "Retained routing alert evidence" });
-      await expect(evidence.getByText("$0.40 · 5 supporting sessions")).toBeVisible({
-        timeout: 75_000,
-      });
+      await inspectRetainedAlert();
+      await expect(
+        page.locator("#routing-canary").getByRole("link", {
+          name: `Activation #${baseline.activationNumber}`,
+          exact: true,
+        }),
+      ).toHaveAttribute("href", rollbackHref);
     });
   } catch (error) {
     failed = true;

@@ -257,6 +257,30 @@ The browser proof uses synthetic source evidence and signed-in local accounts.
 See [metric coverage](../architecture/factory-outcomes.md#qualification-and-coverage-limits)
 and [projection recovery](../deployment/worker-operations.md#factory-outcome-projection-recovery).
 
+### Evidence-backed model routing
+
+Use the disposable loopback Supabase and signed-in browser setup above. The
+routing fixture seeds frozen benchmark, smoke, and observed attempt evidence.
+Chromium drives the real application from the frozen comparison through the
+candidate's Run Inspector and rollback. Capture those three points and compare
+the active attempt's admission and manifest before and after rollback.
+
+```sh
+pnpm check
+pnpm check:db-tests supabase/tests/factory_benchmark_frontier.sql \
+  supabase/tests/factory_definition_activation.sql \
+  supabase/tests/factory_scope_and_membership.sql \
+  supabase/tests/session_credential_authorization.sql
+WALLIE_FACTORY_BENCHMARKS_E2E=1 pnpm exec playwright test e2e/factory-routing-rollback.spec.ts
+```
+
+- The routing suite covers unsupported fallback, explicit overrides, revoked credentials, and stale or insufficient benchmark evidence.
+- The activation and access suites cover concurrent head changes, credential revocation, and scoped reads and mutations.
+- Verify that new admissions use the restored profile and that the original comparison and canary alert still open their exact evidence.
+
+Use the [rollout criteria](../architecture/model-routing.md#rollout-criteria)
+to review shadow, canary, and full enrollment decisions.
+
 ### Factory scorer qualification
 
 Use an isolated checkout without deployment environment files and an exclusive

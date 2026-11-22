@@ -1695,6 +1695,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ["workerd", null, "xhigh"],
     ["node", "medium", "medium"],
     ["changed sandbox", "medium", "medium"],
+    ["revoked credential", "medium", "medium"],
   ] as const)(
     "uses the exact reviewed execution pin for a retry on %s with benchmark effort %s",
     async (runtime, benchmarkEffort, expectedEffort) => {
@@ -1786,7 +1787,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           onUnmatched: { kind: "escalate" },
         }),
       });
-      const { admin, rpc } = buildAdminMock({
+      const { admin, rpc, runRows, insertedArtifacts } = buildAdminMock({
         session: baseSession({
           execute_pinned_definition: true,
           factory_definition_provenance: "pinned",
@@ -1821,12 +1822,35 @@ describe("processPipelineJob (generic stage runner)", () => {
         },
       });
 
+      const revokedSandbox = runtime === "revoked credential" ? new FakeSandbox() : null;
+      if (revokedSandbox) {
+        let credentialAvailable = true;
+        const writeFile = revokedSandbox.writeFile.bind(revokedSandbox);
+        vi.spyOn(revokedSandbox, "stop");
+        vi.spyOn(revokedSandbox, "writeFile").mockImplementation(async (path, ...args) => {
+          await writeFile(path, ...args);
+          if (path.endsWith("/prompt.txt")) credentialAvailable = false;
+        });
+        mocked.getCodexCredentialForSession.mockImplementationOnce(async () => {
+          if (!credentialAvailable)
+            throw new Error("Codex credential was revoked after admission.");
+          return { expiresAt: null, secret: "previous-codex-key", type: "platform_api_key" };
+        });
+        const { createAgentRunner } =
+          await vi.importActual<typeof import("@/lib/agent-runner")>("@/lib/agent-runner");
+        mocked.createAgentRunner.mockImplementationOnce(createAgentRunner);
+        mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+          await input.onSandboxCreated?.({ provider: "vercel", sandboxId: revokedSandbox.id });
+          return revokedSandbox;
+        });
+      }
+
       const result = await processPipelineJob({
         admin,
         job: baseJob({ stage_id: stageId, trigger_type: "manual_retry", attempt_count: 2 }),
         workerRuntime: runtime === "node" ? "node" : "workerd",
       });
-      if (runtime !== "workerd") {
+      if (runtime === "node" || runtime === "changed sandbox") {
         expect(result.result).toBe("error");
         expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
         expect(mocked.createAgentRunner).not.toHaveBeenCalled();
@@ -1835,7 +1859,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         }
         return;
       }
-      expect(result.result).toBe("success");
+      expect(result.result).toBe(revokedSandbox ? "error" : "success");
       expect(rpc).toHaveBeenCalledWith(
         "start_session_job_attempt",
         expect.objectContaining({
@@ -1871,6 +1895,48 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect(mocked.createAgentRunner).toHaveBeenCalledWith("codex", {
         codex: expect.objectContaining({ model: routing.modelName, effort: expectedEffort }),
       });
+      if (revokedSandbox) {
+        expect(mocked.createAgentRunner).toHaveBeenCalledOnce();
+        expect(mocked.getCodexCredentialForSession).toHaveBeenCalledOnce();
+        expect(mocked.getClaudeCodeCredentialForSession).not.toHaveBeenCalled();
+        const pinCallIndex = rpc.mock.calls.findIndex(
+          ([name]) => name === "pin_session_attempt_manifest",
+        );
+        expect(rpc.mock.invocationCallOrder[pinCallIndex]).toBeLessThan(
+          mocked.getCodexCredentialForSession.mock.invocationCallOrder[0]!,
+        );
+        expect(runRows).toContainEqual(
+          expect.objectContaining({
+            id: result.runId,
+            attempt_count: 2,
+            model_provider: "codex",
+            model_name: routing.modelName,
+            status: "error",
+          }),
+        );
+        expect(rpc).toHaveBeenCalledWith(
+          "fail_session_job_attempt",
+          expect.objectContaining({
+            p_run_id: result.runId,
+            p_attempt_count: 2,
+            p_error: "Codex credential was revoked after admission.",
+          }),
+        );
+        expect(
+          revokedSandbox.calls.every(
+            ({ cmd, args }) =>
+              (cmd === "mkdir" && args[0] === "-m" && args[1] === "700") ||
+              (cmd === "bash" && args[1]?.startsWith("mkdir -p ")) ||
+              (cmd === "sh" && args[2] === "wallie-codex-config"),
+          ),
+        ).toBe(true);
+        expect([...revokedSandbox.files.values()].map(({ data }) => data.toString())).toEqual([
+          '{"version":1,"commands":[]}',
+          "rendered prompt",
+        ]);
+        expect(revokedSandbox.stop).toHaveBeenCalledOnce();
+        expect(insertedArtifacts).toHaveLength(0);
+      }
     },
   );
 
