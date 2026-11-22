@@ -479,6 +479,21 @@ function setup({
         draft: null,
         activationNumber: 3,
         ...(body.action === "activate-routing" ? { routingMode: "active" } : {}),
+        ...(body.canary
+          ? {
+              routingCanary: {
+                ...body.canary,
+                id: id(83),
+                activationNumber: 3,
+                baselineActivationNumber: 2,
+                taskClassSlug: "plan",
+                candidateRevisionId: next.id,
+                baselineRevisionId: published.id,
+                minimumSupport: 5,
+                createdAt,
+              },
+            }
+          : {}),
       };
       return body.action === "activate-routing"
         ? Response.json({ activation: activation(next, 3) })
@@ -745,6 +760,78 @@ it("requires retained benchmark evidence even when a routing draft has a passing
   expect(
     screen.getByText("Apply a qualified benchmark finding before activating routing."),
   ).toBeVisible();
+});
+
+it("enrolls the exact reviewed class at the confirmed share and links to its outcomes", async () => {
+  const { requests } = setup({ initialDraft: reviewedRoutingDraft });
+  const activate = await screen.findByRole("button", { name: "Activate reviewed routing" });
+  await waitFor(() => expect(activate).toBeEnabled());
+  fireEvent.click(activate);
+  const dialog = within(
+    await screen.findByRole("alertdialog", { name: "Activate reviewed routing?" }),
+  );
+  expect(dialog.getByRole("radio", { name: "All new sessions" })).toBeChecked();
+  fireEvent.click(dialog.getByRole("radio", { name: "Canary rollout" }));
+  const confirm = dialog.getByRole("button", { name: "Start routing canary" });
+  expect(confirm).toBeDisabled();
+
+  const taskClass = dialog.getByRole("combobox", { name: "Canary task class" });
+  expect(within(taskClass).getAllByRole("option")).toHaveLength(2);
+  expect(within(taskClass).getByRole("option", { name: "Planning (plan)" })).toHaveValue(id(70));
+  fireEvent.change(taskClass, { target: { value: id(70) } });
+  const share = dialog.getByRole("spinbutton", { name: "Candidate share (%)" });
+  fireEvent.change(share, { target: { value: "100" } });
+  expect(confirm).toBeDisabled();
+  fireEvent.change(share, { target: { value: "0.001" } });
+  expect(confirm).toBeDisabled();
+  fireEvent.change(share, { target: { value: "12.75" } });
+  expect(confirm).toBeEnabled();
+  fireEvent.click(confirm);
+
+  await screen.findByText("Routing canary started for new sessions.");
+  expect(screen.getByText("Canary active · plan · 12.75% candidate share")).toBeVisible();
+  expect(screen.getByRole("link", { name: "View canary outcomes" })).toHaveAttribute(
+    "href",
+    `/w/acme/analytics?factory=${id(9)}&routingCanary=${id(83)}#routing-canary`,
+  );
+  expect(requests).toEqual([
+    {
+      path: endpoint,
+      body: {
+        action: "activate-routing",
+        expectedActivationNumber: 2,
+        draftId: reviewedRoutingDraft.id,
+        canary: { taskClassId: id(70), candidateBps: 1275 },
+      },
+    },
+  ]);
+});
+
+it("keeps canary rollout unavailable when the reviewed class is a later stage", async () => {
+  const initialDraft = {
+    ...document(6, "draft", {
+      ...reviewedRoutingDraft.source,
+      stages: [
+        { ...source.stages[0], id: id(84), slug: "intake", name: "Intake" },
+        ...reviewedRoutingDraft.source.stages,
+      ],
+    }),
+    routingDraftEvidence: reviewedRoutingDraft.routingDraftEvidence,
+  };
+  setup({ initialDraft });
+  const activate = await screen.findByRole("button", { name: "Activate reviewed routing" });
+  await waitFor(() => expect(activate).toBeEnabled());
+  fireEvent.click(activate);
+  const dialog = within(
+    await screen.findByRole("alertdialog", { name: "Activate reviewed routing?" }),
+  );
+  expect(dialog.getByRole("radio", { name: "Canary rollout" })).toBeDisabled();
+  expect(
+    dialog.getByText(
+      "A canary requires a compatible baseline and retained evidence for the first stage’s routing rule.",
+    ),
+  ).toBeVisible();
+  expect(dialog.getByRole("button", { name: "Activate routing for new sessions" })).toBeEnabled();
 });
 
 it("blocks another activation from a stale routing review", async () => {

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { loadFactoryRoutingCanary } from "@/lib/model-routing/canary-storage";
 import { routingDraftEvidenceSchema } from "@/lib/model-routing/draft-contracts";
 import { selectReviewedFactoryRoutingActivation } from "@/lib/model-routing/reviewed-activation";
 import { loadWorkspaceSandboxOverview } from "@/lib/sandbox-connections/server";
@@ -184,18 +185,21 @@ export async function loadFactoryEditorSnapshot(
   // If the workspace is deleted during the load, the observed activation can no longer be resolved.
   if (activation && !published) return null;
   let routingMode: FactoryEditorSnapshot["routingMode"];
+  let routingCanary: FactoryEditorSnapshot["routingCanary"];
   if (published?.bundle.modelRouting) {
-    const { data, error } = await selectReviewedFactoryRoutingActivation(client, {
-      workspaceId,
-      factoryId: factory.id,
-      activationNumber,
-    });
-    if (error) throw error;
-    routingMode = data ? "active" : "shadow";
+    const scope = { workspaceId, factoryId: factory.id, activationNumber };
+    const [review, canary] = await Promise.all([
+      selectReviewedFactoryRoutingActivation(client, scope),
+      loadFactoryRoutingCanary(client, scope),
+    ]);
+    if (review.error) throw review.error;
+    routingMode = review.data ? "active" : "shadow";
+    routingCanary = canary ?? undefined;
   }
   return {
     activationNumber,
     ...(routingMode ? { routingMode } : {}),
+    ...(routingCanary ? { routingCanary } : {}),
     published,
     draft: workingDraft,
     baseline,

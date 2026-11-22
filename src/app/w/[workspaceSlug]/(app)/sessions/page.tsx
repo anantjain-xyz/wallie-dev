@@ -18,7 +18,8 @@ export default async function SessionsRoutePage({ params, searchParams }: Sessio
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
   const selection = resolveFactorySelection(factories, search[FACTORY_QUERY_PARAM]);
-  if (selection.kind === "unavailable") return <FactoryUnavailable title="Sessions" />;
+  if (selection.kind === "unavailable")
+    return <FactoryUnavailable title="Sessions" workspaceSlug={workspaceSlug} />;
 
   const factory = selection.kind === "factory" ? selection.factory : undefined;
   const data = await loadSessionListPageData(workspaceSlug, search, factory?.id);

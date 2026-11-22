@@ -326,6 +326,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await expect(page.getByRole("button", { name: "Workspace navigation: Inbox" })).toBeFocused();
 
     await context.setOffline(true);
+    await expect(main.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
     await expect(main.getByText(delegatedTitle, { exact: true })).toHaveCount(0);
     await write(admin.rpc("revoke_factory_membership", membership));
     await Promise.all([

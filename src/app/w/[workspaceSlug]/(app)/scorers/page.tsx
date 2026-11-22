@@ -37,7 +37,7 @@ export default async function ScorersPage({
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
   const scope = await loadScorerPageScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Scorers" />;
+  if (!scope) return <FactoryUnavailable title="Scorers" workspaceSlug={workspaceSlug} />;
 
   const { factory, canEdit, supabase, workspaceId } = scope;
   const factoryQuery = { factory: factory.id };

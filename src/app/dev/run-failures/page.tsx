@@ -120,6 +120,7 @@ export default function RunFailuresPage() {
   });
   return (
     <AppShell
+      creationFactory={{ id: "proof-default-factory", name: "Proof Factory" }}
       workspace={workspace}
       onboarding={null}
       pathnameOverride="/w/proof/sessions/42"

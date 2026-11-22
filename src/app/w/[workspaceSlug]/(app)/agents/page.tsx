@@ -16,7 +16,7 @@ export default async function AgentsPage({
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
   const scope = await loadAgentPageScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Agents" />;
+  if (!scope) return <FactoryUnavailable title="Agents" workspaceSlug={workspaceSlug} />;
 
   const { factory, canEditPrompt, workspaceId } = scope;
   const after = z.string().uuid().safeParse(query.after);

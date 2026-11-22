@@ -8,6 +8,7 @@ import type { SessionRepositoryOptionsResult } from "@/features/sessions/client"
 import { isWorkspaceOperator } from "@/features/workspaces/authenticated-context";
 import { factoryWritableRepositoryIds } from "@/lib/factory-definitions/repository-bindings";
 import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
+import { loadFactoryRoutingCanary } from "@/lib/model-routing/canary-storage";
 import {
   buildRoutingOverrideOptions,
   selectReviewedFactoryRoutingActivation,
@@ -61,17 +62,22 @@ export async function GET(_request: Request, context: RouteContext) {
 
     let routingOverrideOptions;
     if (pinned.modelRouting && isWorkspaceOperator(currentMember)) {
-      const { data, error } = await selectReviewedFactoryRoutingActivation(supabase, {
+      const scope = {
         workspaceId: workspace.id,
         factoryId: pinned.factoryId,
         activationNumber: pinned.activationNumber,
-      });
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-      if (data) {
+      };
+      const [review, canary] = await Promise.all([
+        selectReviewedFactoryRoutingActivation(supabase, scope),
+        loadFactoryRoutingCanary(supabase, scope),
+      ]);
+      if (review.error) return NextResponse.json({ error: review.error.message }, { status: 500 });
+      if (review.data) {
         routingOverrideOptions = buildRoutingOverrideOptions({
           definition: pinned,
           activationNumber: pinned.activationNumber,
-          reviewedTargets: data.reviewed_targets,
+          reviewedTargets: review.data.reviewed_targets,
+          ...(canary ? { taskClassSlug: canary.taskClassSlug } : {}),
         });
       }
     }

@@ -220,9 +220,16 @@ describe("session repositories route", () => {
           error: null,
         })),
       };
-      supabase.from.mockImplementation((table) =>
-        table === "factory_routing_activations" ? review : repos,
-      );
+      const canary = {
+        select: vi.fn(() => canary),
+        eq: vi.fn(() => canary),
+        maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+      };
+      supabase.from.mockImplementation((table) => {
+        if (table === "factory_routing_activations") return review;
+        if (table === "factory_routing_canaries") return canary;
+        return repos;
+      });
       mocked.loadActiveFactoryExecution.mockResolvedValueOnce({
         activationNumber: 7,
         canonicalDigest: "a".repeat(64),

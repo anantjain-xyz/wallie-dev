@@ -94,6 +94,7 @@ const querySchema = z.object({
     .uuid()
     .transform((id) => id.toLowerCase())
     .optional(),
+  routingCanary: z.string().uuid().toLowerCase().optional(),
   from: z.string().date().optional(),
   to: z.string().date().optional(),
   compare: z.literal("previous").optional(),
@@ -114,6 +115,7 @@ export type AnalyticsQuery = AnalyticsWindow & {
   environment: string | null;
   comparison: AnalyticsWindow | null;
   evidence: AnalyticsEvidenceSelection | null;
+  routingCanaryId?: string;
 };
 
 function analyticsWindow(from: number, to: number): AnalyticsWindow {
@@ -139,6 +141,7 @@ export function parseAnalyticsQuery(
     facet,
     bucket,
     cursor,
+    routingCanary,
   } = parsed.data;
   if ((from === undefined) !== (to === undefined)) return { success: false };
   const end = to ? Date.parse(to) : Math.floor(now.getTime() / DAY_MS) * DAY_MS;
@@ -175,6 +178,7 @@ export function parseAnalyticsQuery(
       environment: environment || null,
       comparison,
       evidence,
+      ...(routingCanary ? { routingCanaryId: routingCanary } : {}),
     },
   };
 }

@@ -18,6 +18,9 @@ export function AnalyticsFilters({
         method="get"
       >
         <input name="factory" type="hidden" value={factoryId} />
+        {query.routingCanaryId ? (
+          <input name="routingCanary" type="hidden" value={query.routingCanaryId} />
+        ) : null}
         <label className="type-label flex flex-col gap-1.5">
           From date
           <input
