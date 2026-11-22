@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { extractLinearIssueId } from "@/features/sessions/linear-issue-url";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
+import { routingOverrideSchema } from "@/lib/model-routing/operation-contracts";
 import { maxSessionAttachments } from "@/lib/storage/contracts";
 
 const selectedStageIdsSchema = z
@@ -27,6 +28,7 @@ export const createSessionPayloadSchema = z
     promptMd: z.string().nullable().optional(),
     requestId: z.string().uuid("Creation request id is invalid.").optional(),
     restartOfSessionId: z.string().uuid("Source session id is invalid.").optional(),
+    routingOverride: routingOverrideSchema.optional(),
     selectedStageIds: selectedStageIdsSchema.optional(),
     title: z.string().nullable().optional(),
     workspaceId: z.string().uuid("Workspace id is invalid."),
@@ -51,13 +53,27 @@ export const createSessionPayloadSchema = z
       });
     }
 
-    if ((payload.restartOfSessionId || payload.factoryDefinitionDigest) && !payload.requestId) {
+    if (
+      (payload.restartOfSessionId || payload.factoryDefinitionDigest || payload.routingOverride) &&
+      !payload.requestId
+    ) {
       context.addIssue({
         code: "custom",
         message: payload.restartOfSessionId
           ? "A creation request id is required to restart a session."
           : "A creation request id is required to confirm a factory definition.",
         path: ["requestId"],
+      });
+    }
+
+    if (
+      payload.routingOverride &&
+      (!payload.factoryDefinitionDigest || payload.restartOfSessionId || payload.draftSpecification)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Confirm a factory definition to override routing for a new pipeline session.",
+        path: ["routingOverride"],
       });
     }
   });
@@ -82,6 +98,16 @@ export function normalizeCreateSessionPayload(payload: CreateSessionPayload) {
     requestId: payload.requestId,
     ...(payload.restartOfSessionId
       ? { restartOfSessionId: payload.restartOfSessionId.toLowerCase() }
+      : {}),
+    ...(payload.routingOverride
+      ? {
+          routingOverride: {
+            expectedActivationNumber: payload.routingOverride.expectedActivationNumber,
+            ruleId: payload.routingOverride.ruleId.toLowerCase(),
+            target: payload.routingOverride.target,
+            reason: payload.routingOverride.reason.trim(),
+          },
+        }
       : {}),
     selectedStageIds: payload.selectedStageIds,
     title,

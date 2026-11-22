@@ -218,6 +218,32 @@ describe("RunInspector", () => {
     expect(routing.getByRole("link", { name: "Open frozen suite revision" })).toBeTruthy();
   });
 
+  it("shows the override actor and target alongside the original recommendation", () => {
+    const { receipt } = historicalDecision;
+    show({}, undefined, undefined, undefined, {
+      kind: "recorded",
+      receipt: {
+        ...receipt,
+        decision: { ...receipt.decision, mode: "active" },
+        override: {
+          actorMemberId: workspaceId,
+          reason: "Use the approved backup for this one session.",
+          target: "rule_fallback",
+          configuration: { ...receipt.decision.configuration, modelKey: "openai/gpt-4.1" },
+          benchmarkCandidateKey: "e".repeat(64),
+          createdAt: run.startedAt ?? "2026-11-21T12:00:00.000Z",
+        },
+      },
+    });
+    const routing = routingPanel();
+    expect(routing.getByText("Override recorded")).toBeTruthy();
+    expect(routing.getByText("Use the approved backup for this one session.")).toBeTruthy();
+    expect(routing.getByText(workspaceId)).toBeTruthy();
+    expect(routing.getByText("openai/gpt-4.1")).toBeTruthy();
+    expect(routing.getByText("openai/gpt-5.5")).toBeTruthy();
+    expect(routing.getByRole("link", { name: "Open exact comparison configuration" })).toBeTruthy();
+  });
+
   it("keeps the fallback reason visible when the reviewer cannot manage the factory", () => {
     const { receipt } = historicalDecision;
     show({}, undefined, undefined, undefined, {

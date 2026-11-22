@@ -28,6 +28,7 @@ const documentSchema = contentSchema.extend({
 
 export const factoryEditorSnapshotSchema = z.object({
   activationNumber,
+  routingMode: z.enum(["shadow", "active"]).optional(),
   published: documentSchema.nullable(),
   draft: documentSchema.nullable(),
   baseline: z.object({ source: serialFactoryDefinitionSchema }).nullable(),

@@ -12,6 +12,7 @@ export type Database = {
       agent_jobs: {
         Row: {
           attempt_count: number
+          claimed_worker_runtime: string | null
           created_at: string
           dedupe_key: string | null
           finished_at: string | null
@@ -33,6 +34,7 @@ export type Database = {
         }
         Insert: {
           attempt_count?: number
+          claimed_worker_runtime?: string | null
           created_at?: string
           dedupe_key?: string | null
           finished_at?: string | null
@@ -54,6 +56,7 @@ export type Database = {
         }
         Update: {
           attempt_count?: number
+          claimed_worker_runtime?: string | null
           created_at?: string
           dedupe_key?: string | null
           finished_at?: string | null
@@ -4174,6 +4177,81 @@ export type Database = {
           },
         ]
       }
+      factory_routing_activations: {
+        Row: {
+          activation_number: number
+          benchmark_evidence_draft_id: string
+          draft_digest: string
+          draft_id: string
+          factory_id: string
+          previous_activation_number: number | null
+          previous_revision_id: string | null
+          reviewed_at: string
+          reviewed_by_member_id: string
+          reviewed_targets: Json
+          revision_id: string
+          workspace_id: string
+        }
+        Insert: {
+          activation_number: number
+          benchmark_evidence_draft_id: string
+          draft_digest: string
+          draft_id: string
+          factory_id: string
+          previous_activation_number?: number | null
+          previous_revision_id?: string | null
+          reviewed_at?: string
+          reviewed_by_member_id: string
+          reviewed_targets: Json
+          revision_id: string
+          workspace_id: string
+        }
+        Update: {
+          activation_number?: number
+          benchmark_evidence_draft_id?: string
+          draft_digest?: string
+          draft_id?: string
+          factory_id?: string
+          previous_activation_number?: number | null
+          previous_revision_id?: string | null
+          reviewed_at?: string
+          reviewed_by_member_id?: string
+          reviewed_targets?: Json
+          revision_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_routing_activations_workspace_id_factory_id_activa_fkey"
+            columns: ["workspace_id", "factory_id", "activation_number"]
+            isOneToOne: true
+            referencedRelation: "factory_definition_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
+            ]
+          },
+          {
+            foreignKeyName: "factory_routing_activations_workspace_id_factory_id_benchm_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "benchmark_evidence_draft_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_routing_draft_evidence"
+            referencedColumns: ["workspace_id", "factory_id", "draft_id"]
+          },
+          {
+            foreignKeyName: "factory_routing_activations_workspace_id_factory_id_draft__fkey"
+            columns: ["workspace_id", "factory_id", "draft_id"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_drafts"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
       factory_routing_draft_evidence: {
         Row: {
           candidate_key: string
@@ -6533,6 +6611,7 @@ export type Database = {
           pipeline_id: string
           prompt_sha256: string
           routing_decision: Json | null
+          routing_execution: Json | null
           selected_stage_ids: string[]
           session_id: string
           title_sha256: string
@@ -6560,6 +6639,7 @@ export type Database = {
           pipeline_id: string
           prompt_sha256: string
           routing_decision?: Json | null
+          routing_execution?: Json | null
           selected_stage_ids: string[]
           session_id: string
           title_sha256: string
@@ -6587,6 +6667,7 @@ export type Database = {
           pipeline_id?: string
           prompt_sha256?: string
           routing_decision?: Json | null
+          routing_execution?: Json | null
           selected_stage_ids?: string[]
           session_id?: string
           title_sha256?: string
@@ -6617,6 +6698,71 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "sessions"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_factory_routing_overrides: {
+        Row: {
+          activation_number: number
+          actor_member_id: string
+          created_at: string
+          factory_id: string
+          reason: string
+          routing_execution: Json
+          rule_id: string
+          session_id: string
+          target: string
+          workspace_id: string
+        }
+        Insert: {
+          activation_number: number
+          actor_member_id: string
+          created_at?: string
+          factory_id: string
+          reason: string
+          routing_execution: Json
+          rule_id: string
+          session_id: string
+          target: string
+          workspace_id: string
+        }
+        Update: {
+          activation_number?: number
+          actor_member_id?: string
+          created_at?: string
+          factory_id?: string
+          reason?: string
+          routing_execution?: Json
+          rule_id?: string
+          session_id?: string
+          target?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_factory_routing_overr_session_id_workspace_id_fact_fkey"
+            columns: ["session_id", "workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id", "workspace_id", "factory_id"]
+          },
+          {
+            foreignKeyName: "session_factory_routing_overr_workspace_id_factory_id_acti_fkey"
+            columns: ["workspace_id", "factory_id", "activation_number"]
+            isOneToOne: false
+            referencedRelation: "factory_routing_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
+            ]
+          },
+          {
+            foreignKeyName: "session_factory_routing_overrides_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "session_factory_admission_inputs"
+            referencedColumns: ["session_id"]
           },
         ]
       }
@@ -9802,6 +9948,18 @@ export type Database = {
         }
         Returns: Json
       }
+      activate_reviewed_factory_routing: {
+        Args: {
+          p_actor_user_id: string
+          p_draft_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       adjudicate_factory_evaluation_receipt: {
         Args: {
           p_actor_user_id: string
@@ -10661,6 +10819,7 @@ export type Database = {
             }
             Returns: {
               attempt_count: number
+              claimed_worker_runtime: string | null
               created_at: string
               dedupe_key: string | null
               finished_at: string | null
@@ -10695,6 +10854,7 @@ export type Database = {
             }
             Returns: {
               attempt_count: number
+              claimed_worker_runtime: string | null
               created_at: string
               dedupe_key: string | null
               finished_at: string | null
@@ -10725,6 +10885,7 @@ export type Database = {
             Args: { default_concurrency_limit?: number }
             Returns: {
               attempt_count: number
+              claimed_worker_runtime: string | null
               created_at: string
               dedupe_key: string | null
               finished_at: string | null
@@ -11491,6 +11652,36 @@ export type Database = {
           creator_member_id: string
           draft_specification?: boolean
           expected_factory_definition_digest: string
+          selected_pipeline_id?: string
+          selected_stage_ids?: string[]
+          session_attachment_ids: string[]
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          source_session_id?: string
+          target_factory_id?: string
+          target_request_hash: string
+          target_request_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
+      }
+      create_session_command_with_routing_override: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          draft_specification?: boolean
+          expected_factory_definition_digest: string
+          p_routing_override: Json
           selected_pipeline_id?: string
           selected_stage_ids?: string[]
           session_attachment_ids: string[]
@@ -12450,6 +12641,14 @@ export type Database = {
           total_cost_usd: number
           total_tokens: number
         }[]
+      }
+      get_session_factory_routing_execution: {
+        Args: {
+          p_factory_id: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       get_session_git_continuity_state: {
         Args: { p_session_id: string }

@@ -11,6 +11,8 @@ import { ScopedCredentialCleanupError } from "@/lib/agent-runner/scoped-credenti
 import { ScopedRunCredentialUnavailableError } from "@/lib/agent-credentials/scoped-run-credential";
 import { McpCredentialsUnavailableError } from "@/lib/factory-mcp/credentials";
 import type { CreateAgentRunnerOptions } from "@/lib/agent-runner";
+import type { RoutedFactoryExecution } from "@/lib/model-routing/execution";
+import { modelRoutingPolicySchema } from "@/lib/model-routing/contracts";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import {
   AGENT_PROVIDERS,
@@ -266,6 +268,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     trigger_type: "manual_run",
     updated_at: new Date().toISOString(),
     attempt_count: 1,
+    claimed_worker_runtime: null,
     scheduled_at: null,
     git_continuity_release_revision: null,
     is_repair: false,
@@ -350,6 +353,7 @@ function gitInputFixture(overrides: Partial<GitInputFixture> = {}): GitInputFixt
 interface MockOptions {
   session: Tables<"sessions"> | null;
   pinnedDefinition?: { definition_json: string; canonical_digest: string };
+  routingExecution?: RoutedFactoryExecution;
   originalInput?: {
     original_title: string;
     original_prompt_md: string;
@@ -824,6 +828,9 @@ function buildAdminMock(opts: MockOptions) {
 
   const invokeRpc = async (fn: string, args?: unknown) => {
     const payload = (args ?? {}) as Record<string, unknown>;
+    if (fn === "get_session_factory_routing_execution") {
+      return { data: opts.routingExecution ?? null, error: null };
+    }
     if (fn === "pin_session_attempt_manifest") {
       const run = runRows.find((row) => row.id === payload.p_run_id && row.status === "running");
       return { data: Boolean(run && run.attempt_count === payload.p_attempt_count), error: null };
@@ -1680,6 +1687,184 @@ describe("processPipelineJob (generic stage runner)", () => {
           expect.objectContaining({ p_max_turns: 17, p_agent_effort: "max" }),
         );
       }
+    },
+  );
+
+  it.each(["workerd", "node", "changed sandbox"] as const)(
+    "uses the exact reviewed execution pin for a retry on %s",
+    async (runtime) => {
+      const id = (suffix: number) => `77900000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
+      const [stageId, pipelineId, repositoryId, revisionId] = [id(1), id(2), id(3), id(4)];
+      const baseAgent = {
+        agentId: id(5),
+        promptRevisionId: id(6),
+        promptMd: "Original agent instructions",
+        promptSha256: createHash("sha256").update("Original agent instructions").digest("hex"),
+      };
+      const routedPromptMd = "Reviewed candidate instructions";
+      const routing: RoutedFactoryExecution = {
+        version: 1,
+        configuration: {
+          agentId: id(7),
+          definitionRevisionId: id(8),
+          experimentId: id(9),
+          qualificationId: id(10),
+          modelKey: "openai/gpt-4.1-2025-04-14",
+          harness: "codex",
+          workerRuntime: "workerd",
+        },
+        benchmarkCandidateKey: "a".repeat(64),
+        definitionDigest: "b".repeat(64),
+        modelName: "gpt-4.1-2025-04-14",
+        sandboxProvider: "vercel",
+        sandboxConnectionRevision: id(11),
+        credentialBindingId: null,
+        implementationAgent: {
+          agentId: id(7),
+          promptRevisionId: id(12),
+          promptSha256: createHash("sha256").update(routedPromptMd).digest("hex"),
+        },
+      };
+      const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
+        schemaVersion: 1,
+        kind: "serial",
+        pipelineId,
+        repositoryId,
+        sandboxProvider: "vercel",
+        agent: {
+          provider: "claude-code",
+          model: "claude-sonnet-4-5",
+          effort: "max",
+          concurrencyLimit: 2,
+          stallTimeoutMs: 120000,
+          maxRetries: 2,
+          maxTurns: 17,
+        },
+        implementationAgent: baseAgent,
+        operatingRulesMd: "Original workflow rules",
+        operatingRuleStageIds: [],
+        executionPolicyRevisionId: null,
+        deliveryPolicyRevisionId: null,
+        skillIds: [],
+        toolIds: [],
+        stages: [
+          {
+            id: stageId,
+            slug: "delivery",
+            name: "Delivery",
+            description: "",
+            promptTemplateMd: "Original workflow prompt",
+            anyoneCanApprove: false,
+            approverMemberIds: [],
+            previousStageIds: [],
+          },
+        ],
+        modelRouting: modelRoutingPolicySchema.parse({
+          version: 1,
+          taskClasses: [{ id: id(13), slug: "delivery", name: "Delivery" }],
+          rules: [
+            {
+              id: id(14),
+              taskClassId: id(13),
+              configuration: routing.configuration,
+              constraints: {
+                qualityFloorBps: 8000,
+                minResolvedTrials: 2,
+                maxMeanCostUsd: null,
+                maxLatencyMs: null,
+                minConfidenceBps: null,
+              },
+              onUnavailable: { kind: "escalate" },
+            },
+          ],
+          onUnmatched: { kind: "escalate" },
+        }),
+      });
+      const { admin, rpc } = buildAdminMock({
+        session: baseSession({
+          execute_pinned_definition: true,
+          factory_definition_provenance: "pinned",
+          factory_definition_revision_id: revisionId,
+          pipeline_id: pipelineId,
+          current_stage_id: stageId,
+          github_repository_id: repositoryId,
+          creator_member_id: id(15),
+        }),
+        pinnedDefinition: { definition_json: definitionJson, canonical_digest: canonicalDigest },
+        originalInput: {
+          original_title: "Original task",
+          original_prompt_md: "Original input",
+          definition_revision_id: revisionId,
+          github_repository_id: repositoryId,
+        },
+        githubRepositories: [{ id: repositoryId, full_name: "acme/app", default_branch: "main" }],
+        priorGitInput: { repository_id: repositoryId },
+        currentAttempt: 2,
+        routingExecution: routing,
+      });
+      mocked.loadRunAgentPrompt.mockResolvedValue({
+        ...routing.implementationAgent,
+        promptMd: routedPromptMd,
+      });
+      mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValue({
+        provider: "vercel",
+        connection: {
+          provider: "vercel",
+          credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+          revision: runtime === "changed sandbox" ? id(16) : routing.sandboxConnectionRevision,
+        },
+      });
+
+      const result = await processPipelineJob({
+        admin,
+        job: baseJob({ stage_id: stageId, trigger_type: "manual_retry", attempt_count: 2 }),
+        workerRuntime: runtime === "node" ? "node" : "workerd",
+      });
+      if (runtime !== "workerd") {
+        expect(result.result).toBe("error");
+        expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+        expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+        if (runtime === "node") {
+          expect(rpc).not.toHaveBeenCalledWith("start_session_job_attempt", expect.anything());
+        }
+        return;
+      }
+      expect(result.result).toBe("success");
+      expect(rpc).toHaveBeenCalledWith(
+        "start_session_job_attempt",
+        expect.objectContaining({
+          p_model_provider: "codex",
+          p_model_name: routing.modelName,
+          p_attempt_count: 2,
+        }),
+      );
+      expect(mocked.loadRunAgentPrompt).toHaveBeenCalledWith(
+        admin,
+        expect.objectContaining({
+          expected: routing.implementationAgent,
+        }),
+      );
+      expect(mocked.assertCurrentSandboxCapabilityCheck).toHaveBeenCalledWith(
+        expect.objectContaining({
+          definitionDigest: routing.definitionDigest,
+          qualificationId: routing.configuration.qualificationId,
+        }),
+      );
+      expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          promptTemplateMd: expect.objectContaining({ value: "Original workflow prompt" }),
+        }),
+        expect.objectContaining({
+          agentPromptMd: expect.objectContaining({ value: routedPromptMd }),
+        }),
+      );
+      expect(rpc).toHaveBeenCalledWith(
+        "pin_session_attempt_manifest",
+        expect.objectContaining({ p_worker_runtime: "workerd" }),
+      );
+      expect(mocked.createAgentRunner).toHaveBeenCalledWith("codex", {
+        codex: expect.objectContaining({ model: routing.modelName }),
+      });
     },
   );
 

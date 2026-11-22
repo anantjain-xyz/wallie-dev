@@ -14,7 +14,8 @@ export async function loadRunAgentPrompt(
     factoryId: string;
     sessionId: string;
     runId: string;
-    expected?: FactoryAgentPromptSnapshot;
+    expected?: Omit<FactoryAgentPromptSnapshot, "promptMd"> &
+      Partial<Pick<FactoryAgentPromptSnapshot, "promptMd">>;
   },
 ): Promise<FactoryAgentPromptSnapshot> {
   const { data: run, error: runError } = await client
@@ -53,7 +54,7 @@ export async function loadRunAgentPrompt(
     input.expected &&
     (input.expected.agentId !== snapshot.agentId ||
       input.expected.promptRevisionId !== snapshot.promptRevisionId ||
-      input.expected.promptMd !== snapshot.promptMd ||
+      (input.expected.promptMd !== undefined && input.expected.promptMd !== snapshot.promptMd) ||
       input.expected.promptSha256 !== snapshot.promptSha256)
   ) {
     throw new Error("The run's agent prompt differs from its pinned factory definition.");

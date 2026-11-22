@@ -180,6 +180,62 @@ describe("wallie service helpers", () => {
     });
   });
 
+  it("commits the exact one-task override with the ordinary creation request", async () => {
+    const rpc = vi.fn(() => ({
+      single: async () => ({
+        data: {
+          job_id: "job-1",
+          run_id: "run-1",
+          session_id: "session-1",
+          session_number: 42,
+          workspace_slug: "acme",
+        },
+        error: null,
+      }),
+    }));
+    const routingOverride = {
+      expectedActivationNumber: 7,
+      ruleId: "54200000-0001-4000-8000-000000000015",
+      target: "rule_fallback",
+      reason: "Use the reviewed backup.",
+    } as const;
+    const digest = "a".repeat(64);
+    await createSessionWithFirstJob({
+      admin: { rpc } as unknown as NonNullable<
+        Parameters<typeof createSessionWithFirstJob>[0]["admin"]
+      >,
+      commandFactoryId: "factory-1",
+      creationRequest: { id: "request-1", fingerprint: "fingerprint-1" },
+      creatorMemberId: "member-1",
+      factoryDefinitionDigest: digest,
+      githubRepositoryId: "repository-1",
+      linearIssueId: null,
+      linearIssueUrl: null,
+      modelName: "gpt-5.5",
+      modelProvider: "codex",
+      promptMd: "Verify reviewed routing.",
+      routingOverride,
+      selectedStageIds: ["stage-build"],
+      title: "Check override",
+      workspaceId: "workspace-1",
+    });
+
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(
+      "create_session_command_with_routing_override",
+      expect.objectContaining({
+        creator_member_id: "member-1",
+        expected_factory_definition_digest: digest,
+        p_routing_override: routingOverride,
+        selected_stage_ids: ["stage-build"],
+        session_github_repository_id: "repository-1",
+        target_factory_id: "factory-1",
+        target_request_hash: "fingerprint-1",
+        target_request_id: "request-1",
+        target_workspace_id: "workspace-1",
+      }),
+    );
+  });
+
   it("blocks first-run prep when the resolved repository is archived", () => {
     expect(() =>
       assertSessionFirstRunReady({

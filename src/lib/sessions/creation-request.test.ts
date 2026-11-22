@@ -33,4 +33,28 @@ describe("session creation fingerprint", () => {
       fingerprintSessionCreation(input),
     );
   });
+
+  it("binds a routing override and its reason to the immutable request", () => {
+    const routingOverride = {
+      expectedActivationNumber: 4,
+      ruleId: "deadbeef-5555-4555-8555-555555555555",
+      target: "primary",
+      reason: "Use the reviewed primary.",
+    } as const;
+    const confirmed = { ...input, factoryDefinitionDigest: "a".repeat(64) };
+    const fingerprint = fingerprintSessionCreation({ ...confirmed, routingOverride });
+    expect(fingerprint).not.toBe(fingerprintSessionCreation(confirmed));
+    expect(
+      fingerprintSessionCreation({
+        ...confirmed,
+        routingOverride: { ...routingOverride, reason: `   ${routingOverride.reason} ` },
+      }),
+    ).toBe(fingerprint);
+    expect(
+      fingerprintSessionCreation({
+        ...confirmed,
+        routingOverride: { ...routingOverride, reason: "Verify a changed expectation." },
+      }),
+    ).not.toBe(fingerprint);
+  });
 });

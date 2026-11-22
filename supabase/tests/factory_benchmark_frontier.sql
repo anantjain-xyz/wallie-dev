@@ -457,7 +457,8 @@ set local request.jwt.claim.sub = '';
 
 create function pg_temp.apply_routing_finding(
   p_position integer, p_request integer, p_floor integer default 8000,
-  p_cost numeric default 0.10, p_suite_id uuid default null, p_expected_draft uuid default null
+  p_cost numeric default 0.10, p_suite_id uuid default null, p_expected_draft uuid default null,
+  p_activation bigint default 0
 ) returns uuid language plpgsql as $$
 declare
   scope live_scope;
@@ -487,7 +488,7 @@ begin
     'onUnmatched', '{"kind":"escalate"}'::jsonb
   ));
   return (public.save_factory_routing_draft(
-    scope.workspace_id, scope.factory_id, scope.owner_id, 0, body::text,
+    scope.workspace_id, scope.factory_id, scope.owner_id, p_activation, body::text,
     encode(sha256(convert_to(body::text, 'UTF8')), 'hex'), '{"newStageIds":[]}'::jsonb,
     candidate.experiment_id, candidate.candidate_key, coalesce(p_suite_id, (select id from live_suite)),
     scorer_id, pg_temp.live_id(202), pg_temp.live_id(p_request), repeat(p_request::text, 32), p_expected_draft
@@ -587,17 +588,6 @@ select throws_ok($$select pg_temp.preview_frontier_routing(p_actor => pg_temp.li
 select ok(not has_function_privilege('authenticated','public.preview_factory_model_routing(uuid,uuid,uuid,bigint,uuid,text)','EXECUTE')
   and has_function_privilege('service_role','public.preview_factory_model_routing(uuid,uuid,uuid,bigint,uuid,text)','EXECUTE'),
   'direct draft preview is service-only');
-
-select updated.id from live_scope scope cross join live_suite suite cross join live_task task
-cross join lateral public.save_factory_benchmark_suite_revision(
-  scope.workspace_id, scope.factory_id, scope.owner_id, 'Revised live replay suite', 'regression',
-  p_suite_id => suite.suite_id, p_expected_revision_id => suite.id, p_task_revision_ids => array[task.id]
-) updated;
-select throws_ok($$select pg_temp.apply_routing_finding(1, 16, p_expected_draft => (select draft_id from routing_apply))$$,
-  'PT409', 'The suite revision changed. Run a new comparison before applying it.',
-  'a suite edit invalidates previously qualified evidence for new proposals');
-select is(pg_temp.apply_routing_finding(1, 15), (select draft_id from routing_apply),
-  'resubmitting the same request still reads its original receipt after a suite edit');
 
 create function pg_temp.save_frontier_routing_edit(
   p_source_draft_id uuid, p_path text[], p_value jsonb, p_activation bigint, p_expected_draft_id uuid
@@ -731,6 +721,201 @@ from published_routing_draft;
 select is((select draft.routing_evidence_source_draft_id from public.factory_definition_drafts draft
   join changed_configuration_routing_draft edited on edited.draft_id = draft.id),
   null::uuid,'a primary configuration change drops evidence even from an exact published base');
+
+create temp table review_proposal as
+select pg_temp.apply_routing_finding(1,19,p_expected_draft => draft_id,p_activation => 3) as draft_id
+from changed_configuration_routing_draft;
+create temp table review_candidate as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,rules,0,onUnavailable}',
+  jsonb_build_object('kind','fallback','configuration',pg_temp.routing_configuration(5)
+    || jsonb_build_object('scorerRevisionId',(select id from frontier_scorer))),3,draft_id) as draft_id
+from review_proposal;
+insert into public.sandbox_capability_checks(workspace_id,github_repository_id,agent_provider,agent_model,
+  sandbox_provider,sandbox_id,sandbox_connection_revision,sandbox_vercel_team_id,sandbox_vercel_project_id,status,
+  capabilities,factory_definition_digest)
+select capability.workspace_id,capability.github_repository_id,capability.agent_provider,capability.agent_model,
+  capability.sandbox_provider,capability.sandbox_id,capability.sandbox_connection_revision,
+  capability.sandbox_vercel_team_id,capability.sandbox_vercel_project_id,capability.status,
+  capability.capabilities,draft.canonical_digest
+from public.sandbox_capability_checks capability cross join review_candidate review
+join public.factory_definition_drafts draft on draft.id=review.draft_id where capability.id=pg_temp.live_id(51);
+create function pg_temp.activate_reviewed_routing(p_expected bigint, p_actor uuid default pg_temp.live_id(1))
+returns jsonb language sql as $$
+  select public.activate_reviewed_factory_routing(scope.workspace_id,scope.factory_id,p_actor,p_expected,
+    review.draft_id,array['vercel'],array['agentCli']) from live_scope scope cross join review_candidate review
+$$;
+select throws_ok($$select pg_temp.activate_reviewed_routing(3,pg_temp.live_id(2))$$, '42501', null,
+  'a factory viewer cannot activate the reviewed proposal');
+select throws_ok($$select pg_temp.activate_reviewed_routing(3)$$, 'PT422',
+  'A current passing smoke test is required for the exact factory candidate.',
+  'reviewed activation keeps the existing exact candidate smoke gate');
+insert into public.factory_definition_smoke_tests(workspace_id,factory_id,target_kind,target_id,definition_digest,
+  base_activation_number,sandbox_connection_revision,created_by,lease_expires_at,finished_at,status,evidence)
+select draft.workspace_id,draft.factory_id,'draft',draft.id,draft.canonical_digest,3,pg_temp.live_id(50),draft.created_by,
+  clock_timestamp()+interval '5 minutes',clock_timestamp(),'passed','{"runtimeProfile":"vercel"}'
+from public.factory_definition_drafts draft join review_candidate review on review.draft_id=draft.id;
+create temp table reviewed_activation as select pg_temp.activate_reviewed_routing(3) as result;
+select ok((select result->>'activationNumber' = '4' and result->>'previousActivationNumber' = '3'
+  and result->>'previousRevisionId' = pg_temp.live_id(300)::text and result->>'createdAt' is not null from reviewed_activation),
+  'reviewed activation appends the exact candidate and previous head');
+select is((select benchmark_evidence_draft_id from public.factory_routing_activations where workspace_id=pg_temp.live_id(11)),
+  (select draft_id from review_proposal),'activation pins the original immutable proposal underneath the edited draft');
+select throws_ok($$select pg_temp.activate_reviewed_routing(3)$$, 'PT409', null,
+  'a competing writer with the same expected head cannot activate');
+
+create function pg_temp.create_reviewed_override(p_request integer, p_reason text,
+  p_member uuid default pg_temp.live_id(21), p_rule uuid default pg_temp.live_id(202), p_activation bigint default 4)
+returns table(session_id uuid,session_number integer,workspace_slug text,job_id uuid,run_id uuid)
+language sql as $$
+  select accepted.* from live_scope scope cross join reviewed_activation reviewed
+  cross join lateral public.create_session_command_with_routing_override(scope.workspace_id,p_member,pg_temp.live_id(p_request),
+    repeat('a',64),reviewed.result->>'draftDigest','Choose exact routing','Use the reviewed fixture task.',
+    'codex','gpt-4.1-2025-04-14','{}'::uuid[],
+    jsonb_build_object('expectedActivationNumber',p_activation,'ruleId',p_rule,'target','rule_fallback','reason',p_reason),
+    session_github_repository_id=>pg_temp.live_id(42), selected_pipeline_id=>pg_temp.live_id(40),
+    selected_stage_ids=>array[pg_temp.live_id(41)], target_factory_id=>scope.factory_id) accepted
+$$;
+select throws_ok($$select pg_temp.create_reviewed_override(320,'Owner required',pg_temp.live_id(22))$$, '42501', null,
+  'an ordinary factory member cannot add a one-task override');
+select throws_ok($$select pg_temp.create_reviewed_override(320,'Old policy',p_activation=>3)$$, 'PT409', null,
+  'a one-task override requires the exact current reviewed activation');
+select throws_ok($$select pg_temp.create_reviewed_override(320,'Wrong class',p_rule=>pg_temp.live_id(299))$$, 'PT422', null,
+  'a one-task override cannot use a rule outside the trusted task class');
+create temp table reviewed_active_run as
+select * from public.create_session_with_first_job(pg_temp.live_id(11),pg_temp.live_id(21),
+  'New automatic routing','Review a fixture task.','codex','gpt-4.1-2025-04-14',
+  session_github_repository_id=>pg_temp.live_id(42), selected_pipeline_id=>pg_temp.live_id(40),
+  selected_stage_ids=>array[pg_temp.live_id(41)]);
+select ok((select admission.routing_decision->>'mode'='active'
+  and admission.routing_execution->>'benchmarkCandidateKey'=pg_temp.frontier_result(1)->>'candidateKey'
+  and admission.routing_execution->>'modelName'='gpt-4.1-2025-04-14'
+  and admission.routing_execution#>>'{implementationAgent,promptRevisionId}'=pg_temp.live_id(48)::text
+  from public.session_factory_admission_inputs admission join reviewed_active_run using(session_id)),
+  'a new admission pins the reviewed recommendation and exact executable profile');
+select ok((select admission.routing_decision->>'mode'='shadow' and admission.routing_execution is null
+  from public.session_factory_admission_inputs admission join inspected_routing_run using(session_id)),
+  'the earlier admission stays pinned in shadow mode after reviewed activation');
+create temp table reviewed_override_run as select * from pg_temp.create_reviewed_override(321,'Use the exact alternate.');
+select is((select session_id from pg_temp.create_reviewed_override(321,'Use the exact alternate.')),
+  (select session_id from reviewed_override_run),'retrying the same one-task override returns its original session');
+select throws_ok($$select pg_temp.create_reviewed_override(321,'Different reason.')$$, 'P0005', null,
+  'a replay cannot replace the authorized override reason');
+select ok((select admission.routing_decision->>'benchmarkCandidateKey'=pg_temp.frontier_result(1)->>'candidateKey'
+  and override.routing_execution->>'benchmarkCandidateKey'=pg_temp.frontier_result(5)->>'candidateKey'
+  and override.actor_member_id=pg_temp.live_id(21) and override.reason='Use the exact alternate.'
+  from public.session_factory_admission_inputs admission join reviewed_override_run using(session_id)
+  join public.session_factory_routing_overrides override using(session_id)),
+  'the override records its actor, reason and target without replacing the recommendation');
+select is((select public.get_session_factory_routing_execution(scope.workspace_id,scope.factory_id,run.session_id)
+  ->>'benchmarkCandidateKey' from live_scope scope cross join reviewed_override_run run),
+  pg_temp.frontier_result(5)->>'candidateKey','the worker reads the authorized alternate as its effective pin');
+select throws_ok($$update public.session_factory_routing_overrides set reason='Unapproved change'$$,'23514',null,
+  'the one-task override is immutable');
+select public.grant_factory_membership(scope.workspace_id,scope.factory_id,scope.owner_id,pg_temp.live_id(21),'member')
+from live_scope scope;
+update public.workspace_members set role='owner' where id=pg_temp.live_id(22);
+update public.workspace_members set role='member' where id=pg_temp.live_id(21);
+select is((select session_id from pg_temp.create_reviewed_override(321,'Use the exact alternate.')),
+  (select session_id from reviewed_override_run),'a still-authorized member can replay their own committed override');
+select throws_ok($$select pg_temp.create_reviewed_override(323,'New unapproved override.')$$,'42501',null,
+  'replay permission does not authorize a fresh override after demotion');
+update public.workspace_members set role='owner' where id=pg_temp.live_id(21);
+update public.workspace_members set role='member' where id=pg_temp.live_id(22);
+create temp table ordinary_reviewed_command as
+select accepted.* from live_scope scope cross join reviewed_activation reviewed
+cross join lateral public.create_session_command_once(scope.workspace_id,pg_temp.live_id(21),pg_temp.live_id(324),
+  repeat('a',64),reviewed.result->>'draftDigest','Choose exact routing','Use the reviewed fixture task.',
+  'codex','gpt-4.1-2025-04-14','{}'::uuid[],session_github_repository_id=>pg_temp.live_id(42),
+  selected_pipeline_id=>pg_temp.live_id(40),selected_stage_ids=>array[pg_temp.live_id(41)],
+  target_factory_id=>scope.factory_id) accepted;
+select throws_ok($$select pg_temp.create_reviewed_override(324,'Do not change a committed task.')$$,'P0005',null,
+  'a replay cannot retrofit an override onto an ordinary committed creation');
+update public.agent_jobs set scheduled_at=clock_timestamp()+interval '1 hour'
+where id=(select job_id from ordinary_reviewed_command);
+delete from public.user_codex_credentials where user_id=pg_temp.live_id(1);
+select throws_ok($$select pg_temp.create_reviewed_override(322,'Missing credential.')$$,'PT422',
+  'The reviewed routing policy escalated this task (credential_unavailable)',
+  'an unavailable reviewed route escalates without granting a baseline or override execution');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(1),'platform_api_key','synthetic-routing-key');
+
+-- Worker enforcement assertions
+
+update public.agent_jobs set created_at = '-infinity'
+where id=(select job_id from reviewed_active_run);
+create temp table reviewed_node_claim as
+select id from public.claim_next_agent_job(false, 2, 'node');
+select ok((select job.status = 'queued' and job.attempt_count = 0 and job.claimed_worker_runtime is null
+  from public.agent_jobs job join reviewed_active_run target on job.id=target.job_id),
+  'a Node worker leaves a Workerd routing claim queued without spending an attempt');
+create temp table reviewed_workerd_claim as
+select * from public.claim_next_worker_dispatch(false,100,2,1800000);
+select ok((select job.status='running' and job.attempt_count=1 and job.claimed_worker_runtime='workerd'
+  from reviewed_workerd_claim dispatch join reviewed_active_run target using(job_id)
+  join public.agent_jobs job on job.id=target.job_id and job.attempt_count=dispatch.attempt_count),
+  'the Workerd dispatcher acquires the routed job and its exact runtime');
+select throws_ok($$select public.start_session_job_attempt(job_id,1,pg_temp.live_id(41),0,
+  'codex','gpt-5.5','project','wallie/routed') from reviewed_active_run$$,
+  '23514','The claimed attempt does not match the pinned routing configuration.',
+  'attempt start refuses a model other than the admitted native model');
+select is(public.start_session_job_attempt(job_id,1,pg_temp.live_id(41),0,
+  'codex','gpt-4.1-2025-04-14','project','wallie/routed'),run_id,
+  'the exact routed attempt starts against its original base stage') from reviewed_active_run;
+select public.pin_session_job_git_input(job_id,1,run_id,pg_temp.live_id(42),'main',repeat('a',40))
+from reviewed_active_run;
+update public.agent_runs set sandbox_provider='vercel',sandbox_connection_revision=pg_temp.live_id(50),
+  sandbox_id='sbx_reviewed_worker',sandbox_vercel_team_id='team_live',sandbox_vercel_project_id='prj_live'
+where id=(select run_id from reviewed_active_run);
+select throws_ok($$select public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
+  repeat('a',40),'[]','node',null,null,pg_temp.live_id(21)) from reviewed_active_run$$,
+  '23514','The attempt manifest does not match the pinned routing configuration.',
+  'a manifest from the wrong runtime cannot authorize this attempt');
+update public.agent_runs set sandbox_connection_revision=pg_temp.live_id(299)
+where id=(select run_id from reviewed_active_run);
+select throws_ok($$select public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
+  repeat('a',40),'[]','workerd',null,null,pg_temp.live_id(21)) from reviewed_active_run$$,
+  '23514','The attempt manifest does not match the pinned routing configuration.',
+  'a manifest from a different sandbox connection cannot authorize this attempt');
+update public.agent_runs set sandbox_connection_revision=pg_temp.live_id(50)
+where id=(select run_id from reviewed_active_run);
+select ok(public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
+  repeat('a',40),'[]','workerd',null,null,pg_temp.live_id(21)),
+  'the exact claimed runtime and sandbox connection pin the manifest') from reviewed_active_run;
+select ok((select manifest.routing_decision_session_id=target.session_id
+    and manifest.definition_revision_id=admission.definition_revision_id
+    and manifest.model_name=admission.routing_execution->>'modelName'
+    and run.agent_prompt_revision_id::text=admission.routing_execution#>>'{implementationAgent,promptRevisionId}'
+  from reviewed_active_run target join public.session_attempt_manifests manifest using(run_id)
+  join public.session_factory_admission_inputs admission on admission.session_id=target.session_id
+  join public.agent_runs run on run.id=target.run_id),
+  'attempt provenance preserves the base workflow and the qualified model/prompt together');
+select is(public.fail_session_job_attempt(job_id,1,'Repeat routing proof',false,0,run_id),'error',
+  'the exact routed attempt can retire normally') from reviewed_active_run;
+create temp table reviewed_manual_retry as
+select next.* from reviewed_active_run original cross join lateral public.enqueue_session_job_with_run(
+  original.session_id,pg_temp.live_id(11),pg_temp.live_id(41),pg_temp.live_id(21),'manual_retry',
+  'cursor','unrelated-model','project') as next;
+select ok((select retry.created and (run.model_provider,run.model_name,run.agent_prompt_revision_id) =
+    ('codex','gpt-4.1-2025-04-14',pg_temp.live_id(48))
+  from reviewed_manual_retry retry join public.agent_runs run on run.id=retry.run_id),
+  'a manual retry stamps the original routed execution identity over unrelated defaults');
+
+create temp table proposal_before_suite_edit as
+select pg_temp.apply_routing_finding(1,20,p_activation => 4) as draft_id;
+select updated.id from live_scope scope cross join live_suite suite cross join live_task task
+cross join lateral public.save_factory_benchmark_suite_revision(
+  scope.workspace_id, scope.factory_id, scope.owner_id, 'Revised live replay suite', 'regression',
+  p_suite_id => suite.suite_id, p_expected_revision_id => suite.id, p_task_revision_ids => array[task.id]
+) updated;
+select throws_ok($$select pg_temp.apply_routing_finding(1,16,
+  p_expected_draft=>(select draft_id from proposal_before_suite_edit),p_activation=>4)$$,
+  'PT409', 'The suite revision changed. Run a new comparison before applying it.',
+  'a suite edit invalidates previously qualified evidence for new proposals');
+select is(pg_temp.apply_routing_finding(1,20,p_activation=>4), (select draft_id from proposal_before_suite_edit),
+  'resubmitting the same request still reads its original receipt after a suite edit');
+select throws_ok($$select public.activate_reviewed_factory_routing(scope.workspace_id,scope.factory_id,scope.owner_id,4,
+  saved.draft_id,array['vercel'],array['agentCli']) from live_scope scope cross join proposal_before_suite_edit saved$$,
+  'PT409',null,'stale benchmark evidence cannot activate the current reviewed candidate');
 
 update public.workspaces set deletion_requested_at = clock_timestamp() where id = pg_temp.live_id(11);
 set local storage.allow_delete_query = 'true';
