@@ -51,7 +51,7 @@ async function expectAccessible(page: Page, { sessionsLedger = false } = {}) {
     });
     return violations.map(({ id, nodes }) => ({ id, targets: nodes.map(({ target }) => target) }));
   });
-  // Baseline the current archived badge contrast and compact issue-link size.
+  // Baseline the compact issue-link target size until it is fixed.
   // Keep axe active on every other element and rule.
   const unexpected = violations.flatMap(({ id, targets }) =>
     targets
@@ -59,13 +59,11 @@ async function expectAccessible(page: Page, { sessionsLedger = false } = {}) {
         (target) =>
           !(
             sessionsLedger &&
+            id === "target-size" &&
+            page.viewportSize()?.width === 390 &&
             target.some(
               (selector) =>
-                typeof selector === "string" &&
-                ((id === "color-contrast" && selector.includes(".sessions-ledger-archived")) ||
-                  (id === "target-size" &&
-                    page.viewportSize()?.width === 390 &&
-                    /^a\[href\$="OP-\d+"\]$/u.test(selector))),
+                typeof selector === "string" && /^a\[href\$="OP-\d+"\]$/u.test(selector),
             )
           ),
       )
