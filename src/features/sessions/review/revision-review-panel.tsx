@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { timestampMs } from "@/components/shared/time-format";
+import { SelectField } from "@/components/ui/select";
 import type { SessionArtifactMetadata } from "@/features/sessions/types";
 import { compareRevisionSources, summarizeRevisionChanges } from "./revision";
 import type { FeedbackBatchDetail, FeedbackHistoryPage, ReviewRun } from "./feedback-history";
@@ -382,24 +383,22 @@ export function RevisionReviewPanel({
       ) : null}
       <section aria-label="Compare artifact revisions" className="min-w-0 space-y-3">
         <h4 className="text-sm font-semibold">Compare revisions</h4>
-        <label className="block text-xs" htmlFor="compare-artifact-source">
-          Compare version {version} with
-        </label>
-        <select
+        <SelectField
+          emptyOption={{ label: "Choose a version", value: "" }}
           id="compare-artifact-source"
-          value={beforeId}
-          className="min-h-11 w-full rounded-[4px] border border-border bg-surface px-2 text-xs"
-          onChange={(event) => setSelectedBeforeId(event.target.value)}
-        >
-          <option value="">Choose a version</option>
-          {(versions ?? [])
+          label={`Compare version ${version} with`}
+          labelClassName="text-xs font-normal"
+          onValueChange={setSelectedBeforeId}
+          options={(versions ?? [])
             .filter((row) => row.id && row.id !== artifactId)
-            .map((row) => (
-              <option key={row.id} value={row.id}>
-                Version {row.version} · {row.authorLabel} · {row.id!.slice(0, 8)}
-              </option>
-            ))}
-        </select>
+            .map((row) => ({
+              label: `Version ${row.version} · ${row.authorLabel} · ${row.id!.slice(0, 8)}`,
+              value: row.id!,
+            }))}
+          triggerClassName="min-h-11 text-xs"
+          value={beforeId}
+          wrap
+        />
         {compareError ? (
           <p role="alert" className="text-xs text-danger">
             {compareError} Use Refresh review to retry.

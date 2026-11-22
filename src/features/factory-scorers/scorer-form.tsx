@@ -5,6 +5,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import type { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { SelectField } from "@/components/ui/select";
 import { scorerEvidenceLabels } from "@/features/factory-scorers/scorer-evidence-labels";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
@@ -229,41 +230,50 @@ export function ScorerForm({
           </div>
         </fieldset>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Score scale">
-            <select
-              className="ui-select"
-              name="scale"
-              onChange={(event) =>
-                setScale(event.target.value === "numeric" ? "numeric" : "boolean")
-              }
-              value={scale}
-            >
-              <option value="boolean">Boolean</option>
-              <option value="numeric">Numeric</option>
-            </select>
-          </Field>
+          <SelectField
+            label="Score scale"
+            labelClassName="type-label text-foreground"
+            name="scale"
+            onValueChange={(next) => {
+              if (!conflict) setMessage(null);
+              setScale(next === "numeric" ? "numeric" : "boolean");
+            }}
+            options={[
+              { label: "Boolean", value: "boolean" },
+              { label: "Numeric", value: "numeric" },
+            ]}
+            value={scale}
+          />
           {scale === "boolean" ? (
-            <Field label="Passing value">
-              <select
-                className="ui-select"
-                defaultValue={String(booleanRule?.passValue ?? true)}
-                name="passValue"
-              >
-                <option value="true">True</option>
-                <option value="false">False</option>
-              </select>
-            </Field>
+            <SelectField
+              defaultValue={String(booleanRule?.passValue ?? true)}
+              key="passValue"
+              label="Passing value"
+              labelClassName="type-label text-foreground"
+              name="passValue"
+              onValueChange={() => {
+                if (!conflict) setMessage(null);
+              }}
+              options={[
+                { label: "True", value: "true" },
+                { label: "False", value: "false" },
+              ]}
+            />
           ) : (
-            <Field label="Better score">
-              <select
-                className="ui-select"
-                defaultValue={numericRule?.direction ?? "higher_is_better"}
-                name="direction"
-              >
-                <option value="higher_is_better">Higher</option>
-                <option value="lower_is_better">Lower</option>
-              </select>
-            </Field>
+            <SelectField
+              defaultValue={numericRule?.direction ?? "higher_is_better"}
+              key="direction"
+              label="Better score"
+              labelClassName="type-label text-foreground"
+              name="direction"
+              onValueChange={() => {
+                if (!conflict) setMessage(null);
+              }}
+              options={[
+                { label: "Higher", value: "higher_is_better" },
+                { label: "Lower", value: "lower_is_better" },
+              ]}
+            />
           )}
         </div>
         {scale === "numeric" ? (

@@ -7,6 +7,7 @@ import {
   AGENT_EFFORT_SELECT_OPTIONS,
   AGENT_PROVIDER_LABELS,
 } from "@/components/shared/agent-provider-options";
+import { SelectField } from "@/components/ui/select";
 import { FactoryRepositoryBindingsEditor } from "@/features/factory-definition/repository-bindings-editor";
 import { ModelRoutingEditor } from "@/features/factory-definition/model-routing-editor";
 import {
@@ -330,22 +331,17 @@ export function StructuredFactoryDefinitionEditor({
               values={value.skills}
             />
             {skillOptions?.length ? (
-              <Field label="Add a skill revision">
-                <select
-                  className="ui-select"
-                  onChange={(event) => {
-                    if (event.target.value) update("skills", [...value.skills, event.target.value]);
-                  }}
-                  value=""
-                >
-                  <option value="">Choose a skill revision</option>
-                  {skillOptions.map(({ id, label }) => (
-                    <option key={id} value={id}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <SelectField
+                disabled={disabled}
+                emptyOption={{ label: "Choose a skill revision", value: "" }}
+                label="Add a skill revision"
+                onValueChange={(next) => {
+                  if (!disabled && next) update("skills", [...value.skills, next]);
+                }}
+                options={skillOptions.map(({ id, label }) => ({ label, value: id }))}
+                value=""
+                wrap
+              />
             ) : null}
           </div>
         </div>
@@ -384,23 +380,17 @@ export function StructuredFactoryDefinitionEditor({
           <p className="type-secondary text-muted">No scorer revisions selected.</p>
         )}
         {availableScorers.length > 0 ? (
-          <Field label="Add a scorer revision">
-            <select
-              className="ui-select"
-              disabled={scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS}
-              onChange={(event) => {
-                if (event.target.value) updateScorers([...scorerRevisionIds, event.target.value]);
-              }}
-              value=""
-            >
-              <option value="">Choose a scorer revision</option>
-              {availableScorers.map(({ id, label }) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <SelectField
+            disabled={disabled || scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS}
+            emptyOption={{ label: "Choose a scorer revision", value: "" }}
+            label="Add a scorer revision"
+            onValueChange={(next) => {
+              if (!disabled && next) updateScorers([...scorerRevisionIds, next]);
+            }}
+            options={availableScorers.map(({ id, label }) => ({ label, value: id }))}
+            value=""
+            wrap
+          />
         ) : null}
         {scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS ? (
           <p className="type-annotation text-muted">
@@ -530,75 +520,62 @@ export function StructuredFactoryDefinitionEditor({
           Runtime
         </h3>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Sandbox provider">
-            <select
-              className="ui-select"
-              onChange={(event) => {
-                const provider = sandboxProviderSchema.safeParse(event.target.value);
-                if (provider.success) update("sandboxProvider", provider.data);
-              }}
-              value={value.sandboxProvider}
-            >
-              {SANDBOX_PROVIDERS.map((provider) => (
-                <option key={provider} value={provider}>
-                  {sandboxLabels[provider]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Agent provider">
-            <select
-              className="ui-select"
-              onChange={(event) => {
-                const provider = agentConfigValueSchemas.agent_provider.safeParse(
-                  event.target.value,
-                );
-                if (!provider.success || provider.data === agent.provider) return;
-                updateAgent({
-                  provider: provider.data,
-                  model: getRecommendedAgentModel(provider.data),
-                  effort: agentProviderSupportsEffort(provider.data) ? agent.effort : null,
-                });
-              }}
-              value={agent.provider}
-            >
-              {AGENT_PROVIDERS.map((provider) => (
-                <option key={provider} value={provider}>
-                  {AGENT_PROVIDER_LABELS[provider]}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <SelectField
+            disabled={disabled}
+            label="Sandbox provider"
+            onValueChange={(next) => {
+              if (disabled) return;
+              const provider = sandboxProviderSchema.safeParse(next);
+              if (provider.success) update("sandboxProvider", provider.data);
+            }}
+            options={SANDBOX_PROVIDERS.map((provider) => ({
+              label: sandboxLabels[provider],
+              value: provider,
+            }))}
+            value={value.sandboxProvider}
+          />
+          <SelectField
+            disabled={disabled}
+            label="Agent provider"
+            onValueChange={(next) => {
+              if (disabled) return;
+              const provider = agentConfigValueSchemas.agent_provider.safeParse(next);
+              if (!provider.success || provider.data === agent.provider) return;
+              updateAgent({
+                provider: provider.data,
+                model: getRecommendedAgentModel(provider.data),
+                effort: agentProviderSupportsEffort(provider.data) ? agent.effort : null,
+              });
+            }}
+            options={AGENT_PROVIDERS.map((provider) => ({
+              label: AGENT_PROVIDER_LABELS[provider],
+              value: provider,
+            }))}
+            value={agent.provider}
+          />
           <TextField
             label="Model"
             onChange={(model) => updateAgent({ model })}
             value={agent.model}
           />
-          <Field label="Reasoning effort">
-            <select
-              className="ui-select"
-              disabled={!agentProviderSupportsEffort(agent.provider) && agent.effort === null}
-              onChange={(event) => {
-                const effort = event.target.value;
-                if (!effort) {
-                  updateAgent({ effort: null });
-                  return;
-                }
-                const parsed = agentConfigValueSchemas.agent_effort.safeParse(effort);
-                if (parsed.success) updateAgent({ effort: parsed.data });
-              }}
-              value={agent.effort ?? ""}
-            >
-              <option value={AGENT_EFFORT_EMPTY_OPTION.value}>
-                {AGENT_EFFORT_EMPTY_OPTION.label}
-              </option>
-              {AGENT_EFFORT_SELECT_OPTIONS.map(({ label, value: effort }) => (
-                <option key={effort} value={effort}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <SelectField
+            disabled={
+              disabled || (!agentProviderSupportsEffort(agent.provider) && agent.effort === null)
+            }
+            emptyOption={AGENT_EFFORT_EMPTY_OPTION}
+            label="Reasoning effort"
+            onValueChange={(effort) => {
+              if (disabled) return;
+              if (!effort) {
+                updateAgent({ effort: null });
+                return;
+              }
+              const parsed = agentConfigValueSchemas.agent_effort.safeParse(effort);
+              if (parsed.success) updateAgent({ effort: parsed.data });
+            }}
+            options={AGENT_EFFORT_SELECT_OPTIONS}
+            value={agent.effort ?? ""}
+          />
           {numericAgentFields.map(({ key, label, min, max }) => {
             const number =
               key === "stallTimeoutMs" ? stallTimeoutMsToMinutes(agent[key]) : agent[key];

@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
+import { selectDropdownOption } from "./helpers/select";
 
 async function checked<T>(operation: PromiseLike<{ data: T; error: unknown }>) {
   const { data, error } = await operation;
@@ -172,9 +173,10 @@ test("Governance manages receiver metadata and shows the signing secret only onc
     await expect(events.getByRole("heading", { name: "Event subscriptions" })).toBeVisible();
     await events.getByLabel("Name", { exact: true }).fill("Release reporting");
     await events.getByLabel("HTTPS endpoint").fill("https://receiver.example.com/wallie");
-    await events
-      .getByRole("combobox", { name: "Authorization", exact: true })
-      .selectOption(`machine_token:${tokenId}`);
+    await selectDropdownOption(
+      events.getByRole("combobox", { name: "Authorization", exact: true }),
+      `machine_token:${tokenId}`,
+    );
     await events.getByRole("checkbox", { name: "Review ready" }).check();
     await events.getByRole("checkbox", { name: "Review approved" }).check();
     const created = page.waitForResponse(

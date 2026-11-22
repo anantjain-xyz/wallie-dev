@@ -166,14 +166,19 @@ describe("ArtifactPanel", () => {
         .mock.calls.filter(([input]) => String(input).includes("artifactId=previous-artifact")),
     ).toHaveLength(1);
 
-    fireEvent.change(screen.getByLabelText("Compare version 3 with"), {
-      target: { value: oldest.id },
-    });
+    fireEvent.click(screen.getByLabelText("Compare version 3 with"));
+    fireEvent.click(
+      screen
+        .getByRole("listbox", { name: "Compare version 3 with" })
+        .querySelector(`[role="option"][data-value="${oldest.id}"]`) as HTMLElement,
+    );
     expect(await screen.findByText("Refresh the board manually.")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Review brief" }));
     expect(screen.getByText("v2 → v3")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Compare versions" }));
-    expect(screen.getByLabelText("Compare version 3 with")).toHaveProperty("value", previous.id);
+    expect(screen.getByLabelText("Compare version 3 with").getAttribute("data-value")).toBe(
+      previous.id,
+    );
     expect(await screen.findByText("Keep the board as-is after reconnecting.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Full artifact" }));

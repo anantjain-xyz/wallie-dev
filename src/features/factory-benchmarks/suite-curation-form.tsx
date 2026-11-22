@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useId, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -150,17 +151,16 @@ export function SuiteCurationForm({
               required
             />
           </label>
-          <label className="block min-w-0 space-y-1.5">
-            <span className="type-label">Suite purpose</span>
-            <select
-              className="ui-select"
-              name="purpose"
-              defaultValue={draft?.purpose ?? "regression"}
-            >
-              <option value="regression">Regression</option>
-              <option value="holdout">Holdout</option>
-            </select>
-          </label>
+          <SelectField
+            defaultValue={draft?.purpose ?? "regression"}
+            label="Suite purpose"
+            labelClassName="type-label"
+            name="purpose"
+            options={[
+              { label: "Regression", value: "regression" },
+              { label: "Holdout", value: "holdout" },
+            ]}
+          />
         </div>
         <fieldset className="min-w-0 space-y-3">
           <legend className="type-label text-foreground">Task selection</legend>

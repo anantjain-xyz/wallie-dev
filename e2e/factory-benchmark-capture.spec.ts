@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import type { Database } from "@/lib/supabase/database.types";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { selectDropdownOption } from "./helpers/select";
 
 async function capture(page: Page, info: TestInfo, name: string) {
   await page.evaluate(() => document.fonts.ready);
@@ -63,11 +64,12 @@ test("a factory operator captures a historical run with explicit missing replay 
     await preview.getByText("Original prompt", { exact: true }).click();
     await expect(preview.getByText("Original prompt unavailable.", { exact: true })).toBeVisible();
 
-    await suite.selectOption({ label: "New suite" });
+    await selectDropdownOption(suite, { label: "New suite" });
     await dialog.getByRole("textbox", { name: "Suite name", exact: true }).fill(suiteName);
-    await dialog
-      .getByRole("combobox", { name: "Suite purpose", exact: true })
-      .selectOption({ label: "Regression" });
+    await selectDropdownOption(
+      dialog.getByRole("combobox", { name: "Suite purpose", exact: true }),
+      { label: "Regression" },
+    );
     await submit.click();
     await expect(acceptance).toBeFocused();
     expect(
@@ -90,7 +92,7 @@ test("a factory operator captures a historical run with explicit missing replay 
     await page.getByRole("button", { name: "Switch to dark mode" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await openCapture.click();
-    await suite.selectOption({ label: suiteName });
+    await selectDropdownOption(suite, { label: suiteName });
     await expect(acceptance).toHaveValue(criteria);
     await submit.click();
     await expect(

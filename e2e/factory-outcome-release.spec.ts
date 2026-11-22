@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryOutcomeRelease } from "./helpers/factory-outcome-release";
 import { assertFactoryOutcomeExportReconciles } from "./helpers/reconcile-factory-outcome-export";
+import { selectDropdownOption } from "./helpers/select";
 
 const windowSchema = z.object({
   from: z.iso.datetime({ offset: true }),
@@ -356,7 +357,10 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     ).toHaveCount(0);
     await expect(evidence.getByRole("link", { name: "Session #81", exact: true })).toBeVisible();
 
-    await page.getByRole("combobox", { name: /^Break down throughput by/u }).selectOption("model");
+    await selectDropdownOption(
+      page.getByRole("combobox", { name: /^Break down throughput by/u }),
+      "model",
+    );
     await page.getByRole("button", { name: "Apply filters", exact: true }).click();
     await expect(analyticsValue(page, "Pull request throughput", "gpt-5.5")).toHaveText("1");
     await expect(analyticsValue(page, "Pull request throughput", "Unlinked")).toHaveText("3");
@@ -365,7 +369,10 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
       evidence.getByRole("link", { name: `Run ${fixture.producingRunId}`, exact: true }),
     ).toBeVisible();
     await expect(evidence).toContainText(fixture.mergeObservationId);
-    await page.getByRole("combobox", { name: /^Break down throughput by/u }).selectOption("person");
+    await selectDropdownOption(
+      page.getByRole("combobox", { name: /^Break down throughput by/u }),
+      "person",
+    );
     await page.getByRole("button", { name: "Apply filters", exact: true }).click();
     const requester = `Workspace member ${fixture.ownerMemberId.slice(0, 8)}`;
     await expect(analyticsValue(page, "Pull request throughput", requester)).toHaveText("4");

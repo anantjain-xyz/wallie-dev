@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { cn } from "@/lib/utils";
 
 export type MultiSelectOption = {
@@ -64,18 +65,17 @@ export function MultiSelectField({
         aria-describedby={describedBy}
         aria-expanded={isExpanded}
         aria-labelledby={`${labelId} ${summaryId}`}
-        className={cn(
-          "ui-input flex items-center justify-between gap-3 text-left",
-          error && "border-danger",
-        )}
+        className={cn("ui-select-trigger w-full", error && "border-danger")}
         id={id}
         onClick={() => setIsExpanded((value) => !value)}
         type="button"
       >
-        <span id={summaryId}>{summary}</span>
-        <span aria-hidden="true" className="text-muted">
-          {isExpanded ? "▾" : "▸"}
+        <span className="min-w-0 truncate" id={summaryId}>
+          {summary}
         </span>
+        <ChevronDownIcon
+          className={cn("text-muted transition-transform duration-150", isExpanded && "rotate-180")}
+        />
       </button>
       <div
         className="max-h-48 overflow-y-auto rounded-[6px] border border-border bg-background p-2"

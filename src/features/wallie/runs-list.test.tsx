@@ -126,9 +126,8 @@ describe("Runs list", () => {
     expect(latest).toContain("status=error");
     expect(latest).not.toContain("cursor=");
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), {
-      target: { value: "canceled" },
-    });
+    fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(screen.getByRole("option", { name: "Canceled" }));
     fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
     expect(mocked.push).toHaveBeenCalledTimes(1);
     const destination = new URL(mocked.push.mock.calls[0]?.[0], "http://localhost");
@@ -153,9 +152,9 @@ describe("Runs list", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "No matching runs" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Selected session" }).getAttribute("value")).toBe(
-      SESSION_ID,
-    );
+    const sessionFilter = screen.getByRole("combobox", { name: "Session" });
+    expect(sessionFilter.getAttribute("data-value")).toBe(SESSION_ID);
+    expect(sessionFilter.textContent).toContain("Selected session");
     fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
     expect(mocked.push).toHaveBeenCalledWith(
       `/w/acme/runs?sessionId=${SESSION_ID}&stageId=${STAGE_ID}`,

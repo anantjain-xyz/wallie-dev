@@ -92,9 +92,8 @@ it("saves a holdout suite by normalized tags with a separately described input",
   fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
     target: { value: "UI holdout" },
   });
-  fireEvent.change(screen.getByRole("combobox", { name: "Suite purpose" }), {
-    target: { value: "holdout" },
-  });
+  fireEvent.click(screen.getByRole("combobox", { name: "Suite purpose" }));
+  fireEvent.click(screen.getByRole("option", { name: "Holdout" }));
   fireEvent.click(screen.getByRole("radio", { name: "Match tags" }));
   fireEvent.change(screen.getByRole("textbox", { name: /^Selection tags$/ }), {
     target: { value: " ui, invoice " },

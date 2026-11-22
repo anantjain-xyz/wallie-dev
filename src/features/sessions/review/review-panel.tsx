@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { SelectField } from "@/components/ui/select";
 import { PencilIcon } from "@/components/shared/icons/pencil-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -751,21 +752,19 @@ export function ArtifactReviewPanel({
           >
             {anchor.quote}
           </blockquote>
-          <label className="block text-xs text-muted" htmlFor={`${composerId}-kind`}>
-            Comment type
-          </label>
-          <select
-            className={cn(fieldClass, "min-h-11", inline && "max-lg:text-base")}
+          <SelectField
             disabled={pending}
             id={`${composerId}-kind`}
-            onChange={(event) =>
-              setKind(event.target.value === "blocking" ? "blocking" : "discussion")
-            }
+            label="Comment type"
+            labelClassName="text-xs font-normal text-muted"
+            onValueChange={(value) => setKind(value === "blocking" ? "blocking" : "discussion")}
+            options={[
+              { label: "Discussion", value: "discussion" },
+              { label: "Blocking request", value: "blocking" },
+            ]}
+            triggerClassName={cn("min-h-11 text-xs", inline && "max-lg:text-base")}
             value={kind}
-          >
-            <option value="discussion">Discussion</option>
-            <option value="blocking">Blocking request</option>
-          </select>
+          />
           {inline && kind === "blocking" ? (
             <p className="text-xs text-warning">Blocks approval until a reviewer closes it.</p>
           ) : null}

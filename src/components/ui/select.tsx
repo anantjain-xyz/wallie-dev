@@ -26,20 +26,38 @@ import { useModalOverlayContainer, useOverlayContainer } from "@/components/ui/p
 import { cn } from "@/lib/utils";
 
 export type SelectOption = {
+  disabled?: boolean;
   icon?: ReactNode;
   label: string;
   value: string;
 };
 
+export type SelectOptionGroup = {
+  label: string;
+  options: readonly SelectOption[];
+};
+
 export type SelectFieldProps = {
+  align?: "start" | "end";
+  "aria-describedby"?: string;
   className?: string;
+  contentClassName?: string;
+  defaultValue?: string;
   disabled?: boolean;
   emptyOption?: SelectOption;
   fallbackLabel?: string;
+  form?: string;
+  groups?: readonly SelectOptionGroup[];
+  id?: string;
   label: ReactNode;
-  onValueChange: (value: string) => void;
-  options: readonly SelectOption[];
-  value: string;
+  labelClassName?: string;
+  name?: string;
+  onValueChange?: (value: string) => void;
+  options?: readonly SelectOption[];
+  required?: boolean;
+  triggerClassName?: string;
+  value?: string;
+  wrap?: boolean;
 };
 
 type SelectItemDescriptor = {
@@ -51,12 +69,16 @@ type SelectItemDescriptor = {
 type SelectContextValue = {
   applyTypeahead: (key: string, mode: "highlight" | "select") => void;
   disabled: boolean;
+  errorId: string;
+  form?: string;
   highlightedValue: string | null;
+  invalidMessage: string | null;
   items: readonly SelectItemDescriptor[];
   listboxId: string;
   onValueChange: (value: string) => void;
   open: boolean;
   optionId: (value: string) => string;
+  required: boolean;
   setHighlightedValue: (value: string | null) => void;
   setOpen: (open: boolean) => void;
   setTrigger: (node: HTMLButtonElement | null) => void;
@@ -149,6 +171,22 @@ function isNonNoneCss(value: string) {
   return Boolean(value) && value !== "none";
 }
 
+function firstInvalidFormControl(form: HTMLFormElement): Element | null {
+  for (const element of Array.from(form.elements)) {
+    if (
+      (element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLButtonElement) &&
+      element.willValidate &&
+      !element.validity.valid
+    ) {
+      return element;
+    }
+  }
+  return null;
+}
+
 /** Viewport offset when the portal target is a `position: fixed` containing block. */
 function portalFixedContainingBlock(container: HTMLElement) {
   const style = getComputedStyle(container);
@@ -181,31 +219,49 @@ export function Select({
   children,
   defaultValue,
   disabled = false,
+  form,
+  name,
   onValueChange,
+  required = false,
   value: valueProp,
 }: {
   children: ReactNode;
   defaultValue?: string;
   disabled?: boolean;
+  form?: string;
+  name?: string;
   onValueChange?: (value: string) => void;
+  required?: boolean;
   value?: string;
 }) {
   const listboxId = useId();
+  const errorId = useId();
   const typeaheadRef = useRef({ buffer: "", timeout: 0 });
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
+  const [inputElement, setInputElement] = useState<HTMLInputElement | null>(null);
   const [uncontrolledValue, setUncontrolledValue] = useState(defaultValue ?? "");
+  const [invalidMessage, setInvalidMessage] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [highlightedValue, setHighlightedValue] = useState<string | null>(null);
   const value = valueProp ?? uncontrolledValue;
+  const isOpen = !disabled && open;
+  const activeInvalidMessage = required && value === "" ? invalidMessage : null;
   const items = useMemo(() => collectItems(children), [children]);
   const enabledItems = useMemo(() => items.filter((item) => !item.disabled), [items]);
 
+  const isControlDisabled = useCallback(
+    () => disabled || Boolean(trigger?.matches(":disabled")),
+    [disabled, trigger],
+  );
+
   const commitValue = useCallback(
     (nextValue: string) => {
+      if (isControlDisabled()) return;
+      if (nextValue !== "") setInvalidMessage(null);
       if (valueProp === undefined) setUncontrolledValue(nextValue);
       onValueChange?.(nextValue);
     },
-    [onValueChange, valueProp],
+    [isControlDisabled, onValueChange, valueProp],
   );
 
   const optionId = useCallback(
@@ -250,11 +306,11 @@ export function Select({
   );
 
   const openList = useCallback(() => {
-    if (disabled) return;
+    if (isControlDisabled()) return;
     const selected = items.find((item) => item.value === value && !item.disabled);
     setHighlightedValue((selected ?? firstEnabled(items))?.value ?? null);
     setOpen(true);
-  }, [disabled, items, value]);
+  }, [isControlDisabled, items, value]);
 
   const moveHighlight = useCallback(
     (step: 1 | -1) => {
@@ -280,7 +336,7 @@ export function Select({
   }, [close, commitValue, highlightedValue, items]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!isOpen) return;
 
     function onPointerDown(event: PointerEvent) {
       const target = event.target;
@@ -345,9 +401,9 @@ export function Select({
     applyTypeahead,
     close,
     enabledItems,
+    isOpen,
     listboxId,
     moveHighlight,
-    open,
     selectHighlighted,
     trigger,
   ]);
@@ -357,19 +413,38 @@ export function Select({
     return () => window.clearTimeout(typeahead.timeout);
   }, []);
 
+  useEffect(() => {
+    const formById = form ? document.getElementById(form) : null;
+    const ownerForm =
+      inputElement?.form ??
+      trigger?.form ??
+      (formById instanceof HTMLFormElement ? formById : null);
+    if (!ownerForm) return;
+    function onReset() {
+      setInvalidMessage(null);
+      if (valueProp === undefined) setUncontrolledValue(defaultValue ?? "");
+    }
+    ownerForm.addEventListener("reset", onReset);
+    return () => ownerForm.removeEventListener("reset", onReset);
+  }, [defaultValue, form, inputElement, trigger, valueProp]);
+
   const context = useMemo<SelectContextValue>(
     () => ({
       applyTypeahead,
       disabled,
+      errorId,
+      form,
       highlightedValue,
+      invalidMessage: activeInvalidMessage,
       items,
       listboxId,
       onValueChange: (nextValue) => {
         commitValue(nextValue);
         close();
       },
-      open,
+      open: isOpen,
       optionId,
+      required,
       setHighlightedValue,
       setOpen: (nextOpen) => {
         if (nextOpen) openList();
@@ -380,26 +455,76 @@ export function Select({
       value,
     }),
     [
+      activeInvalidMessage,
       applyTypeahead,
       close,
       commitValue,
       disabled,
+      errorId,
+      form,
       highlightedValue,
+      isOpen,
       items,
       listboxId,
-      open,
       openList,
       optionId,
+      required,
       trigger,
       value,
     ],
   );
 
-  return <SelectContext value={context}>{children}</SelectContext>;
+  return (
+    <SelectContext value={context}>
+      {required ? (
+        <input
+          aria-hidden="true"
+          className="pointer-events-none absolute h-px w-px opacity-0"
+          disabled={disabled}
+          form={form}
+          name={name}
+          onChange={() => undefined}
+          onFocus={() => trigger?.focus()}
+          onInvalid={(event) => {
+            const input = event.currentTarget;
+            const message = input.validity.valueMissing
+              ? "Please select an option."
+              : input.validationMessage || "Please select an option.";
+            setInvalidMessage(message);
+            event.preventDefault();
+            const ownerForm = input.form;
+            if (!ownerForm || firstInvalidFormControl(ownerForm) === input) {
+              trigger?.focus();
+            }
+          }}
+          ref={setInputElement}
+          required
+          tabIndex={-1}
+          value={value}
+        />
+      ) : name ? (
+        <input
+          disabled={disabled}
+          form={form}
+          name={name}
+          ref={setInputElement}
+          type="hidden"
+          value={value}
+        />
+      ) : null}
+      {children}
+      {activeInvalidMessage ? (
+        <p className="text-xs font-medium text-danger" id={errorId} role="alert">
+          {activeInvalidMessage}
+        </p>
+      ) : null}
+    </SelectContext>
+  );
 }
 
 type SelectTriggerProps = Omit<React.ComponentProps<"button">, "type"> & {
   accessibleLabel?: string;
+  fallbackLabel?: string;
   ref?: Ref<HTMLButtonElement>;
 };
 
@@ -407,12 +532,14 @@ export function SelectTrigger({
   accessibleLabel,
   children,
   className,
+  fallbackLabel,
   ref,
   ...props
 }: SelectTriggerProps) {
   const context = useSelectContext();
   const selectedLabel =
-    context.items.find((item) => item.value === context.value)?.label ?? context.value;
+    context.items.find((item) => item.value === context.value)?.label ??
+    (context.value || fallbackLabel || "");
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
     props.onKeyDown?.(event);
@@ -432,15 +559,25 @@ export function SelectTrigger({
     context.applyTypeahead(event.key, "select");
   }
 
+  const describedBy =
+    [props["aria-describedby"], context.invalidMessage ? context.errorId : undefined]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
   return (
     <button
+      data-value={context.value}
       {...props}
       aria-controls={context.listboxId}
+      aria-describedby={describedBy}
       aria-expanded={context.open}
       aria-haspopup="listbox"
-      aria-label={accessibleLabel}
-      className={cn("ui-select-trigger", className)}
+      aria-invalid={context.invalidMessage ? true : props["aria-invalid"]}
+      aria-label={accessibleLabel ?? props["aria-label"]}
+      aria-required={context.required || undefined}
+      className={cn("ui-select-trigger", context.invalidMessage && "border-danger", className)}
       disabled={context.disabled}
+      form={context.form ?? props.form}
       onClick={(event) => {
         props.onClick?.(event);
         if (event.defaultPrevented) return;
@@ -474,7 +611,12 @@ export function SelectContent({
   const { highlightedValue, listboxId, open, optionId, trigger } = useSelectContext();
   const overlayContainer = useOverlayContainer();
   const modalContainer = useModalOverlayContainer();
-  const container = containerOverride ?? modalContainer ?? overlayContainer;
+  const container =
+    containerOverride ??
+    modalContainer ??
+    trigger?.closest<HTMLElement>('[aria-modal="true"]') ??
+    overlayContainer ??
+    (typeof document !== "undefined" ? document.body : null);
   const listboxRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<CSSProperties>({});
 
@@ -596,10 +738,18 @@ export function SelectContent({
 
   if (!open || !container) return null;
 
+  const triggerAriaLabel = trigger?.getAttribute("aria-label") ?? undefined;
+  const triggerAriaLabelledBy = trigger?.getAttribute("aria-labelledby") ?? undefined;
+  const fallbackLabelEl = !triggerAriaLabel && !triggerAriaLabelledBy ? trigger?.labels?.[0] : null;
+  const listboxAriaLabelledBy = triggerAriaLabelledBy ?? (fallbackLabelEl?.id || undefined);
+  const listboxAriaLabel =
+    triggerAriaLabel ??
+    (!listboxAriaLabelledBy ? fallbackLabelEl?.textContent?.trim() || undefined : undefined);
+
   return createPortal(
     <div
-      aria-label={trigger?.getAttribute("aria-label") ?? undefined}
-      aria-labelledby={trigger?.getAttribute("aria-labelledby") ?? undefined}
+      aria-label={listboxAriaLabel}
+      aria-labelledby={listboxAriaLabelledBy}
       className={cn("ui-select-content p-1", className)}
       id={listboxId}
       ref={listboxRef}
@@ -610,6 +760,29 @@ export function SelectContent({
       {children}
     </div>,
     container,
+  );
+}
+
+export function SelectGroup({
+  children,
+  className,
+  label,
+}: {
+  children: ReactNode;
+  className?: string;
+  label: string;
+}) {
+  const groupLabelId = useId();
+  return (
+    <div aria-labelledby={groupLabelId} className={cn("mt-1 first:mt-0", className)} role="group">
+      <div
+        className="px-3 py-1.5 type-annotation font-semibold uppercase tracking-wide text-muted"
+        id={groupLabelId}
+      >
+        {label}
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -668,63 +841,120 @@ export function SelectItem({
 
 (SelectItem as SelectItemComponent)[SELECT_ITEM] = true;
 
+function SelectFieldTriggerLabel({
+  fallbackLabel,
+  options,
+}: {
+  fallbackLabel: string;
+  options: readonly SelectOption[];
+}) {
+  const { value } = useSelectContext();
+  const selectedOption = options.find((option) => option.value === value);
+  const selectedLabel = selectedOption?.label ?? (value || fallbackLabel);
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      {selectedOption?.icon ? (
+        <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center">
+          {selectedOption.icon}
+        </span>
+      ) : null}
+      <span className="min-w-0 truncate">{selectedLabel}</span>
+    </span>
+  );
+}
+
 export function SelectField({
+  align = "start",
+  "aria-describedby": ariaDescribedBy,
   className,
+  contentClassName,
+  defaultValue,
   disabled = false,
   emptyOption,
   fallbackLabel,
+  form,
+  groups,
+  id,
   label,
+  labelClassName,
+  name,
   onValueChange,
-  options,
+  options = [],
+  required = false,
+  triggerClassName,
   value,
+  wrap = false,
 }: SelectFieldProps) {
+  const generatedId = useId();
   const labelId = useId();
+  const triggerId = id ?? generatedId;
   const [triggerElement, setTriggerElement] = useState<HTMLButtonElement | null>(null);
-  const selectOptions = emptyOption ? [emptyOption, ...options] : [...options];
-  const selectedOption = selectOptions.find((option) => option.value === value);
-  const hasOptionIcons = selectOptions.some((option) => option.icon);
-  const selectedLabel =
-    selectedOption?.label ?? (value || fallbackLabel || emptyOption?.label || "None");
+  const flatOptions = useMemo(() => {
+    const grouped = groups ? groups.flatMap((group) => group.options) : [];
+    return [...(emptyOption ? [emptyOption] : []), ...options, ...grouped];
+  }, [emptyOption, groups, options]);
+  const hasOptionIcons = flatOptions.some((option) => option.icon);
+  const resolvedFallbackLabel = fallbackLabel || emptyOption?.label || "None";
+
+  function renderItem(option: SelectOption, keyPrefix = "") {
+    return (
+      <SelectItem
+        disabled={option.disabled}
+        key={`${keyPrefix}${option.value || "__empty__"}`}
+        leading={
+          hasOptionIcons ? (
+            <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center">
+              {option.icon}
+            </span>
+          ) : undefined
+        }
+        value={option.value}
+        wrap={wrap}
+      >
+        {option.label}
+      </SelectItem>
+    );
+  }
 
   return (
-    <div className={cn("block space-y-1.5", className)}>
-      <span className="text-[13px] font-medium text-foreground" id={labelId}>
+    <div className={cn("relative block min-w-0 space-y-1.5", className)}>
+      <label
+        className={cn("block text-[13px] font-medium text-foreground", labelClassName)}
+        htmlFor={triggerId}
+        id={labelId}
+      >
         {label}
-      </span>
-      <Select disabled={disabled} onValueChange={onValueChange} value={value}>
-        <SelectTrigger aria-labelledby={labelId} className="w-full" ref={setTriggerElement}>
-          <span className="flex min-w-0 items-center gap-2">
-            {selectedOption?.icon ? (
-              <span
-                aria-hidden="true"
-                className="flex h-5 w-5 shrink-0 items-center justify-center"
-              >
-                {selectedOption.icon}
-              </span>
-            ) : null}
-            <span className="min-w-0 truncate">{selectedLabel}</span>
-          </span>
+      </label>
+      <Select
+        defaultValue={defaultValue}
+        disabled={disabled}
+        form={form}
+        name={name}
+        onValueChange={onValueChange}
+        required={required}
+        value={value}
+      >
+        <SelectTrigger
+          aria-describedby={ariaDescribedBy}
+          aria-labelledby={labelId}
+          className={cn("w-full", triggerClassName)}
+          fallbackLabel={resolvedFallbackLabel}
+          id={triggerId}
+          ref={setTriggerElement}
+        >
+          <SelectFieldTriggerLabel fallbackLabel={resolvedFallbackLabel} options={flatOptions} />
         </SelectTrigger>
         <SelectContent
+          align={align}
+          className={contentClassName}
           container={triggerElement?.closest<HTMLElement>('[aria-modal="true"]') ?? undefined}
         >
-          {selectOptions.map((option) => (
-            <SelectItem
-              key={option.value || "__empty__"}
-              leading={
-                hasOptionIcons ? (
-                  <span
-                    aria-hidden="true"
-                    className="flex h-5 w-5 shrink-0 items-center justify-center"
-                  >
-                    {option.icon}
-                  </span>
-                ) : undefined
-              }
-              value={option.value}
-            >
-              {option.label}
-            </SelectItem>
+          {emptyOption ? renderItem(emptyOption, "empty-") : null}
+          {options.map((option) => renderItem(option))}
+          {groups?.map((group) => (
+            <SelectGroup key={group.label} label={group.label}>
+              {group.options.map((option) => renderItem(option, `${group.label}-`))}
+            </SelectGroup>
           ))}
         </SelectContent>
       </Select>

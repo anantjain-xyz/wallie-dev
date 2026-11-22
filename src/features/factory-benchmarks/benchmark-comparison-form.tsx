@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -168,42 +169,39 @@ function CandidateFields({
     >
       <legend className="type-label px-1">{label}</legend>
       {axes.map(({ label: axisLabel, name, options }) => (
-        <label className="block min-w-0 space-y-1" key={name}>
-          <span className="type-label">{axisLabel}</span>
-          <select
-            className="ui-input min-w-0"
-            onChange={(event) =>
-              onChange({ ...selection, [name]: event.target.value, qualificationId: "" })
-            }
-            required
-            value={selection[name]}
-          >
-            <option value="">Select {axisLabel.toLowerCase()}</option>
-            {options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectField
+          className="space-y-1"
+          emptyOption={{ label: `Select ${axisLabel.toLowerCase()}`, value: "" }}
+          key={name}
+          label={axisLabel}
+          labelClassName="type-label"
+          onValueChange={(value) => {
+            if (value === selection[name]) return;
+            onChange({ ...selection, [name]: value, qualificationId: "" });
+          }}
+          options={options}
+          required
+          value={selection[name]}
+          wrap
+        />
       ))}
       {profiles.length > 1 ? (
-        <label className="block min-w-0 space-y-1">
-          <span className="type-label">Qualified toolchain</span>
-          <select
-            className="ui-input min-w-0"
-            onChange={(event) => onChange({ ...selection, qualificationId: event.target.value })}
-            value={profile?.id ?? selection.qualificationId}
-          >
-            <option value="">Select a toolchain</option>
-            {profiles.map((choice) => (
-              <option key={choice.id} value={choice.id}>
-                {choice.toolchain} · {choice.sandboxProvider} · {choice.id.slice(0, 8)}
-                {choice.unavailableReason ? " · Unavailable" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectField
+          className="space-y-1"
+          emptyOption={{ label: "Select a toolchain", value: "" }}
+          label="Qualified toolchain"
+          labelClassName="type-label"
+          onValueChange={(value) => {
+            if (value === (profile?.id ?? selection.qualificationId)) return;
+            onChange({ ...selection, qualificationId: value });
+          }}
+          options={profiles.map((choice) => ({
+            label: `${choice.toolchain} · ${choice.sandboxProvider} · ${choice.id.slice(0, 8)}${choice.unavailableReason ? " · Unavailable" : ""}`,
+            value: choice.id,
+          }))}
+          value={profile?.id ?? selection.qualificationId}
+          wrap
+        />
       ) : null}
       <p
         aria-live="polite"
@@ -424,14 +422,16 @@ export function BenchmarkComparisonForm({
     void action.run({ experimentId: lastRequest.current.experimentId, ...parsed.data });
   }
 
+  function clearFormFeedback() {
+    setMessage(null);
+    setReceipt(null);
+  }
+
   return (
     <form
       aria-label="Benchmark comparison"
       className="ui-sheet space-y-4 p-4 sm:p-5"
-      onChange={() => {
-        setMessage(null);
-        setReceipt(null);
-      }}
+      onChange={clearFormFeedback}
       onSubmit={submit}
     >
       <div className="space-y-1">
@@ -455,14 +455,20 @@ export function BenchmarkComparisonForm({
             axes={axes}
             selection={baseline}
             resolved={baselineResult}
-            onChange={setBaseline}
+            onChange={(next) => {
+              clearFormFeedback();
+              setBaseline(next);
+            }}
           />
           <CandidateFields
             label="Candidate"
             axes={axes}
             selection={candidate}
             resolved={candidateResult}
-            onChange={setCandidate}
+            onChange={(next) => {
+              clearFormFeedback();
+              setCandidate(next);
+            }}
           />
         </div>
         {comparesMultipleAxes ? (
@@ -470,25 +476,30 @@ export function BenchmarkComparisonForm({
             This pair changes several axes. Results describe the combined configuration change.
           </p>
         ) : null}
-        <label className="block min-w-0 space-y-1">
-          <span className="type-label">Replay policy revision</span>
-          <select
-            aria-describedby={policyHelpId}
-            className="ui-input min-w-0"
-            onChange={(event) => setPolicyRevisionId(event.target.value)}
-            required
-            value={policyRevisionId}
-          >
-            <option value="">
-              {options.policies.length ? "Select a replay policy" : "No published replay policies"}
-            </option>
-            {options.policies.map(({ id, profile, revisionNumber }) => (
-              <option key={id} value={id}>
-                Revision {revisionNumber} · {policyLabels[profile]}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectField
+          aria-describedby={policyHelpId}
+          className="space-y-1"
+          emptyOption={{
+            label: options.policies.length
+              ? "Select a replay policy"
+              : "No published replay policies",
+            value: "",
+          }}
+          label="Replay policy revision"
+          labelClassName="type-label"
+          onValueChange={(value) => {
+            if (value === policyRevisionId) return;
+            clearFormFeedback();
+            setPolicyRevisionId(value);
+          }}
+          options={options.policies.map(({ id, profile, revisionNumber }) => ({
+            label: `Revision ${revisionNumber} · ${policyLabels[profile]}`,
+            value: id,
+          }))}
+          required
+          value={policyRevisionId}
+          wrap
+        />
         <p className="type-secondary text-muted" id={policyHelpId}>
           Freezing saves a trial plan. The replay policy controls execution.
         </p>

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { SelectField } from "@/components/ui/select";
 import {
   factoryEditorPost,
   fetchFactoryEditor,
@@ -201,24 +202,16 @@ export function ServiceCredentialsPanel({
               if (validSecret) attachSecret(validSecret);
             }}
           >
-            <label className="block min-w-0 flex-1 space-y-1.5">
-              <span className="text-[13px] font-medium text-foreground">
-                Saved workspace secret
-              </span>
-              <select
-                className="ui-select"
-                disabled={busy}
-                onChange={(event) => setSecretId(event.target.value)}
-                value={validSecret}
-              >
-                <option value="">Choose a saved secret</option>
-                {eligibleSecrets.map((secret) => (
-                  <option key={secret.id} value={secret.id}>
-                    {secret.key}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SelectField
+              className="flex-1"
+              disabled={busy}
+              emptyOption={{ label: "Choose a saved secret", value: "" }}
+              label="Saved workspace secret"
+              onValueChange={setSecretId}
+              options={eligibleSecrets.map((secret) => ({ label: secret.key, value: secret.id }))}
+              value={validSecret}
+              wrap
+            />
             <button className="ui-button" disabled={busy || !validSecret} type="submit">
               <ActionButtonLabel
                 idle="Attach secret"

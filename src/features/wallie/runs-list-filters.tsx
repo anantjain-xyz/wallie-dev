@@ -6,6 +6,7 @@ import { useTransition } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
+import { SelectField, type SelectOption, type SelectOptionGroup } from "@/components/ui/select";
 import { FACTORY_QUERY_PARAM, withFactoryQuery } from "@/features/factories/factory-selection";
 import type { RunCatalogQuery } from "@/features/wallie/run-catalog-contracts";
 import { RUN_PROVIDER_LABELS, runsListFilterHref } from "@/features/wallie/runs-list-state";
@@ -51,49 +52,65 @@ export function RunsListFilters({
       ) : null}
       <fieldset className="flex min-w-0 flex-wrap items-end gap-2" disabled={pending}>
         <legend className="sr-only">Run filters</legend>
-        <FilterSelect label="Status" name="status" value={query.status}>
-          <option value="">All statuses</option>
-          <option value="queued">Queued</option>
-          <option value="started">Starting</option>
-          <option value="running">Running</option>
-          <option value="success">Complete</option>
-          <option value="error">Failed or interrupted</option>
-          <option value="canceled">Canceled</option>
-        </FilterSelect>
-        <FilterSelect label="Agent" name="provider" value={query.provider}>
-          <option value="">All agents</option>
-          {Object.entries(RUN_PROVIDER_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </FilterSelect>
-        <FilterSelect label="Session" name="sessionId" value={query.sessionId}>
-          <option value="">Any session</option>
-          {query.sessionId && !sessions.some((option) => option.id === query.sessionId) ? (
-            <option value={query.sessionId}>Selected session</option>
-          ) : null}
-          <optgroup label="Sessions on this page">
-            {sessions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </optgroup>
-        </FilterSelect>
-        <FilterSelect label="Stage" name="stageId" value={query.stageId}>
-          <option value="">Any stage</option>
-          {query.stageId && !stages.some((option) => option.id === query.stageId) ? (
-            <option value={query.stageId}>Selected stage</option>
-          ) : null}
-          <optgroup label="Stages on this page">
-            {stages.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </optgroup>
-        </FilterSelect>
+        <FilterSelect
+          label="Status"
+          name="status"
+          options={[
+            { label: "All statuses", value: "" },
+            { label: "Queued", value: "queued" },
+            { label: "Starting", value: "started" },
+            { label: "Running", value: "running" },
+            { label: "Complete", value: "success" },
+            { label: "Failed or interrupted", value: "error" },
+            { label: "Canceled", value: "canceled" },
+          ]}
+          value={query.status}
+        />
+        <FilterSelect
+          label="Agent"
+          name="provider"
+          options={[
+            { label: "All agents", value: "" },
+            ...Object.entries(RUN_PROVIDER_LABELS).map(([value, label]) => ({ label, value })),
+          ]}
+          value={query.provider}
+        />
+        <FilterSelect
+          groups={[
+            {
+              label: "Sessions on this page",
+              options: sessions.map((option) => ({ label: option.label, value: option.id })),
+            },
+          ]}
+          label="Session"
+          name="sessionId"
+          options={[
+            { label: "Any session", value: "" },
+            ...(query.sessionId && !sessions.some((option) => option.id === query.sessionId)
+              ? [{ label: "Selected session", value: query.sessionId }]
+              : []),
+          ]}
+          value={query.sessionId}
+          wrap
+        />
+        <FilterSelect
+          groups={[
+            {
+              label: "Stages on this page",
+              options: stages.map((option) => ({ label: option.label, value: option.id })),
+            },
+          ]}
+          label="Stage"
+          name="stageId"
+          options={[
+            { label: "Any stage", value: "" },
+            ...(query.stageId && !stages.some((option) => option.id === query.stageId)
+              ? [{ label: "Selected stage", value: query.stageId }]
+              : []),
+          ]}
+          value={query.stageId}
+          wrap
+        />
         <button className={`ui-button-primary ${FILTER_CONTROL_CLASS}`} type="submit">
           <ActionButtonLabel idle="Apply" pending={pending} pendingLabel="Applying…" />
         </button>
@@ -113,27 +130,33 @@ export function RunsListFilters({
 }
 
 function FilterSelect({
+  groups,
   label,
   name,
+  options,
   value,
-  children,
+  wrap,
 }: {
+  groups?: readonly SelectOptionGroup[];
   label: string;
   name: string;
+  options: readonly SelectOption[];
   value?: string;
-  children: React.ReactNode;
+  wrap?: boolean;
 }) {
   return (
-    <label className="flex min-w-0 flex-1 basis-[140px] flex-col gap-1 text-xs text-muted">
-      <span>{label}</span>
-      <select
-        className={`ui-input max-w-full ${FILTER_CONTROL_CLASS}`}
-        defaultValue={value ?? ""}
-        name={name}
-      >
-        {children}
-      </select>
-    </label>
+    <SelectField
+      className="flex-1 basis-[140px] space-y-1"
+      defaultValue={value ?? ""}
+      groups={groups}
+      key={value ?? ""}
+      label={label}
+      labelClassName="text-xs font-normal text-muted"
+      name={name}
+      options={options}
+      triggerClassName={`max-w-full py-1.5 ${FILTER_CONTROL_CLASS}`}
+      wrap={wrap}
+    />
   );
 }
 

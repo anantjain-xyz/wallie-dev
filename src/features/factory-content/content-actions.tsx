@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -107,20 +108,19 @@ export function ContextRegistration({
       <InlineActionMessage message={action.message} />
       <fieldset className="min-w-0 space-y-4" aria-busy={action.isBusy} disabled={action.isBusy}>
         <legend className="sr-only">Source details</legend>
-        <label className="block min-w-0 space-y-1.5">
-          <span className="type-label">Repository and grant</span>
-          <select className="ui-select w-full" defaultValue="" name="repository" required>
-            <option value="" disabled>
-              Choose a repository
-            </option>
-            {options.map((option, i) => (
-              <option key={`${option.grant_id}/${option.repository_id}`} value={i + 1}>
-                {option.repository_full_name} · Grant {option.grant_id.slice(0, 8)} · v
-                {option.grant_version}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectField
+          defaultValue=""
+          emptyOption={{ disabled: true, label: "Choose a repository", value: "" }}
+          label="Repository and grant"
+          labelClassName="type-label"
+          name="repository"
+          options={options.map((option, i) => ({
+            label: `${option.repository_full_name} · Grant ${option.grant_id.slice(0, 8)} · v${option.grant_version}`,
+            value: String(i + 1),
+          }))}
+          required
+          wrap
+        />
         <label className="block space-y-1.5">
           <span className="type-label">Document path</span>
           <input

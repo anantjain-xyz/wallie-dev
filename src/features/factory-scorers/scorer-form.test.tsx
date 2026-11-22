@@ -52,7 +52,12 @@ it("validates numeric thresholds locally and publishes the exact valid rubric", 
     ["Scorer name", "Change quality"],
     ["Identifier", "change-quality"],
     ["Rubric", original.rubric],
-    ["Score scale", "numeric"],
+  ]) {
+    fireEvent.change(screen.getByLabelText(name), { target: { value } });
+  }
+  fireEvent.click(screen.getByRole("combobox", { name: "Score scale" }));
+  fireEvent.click(screen.getByRole("option", { name: "Numeric" }));
+  for (const [name, value] of [
     ["Minimum score", "0"],
     ["Maximum score", "10"],
     ["Pass threshold", "8"],

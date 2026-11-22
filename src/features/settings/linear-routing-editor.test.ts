@@ -114,7 +114,9 @@ describe("Linear routing editor", () => {
       }),
     );
 
-    expect(html.match(/renamed-stage/g)).toHaveLength(2);
+    expect(html).toContain('data-value="renamed-stage"');
+    expect(html).toContain(">renamed-stage</span>");
+    expect(html).toContain("Restart at renamed-stage stage");
   });
 
   it("shows configured automated landing behavior", () => {

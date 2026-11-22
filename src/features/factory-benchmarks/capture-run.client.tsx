@@ -11,6 +11,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
+import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -263,39 +264,39 @@ export function CaptureBenchmarkRun({
                 disabled={action.isBusy || view.refresh === "pending"}
               >
                 <legend className="sr-only">Benchmark task</legend>
-                <label className="block space-y-1.5">
-                  <span className="type-label">Suite</span>
-                  <select
-                    className="ui-select"
-                    name="suite"
-                    value={selection}
-                    onChange={(event) => setSuiteId(event.target.value)}
-                    required
-                  >
-                    <option value="" disabled>
-                      Choose a suite
-                    </option>
-                    {view.preview.suites.map((suite) => (
-                      <option key={suite.id} value={suite.id}>
-                        {suite.name}
-                      </option>
-                    ))}
-                    <option value="new">New suite</option>
-                  </select>
-                </label>
+                <SelectField
+                  emptyOption={{ disabled: true, label: "Choose a suite", value: "" }}
+                  label="Suite"
+                  labelClassName="type-label"
+                  name="suite"
+                  onValueChange={setSuiteId}
+                  options={[
+                    ...view.preview.suites.map((suite) => ({
+                      label: suite.name,
+                      value: suite.id,
+                    })),
+                    { label: "New suite", value: "new" },
+                  ]}
+                  required
+                  value={selection}
+                  wrap
+                />
                 {selection === "new" ? (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block min-w-0 space-y-1.5">
                       <span className="type-label">Suite name</span>
                       <input className="ui-input" name="name" maxLength={120} required />
                     </label>
-                    <label className="block min-w-0 space-y-1.5">
-                      <span className="type-label">Suite purpose</span>
-                      <select className="ui-select" name="purpose" defaultValue="regression">
-                        <option value="regression">Regression</option>
-                        <option value="holdout">Holdout</option>
-                      </select>
-                    </label>
+                    <SelectField
+                      defaultValue="regression"
+                      label="Suite purpose"
+                      labelClassName="type-label"
+                      name="purpose"
+                      options={[
+                        { label: "Regression", value: "regression" },
+                        { label: "Holdout", value: "holdout" },
+                      ]}
+                    />
                   </div>
                 ) : null}
                 <label className="block space-y-1.5">

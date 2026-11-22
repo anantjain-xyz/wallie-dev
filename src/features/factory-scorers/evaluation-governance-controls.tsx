@@ -4,6 +4,7 @@ import { useRef, useState, type FormEvent } from "react";
 import type { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { SelectField } from "@/components/ui/select";
 import {
   type EvaluationGovernanceCommand,
   evaluationGovernanceCommandSchema,
@@ -55,28 +56,32 @@ export function AdjudicationForm({ endpoint }: { endpoint: string }) {
   return (
     <form className="space-y-3" onSubmit={submit}>
       <div className="flex flex-wrap items-end gap-3">
-        <label className="type-label flex flex-col gap-1.5">
-          Adjudication outcome
-          <select
-            className="ui-input"
-            name="disposition"
-            onChange={(event) => setDisputed(event.target.value === "disputed")}
-            value={disputed ? "disputed" : "confirmed"}
-          >
-            <option value="confirmed">Confirm verdict</option>
-            <option value="disputed">Dispute verdict</option>
-          </select>
-        </label>
+        <SelectField
+          className="min-w-44"
+          label="Adjudication outcome"
+          labelClassName="type-label"
+          name="disposition"
+          onValueChange={(value) => setDisputed(value === "disputed")}
+          options={[
+            { label: "Confirm verdict", value: "confirmed" },
+            { label: "Dispute verdict", value: "disputed" },
+          ]}
+          value={disputed ? "disputed" : "confirmed"}
+        />
         {disputed ? (
-          <label className="type-label flex flex-col gap-1.5">
-            Expected outcome
-            <select className="ui-input" name="expectedStatus">
-              <option value="">No suggested outcome</option>
-              <option value="pass">Pass</option>
-              <option value="fail">Fail</option>
-              <option value="inconclusive">Inconclusive</option>
-            </select>
-          </label>
+          <SelectField
+            className="min-w-48"
+            defaultValue=""
+            label="Expected outcome"
+            labelClassName="type-label"
+            name="expectedStatus"
+            options={[
+              { label: "No suggested outcome", value: "" },
+              { label: "Pass", value: "pass" },
+              { label: "Fail", value: "fail" },
+              { label: "Inconclusive", value: "inconclusive" },
+            ]}
+          />
         ) : null}
       </div>
       <label className="type-label flex flex-col gap-1.5">
@@ -129,19 +134,19 @@ export function ReevaluationForm({
   return (
     <form className="space-y-3" onSubmit={submit}>
       <div className="flex flex-wrap items-end gap-3">
-        <label className="type-label flex flex-col gap-1.5">
-          Target rubric revision
-          <select className="ui-input" defaultValue="" name="targetRevisionId" required>
-            <option disabled value="">
-              Choose a newer revision
-            </option>
-            {revisions.map(({ id, revision_number }) => (
-              <option key={id} value={id}>
-                Revision {revision_number}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectField
+          className="min-w-52"
+          defaultValue=""
+          emptyOption={{ disabled: true, label: "Choose a newer revision", value: "" }}
+          label="Target rubric revision"
+          labelClassName="type-label"
+          name="targetRevisionId"
+          options={revisions.map(({ id, revision_number }) => ({
+            label: `Revision ${revision_number}`,
+            value: id,
+          }))}
+          required
+        />
         <button
           className="ui-button-primary px-3 py-2"
           disabled={action.busy || action.conflict}

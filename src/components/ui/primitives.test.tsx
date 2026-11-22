@@ -874,4 +874,168 @@ describe("accessible overlay primitives", () => {
       "top left",
     );
   });
+
+  it("submits FormData, resets on form reset, and supports grouped options in SelectField", async () => {
+    const user = userEvent.setup();
+    const submitted: string[] = [];
+
+    renderWithOverlays(
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          submitted.push(String(new FormData(event.currentTarget).get("dimension")));
+        }}
+      >
+        <SelectField
+          defaultValue="source"
+          groups={[
+            {
+              label: "Dimensions",
+              options: [
+                { label: "Request source", value: "source" },
+                { label: "Model", value: "model" },
+                { disabled: true, label: "Unavailable", value: "disabled" },
+              ],
+            },
+          ]}
+          label="Break down throughput by"
+          name="dimension"
+        />
+        <button type="submit">Apply</button>
+        <button type="reset">Reset</button>
+      </form>,
+    );
+
+    const trigger = screen.getByLabelText("Break down throughput by");
+    expect(trigger).toHaveAttribute("role", "combobox");
+    expect(trigger).toHaveAttribute("data-value", "source");
+    expect(trigger).toHaveTextContent("Request source");
+
+    await user.click(trigger);
+    const group = await screen.findByRole("group", { name: "Dimensions" });
+    expect(group).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "Model" }));
+    expect(trigger).toHaveAttribute("data-value", "model");
+    expect(trigger).toHaveTextContent("Model");
+
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(submitted).toEqual(["model"]);
+
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    expect(trigger).toHaveAttribute("data-value", "source");
+    expect(trigger).toHaveTextContent("Request source");
+
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(submitted).toEqual(["model", "source"]);
+  });
+
+  it("enforces required form validation on SelectField without axe violations", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    renderWithOverlays(
+      <main>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit(new FormData(event.currentTarget).get("repository"));
+          }}
+        >
+          <SelectField
+            defaultValue=""
+            emptyOption={{ disabled: true, label: "Choose a repository", value: "" }}
+            label="Repository"
+            name="repository"
+            options={[{ label: "wallie/app", value: "repo-1" }]}
+            required
+          />
+          <button type="submit">Register</button>
+        </form>
+      </main>,
+    );
+
+    const trigger = screen.getByRole("combobox", { name: "Repository" });
+    expect(trigger).toHaveAttribute("aria-required", "true");
+    const results = await axe.run(document.body, {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(results.violations).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: "Register" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    expect(trigger).toHaveAccessibleDescription("Please select an option.");
+    expect(screen.getByText("Please select an option.")).toHaveAttribute("role", "alert");
+
+    const invalidResults = await axe.run(document.body, {
+      rules: { "color-contrast": { enabled: false } },
+    });
+    expect(invalidResults.violations).toEqual([]);
+
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: "wallie/app" }));
+    expect(trigger).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("Please select an option.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Register" }));
+    expect(onSubmit).toHaveBeenCalledWith("repo-1");
+  });
+
+  it("resets an externally form-associated SelectField and ignores commits when a fieldset disables", async () => {
+    const user = userEvent.setup();
+    const onValueChange = vi.fn();
+
+    function Harness() {
+      const [fieldsetDisabled, setFieldsetDisabled] = useState(false);
+      return (
+        <>
+          <form id="external-select-form">
+            <button type="reset">Reset external form</button>
+          </form>
+          <SelectField
+            defaultValue="source"
+            form="external-select-form"
+            label="External dimension"
+            name="dimension"
+            options={[
+              { label: "Request source", value: "source" },
+              { label: "Model", value: "model" },
+            ]}
+          />
+          <button onClick={() => setFieldsetDisabled(true)} type="button">
+            Disable fieldset
+          </button>
+          <fieldset disabled={fieldsetDisabled}>
+            <SelectField
+              label="Guarded field"
+              onValueChange={onValueChange}
+              options={[
+                { label: "One", value: "one" },
+                { label: "Two", value: "two" },
+              ]}
+              value="one"
+            />
+          </fieldset>
+        </>
+      );
+    }
+
+    renderWithOverlays(<Harness />);
+
+    const external = screen.getByRole("combobox", { name: "External dimension" });
+    await user.click(external);
+    await user.click(await screen.findByRole("option", { name: "Model" }));
+    expect(external).toHaveAttribute("data-value", "model");
+
+    await user.click(screen.getByRole("button", { name: "Reset external form" }));
+    expect(external).toHaveAttribute("data-value", "source");
+    expect(external).toHaveTextContent("Request source");
+
+    const guarded = screen.getByRole("combobox", { name: "Guarded field" });
+    await user.click(guarded);
+    const twoOption = await screen.findByRole("option", { name: "Two" });
+    fireEvent.click(screen.getByRole("button", { name: "Disable fieldset" }));
+    fireEvent.click(twoOption);
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
 });

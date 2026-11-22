@@ -2,6 +2,7 @@ import Link from "next/link";
 import { useId, useState, type RefObject } from "react";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { SelectField } from "@/components/ui/select";
 import type { FactoryEditorDocument } from "@/lib/factory-definitions/editor-contracts";
 import {
   routingCanarySelectionSchema,
@@ -202,21 +203,17 @@ export function ReviewedRoutingActivation({
             ) : null}
             {canaryMode ? (
               <div className="grid min-w-0 gap-3 border-t border-border pt-3">
-                <label className="block min-w-0 space-y-1.5">
-                  <span className="block font-medium">Canary task class</span>
-                  <select
-                    className="ui-select"
-                    onChange={(event) => setTaskClassId(event.target.value)}
-                    value={taskClassId}
-                  >
-                    <option value="">Choose a task class</option>
-                    {canaryClasses.map(({ id, name, slug }) => (
-                      <option key={id} value={id}>
-                        {name} ({slug})
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <SelectField
+                  emptyOption={{ label: "Choose a task class", value: "" }}
+                  label="Canary task class"
+                  onValueChange={setTaskClassId}
+                  options={canaryClasses.map(({ id, name, slug }) => ({
+                    label: `${name} (${slug})`,
+                    value: id,
+                  }))}
+                  value={taskClassId}
+                  wrap
+                />
                 <label className="block min-w-0 space-y-1.5">
                   <span className="block font-medium">Candidate share (%)</span>
                   <input

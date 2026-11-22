@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { TimeDisplay } from "@/components/shared/time-display";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
+import { SelectField } from "@/components/ui/select";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
@@ -384,37 +385,36 @@ function StepNavigation({
       className="h-fit min-w-0 rounded-[6px] border border-border bg-sheet p-2 lg:sticky lg:top-8 lg:border-0 lg:bg-transparent lg:p-0"
     >
       <div className="lg:hidden">
-        <label htmlFor="onboarding-step-picker" className="type-label text-muted">
-          Setup step
-        </label>
-        <select
-          id="onboarding-step-picker"
-          className="mt-2 min-h-11 w-full rounded-[6px] border border-border-control bg-sheet px-3 text-[14px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          value={items.find((step) => step.isActive)?.id}
+        <SelectField
+          className="space-y-2"
           disabled={!canSelect}
-          onChange={(event) => {
-            const step = items.find((item) => item.id === event.target.value);
+          groups={ONBOARDING_GROUPS.map((group) => ({
+            label: group.title,
+            options: items
+              .filter((step) => group.steps.includes(step.id))
+              .map((step) => ({
+                disabled: !step.isNavigable,
+                label: `${step.shortTitle}${step.id === "linear" ? " (optional)" : ""}${
+                  step.displayState === "completed"
+                    ? " — Completed"
+                    : step.displayState === "skipped"
+                      ? " — Skipped"
+                      : ""
+                }`,
+                value: step.id,
+              })),
+          }))}
+          id="onboarding-step-picker"
+          label="Setup step"
+          labelClassName="type-label text-muted"
+          onValueChange={(value) => {
+            const step = items.find((item) => item.id === value);
             if (step?.isNavigable) onSelect(step.id);
           }}
-        >
-          {ONBOARDING_GROUPS.map((group) => (
-            <optgroup key={group.title} label={group.title}>
-              {items
-                .filter((step) => group.steps.includes(step.id))
-                .map((step) => (
-                  <option key={step.id} value={step.id} disabled={!step.isNavigable}>
-                    {step.shortTitle}
-                    {step.id === "linear" ? " (optional)" : ""}
-                    {step.displayState === "completed"
-                      ? " — Completed"
-                      : step.displayState === "skipped"
-                        ? " — Skipped"
-                        : ""}
-                  </option>
-                ))}
-            </optgroup>
-          ))}
-        </select>
+          triggerClassName="min-h-11 text-[14px]"
+          value={items.find((step) => step.isActive)?.id ?? ""}
+          wrap
+        />
       </div>
       <ol className="hidden space-y-5 lg:block">
         {ONBOARDING_GROUPS.map((group, index) => (

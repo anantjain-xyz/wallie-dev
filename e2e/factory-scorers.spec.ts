@@ -2,6 +2,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { selectDropdownOption } from "./helpers/select";
 
 test.use({ actionTimeout: 10_000 });
 
@@ -52,7 +53,10 @@ test("an operator authors, binds, and revisits exact scorer revisions", async ({
     await page.getByLabel("Identifier", { exact: true }).fill("invoice-verification");
     await page.getByLabel("Rubric", { exact: true }).fill(firstRubric);
     await page.getByRole("checkbox", { name: "Validation report", exact: true }).check();
-    await page.getByRole("combobox", { name: "Score scale", exact: true }).selectOption("numeric");
+    await selectDropdownOption(
+      page.getByRole("combobox", { name: "Score scale", exact: true }),
+      "numeric",
+    );
     await page.getByLabel("Minimum score", { exact: true }).fill("0");
     await page.getByLabel("Maximum score", { exact: true }).fill("100");
     await page.getByLabel("Pass threshold", { exact: true }).fill("80");

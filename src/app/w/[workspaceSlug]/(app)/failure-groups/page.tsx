@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { SelectField } from "@/components/ui/select";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
@@ -102,14 +103,17 @@ export default async function FailureGroupsPage({
         className="ui-sheet grid gap-4 p-4 sm:grid-cols-[1fr_minmax(0,1.6fr)_1fr] sm:items-end sm:p-5"
       >
         <input type="hidden" name="factory" value={scope.factoryId} />
-        <label className="type-label grid min-w-0 gap-1.5">
-          Symptom
-          <select className="ui-input w-full" name="symptom" defaultValue={filters.symptom ?? ""}>
-            <option value="">All symptoms</option>
-            <option value="scorer">Scorer failures</option>
-            <option value="validation">Validation failures</option>
-          </select>
-        </label>
+        <SelectField
+          defaultValue={filters.symptom ?? ""}
+          label="Symptom"
+          labelClassName="type-label"
+          name="symptom"
+          options={[
+            { label: "All symptoms", value: "" },
+            { label: "Scorer failures", value: "scorer" },
+            { label: "Validation failures", value: "validation" },
+          ]}
+        />
         <label className="type-label grid min-w-0 gap-1.5">
           Factory definition revision
           <input
@@ -128,19 +132,18 @@ export default async function FailureGroupsPage({
             </option>
           ))}
         </datalist>
-        <label className="type-label grid min-w-0 gap-1.5">
-          Review state
-          <select
-            className="ui-input w-full"
-            name="disposition"
-            defaultValue={filters.disposition ?? ""}
-          >
-            <option value="">All states</option>
-            <option value="open">Open</option>
-            <option value="dismissed">Dismissed</option>
-            <option value="split">Split</option>
-          </select>
-        </label>
+        <SelectField
+          defaultValue={filters.disposition ?? ""}
+          label="Review state"
+          labelClassName="type-label"
+          name="disposition"
+          options={[
+            { label: "All states", value: "" },
+            { label: "Open", value: "open" },
+            { label: "Dismissed", value: "dismissed" },
+            { label: "Split", value: "split" },
+          ]}
+        />
         <div className="flex flex-wrap gap-2 sm:col-span-3">
           <button className="ui-button ui-button-primary" type="submit">
             Apply filters
