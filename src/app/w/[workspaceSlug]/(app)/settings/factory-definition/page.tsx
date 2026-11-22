@@ -15,19 +15,24 @@ const idSchema = z
   .string()
   .uuid()
   .transform((id) => id.toLowerCase());
+const activationNumberSchema = z
+  .string()
+  .regex(/^[1-9]\d*$/)
+  .transform(Number)
+  .pipe(z.number().int().safe().positive());
 const selectionSchema = z.union([
   z
     .object({
       revision: idSchema,
-      activation: z
-        .string()
-        .regex(/^[1-9]\d*$/)
-        .transform(Number)
-        .pipe(z.number().int().safe().positive())
-        .optional(),
+      activation: activationNumberSchema.optional(),
+      restoreFrom: activationNumberSchema.optional(),
       test: z.string().uuid().optional(),
     })
-    .strict(),
+    .strict()
+    .refine(
+      ({ activation, restoreFrom }) =>
+        restoreFrom === undefined || (activation !== undefined && restoreFrom - 1 === activation),
+    ),
   z.object({ draft: z.string().uuid(), test: z.string().uuid().optional() }).strict(),
 ]);
 
@@ -42,6 +47,7 @@ export default async function FactoryDefinitionPage({
     scorerRevision?: string | string[];
     revision?: string | string[];
     activation?: string | string[];
+    restoreFrom?: string | string[];
     draft?: string | string[];
     test?: string | string[];
   }>;
@@ -59,7 +65,8 @@ export default async function FactoryDefinitionPage({
   if (!factoryId.success)
     return <FactoryUnavailable title="Factory definition" workspaceSlug={workspaceSlug} />;
   const selection = selectionSchema.safeParse(target);
-  if (target.activation !== undefined && !selection.success) notFound();
+  if ((target.activation !== undefined || target.restoreFrom !== undefined) && !selection.success)
+    notFound();
   const { data: factory, error } = await selectFactory(supabase, workspace.id, factoryId.data);
   if (error) throw error;
   if (!factory)

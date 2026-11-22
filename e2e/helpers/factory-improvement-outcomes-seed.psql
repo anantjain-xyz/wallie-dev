@@ -1,0 +1,119 @@
+-- Run only against the scoped, disposable improvement browser fixture.
+\set ON_ERROR_STOP on
+begin;
+set local request.jwt.claim.role = 'service_role';
+create function pg_temp.live_id(slot integer) returns uuid language sql immutable as $$
+  select ('62300000-0000-4000-9000-' || lpad(slot::text,12,'0'))::uuid
+$$;
+
+create temp table browser_outcome_scope as
+select workspace.id as workspace_id,factory.id as factory_id,pg_temp.live_id(1) as owner_id
+from public.workspaces workspace
+join public.factories factory on factory.workspace_id = workspace.id and factory.is_default
+where workspace.id = pg_temp.live_id(11)
+  and workspace.slug = 'adoption-browser-' || (:'run_id')::uuid::text;
+select workspace_id from browser_outcome_scope \gset
+select enabled as release_was_enabled from public.get_git_continuity_release_state() \gset
+\o /dev/null
+select public.set_git_continuity_release(true,revision,'Improvement outcomes browser admissions')
+from public.get_git_continuity_release_state() where not enabled;
+insert into internal.workspace_issue_counters(workspace_id,last_issue_number)
+select scope.workspace_id, max(session.number)
+from browser_outcome_scope scope join public.sessions session on session.workspace_id = scope.workspace_id
+group by scope.workspace_id
+on conflict (workspace_id) do nothing;
+\o
+
+create function pg_temp.admit_outcome(p_slot integer,p_title text) returns public.agent_jobs language plpgsql as $$
+declare job_id uuid; result public.agent_jobs;
+begin
+  select admitted.job_id into strict job_id from browser_outcome_scope scope
+  cross join lateral public.create_session_once_with_first_job(
+    scope.workspace_id,pg_temp.live_id(21),pg_temp.live_id(p_slot),repeat('1',64),p_title,
+    'Use the frozen admission inputs.','codex','gpt-4.1-2025-04-14','{}'::uuid[],
+    session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
+    selected_stage_ids=>array[pg_temp.live_id(41)]) admitted;
+  select * into strict result from public.agent_jobs job where job.id = job_id;
+  return result;
+end;
+$$;
+
+create function pg_temp.start_outcome(p_job public.agent_jobs) returns uuid language plpgsql as $$
+declare run_id uuid;
+begin
+  update public.agent_jobs set status = 'running',attempt_count = 1,
+    git_continuity_release_revision = (select revision from public.get_git_continuity_release_state())
+  where id = p_job.id;
+  run_id := public.start_session_job_attempt(p_job.id,1,p_job.stage_id,0,'codex','gpt-4.1-2025-04-14',
+    'project','wallie/browser-outcome-' || p_job.id);
+  if run_id is null then raise exception 'Expected an exact started outcome attempt.'; end if;
+  update public.agent_runs set started_at = clock_timestamp() where id = run_id;
+  return run_id;
+end;
+$$;
+
+create function pg_temp.admission_pin(p_session_id uuid) returns jsonb language sql stable as $$
+  select jsonb_build_object('activationNumber',input.activation_number,'revisionId',input.definition_revision_id,
+    'digest',input.definition_digest,'pinHash',encode(sha256(convert_to(to_jsonb(input)::text,'UTF8')),'hex'))
+  from browser_outcome_scope scope join public.session_factory_admission_inputs input using (workspace_id,factory_id)
+  where input.session_id = p_session_id
+$$;
+
+\if :{?baseline}
+create temp table baseline_admission as select * from pg_temp.admit_outcome(650,'Baseline pending outcome');
+select pg_temp.admission_pin(session_id) from baseline_admission;
+
+\elif :{?candidate}
+create temp table measured_outcome as select * from pg_temp.admit_outcome(651,'Adopted measured outcome');
+create temp table pending_outcome as select * from pg_temp.admit_outcome(652,'Adopted pending outcome');
+\o /dev/null
+do $$
+declare measured public.agent_jobs; run_id uuid;
+begin
+  select * into strict measured from measured_outcome;
+  run_id := pg_temp.start_outcome(measured);
+  if not (select accepted from public.record_session_run_usage(measured.id,1,run_id,
+    p_cost_usd=>0.20,p_cost_provenance=>'measured'))
+  then raise exception 'Expected the measured outcome to retain spend.'; end if;
+  perform internal.exhaust_session_execution(measured.session_id,'elapsed_execution',1,1);
+  if public.fail_session_job_attempt(measured.id,1,'Browser fixture exhausted the execution budget.',false,1,run_id) <> 'error'
+  then raise exception 'Expected the measured outcome attempt to settle.'; end if;
+  update public.agent_runs set finished_at = clock_timestamp() where id = run_id;
+end;
+$$;
+select pg_temp.start_outcome(job) from public.agent_jobs job join pending_outcome pending using (id);
+\o
+
+-- Supply finite synthetic runtime evidence through the real Settings smoke commands.
+create temp table outcome_restore_smoke as
+select test.* from browser_outcome_scope scope
+join public.factory_definition_revisions baseline on (baseline.workspace_id,baseline.factory_id,baseline.id) =
+  (scope.workspace_id,scope.factory_id,pg_temp.live_id(161))
+cross join lateral public.start_factory_definition_smoke_test(scope.workspace_id,scope.factory_id,scope.owner_id,3,
+  'revision',baseline.id,baseline.canonical_digest,array['vercel'],array['agentCli','git','node','packageManager']) test;
+select public.finish_factory_definition_smoke_test(workspace_id,id,'passed',jsonb_build_object(
+  'runtimeProfile','vercel','stageCount',1,'completedStageCount',1,
+  'stages',jsonb_build_array(jsonb_build_object('stageId',pg_temp.live_id(41),'promptDigest',repeat('a',64)))),null)
+  as smoke_passed from outcome_restore_smoke \gset
+\if :smoke_passed
+\else
+select 1 / 0;
+\endif
+select pg_temp.admission_pin(session_id) from pending_outcome;
+
+\elif :{?restored}
+create temp table restored_admission as select * from pg_temp.admit_outcome(653,'Outcome after restoration');
+select jsonb_build_object('restored',pg_temp.admission_pin(restored.session_id),
+  'preserved',pg_temp.admission_pin(pending.id))
+from restored_admission restored cross join browser_outcome_scope scope
+join public.sessions pending on pending.workspace_id = scope.workspace_id and pending.title = 'Adopted pending outcome';
+\endif
+
+\if :release_was_enabled
+\else
+\o /dev/null
+select public.set_git_continuity_release(false,revision,'Restore release gate after improvement browser admissions')
+from public.get_git_continuity_release_state() where enabled;
+\o
+\endif
+commit;

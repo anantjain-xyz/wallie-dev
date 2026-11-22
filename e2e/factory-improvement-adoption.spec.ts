@@ -1,69 +1,23 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { promisify } from "node:util";
 
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { z } from "zod";
 
 import { factoryImprovementAdoptionSchema } from "../src/lib/factory-proposals/adoption-contracts";
-import { factoryImprovementPublicationSchema } from "../src/lib/factory-proposals/publication-contracts";
 import { signInViaMagicLink } from "./helpers/auth";
+import {
+  improvementBrowserFixtureSchema,
+  runImprovementBrowserFixture,
+} from "./helpers/factory-improvement-fixture";
 
-const fixtureSchema = z.object({
-  workspaceId: z.string().uuid(),
-  workspaceSlug: z.string(),
-  factoryId: z.string().uuid(),
-  ownerEmail: z.string().email(),
-  managerEmail: z.string().email(),
-  previousRevisionId: z.string().uuid(),
-  publication: factoryImprovementPublicationSchema,
-});
 const adoptionResultSchema = z.object({
   adoption: factoryImprovementAdoptionSchema,
   replay: z.boolean(),
 });
-const exec = promisify(execFile);
-
-async function runFixture(action: "seed" | "adopt" | "cleanup", runId: string) {
-  const host = process.env.WALLIE_ADOPTION_E2E_PG_HOST;
-  const database = process.env.WALLIE_ADOPTION_E2E_PG_DATABASE;
-  const port = process.env.WALLIE_ADOPTION_E2E_PG_PORT;
-  if (
-    !host ||
-    !(
-      /^\/(?:private\/)?tmp\/wallie-[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_-]+)*$/.test(host) ||
-      host === "127.0.0.1" ||
-      host === "::1"
-    ) ||
-    !database ||
-    !/^(?:postgres|wallie_[a-z0-9_]+)$/.test(database) ||
-    (port !== undefined && !/^\d{1,5}$/.test(port))
-  ) {
-    throw new Error("Use an isolated local Postgres database for the adoption browser fixture.");
-  }
-  const { stdout } = await exec(
-    "psql",
-    [
-      "-XqAt",
-      "--host",
-      host,
-      "--dbname",
-      database,
-      ...(port ? ["--port", port] : []),
-      "-v",
-      "ON_ERROR_STOP=1",
-      "-v",
-      `run_id=${runId}`,
-      "-v",
-      `${action}=1`,
-      "-f",
-      resolve(__dirname, "helpers/factory-improvement-adoption-seed.psql"),
-    ],
-    { timeout: 90_000 },
-  );
-  return JSON.parse(stdout.trim()) as unknown;
+function runFixture(action: "seed" | "adopt" | "cleanup", runId: string) {
+  return runImprovementBrowserFixture("factory-improvement-adoption-seed.psql", action, runId);
 }
 
 async function capture(page: Page, info: TestInfo, name: string, region: Locator) {
@@ -96,7 +50,7 @@ test("adopts the exact reviewed revision and retains a read-only receipt", async
   let workflowError: unknown;
 
   try {
-    const fixture = fixtureSchema.parse(await runFixture("seed", runId));
+    const fixture = improvementBrowserFixtureSchema.parse(await runFixture("seed", runId));
     const { workspaceId, workspaceSlug, factoryId, publication } = fixture;
     const { proposalId, proposalRevisionId, pullRequest, headCommitSha } = publication;
     if (!pullRequest || !headCommitSha) throw new Error("Fixture publication is incomplete.");
