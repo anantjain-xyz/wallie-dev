@@ -13529,6 +13529,16 @@ export type Database = {
         }
         Returns: Json
       }
+      list_factory_improvement_workbench: {
+        Args: {
+          p_after_proposal_id?: string
+          p_cohort_id?: string
+          p_factory_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_revert_evidence: {
         Args: {
           p_cursor_at?: string
@@ -14434,6 +14444,16 @@ export type Database = {
           p_before_created_at?: string
           p_factory_id: string
           p_selected_adjudication_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_improvement_workbench: {
+        Args: {
+          p_before_event?: number
+          p_factory_id: string
+          p_proposal_id: string
+          p_revision_id?: string
           p_workspace_id: string
         }
         Returns: Json
@@ -15795,6 +15815,20 @@ export type Database = {
           p_proposal_id?: string
           p_rationale: string
           p_regression_risks: string
+          p_request_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      save_factory_improvement_review_event: {
+        Args: {
+          p_action: string
+          p_actor_user_id: string
+          p_expected_review_version: number
+          p_factory_id: string
+          p_note: string
+          p_proposal_id: string
+          p_proposal_revision_id: string
           p_request_id: string
           p_workspace_id: string
         }

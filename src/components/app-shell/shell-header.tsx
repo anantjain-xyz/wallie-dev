@@ -449,6 +449,7 @@ export function ShellHeader({
           item.id === "analytics" ||
           item.id === "benchmarks" ||
           item.id === "failure-groups" ||
+          item.id === "improvements" ||
           item.id === "overview" ||
           item.id === "factory-definition" ||
           isManagedFactoryPath(item.href, workspace.slug)
@@ -588,7 +589,7 @@ export function ShellHeader({
                     )}
                   >
                     <NavigationMenuIcon />
-                    <span className="min-w-0 break-words">{activeNavItem?.label ?? "Pages"}</span>
+                    <span className="min-w-0 truncate">{activeNavItem?.label ?? "Pages"}</span>
                   </button>
                 </DialogTrigger>
                 <DialogContent

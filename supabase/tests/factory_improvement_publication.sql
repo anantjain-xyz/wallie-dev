@@ -97,6 +97,26 @@ begin
 exception when others then return sqlstate;
 end;
 $$;
+
+create function pg_temp.try_publication_claim() returns text language plpgsql as $$
+begin
+  perform pg_temp.claim_publication();
+  return '00000';
+exception when others then return sqlstate;
+end;
+$$;
+savepoint before_dismissed_proposal;
+select public.save_factory_improvement_review_event(workspace_id, factory_id, owner_id,
+  pg_temp.live_id(300), pg_temp.live_id(312), 0, gen_random_uuid(), 'dismiss', 'Dismiss the tested draft')
+from live_scope;
+select pg_temp.try_publication_advance('arm_create') as dismissed_action_state \gset
+select pg_temp.advance_publication('release');
+select pg_temp.try_publication_claim() as dismissed_claim_state \gset
+rollback to savepoint before_dismissed_proposal;
+release savepoint before_dismissed_proposal;
+select is(:'dismissed_action_state'::text, 'PT409', 'dismissing a proposal fences an existing lease before GitHub creation');
+select is(:'dismissed_claim_state'::text, 'PT409', 'a dismissed proposal cannot start a new publication attempt');
+
 savepoint before_superseded_proposal;
 select pg_temp.validation_proposal_revision(3, 103);
 select pg_temp.try_publication_advance('arm_create') as stale_action_state \gset

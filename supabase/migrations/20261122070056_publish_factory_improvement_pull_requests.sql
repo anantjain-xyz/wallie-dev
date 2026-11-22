@@ -108,6 +108,8 @@ returns boolean language sql stable set search_path = '' as $$
       where (revision.workspace_id,revision.factory_id,revision.proposal_id) =
         (publication.workspace_id,publication.factory_id,publication.proposal_id)
       order by revision.revision_number desc limit 1)
+    and internal.factory_improvement_disposition(publication.workspace_id,publication.factory_id,
+      publication.proposal_id,publication.proposal_revision_id) <> 'dismissed'
     and exists (select 1 from public.factories factory where (factory.workspace_id,factory.id,factory.status) =
       (publication.workspace_id,publication.factory_id,'active'));
 $$;
@@ -202,8 +204,9 @@ begin
     order by revision.revision_number desc limit 1;
     if not found then raise exception 'Improvement proposal is unavailable.' using errcode = 'P0002'; end if;
     if proposal.id is distinct from p_proposal_revision_id
-      or proposal.intent->'base' is distinct from internal.current_factory_improvement_base(p_workspace_id,p_factory_id) then
-      raise exception 'The proposal revision or its base changed.' using errcode = 'PT409';
+      or proposal.intent->'base' is distinct from internal.current_factory_improvement_base(p_workspace_id,p_factory_id)
+      or internal.factory_improvement_disposition(p_workspace_id,p_factory_id,p_proposal_id,p_proposal_revision_id) = 'dismissed' then
+      raise exception 'The proposal revision, review decision, or active base changed.' using errcode = 'PT409';
     end if;
     select * into validation from internal.factory_improvement_validations compared
     where (compared.workspace_id,compared.factory_id,compared.proposal_id,compared.proposal_revision_id) =

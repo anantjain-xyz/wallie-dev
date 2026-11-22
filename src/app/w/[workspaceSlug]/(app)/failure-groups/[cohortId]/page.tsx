@@ -23,6 +23,7 @@ import {
   workspaceAgentDetailPath,
   workspaceFailureGroupPath,
   workspaceFailureGroupsPath,
+  workspaceImprovementsPath,
   workspaceRunDetailPath,
   workspaceScorersPath,
 } from "@/lib/routes";
@@ -226,6 +227,16 @@ export default async function FailureGroupPage({
           </p>
           <FailureGroupLimits cohort={cohort} />
           <FailureGroupCounts cohort={cohort} />
+          <Link
+            className="ui-button"
+            href={workspaceImprovementsPath(workspaceSlug, {
+              factory: scope.factoryId,
+              cohort: cohort.id,
+            })}
+            prefetch={false}
+          >
+            View improvements
+          </Link>
           {revision ? (
             <Link
               className="ui-button"
