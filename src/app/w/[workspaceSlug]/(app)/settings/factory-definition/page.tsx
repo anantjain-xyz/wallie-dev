@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { FactoryDefinitionEditor } from "@/features/factory-definition/definition-editor";
 import {
@@ -31,6 +33,15 @@ const selectionSchema = z.union([
   z.object({ draft: z.string().uuid(), test: z.string().uuid().optional() }).strict(),
 ]);
 
+const FACTORY_DEFINITION_RESET_PARAMS = [
+  "revision",
+  "activation",
+  "draft",
+  "test",
+  "implementationAgent",
+  "scorerRevision",
+] as const;
+
 export default async function FactoryDefinitionPage({
   params,
   searchParams,
@@ -47,23 +58,49 @@ export default async function FactoryDefinitionPage({
   }>;
 }) {
   const { workspaceSlug } = await params;
-  const [{ currentMember, supabase, workspace }, query] = await Promise.all([
+  const [{ currentMember, supabase, workspace }, factories, query] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
+    loadWorkspaceFactoryOptions(workspaceSlug),
     searchParams,
   ]);
   if (!isWorkspaceOperator(currentMember)) {
     notFound();
   }
+  const activeFactories = factories.filter(({ status }) => status === "active");
   const { factory: factoryQuery, implementationAgent, scorerRevision, ...target } = query;
   const factoryId = idSchema.optional().safeParse(factoryQuery);
   if (!factoryId.success)
-    return <FactoryUnavailable title="Factory definition" workspaceSlug={workspaceSlug} />;
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={activeFactories}
+            resetParams={FACTORY_DEFINITION_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Factory definition"
+        workspaceSlug={workspaceSlug}
+      />
+    );
   const selection = selectionSchema.safeParse(target);
   if (target.activation !== undefined && !selection.success) notFound();
   const { data: factory, error } = await selectFactory(supabase, workspace.id, factoryId.data);
   if (error) throw error;
   if (!factory)
-    return <FactoryUnavailable title="Factory definition" workspaceSlug={workspaceSlug} />;
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={activeFactories}
+            resetParams={FACTORY_DEFINITION_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Factory definition"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   const prompt = idSchema.safeParse(implementationAgent);
   const requestedScorer = selection.success ? undefined : idSchema.safeParse(scorerRevision).data;
@@ -95,6 +132,13 @@ export default async function FactoryDefinitionPage({
       key={`${factory.id}:${agent?.id ?? ""}:${requestedScorer ?? ""}`}
       factoryId={factoryId.data}
       factoryName={factory.name}
+      factorySelector={
+        <FactorySelector
+          factories={activeFactories}
+          resetParams={FACTORY_DEFINITION_RESET_PARAMS}
+          selectedValue={factory.id}
+        />
+      }
       initialAgent={agent ? { agentId: agent.agent_id, promptRevisionId: agent.id } : undefined}
       initialScorerRevisionId={requestedScorer}
       referenceOptions={referenceOptions}

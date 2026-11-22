@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { TimeDisplay } from "@/components/shared/time-display";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
@@ -55,6 +55,7 @@ function isOnline() {
 export function FactoryInboxPage({
   cursor,
   factoryId,
+  factorySelector,
   initialInbox,
   initialNow,
   memberId,
@@ -63,6 +64,7 @@ export function FactoryInboxPage({
 }: {
   cursor: string | null;
   factoryId: string | null;
+  factorySelector?: ReactNode;
   initialInbox: FactoryInbox | null;
   initialNow: string;
   memberId: string;
@@ -208,9 +210,12 @@ export function FactoryInboxPage({
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         actions={
-          <button className="ui-button" onClick={() => recovery.retry()} type="button">
-            Refresh
-          </button>
+          <>
+            {factorySelector}
+            <button className="ui-button" onClick={() => recovery.retry()} type="button">
+              Refresh
+            </button>
+          </>
         }
         actionsRightOnDesktop
         title="Inbox"

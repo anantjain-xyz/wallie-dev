@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
@@ -178,6 +179,7 @@ function summarize(period: AnalyticsPeriodData, health: ProjectionHealth | null)
 
 export function OverviewView({
   factory,
+  factorySelector,
   health,
   periods,
   query,
@@ -185,6 +187,7 @@ export function OverviewView({
   workspaceSlug,
 }: {
   factory: FactorySelectionOption;
+  factorySelector?: ReactNode;
   health: ProjectionHealth | null;
   periods: Awaited<ReturnType<typeof loadAnalyticsPeriods>>;
   query: AnalyticsQuery;
@@ -200,10 +203,11 @@ export function OverviewView({
     <PageContainer>
       <PageHeader
         title="Overview"
-        description={factory.name}
+        description={factorySelector ? undefined : factory.name}
         actionsRightOnDesktop
         actions={
           <>
+            {factorySelector}
             <Link
               className="ui-button px-3 py-2 text-sm"
               href={workspaceInboxPath(workspaceSlug, factoryQuery)}

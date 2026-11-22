@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { loadFailureGroupScope } from "@/features/factory-failures/failure-group-scope";
 import {
@@ -18,6 +20,7 @@ import { workspaceFailureGroupPath, workspaceFailureGroupsPath } from "@/lib/rou
 import { titleFromSlug } from "@/lib/utils";
 
 const revisionDate = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
+const FAILURE_GROUPS_FACTORY_RESET_PARAMS = ["revision"] as const;
 
 export default async function FailureGroupsPage({
   params,
@@ -28,14 +31,37 @@ export default async function FailureGroupsPage({
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
   const query = parseFailureCohortQuery(search);
-  const scope = await loadFailureGroupScope(workspaceSlug, search.factory);
-  if (!scope) return <FactoryUnavailable title="Failure groups" workspaceSlug={workspaceSlug} />;
+  const [scope, factories] = await Promise.all([
+    loadFailureGroupScope(workspaceSlug, search.factory),
+    loadWorkspaceFactoryOptions(workspaceSlug),
+  ]);
+  if (!scope)
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={factories}
+            resetParams={FAILURE_GROUPS_FACTORY_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Failure groups"
+        workspaceSlug={workspaceSlug}
+      />
+    );
+  const factorySelector = (
+    <FactorySelector
+      factories={factories}
+      resetParams={FAILURE_GROUPS_FACTORY_RESET_PARAMS}
+      selectedValue={scope.factoryId}
+    />
+  );
   const base = workspaceFailureGroupsPath(workspaceSlug);
   const reset = workspaceFailureGroupsPath(workspaceSlug, { factory: scope.factoryId });
   if (!query.success) {
     return (
       <PageContainer>
-        <PageHeader title="Failure groups" description={scope.factory.name} />
+        <PageHeader actions={factorySelector} actionsRightOnDesktop title="Failure groups" />
         <div className="ui-sheet space-y-3 p-5">
           <p className="type-body">Check the failure group filters and try again.</p>
           <Link className="ui-button" href={reset}>
@@ -52,11 +78,24 @@ export default async function FailureGroupsPage({
     listFailureCohorts(scope.supabase, scope, query.data),
     listRecentFailureDefinitionRevisions(scope.supabase, scope),
   ]);
-  if (!page) return <FactoryUnavailable title="Failure groups" workspaceSlug={workspaceSlug} />;
+  if (!page)
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={factories}
+            resetParams={FAILURE_GROUPS_FACTORY_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Failure groups"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   return (
     <PageContainer>
-      <PageHeader title="Failure groups" description={scope.factory.name} />
+      <PageHeader actions={factorySelector} actionsRightOnDesktop title="Failure groups" />
       <form
         action={base}
         key={JSON.stringify(preserved)}

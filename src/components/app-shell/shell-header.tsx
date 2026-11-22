@@ -33,7 +33,6 @@ import {
   defaultsToAllFactories,
   FACTORY_QUERY_PARAM,
   isFactoryAggregatePath,
-  isFactorySelectorPath,
   isManagedFactoryPath,
   withFactoryQuery,
 } from "@/features/factories/factory-selection";
@@ -66,7 +65,6 @@ export type CreationFactory = {
 type ShellHeaderProps = {
   creationFactory: CreationFactory | null;
   children?: ReactNode;
-  factorySelector?: ReactNode;
   navItems: WorkspaceNavItem[];
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
@@ -262,7 +260,6 @@ export function prefetchShellNavHrefOnIntent(
 export function ShellHeader({
   creationFactory,
   children,
-  factorySelector,
   navItems,
   onboarding,
   pathnameOverride,
@@ -621,9 +618,6 @@ export function ShellHeader({
               <ThemeToggle />
               <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
             </div>
-            {factorySelector && isFactorySelectorPath(pathname, workspace.slug) ? (
-              <div className="min-w-0 basis-full pb-1 sm:basis-auto sm:pb-0">{factorySelector}</div>
-            ) : null}
           </div>
         </header>
 

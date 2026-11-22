@@ -15,4 +15,16 @@ describe("FactoryUnavailable", () => {
     expect(html).not.toContain("scorerId=");
     expect(html).not.toContain("sessionId=");
   });
+
+  it("renders optional recovery actions in the page header", () => {
+    const html = renderToStaticMarkup(
+      <FactoryUnavailable
+        actions={<button type="button">Switch factory</button>}
+        title="Agents"
+        workspaceSlug="acme"
+      />,
+    );
+
+    expect(html).toContain("Switch factory");
+  });
 });

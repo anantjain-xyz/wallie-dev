@@ -30,6 +30,7 @@ export async function loadScorerPageScope(workspaceSlug: string, factoryQuery?: 
   if (selected.kind !== "factory") return null;
   const { factory } = selected;
   return {
+    factories,
     factory,
     workspaceId: workspace.id,
     supabase,

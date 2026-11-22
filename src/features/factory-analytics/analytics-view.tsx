@@ -22,6 +22,7 @@ export function AnalyticsView({
   workspaceId,
   workspaceSlug,
   factory,
+  factorySelector,
   query,
   periods,
   evidence,
@@ -31,6 +32,7 @@ export function AnalyticsView({
   workspaceId: string;
   workspaceSlug: string;
   factory: FactorySelectionOption;
+  factorySelector?: ReactNode;
   query: AnalyticsQuery;
   periods: Awaited<ReturnType<typeof loadAnalyticsPeriods>>;
   evidence: Awaited<ReturnType<typeof loadAnalyticsEvidence>>;
@@ -58,7 +60,12 @@ export function AnalyticsView({
 
   return (
     <PageContainer>
-      <PageHeader title="Analytics" description={factory.name} />
+      <PageHeader
+        actions={factorySelector}
+        actionsRightOnDesktop
+        description={factorySelector ? undefined : factory.name}
+        title="Analytics"
+      />
       {routingCanaryComparison ? <div className="mb-8">{routingCanaryComparison}</div> : null}
       <AnalyticsFilters
         action={workspaceAnalyticsPath(workspaceSlug)}

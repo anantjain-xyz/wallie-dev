@@ -7,9 +7,12 @@ import { projectionHealthSchema } from "@/features/factory-overview/projection-h
 import { OverviewView } from "@/features/factory-overview/overview-view";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { resolveAnalyticsFactory } from "@/features/factories/factory-selection";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { workspaceOverviewPath } from "@/lib/routes";
+
+const OVERVIEW_FACTORY_RESET_PARAMS = ["metric", "period", "facet", "bucket"] as const;
 
 export default async function OverviewPage({
   params,
@@ -20,10 +23,22 @@ export default async function OverviewPage({
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
   const parsed = parseAnalyticsQuery(search);
+  const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
   if (!parsed.success || parsed.data.evidence) {
+    const fallbackFactory = resolveAnalyticsFactory(factories, search.factory);
     return (
       <PageContainer>
-        <PageHeader title="Overview" />
+        <PageHeader
+          actions={
+            <FactorySelector
+              factories={factories}
+              resetParams={OVERVIEW_FACTORY_RESET_PARAMS}
+              selectedValue={fallbackFactory?.id ?? "unavailable"}
+            />
+          }
+          actionsRightOnDesktop
+          title="Overview"
+        />
         <section className="ui-sheet space-y-3 px-6 py-8">
           <h2 className="type-section-title">Invalid Overview filters</h2>
           <p className="type-secondary text-muted">
@@ -40,12 +55,22 @@ export default async function OverviewPage({
     );
   }
   const query = parsed.data;
-  const [{ supabase, workspace }, factories] = await Promise.all([
-    loadAuthenticatedWorkspaceContext(workspaceSlug),
-    loadWorkspaceFactoryOptions(workspaceSlug),
-  ]);
+  const { supabase, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
   const factory = resolveAnalyticsFactory(factories, query.factoryId);
-  if (!factory) return <FactoryUnavailable title="Overview" workspaceSlug={workspaceSlug} />;
+  if (!factory)
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={factories}
+            resetParams={OVERVIEW_FACTORY_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Overview"
+        workspaceSlug={workspaceSlug}
+      />
+    );
   const [periods, health] = await Promise.all([
     loadAnalyticsPeriods({ supabase, workspaceId: workspace.id, factoryId: factory.id, query }),
     supabase.rpc("get_factory_flow_projection_health", {
@@ -57,6 +82,13 @@ export default async function OverviewPage({
   return (
     <OverviewView
       factory={factory}
+      factorySelector={
+        <FactorySelector
+          factories={factories}
+          resetParams={OVERVIEW_FACTORY_RESET_PARAMS}
+          selectedValue={factory.id}
+        />
+      }
       health={!health.error && parsedHealth.success ? parsedHealth.data : null}
       periods={periods}
       query={query}
