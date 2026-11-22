@@ -4,21 +4,59 @@ select no_plan();
 set local request.jwt.claim.role = 'service_role';
 \ir fixtures/factory_improvement_publication.psql
 
--- Both target configurations have exact measured routing evidence.
-select pg_temp.execute_publication_fixture(true);
-select public.reconcile_factory_benchmark_evaluations(100);
+-- Keep the paired publication validation fixture separate from the routing comparison.
+-- Measure the original primary, unchanged fallback and new primary as distinct axes.
+with changed_primary as (
+  select previous.*, jsonb_set(previous.definition_json::jsonb,'{stages,0,promptTemplateMd}',
+    '"Review the change and record the acceptance checks."'::jsonb)::text as body
+  from public.factory_definition_revisions previous where previous.id = pg_temp.live_id(161)
+)
+insert into public.factory_definition_revisions(id,workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+select pg_temp.live_id(163),workspace_id,factory_id,schema_version,body,encode(sha256(convert_to(body,'UTF8')),'hex'),created_by
+from changed_primary;
+
+select public.control_factory_benchmark_schedule(scope.workspace_id,scope.factory_id,scheduled.experiment_id,scope.owner_id,'pause')
+from live_scope scope cross join publication_validation validation
+cross join lateral unnest(array[(validation.receipt#>>'{targeted,experimentId}')::uuid,
+  (validation.receipt#>>'{holdout,experimentId}')::uuid]) scheduled(experiment_id);
+update public.agent_jobs job set scheduled_at = clock_timestamp() + interval '1 hour'
+from live_scope scope where job.status = 'queued' and job.workspace_id <> scope.workspace_id;
+
+create temp table improvement_routing_comparison as
+select args.workspace_id,args.factory_id,args.owner_id,args.scorer_id,args.targeted_suite_id,args.execution,
+  pg_temp.live_id(374) as experiment_id,
+  public.freeze_factory_benchmark_experiment_axes_with_evaluation(args.workspace_id,args.factory_id,args.owner_id,
+    pg_temp.live_id(374),args.targeted_suite_id,args.policy_id,axes.candidates,1,211,120000,
+    jsonb_build_object('scorerRevisionIds',jsonb_build_array(args.scorer_id),'budgetLimitUsd',20)) as receipt
+from validation_arguments args
+cross join lateral (
+  select jsonb_agg(jsonb_build_object('definitionRevisionId',pg_temp.live_id(slot),
+    'qualificationId',pg_temp.live_id(51),'workerRuntime','workerd') order by position) as candidates
+  from unnest(array[161,162,163]) with ordinality revision(slot,position)
+) axes;
+select public.configure_factory_benchmark_live_schedule(workspace_id,factory_id,experiment_id,owner_id,
+  (execution->>'inferenceConnectionRevision')::uuid,0.20,0.10,20,1,6)
+from improvement_routing_comparison;
+select pg_temp.frontier_execute(p_latency_floor_ms => 2000) from generate_series(1,6);
+select is(public.reconcile_factory_benchmark_evaluations(100),6,'every routing axis produces its own exact measured trials');
 select pg_temp.frontier_score();
+
 insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
 values (pg_temp.live_id(1),'platform_api_key','synthetic-improvement-routing-key');
 
 create function pg_temp.improvement_routing_configuration(p_position integer) returns jsonb language sql as $$
   select jsonb_build_object('agentId',pg_temp.live_id(47),'definitionRevisionId',axis.definition_revision_id,
-    'experimentId',axis.experiment_id,'qualificationId',axis.qualification_id,'scorerRevisionId',scorer.id,
+    'experimentId',axis.experiment_id,'qualificationId',axis.qualification_id,'scorerRevisionId',comparison.scorer_id,
     'modelKey',axis.canonical_model_key,'harness',axis.harness,'workerRuntime',axis.worker_runtime)
   from public.factory_benchmark_experiment_candidates axis
-  join publication_validation validation on axis.experiment_id::text = validation.receipt#>>'{targeted,experimentId}'
-  cross join frontier_scorer scorer where axis.comparison_position = p_position
+  join improvement_routing_comparison comparison using (workspace_id,factory_id,experiment_id)
+  where axis.comparison_position = p_position
 $$;
+
+select ok((pg_temp.improvement_routing_configuration(3)->>'definitionRevisionId')::uuid = pg_temp.live_id(163)
+  and pg_temp.improvement_routing_configuration(3)->>'definitionRevisionId'
+    <> pg_temp.improvement_routing_configuration(2)->>'definitionRevisionId',
+  'the changed primary and unchanged fallback have distinct execution identities');
 
 create temp table candidate_routing_draft as
 with factory_scope as (
@@ -33,14 +71,14 @@ with factory_scope as (
   from live_scope scope join public.factory_definition_revisions revision on revision.id = pg_temp.live_id(161)
 )
 select saved.*
-from factory_scope scope cross join publication_validation validation cross join frontier_scorer scorer
-join public.factory_benchmark_experiment_candidates axis on axis.comparison_position = 1
-join public.factory_benchmark_experiments experiment on experiment.id = axis.experiment_id
+from factory_scope scope
+join improvement_routing_comparison comparison using (workspace_id,factory_id)
+join public.factory_benchmark_experiment_candidates axis using (workspace_id,factory_id,experiment_id)
 cross join lateral public.save_factory_routing_draft(scope.workspace_id,scope.factory_id,scope.owner_id,2,
   scope.body::text,encode(sha256(convert_to(scope.body::text,'UTF8')),'hex'),'{"newStageIds":[]}',
-  axis.experiment_id,axis.candidate_key,experiment.suite_revision_id,scorer.id,pg_temp.live_id(202),
+  axis.experiment_id,axis.candidate_key,comparison.targeted_suite_id,comparison.scorer_id,pg_temp.live_id(202),
   pg_temp.live_id(375),repeat('b',64),null) saved
-where experiment.id::text = validation.receipt#>>'{targeted,experimentId}';
+where axis.comparison_position = 1;
 
 insert into public.sandbox_capability_checks(workspace_id,github_repository_id,agent_provider,agent_model,
   sandbox_provider,sandbox_id,sandbox_connection_revision,sandbox_vercel_team_id,sandbox_vercel_project_id,status,
@@ -97,7 +135,7 @@ begin
   body := jsonb_set(prior.definition_json::jsonb,'{stages,0,promptTemplateMd}',
     '"Review the task against its acceptance criteria."',true);
   if p_replace_primary then
-    body := jsonb_set(body,'{modelRouting,rules,0,configuration}',pg_temp.improvement_routing_configuration(2) - 'scorerRevisionId');
+    body := jsonb_set(body,'{modelRouting,rules,0,configuration}',pg_temp.improvement_routing_configuration(3) - 'scorerRevisionId');
     edits := jsonb_build_array(jsonb_build_object('kind','routing_target','ruleId',pg_temp.live_id(202),
       'from',prior.definition_json::jsonb#>'{modelRouting,rules,0,configuration}',
       'to',body#>'{modelRouting,rules,0,configuration}'));
@@ -157,7 +195,7 @@ select pg_temp.admit_improvement_routing('After reviewed improvement') as id;
 select ok((select before_pin.activation_number = 3 and after_pin.activation_number = 4
   and before_pin.routing_decision->>'mode' = 'active' and after_pin.routing_decision->>'mode' = 'active'
   and before_pin.routing_execution->'configuration' = pg_temp.improvement_routing_configuration(1)
-  and after_pin.routing_execution->'configuration' = pg_temp.improvement_routing_configuration(2) - 'scorerRevisionId'
+  and after_pin.routing_execution->'configuration' = pg_temp.improvement_routing_configuration(3) - 'scorerRevisionId'
   from admitted_before_improvement old_pin join public.session_factory_admission_inputs before_pin on before_pin.session_id = old_pin.id
   cross join admitted_after_improvement new_pin join public.session_factory_admission_inputs after_pin on after_pin.session_id = new_pin.id),
   'only future admissions use the newly qualified primary while the old pin stays exact');
@@ -179,20 +217,18 @@ where activation.activation_number = 4;
 create temp table later_routing_draft as
 select saved.*
 from live_scope scope
+join improvement_routing_comparison comparison using (workspace_id,factory_id)
+join public.factory_benchmark_experiment_candidates axis using (workspace_id,factory_id,experiment_id)
 cross join adopted_routing_revision revision
-cross join publication_validation validation
-cross join frontier_scorer scorer
-join public.factory_benchmark_experiment_candidates axis on axis.comparison_position = 1
-join public.factory_benchmark_experiments experiment on experiment.id = axis.experiment_id
 cross join lateral (
   select jsonb_set(revision.definition_json::jsonb,'{modelRouting,rules,0,configuration}',
     pg_temp.improvement_routing_configuration(1))::text as body
 ) definition
 cross join lateral public.save_factory_routing_draft(scope.workspace_id,scope.factory_id,scope.owner_id,4,
   definition.body,encode(sha256(convert_to(definition.body,'UTF8')),'hex'),'{"newStageIds":[]}',
-  axis.experiment_id,axis.candidate_key,experiment.suite_revision_id,scorer.id,pg_temp.live_id(202),
+  axis.experiment_id,axis.candidate_key,comparison.targeted_suite_id,comparison.scorer_id,pg_temp.live_id(202),
   pg_temp.live_id(377),repeat('c',64),null) saved
-where experiment.id::text = validation.receipt#>>'{targeted,experimentId}';
+where axis.comparison_position = 1;
 
 insert into public.sandbox_capability_checks(workspace_id,github_repository_id,agent_provider,agent_model,
   sandbox_provider,sandbox_id,sandbox_connection_revision,sandbox_vercel_team_id,sandbox_vercel_project_id,status,
@@ -256,7 +292,7 @@ select ok((select restored.activation_number = 6 and restored.previous_activatio
 create temp table admitted_after_restore as select pg_temp.admit_improvement_routing('After adopted routing restore') as id;
 select ok((select input.activation_number = 6 and input.definition_revision_id = target.id
   and input.definition_digest = target.canonical_digest and input.routing_decision->>'mode' = 'active'
-  and input.routing_execution->'configuration' = pg_temp.improvement_routing_configuration(2) - 'scorerRevisionId'
+  and input.routing_execution->'configuration' = pg_temp.improvement_routing_configuration(3) - 'scorerRevisionId'
   from public.session_factory_admission_inputs input join admitted_after_restore admitted on admitted.id = input.session_id
   cross join adopted_routing_revision target),'a new admission uses the restored reviewed target and exact revision');
 select is((select to_jsonb(input) from public.session_factory_admission_inputs input

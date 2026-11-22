@@ -9,6 +9,7 @@ import {
 } from "@/lib/factory-mcp/manifest";
 import type { Database } from "@/lib/supabase/database.types";
 
+import { withCatalogSignal } from "./catalog-query";
 import type { FactoryDefinitionCatalog } from "./references";
 
 export type FactoryMcpCatalogSelection = {
@@ -41,6 +42,7 @@ export async function loadFactoryMcpCatalog(
     mcpSecretBindingIds = [],
     mcpExecutionGrantId,
   }: FactoryMcpCatalogSelection & { workspaceId: string; factoryId: string },
+  signal?: AbortSignal,
 ): Promise<Pick<FactoryDefinitionCatalog, "tools" | "mcpSecretBindings" | "mcpExecutionGrant">> {
   const revisions = selectedIds(mcpToolRevisionIds);
   if (!revisions.length) return { tools: [] };
@@ -48,36 +50,44 @@ export async function loadFactoryMcpCatalog(
   const bindings = selectedIds(mcpSecretBindingIds);
   const grantId = mcpIdSchema.safeParse(mcpExecutionGrantId);
   const [revisionsResult, bindingsResult, grantResult] = await Promise.all([
-    client
-      .from("factory_mcp_server_revisions")
-      .select(
-        "id, server_id, revision_number, endpoint, operation_names, auth_kind, factory_mcp_servers!inner(slug)",
-      )
-      .eq("workspace_id", workspaceId)
-      .eq("factory_id", factoryId)
-      .is("revoked_at", null)
-      .in("id", revisions),
+    withCatalogSignal(
+      client
+        .from("factory_mcp_server_revisions")
+        .select(
+          "id, server_id, revision_number, endpoint, operation_names, auth_kind, factory_mcp_servers!inner(slug)",
+        )
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .is("revoked_at", null)
+        .in("id", revisions),
+      signal,
+    ),
     bindings.length
-      ? client
-          .from("factory_mcp_secret_bindings")
-          .select(
-            "id, execution_grant_id, service_principal_id, factory_agent_id, tool_revision_id",
-          )
-          .eq("workspace_id", workspaceId)
-          .eq("factory_id", factoryId)
-          .is("revoked_at", null)
-          .in("id", bindings)
+      ? withCatalogSignal(
+          client
+            .from("factory_mcp_secret_bindings")
+            .select(
+              "id, execution_grant_id, service_principal_id, factory_agent_id, tool_revision_id",
+            )
+            .eq("workspace_id", workspaceId)
+            .eq("factory_id", factoryId)
+            .is("revoked_at", null)
+            .in("id", bindings),
+          signal,
+        )
       : { data: [], error: null },
     grantId.success
-      ? client
-          .from("factory_execution_grants")
-          .select("id, version, service_principal_id, tool_ids")
-          .eq("workspace_id", workspaceId)
-          .eq("factory_id", factoryId)
-          .eq("id", grantId.data)
-          .is("revoked_at", null)
-          .gt("expires_at", new Date().toISOString())
-          .maybeSingle()
+      ? withCatalogSignal(
+          client
+            .from("factory_execution_grants")
+            .select("id, version, service_principal_id, tool_ids")
+            .eq("workspace_id", workspaceId)
+            .eq("factory_id", factoryId)
+            .eq("id", grantId.data)
+            .is("revoked_at", null)
+            .gt("expires_at", new Date().toISOString()),
+          signal,
+        ).maybeSingle()
       : { data: null, error: null },
   ]);
   if (revisionsResult.error) throw revisionsResult.error;

@@ -96,16 +96,24 @@ export async function adoptFactoryImprovement(
   if (managerError) throw managerStatus === 0 ? new AdoptionError("PT502") : managerError;
   if (!manager) throw new AdoptionError("42501");
 
-  const existing = await readFactoryImprovementAdoption(scope);
-  if (existing) {
-    if (!matchesCommand(existing, command)) throw new AdoptionError("PT409");
-    return { adoption: existing, replay: true };
+  async function readReplay() {
+    const adoption = await readFactoryImprovementAdoption(scope);
+    if (!adoption) return null;
+    if (!matchesCommand(adoption, command)) throw new AdoptionError("PT409");
+    return { adoption, replay: true };
   }
+
+  const existing = await readReplay();
+  if (existing) return existing;
 
   const publication = await readFactoryImprovementPublication(scope);
   if (!publication?.pullRequest) throw new AdoptionError("P0002");
+  if (!publication.current) {
+    const replay = await readReplay();
+    if (replay) return replay;
+    throw new AdoptionError("PT409");
+  }
   if (
-    !publication.current ||
     publication.id !== command.publicationId ||
     publication.base.activationNumber !== command.expectedActivationNumber ||
     publication.candidate.digest !== command.candidateDigest ||
@@ -139,10 +147,17 @@ export async function adoptFactoryImprovement(
 
   const bundle = readVerifiedFactoryDefinition(verified.definitionJson, command.candidateDigest);
   if (!bundle) throw new AdoptionError("PT422");
-  const catalog = await loadFactoryDefinitionCatalog(scope.client, {
-    workspaceId: scope.workspaceId,
-    factoryId: scope.factoryId,
-    ...factoryComponentRevisionsForBundle(bundle),
+  const catalog = await loadFactoryDefinitionCatalog(
+    scope.client,
+    {
+      workspaceId: scope.workspaceId,
+      factoryId: scope.factoryId,
+      ...factoryComponentRevisionsForBundle(bundle),
+    },
+    signal,
+  ).catch((error: unknown) => {
+    if (signal.aborted) throw new AdoptionError("PT502");
+    throw error;
   });
   const compiled = recompileStoredFactoryDefinition(
     verified.definitionJson,

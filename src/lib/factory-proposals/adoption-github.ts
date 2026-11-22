@@ -105,7 +105,7 @@ async function readLatestDecisions(github: GitHub, pull: MergedPull, signal: Abo
         latest.set(decision.user.id, decision);
       }
     }
-    if (!hasNextPage && reviews.data.length < reviewsPerPage) return [...latest.values()];
+    if (!hasNextPage) return [...latest.values()];
   }
   throw new ImprovementAdoptionGitHubError("remote_unavailable");
 }
@@ -214,16 +214,16 @@ export function createFactoryImprovementReviewVerifier({
         includeDefinition
           ? github.readVerifiedHead({ base, head, candidateDigest, requireRef: false, signal })
           : Promise.resolve(null),
-        github.verifyMergedBranch({
-          baseCommitSha,
-          head,
-          mergeCommitSha: pull.mergeCommitSha,
-          candidateDigest,
-          signal,
-        }),
       ]);
       const current = await github.verifyMergedPullRequest(command);
       if (!isDeepStrictEqual(current, pull)) return reviewConflict();
+      await github.verifyMergedBranch({
+        baseCommitSha,
+        head,
+        mergeCommitSha: pull.mergeCommitSha,
+        candidateDigest,
+        signal,
+      });
       signal.throwIfAborted();
       const proof: FactoryImprovementReviewProof = {
         repositoryNumericId: target.repositoryNumericId,

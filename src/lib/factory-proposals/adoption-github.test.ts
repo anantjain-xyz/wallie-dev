@@ -256,6 +256,26 @@ describe("factory improvement GitHub adoption proof", () => {
     await expect(verifier.assertCurrent(proof)).rejects.toMatchObject({ code: "review_conflict" });
   });
 
+  it("rejects a target that loses the merge while GitHub returns unchanged pull metadata", async () => {
+    const { verifier, replies } = fixture();
+    const { proof } = await verifier.read();
+    let pullReads = 0;
+    replies.set("/pulls/42", () => {
+      pullReads += 1;
+      if (pullReads === 2) replies.set(baseRef, gitRef(target.baseBranch, branchTipSha));
+      return Response.json(hostedPull);
+    });
+    replies.set(`/compare/${mergeCommitSha}...${branchTipSha}?per_page=1`, {
+      status: "diverged",
+      base_commit: { sha: mergeCommitSha },
+      merge_base_commit: { sha: baseCommitSha },
+      ahead_by: 2,
+      behind_by: 1,
+    });
+
+    await expect(verifier.assertCurrent(proof)).rejects.toMatchObject({ code: "review_conflict" });
+  });
+
   it("rejects later changes to the live definition even while the target contains the merge", async () => {
     const { verifier, replies, setTree, putBlob } = fixture();
     const { proof } = await verifier.read();
@@ -331,6 +351,33 @@ describe("factory improvement GitHub adoption proof", () => {
     replies.set(reviewsPath + "2", [{ id: 96, state: "COMMENTED", user: reviewer }]);
     await expect(verifier.read()).resolves.toMatchObject({ proof: { reviewId: "95" } });
     expect(requests.some((request) => request.url === api + reviewsPath + "2")).toBe(true);
+  });
+
+  it("accepts a full final review page and rejects a continuation beyond the review limit", async () => {
+    const { verifier, replies } = fixture();
+    let hasFurtherReviews = false;
+    for (let page = 1; page <= 5; page += 1) {
+      const comments = Array.from({ length: page === 5 ? 99 : 100 }, (_, index) => ({
+        id: page * 100 + index,
+        state: "COMMENTED",
+      }));
+      const reviews = page === 5 ? [...comments, approval] : comments;
+      replies.set(reviewsPath + page, () =>
+        Response.json(reviews, {
+          headers:
+            page < 5 || hasFurtherReviews
+              ? { Link: `<${api}${reviewsPath}${page + 1}>; rel="next"` }
+              : {},
+        }),
+      );
+    }
+
+    const { proof } = await verifier.read();
+    expect(proof.reviewId).toBe("95");
+    hasFurtherReviews = true;
+    await expect(verifier.assertCurrent(proof)).rejects.toMatchObject({
+      code: "remote_unavailable",
+    });
   });
 
   it("fails closed on duplicated identities across review pages", async () => {

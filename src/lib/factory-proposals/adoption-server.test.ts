@@ -127,14 +127,21 @@ function fixture({
   testedDigest = sha256(exactBytes),
   skillIsCurrent = true,
   recheckError,
+  concurrentPublication,
+  abortDuringCatalog = false,
 }: {
   hostedBytes?: string;
   testedDigest?: string;
   skillIsCurrent?: boolean;
   recheckError?: ImprovementAdoptionGitHubError;
+  concurrentPublication?: "matching-adoption" | "different-adoption" | "no-adoption";
+  abortDuringCatalog?: boolean;
 } = {}) {
   const trace: string[] = [];
   const activationRequests: unknown[] = [];
+  const controller = new AbortController();
+  const catalogSignals: AbortSignal[] = [];
+  let publicationRead = false;
   const publication = {
     id: id(14),
     proposalId: ids.proposalId,
@@ -164,7 +171,7 @@ function fixture({
     headTreeSha: "e".repeat(40),
     creationArmed: false,
     pullRequest: { number: proof.pullNumber, url: proof.pullUrl, state: "draft" },
-    current: true,
+    current: !concurrentPublication,
   } satisfies FactoryImprovementPublication;
   const adoption = {
     id: id(23),
@@ -204,8 +211,15 @@ function fixture({
         const { pathname, searchParams } = new URL(request.url);
         switch (pathname) {
           case "/rest/v1/rpc/get_factory_improvement_adoption":
+            if (publicationRead && concurrentPublication === "matching-adoption") {
+              return Response.json(adoption);
+            }
+            if (publicationRead && concurrentPublication === "different-adoption") {
+              return Response.json({ ...adoption, publicationId: id(24) });
+            }
             return Response.json(null);
           case "/rest/v1/rpc/get_factory_improvement_publication":
+            publicationRead = true;
             return Response.json(publication);
           case "/rest/v1/rpc/adopt_factory_improvement":
             trace.push("activation");
@@ -230,6 +244,11 @@ function fixture({
             return Response.json([]);
           case "/rest/v1/factory_skill_revisions":
             trace.push("scoped skill catalog");
+            catalogSignals.push(request.signal);
+            if (abortDuringCatalog) {
+              controller.abort(new DOMException("Fixture deadline", "TimeoutError"));
+              request.signal.throwIfAborted();
+            }
             expect(searchParams.get("workspace_id")).toBe(`eq.${ids.workspaceId}`);
             expect(searchParams.get("factory_id")).toBe(`eq.${ids.factoryId}`);
             expect(searchParams.get("id")).toBe(`in.(${skillRevisionId})`);
@@ -241,12 +260,13 @@ function fixture({
       },
     },
   });
-  const scope = { ...ids, client, signal: new AbortController().signal };
+  const scope = { ...ids, client, signal: controller.signal };
   return {
     adopt: () => adoptFactoryImprovement(scope, command),
     adoption,
     trace,
     activationRequests,
+    catalogSignals,
   };
 }
 
@@ -320,6 +340,25 @@ describe("adoptFactoryImprovement", () => {
     expect(activationRequests).toEqual([]);
   });
 
+  it("returns the exact receipt when another request adopts between the adoption and publication reads", async () => {
+    const { adopt, adoption, activationRequests } = fixture({
+      concurrentPublication: "matching-adoption",
+    });
+    await expect(adopt()).resolves.toEqual({ adoption, replay: true });
+    expect(mintSandboxRepositoryToken).not.toHaveBeenCalled();
+    expect(activationRequests).toEqual([]);
+  });
+
+  it.each(["different-adoption", "no-adoption"] as const)(
+    "rejects a stale publication with %s",
+    async (concurrentPublication) => {
+      const { adopt, activationRequests } = fixture({ concurrentPublication });
+      await expect(adopt()).rejects.toMatchObject({ code: "PT409" });
+      expect(mintSandboxRepositoryToken).not.toHaveBeenCalled();
+      expect(activationRequests).toEqual([]);
+    },
+  );
+
   it.each([
     {
       kind: "changed candidate bytes",
@@ -341,6 +380,16 @@ describe("adoptFactoryImprovement", () => {
   it("sends no activation if the reviewed bytes no longer compile against the scoped catalog", async () => {
     const { adopt, trace, activationRequests } = fixture({ skillIsCurrent: false });
     await expect(adopt()).rejects.toMatchObject({ code: "PT422" });
+    expect(trace).toEqual(["hosted bytes", "scoped skill catalog"]);
+    expect(activationRequests).toEqual([]);
+  });
+
+  it("aborts the in-flight catalog read and returns a retryable error when the adoption deadline expires", async () => {
+    const { adopt, trace, activationRequests, catalogSignals } = fixture({
+      abortDuringCatalog: true,
+    });
+    await expect(adopt()).rejects.toMatchObject({ code: "PT502" });
+    expect(catalogSignals.map((signal) => signal.aborted)).toEqual([true]);
     expect(trace).toEqual(["hosted bytes", "scoped skill catalog"]);
     expect(activationRequests).toEqual([]);
   });

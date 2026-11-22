@@ -9,6 +9,7 @@ import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import { getEnabledSandboxProviders } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
 
+import { withCatalogSignal } from "./catalog-query";
 import type { CompiledFactoryDefinition } from "./compiler";
 import { loadFactoryMcpCatalog, type FactoryMcpCatalogSelection } from "./mcp-catalog";
 import type { FactoryDefinitionCatalog } from "./references";
@@ -35,24 +36,30 @@ export async function loadFactoryDefinitionRepositories(
   client: Pick<AdminClient, "from">,
   workspaceId: string,
   factoryId: string,
+  signal?: AbortSignal,
 ) {
   const [repositories, installation] = await Promise.all([
     collectCatalogRows((from, to) =>
-      client
-        .from("github_repositories")
-        .select("id, full_name, github_installation_id")
-        .eq("workspace_id", workspaceId)
-        .eq("factory_id", factoryId)
-        .eq("is_archived", false)
-        .order("id")
-        .range(from, to),
+      withCatalogSignal(
+        client
+          .from("github_repositories")
+          .select("id, full_name, github_installation_id")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
+          .eq("is_archived", false)
+          .order("id")
+          .range(from, to),
+        signal,
+      ),
     ),
-    client
-      .from("github_installations")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("suspended", false)
-      .maybeSingle(),
+    withCatalogSignal(
+      client
+        .from("github_installations")
+        .select("id")
+        .eq("workspace_id", workspaceId)
+        .eq("suspended", false),
+      signal,
+    ).maybeSingle(),
   ]);
   if (installation.error) throw installation.error;
   return repositories.filter(
@@ -78,6 +85,7 @@ export async function loadFactoryDefinitionCatalog(
     scorerRevisionIds?: readonly string[];
     modelRoutingConfigurations?: readonly ModelRoutingConfiguration[];
   },
+  signal?: AbortSignal,
 ): Promise<FactoryDefinitionCatalog> {
   const [
     pipelines,
@@ -92,49 +100,62 @@ export async function loadFactoryDefinitionCatalog(
     qualifiedRoutingConfigurations,
   ] = await Promise.all([
     collectCatalogRows((from, to) =>
-      admin
-        .from("pipelines")
-        .select("id, name")
-        .eq("workspace_id", workspaceId)
-        .eq("factory_id", factoryId)
-        .order("id")
-        .range(from, to),
+      withCatalogSignal(
+        admin
+          .from("pipelines")
+          .select("id, name")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
+          .order("id")
+          .range(from, to),
+        signal,
+      ),
     ),
-    loadFactoryDefinitionRepositories(admin, workspaceId, factoryId),
+    loadFactoryDefinitionRepositories(admin, workspaceId, factoryId, signal),
     collectCatalogRows((from, to) =>
-      admin
-        .from("execution_policy_revisions")
-        .select("id")
-        .eq("workspace_id", workspaceId)
-        .order("id")
-        .range(from, to),
-    ),
-    collectCatalogRows((from, to) =>
-      admin
-        .from("delivery_policy_revisions")
-        .select("id, pipeline_id")
-        .eq("workspace_id", workspaceId)
-        .order("id")
-        .range(from, to),
+      withCatalogSignal(
+        admin
+          .from("execution_policy_revisions")
+          .select("id")
+          .eq("workspace_id", workspaceId)
+          .order("id")
+          .range(from, to),
+        signal,
+      ),
     ),
     collectCatalogRows((from, to) =>
-      admin
-        .from("workspace_members")
-        .select("id")
-        .eq("workspace_id", workspaceId)
-        .eq("kind", "human")
-        .eq("is_active", true)
-        .order("id")
-        .range(from, to),
+      withCatalogSignal(
+        admin
+          .from("delivery_policy_revisions")
+          .select("id, pipeline_id")
+          .eq("workspace_id", workspaceId)
+          .order("id")
+          .range(from, to),
+        signal,
+      ),
     ),
-    loadSelectedAgentPromptRevision(admin, workspaceId, factoryId, agentPromptRevisionId),
-    loadSelectedSkillRevisions(admin, workspaceId, factoryId, skillRevisionIds ?? []),
-    loadSelectedScorerRevisions(admin, workspaceId, factoryId, scorerRevisionIds ?? []),
-    loadFactoryMcpCatalog(admin, { workspaceId, factoryId, ...mcpSelection }),
+    collectCatalogRows((from, to) =>
+      withCatalogSignal(
+        admin
+          .from("workspace_members")
+          .select("id")
+          .eq("workspace_id", workspaceId)
+          .eq("kind", "human")
+          .eq("is_active", true)
+          .order("id")
+          .range(from, to),
+        signal,
+      ),
+    ),
+    loadSelectedAgentPromptRevision(admin, workspaceId, factoryId, agentPromptRevisionId, signal),
+    loadSelectedSkillRevisions(admin, workspaceId, factoryId, skillRevisionIds ?? [], signal),
+    loadSelectedScorerRevisions(admin, workspaceId, factoryId, scorerRevisionIds ?? [], signal),
+    loadFactoryMcpCatalog(admin, { workspaceId, factoryId, ...mcpSelection }, signal),
     loadQualifiedModelRoutingConfigurations(
       admin,
       { workspaceId, factoryId },
       modelRoutingConfigurations ?? [],
+      signal,
     ),
   ]);
   return {
@@ -180,6 +201,7 @@ async function loadSelectedSkillRevisions(
   workspaceId: string,
   factoryId: string,
   references: readonly string[],
+  signal: AbortSignal | undefined,
 ) {
   const ids = [
     ...new Set(
@@ -190,13 +212,16 @@ async function loadSelectedSkillRevisions(
     ),
   ];
   if (ids.length === 0) return [];
-  const { data, error } = await admin
-    .from("factory_skill_revisions")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .eq("factory_id", factoryId)
-    .is("revoked_at", null)
-    .in("id", ids);
+  const { data, error } = await withCatalogSignal(
+    admin
+      .from("factory_skill_revisions")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .is("revoked_at", null)
+      .in("id", ids),
+    signal,
+  );
   if (error) throw error;
   return data;
 }
@@ -206,14 +231,18 @@ async function loadSelectedScorerRevisions(
   workspaceId: string,
   factoryId: string,
   revisionIds: readonly string[],
+  signal: AbortSignal | undefined,
 ) {
   if (revisionIds.length === 0) return [];
-  const { data, error } = await admin
-    .from("factory_scorer_revisions")
-    .select("id, workspace_id, factory_id")
-    .eq("workspace_id", workspaceId)
-    .eq("factory_id", factoryId)
-    .in("id", revisionIds);
+  const { data, error } = await withCatalogSignal(
+    admin
+      .from("factory_scorer_revisions")
+      .select("id, workspace_id, factory_id")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .in("id", revisionIds),
+    signal,
+  );
   if (error) throw error;
   return data;
 }
@@ -223,15 +252,19 @@ async function loadSelectedAgentPromptRevision(
   workspaceId: string,
   factoryId: string,
   revisionId: string | undefined,
+  signal: AbortSignal | undefined,
 ) {
   if (!revisionId) return [];
-  const { data, error } = await admin
-    .from("factory_agent_prompt_revisions")
-    .select("id, agent_id, prompt_md, prompt_sha256")
-    .eq("workspace_id", workspaceId)
-    .eq("factory_id", factoryId)
-    .eq("id", revisionId)
-    .limit(1);
+  const { data, error } = await withCatalogSignal(
+    admin
+      .from("factory_agent_prompt_revisions")
+      .select("id, agent_id, prompt_md, prompt_sha256")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .eq("id", revisionId)
+      .limit(1),
+    signal,
+  );
   if (error) throw error;
   return data;
 }
