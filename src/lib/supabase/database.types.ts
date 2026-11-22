@@ -12773,6 +12773,15 @@ export type Database = {
         }
         Returns: Json
       }
+      get_factory_improvement_proposal_revision: {
+        Args: {
+          p_factory_id: string
+          p_proposal_id: string
+          p_revision_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_inbox: {
         Args: {
           p_before_artifact_id?: string
@@ -13946,6 +13955,25 @@ export type Database = {
           p_diagnosis_id: string
           p_factory_id: string
           p_lease_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      prepare_factory_improvement_proposal: {
+        Args: {
+          p_activation_number: number
+          p_actor_user_id: string
+          p_base_digest: string
+          p_base_revision_id: string
+          p_diagnosis_id: string
+          p_edits: Json
+          p_expected_benefit: string
+          p_expected_revision_id?: string
+          p_factory_id: string
+          p_proposal_id?: string
+          p_rationale: string
+          p_regression_risks: string
+          p_request_id: string
           p_workspace_id: string
         }
         Returns: Json
@@ -15688,6 +15716,29 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      save_factory_improvement_proposal: {
+        Args: {
+          p_activation_number: number
+          p_actor_user_id: string
+          p_base_digest: string
+          p_base_revision_id: string
+          p_candidate_digest?: string
+          p_definition_json?: string
+          p_diagnosis_id: string
+          p_diagnostics: Json
+          p_diff?: Json
+          p_edits: Json
+          p_expected_benefit: string
+          p_expected_revision_id?: string
+          p_factory_id: string
+          p_proposal_id?: string
+          p_rationale: string
+          p_regression_risks: string
+          p_request_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       save_factory_mcp_server_revision: {
         Args: {
