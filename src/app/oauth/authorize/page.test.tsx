@@ -15,6 +15,7 @@ vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: () => ({ rpc
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
 import FactoryOAuthAuthorizePage from "./page";
+import AuthorizeLayout from "./layout";
 
 const issuer = "https://wallie.example.test";
 const workspace = "56800000-0000-4000-8000-000000000005";
@@ -133,4 +134,37 @@ it("sends invalid_target only after the exact registered callback passes databas
     state: "client state",
     iss: issuer,
   });
+});
+
+it("composes the consent render inside one focusable main landmark", async () => {
+  mocks.rpc.mockReturnValue({
+    single: async () => ({
+      data: {
+        authorization_id: "56800000-0000-4000-8000-000000000003",
+        client_name: "Release tools",
+        workspace_id: workspace,
+        workspace_name: "Northwind",
+        factories: [{ factory_id: readFactory, name: "Customer tools", scopes: ["sessions:read"] }],
+      },
+      error: null,
+    }),
+  });
+
+  const html = renderToStaticMarkup(<AuthorizeLayout>{await authorization()}</AuthorizeLayout>);
+  expect(html.match(/id="main-content"/g)).toHaveLength(1);
+  expect(html).toContain('tabindex="-1"');
+  expect(html).toContain("Authorize client");
+  expect(html).toContain("Release tools");
+  expect(html).toContain("Customer tools");
+});
+
+it("composes the unavailable render inside one focusable main landmark", async () => {
+  mocks.rpc.mockReturnValue({
+    single: async () => ({ data: null, error: { code: "42501" } }),
+  });
+
+  const html = renderToStaticMarkup(<AuthorizeLayout>{await authorization()}</AuthorizeLayout>);
+  expect(html.match(/id="main-content"/g)).toHaveLength(1);
+  expect(html).toContain('tabindex="-1"');
+  expect(html).toContain("This authorization request is unavailable.");
 });
