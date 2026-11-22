@@ -65,6 +65,7 @@ it.each([
   },
   { scenario: "scorer sampling fails", samplingFailure: true },
   { scenario: "evaluation maintenance fails", evaluationFailure: true },
+  { scenario: "routing canary alert evaluation fails", canaryAlertFailure: true },
   { scenario: "benchmark scheduling fails", benchmarkFailure: true },
   { scenario: "a judge dispatch fails", judgeFailure: true },
 ])(
@@ -77,6 +78,7 @@ it.each([
     projectionFailure,
     samplingFailure,
     evaluationFailure,
+    canaryAlertFailure,
     benchmarkFailure,
     judgeFailure,
   }) => {
@@ -133,6 +135,16 @@ it.each([
       }
       if (name === "maintain_factory_evaluation_queue") {
         return { abortSignal: () => ({ single: evaluations }) };
+      }
+      if (name === "process_factory_routing_canary_alerts") {
+        return {
+          abortSignal: () =>
+            Promise.resolve(
+              canaryAlertFailure
+                ? { data: null, error: { message: "Routing alert evaluation unavailable" } }
+                : { data: { evaluated: 2, created: 1 }, error: null },
+            ),
+        };
       }
       return {
         abortSignal: () =>
@@ -218,7 +230,10 @@ it.each([
       expect(sample).toHaveBeenCalledOnce();
       expect(rpc).toHaveBeenNthCalledWith(5, "maintain_factory_evaluation_queue", { p_limit: 25 });
       expect(evaluations).toHaveBeenCalledOnce();
-      expect(rpc).toHaveBeenNthCalledWith(6, "prune_factory_analytics_exports", { p_limit: 100 });
+      expect(rpc).toHaveBeenNthCalledWith(6, "process_factory_routing_canary_alerts", {
+        p_limit: 8,
+      });
+      expect(rpc).toHaveBeenNthCalledWith(7, "prune_factory_analytics_exports", { p_limit: 100 });
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );

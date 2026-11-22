@@ -2,11 +2,13 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
+import type { RoutingCanaryAlert } from "@/lib/model-routing/canary-alert";
 import type { RoutingCanaryReport } from "@/lib/model-routing/canary-report";
 
 import { RoutingCanaryComparison } from "./routing-canary-comparison";
+import { loadRoutingCanaryComparison } from "./routing-canary-data";
 
 const id = (value: number) => `10000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const first = "2026-11-20T10:00:00Z";
@@ -62,6 +64,49 @@ const report: RoutingCanaryReport = {
   candidate: { ...baseline, scorePasses: 5, scoreFailures: 1, meanSpendUsd: 0.25 },
 };
 
+const alert: RoutingCanaryAlert = {
+  id: id(10),
+  canaryId: report.canary.id,
+  activationNumber: report.canary.activationNumber,
+  ruleId: id(4),
+  evidenceDraftId: id(5),
+  evidence: {
+    version: 1,
+    experimentId: id(11),
+    candidateKey: "a".repeat(64),
+    suite: { id: id(12), revisionId: id(13), purpose: "holdout", name: "Invoices" },
+    scorerRevisionId: id(3),
+    scorerName: "Invoice quality",
+    taskClassName: "Invoice delivery",
+    definitionDigest: "b".repeat(64),
+    replayPolicyRevisionId: id(14),
+    replayPolicyDigest: "c".repeat(64),
+    ruleId: id(4),
+    capturedAt: first,
+    qualityPassRateBps: 8000,
+    resolvedTrials: 5,
+    measuredMeanCostUsd: "0.08",
+    constraints: {
+      qualityFloorBps: 8000,
+      maxMeanCostUsd: null,
+      maxLatencyMs: null,
+      minResolvedTrials: 5,
+      minConfidenceBps: null,
+    },
+    p95WallLatencyMs: 22000,
+    isRecommended: true,
+  },
+  thresholdRevision: 1,
+  metric: "spend",
+  thresholdBps: 2500,
+  baselineValue: 0.3,
+  candidateValue: 0.4,
+  baselineSupport: 5,
+  candidateSupport: 5,
+  observedAt: last,
+  report: { ...report, candidate: { ...report.candidate, meanSpendUsd: 0.4 } },
+};
+
 afterEach(cleanup);
 
 it("shows assigned arms, support, retry-inclusive usage and links to exact revisions", () => {
@@ -83,11 +128,11 @@ it("shows assigned arms, support, retry-inclusive usage and links to exact revis
   expect(region.getByText("Comparable")).toBeVisible();
   expect(region.getByRole("link", { name: "Activation #7" })).toHaveAttribute(
     "href",
-    `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.baselineRevisionId}`,
+    `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.baselineRevisionId}&activation=7#revision-history`,
   );
   expect(region.getByRole("link", { name: "Activation #8" })).toHaveAttribute(
     "href",
-    `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.candidateRevisionId}`,
+    `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.candidateRevisionId}&activation=8#revision-history`,
   );
   const attempts = within(region.getByRole("row", { name: /Run attempts/ }));
   expect(attempts.getAllByText("14")).toHaveLength(2);
@@ -161,4 +206,85 @@ it("keeps a missing exact comparison unavailable", () => {
   );
   expect(screen.getByText("This canary comparison is unavailable.")).toBeVisible();
   expect(screen.queryByRole("table")).toBeNull();
+});
+
+it("links the live report to the exact retained alert while keeping live metrics", () => {
+  const href = `/w/acme/analytics?factory=${id(9)}&routingCanary=${alert.canaryId}&routingAlert=${alert.id}#routing-canary`;
+  render(
+    <RoutingCanaryComparison
+      factoryId={id(9)}
+      latestAlertHref={href}
+      state={{ kind: "ready", report, latestAlert: alert }}
+      workspaceSlug="acme"
+    />,
+  );
+  expect(screen.getByRole("link", { name: "View retained alert evidence" })).toHaveAttribute(
+    "href",
+    href,
+  );
+  expect(screen.getByText("$0.25")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Retained routing alert evidence" })).toBeNull();
+});
+
+it.each([true, false])(
+  "renders retained spending, scorer and benchmark evidence with rollback access %s",
+  (canManageFactory) => {
+    render(
+      <RoutingCanaryComparison
+        canManageFactory={canManageFactory}
+        factoryId={id(9)}
+        state={{ kind: "retained", alert }}
+        workspaceSlug="acme"
+      />,
+    );
+    const evidence = within(
+      screen.getByRole("region", { name: "Retained routing alert evidence" }),
+    );
+    expect(evidence.getByText("At least 25% higher")).toBeVisible();
+    expect(evidence.getByText("$0.40 · 5 supporting sessions")).toBeVisible();
+    expect(evidence.getByText(alert.ruleId)).toBeVisible();
+    expect(evidence.getByText(alert.evidence.scorerRevisionId)).toBeVisible();
+    expect(
+      evidence.getByRole("link", { name: "Open exact benchmark configuration" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining(`#frontier-configuration-${alert.evidence.candidateKey}`),
+    );
+    expect(evidence.getByRole("link", { name: "Open frozen suite revision" })).toHaveAttribute(
+      "href",
+      expect.stringContaining(`revision=${alert.evidence.suite.revisionId}`),
+    );
+    const rollback = evidence.queryByRole("link", { name: "Review rollback" });
+    if (canManageFactory) {
+      expect(rollback).toHaveAttribute(
+        "href",
+        `/w/acme/settings/factory-definition?factory=${id(9)}&revision=${report.canary.baselineRevisionId}&activation=7#revision-history`,
+      );
+    } else {
+      expect(rollback).toBeNull();
+    }
+  },
+);
+
+it("loads only the exact retained alert and refuses a mismatched receipt", async () => {
+  const rpc = vi.fn().mockResolvedValue({ data: alert, error: null });
+  const scope = {
+    workspaceId: id(20),
+    factoryId: id(9),
+    canaryId: alert.canaryId,
+    alertId: alert.id,
+  };
+  await expect(loadRoutingCanaryComparison({ rpc }, scope)).resolves.toEqual({
+    kind: "retained",
+    alert,
+  });
+  expect(rpc).toHaveBeenCalledExactlyOnceWith("get_factory_routing_canary_alert", {
+    p_workspace_id: scope.workspaceId,
+    p_factory_id: scope.factoryId,
+    p_canary_id: scope.canaryId,
+    p_alert_id: scope.alertId,
+  });
+  await expect(
+    loadRoutingCanaryComparison({ rpc }, { ...scope, canaryId: id(22) }),
+  ).resolves.toEqual({ kind: "unavailable", alertRequested: true });
 });

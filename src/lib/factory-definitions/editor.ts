@@ -2,8 +2,10 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { loadFactoryRoutingCanaryAlert } from "@/lib/model-routing/canary-alert-storage";
 import { loadFactoryRoutingCanary } from "@/lib/model-routing/canary-storage";
 import { routingDraftEvidenceSchema } from "@/lib/model-routing/draft-contracts";
+import { routingQualificationStatusSchema } from "@/lib/model-routing/qualification-status";
 import { selectReviewedFactoryRoutingActivation } from "@/lib/model-routing/reviewed-activation";
 import { loadWorkspaceSandboxOverview } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
@@ -122,16 +124,74 @@ async function readEditorDocument(
   return data ? editorDocument(client, { workspaceId, factoryId }, data, target.kind) : null;
 }
 
+async function withRoutingQualification(
+  client: Client,
+  workspaceId: string,
+  factoryId: string,
+  document: FactoryEditorDocument,
+  activationNumber?: number,
+): Promise<FactoryEditorDocument> {
+  const target =
+    document.kind === "draft"
+      ? { p_draft_id: document.id }
+      : activationNumber
+        ? { p_activation_number: activationNumber }
+        : null;
+  if (!document.bundle.modelRouting || !target) return document;
+
+  const { data, error } = await client.rpc("get_factory_routing_qualification_status", {
+    p_workspace_id: workspaceId,
+    p_factory_id: factoryId,
+    ...target,
+  });
+  if (error) throw error;
+  if (!data) return document;
+  const routingQualification = routingQualificationStatusSchema.parse(data);
+  const matchesTarget =
+    document.kind === "draft"
+      ? routingQualification.draftId === document.id
+      : routingQualification.revisionId === document.id &&
+        routingQualification.activationNumber === activationNumber;
+  if (!matchesTarget || routingQualification.definitionDigest !== document.digest) {
+    throw new Error("The routing qualification describes a different definition.");
+  }
+  return { ...document, routingQualification };
+}
+
 export async function loadFactoryEditorDocument(
   client: Client,
   workspaceId: string,
   target: FactoryDefinitionTarget,
   factoryId?: string,
+  activationNumber?: number,
 ): Promise<FactoryEditorDocument | null> {
   const { data: factory, error } = await selectFactory(client, workspaceId, factoryId);
   if (error) throw error;
   if (!factory) return null;
-  return readEditorDocument(client, workspaceId, factory.id, target);
+  const document = await readEditorDocument(client, workspaceId, factory.id, target);
+  if (!document) return null;
+  if (target.kind === "draft") {
+    return withRoutingQualification(client, workspaceId, factory.id, document);
+  }
+
+  const activations = client
+    .from("factory_definition_activations")
+    .select("activation_number")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factory.id)
+    .eq("revision_id", target.id);
+  const { data, error: activationError } = await (activationNumber
+    ? activations.eq("activation_number", activationNumber).maybeSingle()
+    : activations.order("activation_number", { ascending: false }).limit(1).maybeSingle());
+  if (activationError) throw activationError;
+  if (!data) return activationNumber ? null : document;
+  return withRoutingQualification(
+    client,
+    workspaceId,
+    factory.id,
+    { ...document, activationNumber: data.activation_number },
+    data.activation_number,
+  );
 }
 
 async function loadEditorBaseline(
@@ -186,6 +246,7 @@ export async function loadFactoryEditorSnapshot(
   if (activation && !published) return null;
   let routingMode: FactoryEditorSnapshot["routingMode"];
   let routingCanary: FactoryEditorSnapshot["routingCanary"];
+  let routingCanaryAlertId: FactoryEditorSnapshot["routingCanaryAlertId"];
   if (published?.bundle.modelRouting) {
     const scope = { workspaceId, factoryId: factory.id, activationNumber };
     const [review, canary] = await Promise.all([
@@ -195,13 +256,28 @@ export async function loadFactoryEditorSnapshot(
     if (review.error) throw review.error;
     routingMode = review.data ? "active" : "shadow";
     routingCanary = canary ?? undefined;
+    if (canary) {
+      const alert = await loadFactoryRoutingCanaryAlert(client, {
+        workspaceId,
+        factoryId: factory.id,
+        canaryId: canary.id,
+      });
+      routingCanaryAlertId = alert?.id;
+    }
   }
+  const [publishedDefinition, draftDefinition] = await Promise.all([
+    published
+      ? withRoutingQualification(client, workspaceId, factory.id, published, activationNumber)
+      : null,
+    workingDraft ? withRoutingQualification(client, workspaceId, factory.id, workingDraft) : null,
+  ]);
   return {
     activationNumber,
     ...(routingMode ? { routingMode } : {}),
     ...(routingCanary ? { routingCanary } : {}),
-    published,
-    draft: workingDraft,
+    ...(routingCanaryAlertId ? { routingCanaryAlertId } : {}),
+    published: publishedDefinition,
+    draft: draftDefinition,
     baseline,
     readySandboxProviders: sandbox.enabledProviders.filter(
       (provider) => sandbox.connections[provider]?.status === "connected",

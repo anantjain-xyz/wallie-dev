@@ -4324,6 +4324,91 @@ export type Database = {
           },
         ]
       }
+      factory_routing_canary_alerts: {
+        Row: {
+          activation_number: number
+          baseline_support: number
+          baseline_value: number
+          canary_id: string
+          candidate_support: number
+          candidate_value: number
+          evidence: Json
+          evidence_draft_id: string
+          factory_id: string
+          id: string
+          metric: string
+          observed_at: string
+          report: Json
+          rule_id: string
+          threshold_bps: number
+          threshold_revision: number
+          workspace_id: string
+        }
+        Insert: {
+          activation_number: number
+          baseline_support: number
+          baseline_value: number
+          canary_id: string
+          candidate_support: number
+          candidate_value: number
+          evidence: Json
+          evidence_draft_id: string
+          factory_id: string
+          id?: string
+          metric: string
+          observed_at: string
+          report: Json
+          rule_id: string
+          threshold_bps: number
+          threshold_revision: number
+          workspace_id: string
+        }
+        Update: {
+          activation_number?: number
+          baseline_support?: number
+          baseline_value?: number
+          canary_id?: string
+          candidate_support?: number
+          candidate_value?: number
+          evidence?: Json
+          evidence_draft_id?: string
+          factory_id?: string
+          id?: string
+          metric?: string
+          observed_at?: string
+          report?: Json
+          rule_id?: string
+          threshold_bps?: number
+          threshold_revision?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_routing_canary_alerts_workspace_id_factory_id_cana_fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "canary_id",
+              "activation_number",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_routing_canaries"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "id",
+              "activation_number",
+            ]
+          },
+          {
+            foreignKeyName: "factory_routing_canary_alerts_workspace_id_factory_id_evid_fkey"
+            columns: ["workspace_id", "factory_id", "evidence_draft_id"]
+            isOneToOne: false
+            referencedRelation: "factory_routing_draft_evidence"
+            referencedColumns: ["workspace_id", "factory_id", "draft_id"]
+          },
+        ]
+      }
       factory_routing_draft_evidence: {
         Row: {
           candidate_key: string
@@ -4381,6 +4466,65 @@ export type Database = {
               "factory_id",
               "experiment_id",
               "candidate_key",
+            ]
+          },
+        ]
+      }
+      factory_routing_rollbacks: {
+        Row: {
+          activation_number: number
+          actor_member_id: string
+          created_at: string
+          factory_id: string
+          previous_activation_number: number
+          restored_mode: string
+          target_activation_number: number
+          target_revision_id: string
+          workspace_id: string
+        }
+        Insert: {
+          activation_number: number
+          actor_member_id: string
+          created_at?: string
+          factory_id: string
+          previous_activation_number: number
+          restored_mode: string
+          target_activation_number: number
+          target_revision_id: string
+          workspace_id: string
+        }
+        Update: {
+          activation_number?: number
+          actor_member_id?: string
+          created_at?: string
+          factory_id?: string
+          previous_activation_number?: number
+          restored_mode?: string
+          target_activation_number?: number
+          target_revision_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_routing_rollbacks_workspace_id_factory_id_activati_fkey"
+            columns: ["workspace_id", "factory_id", "activation_number"]
+            isOneToOne: true
+            referencedRelation: "factory_definition_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
+            ]
+          },
+          {
+            foreignKeyName: "factory_routing_rollbacks_workspace_id_factory_id_target_a_fkey"
+            columns: ["workspace_id", "factory_id", "target_activation_number"]
+            isOneToOne: false
+            referencedRelation: "factory_definition_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
             ]
           },
         ]
@@ -12625,12 +12769,30 @@ export type Database = {
         }
         Returns: Json
       }
+      get_factory_routing_canary_alert: {
+        Args: {
+          p_alert_id?: string
+          p_canary_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_routing_canary_report: {
         Args: {
           p_canary_id?: string
           p_factory_id: string
           p_from?: string
           p_to?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_factory_routing_qualification_status: {
+        Args: {
+          p_activation_number?: number
+          p_draft_id?: string
+          p_factory_id: string
           p_workspace_id: string
         }
         Returns: Json
@@ -13772,6 +13934,10 @@ export type Database = {
         Returns: Json
       }
       process_factory_flow_projection: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      process_factory_routing_canary_alerts: {
         Args: { p_limit?: number }
         Returns: Json
       }
@@ -15194,6 +15360,34 @@ export type Database = {
           p_factory_id: string
           p_required_probes: string[]
           p_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          activation_number: number
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          previous_activation_number: number | null
+          revision_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_definition_activations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rollback_factory_routing_activation: {
+        Args: {
+          p_actor_user_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_revision_id: string
+          p_target_activation_number: number
           p_workspace_id: string
         }
         Returns: {

@@ -83,6 +83,7 @@ const baseProps = {
   activeActivationNumber: 2,
   activeRevisionId: currentId,
   selectedRevisionId: olderId,
+  selectedActivationNumber: 1,
   selectedDocument: savedRevision,
   nextBeforeActivationNumber: null,
   busy: false,
@@ -154,6 +155,27 @@ it("keeps rollback errors in the confirmation dialog", async () => {
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Reload before retrying.");
   expect(screen.getByRole("alertdialog")).toBeVisible();
+});
+
+it("closes the rollback fence when the same revision is selected at another activation", async () => {
+  const onRollback = vi.fn(async () => undefined);
+  const later = { ...activations[1]!, id: sourceDraftId, activationNumber: 3 };
+  const props = {
+    ...baseProps,
+    activations: [later, ...activations],
+    activeActivationNumber: 4,
+    onRollback,
+  };
+  const { rerender } = render(<FactoryRevisionHistory {...props} />, {
+    wrapper: PortalRootProvider,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Roll back to this revision" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Activate this revision?" });
+  expect(within(dialog).getByText("#1")).toBeVisible();
+
+  rerender(<FactoryRevisionHistory {...props} selectedActivationNumber={3} />);
+  expect(within(dialog).getByRole("button", { name: "Activate revision" })).toBeDisabled();
+  expect(onRollback).not.toHaveBeenCalled();
 });
 
 it("disables confirmation when a newer read withdraws activation eligibility", async () => {

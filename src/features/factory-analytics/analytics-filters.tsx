@@ -21,6 +21,9 @@ export function AnalyticsFilters({
         {query.routingCanaryId ? (
           <input name="routingCanary" type="hidden" value={query.routingCanaryId} />
         ) : null}
+        {query.routingAlertId ? (
+          <input name="routingAlert" type="hidden" value={query.routingAlertId} />
+        ) : null}
         <label className="type-label flex flex-col gap-1.5">
           From date
           <input

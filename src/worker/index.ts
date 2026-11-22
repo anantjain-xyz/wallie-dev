@@ -21,6 +21,7 @@ import {
   pruneFactoryAnalyticsExports,
 } from "@/lib/factory-outcomes/maintenance";
 import { processFactoryScorerSampling } from "@/lib/factory-scorers/sampling-maintenance";
+import { processFactoryRoutingCanaryAlerts } from "@/lib/model-routing/canary-alert-maintenance";
 import { drainFactoryEventDeliveries } from "@/lib/factory-event-subscriptions/dispatch";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import {
@@ -207,6 +208,7 @@ async function main() {
     let samplingFactoryScorers = false;
     let maintainingEvaluationQueue = false;
     let evaluatingFactoryJudges = false;
+    let checkingRoutingCanaries = false;
     let reconcilingBenchmarkSchedules = false;
     let reconcilingBenchmarkEvaluations = false;
     maintenanceTimers.push(
@@ -258,6 +260,16 @@ async function main() {
               await drainFactoryJudges(admin, "node");
             } finally {
               evaluatingFactoryJudges = false;
+            }
+          });
+        }
+        if (!checkingRoutingCanaries) {
+          checkingRoutingCanaries = true;
+          timerTasks.run("routing canary alerts", async () => {
+            try {
+              await processFactoryRoutingCanaryAlerts(admin);
+            } finally {
+              checkingRoutingCanaries = false;
             }
           });
         }

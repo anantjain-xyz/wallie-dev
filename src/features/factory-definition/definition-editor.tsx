@@ -25,6 +25,7 @@ import {
 } from "@/features/factory-definition/reviewed-routing-activation";
 import { RoutingDraftEvidencePanel } from "@/features/factory-definition/routing-draft-evidence";
 import { FactoryRoutingPreview } from "@/features/factory-definition/routing-preview";
+import { RoutingQualificationNotice } from "@/features/factory-definition/routing-qualification-notice";
 import { FactoryScorerBindings } from "@/features/factory-definition/scorer-bindings";
 import { FactorySemanticDiff } from "@/features/factory-definition/semantic-diff";
 import { ServiceCredentialsPanel } from "@/features/factory-definition/service-credentials-panel";
@@ -40,6 +41,7 @@ import {
   factoryEditorHistoryResponseSchema,
   factoryEditorPreviewResponseSchema,
   factoryEditorSnapshotResponseSchema,
+  type FactoryEditorActivation,
   type FactoryEditorContent,
   type FactoryEditorDocument,
   type FactoryEditorSnapshot,
@@ -59,7 +61,9 @@ import {
 } from "@/lib/routes";
 
 type AgentSelection = { agentId: string; promptRevisionId: string };
-type Selection = ({ revision: string } | { draft: string }) & { test?: string };
+type Selection = ({ revision: string; activation?: number } | { draft: string }) & {
+  test?: string;
+};
 type Input =
   | { kind: "structured"; value: SerialFactoryDefinition }
   | { kind: "json"; text: string };
@@ -167,6 +171,9 @@ function readDefinition(endpoint: string, selection: Selection, signal?: AbortSi
   const query = new URLSearchParams(
     "revision" in selection ? [["revisionId", selection.revision]] : [["draftId", selection.draft]],
   );
+  if ("revision" in selection && selection.activation) {
+    query.set("activationNumber", String(selection.activation));
+  }
   return fetchFactoryEditor(`${endpoint}?${query}`, factoryEditorDocumentResponseSchema, {
     signal,
   }).then(({ document }) => document);
@@ -223,7 +230,7 @@ export function FactoryDefinitionEditor({
   );
   const inFlight = useRef(false);
   const reloadButtonRef = useRef<HTMLButtonElement>(null);
-  const scrolledReceiptUrl = useRef<string | null>(null);
+  const scrolledSelectionUrl = useRef<string | null>(null);
   const dirty = edit ? editChanged(edit) : false;
   const stale =
     edit !== null &&
@@ -238,17 +245,23 @@ export function FactoryDefinitionEditor({
       ? "Reload the definition before testing."
       : null;
   const selectedRevision = selected?.kind === "revision" ? selected.id : null;
+  const selectedActivationNumber =
+    selected?.activationNumber ??
+    history?.activations.find(({ revisionId }) => revisionId === selectedRevision)
+      ?.activationNumber;
   const draft = snapshot?.draft ?? null;
   const routingDraftEvidence = (selected ?? draft)?.routingDraftEvidence;
   const selectedMatchesDraft =
     draft !== null && selected?.kind === "draft" && selected.id === draft.id;
   const historyCandidate = selectedMatchesDraft ? null : selected;
   const isRollbackCandidate = Boolean(
-    selectedRevision && snapshot?.published && selectedRevision !== snapshot.published.id,
+    selectedActivationNumber && snapshot?.published && selectedRevision !== snapshot.published.id,
   );
   const activationNumber = snapshot?.activationNumber ?? 0;
   const requestedDraft = selection && "draft" in selection ? selection.draft : null;
   const requestedRevision = selection && "revision" in selection ? selection.revision : null;
+  const requestedActivation =
+    selection && "revision" in selection ? selection.activation : undefined;
   const draftTests = useCandidateTests({
     api,
     target: draft,
@@ -294,12 +307,17 @@ export function FactoryDefinitionEditor({
 
   useEffect(() => {
     const { hash, href } = window.location;
-    if (!anchorReady || hash !== "#candidate-tests" || scrolledReceiptUrl.current === href) return;
-    const anchor = document.getElementById("candidate-tests");
+    const candidateAnchor = anchorReady && hash === "#candidate-tests";
+    const rollbackAnchor =
+      hash === "#revision-history" &&
+      requestedActivation !== undefined &&
+      requestedActivation === selected?.activationNumber;
+    if ((!candidateAnchor && !rollbackAnchor) || scrolledSelectionUrl.current === href) return;
+    const anchor = document.getElementById(hash.slice(1));
     if (!anchor) return;
     anchor.scrollIntoView?.({ block: "start" });
-    scrolledReceiptUrl.current = href;
-  }, [anchorReady, requestedDraft, requestedRevision, selection?.test]);
+    scrolledSelectionUrl.current = href;
+  }, [anchorReady, requestedActivation, selected?.activationNumber, selection?.test]);
 
   const loadWorkspace = useCallback(
     async (signal?: AbortSignal) => {
@@ -332,7 +350,7 @@ export function FactoryDefinitionEditor({
           ),
         );
         const target = requestedRevision
-          ? { revision: requestedRevision }
+          ? { revision: requestedRevision, activation: requestedActivation }
           : requestedDraft
             ? { draft: requestedDraft }
             : null;
@@ -353,6 +371,7 @@ export function FactoryDefinitionEditor({
     initialPromptRevisionId,
     initialScorerRevisionId,
     loadWorkspace,
+    requestedActivation,
     requestedDraft,
     requestedRevision,
   ]);
@@ -387,9 +406,18 @@ export function FactoryDefinitionEditor({
 
   async function reload() {
     await run("reload", async () => {
-      const current = await loadWorkspace();
+      const currentTarget = selected
+        ? selected.kind === "draft"
+          ? { draft: selected.id }
+          : { revision: selected.id, activation: selectedActivationNumber }
+        : null;
+      const [current, refreshedSelection] = await Promise.all([
+        loadWorkspace(),
+        currentTarget ? readDefinition(editorApi, currentTarget) : null,
+      ]);
       setSnapshot(current.snapshot);
       setHistory(current.history);
+      if (refreshedSelection) setSelected(refreshedSelection);
       setPreview(null);
       setConflict(false);
       if (!dirty) setEdit(editFrom(current.snapshot, edit?.input.kind));
@@ -485,6 +513,7 @@ export function FactoryDefinitionEditor({
     if (
       !draft?.source.modelRouting ||
       !draft.routingDraftEvidence ||
+      draft.routingQualification?.status === "stale" ||
       locked ||
       dirty ||
       !draftTests.eligible ||
@@ -521,9 +550,13 @@ export function FactoryDefinitionEditor({
     }
   }
 
-  async function selectRevision(revision: string) {
+  async function selectRevision({
+    revisionId,
+    activationNumber: activation,
+  }: FactoryEditorActivation) {
     await run("select", async () => {
-      setSelected(await readDefinition(editorApi, { revision }));
+      const document = await readDefinition(editorApi, { revision: revisionId, activation });
+      setSelected({ ...document, activationNumber: activation });
       setPreview(null);
     });
   }
@@ -548,12 +581,17 @@ export function FactoryDefinitionEditor({
     });
   }
 
-  async function rollback(revisionId: string, expectedActivationNumber: number) {
+  async function rollback(
+    revisionId: string,
+    expectedActivationNumber: number,
+    targetActivationNumber: number,
+  ) {
     if (
       dirty ||
       locked ||
       !revisionTests.eligible ||
       selectedRevision !== revisionId ||
+      selectedActivationNumber !== targetActivationNumber ||
       expectedActivationNumber !== activationNumber
     ) {
       throw new Error("Review the current test result before activating this revision.");
@@ -562,7 +600,12 @@ export function FactoryDefinitionEditor({
       await fetchFactoryEditor(
         api,
         activationSavedSchema,
-        factoryEditorPost({ action: "rollback", expectedActivationNumber, revisionId }),
+        factoryEditorPost({
+          action: "rollback",
+          expectedActivationNumber,
+          revisionId,
+          targetActivationNumber,
+        }),
       );
       await refreshAfterActivation();
       setFeedback({ kind: "success", text: "Selected revision activated for new sessions." });
@@ -575,7 +618,9 @@ export function FactoryDefinitionEditor({
 
   function receiptHref(document: FactoryEditorDocument, test: string) {
     const query =
-      document.kind === "draft" ? { draft: document.id, test } : { revision: document.id, test };
+      document.kind === "draft"
+        ? { draft: document.id, test }
+        : { revision: document.id, activation: document.activationNumber, test };
     return `${workspaceFactoryDefinitionPath(workspaceSlug, { ...query, factory: factoryId })}#candidate-tests`;
   }
 
@@ -707,6 +752,7 @@ export function FactoryDefinitionEditor({
                           href={workspaceFactoryDefinitionPath(workspaceSlug, {
                             factory: factoryId,
                             revision: snapshot.published.id,
+                            activation: snapshot.activationNumber,
                           })}
                           target="_blank"
                           rel="noreferrer"
@@ -731,6 +777,19 @@ export function FactoryDefinitionEditor({
                         >
                           View canary outcomes
                         </Link>
+                        {snapshot.routingCanaryAlertId ? (
+                          <Link
+                            className="block text-accent underline underline-offset-2"
+                            href={`${workspaceAnalyticsPath(workspaceSlug, {
+                              factory: history?.factoryId ?? factoryId,
+                              routingCanary: snapshot.routingCanary.id,
+                              routingAlert: snapshot.routingCanaryAlertId,
+                            })}#routing-canary`}
+                            prefetch={false}
+                          >
+                            Review canary degradation alert
+                          </Link>
+                        ) : null}
                       </dd>
                     ) : snapshot.routingMode === "active" ? (
                       <dd className="mt-1 text-success">Routing active for new sessions</dd>
@@ -758,6 +817,10 @@ export function FactoryDefinitionEditor({
                     </dd>
                   </div>
                 </dl>
+                <RoutingQualificationNotice
+                  status={snapshot.published?.routingQualification}
+                  subject="Published"
+                />
                 {edit ? (
                   <>
                     <div className="flex flex-wrap items-center justify-between gap-2 border-y border-border py-3">
@@ -869,6 +932,7 @@ export function FactoryDefinitionEditor({
                             !locked &&
                             !dirty &&
                             draftTests.eligible &&
+                            draft.routingQualification?.status !== "stale" &&
                             Boolean(draft.routingDraftEvidence)
                           }
                           factoryId={history?.factoryId ?? factoryId}
@@ -884,7 +948,13 @@ export function FactoryDefinitionEditor({
                         />
                       ) : null}
                     </div>
-                    {draft?.source.modelRouting && !draft.routingDraftEvidence ? (
+                    <RoutingQualificationNotice
+                      status={draft?.routingQualification}
+                      subject="Draft"
+                    />
+                    {draft?.source.modelRouting &&
+                    !draft.routingDraftEvidence &&
+                    draft.routingQualification?.status !== "stale" ? (
                       <p className="type-secondary text-muted">
                         Apply a qualified benchmark finding before activating routing.
                       </p>
@@ -1043,6 +1113,7 @@ export function FactoryDefinitionEditor({
             activeActivationNumber={snapshot.activationNumber}
             activeRevisionId={snapshot.published?.id ?? null}
             selectedRevisionId={selectedRevision}
+            selectedActivationNumber={selectedActivationNumber}
             selectedDocument={selected}
             nextBeforeActivationNumber={history?.nextBeforeActivationNumber ?? null}
             busy={busy}
@@ -1075,11 +1146,15 @@ export function FactoryDefinitionEditor({
                 </div>
               ) : null
             }
-            onSelect={(id) => void selectRevision(id)}
+            onSelect={(activation) => void selectRevision(activation)}
             onLoadMore={() => void loadMore()}
             onRollback={rollback}
-            revisionHref={(revision) =>
-              workspaceFactoryDefinitionPath(workspaceSlug, { revision, factory: factoryId })
+            revisionHref={(revision, activation) =>
+              workspaceFactoryDefinitionPath(workspaceSlug, {
+                revision,
+                activation,
+                factory: factoryId,
+              })
             }
             sourceDraftHref={(draft) =>
               workspaceFactoryDefinitionPath(workspaceSlug, { draft, factory: factoryId })

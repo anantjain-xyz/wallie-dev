@@ -64,3 +64,10 @@ The save transaction retains an immutable receipt with the draft and the exact e
 - Each new admission records its assignment before queueing. The bucket is deterministic for the canary, task class, and session. Worker restarts and retries reuse that assignment.
 - An authorized one-task override keeps the assigned cohort and pins the explicitly selected reviewed route before queueing. The selected route must pass the usual qualification and credential checks.
 - Analytics compares the assigned cohorts using production attempts, including failed attempts and retries. The report shows missing measurements and explicit overrides. A comparison remains inconclusive when either arm lacks enough comparable evidence.
+
+## Qualification drift and rollback
+
+- A reviewed route is qualified against its exact model, harness, worker runtime, sandbox connection, toolchain, benchmark suite, and scorer revision. Factory Definition shows which candidate or reviewed canary baseline needs a new comparison. Activation rechecks the evidence against current qualification and authority.
+- The worker evaluates supported canary metrics independently. Version 1 alerts on a pass-rate drop of at least 10 percentage points, or an increase of at least 25% in mean spend or attempt wall time per closed session. Each metric requires the canary's minimum support in both arms and comparable evidence with verified execution. Wallie retains the first breach for each metric with its sample counts, threshold, report, and benchmark receipt.
+- Open a degradation alert to review the retained evidence and the exact baseline activation. An operator can restore a compatible prior activation after a passing smoke test for the current head. Rollback appends an activation for new admissions and retains the original decisions, cohorts, and comparisons.
+- Factory Definition requires a different revision for rollback. This guard also applies when multiple legacy activations share a revision.

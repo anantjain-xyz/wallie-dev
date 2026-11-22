@@ -435,6 +435,40 @@ describe("factory definition commands", () => {
       }),
     ).resolves.toEqual({ ok: false, status: 409, error: "Reload before retrying." });
   });
+
+  it("routes an exact historical activation through the reviewed rollback guard", async () => {
+    const { admin } = fixture(({ url, body }) => {
+      if (url.pathname.endsWith("/factory_definition_revisions")) return Response.json([stored]);
+      expect(url.pathname).toMatch(/\/rpc\/rollback_factory_routing_activation$/);
+      expect(body).toEqual({
+        p_workspace_id: workspaceId,
+        p_factory_id: factoryId,
+        p_actor_user_id: actorUserId,
+        p_expected_activation_number: 4,
+        p_target_activation_number: 2,
+        p_revision_id: revisionId,
+        p_enabled_sandbox_providers: ["vercel"],
+        p_required_probes: ["git", "codexExternalSandbox"],
+      });
+      return Response.json(
+        { code: "PT409", message: "The rollback target changed." },
+        { status: 409 },
+      );
+    });
+    await expect(
+      mutateFactoryDefinition({
+        admin,
+        workspaceId,
+        actorUserId,
+        command: {
+          action: "rollback",
+          expectedActivationNumber: 4,
+          revisionId,
+          targetActivationNumber: 2,
+        },
+      }),
+    ).resolves.toEqual({ ok: false, status: 409, error: "The rollback target changed." });
+  });
 });
 
 describe("stored factory definition identity", () => {

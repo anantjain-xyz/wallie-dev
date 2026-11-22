@@ -6,6 +6,7 @@ import { useId, useRef, useState, type ReactNode } from "react";
 import { formatUtcTimestamp } from "@/components/shared/time-format";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Status } from "@/components/ui/status";
+import { RoutingQualificationNotice } from "@/features/factory-definition/routing-qualification-notice";
 import type {
   FactoryEditorActivation,
   FactoryEditorDocument,
@@ -17,23 +18,29 @@ type RevisionHistoryProps = {
   activeActivationNumber: number;
   activeRevisionId: string | null;
   selectedRevisionId: string | null;
+  selectedActivationNumber?: number;
   selectedDocument: FactoryEditorDocument | null;
   nextBeforeActivationNumber: number | null;
   busy: boolean;
   canManage: boolean;
   activationEligible: boolean;
   candidateTests?: ReactNode;
-  onSelect: (revisionId: string) => void;
+  onSelect: (activation: FactoryEditorActivation) => void;
   onLoadMore: () => void;
-  onRollback: (revisionId: string, expectedActivationNumber: number) => Promise<void> | void;
-  revisionHref: (revisionId: string) => string;
+  onRollback: (
+    revisionId: string,
+    expectedActivationNumber: number,
+    targetActivationNumber: number,
+  ) => Promise<void> | void;
+  revisionHref: (revisionId: string, activationNumber?: number) => string;
   sourceDraftHref: (draftId: string) => string;
 };
 
 type RollbackConfirmation = {
   revisionId: string;
   revisionDigest: string;
-  activationNumber: number;
+  expectedActivationNumber: number;
+  targetActivationNumber: number;
 };
 
 const sourceLinkClass =
@@ -44,6 +51,7 @@ export function FactoryRevisionHistory({
   activeActivationNumber,
   activeRevisionId,
   selectedRevisionId,
+  selectedActivationNumber,
   selectedDocument,
   nextBeforeActivationNumber,
   busy,
@@ -62,20 +70,24 @@ export function FactoryRevisionHistory({
   const [rollbackPending, setRollbackPending] = useState(false);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
 
-  const selectedActivationId = activations.find(
-    ({ revisionId }) => revisionId === selectedRevisionId,
-  )?.id;
   const selectedIsRevision = selectedDocument?.kind === "revision";
-  const selectedIsActive = selectedIsRevision && selectedDocument.id === activeRevisionId;
+  const selectedIsActive =
+    selectedIsRevision && selectedActivationNumber === activeActivationNumber;
+  const targetActivationNumber = selectedIsRevision ? selectedActivationNumber : undefined;
   const allowRollback =
-    canManage && selectedIsRevision && !selectedIsActive && activeActivationNumber > 0;
+    canManage &&
+    selectedIsRevision &&
+    selectedDocument.id !== activeRevisionId &&
+    targetActivationNumber !== undefined &&
+    targetActivationNumber < activeActivationNumber;
   const controlsDisabled = busy || rollbackPending;
   const canConfirm =
     allowRollback &&
     activationEligible &&
     confirmation?.revisionId === selectedDocument.id &&
     confirmation.revisionDigest === selectedDocument.digest &&
-    confirmation.activationNumber === activeActivationNumber;
+    confirmation.expectedActivationNumber === activeActivationNumber &&
+    confirmation.targetActivationNumber === targetActivationNumber;
 
   async function confirmRollback() {
     if (!confirmation || !canConfirm || controlsDisabled) return;
@@ -83,7 +95,11 @@ export function FactoryRevisionHistory({
     setRollbackError(null);
     setRollbackPending(true);
     try {
-      await onRollback(confirmation.revisionId, confirmation.activationNumber);
+      await onRollback(
+        confirmation.revisionId,
+        confirmation.expectedActivationNumber,
+        confirmation.targetActivationNumber,
+      );
       setConfirmation(null);
     } catch (cause) {
       setRollbackError(
@@ -95,7 +111,11 @@ export function FactoryRevisionHistory({
   }
 
   return (
-    <section aria-labelledby={headingId} className="min-w-0 space-y-4">
+    <section
+      aria-labelledby={headingId}
+      className="min-w-0 scroll-mt-8 space-y-4"
+      id="revision-history"
+    >
       <h2 className="type-section-title" id={headingId} ref={headingRef} tabIndex={-1}>
         Revision history
       </h2>
@@ -103,7 +123,9 @@ export function FactoryRevisionHistory({
         <ol className="divide-y divide-border rounded-[6px] border border-border bg-surface">
           {activations.map((activation) => {
             const isCurrent = activation.activationNumber === activeActivationNumber;
-            const isSelected = activation.id === selectedActivationId;
+            const isSelected =
+              activation.activationNumber === targetActivationNumber &&
+              activation.revisionId === selectedRevisionId;
             const timestamp = formatUtcTimestamp(activation.createdAt);
             return (
               <li key={activation.id}>
@@ -115,7 +137,7 @@ export function FactoryRevisionHistory({
                     isSelected && "bg-control-muted",
                   )}
                   disabled={controlsDisabled}
-                  onClick={() => onSelect(activation.revisionId)}
+                  onClick={() => onSelect(activation)}
                   type="button"
                 >
                   <span className="min-w-0">
@@ -156,6 +178,12 @@ export function FactoryRevisionHistory({
             {selectedIsActive && <Status compact label="Current" value="approved" />}
           </div>
           <dl className="space-y-2 text-xs">
+            {targetActivationNumber !== undefined ? (
+              <div>
+                <dt className="text-muted">Activation</dt>
+                <dd className="font-mono text-foreground">#{targetActivationNumber}</dd>
+              </div>
+            ) : null}
             <div>
               <dt className="text-muted">{selectedIsRevision ? "Revision ID" : "Draft ID"}</dt>
               <dd className="font-mono text-foreground [overflow-wrap:anywhere]">
@@ -182,7 +210,7 @@ export function FactoryRevisionHistory({
               className={sourceLinkClass}
               href={
                 selectedIsRevision
-                  ? revisionHref(selectedDocument.id)
+                  ? revisionHref(selectedDocument.id, targetActivationNumber)
                   : sourceDraftHref(selectedDocument.id)
               }
               prefetch={false}
@@ -216,6 +244,10 @@ export function FactoryRevisionHistory({
               {JSON.stringify(selectedDocument.source, null, 2)}
             </pre>
           </details>
+          <RoutingQualificationNotice
+            status={selectedDocument.routingQualification}
+            subject="Selected"
+          />
         </div>
       )}
       {candidateTests}
@@ -232,7 +264,8 @@ export function FactoryRevisionHistory({
               ? {
                   revisionId: selectedDocument.id,
                   revisionDigest: selectedDocument.digest,
-                  activationNumber: activeActivationNumber,
+                  expectedActivationNumber: activeActivationNumber,
+                  targetActivationNumber,
                 }
               : null,
           );
@@ -258,7 +291,13 @@ export function FactoryRevisionHistory({
           <dl className="mt-4 space-y-2 text-xs">
             <div>
               <dt className="text-muted">Current activation</dt>
-              <dd className="font-mono text-foreground">#{confirmation.activationNumber}</dd>
+              <dd className="font-mono text-foreground">
+                #{confirmation.expectedActivationNumber}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted">Restore activation</dt>
+              <dd className="font-mono text-foreground">#{confirmation.targetActivationNumber}</dd>
             </div>
             <div>
               <dt className="text-muted">Selected revision digest</dt>

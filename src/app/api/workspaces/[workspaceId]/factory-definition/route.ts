@@ -57,6 +57,7 @@ const commandSchema = z.discriminatedUnion("action", [
       action: z.literal("rollback"),
       expectedActivationNumber: factoryDefinitionExpectedActivationSchema,
       revisionId: z.string().uuid(),
+      targetActivationNumber: z.number().int().safe().positive().optional(),
     })
     .strict(),
 ]);
