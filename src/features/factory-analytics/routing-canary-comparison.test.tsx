@@ -74,7 +74,7 @@ it("shows assigned arms, support, retry-inclusive usage and links to exact revis
     />,
   );
   const region = within(screen.getByRole("region", { name: "Routing canary" }));
-  expect(region.getByText("invoice-delivery · 12.75% assigned to the candidate")).toBeVisible();
+  expect(region.getByText("invoice-delivery · 12.75% candidate share target")).toBeVisible();
   expect(
     region.getByText(
       "Minimum support of 5 sessions per group. 4 sessions outside this task class.",

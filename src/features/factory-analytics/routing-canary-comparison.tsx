@@ -186,8 +186,8 @@ export function RoutingCanaryComparison({
           )}
         </div>
         <p className="type-secondary break-words">
-          {canary.taskClassSlug} · {percent.format(canary.candidateBps / 10_000)} assigned to the
-          candidate
+          {canary.taskClassSlug} · {percent.format(canary.candidateBps / 10_000)} candidate share
+          target
         </p>
         <p className="text-xs text-muted">
           {timeLabel(window.from)} to {timeLabel(window.to)}. Observed as of{" "}
