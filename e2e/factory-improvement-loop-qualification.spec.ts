@@ -5,20 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 
-import {
-  expect,
-  test,
-  type APIResponse,
-  type Locator,
-  type Page,
-  type Response,
-} from "@playwright/test";
+import { expect, test, type APIResponse, type Locator, type Page } from "@playwright/test";
 import { z } from "zod";
 
+import { benchmarkComparisonSchema } from "../src/lib/factory-benchmarks/comparison-contracts";
 import { diagnosisReceiptSchema } from "../src/lib/factory-diagnosis/contracts";
 import { factoryImprovementAdoptionSchema } from "../src/lib/factory-proposals/adoption-contracts";
 import { factoryImprovementPublicationSchema } from "../src/lib/factory-proposals/publication-contracts";
 import {
+  workspaceBenchmarkComparisonPath,
   workspaceFactoryDefinitionPath,
   workspaceFailureGroupPath,
   workspaceImprovementPath,
@@ -45,6 +40,7 @@ import {
   qualificationAppOrigin,
   qualificationCheckpoint,
   QualificationPostResponseLost,
+  readQualificationMutationResponse,
   requireQualificationProofDirectory,
 } from "./helpers/factory-improvement-loop-qualification";
 
@@ -119,17 +115,31 @@ async function expectEvidence(page: Page, app: string, factoryApi: string, manif
   return evidence;
 }
 
-async function expectComparisonLinks(adoptionPanel: Locator, app: string, manifest: Manifest) {
-  for (const [label, experimentId] of [
-    ["Targeted comparison", manifest.targetedExperimentId],
-    ["Held-out comparison", manifest.holdoutExperimentId],
+async function expectComparisonLinks(
+  adoptionPanel: Locator,
+  experimentsApi: URL,
+  manifest: Manifest,
+  comparisons: z.output<typeof factoryImprovementPublicationSchema.shape.comparisons>,
+) {
+  for (const [label, arm, experimentId] of [
+    ["Targeted comparison", "targeted", manifest.targetedExperimentId],
+    ["Held-out comparison", "holdout", manifest.holdoutExperimentId],
   ] as const) {
+    expect(comparisons[arm].experimentId).toBe(experimentId);
+    const url = new URL(`${experimentId}/comparison?limit=1&candidateLimit=1`, experimentsApi);
+    const comparison = benchmarkComparisonSchema.parse(
+      await accepted(await adoptionPanel.page().request.get(url.href), 200),
+    );
+    expect(comparison.experimentId).toBe(experimentId);
+    expect(comparison.suite.revisionId).toBe(comparisons[arm].suiteRevisionId);
     const link = adoptionPanel.getByRole("link", { name: label, exact: true });
     await expect(link).toBeVisible();
-    const url = new URL(z.string().parse(await link.getAttribute("href")), app);
-    expect(url.origin).toBe(app);
-    expect(url.pathname).toMatch(new RegExp(`/benchmarks/[^/]+/comparisons/${experimentId}$`));
-    expect(url.searchParams.get("factory")).toBe(manifest.factoryId);
+    await expect(link).toHaveAttribute(
+      "href",
+      workspaceBenchmarkComparisonPath(manifest.workspaceSlug, comparison.suite.id, experimentId, {
+        factory: manifest.factoryId,
+      }),
+    );
   }
 }
 
@@ -518,6 +528,46 @@ test("keeps a browser HTTP error or uncertain delivery when route cleanup fails"
   }
 });
 
+test("classifies only body transport loss after the expected mutation status", async ({ page }) => {
+  const server = createServer((request, response) => {
+    if (request.method !== "POST") {
+      response.end("qualification");
+      return;
+    }
+    if (request.url === "/lost") {
+      response.writeHead(201, { "Content-Type": "application/json", "Content-Length": "64" });
+      response.write("{", () => response.destroy());
+      return;
+    }
+    response.writeHead(request.url === "/unexpected" ? 409 : 201, {
+      "Content-Type": "application/json",
+    });
+    response.end("{");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing loopback address.");
+    const origin = `http://127.0.0.1:${address.port}`;
+    await page.goto(origin);
+    const read = async (path: string) => {
+      const pending = page.waitForResponse(`${origin}${path}`);
+      await page.evaluate((endpoint) => {
+        void fetch(endpoint, { method: "POST" })
+          .then((result) => result.text())
+          .catch(() => {});
+      }, path);
+      return readQualificationMutationResponse(await pending, 201);
+    };
+    await expect(read("/lost")).rejects.toBeInstanceOf(QualificationPostResponseLost);
+    await expect(read("/malformed")).rejects.toBeInstanceOf(SyntaxError);
+    await expect(read("/unexpected")).rejects.toThrow("201");
+  } finally {
+    await server[Symbol.asyncDispose]();
+  }
+});
+
 const liveTest = test.extend<{ manifestPath: string }>({
   manifestPath: async ({}, providePath) => {
     const path = process.env.WALLIE_FACTORY_IMPROVEMENT_MANIFEST;
@@ -633,7 +683,14 @@ liveTest.describe("Live reviewed qualification", () => {
       evidence,
     );
     await expect(page.locator("#candidate-diff:visible")).toContainText(manifest.candidate.digest);
-    await expectComparisonLinks(adoptionPanel, app, manifest);
+    const comparisonEvidence = before.adoption ?? before.publication;
+    if (!comparisonEvidence) throw new Error("The retained comparison receipts are unavailable.");
+    await expectComparisonLinks(
+      adoptionPanel,
+      new URL(`${factoryApi}/benchmarks/experiments/`, app),
+      manifest,
+      comparisonEvidence.comparisons,
+    );
     const prLink = adoptionPanel.getByRole("link", {
       name: `GitHub pull request #${manifest.publication.number}`,
     });
@@ -660,9 +717,8 @@ liveTest.describe("Live reviewed qualification", () => {
         name: "Adopt the reviewed configuration?",
       });
       await expect(confirm).toBeVisible();
-      let response: Response | undefined;
       try {
-        response = await observeQualificationPost(
+        const response = await observeQualificationPost(
           page,
           adoptionApi,
           adoptionRequest,
@@ -674,6 +730,13 @@ liveTest.describe("Live reviewed qualification", () => {
               timeout: qualificationSubmitTimeout,
             }),
         );
+        const status = retry && response.status() === 200 ? 200 : 201;
+        adoption = z
+          .object({
+            adoption: factoryImprovementAdoptionSchema,
+            replay: z.literal(status === 200),
+          })
+          .parse(await readQualificationMutationResponse(response, status)).adoption;
       } catch (error) {
         if (!(error instanceof QualificationPostResponseLost) || !progress.adoptionRequest)
           throw error;
@@ -681,15 +744,6 @@ liveTest.describe("Live reviewed qualification", () => {
         if (!durable.adoption) throw error;
         adoption = durable.adoption;
         await page.reload({ waitUntil: "domcontentloaded" });
-      }
-      if (response) {
-        const status = retry && response.status() === 200 ? 200 : 201;
-        adoption = z
-          .object({
-            adoption: factoryImprovementAdoptionSchema,
-            replay: z.literal(status === 200),
-          })
-          .parse(await accepted(response, status)).adoption;
       }
     }
     if (!adoption) throw new Error("The exact adoption receipt is unavailable.");
@@ -786,9 +840,8 @@ liveTest.describe("Live reviewed qualification", () => {
         rollbackEvidence,
         restoreDialog,
       );
-      let response: Response | undefined;
       try {
-        response = await observeQualificationPost(
+        const response = await observeQualificationPost(
           page,
           definitionApi,
           rollbackRequest,
@@ -800,6 +853,13 @@ liveTest.describe("Live reviewed qualification", () => {
               timeout: qualificationSubmitTimeout,
             }),
         );
+        expect(await readQualificationMutationResponse(response, 201)).toMatchObject({
+          activation: {
+            revisionId: expectedRestore.revisionId,
+            activationNumber: expectedRestore.activationNumber,
+            previousActivationNumber: adoption.adopted.activationNumber,
+          },
+        });
       } catch (error) {
         if (
           !(error instanceof QualificationPostResponseLost) ||
@@ -808,15 +868,6 @@ liveTest.describe("Live reviewed qualification", () => {
         ) {
           throw error;
         }
-      }
-      if (response) {
-        expect(await accepted(response, 201)).toMatchObject({
-          activation: {
-            revisionId: expectedRestore.revisionId,
-            activationNumber: expectedRestore.activationNumber,
-            previousActivationNumber: adoption.adopted.activationNumber,
-          },
-        });
       }
     }
     const restored = await inspectQualificationProgress(manifest);

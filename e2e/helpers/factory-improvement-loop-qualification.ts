@@ -113,8 +113,22 @@ export function qualificationCheckpoint(manifestPath: string, manifest: Manifest
 
 export class QualificationPostResponseLost extends Error {
   constructor(cause: unknown) {
-    super("The forwarded qualification POST did not return an observed response.", { cause });
+    super("The forwarded qualification POST did not return a complete response.", { cause });
   }
+}
+
+export async function readQualificationMutationResponse(
+  response: Pick<Response, "status" | "body">,
+  status: 200 | 201,
+): Promise<unknown> {
+  expect(response.status()).toBe(status);
+  let bytes: Buffer;
+  try {
+    bytes = await response.body();
+  } catch (error) {
+    throw new QualificationPostResponseLost(error);
+  }
+  return JSON.parse(bytes.toString("utf8")) as unknown;
 }
 
 export async function observeQualificationPost(

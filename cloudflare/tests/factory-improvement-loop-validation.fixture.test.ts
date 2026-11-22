@@ -325,19 +325,19 @@ async function control(
   );
 }
 
-async function assertExclusiveJudgeQueue(admin: QualificationAdmin, workspaceId: string) {
+async function assertExclusiveJudgeQueue(admin: QualificationAdmin, sampleReceiptIds: string[]) {
   const competing = await receipt(
     admin
       .from("factory_evaluation_jobs")
       .select("id")
-      .neq("workspace_id", workspaceId)
+      .not("sample_receipt_id", "in", `(${sampleReceiptIds.join(",")})`)
       .in("status", ["queued", "claimed"])
       .limit(1),
   );
   assert.equal(
     competing.length,
     0,
-    "The qualification judge requires a disposable project without queued or claimed evaluation jobs in other workspaces.",
+    "The qualification judge requires a disposable project without queued or claimed evaluations outside this experiment's exact samples.",
   );
 }
 
@@ -533,30 +533,29 @@ async function executeExperiment(
     await receipt(admin.rpc("reconcile_factory_benchmark_evaluations", { p_limit: 100 })),
     4,
   );
-  // The fixture workspace has one evaluation slot. Wait for each drain before claiming the next.
-  for (let index = 0; index < slots.length; index += 1) {
-    await assertExclusiveJudgeQueue(admin, scope.workspace);
-    await drainFactoryJudges(admin, "workerd");
-  }
   const samples = await receipt(
     admin
       .from("factory_scorer_sample_receipts")
-      .select("id")
+      .select("id,benchmark_trial_id")
       .eq("workspace_id", scope.workspace)
       .eq("factory_id", scope.factory)
       .in("benchmark_trial_id", [...seen]),
   );
-  assert.equal(samples.length, 4);
+  assert.equal(samples.length, slots.length);
+  assert.deepEqual(new Set(samples.map(({ benchmark_trial_id }) => benchmark_trial_id)), seen);
+  const sampleReceiptIds = samples.map(({ id }) => id);
+  // The fixture workspace has one evaluation slot. Wait for each drain before claiming the next.
+  for (let index = 0; index < slots.length; index += 1) {
+    await assertExclusiveJudgeQueue(admin, sampleReceiptIds);
+    await drainFactoryJudges(admin, "workerd");
+  }
   const evaluations = await receipt(
     admin
       .from("factory_evaluation_jobs")
       .select("status")
       .eq("workspace_id", scope.workspace)
       .eq("factory_id", scope.factory)
-      .in(
-        "sample_receipt_id",
-        samples.map(({ id }) => id),
-      ),
+      .in("sample_receipt_id", sampleReceiptIds),
   );
   assert.deepEqual(
     evaluations.map(({ status }) => status),

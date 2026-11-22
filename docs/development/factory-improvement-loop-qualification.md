@@ -21,7 +21,11 @@ Use an exclusive loopback Supabase project and a compiled local Wallie app. The 
 node --import ./scripts/register-server-only.mjs --import tsx \
   scripts/qualify-factory-improvement-loop.ts prepare \
   --workdir "$M10_SUPABASE_DIR" --state "$M10_STATE" --app-origin "$M10_APP_ORIGIN"
+```
 
+Run the pgTAP regressions against a disposable project managed by the Supabase CLI. When using `--status-file` for a separately managed fixture, use a CLI-managed project for this check and keep the original fixture project for publication and browser proof.
+
+```sh
 pnpm check:db-tests --workdir "$M10_SUPABASE_DIR" \
   "$PWD/supabase/tests/factory_improvement_validation.sql" \
   "$PWD/supabase/tests/factory_improvement_publication.sql" \
