@@ -52,6 +52,7 @@ import {
 } from "@/lib/factory-definitions/schema";
 import type { FactorySecretBindingScope } from "@/lib/factory-secret-bindings/contracts";
 import {
+  workspaceAnalyticsPath,
   workspaceBenchmarksPath,
   workspaceFactoryDefinitionPath,
   workspaceSettingsPath,
@@ -503,10 +504,16 @@ export function FactoryDefinitionEditor({
           action: "activate-routing",
           expectedActivationNumber: target.activationNumber,
           draftId: target.draftId,
+          ...(target.canary ? { canary: target.canary } : {}),
         }),
       );
       await refreshAfterActivation();
-      setFeedback({ kind: "success", text: "Reviewed routing activated for new sessions." });
+      setFeedback({
+        kind: "success",
+        text: target.canary
+          ? "Routing canary started for new sessions."
+          : "Reviewed routing activated for new sessions.",
+      });
     });
     if (error) {
       draftTests.refresh();
@@ -711,7 +718,21 @@ export function FactoryDefinitionEditor({
                         "None"
                       )}
                     </dd>
-                    {snapshot.routingMode === "active" ? (
+                    {snapshot.routingCanary ? (
+                      <dd className="mt-1 space-y-1">
+                        <p className="text-foreground">
+                          Canary active · {snapshot.routingCanary.taskClassSlug} ·{" "}
+                          {snapshot.routingCanary.candidateBps / 100}% candidate share
+                        </p>
+                        <Link
+                          className="text-accent underline underline-offset-2"
+                          href={`${workspaceAnalyticsPath(workspaceSlug, { factory: history?.factoryId ?? factoryId, routingCanary: snapshot.routingCanary.id })}#routing-canary`}
+                          prefetch={false}
+                        >
+                          View canary outcomes
+                        </Link>
+                      </dd>
+                    ) : snapshot.routingMode === "active" ? (
                       <dd className="mt-1 text-success">Routing active for new sessions</dd>
                     ) : null}
                   </div>
@@ -842,6 +863,7 @@ export function FactoryDefinitionEditor({
                       {draft?.source.modelRouting ? (
                         <ReviewedRoutingActivation
                           activationNumber={activationNumber}
+                          baselineAvailable={Boolean(snapshot.published && !snapshot.routingCanary)}
                           draft={draft}
                           eligible={
                             !locked &&

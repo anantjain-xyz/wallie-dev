@@ -11,6 +11,7 @@ import {
 } from "@/lib/factory-definitions/schema";
 import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
 import { selectFactory } from "@/lib/factory-definitions/storage";
+import { routingCanarySelectionSchema } from "@/lib/model-routing/canary-contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/database.types";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -38,9 +39,17 @@ const commandSchema = z.discriminatedUnion("action", [
     .strict(),
   z
     .object({
-      action: z.enum(["publish", "activate-routing"]),
+      action: z.literal("publish"),
       expectedActivationNumber: factoryDefinitionExpectedActivationSchema,
       draftId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("activate-routing"),
+      expectedActivationNumber: factoryDefinitionExpectedActivationSchema,
+      draftId: z.string().uuid(),
+      canary: routingCanarySelectionSchema.optional(),
     })
     .strict(),
   z

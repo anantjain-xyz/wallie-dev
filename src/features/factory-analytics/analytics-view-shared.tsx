@@ -52,6 +52,7 @@ export function analyticsCohortHref(
     compare: query.comparison ? "previous" : undefined,
     dimension: query.dimension,
     environment: query.environment ?? undefined,
+    routingCanary: query.routingCanaryId,
     ...evidence,
   });
   return evidence ? `${url}#analytics-evidence` : url;

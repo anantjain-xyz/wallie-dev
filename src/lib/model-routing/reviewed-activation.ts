@@ -34,10 +34,12 @@ export function buildRoutingOverrideOptions({
   definition,
   activationNumber,
   reviewedTargets,
+  taskClassSlug,
 }: {
   definition: Pick<CompiledFactoryDefinition, "stages" | "modelRouting">;
   activationNumber: number;
   reviewedTargets: unknown;
+  taskClassSlug?: string;
 }): RoutingOverrideOptions | undefined {
   const policy = definition.modelRouting;
   if (!policy) return;
@@ -47,6 +49,7 @@ export function buildRoutingOverrideOptions({
   const rules = new Map(policy.rules.map((rule) => [rule.taskClassId, rule.id]));
   const targets: RoutingOverrideOptions["targets"] = [];
   for (const stage of definition.stages) {
+    if (taskClassSlug !== undefined && stage.slug !== taskClassSlug) continue;
     const classId = classIds.get(stage.slug);
     const ruleId = classId && rules.get(classId);
     if (!ruleId) continue;

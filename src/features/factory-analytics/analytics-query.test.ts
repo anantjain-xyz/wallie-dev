@@ -31,6 +31,7 @@ describe("analytics query", () => {
 
   it.each([
     { factory: "all" },
+    { routingCanary: "latest" },
     { from: "2026-02-29", to: "2026-03-02" },
     { from: "2026-02-01" },
     { from: "2026-02-02", to: "2026-02-02" },
@@ -48,6 +49,7 @@ describe("analytics query", () => {
   });
 
   it("keeps exact named comparison evidence, and accepts the SQL date bound", () => {
+    const canaryId = "54200000-0001-4000-8000-000000000002";
     expect(
       parseAnalyticsQuery({
         from: "2024-01-01",
@@ -58,12 +60,14 @@ describe("analytics query", () => {
         bucket: "model:A named model",
         period: "compare",
         dimension: "model",
+        routingCanary: canaryId,
       }),
     ).toMatchObject({
       success: true,
       data: {
         environment: null,
         dimension: "model",
+        routingCanaryId: canaryId,
         evidence: { metric: "throughput", bucket: "model:A named model", period: "compare" },
       },
     });
