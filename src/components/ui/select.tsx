@@ -166,11 +166,11 @@ function portalFixedContainingBlock(container: HTMLElement) {
     willChangeTokens.includes("perspective");
 
   if (!createsContainingBlock) {
-    return { bottom: window.innerHeight, left: 0, top: 0 };
+    return { bottom: window.innerHeight, left: 0, right: window.innerWidth, top: 0 };
   }
 
   const rect = container.getBoundingClientRect();
-  return { bottom: rect.bottom, left: rect.left, top: rect.top };
+  return { bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top };
 }
 
 /**
@@ -440,6 +440,7 @@ export function SelectTrigger({
       aria-haspopup="listbox"
       aria-label={accessibleLabel}
       className={cn("ui-select-trigger", className)}
+      data-value={context.value}
       disabled={context.disabled}
       onClick={(event) => {
         props.onClick?.(event);
@@ -461,10 +462,12 @@ export function SelectTrigger({
 }
 
 export function SelectContent({
+  align = "start",
   children,
   className,
   container: containerOverride,
 }: {
+  align?: "start" | "end";
   children: ReactNode;
   className?: string;
   container?: HTMLElement | null;
@@ -508,19 +511,45 @@ export function SelectContent({
       const availableHeight = overlayTrigger
         ? boundaryHeight
         : Math.max(placeAbove ? spaceAbove : spaceBelow, boundaryRect ? 0 : 96);
-      const availableWidth = Math.max(window.innerWidth - rect.left - gutter, rect.width);
 
       listbox.style.setProperty("--radix-select-trigger-width", `${rect.width}px`);
+
+      const measuredWidth = listbox.getBoundingClientRect().width;
+      const preferredWidth = measuredWidth > 0 ? measuredWidth : Math.max(rect.width, 192);
+      const maxViewportWidth = Math.max(window.innerWidth - gutter * 2, 0);
+      const spaceRight = window.innerWidth - rect.left - gutter;
+      const spaceLeft = rect.right - gutter;
+      const alignEnd =
+        align === "end"
+          ? !(spaceLeft < preferredWidth && spaceRight > spaceLeft)
+          : spaceRight < preferredWidth && spaceLeft > spaceRight;
+      const fitsAligned = alignEnd ? spaceLeft >= preferredWidth : spaceRight >= preferredWidth;
+      const clampedLeft = Math.max(
+        gutter,
+        Math.min(
+          rect.left,
+          window.innerWidth - gutter - Math.min(preferredWidth, maxViewportWidth),
+        ),
+      );
+      const availableWidth = fitsAligned
+        ? Math.max(alignEnd ? spaceLeft : spaceRight, rect.width)
+        : Math.max(maxViewportWidth, rect.width);
+
       listbox.style.setProperty("--radix-select-content-available-width", `${availableWidth}px`);
       listbox.style.setProperty("--radix-select-content-available-height", `${availableHeight}px`);
       listbox.style.setProperty(
         "--radix-select-content-transform-origin",
-        placeAbove && !overlayTrigger ? "bottom left" : "top left",
+        `${placeAbove && !overlayTrigger ? "bottom" : "top"} ${alignEnd ? "right" : "left"}`,
       );
       setPosition({
         bottom: placeAbove && !overlayTrigger ? origin.bottom - rect.top + sideOffset : undefined,
-        left: rect.left - origin.left,
+        left: !fitsAligned
+          ? clampedLeft - origin.left
+          : alignEnd
+            ? undefined
+            : rect.left - origin.left,
         position: "fixed",
+        right: fitsAligned && alignEnd ? origin.right - rect.right : undefined,
         top: overlayTrigger
           ? boundaryTop - origin.top
           : placeAbove
@@ -544,7 +573,7 @@ export function SelectContent({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [container, open, trigger]);
+  }, [align, container, open, trigger]);
 
   useLayoutEffect(() => {
     if (!open || highlightedValue == null) return;
@@ -610,6 +639,7 @@ export function SelectItem({
       className={cn("ui-select-item", className)}
       data-disabled={disabled ? "" : undefined}
       data-highlighted={highlighted ? "" : undefined}
+      data-value={value}
       id={context.optionId(value)}
       onClick={() => {
         if (disabled) return;

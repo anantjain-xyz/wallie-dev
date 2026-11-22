@@ -3,6 +3,8 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 
+import { FilterSelectTrigger } from "@/components/ui/filter-controls";
+import { Select, SelectContent, SelectItem } from "@/components/ui/select";
 import {
   FACTORY_QUERY_PARAM,
   defaultsToAllFactories,
@@ -17,6 +19,10 @@ import {
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
 import { workspaceBenchmarksPath } from "@/lib/routes";
+
+function factoryOptionLabel(factory: FactorySelectionOption) {
+  return `${factory.name}${factory.status === "archived" ? " (archived)" : ""}`;
+}
 
 export function FactorySelector({
   factories,
@@ -52,31 +58,32 @@ export function FactorySelector({
         : "unavailable";
 
   return (
-    <label className="min-w-0">
-      <span className="sr-only">Factory</span>
-      <select
+    <Select
+      onValueChange={(value) => {
+        if (value === selectedValue || value === "unavailable") return;
+        const href = factorySwitchHref(pathname, search.toString(), value);
+        startTransition(() => router.push(href, { scroll: false }));
+      }}
+      value={selectedValue}
+    >
+      <FilterSelectTrigger
+        accessibleLabel="Factory"
         aria-busy={pending}
-        className="ui-input h-9 max-w-36 truncate pr-2 text-xs sm:max-w-52"
-        onChange={(event) => {
-          const value = event.currentTarget.value;
-          const href = factorySwitchHref(pathname, search.toString(), value);
-          startTransition(() => router.push(href, { scroll: false }));
-        }}
-        value={selectedValue}
-      >
+        className="max-w-full sm:max-w-52"
+      />
+      <SelectContent align="end">
         {selectedValue === "unavailable" ? (
-          <option disabled value="unavailable">
+          <SelectItem disabled value="unavailable">
             Factory unavailable
-          </option>
+          </SelectItem>
         ) : null}
-        {allowAll && <option value="all">All factories</option>}
+        {allowAll ? <SelectItem value="all">All factories</SelectItem> : null}
         {options.map((factory) => (
-          <option key={factory.id} value={factory.id}>
-            {factory.name}
-            {factory.status === "archived" ? " (archived)" : ""}
-          </option>
+          <SelectItem key={factory.id} value={factory.id}>
+            {factoryOptionLabel(factory)}
+          </SelectItem>
         ))}
-      </select>
-    </label>
+      </SelectContent>
+    </Select>
   );
 }
