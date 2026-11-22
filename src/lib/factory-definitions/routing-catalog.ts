@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ModelRoutingConfiguration } from "@/lib/model-routing/contracts";
 import type { Database } from "@/lib/supabase/database.types";
 
+import { withCatalogSignal } from "./catalog-query";
 import type { QualifiedModelRoutingConfiguration } from "./references";
 import { readVerifiedFactoryDefinition } from "./stored-definition";
 
@@ -15,6 +16,7 @@ export async function loadQualifiedModelRoutingConfigurations(
   client: Client,
   scope: FactoryScope,
   configurations: readonly ModelRoutingConfiguration[],
+  signal?: AbortSignal,
 ): Promise<QualifiedModelRoutingConfiguration[]> {
   if (configurations.length === 0) return [];
 
@@ -25,12 +27,15 @@ export async function loadQualifiedModelRoutingConfigurations(
   const definitions = new Map<string, { digest: string; agentId: string }>();
   const revisionBatchSize = 100;
   for (let index = 0; index < revisionIds.length; index += revisionBatchSize) {
-    const revisions = await client
-      .from("factory_definition_revisions")
-      .select("id,canonical_digest,definition_json")
-      .eq("workspace_id", workspaceId)
-      .eq("factory_id", factoryId)
-      .in("id", revisionIds.slice(index, index + revisionBatchSize));
+    const revisions = await withCatalogSignal(
+      client
+        .from("factory_definition_revisions")
+        .select("id,canonical_digest,definition_json")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .in("id", revisionIds.slice(index, index + revisionBatchSize)),
+      signal,
+    );
     if (revisions.error) throw revisions.error;
     for (const { id, canonical_digest, definition_json } of revisions.data) {
       const definition = readVerifiedFactoryDefinition(definition_json, canonical_digest);
@@ -68,14 +73,17 @@ export async function loadQualifiedModelRoutingConfigurations(
   }
   const batches = await Promise.all(
     filterBatches.map(async (filter) => {
-      const candidates = await client
-        .from("factory_benchmark_experiment_candidates")
-        .select(
-          "experiment_id,definition_revision_id,definition_digest,qualification_id,canonical_model_key,harness,worker_runtime",
-        )
-        .eq("workspace_id", workspaceId)
-        .eq("factory_id", factoryId)
-        .or(filter);
+      const candidates = await withCatalogSignal(
+        client
+          .from("factory_benchmark_experiment_candidates")
+          .select(
+            "experiment_id,definition_revision_id,definition_digest,qualification_id,canonical_model_key,harness,worker_runtime",
+          )
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
+          .or(filter),
+        signal,
+      );
       if (candidates.error) throw candidates.error;
       return candidates.data;
     }),
@@ -94,12 +102,15 @@ export async function loadQualifiedModelRoutingConfigurations(
   ];
   const scorerMatches = new Set<string>();
   for (let index = 0; index < scorerFilters.length; index += candidateBatchSize) {
-    const dimensions = await client
-      .from("factory_benchmark_evaluation_dimensions")
-      .select("experiment_id,scorer_revision_id")
-      .eq("workspace_id", workspaceId)
-      .eq("factory_id", factoryId)
-      .or(scorerFilters.slice(index, index + candidateBatchSize).join(","));
+    const dimensions = await withCatalogSignal(
+      client
+        .from("factory_benchmark_evaluation_dimensions")
+        .select("experiment_id,scorer_revision_id")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .or(scorerFilters.slice(index, index + candidateBatchSize).join(",")),
+      signal,
+    );
     if (dimensions.error) throw dimensions.error;
     for (const { experiment_id, scorer_revision_id } of dimensions.data) {
       scorerMatches.add(`${experiment_id}:${scorer_revision_id}`);

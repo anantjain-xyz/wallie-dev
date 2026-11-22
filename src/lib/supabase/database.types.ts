@@ -4180,9 +4180,9 @@ export type Database = {
       factory_routing_activations: {
         Row: {
           activation_number: number
-          benchmark_evidence_draft_id: string
+          benchmark_evidence_draft_id: string | null
           draft_digest: string
-          draft_id: string
+          draft_id: string | null
           factory_id: string
           previous_activation_number: number | null
           previous_revision_id: string | null
@@ -4190,13 +4190,14 @@ export type Database = {
           reviewed_by_member_id: string
           reviewed_targets: Json
           revision_id: string
+          source_improvement_adoption_id: string | null
           workspace_id: string
         }
         Insert: {
           activation_number: number
-          benchmark_evidence_draft_id: string
+          benchmark_evidence_draft_id?: string | null
           draft_digest: string
-          draft_id: string
+          draft_id?: string | null
           factory_id: string
           previous_activation_number?: number | null
           previous_revision_id?: string | null
@@ -4204,13 +4205,14 @@ export type Database = {
           reviewed_by_member_id: string
           reviewed_targets: Json
           revision_id: string
+          source_improvement_adoption_id?: string | null
           workspace_id: string
         }
         Update: {
           activation_number?: number
-          benchmark_evidence_draft_id?: string
+          benchmark_evidence_draft_id?: string | null
           draft_digest?: string
-          draft_id?: string
+          draft_id?: string | null
           factory_id?: string
           previous_activation_number?: number | null
           previous_revision_id?: string | null
@@ -4218,6 +4220,7 @@ export type Database = {
           reviewed_by_member_id?: string
           reviewed_targets?: Json
           revision_id?: string
+          source_improvement_adoption_id?: string | null
           workspace_id?: string
         }
         Relationships: [
@@ -10336,6 +10339,24 @@ export type Database = {
               workspace_id: string
             }[]
           }
+      adopt_factory_improvement: {
+        Args: {
+          p_actor_user_id: string
+          p_candidate_digest: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_head_commit_sha: string
+          p_proposal_id: string
+          p_proposal_revision_id: string
+          p_publication_id: string
+          p_required_probes: string[]
+          p_review: Json
+          p_reviewed_definition_json: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       adopt_session_checkpoint_publication: {
         Args: {
           p_claim_id: string
@@ -12792,6 +12813,16 @@ export type Database = {
           p_factory_id: string
           p_from: string
           p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_factory_improvement_adoption: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_proposal_id: string
+          p_proposal_revision_id: string
           p_workspace_id: string
         }
         Returns: Json

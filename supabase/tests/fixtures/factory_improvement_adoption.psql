@@ -1,0 +1,67 @@
+\ir factory_improvement_publication.psql
+
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(1),'platform_api_key','synthetic-adoption-credential');
+insert into public.workspace_sandbox_settings(workspace_id,active_provider)
+select workspace_id,'vercel' from live_scope on conflict (workspace_id) do update
+set active_provider = excluded.active_provider;
+insert into public.sandbox_capability_checks(workspace_id,github_repository_id,agent_provider,agent_model,
+  sandbox_provider,sandbox_id,sandbox_connection_revision,sandbox_vercel_team_id,sandbox_vercel_project_id,status,
+  capabilities,factory_definition_digest)
+select capability.workspace_id,capability.github_repository_id,capability.agent_provider,capability.agent_model,
+  capability.sandbox_provider,capability.sandbox_id,capability.sandbox_connection_revision,capability.sandbox_vercel_team_id,
+  capability.sandbox_vercel_project_id,capability.status,capability.capabilities,definition.canonical_digest
+from public.sandbox_capability_checks capability
+join public.factory_definition_revisions definition on definition.id in (pg_temp.live_id(161),pg_temp.live_id(162))
+where capability.id = pg_temp.live_id(51);
+
+select pg_temp.execute_publication_fixture(true);
+select public.reconcile_factory_benchmark_evaluations(100);
+select pg_temp.frontier_score(p_fail_position => 1);
+select pg_temp.execute_publication_fixture(false);
+select public.reconcile_factory_benchmark_evaluations(100);
+select pg_temp.frontier_score();
+
+select public.set_factory_improvement_publication_target(workspace_id,factory_id,owner_id,
+  pg_temp.live_id(360),'wallie/smoke/adoption-base') from live_scope;
+create temp table adoption_publication as
+select public.claim_factory_improvement_publication(workspace_id,factory_id,owner_id,
+  pg_temp.live_id(300),pg_temp.live_id(312)) as claim from live_scope;
+
+create function pg_temp.advance_adoption_publication(p_action text,p_values jsonb default '{}')
+returns jsonb language sql as $$
+  select public.advance_factory_improvement_publication(scope.workspace_id,scope.factory_id,scope.owner_id,
+    (fixture.claim#>>'{publication,id}')::uuid,(fixture.claim#>>'{claim,id}')::uuid,p_action,p_values)
+  from live_scope scope cross join adoption_publication fixture;
+$$;
+
+select pg_temp.advance_adoption_publication('freeze_base',jsonb_build_object(
+  'baseCommitSha',repeat('a',40),'baseTreeSha',repeat('b',40)));
+select pg_temp.advance_adoption_publication('pin_head',jsonb_build_object(
+  'headCommitSha',repeat('c',40),'headTreeSha',repeat('d',40)));
+select pg_temp.advance_adoption_publication('authorize_head');
+select pg_temp.advance_adoption_publication('arm_create');
+select pg_temp.advance_adoption_publication('record_pr',
+  '{"pullNumber":640,"pullUrl":"https://github.com/fixture/improvement-config/pull/640","pullState":"draft"}');
+
+create function pg_temp.adoption_review() returns jsonb language sql stable as $$
+  select jsonb_build_object('repositoryNumericId',62300360,'pullNumber',640,
+    'pullUrl','https://github.com/fixture/improvement-config/pull/640',
+    'baseCommitSha',repeat('a',40),'headCommitSha',repeat('c',40),'mergeCommitSha',repeat('e',40),
+    'reviewerId',6401,'reviewerLogin','fixture-reviewer','reviewId','6402',
+    'reviewedAt',statement_timestamp() - interval '10 seconds',
+    'mergedAt',statement_timestamp() - interval '5 seconds','observedAt',statement_timestamp());
+$$;
+
+create function pg_temp.adopt_fixture(
+  p_actor uuid default pg_temp.live_id(1),p_expected bigint default 2,p_head text default repeat('c',40),
+  p_review jsonb default null,p_reviewed_bytes text default null
+) returns jsonb language sql as $$
+  select public.adopt_factory_improvement(
+    scope.workspace_id,scope.factory_id,p_actor,pg_temp.live_id(300),pg_temp.live_id(312),
+    (publication.claim#>>'{publication,id}')::uuid,p_expected,candidate.canonical_digest,p_head,
+    coalesce(p_reviewed_bytes,candidate.definition_json),coalesce(p_review,pg_temp.adoption_review()),
+    array['vercel'],array['agentCli','git','node','packageManager'])
+  from live_scope scope cross join adoption_publication publication
+  join public.factory_definition_revisions candidate on candidate.id = pg_temp.live_id(162);
+$$;
