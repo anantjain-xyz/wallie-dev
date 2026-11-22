@@ -1,0 +1,70 @@
+-- Reuse the immutable production validation/adoption fixture data in rollback-only transactions.
+begin;
+set local request.jwt.claim.role = 'service_role';
+do $$ begin
+  if exists (select 1 from public.agent_jobs where status in ('queued','started','running'))
+    or exists (select 1 from public.factory_benchmark_schedules where state = 'active') then
+    raise exception 'Rejection qualification requires an exclusive database without active work.';
+  end if;
+end $$;
+\o /dev/null
+\ir ../../supabase/tests/fixtures/factory_benchmark_frontier.psql
+\ir ../../supabase/tests/fixtures/factory_improvement_validation.psql
+
+create temp table rejected_comparison on commit drop as
+select fixture.*, (frozen.receipt#>>'{targeted,experimentId}')::uuid as targeted,
+  (frozen.receipt#>>'{holdout,experimentId}')::uuid as holdout
+from validation_arguments fixture cross join lateral (
+  select public.start_factory_improvement_validation(fixture.workspace_id,fixture.factory_id,fixture.owner_id,
+    pg_temp.live_id(300),pg_temp.live_id(311),pg_temp.live_id(330),fixture.targeted_suite_id,
+    fixture.holdout_suite_id,fixture.policy_id,fixture.scorer_id,fixture.axes,fixture.axes,
+    fixture.execution,fixture.thresholds)->'validation' as receipt
+) frozen;
+select public.control_factory_benchmark_schedule(workspace_id,factory_id,holdout,owner_id,'pause') from rejected_comparison;
+select pg_temp.frontier_execute(p_latency_floor_ms => 2000) from generate_series(1,4);
+select public.reconcile_factory_benchmark_evaluations(100);
+select pg_temp.frontier_score(p_fail_position => 1);
+select public.control_factory_benchmark_schedule(workspace_id,factory_id,targeted,owner_id,'pause') from rejected_comparison;
+select public.control_factory_benchmark_schedule(workspace_id,factory_id,holdout,owner_id,'resume') from rejected_comparison;
+select pg_temp.frontier_execute(p_latency_floor_ms => 2000) from generate_series(1,4);
+select public.reconcile_factory_benchmark_evaluations(100);
+select pg_temp.frontier_score(p_fail_position => 2);
+\o
+do $$ begin
+  if not exists (
+    select 1 from rejected_comparison fixture
+    where public.get_factory_improvement_validation(fixture.workspace_id,fixture.factory_id,fixture.owner_id,
+      pg_temp.live_id(300),pg_temp.live_id(311)) @>
+      '{"status":"failed","targeted":{"resolvedPairs":2},"holdout":{"status":"failed","regressions":2,"reasons":["known_regression"]}}'
+  ) then
+    raise exception 'The paired holdout regression did not veto qualification.';
+  end if;
+end $$;
+select 'holdout-regression-rejected';
+rollback;
+
+begin;
+set local request.jwt.claim.role = 'service_role';
+\o /dev/null
+\ir ../../supabase/tests/fixtures/factory_improvement_adoption.psql
+\o
+
+do $$ begin
+  begin
+    perform pg_temp.adopt_fixture(p_expected => 1);
+    raise exception 'The stale baseline was accepted.';
+  exception when sqlstate 'PT409' then null;
+  end;
+  begin
+    perform pg_temp.adopt_fixture(p_reviewed_bytes => (select definition_json || chr(10)
+      from public.factory_definition_revisions where id = pg_temp.live_id(162)));
+    raise exception 'The altered candidate bytes were accepted.';
+  exception when sqlstate 'PT422' then null;
+  end;
+  if (select max(activation.activation_number) from public.factory_definition_activations activation
+    join live_scope scope using (workspace_id,factory_id)) is distinct from 2 then
+    raise exception 'A denied adoption changed the active fixture definition.';
+  end if;
+end $$;
+select 'stale-base-and-altered-candidate-rejected';
+rollback;

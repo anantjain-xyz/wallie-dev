@@ -1,0 +1,16 @@
+set local request.jwt.claim.role = 'service_role';
+
+-- Reserve only the fixture job. The ordinary dispatcher can choose any queued workspace.
+update public.agent_jobs set status = 'running',attempt_count = 1,
+  git_continuity_release_revision = (select revision from public.get_git_continuity_release_state())
+where (workspace_id,id,session_id) = (:'workspace_id'::uuid,:'job_id'::uuid,:'session_id'::uuid)
+  and status = 'queued' and attempt_count = 0
+returning id as reserved_job \gset
+
+select public.start_session_job_attempt(:'reserved_job'::uuid,1,:'stage_id'::uuid,0,'codex',:'runner_model',
+  'project','wallie/m10-source-' || :'reserved_job') as run_id \gset
+
+select pinned_run_id from public.pin_session_job_git_input(:'reserved_job'::uuid,1,:'run_id'::uuid,
+  :'repository_id'::uuid,'main',:'commit_sha') \gset
+
+select (public.pin_session_validation_plan(:'pinned_run_id'::uuid,:'commit_sha',:'tree_sha',:'plan'::jsonb)).run_id;

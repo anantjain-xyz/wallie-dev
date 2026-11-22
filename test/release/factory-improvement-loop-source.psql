@@ -1,0 +1,38 @@
+set local request.jwt.claim.role = 'service_role';
+
+insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,
+  raw_app_meta_data,raw_user_meta_data,confirmation_token,recovery_token,email_change_token_new,
+  email_change_token_current,reauthentication_token,email_change,created_at,updated_at,is_sso_user,is_anonymous)
+values ('00000000-0000-0000-0000-000000000000',:'actor_id'::uuid,'authenticated','authenticated',:'owner_email',
+  '',now(),'{"provider":"email","providers":["email"]}','{}','','','','','','',now(),now(),false,false);
+insert into auth.identities(id,provider_id,user_id,identity_data,provider,created_at,updated_at)
+values (gen_random_uuid(),:'actor_id',:'actor_id'::uuid,jsonb_build_object('sub',:'actor_id','email',:'owner_email'),
+  'email',now(),now());
+insert into public.workspaces(id,slug,name)
+values (:'workspace_id'::uuid,:'workspace_slug','Improvement loop qualification');
+insert into public.workspace_members(id,workspace_id,user_id,kind,role)
+values (:'member_id'::uuid,:'workspace_id'::uuid,:'actor_id'::uuid,'human','owner');
+
+insert into public.pipelines(id,workspace_id,factory_id,name,is_default)
+select :'pipeline_id'::uuid,workspace_id,id,'Qualification pipeline',true
+from public.factories where workspace_id = :'workspace_id'::uuid and is_default;
+insert into public.pipeline_stages(id,workspace_id,pipeline_id,position,slug,name,prompt_template_md)
+values (:'stage_id'::uuid,:'workspace_id'::uuid,:'pipeline_id'::uuid,1,'build','Build',:'baseline_prompt');
+
+insert into public.github_installations(id,workspace_id,installation_id,installation_url,app_id,target_type,
+  target_name,permissions)
+values (:'installation_id'::uuid,:'workspace_id'::uuid,:'installation_number'::bigint,
+  :'installation_url',:'installation_app_id'::bigint,:'installation_type',:'installation_owner',
+  '{"contents":"write","pull_requests":"write"}');
+insert into public.github_repositories(id,workspace_id,factory_id,github_installation_id,repo_id,name,full_name,
+  private,html_url,default_branch)
+select :'repository_id'::uuid,workspace_id,id,:'installation_id'::uuid,:'repository_number'::bigint,
+  :'workspace_slug','fixture/' || :'workspace_slug',true,'https://github.test/fixture/' || :'workspace_slug','main'
+from public.factories where workspace_id = :'workspace_id'::uuid and is_default;
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (:'actor_id'::uuid,'platform_api_key',:'codex_ciphertext');
+insert into public.workspace_sandbox_settings(workspace_id,active_provider)
+values (:'workspace_id'::uuid,'vercel')
+on conflict (workspace_id) do update set active_provider = excluded.active_provider;
+
+select id from public.factories where workspace_id = :'workspace_id'::uuid and is_default;
