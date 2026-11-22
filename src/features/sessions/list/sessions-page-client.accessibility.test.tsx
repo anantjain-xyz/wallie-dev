@@ -309,6 +309,42 @@ describe("SessionsPage accessibility", () => {
     expect(pendingArchiveAxe.violations).toEqual([]);
   });
 
+  it("shows a page-local fallback when a local archive hides the last row", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+    render(
+      <OverlayProvider>
+        <main>
+          <SessionsPage
+            initialData={{
+              ...initialData,
+              queryState: { ...initialData.queryState, stageSlug: null },
+            }}
+          />
+        </main>
+      </OverlayProvider>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Actions for session #339" });
+    await user.click(trigger);
+    expect(await screen.findByRole("menu", { name: "Actions for session #339" })).toBeVisible();
+    await user.keyboard("{End}{Enter}");
+    expect(await screen.findByRole("alertdialog")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Archive session" }));
+
+    expect(await screen.findByText("No sessions on this page")).toBeVisible();
+    expect(screen.getByRole("link", { name: "View all sessions" })).toHaveAttribute(
+      "href",
+      "/w/acme/sessions?scope=all",
+    );
+    expect(screen.queryByText("No sessions yet")).toBeNull();
+    expect(screen.queryByText("No active sessions")).toBeNull();
+    expect(screen.queryByRole("link", { name: /New session/ })).toBeNull();
+  });
+
   it("renders ledger columns and keeps only the title as the detail link", () => {
     render(
       <OverlayProvider>
