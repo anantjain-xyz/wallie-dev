@@ -81,6 +81,12 @@ describe("factory scope on aggregate routes", () => {
     expect(result).toBe("/w/acme/sessions?q=auth&sort=oldest&factory=secondary-id");
   });
 
+  it("drops a factory-scoped canary selection when switching Analytics factories", () => {
+    expect(
+      factorySwitchHref("/w/acme/analytics", "routingCanary=old&dimension=agent", secondary.id),
+    ).toBe("/w/acme/analytics?dimension=agent&factory=secondary-id");
+  });
+
   it("shows a single-factory selector for the Agents list and resets its pagination", () => {
     expect(isFactoryAggregatePath("/w/acme/agents", "acme")).toBe(false);
     expect(isFactorySelectorPath("/w/acme/agents", "acme")).toBe(true);

@@ -25,6 +25,7 @@ export function AnalyticsView({
   query,
   periods,
   evidence,
+  routingCanaryComparison,
   scorerTrends,
 }: {
   workspaceId: string;
@@ -33,6 +34,7 @@ export function AnalyticsView({
   query: AnalyticsQuery;
   periods: Awaited<ReturnType<typeof loadAnalyticsPeriods>>;
   evidence: Awaited<ReturnType<typeof loadAnalyticsEvidence>>;
+  routingCanaryComparison?: ReactNode;
   scorerTrends?: ReactNode;
 }) {
   const href: AnalyticsHref = (selection) =>
@@ -57,6 +59,7 @@ export function AnalyticsView({
   return (
     <PageContainer>
       <PageHeader title="Analytics" description={factory.name} />
+      {routingCanaryComparison ? <div className="mb-8">{routingCanaryComparison}</div> : null}
       <AnalyticsFilters
         action={workspaceAnalyticsPath(workspaceSlug)}
         factoryId={factory.id}

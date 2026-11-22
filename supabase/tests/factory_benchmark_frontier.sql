@@ -914,22 +914,393 @@ select ok((select retry.created and (run.model_provider,run.model_name,run.agent
   from reviewed_manual_retry retry join public.agent_runs run on run.id=retry.run_id),
   'a manual retry stamps the original routed execution identity over unrelated defaults');
 
+create temp table canary_review_source as
+select scope.*, existing.revision_id, (existing.result->>'activationNumber')::bigint as activation_number,
+  (jsonb_set(
+    jsonb_set(revision.definition_json::jsonb,'{modelRouting,rules,0,configuration}',
+      pg_temp.routing_configuration(5) || jsonb_build_object('scorerRevisionId',(select id from frontier_scorer))),
+    '{modelRouting,rules,0,onUnavailable}',jsonb_build_object('kind','fallback','configuration',
+      pg_temp.routing_configuration(1) || jsonb_build_object('scorerRevisionId',(select id from frontier_scorer)))))::text as body
+from live_scope scope cross join lateral (
+  select result,(result->>'revisionId')::uuid as revision_id from reviewed_activation
+) existing
+join public.factory_definition_revisions revision on revision.id=existing.revision_id;
+create temp table canary_review_draft as
+select (public.save_factory_routing_draft(source.workspace_id,source.factory_id,source.owner_id,source.activation_number,
+  source.body,encode(sha256(convert_to(source.body,'UTF8')),'hex'),'{"newStageIds":[]}'::jsonb,
+  pg_temp.live_id(80),pg_temp.frontier_result(5)->>'candidateKey',(select id from live_suite),
+  (select id from frontier_scorer),pg_temp.live_id(202),pg_temp.live_id(601),repeat('b',64),null)).id as draft_id
+from canary_review_source source;
+create function pg_temp.seed_canary_activation_checks(p_draft_id uuid, p_base bigint) returns void language plpgsql as $$
+begin
+  insert into public.sandbox_capability_checks(workspace_id,github_repository_id,agent_provider,agent_model,
+    sandbox_provider,sandbox_id,sandbox_connection_revision,sandbox_vercel_team_id,sandbox_vercel_project_id,status,
+    capabilities,factory_definition_digest)
+  select capability.workspace_id,capability.github_repository_id,capability.agent_provider,capability.agent_model,
+    capability.sandbox_provider,capability.sandbox_id,capability.sandbox_connection_revision,
+    capability.sandbox_vercel_team_id,capability.sandbox_vercel_project_id,capability.status,
+    capability.capabilities,draft.canonical_digest
+  from public.sandbox_capability_checks capability cross join public.factory_definition_drafts draft
+  where (capability.id,draft.id) = (pg_temp.live_id(51),p_draft_id);
+  insert into public.factory_definition_smoke_tests(workspace_id,factory_id,target_kind,target_id,definition_digest,
+    base_activation_number,sandbox_connection_revision,created_by,lease_expires_at,finished_at,status,evidence)
+  select draft.workspace_id,draft.factory_id,'draft',draft.id,draft.canonical_digest,p_base,pg_temp.live_id(50),draft.created_by,
+    clock_timestamp()+interval '5 minutes',clock_timestamp(),'passed','{"runtimeProfile":"vercel"}'
+  from public.factory_definition_drafts draft where draft.id=p_draft_id;
+end;
+$$;
+create function pg_temp.activate_routing_canary(
+  p_expected bigint, p_draft_id uuid, p_class uuid default pg_temp.live_id(201), p_bps integer default 5000
+) returns jsonb language sql as $$
+  select public.activate_factory_routing_canary(scope.workspace_id,scope.factory_id,scope.owner_id,p_expected,
+    p_draft_id,array['vercel'],array['agentCli'],p_class,p_bps) from live_scope scope
+$$;
+create temp table incompatible_canary_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{agent,concurrencyLimit}','3',4,draft_id) as draft_id from canary_review_draft;
+select pg_temp.seed_canary_activation_checks(draft_id,4) from incompatible_canary_draft;
+select throws_ok($$select pg_temp.activate_routing_canary(4,draft_id) from incompatible_canary_draft$$,
+  'PT422','A routing canary requires the same workflow and base execution profile as its baseline.',
+  'a reviewed candidate cannot start a canary with a materially different base workflow');
+update canary_review_draft
+set draft_id=pg_temp.save_frontier_routing_edit(incompatible.draft_id,'{agent,concurrencyLimit}','2',4,incompatible.draft_id)
+from incompatible_canary_draft incompatible;
+select pg_temp.seed_canary_activation_checks(draft_id,4) from canary_review_draft;
+select throws_ok($$select pg_temp.activate_routing_canary(4,draft_id,p_bps=>10000) from canary_review_draft$$,
+  '22023',null,'a canary cannot silently start with every task assigned to the candidate');
+select throws_ok($$select pg_temp.activate_routing_canary(4,draft_id,pg_temp.live_id(299)) from canary_review_draft$$,
+  'PT422',null,'canary designation requires the reviewed benchmark rule for the admitted task class');
+select is((select max(activation_number) from public.factory_definition_activations where workspace_id=pg_temp.live_id(11)),
+  4::bigint,'rejected canary designation leaves no broad reviewed activation behind');
+create temp table routing_canary_rollout as
+select pg_temp.activate_routing_canary(4,draft_id) as result from canary_review_draft;
+select ok((select canary.activation_number=5 and canary.baseline_activation_number=4 and canary.candidate_bps=5000
+  and canary.minimum_support=5 and canary.candidate_revision_id=(result->>'revisionId')::uuid
+  and canary.baseline_revision_id=(result->>'previousRevisionId')::uuid
+  from public.factory_routing_canaries canary cross join routing_canary_rollout),
+  'one reviewed designation pins the exact baseline, candidate, class allocation and support');
+select throws_ok($$select pg_temp.activate_routing_canary(4,draft_id) from canary_review_draft$$,'PT409',null,
+  'another writer using the old expected head cannot replace the canary');
+
+-- Select exact participant IDs for both arms to avoid a probabilistic test.
+create temp table routing_canary_test_sessions as
+select distinct on (arm) participant.session_id, assignment.arm, assignment.bucket
+from public.factory_routing_canaries canary
+cross join lateral (select pg_temp.live_id(slot) as session_id from generate_series(701,1000) slot) participant
+cross join lateral (select internal.factory_routing_canary_bucket(canary,participant.session_id) as bucket) hashed
+cross join lateral (select case when hashed.bucket<canary.candidate_bps then 'candidate' else 'baseline' end as arm,hashed.bucket) assignment
+order by arm,participant.session_id;
+insert into public.sessions(id,workspace_id,factory_id,number,title,prompt_md,creator_member_id,pipeline_id,current_stage_id,
+  github_repository_id,execute_pinned_definition,factory_definition_provenance,factory_definition_revision_id,phase_status)
+select assigned.session_id,canary.workspace_id,canary.factory_id,9000+row_number() over (), 'Run exact canary branch',
+  'Review the same fixture task.',pg_temp.live_id(21),pg_temp.live_id(40),pg_temp.live_id(41),pg_temp.live_id(42),
+  true,'pinned',canary.candidate_revision_id,'in_progress'
+from routing_canary_test_sessions assigned cross join public.factory_routing_canaries canary;
+insert into public.session_factory_admission_inputs(session_id,workspace_id,factory_id,activation_number,
+  definition_revision_id,definition_digest,pipeline_id,github_repository_id,selected_stage_ids,
+  model_provider,model_name,title_sha256,prompt_sha256,original_title,original_prompt_md)
+select session.id,session.workspace_id,session.factory_id,canary.activation_number,canary.candidate_revision_id,
+  (rollout.result->>'draftDigest'),session.pipeline_id,session.github_repository_id,array[session.current_stage_id],
+  'codex','gpt-4.1-2025-04-14',encode(sha256(convert_to(session.title,'UTF8')),'hex'),
+  encode(sha256(convert_to(session.prompt_md,'UTF8')),'hex'),session.title,session.prompt_md
+from public.sessions session join routing_canary_test_sessions assigned on assigned.session_id=session.id
+cross join public.factory_routing_canaries canary cross join routing_canary_rollout rollout;
+select results_eq($$
+  select receipt.routing_canary_arm,receipt.routing_canary_bucket,receipt.routing_canary_eligible
+  from public.session_factory_admission_inputs receipt join routing_canary_test_sessions assigned using(session_id)
+  order by receipt.routing_canary_arm
+$$,$$select arm,bucket,true from routing_canary_test_sessions order by arm$$,
+  'each new participant receives the deterministic immutable assignment before any queue');
+select is((select internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id)
+  ->>'benchmarkCandidateKey' from public.session_factory_admission_inputs receipt
+  join routing_canary_test_sessions assigned using(session_id) where assigned.arm='baseline'),
+  pg_temp.frontier_result(1)->>'candidateKey','the baseline executes the previous reviewed routing target');
+select is((select internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id)
+  ->>'benchmarkCandidateKey' from public.session_factory_admission_inputs receipt
+  join routing_canary_test_sessions assigned using(session_id) where assigned.arm='candidate'),
+  pg_temp.frontier_result(5)->>'candidateKey','the candidate executes the newly reviewed routing target');
+select ok((select receipt.routing_decision->>'mode'='shadow' and receipt.routing_execution is null
+  and receipt.routing_canary_baseline_execution->>'effort'='high'
+  from public.session_factory_admission_inputs receipt join routing_canary_test_sessions assigned using(session_id)
+  where assigned.arm='baseline'),'the prior execution overlay retains its own prompt profile without changing the current workflow pin');
+
+create function pg_temp.submit_canary_task() returns uuid language sql as $$
+  select accepted.session_id from live_scope scope cross join routing_canary_rollout rollout
+  cross join lateral public.create_session_command_once(scope.workspace_id,pg_temp.live_id(21),pg_temp.live_id(602),
+    repeat('b',64),rollout.result->>'draftDigest','Submit canary task','Review the same task on retries.',
+    'codex','gpt-4.1-2025-04-14','{}'::uuid[],session_github_repository_id=>pg_temp.live_id(42),
+    selected_pipeline_id=>pg_temp.live_id(40),selected_stage_ids=>array[pg_temp.live_id(41)],target_factory_id=>scope.factory_id)
+  accepted
+$$;
+create temp table canary_admitted_session as select pg_temp.submit_canary_task() as session_id;
+select is(pg_temp.submit_canary_task(),(select session_id from canary_admitted_session),
+  'idempotent creation replay retains the original enrolled session and its exact arm');
+select ok((select receipt.routing_canary_id=canary.id
+  and receipt.routing_canary_bucket=internal.factory_routing_canary_bucket(canary,receipt.session_id)
+  and exists (select 1 from public.agent_jobs queued where queued.session_id=receipt.session_id)
+  from public.session_factory_admission_inputs receipt join canary_admitted_session admitted using(session_id)
+  cross join public.factory_routing_canaries canary),'the common creation command records the assignment and queues its task atomically');
+select throws_ok($$update public.session_factory_admission_inputs set routing_canary_arm='candidate'
+  where session_id=(select session_id from canary_admitted_session)$$,'23514',null,
+  'a committed assignment cannot move to a different cohort');
+
+create temp table canary_override_task as
+select accepted.session_id from live_scope scope cross join routing_canary_rollout rollout
+cross join lateral public.create_session_command_with_routing_override(scope.workspace_id,pg_temp.live_id(21),pg_temp.live_id(603),
+  repeat('b',64),rollout.result->>'draftDigest','Override canary task','Inspect the explicit execution change.',
+  'codex','gpt-4.1-2025-04-14','{}'::uuid[],
+  jsonb_build_object('expectedActivationNumber',5,'ruleId',pg_temp.live_id(202),'target','rule_fallback','reason','Use the reviewed alternate.'),
+  session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
+  selected_stage_ids=>array[pg_temp.live_id(41)],target_factory_id=>scope.factory_id) accepted;
+select ok((select receipt.routing_canary_arm=case when receipt.routing_canary_bucket<canary.candidate_bps then 'candidate' else 'baseline' end
+  and receipt.routing_decision->>'benchmarkCandidateKey'=pg_temp.frontier_result(5)->>'candidateKey'
+  and override.routing_execution->>'benchmarkCandidateKey'=pg_temp.frontier_result(1)->>'candidateKey'
+  from public.session_factory_admission_inputs receipt join canary_override_task owner using(session_id)
+  join public.session_factory_routing_overrides override using(session_id)
+  join public.factory_routing_canaries canary on canary.id=receipt.routing_canary_id),
+  'an explicit reviewed override changes execution while preserving the assigned arm and recommendation');
+
+create temp table canary_original_attempt as
+select job.id as job_id, job.session_id, run.id as run_id, receipt.routing_canary_id,
+  receipt.routing_canary_arm, receipt.routing_canary_bucket,
+  internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id) as execution
+from canary_admitted_session admitted join public.agent_jobs job using(session_id)
+join public.agent_runs run on run.agent_job_id=job.id
+join public.session_factory_admission_inputs receipt on receipt.session_id=admitted.session_id;
+update public.agent_jobs set created_at='-infinity' where id=(select job_id from canary_original_attempt);
+select job_id from public.claim_next_worker_dispatch(false,100,2,1800000);
+select is(public.start_session_job_attempt(job_id,1,pg_temp.live_id(41),0,
+  'codex','gpt-4.1-2025-04-14','project','wallie/canary'),run_id,'the exact canary attempt can start')
+from canary_original_attempt;
+select is(public.fail_session_job_attempt(job_id,1,'Reopen canary task',false,0,run_id),'error',
+  'the canary attempt can retire before a same-session retry') from canary_original_attempt;
+create temp table canary_retried_job as
+select original.session_id,next.job_id,next.created from canary_original_attempt original
+cross join lateral public.enqueue_session_job_with_run(
+  original.session_id,pg_temp.live_id(11),pg_temp.live_id(41),pg_temp.live_id(21),'manual_retry',
+  'cursor','unrelated-model','project') next;
+select ok((select retry.created
+  and (receipt.routing_canary_id,receipt.routing_canary_arm,receipt.routing_canary_bucket)=
+      (original.routing_canary_id,original.routing_canary_arm,original.routing_canary_bucket)
+  and internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id)=original.execution
+  from canary_retried_job retry join canary_original_attempt original using(session_id)
+  join public.session_factory_admission_inputs receipt using(session_id)),
+  'a same-session worker retry keeps the exact original cohort and executable pin');
+
+create temp table later_canary_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,taskClasses,0,name}','"Later canary"',5,null) as draft_id
+from canary_review_draft;
+select pg_temp.seed_canary_activation_checks(draft_id,5) from later_canary_draft;
+select throws_ok($$select pg_temp.activate_routing_canary(5,draft_id) from later_canary_draft$$,'PT422',null,
+  'an already split prior activation cannot silently become a single baseline');
+select is(pg_temp.submit_canary_task(),(select session_id from canary_admitted_session),
+  'a rejected later canary does not change a committed cohort');
+
+create function pg_temp.use_shadow_canary_control() returns jsonb language plpgsql as $$
+declare
+  designation public.factory_routing_canaries;
+  receipt public.session_factory_admission_inputs;
+  owner public.sessions;
+  workflow jsonb;
+begin
+  select * into strict designation from public.factory_routing_canaries where workspace_id=pg_temp.live_id(11);
+  select activation.activation_number,activation.revision_id into designation.baseline_activation_number,designation.baseline_revision_id
+  from public.factory_definition_activations activation
+  where (activation.workspace_id,activation.factory_id,activation.activation_number) =
+    (designation.workspace_id,designation.factory_id,3);
+  select admission.* into strict receipt from public.session_factory_admission_inputs admission
+  join routing_canary_test_sessions assigned using(session_id) where assigned.arm='baseline';
+  select session.* into strict owner from public.sessions session where session.id=receipt.session_id;
+  select revision.definition_json::jsonb into strict workflow from public.factory_definition_revisions revision
+  where revision.id=designation.candidate_revision_id and revision.workspace_id=designation.workspace_id;
+  return internal.make_factory_routing_canary_baseline(designation,receipt,owner,workflow,'review');
+end;
+$$;
+select is(pg_temp.use_shadow_canary_control(),null::jsonb,'a previous shadow activation retains its exact base execution');
+delete from public.user_codex_credentials where user_id=pg_temp.live_id(1);
+select throws_ok($$select pg_temp.use_shadow_canary_control()$$,'PT422',
+  'A current personal credential is required for this agent.',
+  'a shadow control must retain the actual base personal credential authority');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(1),'platform_api_key','synthetic-routing-key');
+
+-- Observed canary outcome assertions
+
+create temp table canary_observed_attempts as
+select assigned.session_id, assigned.arm, fixture.*, scope.workspace_id,
+  pg_temp.live_id(1100 + fixture.job_slot) as job_id,
+  pg_temp.live_id(1100 + fixture.run_slot) as run_id,
+  clock_timestamp() - interval '1 minute' as started_at,
+  internal.effective_factory_routing_execution(scope.workspace_id,scope.factory_id,assigned.session_id) as execution
+from (values
+  ('candidate',1,11,1,'error',1,0.020::numeric,'measured'),
+  ('candidate',1,12,2,'success',2,0.035::numeric,'estimated'),
+  ('baseline',2,13,1,'canceled',3,null,'unavailable'),
+  ('baseline',3,14,1,'running',null,1.000::numeric,'measured')
+) as fixture(arm_name,job_slot,run_slot,attempt_count,status,duration_s,cost,provenance)
+join routing_canary_test_sessions assigned on assigned.arm=fixture.arm_name cross join live_scope scope;
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,trigger_type,status,attempt_count,
+  started_at,finished_at,claimed_worker_runtime)
+select distinct on (job_id) job_id,workspace_id,session_id,pg_temp.live_id(41),'review','manual_retry',
+  status::public.agent_job_status,attempt_count,started_at,started_at + make_interval(secs=>duration_s),'workerd'
+from canary_observed_attempts order by job_id,attempt_count desc;
+insert into public.agent_runs(id,workspace_id,session_id,agent_job_id,stage_id,stage_slug,run_type,model_provider,
+  model_name,status,started_at,finished_at,attempt_count,total_cost_usd,cost_provenance,usage_recorded_at,
+  usage_finalized_at,usage_estimation_revision)
+select run_id,workspace_id,session_id,job_id,pg_temp.live_id(41),'review','project','codex',execution->>'modelName',
+  status::public.agent_run_status,started_at,started_at + make_interval(secs=>duration_s),attempt_count,cost,
+  provenance,started_at,started_at + make_interval(secs=>duration_s),
+  case when provenance='estimated' then 'canary-test-rate-v1' end
+from canary_observed_attempts;
+update public.sessions set phase_status='approved'
+where id=(select session_id from routing_canary_test_sessions where arm='candidate');
+
+create function pg_temp.canary_observed_report(p_id uuid default null, p_from timestamptz default null, p_to timestamptz default null)
+returns jsonb language sql as $$
+  select public.get_factory_routing_canary_report(pg_temp.live_id(11), (select factory_id from live_scope),p_id,p_from,p_to)
+$$;
+create temp table canary_observed_fixture_end as
+select created_at from public.session_factory_admission_inputs join canary_admitted_session using(session_id);
+grant select on live_scope,canary_observed_fixture_end to authenticated;
+set local request.jwt.claim.role='authenticated';
+select set_config('request.jwt.claim.sub',pg_temp.live_id(1)::text,true);
+set local role authenticated;
+select ok((select (report#>>'{baseline,assignedSessions}')::integer+(report#>>'{candidate,assignedSessions}')::integer=4
+  and (report#>>'{baseline,overriddenSessions}')::integer+(report#>>'{candidate,overriddenSessions}')::integer=1
+  and report->'reasons' @> '["exposure_deviations"]'
+  from (select pg_temp.canary_observed_report() report) data),
+  'the report retains all four exact members and discloses the override under its assigned arm');
+select ok((select report#>'{candidate,startedAttempts}'='2'::jsonb and report#>'{candidate,failedAttempts}'='1'::jsonb
+  and report#>'{candidate,succeededAttempts}'='1'::jsonb and report#>'{candidate,measuredCostAttempts}'='1'::jsonb
+  and report#>'{candidate,estimatedCostAttempts}'='1'::jsonb and report#>'{candidate,knownSpendUsd}'='0.055'::jsonb
+  and report#>'{candidate,meanSpendUsd}'='0.055'::jsonb and report#>'{candidate,meanLatencyMs}'='3000'::jsonb
+  and report#>'{candidate,exposureMismatchSessions}'='1'::jsonb
+  from (select pg_temp.canary_observed_report(p_to=>created_at) report from canary_observed_fixture_end) data),
+  'a failed claim and successful retry reconcile to one candidate session, including measured and estimated cost and summed wall time');
+select ok((select report#>'{baseline,canceledAttempts}'='1'::jsonb and report#>'{baseline,pendingAttempts}'='1'::jsonb
+  and report#>'{baseline,unavailableCostAttempts}'='1'::jsonb and report#>'{baseline,pendingCostAttempts}'='1'::jsonb
+  and report#>'{baseline,knownSpendUsd}'='null'::jsonb and report#>'{baseline,meanLatencyMs}'='null'::jsonb
+  and report->>'status'='inconclusive' and report->'reasons' @> '["insufficient_quality","incomplete_usage"]'
+  from (select pg_temp.canary_observed_report(p_to=>created_at) report from canary_observed_fixture_end) data),
+  'terminal unknown and provisional cost remain distinct, and missing quality keeps the comparison inconclusive');
+select is(pg_temp.canary_observed_report(pg_temp.live_id(299)),null::jsonb,
+  'a different canary identifier cannot fall through to the latest report');
+select ok((select report#>'{baseline,assignedSessions}'='0'::jsonb and report#>'{candidate,assignedSessions}'='0'::jsonb
+  from (select pg_temp.canary_observed_report(null,statement_timestamp()-interval '1 day',
+    statement_timestamp()-interval '1 hour') report) data), 'the enrollment window keeps other assignments out of both arms');
+select set_config('request.jwt.claim.sub',pg_temp.live_id(299)::text,true);
+select throws_ok($$select pg_temp.canary_observed_report()$$,'42501',null,
+  'an authenticated outsider cannot query canary outcomes or confirm a designation');
+reset role;
+set local request.jwt.claim.role='service_role';
+
+-- Publish the exact retry output and record one original, scoped judge result.
+create temp table canary_quality_run as
+select retry.job_id,retry.session_id,job.workspace_id,run.id as run_id,original.execution
+from canary_retried_job retry join canary_original_attempt original using(session_id)
+join public.agent_jobs job on job.id=retry.job_id join public.agent_runs run on run.agent_job_id=retry.job_id;
+update public.agent_jobs set status='running',attempt_count=1,claimed_worker_runtime='workerd',
+  git_continuity_release_revision=(select revision from public.get_git_continuity_release_state())
+where id=(select job_id from canary_quality_run);
+select is(public.start_session_job_attempt(job_id,1,pg_temp.live_id(41),0,'codex',execution->>'modelName',
+  'project','wallie/canary-observed-quality'),run_id,'start the exact canary quality retry') from canary_quality_run;
+select public.pin_session_job_git_input(job_id,1,run_id,pg_temp.live_id(42),'main',repeat('a',40)) from canary_quality_run;
+update public.agent_runs set sandbox_provider='vercel',sandbox_connection_revision=pg_temp.live_id(50),
+  sandbox_id='sbx_canary_quality',sandbox_vercel_team_id='team_live',sandbox_vercel_project_id='prj_live'
+where id=(select run_id from canary_quality_run);
+select ok(public.pin_session_attempt_manifest(job_id,run_id,1,repeat('c',64),24,3,repeat('a',40),'[]','workerd',
+  null,execution->>'effort',pg_temp.live_id(21)),'verify exact exposure for the scored retry') from canary_quality_run;
+select ok(public.prepare_session_source_and_checkpoint_publication(run_id,pg_temp.live_id(42),'main',repeat('a',40),
+  repeat('a',40),'Canary quality','Exact retry output','','','',0,'Observed canary output'),
+  'stage the canary retry original output') from canary_quality_run;
+select ok(public.adopt_session_checkpoint_publication(run_id, public.claim_session_checkpoint_publication(run_id)),
+  'retain the concrete output checkpoint for the canary') from canary_quality_run;
+
+insert into public.session_stage_approval_receipts(workspace_id,session_id,completion_id,stage_id,
+  artifact_id,artifact_version,artifact_digest,approved_by_member_id)
+select artifact.workspace_id,artifact.session_id,pg_temp.live_id(1140),artifact.stage_id,artifact.id,artifact.version,
+  encode(sha256(convert_to(internal.approved_predecessor_artifact_text(artifact.artifact_json),'UTF8')),'hex'),pg_temp.live_id(21)
+from canary_quality_run target join public.session_git_checkpoints checkpoint using(run_id)
+join public.session_artifacts artifact on artifact.id=checkpoint.artifact_id;
+insert into public.factory_scorer_sampling_policies(id,workspace_id,factory_id,scorer_revision_id,
+  revision_number,rate_bps,seed,terminal_statuses,stage_ids,created_by)
+select pg_temp.live_id(1141),scope.workspace_id,scope.factory_id,scorer.id,1,10000,'canary-report',
+  array['success'],array[pg_temp.live_id(41)],scope.owner_id from live_scope scope cross join frontier_scorer scorer;
+insert into public.factory_scorer_sample_receipts(id,workspace_id,factory_id,policy_id,scorer_revision_id,
+  definition_revision_id,session_id,run_id,attempt_count,run_finished_at,target_commit_sha,outcome,missing_evidence,evidence)
+select pg_temp.live_id(1142),scope.workspace_id,scope.factory_id,pg_temp.live_id(1141),scorer.id,
+  admission.definition_revision_id,target.session_id,target.run_id,checkpoint.attempt_count,run.finished_at,
+  checkpoint.output_sha,'sampled','{}','[{"kind":"artifact"}]'
+from live_scope scope cross join frontier_scorer scorer cross join canary_quality_run target
+join public.session_factory_admission_inputs admission using(session_id)
+join public.session_git_checkpoints checkpoint using(run_id)
+join public.agent_runs run on run.id=target.run_id;
+update public.factory_evaluation_jobs set status='succeeded', attempt_count=1, available_at=null, finished_at=clock_timestamp()
+where sample_receipt_id=pg_temp.live_id(1142);
+insert into public.factory_evaluation_attempts(id,job_id,workspace_id,factory_id,attempt_number,claimed_at,
+  lease_expires_at,settled_at,outcome)
+select pg_temp.live_id(1143),job.id,job.workspace_id,job.factory_id,1,job.finished_at-interval '1 second',
+  job.finished_at+interval '1 minute',job.finished_at,'succeeded'
+from public.factory_evaluation_jobs job where job.sample_receipt_id=pg_temp.live_id(1142);
+insert into public.factory_evaluation_receipts(attempt_id,workspace_id,factory_id,job_id,session_id,run_id,scorer_revision_id,
+  sample_receipt_id,target_commit_sha,attempt_number,attempt_outcome,profile_revision_id,provider_model,provider_name,
+  status,result,claimed_at,finished_at,latency_ms,cost_usd,cost_provenance)
+select attempt.id,job.workspace_id,job.factory_id,job.id,job.session_id,job.run_id,job.scorer_revision_id,job.sample_receipt_id,
+  job.target_commit_sha,1,'succeeded',(select id from public.factory_judge_profile_revisions
+    where workspace_id=job.workspace_id order by revision desc limit 1),
+  'openai/gpt-example','openai','pass','{"score":{"kind":"boolean","value":true}}',
+  attempt.claimed_at,attempt.settled_at,1000,12.340,'measured'
+from public.factory_evaluation_attempts attempt join public.factory_evaluation_jobs job on job.id=attempt.job_id
+where attempt.id=pg_temp.live_id(1143);
+
+set local request.jwt.claim.role='authenticated';
+select set_config('request.jwt.claim.sub',pg_temp.live_id(1)::text,true);
+set local role authenticated;
+select ok((select (report#>>'{baseline,scoredSessions}')::integer+(report#>>'{candidate,scoredSessions}')::integer=1
+  and (report#>>'{baseline,scorePasses}')::integer+(report#>>'{candidate,scorePasses}')::integer=1
+  and coalesce((report#>>'{baseline,knownSpendUsd}')::numeric,0)+coalesce((report#>>'{candidate,knownSpendUsd}')::numeric,0)=0.055
+  from (select pg_temp.canary_observed_report() report) data),
+  'the exact accepted attempt and frozen scorer contribute one pass while judge spend stays out of production spend');
+reset role;
+set local request.jwt.claim.role='service_role';
+
 create temp table proposal_before_suite_edit as
-select pg_temp.apply_routing_finding(1,20,p_activation => 4) as draft_id;
+select pg_temp.apply_routing_finding(1,20,p_activation => 5,p_expected_draft => draft_id) as draft_id from later_canary_draft;
 select updated.id from live_scope scope cross join live_suite suite cross join live_task task
 cross join lateral public.save_factory_benchmark_suite_revision(
   scope.workspace_id, scope.factory_id, scope.owner_id, 'Revised live replay suite', 'regression',
   p_suite_id => suite.suite_id, p_expected_revision_id => suite.id, p_task_revision_ids => array[task.id]
 ) updated;
 select throws_ok($$select pg_temp.apply_routing_finding(1,16,
-  p_expected_draft=>(select draft_id from proposal_before_suite_edit),p_activation=>4)$$,
+  p_expected_draft=>(select draft_id from proposal_before_suite_edit),p_activation=>5)$$,
   'PT409', 'The suite revision changed. Run a new comparison before applying it.',
   'a suite edit invalidates previously qualified evidence for new proposals');
-select is(pg_temp.apply_routing_finding(1,20,p_activation=>4), (select draft_id from proposal_before_suite_edit),
+select is(pg_temp.apply_routing_finding(1,20,p_activation=>5), (select draft_id from proposal_before_suite_edit),
   'resubmitting the same request still reads its original receipt after a suite edit');
-select throws_ok($$select public.activate_reviewed_factory_routing(scope.workspace_id,scope.factory_id,scope.owner_id,4,
+select throws_ok($$select public.activate_reviewed_factory_routing(scope.workspace_id,scope.factory_id,scope.owner_id,5,
   saved.draft_id,array['vercel'],array['agentCli']) from live_scope scope cross join proposal_before_suite_edit saved$$,
   'PT409',null,'stale benchmark evidence cannot activate the current reviewed candidate');
+
+create temp table post_canary_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,taskClasses,0,name}','"Ordinary later revision"',5,draft_id) as draft_id
+from proposal_before_suite_edit;
+select pg_temp.seed_canary_activation_checks(draft_id,5) from post_canary_draft;
+select is((public.publish_factory_definition_draft(scope.workspace_id,scope.factory_id,scope.owner_id,5,
+  draft.draft_id,array['vercel'],array['agentCli'])).activation_number,6::bigint,
+  'an explicit later publication adds a new revision without changing the canary designation')
+from live_scope scope cross join post_canary_draft draft;
+select ok((select (receipt.routing_canary_id,receipt.routing_canary_arm,receipt.routing_canary_bucket)=
+    (original.routing_canary_id,original.routing_canary_arm,original.routing_canary_bucket)
+  and internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id)=original.execution
+  from canary_original_attempt original join public.session_factory_admission_inputs receipt using(session_id)),
+  'a later activation leaves the previously enrolled session and its execution intact');
+create temp table post_canary_admission as
+select session_id from public.create_session_with_first_job(pg_temp.live_id(11),pg_temp.live_id(21),
+  'Create after canary','Review under the later factory definition.','codex','gpt-4.1-2025-04-14',
+  session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
+  selected_stage_ids=>array[pg_temp.live_id(41)]);
+select ok((select receipt.activation_number=6 and receipt.routing_canary_id is null
+  from post_canary_admission admitted join public.session_factory_admission_inputs receipt using(session_id)),
+  'new work under a later activation does not inherit the old canary assignment');
 
 update public.workspaces set deletion_requested_at = clock_timestamp() where id = pg_temp.live_id(11);
 set local storage.allow_delete_query = 'true';
@@ -937,6 +1308,7 @@ delete from storage.objects where bucket_id = 'session-source-checkpoints'
   and split_part(name,'/',1) = pg_temp.live_id(11)::text;
 delete from public.workspaces where id = pg_temp.live_id(11);
 set constraints factory_definition_drafts_routing_evidence_source_fk immediate;
+set constraints all immediate;
 select is((select count(*) from public.factory_definition_drafts where workspace_id = pg_temp.live_id(11)) +
   (select count(*) from public.factory_routing_draft_evidence where workspace_id = pg_temp.live_id(11)),
   0::bigint,'workspace teardown removes both the derived draft and its retained proposal');

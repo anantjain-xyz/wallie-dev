@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
+import type { RoutingCanarySelection } from "@/lib/model-routing/canary-contracts";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { factoryActivationRequirements, loadFactoryDefinitionCatalog } from "./authority";
@@ -36,7 +37,12 @@ export type FactoryDefinitionMutation =
       source: FactoryDefinitionSource;
     }
   | { action: "publish"; expectedActivationNumber: number; draftId: string }
-  | { action: "activate-routing"; expectedActivationNumber: number; draftId: string }
+  | {
+      action: "activate-routing";
+      expectedActivationNumber: number;
+      draftId: string;
+      canary?: RoutingCanarySelection;
+    }
   | { action: "rollback"; expectedActivationNumber: number; revisionId: string };
 
 export type FactoryActivationSummary = {
@@ -208,10 +214,14 @@ export async function mutateFactoryDefinition({
       p_required_probes: requiredProbes,
     };
     if (command.action === "activate-routing") {
-      const { data, error } = await admin.rpc("activate_reviewed_factory_routing", {
-        ...requirements,
-        p_draft_id: command.draftId,
-      });
+      const activationArgs = { ...requirements, p_draft_id: command.draftId };
+      const { data, error } = command.canary
+        ? await admin.rpc("activate_factory_routing_canary", {
+            ...activationArgs,
+            p_task_class_id: command.canary.taskClassId,
+            p_candidate_bps: command.canary.candidateBps,
+          })
+        : await admin.rpc("activate_reviewed_factory_routing", activationArgs);
       if (error) return mutationError(error);
       const { activationId, ...activation } = reviewedActivationSchema.parse(data);
       return { ok: true, result: { activation: { id: activationId, ...activation } } };

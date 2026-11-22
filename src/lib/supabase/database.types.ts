@@ -4252,6 +4252,78 @@ export type Database = {
           },
         ]
       }
+      factory_routing_canaries: {
+        Row: {
+          activation_number: number
+          baseline_activation_number: number
+          baseline_revision_id: string
+          candidate_bps: number
+          candidate_revision_id: string
+          created_at: string
+          factory_id: string
+          id: string
+          minimum_support: number
+          task_class_id: string
+          task_class_slug: string
+          workspace_id: string
+        }
+        Insert: {
+          activation_number: number
+          baseline_activation_number: number
+          baseline_revision_id: string
+          candidate_bps: number
+          candidate_revision_id: string
+          created_at?: string
+          factory_id: string
+          id?: string
+          minimum_support?: number
+          task_class_id: string
+          task_class_slug: string
+          workspace_id: string
+        }
+        Update: {
+          activation_number?: number
+          baseline_activation_number?: number
+          baseline_revision_id?: string
+          candidate_bps?: number
+          candidate_revision_id?: string
+          created_at?: string
+          factory_id?: string
+          id?: string
+          minimum_support?: number
+          task_class_id?: string
+          task_class_slug?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_routing_canaries_workspace_id_factory_id_activatio_fkey"
+            columns: ["workspace_id", "factory_id", "activation_number"]
+            isOneToOne: true
+            referencedRelation: "factory_routing_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
+            ]
+          },
+          {
+            foreignKeyName: "factory_routing_canaries_workspace_id_factory_id_baseline__fkey"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "baseline_activation_number",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_definition_activations"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "activation_number",
+            ]
+          },
+        ]
+      }
       factory_routing_draft_evidence: {
         Row: {
           candidate_key: string
@@ -6610,6 +6682,11 @@ export type Database = {
           original_title: string | null
           pipeline_id: string
           prompt_sha256: string
+          routing_canary_arm: string | null
+          routing_canary_baseline_execution: Json | null
+          routing_canary_bucket: number | null
+          routing_canary_eligible: boolean | null
+          routing_canary_id: string | null
           routing_decision: Json | null
           routing_execution: Json | null
           selected_stage_ids: string[]
@@ -6638,6 +6715,11 @@ export type Database = {
           original_title?: string | null
           pipeline_id: string
           prompt_sha256: string
+          routing_canary_arm?: string | null
+          routing_canary_baseline_execution?: Json | null
+          routing_canary_bucket?: number | null
+          routing_canary_eligible?: boolean | null
+          routing_canary_id?: string | null
           routing_decision?: Json | null
           routing_execution?: Json | null
           selected_stage_ids: string[]
@@ -6666,6 +6748,11 @@ export type Database = {
           original_title?: string | null
           pipeline_id?: string
           prompt_sha256?: string
+          routing_canary_arm?: string | null
+          routing_canary_baseline_execution?: Json | null
+          routing_canary_bucket?: number | null
+          routing_canary_eligible?: boolean | null
+          routing_canary_id?: string | null
           routing_decision?: Json | null
           routing_execution?: Json | null
           selected_stage_ids?: string[]
@@ -6674,6 +6761,23 @@ export type Database = {
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "session_factory_admission_canary_scope_fk"
+            columns: [
+              "workspace_id",
+              "factory_id",
+              "routing_canary_id",
+              "activation_number",
+            ]
+            isOneToOne: false
+            referencedRelation: "factory_routing_canaries"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "id",
+              "activation_number",
+            ]
+          },
           {
             foreignKeyName: "session_factory_admission_inp_workspace_id_definition_revi_fkey"
             columns: ["workspace_id", "definition_revision_id"]
@@ -9948,6 +10052,20 @@ export type Database = {
         }
         Returns: Json
       }
+      activate_factory_routing_canary: {
+        Args: {
+          p_actor_user_id: string
+          p_candidate_bps: number
+          p_draft_id: string
+          p_enabled_sandbox_providers: string[]
+          p_expected_activation_number: number
+          p_factory_id: string
+          p_required_probes: string[]
+          p_task_class_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       activate_reviewed_factory_routing: {
         Args: {
           p_actor_user_id: string
@@ -12503,6 +12621,16 @@ export type Database = {
           p_actor_user_id: string
           p_factory_id: string
           p_original_merge_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_factory_routing_canary_report: {
+        Args: {
+          p_canary_id?: string
+          p_factory_id: string
+          p_from?: string
+          p_to?: string
           p_workspace_id: string
         }
         Returns: Json

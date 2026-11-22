@@ -57,3 +57,9 @@ The save transaction retains an immutable receipt with the draft and the exact e
 - A new admission pins its reviewed activation, normal decision, and exact execution configuration. The workflow, repository, grants, approvals, tools, and budgets still come from the admitted factory definition.
 - A workspace owner or admin can choose a reviewed target for one new pipeline session and supply a reason. The admission records the operator, reason, and resolved configuration alongside the policy recommendation. A retry of the creation request replays the recorded result.
 - Worker claims and attempt receipts check the pinned runtime, harness, native model, agent prompt, and sandbox connection. Codex also uses the reasoning effort from the qualified benchmark configuration. Later activations affect future admissions. Retries and later stages reuse the session’s existing pin.
+
+## Canary rollout
+
+- Start a canary for a class with a reviewed benchmark proposal. Select the candidate share and use a compatible prior activation as the baseline. The rollout keeps the same workflow and authority across both arms.
+- Each new admission records its assignment before queueing. The bucket is deterministic for the canary, task class, and session. Worker restarts and retries reuse that assignment.
+- Analytics compares the assigned cohorts using production attempts, including failed attempts and retries. The report shows missing measurements and explicit overrides. A comparison remains inconclusive when either arm lacks enough comparable evidence.

@@ -145,6 +145,7 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
       "beforeRevisionPolicy",
       "beforeCohortAt",
       "beforeCohortPolicy",
+      "routingCanary",
     ])
       params.delete(key);
   }
