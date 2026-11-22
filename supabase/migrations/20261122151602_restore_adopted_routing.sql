@@ -14,7 +14,9 @@ declare
   execution_grant public.factory_execution_grants;
   reviewer uuid;
   workflow jsonb;
+  workflow_digest text;
   head_workflow jsonb;
+  head_digest text;
   target record;
   checked record;
   restored_targets jsonb := '[]'::jsonb;
@@ -45,17 +47,28 @@ begin
   where (reviewed.workspace_id,reviewed.factory_id,reviewed.activation_number,reviewed.revision_id) =
     (p_workspace_id,p_factory_id,baseline.activation_number,baseline.revision_id);
   restoring_reviewed := found;
-  select revision.definition_json::jsonb into strict workflow from public.factory_definition_revisions revision
+  select revision.definition_json::jsonb,revision.canonical_digest into strict workflow,workflow_digest
+  from public.factory_definition_revisions revision
   where (revision.workspace_id,revision.factory_id,revision.id) = (p_workspace_id,p_factory_id,baseline.revision_id);
   if restoring_reviewed or exists (
     select 1 from public.factory_routing_activations reviewed
     where (reviewed.workspace_id,reviewed.factory_id,reviewed.activation_number) =
       (p_workspace_id,p_factory_id,head.activation_number)
   ) then
-    select revision.definition_json::jsonb into strict head_workflow from public.factory_definition_revisions revision
+    select revision.definition_json::jsonb,revision.canonical_digest into strict head_workflow,head_digest
+    from public.factory_definition_revisions revision
     where (revision.workspace_id,revision.factory_id,revision.id) = (p_workspace_id,p_factory_id,head.revision_id);
     if workflow - 'modelRouting' is distinct from head_workflow - 'modelRouting' then
-      raise exception 'The prior activation does not preserve the current workflow and base execution scope.' using errcode = 'PT422';
+      if not exists (
+        select 1 from internal.factory_improvement_adoptions adoption
+        where (adoption.workspace_id,adoption.factory_id,adoption.activation_number,adoption.adopted_revision_id,adoption.adopted_digest) =
+          (p_workspace_id,p_factory_id,head.activation_number,head.revision_id,head_digest)
+          and (adoption.baseline_activation_number,adoption.baseline_revision_id,adoption.baseline_digest) =
+            (baseline.activation_number,baseline.revision_id,workflow_digest)
+      ) then
+        raise exception 'The prior activation does not preserve the current workflow and base execution scope.' using errcode = 'PT422';
+      end if;
+      perform internal.assert_factory_skill_bundle_available(p_workspace_id,p_factory_id,workflow->'skillIds');
     end if;
   end if;
   select member.id into strict reviewer from public.workspace_members member

@@ -122,21 +122,29 @@ select pg_temp.live_id(376),scope.workspace_id,scope.factory_id,pg_temp.live_id(
   (validation.receipt->>'id')::uuid,pg_temp.live_id(21),'{}','{}','{}','{}','{}'
 from live_scope scope cross join publication_validation validation;
 
-create function pg_temp.record_improvement_routing(p_replace_primary boolean) returns uuid language plpgsql as $$
+create function pg_temp.record_improvement_routing(p_replace_primary boolean,p_baseline bigint default 3)
+returns uuid language plpgsql as $$
 declare
   prior public.factory_definition_revisions;
   candidate public.factory_definition_revisions;
   adoption internal.factory_improvement_adoptions;
   body jsonb;
-  edits jsonb := '[]';
+  edits jsonb;
 begin
   select revision.* into strict prior from public.factory_definition_revisions revision
-  join prior_routing_activation activation on revision.id::text = activation.receipt->>'revisionId';
+  join public.factory_definition_activations activation
+    on (revision.workspace_id,revision.factory_id,revision.id) =
+      (activation.workspace_id,activation.factory_id,activation.revision_id)
+  join live_scope scope on (activation.workspace_id,activation.factory_id) = (scope.workspace_id,scope.factory_id)
+  where activation.activation_number = p_baseline;
   body := jsonb_set(prior.definition_json::jsonb,'{stages,0,promptTemplateMd}',
     '"Review the task against its acceptance criteria."',true);
+  edits := jsonb_build_array(jsonb_build_object('kind','stage_prompt','stageId',pg_temp.live_id(41),
+    'expectedPromptSha256',encode(sha256(convert_to(prior.definition_json::jsonb#>>'{stages,0,promptTemplateMd}','UTF8')),'hex'),
+    'promptTemplateMd',body#>>'{stages,0,promptTemplateMd}'));
   if p_replace_primary then
     body := jsonb_set(body,'{modelRouting,rules,0,configuration}',pg_temp.improvement_routing_configuration(3) - 'scorerRevisionId');
-    edits := jsonb_build_array(jsonb_build_object('kind','routing_target','ruleId',pg_temp.live_id(202),
+    edits := edits || jsonb_build_array(jsonb_build_object('kind','routing_target','ruleId',pg_temp.live_id(202),
       'from',prior.definition_json::jsonb#>'{modelRouting,rules,0,configuration}',
       'to',body#>'{modelRouting,rules,0,configuration}'));
   end if;
@@ -144,13 +152,13 @@ begin
   values(prior.workspace_id,prior.factory_id,1,body::text,encode(sha256(convert_to(body::text,'UTF8')),'hex'),prior.created_by)
   returning * into candidate;
   insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
-  values(prior.workspace_id,prior.factory_id,candidate.id,4,prior.created_by);
+  values(prior.workspace_id,prior.factory_id,candidate.id,p_baseline+1,prior.created_by);
   insert into internal.factory_improvement_adoptions(workspace_id,factory_id,proposal_id,proposal_revision_id,
     publication_id,validation_id,actor_member_id,baseline_activation_number,baseline_revision_id,baseline_digest,
     activation_number,adopted_revision_id,adopted_digest,review,comparisons)
   select prior.workspace_id,prior.factory_id,pg_temp.live_id(300),pg_temp.live_id(312),pg_temp.live_id(376),
-    (validation.receipt->>'id')::uuid,pg_temp.live_id(21),3,prior.id,prior.canonical_digest,
-    4,candidate.id,candidate.canonical_digest,'{}','{}' from publication_validation validation returning * into adoption;
+    (validation.receipt->>'id')::uuid,pg_temp.live_id(21),p_baseline,prior.id,prior.canonical_digest,
+    p_baseline+1,candidate.id,candidate.canonical_digest,'{}','{}' from publication_validation validation returning * into adoption;
   perform internal.record_factory_improvement_routing(adoption,prior.created_by,prior.definition_json::jsonb,body,edits);
   return adoption.id;
 end;
@@ -176,17 +184,122 @@ rollback to savepoint before_improvement_canary;
 release savepoint before_improvement_canary;
 select is(:'canary_sqlstate'::text,'PT409','an unrelated improvement cannot promote an active routing canary');
 
+create function pg_temp.save_routing_fixture_draft(p_head bigint,p_position integer,p_request uuid,p_request_digest text)
+returns public.factory_definition_drafts language sql as $$
+  select public.save_factory_routing_draft(scope.workspace_id,scope.factory_id,scope.owner_id,p_head,
+    definition.body,encode(sha256(convert_to(definition.body,'UTF8')),'hex'),'{"newStageIds":[]}',
+    axis.experiment_id,axis.candidate_key,comparison.targeted_suite_id,comparison.scorer_id,pg_temp.live_id(202),
+    p_request,p_request_digest,null)
+  from live_scope scope
+  join improvement_routing_comparison comparison using (workspace_id,factory_id)
+  join public.factory_benchmark_experiment_candidates axis using (workspace_id,factory_id,experiment_id)
+  join public.factory_definition_activations head using (workspace_id,factory_id)
+  join public.factory_definition_revisions revision on (head.workspace_id,head.factory_id,head.revision_id) =
+    (revision.workspace_id,revision.factory_id,revision.id)
+  cross join lateral (
+    select jsonb_set(revision.definition_json::jsonb,'{modelRouting,rules,0,configuration}',
+      pg_temp.improvement_routing_configuration(p_position))::text as body
+  ) definition
+  where axis.comparison_position = p_position and head.activation_number = p_head
+$$;
+
+create function pg_temp.add_routing_fixture_capability(p_digest text) returns void language sql as $$
+  insert into public.sandbox_capability_checks(workspace_id,github_repository_id,agent_provider,agent_model,
+    sandbox_provider,sandbox_id,sandbox_connection_revision,sandbox_vercel_team_id,sandbox_vercel_project_id,status,
+    capabilities,factory_definition_digest)
+  select capability.workspace_id,capability.github_repository_id,capability.agent_provider,capability.agent_model,
+    capability.sandbox_provider,capability.sandbox_id,capability.sandbox_connection_revision,capability.sandbox_vercel_team_id,
+    capability.sandbox_vercel_project_id,capability.status,capability.capabilities,p_digest
+  from public.sandbox_capability_checks capability where capability.id = pg_temp.live_id(51)
+$$;
+
+create function pg_temp.pass_restore_smoke(p_expected bigint,p_kind text,p_id uuid,p_digest text)
+returns boolean language sql as $$
+  select public.finish_factory_definition_smoke_test(scope.workspace_id,test.id,'passed',
+    jsonb_build_object('runtimeProfile','vercel','stageCount',1,'completedStageCount',1,
+      'stages',jsonb_build_array(jsonb_build_object('stageId',pg_temp.live_id(41),'promptDigest',repeat('a',64)))),
+    null)
+  from live_scope scope
+  cross join lateral public.start_factory_definition_smoke_test(scope.workspace_id,scope.factory_id,scope.owner_id,
+    p_expected,p_kind,p_id,p_digest,array['vercel'],array['agentCli']) test
+$$;
+
 savepoint before_unchanged_improvement;
-select pg_temp.record_improvement_routing(false) as carried_adoption \gset
+-- Restore activation 3 through an intervening routing-only head. Activations 3 and 5
+-- really select the same reviewed definition, but only activation 5 precedes the adoption.
+create temp table prompt_baseline as
+select revision.* from public.factory_definition_revisions revision
+join prior_routing_activation reviewed on revision.id::text = reviewed.receipt->>'revisionId';
+create temp table intervening_routing_draft as
+select * from pg_temp.save_routing_fixture_draft(3,3,pg_temp.live_id(378),repeat('d',64));
+select pg_temp.add_routing_fixture_capability(canonical_digest) from intervening_routing_draft;
+select pg_temp.pass_restore_smoke(3,'draft',id,canonical_digest) from intervening_routing_draft;
+select public.activate_reviewed_factory_routing(workspace_id,factory_id,created_by,3,id,
+  array['vercel'],array['agentCli']) from intervening_routing_draft;
+select pg_temp.pass_restore_smoke(4,'revision',id,canonical_digest) from prompt_baseline;
+select public.rollback_factory_routing_activation(scope.workspace_id,scope.factory_id,scope.owner_id,4,3,baseline.id,
+  array['vercel'],array['agentCli']) from live_scope scope cross join prompt_baseline baseline;
+select pg_temp.record_improvement_routing(false,5) as carried_adoption \gset
+
 select (adopted.source_improvement_adoption_id::text = :'carried_adoption'
   and (adopted.draft_id,adopted.benchmark_evidence_draft_id) is not distinct from (null::uuid,null::uuid)
   and adopted.reviewed_targets = prior.reviewed_targets) as preserved_targets
 from public.factory_routing_activations adopted join public.factory_routing_activations prior
   on (adopted.workspace_id,adopted.factory_id) = (prior.workspace_id,prior.factory_id)
-where adopted.workspace_id = pg_temp.live_id(11) and adopted.activation_number = 4 and prior.activation_number = 3 \gset
+where adopted.workspace_id = pg_temp.live_id(11) and adopted.activation_number = 6 and prior.activation_number = 5 \gset
+
+create temp table prompt_adoption_session as
+select pg_temp.admit_improvement_routing('Admitted while the prompt improvement is active') as id;
+create temp table prompt_adoption_pin as
+select to_jsonb(input) as receipt from public.session_factory_admission_inputs input
+join prompt_adoption_session admitted on admitted.id = input.session_id;
+
+create function pg_temp.restore_prompt_baseline(p_target bigint) returns public.factory_definition_activations language sql as $$
+  select public.rollback_factory_routing_activation(scope.workspace_id,scope.factory_id,scope.owner_id,6,p_target,baseline.id,
+    array['vercel'],array['agentCli']) from live_scope scope cross join prompt_baseline baseline
+$$;
+create function pg_temp.prompt_restore_error(p_target bigint) returns text language plpgsql as $$
+begin
+  perform pg_temp.restore_prompt_baseline(p_target);
+  raise exception 'The rollback unexpectedly succeeded.';
+exception when others then return sqlstate || ' ' || sqlerrm;
+end;
+$$;
+select pg_temp.prompt_restore_error(3) as older_prompt_error \gset
+select pg_temp.prompt_restore_error(5) as missing_prompt_smoke_error \gset
+select pg_temp.pass_restore_smoke(6,'revision',id,canonical_digest) as prompt_smoke_passed
+from prompt_baseline \gset
+create temp table restored_prompt_baseline as select restored.* from pg_temp.restore_prompt_baseline(5) restored;
+select (restored.activation_number = 7 and restored.previous_activation_number = 6
+  and restored.revision_id = baseline.id and receipt.target_activation_number = 5 and receipt.restored_mode = 'reviewed'
+  and review.draft_id = prior.draft_id and review.benchmark_evidence_draft_id = prior.benchmark_evidence_draft_id
+  and review.reviewed_targets = prior.reviewed_targets and review.source_improvement_adoption_id is null) as restored_prompt_provenance
+  from restored_prompt_baseline restored
+  join public.factory_routing_rollbacks receipt using (workspace_id,factory_id,activation_number)
+  join public.factory_routing_activations review using (workspace_id,factory_id,activation_number)
+  join public.factory_routing_activations prior using (workspace_id,factory_id)
+  cross join prompt_baseline baseline where prior.activation_number = 5 \gset
+select to_jsonb(input) = pin.receipt as retained_prompt_pin from public.session_factory_admission_inputs input
+join prompt_adoption_session admitted on admitted.id = input.session_id
+cross join prompt_adoption_pin pin \gset
+create temp table after_prompt_restore as select pg_temp.admit_improvement_routing('Admitted after prompt restore') as id;
+select (input.activation_number = 7 and input.definition_revision_id = baseline.id
+  and input.definition_digest = baseline.canonical_digest and input.routing_decision->>'mode' = 'active'
+  and input.routing_execution->'configuration' = pg_temp.improvement_routing_configuration(1)) as restored_prompt_admission
+  from public.session_factory_admission_inputs input join after_prompt_restore admitted on admitted.id = input.session_id
+  cross join prompt_baseline baseline \gset
+
 rollback to savepoint before_unchanged_improvement;
 release savepoint before_unchanged_improvement;
 select ok(:'preserved_targets'::boolean,'a prompt edit preserves exact reviewed targets and records its adoption source');
+select is(:'older_prompt_error'::text,'PT422 The prior activation does not preserve the current workflow and base execution scope.',
+  'an older reviewed activation with the identical revision cannot substitute for the exact predecessor');
+select is(:'missing_prompt_smoke_error'::text,'PT422 A current passing smoke test is required for the exact factory candidate.',
+  'restoring the exact prompt predecessor still requires fresh smoke against the adopted head');
+select ok(:'prompt_smoke_passed'::boolean,'the exact prompt predecessor passes a fresh restoration smoke');
+select ok(:'restored_prompt_provenance'::boolean,'restoring the exact prompt predecessor retains its original reviewed routing provenance');
+select ok(:'retained_prompt_pin'::boolean,'the prompt rollback preserves the adopted in-flight admission pin');
+select ok(:'restored_prompt_admission'::boolean,'new admissions use the exact restored prompt and original reviewed target');
 
 select pg_temp.record_improvement_routing(true) as target_adoption \gset
 set constraints factory_routing_activation_improvement_source_fk immediate;
@@ -215,41 +328,9 @@ where activation.activation_number = 4;
 
 -- Move the exact same workflow to a new reviewed routing head before restoring the adopted target.
 create temp table later_routing_draft as
-select saved.*
-from live_scope scope
-join improvement_routing_comparison comparison using (workspace_id,factory_id)
-join public.factory_benchmark_experiment_candidates axis using (workspace_id,factory_id,experiment_id)
-cross join adopted_routing_revision revision
-cross join lateral (
-  select jsonb_set(revision.definition_json::jsonb,'{modelRouting,rules,0,configuration}',
-    pg_temp.improvement_routing_configuration(1))::text as body
-) definition
-cross join lateral public.save_factory_routing_draft(scope.workspace_id,scope.factory_id,scope.owner_id,4,
-  definition.body,encode(sha256(convert_to(definition.body,'UTF8')),'hex'),'{"newStageIds":[]}',
-  axis.experiment_id,axis.candidate_key,comparison.targeted_suite_id,comparison.scorer_id,pg_temp.live_id(202),
-  pg_temp.live_id(377),repeat('c',64),null) saved
-where axis.comparison_position = 1;
-
-insert into public.sandbox_capability_checks(workspace_id,github_repository_id,agent_provider,agent_model,
-  sandbox_provider,sandbox_id,sandbox_connection_revision,sandbox_vercel_team_id,sandbox_vercel_project_id,status,
-  capabilities,factory_definition_digest)
-select capability.workspace_id,capability.github_repository_id,capability.agent_provider,capability.agent_model,
-  capability.sandbox_provider,capability.sandbox_id,capability.sandbox_connection_revision,capability.sandbox_vercel_team_id,
-  capability.sandbox_vercel_project_id,capability.status,capability.capabilities,target.canonical_digest
-from public.sandbox_capability_checks capability
-cross join (select canonical_digest from later_routing_draft union select canonical_digest from adopted_routing_revision) target
-where capability.id = pg_temp.live_id(51);
-
-create function pg_temp.pass_restore_smoke(p_expected bigint,p_kind text,p_id uuid,p_digest text)
-returns boolean language sql as $$
-  select public.finish_factory_definition_smoke_test(scope.workspace_id,test.id,'passed',
-    jsonb_build_object('runtimeProfile','vercel','stageCount',1,'completedStageCount',1,
-      'stages',jsonb_build_array(jsonb_build_object('stageId',pg_temp.live_id(41),'promptDigest',repeat('a',64)))),
-    null)
-  from live_scope scope
-  cross join lateral public.start_factory_definition_smoke_test(scope.workspace_id,scope.factory_id,scope.owner_id,
-    p_expected,p_kind,p_id,p_digest,array['vercel'],array['agentCli']) test
-$$;
+select * from pg_temp.save_routing_fixture_draft(4,1,pg_temp.live_id(377),repeat('c',64));
+select pg_temp.add_routing_fixture_capability(canonical_digest) from later_routing_draft;
+select pg_temp.add_routing_fixture_capability(canonical_digest) from adopted_routing_revision;
 
 select ok(pg_temp.pass_restore_smoke(4,'draft',id,canonical_digest),'the later routing-only draft passes its own smoke')
 from later_routing_draft;
