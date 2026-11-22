@@ -8,10 +8,8 @@ import type {
 import { workspaceFactoryDefinitionPath } from "@/lib/routes";
 
 import { durationLabel, moneyFormat, numberFormat, timeLabel } from "./analytics-view-shared";
-
-export type RoutingCanaryComparisonState =
-  | { kind: "ready"; report: RoutingCanaryReport }
-  | { kind: "unavailable" };
+import { RoutingCanaryAlertEvidence } from "./routing-canary-alert-evidence";
+import type { RoutingCanaryComparisonState } from "./routing-canary-data";
 
 const reasonLabels = {
   insufficient_enrollment: "Too few sessions were assigned to one or both groups.",
@@ -131,11 +129,15 @@ function CohortTitle({
 export function RoutingCanaryComparison({
   canManageFactory,
   factoryId,
+  latestAlertHref,
+  liveReportHref,
   state,
   workspaceSlug,
 }: {
   canManageFactory?: boolean;
   factoryId: string;
+  latestAlertHref?: string;
+  liveReportHref?: string;
   state: RoutingCanaryComparisonState;
   workspaceSlug: string;
 }) {
@@ -149,12 +151,16 @@ export function RoutingCanaryComparison({
         <h2 id="routing-canary-title" className="type-section-title">
           Routing canary
         </h2>
-        <p className="type-secondary text-muted">This canary comparison is unavailable.</p>
+        <p className="type-secondary text-muted">
+          {state.alertRequested
+            ? "This retained routing alert is unavailable."
+            : "This canary comparison is unavailable."}
+        </p>
       </section>
     );
   }
-  const { baseline, candidate, canary, outsideClassSessions, reasons, status, window } =
-    state.report;
+  const report = state.kind === "retained" ? state.alert.report : state.report;
+  const { baseline, candidate, canary, outsideClassSessions, reasons, status, window } = report;
   const baselineHref = canManageFactory
     ? workspaceFactoryDefinitionPath(workspaceSlug, {
         factory: factoryId,
@@ -207,7 +213,28 @@ export function RoutingCanaryComparison({
             ))}
           </ul>
         ) : null}
+        {state.kind === "ready" && state.latestAlert && latestAlertHref ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Status compact label="Routing degradation alert" value="needs_attention" />
+            <Link
+              className="text-sm text-accent underline underline-offset-2"
+              href={latestAlertHref}
+              prefetch={false}
+            >
+              View retained alert evidence
+            </Link>
+          </div>
+        ) : null}
       </header>
+      {state.kind === "retained" ? (
+        <RoutingCanaryAlertEvidence
+          alert={state.alert}
+          canManageFactory={canManageFactory}
+          factoryId={factoryId}
+          liveReportHref={liveReportHref}
+          workspaceSlug={workspaceSlug}
+        />
+      ) : null}
       <table className="type-secondary w-full table-fixed text-left">
         <caption className="sr-only">Baseline and candidate outcomes by assigned group</caption>
         <thead>

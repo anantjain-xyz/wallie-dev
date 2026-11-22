@@ -43,7 +43,12 @@ export type FactoryDefinitionMutation =
       draftId: string;
       canary?: RoutingCanarySelection;
     }
-  | { action: "rollback"; expectedActivationNumber: number; revisionId: string };
+  | {
+      action: "rollback";
+      expectedActivationNumber: number;
+      revisionId: string;
+      targetActivationNumber?: number;
+    };
 
 export type FactoryActivationSummary = {
   id: string;
@@ -231,10 +236,16 @@ export async function mutateFactoryDefinition({
           ...requirements,
           p_draft_id: command.draftId,
         })
-      : await admin.rpc("rollback_factory_definition", {
-          ...requirements,
-          p_revision_id: command.revisionId,
-        });
+      : await (command.targetActivationNumber === undefined
+          ? admin.rpc("rollback_factory_definition", {
+              ...requirements,
+              p_revision_id: command.revisionId,
+            })
+          : admin.rpc("rollback_factory_routing_activation", {
+              ...requirements,
+              p_revision_id: command.revisionId,
+              p_target_activation_number: command.targetActivationNumber,
+            }));
     if (error || !data) return mutationError(error);
     return { ok: true, result: { activation: mapActivation(data) } };
   } catch {

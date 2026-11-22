@@ -158,7 +158,12 @@ function authorized({ initial = false } = {}) {
     requests.push({ table, query, method: init?.method ?? "GET" });
     if (!(table in rows)) throw new Error(`Unexpected PostgREST request for ${table}`);
     const id = query.get("id");
-    const result = id ? rows[table].filter((row) => `eq.${row.id}` === id) : rows[table];
+    const activation = query.get("activation_number");
+    const result = rows[table].filter(
+      (row) =>
+        (!id || `eq.${row.id}` === id) &&
+        (!activation || `eq.${row.activation_number}` === activation),
+    );
     return Response.json(
       new Headers(init?.headers).get("accept") === "application/vnd.pgrst.object+json"
         ? (result[0] ?? null)
@@ -263,10 +268,30 @@ describe("factory definition editor reads", () => {
     expect(response.status).toBe(200);
     const { document } = factoryEditorDocumentResponseSchema.parse(await response.json());
     expect(document).toMatchObject({ kind, id });
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(kind === "revision" ? 3 : 2);
     expect(requests[1]?.query.get("workspace_id")).toBe(`eq.${workspaceId}`);
     expect(requests[1]?.query.get("factory_id")).toBe(`eq.${factoryId}`);
     expect(requests[1]?.query.get("id")).toBe(`eq.${id}`);
+  });
+
+  it("requires the exact scoped activation for a rollback link", async () => {
+    const { requests } = authorized();
+    const active = await GET(
+      new Request(`${routeUrl}?revisionId=${revisionId}&activationNumber=4`),
+      context(),
+    );
+    expect(active.status).toBe(200);
+    const { document } = factoryEditorDocumentResponseSchema.parse(await active.json());
+    expect(document.activationNumber).toBe(4);
+    const read = requests.find(({ table }) => table === "factory_definition_activations");
+    expect(read?.query.get("activation_number")).toBe("eq.4");
+    expect(read?.query.get("revision_id")).toBe(`eq.${revisionId}`);
+    expect(read?.query.get("factory_id")).toBe(`eq.${factoryId}`);
+    const missing = await GET(
+      new Request(`${routeUrl}?revisionId=${revisionId}&activationNumber=7`),
+      context(),
+    );
+    expect(missing.status).toBe(404);
   });
 
   it("rejects conflicting or repeated immutable record selectors", async () => {
@@ -275,6 +300,9 @@ describe("factory definition editor reads", () => {
     ).resolves.toHaveProperty("status", 400);
     await expect(
       GET(new Request(`${routeUrl}?draftId=${draftId}&draftId=${sourceDraftId}`), context()),
+    ).resolves.toHaveProperty("status", 400);
+    await expect(
+      GET(new Request(`${routeUrl}?draftId=${draftId}&activationNumber=4`), context()),
     ).resolves.toHaveProperty("status", 400);
     expect(requireWorkspaceAccessById).not.toHaveBeenCalled();
   });

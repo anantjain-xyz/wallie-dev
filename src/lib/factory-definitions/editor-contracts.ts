@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { routingCanarySummarySchema } from "@/lib/model-routing/canary-contracts";
 import { routingDraftEvidenceSchema } from "@/lib/model-routing/draft-contracts";
+import { routingQualificationStatusSchema } from "@/lib/model-routing/qualification-status";
 import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 
 import {
@@ -24,13 +25,16 @@ const documentSchema = contentSchema.extend({
   kind: z.enum(["draft", "revision"]),
   createdAt,
   sourceDraftId: uuid.nullable(),
+  activationNumber: activationNumber.positive().optional(),
   routingDraftEvidence: routingDraftEvidenceSchema.optional(),
+  routingQualification: routingQualificationStatusSchema.optional(),
 });
 
 export const factoryEditorSnapshotSchema = z.object({
   activationNumber,
   routingMode: z.enum(["shadow", "active"]).optional(),
   routingCanary: routingCanarySummarySchema.optional(),
+  routingCanaryAlertId: uuid.optional(),
   published: documentSchema.nullable(),
   draft: documentSchema.nullable(),
   baseline: z.object({ source: serialFactoryDefinitionSchema }).nullable(),

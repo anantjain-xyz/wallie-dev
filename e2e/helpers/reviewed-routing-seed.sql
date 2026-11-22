@@ -30,10 +30,10 @@ begin
     (p_workspace_id, p_factory_id, p_draft_id, p_owner_id);
   if not exists (
     select 1 from public.factory_routing_draft_evidence evidence
-    where (evidence.workspace_id, evidence.factory_id, evidence.draft_id) =
-      (p_workspace_id, p_factory_id, draft.routing_evidence_source_draft_id)
+    where (evidence.workspace_id, evidence.factory_id) = (p_workspace_id, p_factory_id)
+      and evidence.draft_id in (draft.id, draft.routing_evidence_source_draft_id)
   ) then
-    raise exception 'The exact draft did not retain benchmark evidence after saving the fallback.';
+    raise exception 'The exact draft did not retain benchmark evidence.';
   end if;
 
   repository_id := (draft.definition_json::jsonb->>'repositoryId')::uuid;
@@ -48,6 +48,9 @@ begin
   where (workspace_id, id) = (p_workspace_id, p_factory_id) and not is_default;
   update public.workspace_onboarding set selected_github_repository_id = repository_id
   where workspace_id = p_workspace_id;
+  insert into public.user_codex_credentials(user_id, credential_type, encrypted_credential)
+  values (p_owner_id, 'platform_api_key', 'analytics-proof-synthetic-ciphertext')
+  on conflict (user_id) do nothing;
 
   -- Seed only the local smoke result. Publication rechecks current authority,
   -- the exact saved draft and each reviewed benchmark target through the real RPC.

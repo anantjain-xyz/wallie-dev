@@ -270,6 +270,10 @@ describe("POST factory definition commands", () => {
       { activation: activated },
     ],
     [{ action: "rollback", expectedActivationNumber: 1, revisionId }, { activation: activated }],
+    [
+      { action: "rollback", expectedActivationNumber: 4, revisionId, targetActivationNumber: 2 },
+      { activation: activated },
+    ],
   ])(
     "uses signed-in authority and preserves the exact action payload (%j)",
     async (command, result) => {
@@ -329,6 +333,7 @@ describe("POST factory definition commands", () => {
       canary: { taskClassId: revisionId, candidateBps: 2_000 },
     },
     { action: "rollback", expectedActivationNumber: 0, revisionId, definitionJson: "{}" },
+    { action: "rollback", expectedActivationNumber: 3, revisionId, targetActivationNumber: 0 },
     { action: "draft", expectedActivationNumber: 0, source: { kind: "structured" } },
   ])("rejects malformed or caller-authorized commands (%j)", async (command) => {
     authorized();

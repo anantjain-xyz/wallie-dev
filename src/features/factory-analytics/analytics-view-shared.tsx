@@ -53,6 +53,7 @@ export function analyticsCohortHref(
     dimension: query.dimension,
     environment: query.environment ?? undefined,
     routingCanary: query.routingCanaryId,
+    routingAlert: query.routingAlertId,
     ...evidence,
   });
   return evidence ? `${url}#analytics-evidence` : url;

@@ -191,6 +191,7 @@ export function workspaceFactoryDefinitionPath(
     implementationAgent?: string;
     scorerRevision?: string;
     revision?: string;
+    activation?: number;
     draft?: string;
     test?: string;
   },

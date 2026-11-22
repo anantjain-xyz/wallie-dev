@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { parseAnalyticsQuery, resolveAnalyticsFactory } from "./analytics-query";
+import { analyticsCohortHref } from "./analytics-view-shared";
 
 describe("analytics query", () => {
   it("defaults to 30 complete UTC days and compares equal elapsed periods", () => {
@@ -32,6 +33,8 @@ describe("analytics query", () => {
   it.each([
     { factory: "all" },
     { routingCanary: "latest" },
+    { routingAlert: "54200000-0001-4000-8000-000000000003" },
+    { routingCanary: "54200000-0001-4000-8000-000000000002", routingAlert: "latest" },
     { from: "2026-02-29", to: "2026-03-02" },
     { from: "2026-02-01" },
     { from: "2026-02-02", to: "2026-02-02" },
@@ -71,6 +74,30 @@ describe("analytics query", () => {
         evidence: { metric: "throughput", bucket: "model:A named model", period: "compare" },
       },
     });
+  });
+
+  it("retains exact canary and alert IDs through analytics evidence links", () => {
+    const factoryId = "54200000-0001-4000-8000-000000000001";
+    const canaryId = "54200000-0001-4000-8000-000000000002";
+    const alertId = "54200000-0001-4000-8000-000000000003";
+    const result = parseAnalyticsQuery({
+      factory: factoryId,
+      routingCanary: canaryId,
+      routingAlert: alertId,
+    });
+    expect(result).toMatchObject({
+      success: true,
+      data: { factoryId, routingCanaryId: canaryId, routingAlertId: alertId },
+    });
+    if (!result.success) throw new Error("Expected the scoped alert query to parse.");
+    const link = new URL(
+      analyticsCohortHref("acme", factoryId, result.data, { metric: "merge", period: "primary" }),
+      "http://localhost",
+    );
+    expect(link.searchParams.get("factory")).toBe(factoryId);
+    expect(link.searchParams.get("routingCanary")).toBe(canaryId);
+    expect(link.searchParams.get("routingAlert")).toBe(alertId);
+    expect(link.hash).toBe("#analytics-evidence");
   });
 
   it("selects a visible default or first visible factory and keeps explicit denials", () => {

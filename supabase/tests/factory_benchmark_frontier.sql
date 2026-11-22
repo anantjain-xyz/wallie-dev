@@ -1264,16 +1264,242 @@ select ok((select (report#>>'{baseline,scoredSessions}')::integer+(report#>>'{ca
 reset role;
 set local request.jwt.claim.role='service_role';
 
+-- Canary alert evaluation, retention and manager access.
+select ok(has_function_privilege('service_role','public.process_factory_routing_canary_alerts(integer)','execute')
+  and not has_function_privilege('authenticated','public.process_factory_routing_canary_alerts(integer)','execute')
+  and not has_function_privilege('authenticated','internal.build_factory_routing_canary_report(uuid,uuid,uuid,timestamptz,timestamptz)','execute'),
+  'only maintenance can evaluate canary alerts and only guarded entry points can read the raw report');
+select is(public.process_factory_routing_canary_alerts(1),' {"evaluated":1,"created":0}'::jsonb,
+  'real incomplete or unproven canary outcomes do not emit a degradation alert');
+select is(public.process_factory_routing_canary_alerts(1),' {"evaluated":0,"created":0}'::jsonb,
+  'the next invocation skips the existing cooldown window');
+
+create temp table canary_degraded_snapshot as
+select canary.id as canary_id, snapshot || jsonb_build_object(
+  'status','comparable','reasons','[]'::jsonb,
+  'baseline', snapshot->'baseline' || '{"assignedSessions":10,"scoredSessions":10,"scorePasses":10,"scoreFailures":0,"completeSpendSessions":10,"meanSpendUsd":0.20,"knownLatencySessions":10,"meanLatencyMs":800,"overriddenSessions":0,"fallbackSessions":0,"exposureMismatchSessions":0}',
+  'candidate', snapshot->'candidate' || '{"assignedSessions":10,"scoredSessions":10,"scorePasses":9,"scoreFailures":1,"completeSpendSessions":10,"meanSpendUsd":0.25,"knownLatencySessions":10,"meanLatencyMs":1000,"overriddenSessions":0,"fallbackSessions":0,"exposureMismatchSessions":0}'
+) as report
+from public.factory_routing_canaries canary
+cross join lateral internal.build_factory_routing_canary_report(canary.workspace_id,canary.factory_id,canary.id,null,null) snapshot
+where canary.workspace_id=pg_temp.live_id(11) and canary.activation_number=5;
+select results_eq($$select breach.metric,breach.threshold_bps,breach.baseline_value,breach.candidate_value
+  from canary_degraded_snapshot source cross join lateral internal.factory_routing_canary_breaches(source.report) breach
+  order by breach.metric$$,$$values ('pass_rate'::text,1000,1.0::numeric,0.9::numeric),
+    ('spend',2500,0.20,0.25),('wall_time',2500,800,1000)$$,
+  'degradation thresholds are inclusive and explicit for pass rate, mean spend and attempt wall time');
+select results_eq($$select breach.metric from canary_degraded_snapshot source
+  cross join lateral internal.factory_routing_canary_breaches(
+    jsonb_set(source.report,'{reasons}','["incomparable_scores","incomplete_usage"]')) breach$$,
+  $$values ('wall_time'::text)$$,'quality or spend missingness does not hide independent wall-time degradation');
+select is((select count(*) from canary_degraded_snapshot source
+  cross join lateral internal.factory_routing_canary_breaches(
+    jsonb_set(source.report,'{reasons}','["exposure_deviations"]')) breach),0::bigint,
+  'an override, fallback or unproven execution suppresses automated degradation conclusions');
+select is((select count(*) from canary_degraded_snapshot source
+  cross join lateral internal.factory_routing_canary_breaches(
+    jsonb_set(source.report,'{canary,minimumSupport}','11')) breach),0::bigint,
+  'every alert requires minimum support in each arm');
+select results_eq($$select breach.metric from canary_degraded_snapshot source
+  cross join lateral internal.factory_routing_canary_breaches(
+    jsonb_set(jsonb_set(source.report,'{baseline,meanSpendUsd}','0'),'{baseline,meanLatencyMs}','0')) breach$$,
+  $$values ('pass_rate'::text)$$,'relative spend and latency thresholds need a positive baseline');
+
+select is(internal.record_factory_routing_canary_alerts(canary, source.report),3,
+  'each first supported degradation retains exactly one snapshot')
+from canary_degraded_snapshot source join public.factory_routing_canaries canary on canary.id=source.canary_id;
+select is(internal.record_factory_routing_canary_alerts(canary, source.report),0,
+  'replaying the same evaluation never duplicates a breach')
+from canary_degraded_snapshot source join public.factory_routing_canaries canary on canary.id=source.canary_id;
+create temp table canary_alert_fixture as
+select receipt.id, receipt.workspace_id, receipt.factory_id, receipt.canary_id, receipt.evidence_draft_id, receipt.report
+from public.factory_routing_canary_alerts receipt join canary_degraded_snapshot source using(canary_id)
+where receipt.metric='spend';
+grant select on canary_alert_fixture to authenticated;
+select throws_ok($$update public.factory_routing_canary_alerts set threshold_bps=1 where id=(select id from canary_alert_fixture)$$,
+  '23514',null,'retained alert evidence is immutable');
+select is((select max(activation_number) from public.factory_definition_activations where workspace_id=pg_temp.live_id(11)),
+  5::bigint,'a degradation signal never moves the activation head');
+set local request.jwt.claim.role='authenticated';
+select set_config('request.jwt.claim.sub',pg_temp.live_id(1)::text,true);
+set local role authenticated;
+select ok((select alert->'report'=fixture.report and alert->>'metric'='spend'
+  and alert->>'ruleId'=pg_temp.live_id(202)::text and alert->>'evidenceDraftId'=fixture.evidence_draft_id::text
+  and alert#>>'{evidence,scorerRevisionId}'=fixture.report#>>'{canary,scorerRevisionId}'
+  from canary_alert_fixture fixture cross join lateral public.get_factory_routing_canary_alert(
+    fixture.workspace_id,fixture.factory_id,fixture.canary_id,fixture.id) alert),
+  'a factory manager can replay the exact frozen score, rule, benchmark evidence and report');
+select is(public.get_factory_routing_canary_alert(workspace_id,factory_id,pg_temp.live_id(299),id),null::jsonb,
+  'an alert ID cannot be resolved in another cohort') from canary_alert_fixture;
+select set_config('request.jwt.claim.sub',pg_temp.live_id(299)::text,true);
+select is(public.get_factory_routing_canary_alert(workspace_id,factory_id,canary_id,id),null::jsonb,
+  'an authenticated outsider cannot read the retained alert') from canary_alert_fixture;
+reset role;
+set local request.jwt.claim.role='service_role';
+
+create temp table drift_probe_draft as
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,rules,0,configuration}',
+  pg_temp.routing_configuration(5) || jsonb_build_object('scorerRevisionId',(select id from frontier_scorer),
+    'modelKey','openai/gpt-drifted','harness','opencode','workerRuntime','node'),5,draft_id) as draft_id
+from later_canary_draft;
+select is((select public.freeze_factory_benchmark_experiment_axes_with_evaluation(
+    scope.workspace_id,scope.factory_id,scope.owner_id,pg_temp.live_id(84),suite.id,policy.id,
+    (select jsonb_agg(jsonb_build_object('definitionRevisionId',pg_temp.live_id(101),
+       'qualificationId',pg_temp.live_id(51),'workerRuntime',runtime)) from (values ('node'),('workerd')) choices(runtime)),
+    2,211,120000,jsonb_build_object('scorerRevisionIds',(select jsonb_agg(id) from frontier_scorer),'budgetLimitUsd',20)
+  )->>'expectedTrialCount' from live_scope scope cross join live_suite suite cross join live_policy policy),
+  '4','one frozen experiment can contain the same definition on both runtimes');
+select results_eq($$
+  select candidate.worker_runtime,internal.factory_routing_qualification_reasons(candidate.workspace_id,candidate.factory_id,
+    pg_temp.routing_configuration(1) || jsonb_build_object('experimentId',candidate.experiment_id,
+      'workerRuntime',candidate.worker_runtime,'scorerRevisionId',(select id from frontier_scorer)))
+  from public.factory_benchmark_experiment_candidates candidate join live_scope using(workspace_id,factory_id)
+  where candidate.experiment_id = pg_temp.live_id(84) order by candidate.worker_runtime
+$$,$$values ('node'::text,'{}'::text[]),('workerd'::text,'{}'::text[])$$,
+  'qualification resolves both runtime axes even when definition, model, harness, and qualification ID are identical');
+
+create function pg_temp.routing_qualification_status(p_activation bigint default null,p_draft uuid default null)
+returns jsonb language sql as $$
+  select public.get_factory_routing_qualification_status(scope.workspace_id,scope.factory_id,p_activation,p_draft)
+  from live_scope scope
+$$;
+grant select on live_scope,drift_probe_draft to authenticated;
+set local request.jwt.claim.role='authenticated';
+select set_config('request.jwt.claim.sub',pg_temp.live_id(1)::text,true);
+set local role authenticated;
+select is(pg_temp.routing_qualification_status()->>'status','current','the exact current canary keeps its current qualification evidence');
+select is(pg_temp.routing_qualification_status(1)->>'status','current',
+  'an ordinary shadow activation can read qualified proof from its exact inherited draft source');
+select ok(pg_temp.routing_qualification_status(2)->'reasons' @> '["missing_proposal"]'::jsonb,
+  'a shadow revision without a qualified source cannot borrow another draft’s evidence');
+select ok((select status->>'status'='stale'
+  and status->'reasons' @> '["missing_proposal","model_changed","harness_changed","runtime_changed"]'::jsonb
+  from drift_probe_draft cross join lateral (select pg_temp.routing_qualification_status(p_draft=>draft_id) as status) result),
+  'material model, harness, and runtime changes expose their exact drift reasons without borrowing proof');
+select set_config('request.jwt.claim.sub',pg_temp.live_id(299)::text,true);
+select throws_ok($$select pg_temp.routing_qualification_status()$$,'42501',null,
+  'an outsider cannot inspect routing qualification or confirm its activation');
+reset role;
+set local request.jwt.claim.role='service_role';
+
+create function pg_temp.restore_prior_routing(
+  p_expected bigint,p_target bigint,p_revision uuid,p_actor uuid default pg_temp.live_id(1)
+) returns public.factory_definition_activations language sql as $$
+  select public.rollback_factory_routing_activation(scope.workspace_id,scope.factory_id,p_actor,p_expected,
+    p_target,p_revision,array['vercel'],array['agentCli']) from live_scope scope
+$$;
+select throws_ok($$select public.rollback_factory_definition(scope.workspace_id,scope.factory_id,scope.owner_id,5,
+  (prior.result->>'revisionId')::uuid,array['vercel'],array['agentCli'])
+  from live_scope scope cross join reviewed_activation prior$$,'PT422',
+  'Select the exact prior activation to roll back reviewed routing.','legacy rollback cannot silently restore reviewed routing in shadow mode');
+select throws_ok($$select pg_temp.restore_prior_routing(4,3,pg_temp.live_id(300))$$,'PT409',null,
+  'routing rollback honors the expected active head');
+select throws_ok($$select pg_temp.restore_prior_routing(5,3,(result->>'revisionId')::uuid) from reviewed_activation$$,
+  'P0002','The exact prior factory activation is unavailable.','a revision cannot be substituted for a different earlier activation');
+select throws_ok($$select pg_temp.restore_prior_routing(5,4,(result->>'revisionId')::uuid,pg_temp.live_id(2))
+  from reviewed_activation$$,'42501',null,'a factory reader cannot restore a routing activation');
+delete from public.user_codex_credentials where user_id=pg_temp.live_id(1);
+select throws_ok($$select pg_temp.restore_prior_routing(5,4,(result->>'revisionId')::uuid) from reviewed_activation$$,
+  'PT422','The prior reviewed routing target is unavailable (credential_unavailable)',
+  'rollback cannot restore an earlier reviewed configuration whose actual credential is unavailable');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(1),'platform_api_key','synthetic-routing-key');
+select throws_ok($$select pg_temp.restore_prior_routing(5,4,(result->>'revisionId')::uuid) from reviewed_activation$$,
+  'PT422','A current passing smoke test is required for the exact factory candidate.',
+  'routing rollback retains the exact current-head revision smoke gate');
+insert into public.factory_definition_smoke_tests(workspace_id,factory_id,target_kind,target_id,definition_digest,
+  base_activation_number,sandbox_connection_revision,created_by,lease_expires_at,finished_at,status,evidence)
+select scope.workspace_id,scope.factory_id,'revision',(prior.result->>'revisionId')::uuid,prior.result->>'draftDigest',
+  5,pg_temp.live_id(50),scope.owner_id,clock_timestamp()+interval '5 minutes',clock_timestamp(),'passed','{"runtimeProfile":"vercel"}'
+from live_scope scope cross join reviewed_activation prior;
+
+create function pg_temp.stale_reviewed_rollback(p_revision uuid) returns text language plpgsql as $$
+declare
+  outcome text;
+begin
+  begin
+    perform updated.id from live_scope scope cross join live_suite suite cross join live_task task
+    cross join lateral public.save_factory_benchmark_suite_revision(scope.workspace_id,scope.factory_id,
+      scope.owner_id,'Temporarily revised replay suite','regression',p_suite_id=>suite.suite_id,
+      p_expected_revision_id=>suite.id,p_task_revision_ids=>array[task.id]) updated;
+    begin
+      perform pg_temp.restore_prior_routing(5,4,p_revision);
+      outcome := 'incorrectly restored';
+    exception when sqlstate 'PT409' then
+      outcome := sqlerrm;
+    end;
+    raise exception using errcode='PZ631',message=outcome;
+  exception when sqlstate 'PZ631' then
+    return sqlerrm;
+  end;
+end;
+$$;
+select like(pg_temp.stale_reviewed_rollback((result->>'revisionId')::uuid),'%suite revision changed%',
+  'rollback cannot restore a prior reviewed target after its original suite changes') from reviewed_activation;
+
+create temp table live_rollback_attempt as
+select admitted.* from public.create_session_with_first_job(pg_temp.live_id(11),pg_temp.live_id(21),
+  'Keep running during rollback','Review the exact old assignment.','codex','gpt-4.1-2025-04-14',
+  session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
+  selected_stage_ids=>array[pg_temp.live_id(41)]) admitted;
+update public.agent_jobs set status='running',attempt_count=1,claimed_worker_runtime='workerd',
+  git_continuity_release_revision=(select revision from public.get_git_continuity_release_state())
+where id=(select job_id from live_rollback_attempt);
+select is(public.start_session_job_attempt(job_id,1,pg_temp.live_id(41),0,
+  'codex','gpt-4.1-2025-04-14','project','wallie/live-rollback'),run_id,'the old canary session is running before rollback')
+from live_rollback_attempt;
+select public.pin_session_job_git_input(job_id,1,run_id,pg_temp.live_id(42),'main',repeat('a',40)) from live_rollback_attempt;
+update public.agent_runs set sandbox_provider='vercel',sandbox_connection_revision=pg_temp.live_id(50),
+  sandbox_id='sbx_live_rollback',sandbox_vercel_team_id='team_live',sandbox_vercel_project_id='prj_live'
+where id=(select run_id from live_rollback_attempt);
+select ok(public.pin_session_attempt_manifest(active.job_id,active.run_id,1,repeat('b',64),24,3,
+  repeat('a',40),'[]','workerd',null,internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id)->>'effort',
+  pg_temp.live_id(21)),'the running canary attempt pins its exact pre-rollback execution')
+from live_rollback_attempt active join public.session_factory_admission_inputs receipt using(session_id);
+create temp table live_rollback_snapshot as
+select manifest.run_id, to_jsonb(manifest) as manifest, to_jsonb(receipt) as receipt,
+  internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id) as execution
+from live_rollback_attempt active join public.session_attempt_manifests manifest using(run_id)
+join public.session_factory_admission_inputs receipt on receipt.session_id=active.session_id;
+select is((pg_temp.restore_prior_routing(5,4,(result->>'revisionId')::uuid)).activation_number,
+  6::bigint,'reviewed rollback appends a new activation using the exact earlier reviewed revision') from reviewed_activation;
+select is((select restored_mode from public.factory_routing_rollbacks where workspace_id=pg_temp.live_id(11) and activation_number=6),
+  'reviewed','the immutable rollback record retains the chosen reviewed mode');
+select ok((select run.status='running' and to_jsonb(manifest)=snapshot.manifest and to_jsonb(receipt)=snapshot.receipt
+  and internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id)=snapshot.execution
+  from live_rollback_snapshot snapshot join public.session_attempt_manifests manifest using(run_id)
+  join public.agent_runs run on run.id=snapshot.run_id
+  join public.session_factory_admission_inputs receipt on receipt.session_id=manifest.session_id),
+  'rollback preserves the running attempt manifest, cohort, and effective profile byte-for-byte');
+create temp table rolled_back_admission as
+select session_id from public.create_session_with_first_job(pg_temp.live_id(11),pg_temp.live_id(21),
+  'Run after reviewed rollback','Use the restored reviewed route.','codex','gpt-4.1-2025-04-14',
+  session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
+  selected_stage_ids=>array[pg_temp.live_id(41)]);
+select ok((select receipt.activation_number=6 and receipt.routing_canary_id is null
+  and receipt.routing_decision->>'mode'='active' and receipt.routing_execution->>'benchmarkCandidateKey'=pg_temp.frontier_result(1)->>'candidateKey'
+  from rolled_back_admission admitted join public.session_factory_admission_inputs receipt using(session_id)),
+  'new sessions use the restored reviewed profile without inheriting the old canary');
+
 create temp table post_canary_proposal as
-select pg_temp.apply_routing_finding(1,20,p_activation => 5,p_expected_draft => draft_id) as draft_id from later_canary_draft;
+select pg_temp.apply_routing_finding(1,20,p_activation => 6) as draft_id;
 create temp table post_canary_draft as
-select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,taskClasses,0,name}','"Ordinary later revision"',5,draft_id) as draft_id
+select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,taskClasses,0,name}','"Ordinary later revision"',6,draft_id) as draft_id
 from post_canary_proposal;
-select pg_temp.seed_canary_activation_checks(draft_id,5) from post_canary_draft;
-select is((public.publish_factory_definition_draft(scope.workspace_id,scope.factory_id,scope.owner_id,5,
-  draft.draft_id,array['vercel'],array['agentCli'])).activation_number,6::bigint,
+select pg_temp.seed_canary_activation_checks(draft_id,6) from post_canary_draft;
+select is((public.publish_factory_definition_draft(scope.workspace_id,scope.factory_id,scope.owner_id,6,
+  draft.draft_id,array['vercel'],array['agentCli'])).activation_number,7::bigint,
   'an explicit later publication adds a new revision without changing the canary designation')
 from live_scope scope cross join post_canary_draft draft;
+select is(public.process_factory_routing_canary_alerts(1),'{"evaluated":0,"created":0}'::jsonb,
+  'a superseded canary no longer emits new signals');
+set local request.jwt.claim.role='authenticated';
+select set_config('request.jwt.claim.sub',pg_temp.live_id(1)::text,true);
+set local role authenticated;
+select is(public.get_factory_routing_canary_alert(workspace_id,factory_id,canary_id,id)->'report',report,
+  'the exact old alert replays its frozen report after the activation head moves') from canary_alert_fixture;
+reset role;
+set local request.jwt.claim.role='service_role';
 select ok((select (receipt.routing_canary_id,receipt.routing_canary_arm,receipt.routing_canary_bucket)=
     (original.routing_canary_id,original.routing_canary_arm,original.routing_canary_bucket)
   and internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id)=original.execution
@@ -1284,7 +1510,7 @@ select session_id from public.create_session_with_first_job(pg_temp.live_id(11),
   'Create after canary','Review under the later factory definition.','codex','gpt-4.1-2025-04-14',
   session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
   selected_stage_ids=>array[pg_temp.live_id(41)]);
-select ok((select receipt.activation_number=6 and receipt.routing_canary_id is null
+select ok((select receipt.activation_number=7 and receipt.routing_canary_id is null
   from post_canary_admission admitted join public.session_factory_admission_inputs receipt using(session_id)),
   'new work under a later activation does not inherit the old canary assignment');
 
@@ -1297,21 +1523,21 @@ insert into public.user_codex_credentials(user_id,credential_type,encrypted_cred
 values (pg_temp.live_id(2),'platform_api_key','synthetic-override-manager-codex-key');
 create temp table opencode_control_draft as
 select pg_temp.save_frontier_routing_edit(source.id,'{agent}',source.definition_json::jsonb->'agent' ||
-  '{"provider":"opencode","model":"openai/gpt-4.1-2025-04-14","effort":null}'::jsonb,6,null) as draft_id
+  '{"provider":"opencode","model":"openai/gpt-4.1-2025-04-14","effort":null}'::jsonb,7,null) as draft_id
 from public.factory_definition_drafts source join post_canary_draft saved on source.id=saved.draft_id;
-select pg_temp.seed_canary_activation_checks(draft_id,6,pg_temp.live_id(52)) from opencode_control_draft;
-select is((public.publish_factory_definition_draft(scope.workspace_id,scope.factory_id,scope.owner_id,6,
-  draft.draft_id,array['vercel'],array['agentCli'])).activation_number,7::bigint,'the control publishes as an ordinary OpenCode activation')
+select pg_temp.seed_canary_activation_checks(draft_id,7,pg_temp.live_id(52)) from opencode_control_draft;
+select is((public.publish_factory_definition_draft(scope.workspace_id,scope.factory_id,scope.owner_id,7,
+  draft.draft_id,array['vercel'],array['agentCli'])).activation_number,8::bigint,'the control publishes as an ordinary OpenCode activation')
 from live_scope scope cross join opencode_control_draft draft;
 create temp table codex_canary_draft as
-select (public.save_factory_routing_draft(draft.workspace_id,draft.factory_id,draft.created_by,7,
+select (public.save_factory_routing_draft(draft.workspace_id,draft.factory_id,draft.created_by,8,
   draft.definition_json,draft.canonical_digest,draft.settings_metadata,pg_temp.live_id(80),
   pg_temp.frontier_result(1)->>'candidateKey',(select id from live_suite),(select id from frontier_scorer),
   pg_temp.live_id(202),pg_temp.live_id(640),repeat('c',64),null)).id as draft_id
 from public.factory_definition_drafts draft join opencode_control_draft control on control.draft_id=draft.id;
-select pg_temp.seed_canary_activation_checks(draft_id,7,pg_temp.live_id(52)) from codex_canary_draft;
+select pg_temp.seed_canary_activation_checks(draft_id,8,pg_temp.live_id(52)) from codex_canary_draft;
 create temp table opencode_control_rollout as
-select pg_temp.activate_routing_canary(7,draft_id) as result from codex_canary_draft;
+select pg_temp.activate_routing_canary(8,draft_id) as result from codex_canary_draft;
 
 -- Choose exact test UUIDs before the real admission path so all of these
 -- commands exercise the control arm without depending on random allocation.
@@ -1321,12 +1547,14 @@ declare designation public.factory_routing_canaries;
 begin
   if new.workspace_id <> pg_temp.live_id(11) then return new; end if;
   offset_slot := case new.title when 'Check baseline credential' then 2000
-    when 'Override unavailable baseline' then 2400 when 'Reject revoked override' then 2800 end;
+    when 'Override unavailable baseline' then 2400 when 'Reject revoked override' then 2800
+    when 'Refuse stale candidate' then 3200 when 'Reject stale override' then 3600 end;
   if offset_slot is null then return new; end if;
   select * into strict designation from public.factory_routing_canaries canary
   where (canary.workspace_id,canary.candidate_revision_id) = (new.workspace_id,new.factory_definition_revision_id);
   select pg_temp.live_id(slot) into strict new.id from generate_series(offset_slot+1,offset_slot+400) slot
-  where internal.factory_routing_canary_bucket(designation,pg_temp.live_id(slot)) >= designation.candidate_bps
+  where (internal.factory_routing_canary_bucket(designation,pg_temp.live_id(slot)) < designation.candidate_bps)
+    = (new.title = 'Refuse stale candidate')
   order by slot limit 1;
   return new;
 end;
@@ -1338,7 +1566,7 @@ create function pg_temp.submit_shadow_control_override(p_request integer, p_titl
   cross join lateral public.create_session_command_with_routing_override(scope.workspace_id,pg_temp.live_id(22),pg_temp.live_id(p_request),
     repeat('c',64),rollout.result->>'draftDigest',p_title,'Review exact credential scope.',
     'opencode','openai/gpt-4.1-2025-04-14','{}'::uuid[],
-    jsonb_build_object('expectedActivationNumber',8,'ruleId',pg_temp.live_id(202),'target','primary','reason','Use my qualified Codex route.'),
+    jsonb_build_object('expectedActivationNumber',9,'ruleId',pg_temp.live_id(202),'target','primary','reason','Use my qualified Codex route.'),
     session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
     selected_stage_ids=>array[pg_temp.live_id(41)],target_factory_id=>scope.factory_id) accepted
 $$;
@@ -1364,24 +1592,76 @@ select throws_ok($$select pg_temp.submit_shadow_control_override(643,'Reject rev
 select ok(not exists (select 1 from public.sessions where workspace_id=pg_temp.live_id(11) and title='Reject revoked override')
   and not exists (select 1 from internal.factory_routing_canary_override_requests),
   'a rejected override leaves no admission, job or private handoff');
-drop trigger fixture_force_shadow_control_assignment on public.sessions;
-
 create temp table proposal_before_suite_edit as
-select pg_temp.apply_routing_finding(1,22,p_activation => 8) as draft_id;
+select pg_temp.apply_routing_finding(1,22,p_activation => 9) as draft_id;
 select updated.id from live_scope scope cross join live_suite suite cross join live_task task
 cross join lateral public.save_factory_benchmark_suite_revision(
   scope.workspace_id, scope.factory_id, scope.owner_id, 'Revised live replay suite', 'regression',
   p_suite_id => suite.suite_id, p_expected_revision_id => suite.id, p_task_revision_ids => array[task.id]
 ) updated;
 select throws_ok($$select pg_temp.apply_routing_finding(1,16,
-  p_expected_draft=>(select draft_id from proposal_before_suite_edit),p_activation=>8)$$,
+  p_expected_draft=>(select draft_id from proposal_before_suite_edit),p_activation=>9)$$,
   'PT409', 'The suite revision changed. Run a new comparison before applying it.',
   'a suite edit invalidates previously qualified evidence for new proposals');
-select is(pg_temp.apply_routing_finding(1,22,p_activation=>8), (select draft_id from proposal_before_suite_edit),
+select is(pg_temp.apply_routing_finding(1,22,p_activation=>9), (select draft_id from proposal_before_suite_edit),
   'resubmitting the same request still reads its original receipt after a suite edit');
-select throws_ok($$select public.activate_reviewed_factory_routing(scope.workspace_id,scope.factory_id,scope.owner_id,8,
+select throws_ok($$select public.activate_reviewed_factory_routing(scope.workspace_id,scope.factory_id,scope.owner_id,9,
   saved.draft_id,array['vercel'],array['agentCli']) from live_scope scope cross join proposal_before_suite_edit saved$$,
   'PT409',null,'stale benchmark evidence cannot activate the current reviewed candidate');
+select throws_ok($$select public.create_session_with_first_job(pg_temp.live_id(11),pg_temp.live_id(21),
+  'Refuse stale candidate','Review under current qualification.','opencode','openai/gpt-4.1-2025-04-14',
+  session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
+  selected_stage_ids=>array[pg_temp.live_id(41)])$$,'PT422',
+  'The reviewed routing policy escalated this task (qualification_unavailable)',
+  'a newly assigned candidate cannot execute against stale benchmark targets');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(2),'platform_api_key','synthetic-override-manager-codex-key');
+select throws_ok($$select pg_temp.submit_shadow_control_override(644,'Reject stale override')$$,
+  'PT422','The reviewed override target is unavailable (qualification_unavailable)',
+  'available personal credentials cannot authorize a stale explicit target');
+drop trigger fixture_force_shadow_control_assignment on public.sessions;
+select ok((select run.status='running' and to_jsonb(manifest)=snapshot.manifest
+  and internal.effective_factory_routing_execution(receipt.workspace_id,receipt.factory_id,receipt.session_id)=snapshot.execution
+  from live_rollback_snapshot snapshot join public.session_attempt_manifests manifest using(run_id)
+  join public.agent_runs run on run.id=snapshot.run_id
+  join public.session_factory_admission_inputs receipt on receipt.session_id=manifest.session_id),
+  'later suite invalidation does not requalify or replace the running attempt pin');
+
+select throws_ok($$select pg_temp.restore_prior_routing(9,5,(result->>'revisionId')::uuid) from routing_canary_rollout$$,
+  'PT422','The selected activation contains a canary. Select its earlier baseline activation 4.',
+  'rollback of a heterogeneous historical canary names its exact earlier baseline');
+insert into public.factory_definition_smoke_tests(workspace_id,factory_id,target_kind,target_id,definition_digest,
+  base_activation_number,sandbox_connection_revision,created_by,lease_expires_at,finished_at,status,evidence)
+select scope.workspace_id,scope.factory_id,'revision',(rollout.result->>'previousRevisionId')::uuid,baseline.canonical_digest,
+  9,pg_temp.live_id(50),scope.owner_id,clock_timestamp()+interval '5 minutes',clock_timestamp(),'passed','{"runtimeProfile":"vercel"}'
+from live_scope scope cross join opencode_control_rollout rollout
+join public.factory_definition_revisions baseline on baseline.id=(rollout.result->>'previousRevisionId')::uuid;
+select is((pg_temp.restore_prior_routing(9,8,(result->>'previousRevisionId')::uuid)).activation_number,
+  10::bigint,'exact rollback can restore the prior compatible shadow baseline') from opencode_control_rollout;
+create temp table restored_shadow_admission as
+select session_id from public.create_session_with_first_job(pg_temp.live_id(11),pg_temp.live_id(21),
+  'Run after shadow rollback','Use the restored base profile.','opencode','openai/gpt-4.1-2025-04-14',
+  session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
+  selected_stage_ids=>array[pg_temp.live_id(41)]);
+select ok((select receipt.activation_number=10 and receipt.routing_canary_id is null
+  and receipt.routing_decision->>'mode'='shadow' and receipt.routing_execution is null
+  and receipt.model_provider='opencode'
+  from restored_shadow_admission admitted join public.session_factory_admission_inputs receipt using(session_id)),
+  'restoring shadow does not promote its stale recommendation or retain the candidate assignment');
+
+select revised.id from live_scope scope cross join frontier_scorer scorer
+cross join lateral public.save_factory_scorer_revision(scope.workspace_id,scope.factory_id,scope.owner_id,
+  scorer.scorer_id,scorer.revision_number,jsonb_set(scorer.definition,'{rubric}','"Use the revised rubric."')) revised;
+select public.revoke_factory_benchmark_replay_revision(scope.workspace_id,scope.factory_id,scope.owner_id,p_policy_revision_id=>policy.id)
+from live_scope scope cross join live_policy policy;
+set local request.jwt.claim.role='authenticated';
+select set_config('request.jwt.claim.sub',pg_temp.live_id(1)::text,true);
+set local role authenticated;
+select ok(pg_temp.routing_qualification_status(4)->'reasons'
+  @> '["suite_revision_changed","scorer_revision_changed","replay_policy_revoked"]'::jsonb,
+  'qualification reports distinct suite, scorer and replay drift against the exact historical activation');
+reset role;
+set local request.jwt.claim.role='service_role';
 
 update public.workspaces set deletion_requested_at = clock_timestamp() where id = pg_temp.live_id(11);
 set local storage.allow_delete_query = 'true';

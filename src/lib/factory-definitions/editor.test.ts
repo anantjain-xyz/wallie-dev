@@ -62,9 +62,25 @@ function fixture({
   const client = createClient<Database>("https://database.example.test", "test-key", {
     auth: { autoRefreshToken: false, persistSession: false },
     global: {
-      fetch: async (input) => {
+      fetch: async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : input);
         calls.push(url);
+        if (url.pathname.endsWith("/rpc/get_factory_routing_qualification_status")) {
+          expect(JSON.parse(String(init?.body))).toEqual({
+            p_workspace_id: workspace,
+            p_factory_id: selectedFactory,
+            p_draft_id: requestedDraft,
+          });
+          return Response.json({
+            activationNumber: null,
+            draftId: requestedDraft,
+            revisionId: null,
+            definitionDigest: "e".repeat(64),
+            status: "stale",
+            reasons: ["suite_revision_changed"],
+            targets: [],
+          });
+        }
         const { searchParams } = url;
         expect(searchParams.get("workspace_id")).toBe(`eq.${workspace}`);
         const table = url.pathname.split("/").at(-1);
@@ -293,5 +309,6 @@ describe("selected factory definition editor", () => {
     );
     expect(document?.id).toBe(requestedDraft);
     expect(document?.routingDraftEvidence).toEqual(evidence);
+    expect(document?.routingQualification?.reasons).toEqual(["suite_revision_changed"]);
   });
 });

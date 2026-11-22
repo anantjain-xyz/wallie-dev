@@ -16,9 +16,20 @@ import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 const headers = { "Cache-Control": "private, no-store" };
 const querySchema = z
-  .object({ revisionId: z.string().uuid().optional(), draftId: z.string().uuid().optional() })
+  .object({
+    revisionId: z.string().uuid().toLowerCase().optional(),
+    draftId: z.string().uuid().optional(),
+    activationNumber: z
+      .string()
+      .regex(/^[1-9]\d*$/)
+      .transform(Number)
+      .pipe(z.number().int().safe().positive())
+      .optional(),
+  })
   .strict()
-  .refine(({ revisionId, draftId }) => !(revisionId && draftId));
+  .refine(({ revisionId, draftId, activationNumber }) =>
+    draftId ? !revisionId && !activationNumber : !activationNumber || Boolean(revisionId),
+  );
 
 function respond(body: unknown, status = 200) {
   return Response.json(body, { status, headers });
@@ -28,7 +39,7 @@ export async function GET(request: Request, { params }: FactoryDefinitionRouteCo
   const workspace = factoryDefinitionRouteParamsSchema.safeParse(await params);
   const query = new URL(request.url).searchParams;
   const selection = querySchema.safeParse(Object.fromEntries(query));
-  if (!workspace.success || !selection.success || query.size > 1) {
+  if (!workspace.success || !selection.success || query.size !== new Set(query.keys()).size) {
     return respond({ error: "Invalid factory definition editor request." }, 400);
   }
 
@@ -38,7 +49,7 @@ export async function GET(request: Request, { params }: FactoryDefinitionRouteCo
     });
     if (!access.ok) return respond({ error: access.error }, access.status);
     const { workspace: authorized, supabase } = access.context;
-    const { draftId, revisionId } = selection.data;
+    const { draftId, revisionId, activationNumber } = selection.data;
     const target: FactoryDefinitionTarget | null = draftId
       ? { kind: "draft", id: draftId }
       : revisionId
@@ -50,6 +61,7 @@ export async function GET(request: Request, { params }: FactoryDefinitionRouteCo
         authorized.id,
         target,
         workspace.data.factoryId,
+        activationNumber,
       );
       return document
         ? respond({ document })

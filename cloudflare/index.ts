@@ -42,6 +42,7 @@ import {
   pruneFactoryAnalyticsExports,
 } from "@/lib/factory-outcomes/maintenance";
 import { processFactoryScorerSampling } from "@/lib/factory-scorers/sampling-maintenance";
+import { processFactoryRoutingCanaryAlerts } from "@/lib/model-routing/canary-alert-maintenance";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import { requestFactoryEventDispatch } from "@/lib/factory-event-subscriptions/relay";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
@@ -332,6 +333,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["factory flow projection", () => processFactoryFlowProjection(admin)],
       ["factory scorer sampling", () => processFactoryScorerSampling(admin)],
       ["factory evaluation queue", () => maintainFactoryEvaluationQueue(admin)],
+      ["routing canary alerts", () => processFactoryRoutingCanaryAlerts(admin)],
       ["analytics export cleanup", () => pruneFactoryAnalyticsExports(admin)],
       ["run exports", () => drainRunExports(admin)],
       ["run export cleanup", () => cleanupRunExports(admin)],

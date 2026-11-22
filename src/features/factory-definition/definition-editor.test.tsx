@@ -709,8 +709,35 @@ it("activates an immutable selected revision using the displayed activation guar
   await screen.findByText("Selected revision activated for new sessions.");
   expect(requests[0]).toEqual({
     path: endpoint,
-    body: { action: "rollback", expectedActivationNumber: 2, revisionId: previous.id },
+    body: {
+      action: "rollback",
+      expectedActivationNumber: 2,
+      revisionId: previous.id,
+      targetActivationNumber: 1,
+    },
   });
+});
+
+it("shows stale qualification and disables reviewed activation despite passing smoke", async () => {
+  setup({
+    initialDraft: {
+      ...reviewedRoutingDraft,
+      routingQualification: {
+        activationNumber: null,
+        draftId: reviewedRoutingDraft.id,
+        revisionId: null,
+        definitionDigest: reviewedRoutingDraft.digest,
+        status: "stale",
+        reasons: ["scorer_revision_changed"],
+        targets: [],
+      },
+    },
+  });
+  expect(await screen.findByText("The scoring rubric has a newer revision.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Activate reviewed routing" })).toBeDisabled();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Publish in shadow mode" })).toBeEnabled(),
+  );
 });
 
 it("confirms the exact reviewed draft and smoke receipt before activating routing", async () => {
