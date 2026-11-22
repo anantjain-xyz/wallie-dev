@@ -81,8 +81,25 @@ export function FactorySemanticDiff({
   beforeLabel?: string;
   afterLabel?: string;
 }) {
+  return (
+    <FactorySemanticDiffComparison
+      comparison={after && compareFactoryDefinitions(before, after)}
+      beforeLabel={beforeLabel}
+      afterLabel={afterLabel}
+    />
+  );
+}
+
+export function FactorySemanticDiffComparison({
+  comparison,
+  beforeLabel,
+  afterLabel,
+}: {
+  comparison: ReturnType<typeof compareFactoryDefinitions> | null;
+  beforeLabel: string;
+  afterLabel: string;
+}) {
   const fieldLabels = { beforeLabel, afterLabel };
-  const comparison = after && compareFactoryDefinitions(before, after);
 
   return (
     <div className="min-w-0 space-y-4">

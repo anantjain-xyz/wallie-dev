@@ -97,6 +97,7 @@ const receiptSchema = z.discriminatedUnion("status", [
     diagnostics: z.array(diagnosticSchema).min(1),
   }),
 ]);
+export { receiptSchema as factoryProposalReceiptSchema };
 type ProposalReceipt = z.infer<typeof receiptSchema>;
 const saveReceiptSchema = z.object({ proposal: receiptSchema, replay: z.boolean() });
 

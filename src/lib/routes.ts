@@ -14,6 +14,7 @@ export type WorkspaceNavItem = {
     | "analytics"
     | "benchmarks"
     | "failure-groups"
+    | "improvements"
     | "context"
     | "memory"
     | "agents"
@@ -124,6 +125,24 @@ export function workspaceFailureGroupPath(
 ) {
   return withSearchParams(
     `${workspaceFailureGroupsPath(workspaceSlug)}/${encodeURIComponent(cohortId)}`,
+    query,
+  );
+}
+
+export function workspaceImprovementsPath(
+  workspaceSlug: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/improvements`, query);
+}
+
+export function workspaceImprovementPath(
+  workspaceSlug: string,
+  proposalId: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(
+    `${workspaceImprovementsPath(workspaceSlug)}/${encodeURIComponent(proposalId)}`,
     query,
   );
 }
@@ -267,6 +286,12 @@ export function getWorkspaceNavItems(
       id: "failure-groups",
       href: workspaceFailureGroupsPath(workspaceSlug),
       label: "Failure groups",
+      section: "Improve",
+    },
+    {
+      id: "improvements",
+      href: workspaceImprovementsPath(workspaceSlug),
+      label: "Improvements",
       section: "Improve",
     },
     {

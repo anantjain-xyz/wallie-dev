@@ -7,6 +7,7 @@ import {
   workspaceContextPath,
   workspaceFailureGroupsPath,
   workspaceGovernancePath,
+  workspaceImprovementsPath,
   workspaceInboxPath,
   workspaceMemoryPath,
   workspaceOverviewPath,
@@ -109,6 +110,7 @@ export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
     pathname === workspaceScorersPath(workspaceSlug) ||
     pathname === workspaceBenchmarksPath(workspaceSlug) ||
     pathname === workspaceFailureGroupsPath(workspaceSlug) ||
+    pathname === workspaceImprovementsPath(workspaceSlug) ||
     isFactoryOutcomePath(pathname, workspaceSlug) ||
     isManagedFactoryPath(pathname, workspaceSlug)
   );
@@ -157,6 +159,7 @@ export function factorySwitchHref(pathname: string, search: string, value: strin
     pathname.endsWith("/failure-groups")
   )
     params.delete("revision");
+  if (pathname.endsWith("/improvements")) params.delete("cohort");
   if (pathname.endsWith("/governance")) {
     for (const key of [
       "principal",

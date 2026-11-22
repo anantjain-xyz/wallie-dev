@@ -30,3 +30,9 @@ Each patch preserves repositories, approval authority, credentials, grants, tool
 - Each revision records rationale, expected benefit, risks, and the typed edits. A request retry returns the saved revision when the author and intent match.
 - An edit or rebase identifies the latest proposal revision and the current active base. The compiler validates the patch against the selected base. Earlier revisions retain their original base and result.
 - A valid revision has an inactive `factory_definition_revisions` row. Downstream comparisons and publication can pin the proposal revision, base digest, and candidate revision and digest.
+
+## Review workbench
+
+- Improvements shows the latest proposal revision. The revision history opens the exact stored diff, cited diagnosis, and discussion.
+- Review events identify the proposal revision, review version, author, and request. A new proposal revision opens its own discussion. Exact retries return the original event.
+- Factory managers can comment, investigate, request revision, or dismiss. Dismissal closes review of that revision and preserves its discussion. Production activation requires its own authorization and evidence.
