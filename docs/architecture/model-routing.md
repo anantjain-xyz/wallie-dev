@@ -62,4 +62,5 @@ The save transaction retains an immutable receipt with the draft and the exact e
 
 - Start a canary for a class with a reviewed benchmark proposal. Select the candidate share and use a compatible prior activation as the baseline. The rollout keeps the same workflow and authority across both arms.
 - Each new admission records its assignment before queueing. The bucket is deterministic for the canary, task class, and session. Worker restarts and retries reuse that assignment.
+- An authorized one-task override keeps the assigned cohort and pins the explicitly selected reviewed route before queueing. The selected route must pass the usual qualification and credential checks.
 - Analytics compares the assigned cohorts using production attempts, including failed attempts and retries. The report shows missing measurements and explicit overrides. A comparison remains inconclusive when either arm lacks enough comparable evidence.

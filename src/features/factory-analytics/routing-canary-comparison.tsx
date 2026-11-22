@@ -21,7 +21,7 @@ const reasonLabels = {
   incomparable_scores: "Scorer evidence differs between groups or is unavailable.",
   incomplete_usage: "Some attempts have unavailable or pending costs.",
   exposure_deviations:
-    "Some sessions have missing or mismatched execution records for their assigned group.",
+    "Some sessions have a routing override, a fallback, or missing or mismatched execution evidence.",
 } satisfies Record<RoutingCanaryReport["reasons"][number], string>;
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 2 });

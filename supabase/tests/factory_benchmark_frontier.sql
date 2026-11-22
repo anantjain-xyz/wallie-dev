@@ -931,7 +931,8 @@ select (public.save_factory_routing_draft(source.workspace_id,source.factory_id,
   pg_temp.live_id(80),pg_temp.frontier_result(5)->>'candidateKey',(select id from live_suite),
   (select id from frontier_scorer),pg_temp.live_id(202),pg_temp.live_id(601),repeat('b',64),null)).id as draft_id
 from canary_review_source source;
-create function pg_temp.seed_canary_activation_checks(p_draft_id uuid, p_base bigint) returns void language plpgsql as $$
+create function pg_temp.seed_canary_activation_checks(p_draft_id uuid, p_base bigint, p_probe_id uuid default pg_temp.live_id(51))
+returns void language plpgsql as $$
 begin
   insert into public.sandbox_capability_checks(workspace_id,github_repository_id,agent_provider,agent_model,
     sandbox_provider,sandbox_id,sandbox_connection_revision,sandbox_vercel_team_id,sandbox_vercel_project_id,status,
@@ -941,7 +942,7 @@ begin
     capability.sandbox_vercel_team_id,capability.sandbox_vercel_project_id,capability.status,
     capability.capabilities,draft.canonical_digest
   from public.sandbox_capability_checks capability cross join public.factory_definition_drafts draft
-  where (capability.id,draft.id) = (pg_temp.live_id(51),p_draft_id);
+  where (capability.id,draft.id) = (p_probe_id,p_draft_id);
   insert into public.factory_definition_smoke_tests(workspace_id,factory_id,target_kind,target_id,definition_digest,
     base_activation_number,sandbox_connection_revision,created_by,lease_expires_at,finished_at,status,evidence)
   select draft.workspace_id,draft.factory_id,'draft',draft.id,draft.canonical_digest,p_base,pg_temp.live_id(50),draft.created_by,
@@ -1263,26 +1264,11 @@ select ok((select (report#>>'{baseline,scoredSessions}')::integer+(report#>>'{ca
 reset role;
 set local request.jwt.claim.role='service_role';
 
-create temp table proposal_before_suite_edit as
+create temp table post_canary_proposal as
 select pg_temp.apply_routing_finding(1,20,p_activation => 5,p_expected_draft => draft_id) as draft_id from later_canary_draft;
-select updated.id from live_scope scope cross join live_suite suite cross join live_task task
-cross join lateral public.save_factory_benchmark_suite_revision(
-  scope.workspace_id, scope.factory_id, scope.owner_id, 'Revised live replay suite', 'regression',
-  p_suite_id => suite.suite_id, p_expected_revision_id => suite.id, p_task_revision_ids => array[task.id]
-) updated;
-select throws_ok($$select pg_temp.apply_routing_finding(1,16,
-  p_expected_draft=>(select draft_id from proposal_before_suite_edit),p_activation=>5)$$,
-  'PT409', 'The suite revision changed. Run a new comparison before applying it.',
-  'a suite edit invalidates previously qualified evidence for new proposals');
-select is(pg_temp.apply_routing_finding(1,20,p_activation=>5), (select draft_id from proposal_before_suite_edit),
-  'resubmitting the same request still reads its original receipt after a suite edit');
-select throws_ok($$select public.activate_reviewed_factory_routing(scope.workspace_id,scope.factory_id,scope.owner_id,5,
-  saved.draft_id,array['vercel'],array['agentCli']) from live_scope scope cross join proposal_before_suite_edit saved$$,
-  'PT409',null,'stale benchmark evidence cannot activate the current reviewed candidate');
-
 create temp table post_canary_draft as
 select pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,taskClasses,0,name}','"Ordinary later revision"',5,draft_id) as draft_id
-from proposal_before_suite_edit;
+from post_canary_proposal;
 select pg_temp.seed_canary_activation_checks(draft_id,5) from post_canary_draft;
 select is((public.publish_factory_definition_draft(scope.workspace_id,scope.factory_id,scope.owner_id,5,
   draft.draft_id,array['vercel'],array['agentCli'])).activation_number,6::bigint,
@@ -1301,6 +1287,101 @@ select session_id from public.create_session_with_first_job(pg_temp.live_id(11),
 select ok((select receipt.activation_number=6 and receipt.routing_canary_id is null
   from post_canary_admission admitted join public.session_factory_admission_inputs receipt using(session_id)),
   'new work under a later activation does not inherit the old canary assignment');
+
+-- The reviewer can use both harnesses. Another manager can use the reviewed
+-- Codex route but has no credential for the unused OpenCode shadow control.
+insert into public.user_opencode_provider_credentials(user_id,provider_id,encrypted_api_key)
+values (pg_temp.live_id(1),'openai','synthetic-opencode-test-key');
+update public.workspace_members set role='admin' where id=pg_temp.live_id(22);
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.live_id(2),'platform_api_key','synthetic-override-manager-codex-key');
+create temp table opencode_control_draft as
+select pg_temp.save_frontier_routing_edit(source.id,'{agent}',source.definition_json::jsonb->'agent' ||
+  '{"provider":"opencode","model":"openai/gpt-4.1-2025-04-14","effort":null}'::jsonb,6,null) as draft_id
+from public.factory_definition_drafts source join post_canary_draft saved on source.id=saved.draft_id;
+select pg_temp.seed_canary_activation_checks(draft_id,6,pg_temp.live_id(52)) from opencode_control_draft;
+select is((public.publish_factory_definition_draft(scope.workspace_id,scope.factory_id,scope.owner_id,6,
+  draft.draft_id,array['vercel'],array['agentCli'])).activation_number,7::bigint,'the control publishes as an ordinary OpenCode activation')
+from live_scope scope cross join opencode_control_draft draft;
+create temp table codex_canary_draft as
+select (public.save_factory_routing_draft(draft.workspace_id,draft.factory_id,draft.created_by,7,
+  draft.definition_json,draft.canonical_digest,draft.settings_metadata,pg_temp.live_id(80),
+  pg_temp.frontier_result(1)->>'candidateKey',(select id from live_suite),(select id from frontier_scorer),
+  pg_temp.live_id(202),pg_temp.live_id(640),repeat('c',64),null)).id as draft_id
+from public.factory_definition_drafts draft join opencode_control_draft control on control.draft_id=draft.id;
+select pg_temp.seed_canary_activation_checks(draft_id,7,pg_temp.live_id(52)) from codex_canary_draft;
+create temp table opencode_control_rollout as
+select pg_temp.activate_routing_canary(7,draft_id) as result from codex_canary_draft;
+
+-- Choose exact test UUIDs before the real admission path so all of these
+-- commands exercise the control arm without depending on random allocation.
+create function pg_temp.force_shadow_control_assignment() returns trigger language plpgsql as $$
+declare designation public.factory_routing_canaries;
+  offset_slot integer;
+begin
+  if new.workspace_id <> pg_temp.live_id(11) then return new; end if;
+  offset_slot := case new.title when 'Check baseline credential' then 2000
+    when 'Override unavailable baseline' then 2400 when 'Reject revoked override' then 2800 end;
+  if offset_slot is null then return new; end if;
+  select * into strict designation from public.factory_routing_canaries canary
+  where (canary.workspace_id,canary.candidate_revision_id) = (new.workspace_id,new.factory_definition_revision_id);
+  select pg_temp.live_id(slot) into strict new.id from generate_series(offset_slot+1,offset_slot+400) slot
+  where internal.factory_routing_canary_bucket(designation,pg_temp.live_id(slot)) >= designation.candidate_bps
+  order by slot limit 1;
+  return new;
+end;
+$$;
+create trigger fixture_force_shadow_control_assignment before insert on public.sessions
+  for each row execute function pg_temp.force_shadow_control_assignment();
+create function pg_temp.submit_shadow_control_override(p_request integer, p_title text) returns uuid language sql as $$
+  select accepted.session_id from live_scope scope cross join opencode_control_rollout rollout
+  cross join lateral public.create_session_command_with_routing_override(scope.workspace_id,pg_temp.live_id(22),pg_temp.live_id(p_request),
+    repeat('c',64),rollout.result->>'draftDigest',p_title,'Review exact credential scope.',
+    'opencode','openai/gpt-4.1-2025-04-14','{}'::uuid[],
+    jsonb_build_object('expectedActivationNumber',8,'ruleId',pg_temp.live_id(202),'target','primary','reason','Use my qualified Codex route.'),
+    session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
+    selected_stage_ids=>array[pg_temp.live_id(41)],target_factory_id=>scope.factory_id) accepted
+$$;
+select throws_ok($$select public.create_session_command_once(scope.workspace_id,pg_temp.live_id(22),pg_temp.live_id(641),
+  repeat('c',64),rollout.result->>'draftDigest','Check baseline credential','Review exact credential scope.',
+  'opencode','openai/gpt-4.1-2025-04-14','{}'::uuid[],session_github_repository_id=>pg_temp.live_id(42),
+  selected_pipeline_id=>pg_temp.live_id(40),selected_stage_ids=>array[pg_temp.live_id(41)],target_factory_id=>scope.factory_id)
+from live_scope scope cross join opencode_control_rollout rollout$$,
+  'PT422','A current personal credential is required for this agent.','normal control admission still requires the OpenCode credential');
+create temp table eligible_control_override as
+select pg_temp.submit_shadow_control_override(642,'Override unavailable baseline') as session_id;
+select ok((select receipt.routing_canary_arm='baseline' and receipt.routing_canary_eligible
+  and receipt.routing_canary_baseline_execution is null and override.actor_member_id=pg_temp.live_id(22)
+  and override.routing_execution#>>'{configuration,harness}'='codex'
+  and override.routing_execution->>'benchmarkCandidateKey'=pg_temp.frontier_result(1)->>'candidateKey'
+  from public.session_factory_admission_inputs receipt join eligible_control_override using(session_id)
+  join public.session_factory_routing_overrides override using(session_id)),
+  'an authorized exact override uses Codex without requiring the unused OpenCode control credential');
+delete from public.user_codex_credentials where user_id=pg_temp.live_id(2);
+select throws_ok($$select pg_temp.submit_shadow_control_override(643,'Reject revoked override')$$,
+  'PT422','The reviewed override target is unavailable (credential_unavailable)',
+  'a requested override still requires its own exact credential after the control bypass');
+select ok(not exists (select 1 from public.sessions where workspace_id=pg_temp.live_id(11) and title='Reject revoked override')
+  and not exists (select 1 from internal.factory_routing_canary_override_requests),
+  'a rejected override leaves no admission, job or private handoff');
+drop trigger fixture_force_shadow_control_assignment on public.sessions;
+
+create temp table proposal_before_suite_edit as
+select pg_temp.apply_routing_finding(1,22,p_activation => 8) as draft_id;
+select updated.id from live_scope scope cross join live_suite suite cross join live_task task
+cross join lateral public.save_factory_benchmark_suite_revision(
+  scope.workspace_id, scope.factory_id, scope.owner_id, 'Revised live replay suite', 'regression',
+  p_suite_id => suite.suite_id, p_expected_revision_id => suite.id, p_task_revision_ids => array[task.id]
+) updated;
+select throws_ok($$select pg_temp.apply_routing_finding(1,16,
+  p_expected_draft=>(select draft_id from proposal_before_suite_edit),p_activation=>8)$$,
+  'PT409', 'The suite revision changed. Run a new comparison before applying it.',
+  'a suite edit invalidates previously qualified evidence for new proposals');
+select is(pg_temp.apply_routing_finding(1,22,p_activation=>8), (select draft_id from proposal_before_suite_edit),
+  'resubmitting the same request still reads its original receipt after a suite edit');
+select throws_ok($$select public.activate_reviewed_factory_routing(scope.workspace_id,scope.factory_id,scope.owner_id,8,
+  saved.draft_id,array['vercel'],array['agentCli']) from live_scope scope cross join proposal_before_suite_edit saved$$,
+  'PT409',null,'stale benchmark evidence cannot activate the current reviewed candidate');
 
 update public.workspaces set deletion_requested_at = clock_timestamp() where id = pg_temp.live_id(11);
 set local storage.allow_delete_query = 'true';

@@ -113,7 +113,9 @@ it("distinguishes unavailable measurements from zero and explains an inconclusiv
       knownSpendUsd: null,
       meanSpendUsd: null,
       completeSpendSessions: 0,
-      exposureMismatchSessions: 2,
+      overriddenSessions: 2,
+      fallbackSessions: 2,
+      exposureMismatchSessions: 0,
       measuredCostAttempts: 0,
       unavailableCostAttempts: 13,
       pendingCostAttempts: 1,
@@ -131,6 +133,14 @@ it("distinguishes unavailable measurements from zero and explains an inconclusiv
   expect(
     within(region.getByRole("list", { name: "Comparison limits" })).getAllByRole("listitem"),
   ).toHaveLength(3);
+  expect(
+    region.getByText(
+      "Some sessions have a routing override, a fallback, or missing or mismatched execution evidence.",
+    ),
+  ).toBeVisible();
+  const routingEvidence = within(region.getByRole("row", { name: /Routing evidence/ }));
+  expect(routingEvidence.getAllByText("0 unverified or mismatched")).toHaveLength(2);
+  expect(routingEvidence.getByText("2 overrides · 2 fallbacks")).toBeVisible();
   expect(
     within(region.getByRole("row", { name: /Scored pass rate/ })).getByText("Unavailable"),
   ).toBeVisible();

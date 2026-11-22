@@ -55,6 +55,23 @@ create index session_factory_admission_canary_idx
   on public.session_factory_admission_inputs(workspace_id, factory_id, routing_canary_id, created_at, session_id)
   where routing_canary_id is not null;
 
+-- The override command reserves and consumes this private handoff in its
+-- creation transaction. A failed command rolls it back with the admission.
+create table internal.factory_routing_canary_override_requests (
+  transaction_id xid8 primary key,
+  request_id uuid not null,
+  workspace_id uuid not null,
+  factory_id uuid not null,
+  canary_id uuid not null,
+  activation_number bigint not null,
+  revision_id uuid not null,
+  actor_member_id uuid not null,
+  rule_id uuid not null,
+  task_class_id uuid not null,
+  session_id uuid
+);
+revoke all on internal.factory_routing_canary_override_requests from public, anon, authenticated, service_role;
+
 create function public.activate_factory_routing_canary(
   p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_expected_activation_number bigint,
   p_draft_id uuid, p_enabled_sandbox_providers text[], p_required_probes text[],
@@ -215,6 +232,7 @@ declare
   task_class_slug text;
   reviewed public.factory_routing_activations;
   canary public.factory_routing_canaries;
+  has_override_request boolean := false;
 begin
   new.routing_decision := null;
   new.routing_execution := null;
@@ -247,11 +265,20 @@ begin
       and new.routing_decision->>'taskClassId' is not distinct from canary.task_class_id::text;
     if new.routing_canary_eligible then
       new.routing_canary_bucket := internal.factory_routing_canary_bucket(canary, new.session_id);
+      update internal.factory_routing_canary_override_requests pending set session_id = new.session_id
+      where (pending.transaction_id, pending.workspace_id, pending.factory_id, pending.canary_id,
+        pending.activation_number, pending.revision_id, pending.actor_member_id, pending.rule_id::text, pending.task_class_id)
+        = (pg_current_xact_id(), new.workspace_id, new.factory_id, canary.id, new.activation_number, new.definition_revision_id,
+          new.invoking_actor_member_id, new.routing_decision->>'ruleId', canary.task_class_id)
+        and pending.session_id is null and new.invoking_actor_service_principal_id is null;
+      has_override_request := found;
     end if;
     new.routing_canary_arm := case when new.routing_canary_bucket < canary.candidate_bps then 'candidate' else 'baseline' end;
     if new.routing_canary_arm = 'baseline' then
-      new.routing_canary_baseline_execution := internal.make_factory_routing_canary_baseline(
-        canary, new, owner, definition, task_class_slug);
+      if not has_override_request then
+        new.routing_canary_baseline_execution := internal.make_factory_routing_canary_baseline(
+          canary, new, owner, definition, task_class_slug);
+      end if;
       return new;
     end if;
   end if;
@@ -286,6 +313,8 @@ declare
   owner public.sessions;
   admission public.session_factory_admission_inputs;
   reviewed public.factory_routing_activations;
+  canary public.factory_routing_canaries;
+  reserved_session_id uuid;
   expected_activation bigint;
   selected_rule_id uuid;
   selected_target text := p_routing_override->>'target';
@@ -352,12 +381,46 @@ begin
       where (activation.workspace_id, activation.factory_id) = (target_workspace_id, actual_factory_id));
   if not found then raise exception 'The reviewed routing activation changed. Reload before retrying.' using errcode = 'PT409'; end if;
 
+  -- Match the requested option against the original workflow even when the
+  -- session will be assigned a different execution profile for the control.
+  select revision.definition_json::jsonb into strict workflow
+  from public.factory_definition_revisions revision
+  where (revision.workspace_id, revision.factory_id, revision.id, revision.canonical_digest) =
+    (reviewed.workspace_id, reviewed.factory_id, reviewed.revision_id, reviewed.draft_digest);
+  select entry.value into rule from jsonb_array_elements(workflow#>'{modelRouting,rules}') entry(value)
+  where entry.value->>'id' = selected_rule_id::text;
+  configuration := case selected_target when 'primary' then rule->'configuration' else rule#>'{onUnavailable,configuration}' end;
+  if configuration is null or not reviewed.reviewed_targets @> jsonb_build_array(jsonb_build_object(
+    'ruleId', selected_rule_id, 'target', selected_target, 'configuration', configuration)) then
+    raise exception 'The routing override is outside the reviewed choices for this task.' using errcode = 'PT422';
+  end if;
+
+  select * into canary from public.factory_routing_canaries designation
+  where (designation.workspace_id, designation.factory_id, designation.activation_number, designation.candidate_revision_id) =
+    (reviewed.workspace_id, reviewed.factory_id, reviewed.activation_number, reviewed.revision_id);
+  if found then
+    if rule->>'taskClassId' is distinct from canary.task_class_id::text then
+      raise exception 'The reviewed routing rule does not apply to the admitted task class.' using errcode = 'PT422';
+    end if;
+    insert into internal.factory_routing_canary_override_requests(transaction_id, request_id, workspace_id, factory_id,
+      canary_id, activation_number, revision_id, actor_member_id, rule_id, task_class_id)
+    values (pg_current_xact_id(), target_request_id, target_workspace_id, actual_factory_id,
+      canary.id, expected_activation, reviewed.revision_id, creator_member_id, selected_rule_id, canary.task_class_id);
+  end if;
   select * into strict accepted from public.create_session_command_once(
     target_workspace_id, creator_member_id, target_request_id, target_request_hash, expected_factory_definition_digest,
     session_title, session_prompt_md, agent_model_provider, agent_model_name, session_attachment_ids,
     session_linear_issue_id, session_linear_issue_url, session_github_repository_id, selected_pipeline_id,
     selected_stage_ids, source_session_id, actual_factory_id, draft_specification
   );
+  if canary.id is not null then
+    delete from internal.factory_routing_canary_override_requests pending
+    where (pending.transaction_id, pending.request_id) = (pg_current_xact_id(), target_request_id)
+    returning pending.session_id into reserved_session_id;
+    if not found or reserved_session_id is distinct from accepted.session_id then
+      raise exception 'The routing override does not match the admitted canary task.' using errcode = 'PT422';
+    end if;
+  end if;
   select * into strict owner from public.sessions session
   where (session.workspace_id, session.factory_id, session.id) = (target_workspace_id, actual_factory_id, accepted.session_id);
   select * into admission from public.session_factory_admission_inputs receipt
@@ -369,19 +432,6 @@ begin
     or (admission.routing_canary_id is null and admission.routing_decision->>'mode' is distinct from 'active')
     or (admission.routing_canary_id is not null and admission.routing_canary_eligible is distinct from true) then
     raise exception 'The reviewed routing rule does not apply to the admitted task class.' using errcode = 'PT422';
-  end if;
-  -- The override changes execution only. Match it against the admitted policy
-  -- and its original authority even when the session was assigned to control.
-  select revision.definition_json::jsonb into strict workflow
-  from public.factory_definition_revisions revision
-  where (revision.workspace_id, revision.factory_id, revision.id, revision.canonical_digest) =
-    (admission.workspace_id, admission.factory_id, admission.definition_revision_id, admission.definition_digest);
-  select entry.value into rule from jsonb_array_elements(workflow#>'{modelRouting,rules}') entry(value)
-  where entry.value->>'id' = selected_rule_id::text;
-  configuration := case selected_target when 'primary' then rule->'configuration' else rule#>'{onUnavailable,configuration}' end;
-  if configuration is null or not reviewed.reviewed_targets @> jsonb_build_array(jsonb_build_object(
-    'ruleId', selected_rule_id, 'target', selected_target, 'configuration', configuration)) then
-    raise exception 'The routing override is outside the reviewed choices for this task.' using errcode = 'PT422';
   end if;
   select * into checked from internal.check_factory_model_routing_target(admission, owner, configuration, rule->'constraints');
   if checked.reason is not null or checked.benchmark_candidate_key is null then
