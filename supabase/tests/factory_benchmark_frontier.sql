@@ -445,6 +445,14 @@ select ok((select decision->>'source' = 'rule_fallback' and decision->>'initialR
     jsonb_set(jsonb_set(policy,'{rules,0,configuration,workerRuntime}','"node"'),'{rules,0,onUnavailable}',
       jsonb_build_object('kind','fallback','configuration',pg_temp.routing_configuration(1)))) as decision) resolved),
   'only the configured qualified fallback is considered after a primary failure');
+select is((select pg_temp.resolve_frontier_policy(
+    jsonb_set(jsonb_set(policy,'{rules,0,configuration,workerRuntime}','"node"'),'{rules,0,onUnavailable}',
+      jsonb_build_object('kind','fallback','configuration',pg_temp.routing_configuration(4))))
+    - array['policyRevisionId','policyDigest','mode','version','taskClassSlug','taskClassId','ruleId']
+  from frontier_routing_policy),
+  '{"disposition":"escalated","initialReason":"configuration_unavailable","reason":"cost_unavailable",'
+    '"source":null,"configuration":null,"benchmarkCandidateKey":null}'::jsonb,
+  'an unsupported primary and an unpriced explicit fallback escalate without selecting any execution');
 select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,configuration}',pg_temp.routing_configuration(4)))
     ->>'reason' from frontier_routing_policy), 'cost_unavailable', 'unmeasured spend cannot qualify a cost-constrained rule');
 select is((select pg_temp.resolve_frontier_policy(jsonb_set(policy,'{rules,0,configuration,scorerRevisionId}',
@@ -1609,6 +1617,9 @@ select (public.save_factory_routing_draft(draft.workspace_id,draft.factory_id,dr
   pg_temp.frontier_result(1)->>'candidateKey',(select id from live_suite),(select id from frontier_scorer),
   pg_temp.live_id(202),pg_temp.live_id(640),repeat('c',64),null)).id as draft_id
 from public.factory_definition_drafts draft join opencode_control_draft control on control.draft_id=draft.id;
+update codex_canary_draft set draft_id=pg_temp.save_frontier_routing_edit(draft_id,'{modelRouting,rules,0,onUnavailable}',
+  jsonb_build_object('kind','fallback','configuration',pg_temp.routing_configuration(5)
+    || jsonb_build_object('scorerRevisionId',(select id from frontier_scorer))),8,draft_id);
 select pg_temp.seed_canary_activation_checks(draft_id,8,pg_temp.live_id(52)) from codex_canary_draft;
 create temp table opencode_control_rollout as
 select pg_temp.activate_routing_canary(8,draft_id) as result from codex_canary_draft;
@@ -1687,7 +1698,21 @@ select throws_ok($$select public.create_session_with_first_job(pg_temp.live_id(1
   session_github_repository_id=>pg_temp.live_id(42),selected_pipeline_id=>pg_temp.live_id(40),
   selected_stage_ids=>array[pg_temp.live_id(41)])$$,'PT422',
   'The reviewed routing policy escalated this task (qualification_unavailable)',
-  'a newly assigned candidate cannot execute against stale benchmark targets');
+  'a newly assigned candidate escalates when both reviewed targets use stale benchmark evidence');
+select ok((select not exists (select 1 from public.sessions session
+    where (session.workspace_id,session.id)=(attempt.workspace_id,attempt.session_id))
+    and not exists (select 1 from public.session_factory_admission_inputs receipt
+    where (receipt.workspace_id,receipt.session_id)=(attempt.workspace_id,attempt.session_id))
+    and not exists (select 1 from public.agent_jobs job
+    where (job.workspace_id,job.session_id)=(attempt.workspace_id,attempt.session_id))
+    and not exists (select 1 from public.agent_runs run
+    where (run.workspace_id,run.session_id)=(attempt.workspace_id,attempt.session_id))
+  from (select canary.workspace_id,pg_temp.live_id(slot) as session_id
+    from public.factory_routing_canaries canary cross join generate_series(3201,3600) slot
+    where canary.workspace_id=pg_temp.live_id(11) and canary.activation_number=9
+      and internal.factory_routing_canary_bucket(canary,pg_temp.live_id(slot)) < canary.candidate_bps
+    order by slot limit 1) attempt),
+  'the escalated reviewed admission leaves no session, executable receipt, job, or run');
 insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
 values (pg_temp.live_id(2),'platform_api_key','synthetic-override-manager-codex-key');
 select throws_ok($$select pg_temp.submit_shadow_control_override(644,'Reject stale override')$$,
