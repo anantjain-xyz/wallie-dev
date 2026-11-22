@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { PageSection } from "@/components/ui/page-shell";
+import { SelectField } from "@/components/ui/select";
 import type {
   ScoreCohort,
   ScoreMetrics,
@@ -277,21 +278,18 @@ function CohortRows({
           method="get"
         >
           <HiddenFields values={{ ...fields, evaluationDay: query.evaluationDay }} />
-          <label className="type-label flex flex-col gap-1.5">
-            Result state
-            <select
-              className="ui-input"
-              defaultValue={query.evaluationStatus ?? ""}
-              name="evaluationStatus"
-            >
-              <option value="">All states</option>
-              {filterOptions.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <SelectField
+            className="min-w-44"
+            defaultValue={query.evaluationStatus ?? ""}
+            key={query.evaluationStatus ?? ""}
+            label="Result state"
+            labelClassName="type-label"
+            name="evaluationStatus"
+            options={[
+              { label: "All states", value: "" },
+              ...filterOptions.map(([value, label]) => ({ label, value })),
+            ]}
+          />
           <button className="ui-button" type="submit">
             Filter results
           </button>
@@ -473,6 +471,12 @@ export function ScorerTrends({
   const showRevisionOptions =
     selectRevision && (revisions.length > 0 || Boolean(query?.beforeRevisionPolicy));
   const showCohortOptions = cohorts.length > 0 || Boolean(query?.beforeCohortPolicy);
+  const hasRevisionOption = revisions.some(
+    ({ scorer_revision_id }) => scorer_revision_id === revision,
+  );
+  const defaultRevision = hasRevisionOption ? (revision ?? "") : "";
+  const hasCohortOption = cohorts.some(({ policy_id }) => policy_id === data?.policyId);
+  const defaultCohort = hasCohortOption ? (data?.policyId ?? "") : (cohorts[0]?.policy_id ?? "");
   return (
     <PageSection anchorId="scorer-trends" className="min-w-0" title="Scorer trends">
       <div className="min-w-0 space-y-4">
@@ -499,28 +503,25 @@ export function ScorerTrends({
                     method="get"
                   >
                     <HiddenFields values={fields} />
-                    <label className="type-label flex min-w-0 max-w-full flex-col gap-1.5">
-                      Scorer revision
-                      <select
-                        className="ui-input min-w-0 max-w-full"
-                        defaultValue={revision ?? ""}
-                        name="scorerRevision"
-                        required
-                      >
-                        {revisions.some(
-                          ({ scorer_revision_id }) => scorer_revision_id === revision,
-                        ) ? null : (
-                          <option value="" disabled>
-                            Choose a revision
-                          </option>
-                        )}
-                        {revisions.map((cohort) => (
-                          <option key={cohort.scorer_revision_id} value={cohort.scorer_revision_id}>
-                            {cohort.scorer_name} · Revision {cohort.scorer_revision_number}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <SelectField
+                      className="min-w-52 max-w-full"
+                      defaultValue={defaultRevision}
+                      emptyOption={
+                        hasRevisionOption
+                          ? undefined
+                          : { disabled: true, label: "Choose a revision", value: "" }
+                      }
+                      key={defaultRevision || "__missing__"}
+                      label="Scorer revision"
+                      labelClassName="type-label"
+                      name="scorerRevision"
+                      options={revisions.map((cohort) => ({
+                        label: `${cohort.scorer_name} · Revision ${cohort.scorer_revision_number}`,
+                        value: cohort.scorer_revision_id,
+                      }))}
+                      required
+                      wrap
+                    />
                     <button className="ui-button" type="submit">
                       Show revision
                     </button>
@@ -555,20 +556,19 @@ export function ScorerTrends({
                     <HiddenFields
                       values={{ ...preserved, ...revisionField, ...revisionPage, ...cohortPage }}
                     />
-                    <label className="type-label flex min-w-0 max-w-full flex-col gap-1.5">
-                      Sampling cohort
-                      <select
-                        className="ui-input min-w-0 max-w-full"
-                        defaultValue={data.policyId ?? ""}
-                        name="cohort"
-                      >
-                        {cohorts.map((cohort) => (
-                          <option key={cohort.policy_id} value={cohort.policy_id}>
-                            {cohortLabel(cohort)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <SelectField
+                      className="min-w-52 max-w-full"
+                      defaultValue={defaultCohort}
+                      key={defaultCohort}
+                      label="Sampling cohort"
+                      labelClassName="type-label"
+                      name="cohort"
+                      options={cohorts.map((cohort) => ({
+                        label: cohortLabel(cohort),
+                        value: cohort.policy_id,
+                      }))}
+                      wrap
+                    />
                     <label className="type-label flex flex-col gap-1.5">
                       From (UTC)
                       <input

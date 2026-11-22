@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
+import { selectDropdownOption } from "./helpers/select";
 
 const registrationReceipt = z.object({ client: z.object({ id: z.string().uuid() }) });
 const tokenReceipt = z.object({
@@ -239,7 +240,10 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
     const clients = page.locator("#oauth-clients");
     await clients.getByLabel("Client name").fill(clientName);
     await clients.getByLabel("Redirect URIs").fill(callback.href);
-    await clients.getByLabel(`${factory.name} execution grant`).selectOption(grant.id);
+    await selectDropdownOption(
+      clients.getByRole("combobox", { name: `${factory.name} execution grant` }),
+      grant.id,
+    );
     await clients.getByRole("checkbox", { name: "Read sessions" }).check();
     const registered = page.waitForResponse(
       (response) =>

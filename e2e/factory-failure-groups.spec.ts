@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { expectDropdownValue, selectDropdownOption } from "./helpers/select";
 
 const scorerSeed = z.object({
   runs: z.array(z.object({ runId: z.uuid() })).min(1),
@@ -102,7 +103,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await expect(drawer).toHaveCount(0);
     const symptom = page.getByRole("combobox", { name: "Symptom", exact: true });
     const revision = page.getByLabel("Factory definition revision", { exact: true });
-    await symptom.selectOption("validation");
+    await selectDropdownOption(symptom, "validation");
     await symptom.focus();
     await symptom.press("Tab");
     await expect(revision).toBeFocused();
@@ -138,9 +139,12 @@ test("reviews recurring failures and preserves source evidence across filters, s
     ).toBeVisible();
     await capture(page, info, "04-empty-filters-mobile");
     await page.getByRole("link", { name: "Clear filters", exact: true }).click();
-    await expect(symptom).toHaveValue("");
+    await expectDropdownValue(symptom, "");
     await expect(revision).toHaveValue("");
-    await expect(page.getByRole("combobox", { name: "Review state", exact: true })).toHaveValue("");
+    await expectDropdownValue(
+      page.getByRole("combobox", { name: "Review state", exact: true }),
+      "",
+    );
     await capture(page, info, "04a-cleared-filter-inputs");
 
     await page.setViewportSize({ width: 1440, height: 960 });

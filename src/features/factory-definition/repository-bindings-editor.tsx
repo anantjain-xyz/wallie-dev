@@ -1,3 +1,4 @@
+import { SelectField } from "@/components/ui/select";
 import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
 import { normalizeFactoryId } from "@/lib/factory-definitions/references";
 
@@ -20,25 +21,21 @@ function RepositoryBindingList({
 }) {
   return (
     <div className="min-w-0 space-y-1.5">
-      <label className="block space-y-1.5">
-        <span className="text-[13px] font-medium text-foreground">{label}</span>
-        <select
-          className="ui-select"
-          disabled={available.length === 0}
-          onChange={(event) => {
-            if (!event.target.value) return;
-            onChange([...selected.map(({ value }) => value), event.target.value]);
-          }}
-          value=""
-        >
-          <option value="">{available.length > 0 ? addLabel : "No unassigned repositories"}</option>
-          {available.map(({ id, fullName }) => (
-            <option key={id} value={id}>
-              {fullName}
-            </option>
-          ))}
-        </select>
-      </label>
+      <SelectField
+        disabled={available.length === 0}
+        emptyOption={{
+          label: available.length > 0 ? addLabel : "No unassigned repositories",
+          value: "",
+        }}
+        label={label}
+        onValueChange={(next) => {
+          if (!next) return;
+          onChange([...selected.map(({ value }) => value), next]);
+        }}
+        options={available.map(({ id, fullName }) => ({ label: fullName, value: id }))}
+        value=""
+        wrap
+      />
       {selected.length > 0 && (
         <ul className="space-y-1.5" aria-label={label}>
           {selected.map(({ value, label: name }, index) => (
@@ -101,21 +98,17 @@ export function FactoryRepositoryBindingsEditor({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      <label className="block min-w-0 space-y-1.5 sm:col-span-2">
-        <span className="text-[13px] font-medium text-foreground">Default writable repository</span>
-        <select
-          className="ui-select"
-          onChange={(event) => onChange({ repository: event.target.value })}
-          value={repository}
-        >
-          <option value={repository}>{toSelected(repository).label}</option>
-          {unassigned.map(({ id, fullName }) => (
-            <option key={id} value={id}>
-              {fullName}
-            </option>
-          ))}
-        </select>
-      </label>
+      <SelectField
+        className="sm:col-span-2"
+        label="Default writable repository"
+        onValueChange={(next) => onChange({ repository: next })}
+        options={[
+          { label: toSelected(repository).label, value: repository },
+          ...unassigned.map(({ id, fullName }) => ({ label: fullName, value: id })),
+        ]}
+        value={repository}
+        wrap
+      />
       <RepositoryBindingList
         addLabel="Add writable repository…"
         available={unassigned}

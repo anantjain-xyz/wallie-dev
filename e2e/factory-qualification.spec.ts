@@ -16,6 +16,7 @@ import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
+import { openDropdownListbox } from "./helpers/select";
 
 type Admin = SupabaseClient<Database>;
 const provider = "e2b";
@@ -735,10 +736,11 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     const promptInput = page.getByRole("textbox", { name: "Implementation agent prompt revision" });
     await expect(promptInput).toHaveValue(firstAgentPrompt.id);
     const skillPicker = page.getByRole("combobox", { name: "Add a skill revision", exact: true });
-    await expect(
-      skillPicker.getByRole("option", { name: `${skillName} · Revision 1` }),
-    ).toHaveCount(1);
-    await skillPicker.selectOption(skillRevision.id);
+    const skillListbox = await openDropdownListbox(skillPicker);
+    const skillOption = skillListbox.getByRole("option", { name: `${skillName} · Revision 1` });
+    await expect(skillOption).toHaveCount(1);
+    await expect(skillOption).toHaveAttribute("data-value", skillRevision.id);
+    await skillOption.click();
     await expect(page.getByRole("textbox", { name: "Skills", exact: true })).toHaveValue(
       skillRevision.id,
     );

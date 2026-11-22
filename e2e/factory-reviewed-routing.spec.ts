@@ -22,6 +22,7 @@ import { workspaceFactoryDefinitionPath, workspaceRunDetailPath } from "@/lib/ro
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { expectDropdownValue, selectDropdownOption } from "./helpers/select";
 
 const overrideReason = "Use the reviewed fallback for this invoice task.";
 
@@ -333,12 +334,12 @@ test("activates a reviewed routing draft, audits a one-task override and preserv
         await page.getByRole("button", { name: "New session", exact: true }).click();
         const dialog = page.getByRole("dialog");
         const choice = dialog.getByRole("combobox", { name: "Configuration for this session" });
-        await expect(choice).toHaveValue("", { timeout: 75_000 });
+        await expectDropdownValue(choice, "", { timeout: 75_000 });
         await dialog
           .getByLabel("Prompt", { exact: true })
           .fill("Prepare the invoice delivery summary.");
         await dialog.getByLabel("Title (optional)").fill("Invoice delivery routing proof");
-        await choice.selectOption(`${reviewed.ruleId}:rule_fallback`);
+        await selectDropdownOption(choice, `${reviewed.ruleId}:rule_fallback`);
         const submit = dialog.getByRole("button", { name: "Start session" });
         await expect(submit).toBeDisabled();
         await dialog.getByLabel("Reason for override").fill(overrideReason);

@@ -5,6 +5,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { SelectField } from "@/components/ui/select";
 import type { GovernanceOAuthData } from "@/features/factory-governance/governance-oauth-data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
@@ -125,26 +126,18 @@ export function RegisterOAuthClient({
         <fieldset className="grid min-w-0 gap-3 sm:grid-cols-2">
           <legend className="type-label mb-2 text-foreground">Factory execution grants</legend>
           {options.map((factory) => (
-            <label className="block min-w-0 space-y-1.5" key={factory.id}>
-              <span className="type-label text-foreground [overflow-wrap:anywhere]">
-                {factory.name} execution grant
-              </span>
-              <select
-                className="ui-select"
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  setSelection((current) => ({ ...current, [factory.id]: value }));
-                }}
-                value={selection[factory.id] ?? ""}
-              >
-                <option value="">No access</option>
-                {factory.choices.map((grant) => (
-                  <option key={grant.id} value={grant.id}>
-                    {grant.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SelectField
+              emptyOption={{ label: "No access", value: "" }}
+              key={factory.id}
+              label={`${factory.name} execution grant`}
+              labelClassName="type-label text-foreground [overflow-wrap:anywhere]"
+              onValueChange={(value) => {
+                setSelection((current) => ({ ...current, [factory.id]: value }));
+              }}
+              options={factory.choices.map((grant) => ({ label: grant.label, value: grant.id }))}
+              value={selection[factory.id] ?? ""}
+              wrap
+            />
           ))}
         </fieldset>
         <fieldset className="min-w-0 space-y-2">

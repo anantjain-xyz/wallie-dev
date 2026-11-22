@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import type { Database } from "@/lib/supabase/database.types";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { selectDropdownOption } from "./helpers/select";
 
 async function screenshot(page: Page, info: TestInfo, name: string) {
   await page.evaluate(() => document.fonts.ready);
@@ -95,9 +96,9 @@ test("a factory manager curates distinct suites and preserves the earlier task c
     await page.goto(listPath);
     await page.getByRole("link", { name: "New suite", exact: true }).click();
     await page.getByRole("textbox", { name: "Suite name", exact: true }).fill(holdout);
-    await page
-      .getByRole("combobox", { name: "Suite purpose", exact: true })
-      .selectOption({ label: "Holdout" });
+    await selectDropdownOption(page.getByRole("combobox", { name: "Suite purpose", exact: true }), {
+      label: "Holdout",
+    });
     await page.getByRole("radio", { name: "Match tags", exact: true }).check();
     await page.getByRole("textbox", { name: "Selection tags", exact: true }).fill("triage");
     await page.getByRole("button", { name: "Save suite", exact: true }).click();

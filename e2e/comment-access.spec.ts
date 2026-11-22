@@ -4,6 +4,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { z } from "zod";
 import { createArtifactSourceAnchor } from "../src/features/sessions/review/source-anchor";
+import { expectDropdownValue, selectDropdownOption } from "./helpers/select";
 import type {
   ArtifactReviewComment,
   ArtifactReviewThread,
@@ -171,14 +172,14 @@ for (const width of [1440, 390]) {
     await expect(page.locator("blockquote")).toHaveText("Version 1 is ready for review.");
     await capture(page, `focused-composer-${width}`);
     await composer.fill("Retain this draft across panel visibility changes.");
-    await page.getByLabel("Comment type").selectOption("blocking");
+    await selectDropdownOption(page.getByRole("combobox", { name: "Comment type" }), "blocking");
     await expect(page.getByText("Blocks approval until a reviewer closes it.")).toBeVisible();
     await composer.press("Escape");
     await expect(opener).toBeFocused();
     await opener.press("Enter");
     await expect(composer).toBeFocused();
     await expect(composer).toHaveValue("Retain this draft across panel visibility changes.");
-    await expect(page.getByLabel("Comment type")).toHaveValue("blocking");
+    await expectDropdownValue(page.getByRole("combobox", { name: "Comment type" }), "blocking");
     await page.getByRole("button", { name: "Discard" }).click();
     await selectPassage(page, "keyup");
     await expect(action).toBeEnabled();
@@ -187,7 +188,7 @@ for (const width of [1440, 390]) {
     await action.press("Enter");
     await expect(composer).toBeFocused();
     await expect(composer).toHaveValue("");
-    await expect(page.getByLabel("Comment type")).toHaveValue("discussion");
+    await expectDropdownValue(page.getByRole("combobox", { name: "Comment type" }), "discussion");
     await page.getByRole("button", { name: "Discard" }).click();
     await capture(page, `empty-comments-${width}`);
   });

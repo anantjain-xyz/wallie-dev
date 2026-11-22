@@ -128,10 +128,9 @@ describe("onboarding verification", () => {
       });
       expect(selectedStep).toHaveClass("bg-accent-soft", "text-accent");
       expect(within(selectedStep).getByText("Completed")).toBeInTheDocument();
-      expect(screen.getByRole("combobox", { name: "Setup step" })).toHaveValue("github");
-      expect(
-        screen.getByRole("option", { name: "GitHub — Completed", selected: true }),
-      ).toBeInTheDocument();
+      const setupPicker = screen.getByRole("combobox", { name: "Setup step" });
+      expect(setupPicker).toHaveAttribute("data-value", "github");
+      expect(setupPicker).toHaveTextContent("GitHub — Completed");
     },
   );
 
@@ -140,11 +139,17 @@ describe("onboarding verification", () => {
     data.onboarding.status = "completed";
     render(<OnboardingPageClient initialData={data} />);
 
-    await act(async () =>
-      fireEvent.change(screen.getByRole("combobox", { name: "Setup step" }), {
-        target: { value: "linear" },
-      }),
-    );
+    const setupPicker = screen.getByRole("combobox", { name: "Setup step" });
+    await act(async () => {
+      fireEvent.click(setupPicker);
+    });
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("listbox", { name: "Setup step" })).getByRole("option", {
+          name: "Linear (optional) — Skipped",
+        }),
+      );
+    });
 
     const selectedStep = screen.getByRole("button", {
       name: /Linear.*optional.*Skipped/,
@@ -152,9 +157,8 @@ describe("onboarding verification", () => {
     });
     expect(selectedStep).toHaveClass("bg-accent-soft", "text-accent");
     expect(selectedStep).not.toHaveTextContent("Completed");
-    expect(
-      screen.getByRole("option", { name: "Linear (optional) — Skipped", selected: true }),
-    ).toBeInTheDocument();
+    expect(setupPicker).toHaveAttribute("data-value", "linear");
+    expect(setupPicker).toHaveTextContent("Linear (optional) — Skipped");
   });
 
   it("submits verification from the footer once, polls, and completes into the task composer", async () => {

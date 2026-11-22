@@ -15,6 +15,7 @@ import type { FactoryScorerDefinition } from "@/lib/factory-scorers/contracts";
 import type { Database } from "@/lib/supabase/database.types";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { expectDropdownValue, selectDropdownOption } from "./helpers/select";
 
 const upstreamModel = "openai/gpt-4.1-2025-04-14";
 const nativeCodexModel = "gpt-4.1-2025-04-14";
@@ -41,12 +42,22 @@ async function selectCandidate(
   card: Locator,
   input: { definitionId: string; harness: "codex" | "opencode" },
 ) {
-  await card.getByRole("combobox", { name: "Model", exact: true }).selectOption(upstreamModel);
-  await card.getByRole("combobox", { name: "Harness", exact: true }).selectOption(input.harness);
-  await card.getByRole("combobox", { name: "Worker runtime", exact: true }).selectOption("node");
-  await card
-    .getByRole("combobox", { name: "Factory revision", exact: true })
-    .selectOption(input.definitionId);
+  await selectDropdownOption(
+    card.getByRole("combobox", { name: "Model", exact: true }),
+    upstreamModel,
+  );
+  await selectDropdownOption(
+    card.getByRole("combobox", { name: "Harness", exact: true }),
+    input.harness,
+  );
+  await selectDropdownOption(
+    card.getByRole("combobox", { name: "Worker runtime", exact: true }),
+    "node",
+  );
+  await selectDropdownOption(
+    card.getByRole("combobox", { name: "Factory revision", exact: true }),
+    input.definitionId,
+  );
 }
 
 test("a manager holds the model fixed across harnesses and freezes exact factory revisions", async ({
@@ -255,7 +266,10 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
 
     await selectCandidate(baseline, { definitionId: baselineId, harness: "codex" });
     await selectCandidate(candidate, { definitionId: baselineId, harness: "opencode" });
-    await form.getByRole("combobox", { name: "Replay policy revision" }).selectOption(policy.id);
+    await selectDropdownOption(
+      form.getByRole("combobox", { name: "Replay policy revision" }),
+      policy.id,
+    );
     await expect(freeze).toBeEnabled();
     await baseline.getByText("Exact configuration pins", { exact: true }).click();
     const candidatePins = candidate.getByText("Exact configuration pins", { exact: true });
@@ -271,26 +285,29 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
     await page.getByRole("button", { name: "Switch to dark mode" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     const runtime = candidate.getByRole("combobox", { name: "Worker runtime", exact: true });
-    await runtime.selectOption("workerd");
+    await selectDropdownOption(runtime, "workerd");
     await expect(candidate.getByText(/no qualified OpenCode toolchain/i)).toBeVisible();
-    await expect(candidate.getByRole("combobox", { name: "Harness", exact: true })).toHaveValue(
+    await expectDropdownValue(
+      candidate.getByRole("combobox", { name: "Harness", exact: true }),
       "opencode",
     );
-    await expect(candidate.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
+    await expectDropdownValue(
+      candidate.getByRole("combobox", { name: "Model", exact: true }),
       upstreamModel,
     );
-    await expect(
+    await expectDropdownValue(
       candidate.getByRole("combobox", { name: "Factory revision", exact: true }),
-    ).toHaveValue(baselineId);
-    await expect(runtime).toHaveValue("workerd");
+      baselineId,
+    );
+    await expectDropdownValue(runtime, "workerd");
     await expect(freeze).toBeDisabled();
     await baseline.getByText("Exact configuration pins", { exact: true }).click();
     await screenshot(page, info, "02-benchmark-unsupported-runtime-mobile-dark");
-    await runtime.selectOption("node");
+    await selectDropdownOption(runtime, "node");
     await expect(freeze).toBeEnabled();
 
     const candidateRevision = candidate.getByRole("combobox", { name: "Factory revision" });
-    await candidateRevision.selectOption(revokedSkillDefinitionId);
+    await selectDropdownOption(candidateRevision, revokedSkillDefinitionId);
     await expect(
       candidate.getByText(
         "A selected skill revision is missing, revoked, or unavailable in this factory.",
@@ -299,8 +316,8 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
         },
       ),
     ).toBeVisible();
-    await expect(candidateRevision).toHaveValue(revokedSkillDefinitionId);
-    await expect(runtime).toHaveValue("node");
+    await expectDropdownValue(candidateRevision, revokedSkillDefinitionId);
+    await expectDropdownValue(runtime, "node");
     await expect(freeze).toBeDisabled();
     const beforeFreeze = await admin
       .from("factory_benchmark_experiments")
@@ -310,10 +327,10 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
     expect(beforeFreeze.count).toBe(0);
     await screenshot(page, info, "04-benchmark-revoked-skill-mobile-dark");
 
-    await candidateRevision.selectOption(candidateId);
+    await selectDropdownOption(candidateRevision, candidateId);
     const multiAxisNote = form.getByText("Results describe the combined configuration change.");
     await expect(multiAxisNote).toBeVisible();
-    await candidateRevision.selectOption(baselineId);
+    await selectDropdownOption(candidateRevision, baselineId);
     await expect(multiAxisNote).toBeHidden();
 
     async function freezeAndRead() {
@@ -416,14 +433,18 @@ test("a manager holds the model fixed across harnesses and freezes exact factory
     await page.getByRole("button", { name: "Switch to light mode" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await baseline.getByText("Exact configuration pins", { exact: true }).click();
-    await candidate.getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
+    await selectDropdownOption(
+      candidate.getByRole("combobox", { name: "Harness", exact: true }),
+      "codex",
+    );
     await expect(
       form.getByText("Choose a different configuration for the candidate."),
     ).toBeVisible();
     await expect(freeze).toBeDisabled();
-    await candidate
-      .getByRole("combobox", { name: "Factory revision", exact: true })
-      .selectOption(candidateId);
+    await selectDropdownOption(
+      candidate.getByRole("combobox", { name: "Factory revision", exact: true }),
+      candidateId,
+    );
     if (!(await candidatePins.evaluate((summary) => summary.closest("details")?.open))) {
       await candidatePins.click();
     }

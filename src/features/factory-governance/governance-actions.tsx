@@ -6,6 +6,7 @@ import type { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -47,28 +48,21 @@ function ChoiceField({
 }) {
   const id = useId();
   return (
-    <div className="min-w-0 space-y-1.5">
-      <label className="block type-label text-foreground" htmlFor={id}>
-        {label}
-      </label>
-      <select
-        className="ui-select"
-        defaultValue={selected ?? ""}
-        id={id}
-        name={name}
-        onChange={onChange && ((event) => onChange(event.currentTarget.value))}
-        required
-      >
-        <option value="" disabled>
-          Choose {label.toLowerCase()}
-        </option>
-        {choices.map(({ id, label }) => (
-          <option key={id} value={id}>
-            {label}
-          </option>
-        ))}
-      </select>
-    </div>
+    <SelectField
+      defaultValue={selected ?? ""}
+      emptyOption={{ disabled: true, label: `Choose ${label.toLowerCase()}`, value: "" }}
+      id={id}
+      label={label}
+      labelClassName="type-label text-foreground"
+      name={name}
+      onValueChange={onChange}
+      options={choices.map(({ id: choiceId, label: choiceLabel }) => ({
+        label: choiceLabel,
+        value: choiceId,
+      }))}
+      required
+      wrap
+    />
   );
 }
 

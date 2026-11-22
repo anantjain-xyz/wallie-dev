@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { PageSection } from "@/components/ui/page-shell";
+import { SelectField } from "@/components/ui/select";
 import { GovernanceTime } from "@/features/factory-governance/governance-resource-link";
 import { type FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
@@ -207,27 +208,26 @@ function EventSubscriptionForm({
                 />
               </label>
             </div>
-            <label className="block min-w-0 space-y-1.5">
-              <span className="type-label text-foreground">Authorization</span>
-              <select className="ui-select" name="authority" defaultValue="" required>
-                <option disabled value="">
-                  Choose an authorization
-                </option>
-                {authorizations.map((authorization) => {
-                  const value = `${authorization.credential_kind}:${authorization.credential_id}`;
-                  const kind =
-                    authorization.credential_kind === "machine_token"
-                      ? "Machine token"
-                      : "OAuth client";
-                  return (
-                    <option key={value} value={value}>
-                      {authorization.credential_name} · {kind} ·{" "}
-                      {authorization.credential_id.slice(0, 8)}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
+            <SelectField
+              defaultValue=""
+              emptyOption={{ disabled: true, label: "Choose an authorization", value: "" }}
+              label="Authorization"
+              labelClassName="type-label text-foreground"
+              name="authority"
+              options={authorizations.map((authorization) => {
+                const value = `${authorization.credential_kind}:${authorization.credential_id}`;
+                const kind =
+                  authorization.credential_kind === "machine_token"
+                    ? "Machine token"
+                    : "OAuth client";
+                return {
+                  label: `${authorization.credential_name} · ${kind} · ${authorization.credential_id.slice(0, 8)}`,
+                  value,
+                };
+              })}
+              required
+              wrap
+            />
             <fieldset className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
               <legend className="type-label mb-2 text-foreground">Events</legend>
               {Object.entries(factoryOutboundEventLabels).map(([value, label]) => (
