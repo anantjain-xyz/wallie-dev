@@ -1,0 +1,108 @@
+-- Requires the shared frontier fixture loaded in the same transaction.
+insert into public.sessions(id, workspace_id, factory_id, number, title, pipeline_id, current_stage_id,
+  factory_definition_provenance, factory_definition_revision_id)
+select pg_temp.live_id(2000 + ordinal), scope.workspace_id, scope.factory_id, ordinal,
+  'Synthetic improvement source ' || ordinal, pg_temp.live_id(40), pg_temp.live_id(41), 'pinned',
+  pg_temp.live_id(case when ordinal = 7 then 102 else 43 end)
+from live_scope scope cross join generate_series(2, 8) ordinal;
+insert into public.agent_jobs(id, workspace_id, session_id, stage_id, stage_slug, trigger_type, status, attempt_count, finished_at)
+select pg_temp.live_id(2100 + ordinal), pg_temp.live_id(11), pg_temp.live_id(2000 + ordinal), pg_temp.live_id(41),
+  'review', 'manual_run', 'success', 1, clock_timestamp() from generate_series(2, 8) ordinal;
+insert into public.agent_runs(id, workspace_id, session_id, agent_job_id, stage_id, stage_slug, run_type,
+  model_provider, model_name, status, attempt_count, finished_at)
+select pg_temp.live_id(2200 + ordinal), pg_temp.live_id(11), pg_temp.live_id(2000 + ordinal),
+  pg_temp.live_id(2100 + ordinal), pg_temp.live_id(41), 'review', 'project', 'codex', 'gpt-4.1-2025-04-14',
+  'success', 1, clock_timestamp() from generate_series(2, 8) ordinal;
+-- An independent retained diagnosis source anchors the proposal and is never
+-- a targeted or held-out replay input.
+insert into public.session_validation_evidence(run_id,workspace_id,session_id,job_id,attempt_count,repository_id,
+  repository_full_name,commit_sha,validation_tree_sha,records,assets)
+values (pg_temp.live_id(2208),pg_temp.live_id(11),pg_temp.live_id(2008),pg_temp.live_id(2108),1,pg_temp.live_id(42),
+  'fixture/live',repeat('a',40),repeat('b',40),
+  '[{"key":"tests","status":"failed","provenance":"harness","reportKeys":[]}]','[]');
+insert into internal.factory_failure_cohorts(id,workspace_id,factory_id,task_class_slug,agent_id,symptom_kind,symptom_key)
+select pg_temp.live_id(302), workspace_id, factory_id, 'review', pg_temp.live_id(47), 'validation', 'tests' from live_scope;
+insert into internal.factory_failure_cohort_members(id,cohort_id,workspace_id,factory_id,session_id,run_id,
+  run_attempt_count,agent_prompt_revision_id,model_provider,model_name,source_kind,validation_run_id,
+  validation_record_key,target_commit_sha,target_tree_sha,observed_at)
+select pg_temp.live_id(309),pg_temp.live_id(302),workspace_id,factory_id,pg_temp.live_id(2008),pg_temp.live_id(2208),
+  1,pg_temp.live_id(48),'codex','gpt-4.1-2025-04-14','validation',pg_temp.live_id(2208),'tests',
+  repeat('a',40),repeat('b',40),clock_timestamp() from live_scope;
+insert into internal.factory_diagnoses(id,workspace_id,factory_id,cohort_id,symptom_kind,request_id,requested_by_user_id,
+  requested_by_member_id,agent_id,prompt_revision_id,prompt_sha256,profile_revision_id,model_id,provider_route,
+  definition_revision_id,definition_digest,skill_revision_ids,member_ids,evidence,evidence_digest,minimum_support,
+  support_count,status,attempt_id,lease_id,lease_expires_at,started_at,deadline_at,finished_at,result)
+select pg_temp.live_id(301), scope.workspace_id,scope.factory_id,pg_temp.live_id(302),'validation',pg_temp.live_id(303),
+  scope.owner_id,pg_temp.live_id(21),pg_temp.live_id(47),pg_temp.live_id(48),encode(sha256(''::bytea),'hex'),
+  judge.id,'openai/gpt-example','openai',base.id,base.canonical_digest,'{}',array[pg_temp.live_id(309)],frozen.evidence,
+  encode(sha256(convert_to(frozen.evidence::text,'UTF8')),'hex'),3,1,'completed',pg_temp.live_id(304),pg_temp.live_id(305),
+  statement_timestamp(),statement_timestamp(),statement_timestamp(),statement_timestamp(),
+  jsonb_build_object('version',1,'claims',jsonb_build_array(jsonb_build_object(
+    'member_ids',jsonb_build_array(pg_temp.live_id(309)),'inferred_cause','Fixture hypothesis.','uncertainty','Fixture uncertainty.')))
+from live_scope scope cross join frontier_judge judge
+join public.factory_definition_revisions base on base.id = pg_temp.live_id(101)
+cross join lateral (select jsonb_build_array(jsonb_build_object('member_id',pg_temp.live_id(309),
+  'session_id',pg_temp.live_id(2008)))) frozen(evidence);
+
+create temp table validation_source_tasks as
+select 1 as ordinal, task.* from live_task task
+union all
+select ordinal, revision.* from live_scope scope cross join generate_series(2, 8) ordinal
+cross join lateral public.create_factory_benchmark_task(scope.workspace_id, scope.factory_id, scope.owner_id,
+  pg_temp.live_id(2200 + ordinal), 'Synthetic improvement input ' || ordinal,
+  'Keep the frozen acceptance criteria.', '{}', 'eligible') revision;
+insert into public.factory_benchmark_task_inputs(task_id, workspace_id, factory_id, source_run_id, source_session_id,
+  source_job_id, source_attempt_count, definition_revision_id, repository_id, checkout_sha)
+select task_id, workspace_id, factory_id, pg_temp.live_id(2200 + ordinal), pg_temp.live_id(2000 + ordinal),
+  pg_temp.live_id(2100 + ordinal), 1, pg_temp.live_id(case when ordinal = 7 then 102 else 43 end),
+  pg_temp.live_id(42), repeat('a', 40)
+from validation_source_tasks where ordinal > 1;
+
+create temp table validation_suites as
+select split.label, suite.id
+from live_scope scope cross join (values
+  ('targeted','regression',array[1,2]), ('holdout','holdout',array[3,4]),
+  ('overlap','holdout',array[2,4]), ('exposed','holdout',array[5,6]), ('produced','holdout',array[5,7]), ('diagnosed','holdout',array[5,8])
+) split(label,purpose,ordinals)
+cross join lateral public.save_factory_benchmark_suite_revision(scope.workspace_id, scope.factory_id,
+  scope.owner_id, 'Improvement ' || split.label, split.purpose,
+  p_task_revision_ids => array(select task.id from validation_source_tasks task
+    where task.ordinal = any(split.ordinals) order by task.ordinal)) suite;
+
+insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
+select workspace_id, factory_id, pg_temp.live_id(101), 1, owner_id from live_scope;
+insert into internal.factory_improvement_proposals(id, workspace_id, factory_id, diagnosis_id)
+select pg_temp.live_id(300), workspace_id, factory_id, pg_temp.live_id(301) from live_scope;
+
+create function pg_temp.validation_proposal_revision(p_number integer, p_definition_slot integer)
+returns void language sql as $$
+  insert into internal.factory_improvement_proposal_revisions(id,workspace_id,factory_id,proposal_id,revision_number,
+    previous_revision_id,base_activation_number,base_revision_id,base_digest,request_id,author_member_id,intent,
+    evidence_digest,cited_member_ids,candidate_revision_id,candidate_digest,diff,diagnostics)
+  select pg_temp.live_id(310 + p_number), scope.workspace_id, scope.factory_id, pg_temp.live_id(300), p_number,
+    case when p_number > 1 then pg_temp.live_id(309 + p_number) end, 1, base.id, base.canonical_digest,
+    pg_temp.live_id(320 + p_number), pg_temp.live_id(21),
+    jsonb_build_object('base', jsonb_build_object('activationNumber', 1, 'revisionId', base.id, 'digest', base.canonical_digest),
+      'edits', '[]'::jsonb), (select evidence_digest from internal.factory_diagnoses where id = pg_temp.live_id(301)),
+    array[pg_temp.live_id(309)], candidate.id, candidate.canonical_digest, '{}', '[]'
+  from live_scope scope
+  join public.factory_definition_revisions base on base.id = pg_temp.live_id(101)
+  join public.factory_definition_revisions candidate on candidate.id = pg_temp.live_id(p_definition_slot);
+$$;
+select pg_temp.validation_proposal_revision(1, 102);
+
+create temp table validation_arguments as
+select scope.workspace_id, scope.factory_id, scope.owner_id, policy.id as policy_id, scorer.id as scorer_id,
+  targeted.id as targeted_suite_id, holdout.id as holdout_suite_id,
+  jsonb_build_array(
+    jsonb_build_object('definitionRevisionId',pg_temp.live_id(101),'qualificationId',pg_temp.live_id(51),'workerRuntime','workerd'),
+    jsonb_build_object('definitionRevisionId',pg_temp.live_id(102),'qualificationId',pg_temp.live_id(51),'workerRuntime','workerd')
+  ) as axes,
+  jsonb_build_object('repetitions',1,'seed',211,'timeoutMs',120000,'inferenceConnectionRevision',key.receipt->>'id',
+    'executionReserveUsd',0.20,'evaluationReserveUsd',0.10,'evaluationBudgetLimitUsd',20,
+    'targetedBudgetLimitUsd',20,'holdoutBudgetLimitUsd',20,'factoryConcurrencyLimit',1,'maxAdmittedTrials',4) as execution,
+  '{"minimumIndependentTasks":2,"minimumCoverageBps":10000,"minimumCandidatePassRateBps":8000,
+    "maxPassRateDropBps":0,"maxMeanCostIncreaseBps":100000,"maxP95LatencyIncreaseBps":100000}'::jsonb as thresholds
+from live_scope scope cross join live_policy policy cross join frontier_scorer scorer cross join live_connection key
+join validation_suites targeted on targeted.label = 'targeted'
+join validation_suites holdout on holdout.label = 'holdout';

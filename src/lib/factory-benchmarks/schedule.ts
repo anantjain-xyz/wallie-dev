@@ -44,7 +44,7 @@ const configureFixtureSchedule = z.strictObject({
     ),
 });
 
-const configureLiveSchedule = z.strictObject({
+export const configureLiveBenchmarkScheduleSchema = z.strictObject({
   ...scheduleLimits,
   executionReserveUsd: scheduleUsd.positive(),
   runnerRevision: z.literal(QUALIFIED_BENCHMARK_RUNNER),
@@ -53,7 +53,10 @@ const configureLiveSchedule = z.strictObject({
 
 export const benchmarkScheduleCommandSchema = z
   .union([
-    z.discriminatedUnion("runnerRevision", [configureFixtureSchedule, configureLiveSchedule]),
+    z.discriminatedUnion("runnerRevision", [
+      configureFixtureSchedule,
+      configureLiveBenchmarkScheduleSchema,
+    ]),
     z.strictObject({ action: z.literal("pause") }),
     z.strictObject({ action: z.literal("resume") }),
     z.strictObject({ action: z.literal("cancel") }),
