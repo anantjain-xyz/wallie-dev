@@ -2,7 +2,8 @@
 
 Wallie groups recurring failures by factory, recorded task class, producing
 agent and symptom. Cohort membership preserves the source and configuration
-identities from the failed run.
+identities from the failed run. Runs without a recorded task-class match stay
+unclassified.
 
 | Source                   | Counted failure                                   | Exact source in Wallie                                                                                |
 | ------------------------ | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -16,8 +17,8 @@ agent revision identities when recorded. A missing identity remains unknown.
 ## Counts and qualification
 
 - A run contributes once per cohort even when it has multiple source receipts.
-- Sample support counts distinct sessions. Separate runs of one session still
-  contribute one support sample.
+- Sample support counts distinct sessions with at least one available
+  evidence receipt. Separate runs of one session contribute one support sample.
 - A cohort with fewer than three support samples, mixed producing versions,
   missing evidence, or incomplete identity is inconclusive. Qualification
   describes the evidence and sample, without inferring a cause.
@@ -32,4 +33,5 @@ agent revision identities when recorded. A missing identity remains unknown.
 - Reads recheck current factory and source visibility. Retention can hide
   members or restrict their evidence, which also changes what counts and
   qualification a reader can see. Private asset content stays behind its
-  existing authorized reader.
+  existing authorized reader. A missing expected validation log leaves the
+  failure visible with unavailable evidence.

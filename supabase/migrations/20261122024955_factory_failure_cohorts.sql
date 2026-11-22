@@ -144,9 +144,8 @@ begin
     definition.id as definition_revision_id, definition.canonical_digest as definition_digest,
     case when routing.receipt is not null then routed.id else definition.id end as execution_revision_id,
     case when routing.receipt is not null then routed.canonical_digest else definition.canonical_digest end as execution_digest,
-    case when admission.routing_decision->>'taskClassId' is not null then
-        admission.routing_decision->>'taskClassSlug'
-      when admission.routing_decision is null then original_stage.slug end as task_class_slug,
+    case when admission.routing_decision->>'taskClassId' is not null
+      then admission.routing_decision->>'taskClassSlug' end as task_class_slug,
     coalesce(admission.selected_stage_ids[1], manifest.stage_id, run.stage_id, owner.id) as unclassified_scope_id
   into identity
   from public.agent_runs run
@@ -169,11 +168,6 @@ begin
     on (routed.workspace_id, routed.factory_id, routed.id::text, routed.canonical_digest) =
        (owner.workspace_id, owner.factory_id, routing.receipt#>>'{configuration,definitionRevisionId}',
         routing.receipt->>'definitionDigest')
-  left join lateral (
-    select stage.value->>'slug' as slug
-    from jsonb_array_elements(definition.definition_json::jsonb->'stages') stage(value)
-    where stage.value->>'id' = admission.selected_stage_ids[1]::text
-  ) original_stage on admission.routing_decision is null
   where (run.workspace_id, run.session_id, run.id) = (p_workspace_id, p_session_id, p_run_id)
     and (manifest.run_id is not null or run.attempt_count = p_run_attempt_count)
     and not exists (select 1 from public.session_retained_content_erasures erasure where erasure.session_id = owner.id);
@@ -384,6 +378,8 @@ declare
   score public.factory_evaluation_receipts;
   validation public.session_validation_evidence;
   observed_record jsonb;
+  frozen_plan public.session_validation_plans;
+  planned_command jsonb;
 begin
   if p_member.source_kind = 'scorer' then
     select * into score from public.factory_evaluation_receipts receipt
@@ -417,15 +413,44 @@ begin
       )
   ) then return 'withheld'; end if;
 
+  select * into frozen_plan
+  from public.session_validation_plans plan where plan.run_id = validation.run_id;
+  if found then
+    if (frozen_plan.workspace_id, frozen_plan.session_id, frozen_plan.job_id, frozen_plan.attempt_count,
+        frozen_plan.repository_id, frozen_plan.commit_sha, frozen_plan.validation_tree_sha) is distinct from
+      (validation.workspace_id, validation.session_id, validation.job_id, validation.attempt_count,
+       validation.repository_id, validation.commit_sha, validation.validation_tree_sha) then
+      return 'unavailable';
+    end if;
+    select command.value into planned_command
+    from jsonb_array_elements(frozen_plan.plan->'commands') command(value)
+    where command.value->>'key' = p_member.validation_record_key;
+    if not found then return 'unavailable'; end if;
+  end if;
+
+  -- Planned commands expect exact log and report assets. Older receipts
+  -- without a plan still identify their required reports.
   if exists (
-    select 1 from jsonb_array_elements_text(
-      case when jsonb_typeof(observed_record->'reportKeys') = 'array' then observed_record->'reportKeys' else '[]'::jsonb end
-    ) required(evidence_key)
+    select 1 from (
+      select (planned_command->>'key') || '/log' as evidence_key, 'log' as kind
+      where planned_command is not null
+      union all
+      select (planned_command->>'key') || '/' || (report.value->>'key'), report.value->>'kind'
+      from jsonb_array_elements(planned_command->'reports') report(value)
+      where report.value->'required' = 'true'::jsonb
+      union all
+      select report.evidence_key, null
+      from jsonb_array_elements_text(
+        case when jsonb_typeof(observed_record->'reportKeys') = 'array' then observed_record->'reportKeys' else '[]'::jsonb end
+      ) report(evidence_key)
+      where planned_command is null
+    ) required
     where not exists (
       select 1 from public.session_validation_assets asset
       join storage.objects object on object.bucket_id = 'session-validation-evidence' and object.name = asset.storage_path
       where (asset.workspace_id, asset.session_id, asset.run_id, asset.evidence_key) =
         (p_member.workspace_id, p_member.session_id, p_member.run_id, required.evidence_key)
+        and (required.kind is null or asset.kind = required.kind)
         and object.metadata->>'size' = asset.size_bytes::text and object.metadata->>'mimetype' = asset.content_type
     )
   ) then return 'unavailable'; end if;
@@ -444,7 +469,8 @@ begin
     select member.*, internal.factory_failure_member_evidence_state(member) as evidence_state
     from internal.visible_factory_failure_cohort_members(p_cohort) member
   )
-  select count(distinct run_id) as failure_count, count(distinct session_id) as support_count,
+  select count(distinct run_id) as failure_count,
+    count(distinct session_id) filter (where evidence_state = 'available') as support_count,
     count(distinct (definition_revision_id, execution_revision_id, agent_prompt_revision_id,
       model_provider, model_name, scorer_revision_id)) as version_count,
     bool_or(evidence_state <> 'available') as missing_evidence,

@@ -64,7 +64,8 @@ select profile.id from failure_scope scope cross join lateral public.configure_f
   scope.workspace_id, scope.owner_id, 0, 'openai/gpt-4.1-mini', 'openai', false, false,
   'v2.AAAAAAAAAAAAAAAA.YWJj.AAAAAAAAAAAAAAAAAAAAAA') profile;
 
-create function pg_temp.activate_failure_definition(p_revision integer) returns uuid language sql as $$
+create function pg_temp.activate_failure_definition(p_revision integer, p_task_class text default 'build')
+returns uuid language sql as $$
   with compiled as (
     select scope.*, jsonb_build_object('schemaVersion', 2, 'kind', 'serial', 'sandboxProvider', 'e2b',
       'pipelineId', pg_temp.cohort_fixture_id(31), 'repositoryId', pg_temp.cohort_fixture_id(41),
@@ -74,13 +75,17 @@ create function pg_temp.activate_failure_definition(p_revision integer) returns 
         'maxRetries', 3, 'maxTurns', 5), 'stages', jsonb_build_array(jsonb_build_object(
           'id', pg_temp.cohort_fixture_id(32), 'slug', 'build', 'name', 'Build', 'description', '',
           'promptTemplateMd', 'Produce report revision ' || p_revision, 'anyoneCanApprove', true,
-          'previousStageIds', '[]'::jsonb, 'approverMemberIds', '[]'::jsonb)))::text as definition
+          'previousStageIds', '[]'::jsonb, 'approverMemberIds', '[]'::jsonb))) ||
+      case when p_task_class is null then '{}'::jsonb else jsonb_build_object('modelRouting', jsonb_build_object(
+        'version', 1, 'taskClasses', jsonb_build_array(jsonb_build_object(
+          'id', pg_temp.cohort_fixture_id(45), 'slug', p_task_class, 'name', initcap(p_task_class))),
+        'rules', '[]'::jsonb, 'onUnmatched', '{"kind":"escalate"}'::jsonb)) end as definition
     from failure_scope scope cross join failure_scorer scorer
   ), revision as (
     insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version,
       definition_json, canonical_digest, created_by)
     select pg_temp.cohort_fixture_id(50 + p_revision), workspace_id, factory_id, 2,
-      definition, encode(sha256(convert_to(definition, 'UTF8')), 'hex'), owner_id from compiled
+      definition::text, encode(sha256(convert_to(definition::text, 'UTF8')), 'hex'), owner_id from compiled
     returning id, workspace_id, factory_id, created_by
   )
   insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
@@ -91,14 +96,16 @@ select public.set_git_continuity_release(true, revision, 'Failure cohort fixture
 from public.get_git_continuity_release_state() where not enabled;
 
 create function pg_temp.publish_failure_run(p_key text, p_validation_status text default 'failed',
-  p_with_sibling boolean default false)
+  p_with_sibling boolean default false, p_with_log boolean default true, p_with_plan boolean default true)
 returns table(session_id uuid, run_id uuid, report_id uuid) language plpgsql as $$
 declare
   fixture record;
   fixture_run_id uuid;
   asset_id uuid := gen_random_uuid();
+  log_id uuid := gen_random_uuid();
   sibling_log_id uuid := gen_random_uuid();
   report_path text;
+  log_path text;
   sibling_log_path text;
   plan jsonb := '{"version":1,"commands":[{"key":"tests","command":"pnpm test","timeoutSeconds":60,
     "reports":[{"key":"report","path":"report.txt","kind":"report","required":true}]}]}';
@@ -122,7 +129,9 @@ begin
     plan := jsonb_set(plan, '{commands}', plan->'commands' ||
       '[{"key":"tests/lint","command":"pnpm lint","timeoutSeconds":60,"reports":[]}]'::jsonb);
   end if;
-  perform public.pin_session_validation_plan(fixture_run_id, commit_sha, tree_sha, plan);
+  if p_with_plan then
+    perform public.pin_session_validation_plan(fixture_run_id, commit_sha, tree_sha, plan);
+  end if;
 
   report_path := pg_temp.cohort_fixture_id(11)::text || '/' || fixture_run_id::text || '/' || asset_id::text;
   insert into storage.objects(bucket_id, name, metadata)
@@ -134,6 +143,13 @@ begin
     'reportKeys', '["tests/report"]'::jsonb, 'missingRequiredReports', '[]'::jsonb));
   assets := jsonb_build_array(jsonb_build_object('id', asset_id, 'key', 'tests/report', 'kind', 'report', 'required', true,
     'storagePath', report_path, 'sha256', repeat('e', 64), 'contentType', 'text/plain', 'sizeBytes', 20));
+  if p_with_log then
+    log_path := pg_temp.cohort_fixture_id(11)::text || '/' || fixture_run_id::text || '/' || log_id::text;
+    insert into storage.objects(bucket_id, name, metadata)
+    values ('session-validation-evidence', log_path, '{"mimetype":"text/plain","size":20}');
+    assets := assets || jsonb_build_object('id', log_id, 'key', 'tests/log', 'kind', 'log', 'required', false,
+      'storagePath', log_path, 'sha256', repeat('e', 64), 'contentType', 'text/plain', 'sizeBytes', 20);
+  end if;
   if p_with_sibling then
     sibling_log_path := pg_temp.cohort_fixture_id(11)::text || '/' || fixture_run_id::text || '/' || sibling_log_id::text;
     insert into storage.objects(bucket_id, name, metadata)
@@ -209,7 +225,7 @@ $$;
 
 create function pg_temp.failure_summary(p_kind text) returns jsonb language sql stable as $$
   select cohort from jsonb_array_elements(pg_temp.list_failures()->'cohorts') cohort
-  where cohort->>'symptom_kind' = p_kind;
+  where cohort->>'symptom_kind' = p_kind and cohort->>'task_class_slug' = 'build';
 $$;
 
 create function pg_temp.failure_detail(p_kind text, p_limit integer default 25, p_after uuid default null)
@@ -312,15 +328,21 @@ select public.request_factory_scorer_reevaluation(scope.workspace_id, scope.fact
 from failure_scope scope cross join failure_scorer_second revised cross join failure_attempts prior where prior.key = 'first';
 insert into failure_attempts select 'reevaluated', pg_temp.finish_failure_score(run_id) from failure_runs where key = 'first';
 select pg_temp.activate_failure_definition(2);
-insert into failure_runs select 'changed', fixture.* from pg_temp.publish_failure_run('Changed definition') fixture;
+insert into failure_runs select 'changed', fixture.*
+from pg_temp.publish_failure_run('Changed definition with unavailable log', p_with_log => false) fixture;
 select public.process_factory_failure_cohorts(100);
 
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = '63300000-0000-4000-8000-000000000002';
-select ok(pg_temp.failure_summary('validation') @> '{"failure_count":4,"support_count":4,"version_count":2,
-    "qualification":"inconclusive","qualification_reasons":["mixed_versions"]}',
-  'a changed producing definition reports mixed-version support without rewriting earlier members');
+select ok(pg_temp.failure_summary('validation') @> '{"failure_count":4,"support_count":3,"version_count":2,
+    "qualification":"inconclusive","qualification_reasons":["mixed_versions","missing_evidence"]}',
+  'a changed producing definition marks mixed versions and a missing log contributes no support');
+select ok((select member#>>'{source,evidence_state}' = 'unavailable'
+    and (member#>>'{source,target_commit_sha}') is null and (member#>>'{source,validation_record_key}') is null
+  from jsonb_array_elements(pg_temp.failure_detail('validation')->'members') member
+  join failure_runs fixture on member->>'run_id' = fixture.run_id::text where fixture.key = 'changed'),
+  'the exact deterministic receipt without its log is visible with protected evidence details concealed');
 select ok(pg_temp.failure_summary('scorer') @> '{"failure_count":3,"support_count":3,"version_count":2,
     "qualification":"inconclusive","qualification_reasons":["mixed_versions"]}'
     and jsonb_array_length(pg_temp.failure_detail('scorer')->'members') = 4,
@@ -346,8 +368,9 @@ select ok((select member#>>'{source,evidence_state}' = 'withheld'
   join failure_attempts attempt on member#>>'{source,evaluation_attempt_id}' = attempt.attempt_id::text
   where attempt.key = 'second'),
   'a withheld report immediately conceals protected scorer evidence details');
-select ok(pg_temp.failure_summary('scorer')->'qualification_reasons' @> '["missing_evidence"]'::jsonb,
-  'missing supporting evidence is visible as a qualification limit');
+select ok(pg_temp.failure_summary('scorer') @> '{"failure_count":3,"support_count":2,
+    "qualification_reasons":["missing_evidence","insufficient_support"]}',
+  'withholding a scorer report reduces available support without erasing the observed failure');
 reset role;
 
 create temp table erased_fixture as
@@ -362,8 +385,29 @@ select ok(not exists (select 1 from jsonb_array_elements(pg_temp.failure_detail(
   join erased_fixture fixture on member->>'session_id' = fixture.session_id::text)
   and not exists (select 1 from jsonb_array_elements(pg_temp.failure_detail('validation')->'members') member
   join erased_fixture fixture on member->>'session_id' = fixture.session_id::text)
-  and pg_temp.failure_summary('scorer') @> '{"failure_count":2,"support_count":2}',
+  and pg_temp.failure_summary('scorer') @> '{"failure_count":2,"support_count":1}',
   'content erasure immediately hides source members and adjusts displayed support');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
+select pg_temp.activate_failure_definition(3, null);
+insert into failure_runs select 'legacy', fixture.*
+from pg_temp.publish_failure_run('Older definition without task routing or a frozen plan',
+  p_with_log => false, p_with_plan => false) fixture;
+select pg_temp.activate_failure_definition(4, 'review');
+insert into failure_runs select 'unmatched', fixture.* from pg_temp.publish_failure_run('Unmatched task class') fixture;
+select public.process_factory_failure_cohorts(100);
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '63300000-0000-4000-8000-000000000002';
+select ok(pg_temp.failure_summary('validation') @> '{"failure_count":3,"support_count":1}',
+  'the build stage name cannot add unclassified runs to the matched build class');
+select ok((select summary @> '{"failure_count":2,"support_count":2,"task_class_slug":null,
+    "qualification":"inconclusive","qualification_reasons":["missing_identity"]}'
+  from jsonb_array_elements(pg_temp.list_failures()->'cohorts') summary
+  where summary->>'symptom_kind' = 'validation' and summary->>'task_class_slug' is null),
+  'unmatched runs retain unknown task class and legacy receipts without a frozen plan retain exact report support');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '';
