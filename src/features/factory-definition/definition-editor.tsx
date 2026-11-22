@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -189,6 +189,7 @@ function errorText(error: unknown) {
 export function FactoryDefinitionEditor({
   factoryId,
   factoryName,
+  factorySelector,
   initialAgent,
   initialScorerRevisionId,
   workspaceId,
@@ -199,6 +200,7 @@ export function FactoryDefinitionEditor({
 }: {
   factoryId?: string;
   factoryName?: string;
+  factorySelector?: ReactNode;
   initialAgent?: AgentSelection;
   initialScorerRevisionId?: string;
   workspaceId: string;
@@ -685,20 +687,24 @@ export function FactoryDefinitionEditor({
         }
         eyebrowAsPlain
         actions={
-          <button
-            className="ui-button"
-            disabled={busy}
-            onClick={() => void reload()}
-            ref={reloadButtonRef}
-            type="button"
-          >
-            <ActionButtonLabel
-              idle="Reload definition"
-              pending={pending === "reload"}
-              pendingLabel="Loading…"
-            />
-          </button>
+          <>
+            {factorySelector}
+            <button
+              className="ui-button"
+              disabled={busy}
+              onClick={() => void reload()}
+              ref={reloadButtonRef}
+              type="button"
+            >
+              <ActionButtonLabel
+                idle="Reload definition"
+                pending={pending === "reload"}
+                pendingLabel="Loading…"
+              />
+            </button>
+          </>
         }
+        actionsRightOnDesktop
       />
       {!loading && routingDraftEvidence ? (
         <RoutingDraftEvidencePanel

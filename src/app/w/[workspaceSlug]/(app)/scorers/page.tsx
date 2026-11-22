@@ -4,6 +4,8 @@ import { z } from "zod";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { ScorerForm } from "@/features/factory-scorers/scorer-form";
 import {
@@ -23,6 +25,8 @@ const uuid = z
   .uuid()
   .transform((value) => value.toLowerCase());
 
+const SCORERS_FACTORY_RESET_PARAMS = ["revision", "preset"] as const;
+
 export default async function ScorersPage({
   params,
   searchParams,
@@ -37,9 +41,24 @@ export default async function ScorersPage({
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
   const scope = await loadScorerPageScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Scorers" workspaceSlug={workspaceSlug} />;
+  if (!scope) {
+    const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={factories}
+            resetParams={SCORERS_FACTORY_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Scorers"
+        workspaceSlug={workspaceSlug}
+      />
+    );
+  }
 
-  const { factory, canEdit, supabase, workspaceId } = scope;
+  const { factories, factory, canEdit, supabase, workspaceId } = scope;
   const factoryQuery = { factory: factory.id };
   if (query.revision !== undefined) {
     const revision = uuid.safeParse(query.revision);
@@ -70,14 +89,20 @@ export default async function ScorersPage({
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         actions={
-          canEdit ? (
-            <Link className="ui-button ui-button-primary" href="#new-scorer">
-              New scorer
-            </Link>
-          ) : undefined
+          <>
+            <FactorySelector
+              factories={factories}
+              resetParams={SCORERS_FACTORY_RESET_PARAMS}
+              selectedValue={factory.id}
+            />
+            {canEdit ? (
+              <Link className="ui-button ui-button-primary" href="#new-scorer">
+                New scorer
+              </Link>
+            ) : null}
+          </>
         }
         actionsRightOnDesktop
-        description={factory.status === "archived" ? `${factory.name} · Archived` : factory.name}
         title="Scorers"
       />
       <div className="space-y-8">

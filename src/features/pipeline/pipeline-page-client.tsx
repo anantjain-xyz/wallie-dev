@@ -67,6 +67,7 @@ import { cn } from "@/lib/utils";
 type PipelinePageClientProps = {
   /** When false, skip Supabase realtime (fixtures / offline proof captures). */
   enableRealtime?: boolean;
+  factorySelector?: ReactNode;
   initialData: PipelineDashboardData;
   initialNow?: string;
 };
@@ -212,6 +213,7 @@ export function formatLaneStateSummary(
 
 export function PipelinePageClient({
   enableRealtime = true,
+  factorySelector,
   initialData,
   initialNow,
 }: PipelinePageClientProps) {
@@ -220,6 +222,7 @@ export function PipelinePageClient({
       <PipelinePageContent
         key={`${initialData.workspace.id}:${initialData.factoryId ?? "all"}`}
         enableRealtime={enableRealtime}
+        factorySelector={factorySelector}
         initialData={initialData}
         initialNow={initialNow}
       />
@@ -229,6 +232,7 @@ export function PipelinePageClient({
 
 function PipelinePageContent({
   enableRealtime = true,
+  factorySelector,
   initialData,
   initialNow,
 }: PipelinePageClientProps) {
@@ -816,9 +820,20 @@ function PipelinePageContent({
   return (
     <div className={hasActiveSessions ? pipelineLayout.page : pipelineLayout.emptyPage}>
       <div className={hasActiveSessions ? pipelineLayout.controlsArea : undefined}>
-        <div className={hasActiveSessions ? "sr-only pipeline-wide:not-sr-only" : undefined}>
+        <div
+          className={
+            hasActiveSessions && !factorySelector ? "sr-only pipeline-wide:not-sr-only" : undefined
+          }
+        >
           <PageHeader
-            description="Sessions move through these stages in order, gated by approval at each step."
+            actions={factorySelector}
+            actionsRightOnDesktop
+            className={hasActiveSessions ? "mb-3 pipeline-wide:mb-8" : undefined}
+            description={
+              <span className={hasActiveSessions ? "sr-only pipeline-wide:not-sr-only" : undefined}>
+                Sessions move through these stages in order, gated by approval at each step.
+              </span>
+            }
             title="Pipeline"
           />
         </div>

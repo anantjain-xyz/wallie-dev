@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { z } from "zod";
 
@@ -8,6 +9,8 @@ import {
   PageHeader,
   PageSection,
 } from "@/components/ui/page-shell";
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import {
   ApproveGrant,
@@ -72,10 +75,26 @@ type Query = Partial<
   Record<keyof typeof sourceKinds | keyof Filters | "factory", string | string[]>
 >;
 
-function Unavailable({ href, text }: { href: string; text: string }) {
+const GOVERNANCE_FACTORY_RESET_PARAMS = [
+  "principal",
+  "grant",
+  "binding",
+  "mcpBinding",
+  "event",
+  "actor",
+  "afterGrant",
+  "afterPrincipal",
+  "afterBinding",
+  "afterToken",
+  "beforeAudit",
+  "afterOAuthClient",
+  "afterOAuthGrant",
+] as const;
+
+function Unavailable({ actions, href, text }: { actions?: ReactNode; href: string; text: string }) {
   return (
     <PageContainer className="pt-5 sm:pt-10">
-      <PageHeader title="Governance" />
+      <PageHeader actions={actions} actionsRightOnDesktop title="Governance" />
       <div className="ui-sheet space-y-3 p-4 sm:p-5">
         <p className="type-secondary text-muted">{text}</p>
         <Link className="ui-button" href={href}>
@@ -321,10 +340,34 @@ export default async function GovernancePage({
   searchParams: Promise<Query>;
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
-  const scope = await loadGovernanceScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Governance" workspaceSlug={workspaceSlug} />;
+  const [scope, factories] = await Promise.all([
+    loadGovernanceScope(workspaceSlug, query.factory),
+    loadWorkspaceFactoryOptions(workspaceSlug),
+  ]);
+  const managedFactories = factories.filter(({ canManage }) => canManage);
+  if (!scope)
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={managedFactories}
+            resetParams={GOVERNANCE_FACTORY_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Governance"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   const { factory } = scope;
+  const factorySelector = (
+    <FactorySelector
+      factories={managedFactories}
+      resetParams={GOVERNANCE_FACTORY_RESET_PARAMS}
+      selectedValue={factory.id}
+    />
+  );
   const overviewHref = workspaceGovernancePath(workspaceSlug, { factory: factory.id });
   const sources = Object.entries(sourceKinds).flatMap(([key, kind]) => {
     const id = query[key as keyof typeof sourceKinds];
@@ -332,7 +375,13 @@ export default async function GovernancePage({
   });
   const source = factoryAuditSourceSchema.optional().safeParse(sources[0]);
   if (sources.length > 1 || !source.success) {
-    return <Unavailable href={overviewHref} text="This governance record is unavailable." />;
+    return (
+      <Unavailable
+        actions={factorySelector}
+        href={overviewHref}
+        text="This governance record is unavailable."
+      />
+    );
   }
   const parsed = filters.safeParse(query);
   const historyHref = workspaceGovernancePath(workspaceSlug, {
@@ -340,7 +389,13 @@ export default async function GovernancePage({
     ...governanceSourceQuery(source.data),
   });
   if (!parsed.success) {
-    return <Unavailable href={historyHref} text="This governance page link is unavailable." />;
+    return (
+      <Unavailable
+        actions={factorySelector}
+        href={historyHref}
+        text="This governance page link is unavailable."
+      />
+    );
   }
 
   const { beforeAudit, afterOAuthClient, afterOAuthGrant, ...pages } = parsed.data;
@@ -369,13 +424,18 @@ export default async function GovernancePage({
     if (error instanceof FactoryAuditCursorError) {
       return (
         <Unavailable
+          actions={factorySelector}
           href={historyHref}
           text="This audit page link is unavailable. Open the latest audit events."
         />
       );
     }
     return (
-      <Unavailable href={historyHref} text="Governance records are temporarily unavailable." />
+      <Unavailable
+        actions={factorySelector}
+        href={historyHref}
+        text="Governance records are temporarily unavailable."
+      />
     );
   }
 
@@ -385,7 +445,8 @@ export default async function GovernancePage({
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
-        description={factory.status === "archived" ? `${factory.name} · Archived` : factory.name}
+        actions={factorySelector}
+        actionsRightOnDesktop
         eyebrow={
           source.data ? (
             <Link className="hover:text-foreground" href={overviewHref}>

@@ -2,6 +2,8 @@ import Link from "next/link";
 import { z } from "zod";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { loadAgentPageScope, loadAgentsList } from "@/features/factory-agents/agent-pages-data";
 import { AgentPromptForm } from "@/features/factory-agents/agent-prompt-form";
@@ -15,8 +17,18 @@ export default async function AgentsPage({
   searchParams: Promise<{ factory?: string | string[]; after?: string | string[] }>;
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
-  const scope = await loadAgentPageScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Agents" workspaceSlug={workspaceSlug} />;
+  const [scope, factories] = await Promise.all([
+    loadAgentPageScope(workspaceSlug, query.factory),
+    loadWorkspaceFactoryOptions(workspaceSlug),
+  ]);
+  if (!scope)
+    return (
+      <FactoryUnavailable
+        actions={<FactorySelector factories={factories} selectedValue="unavailable" />}
+        title="Agents"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   const { factory, canEditPrompt, workspaceId } = scope;
   const after = z.string().uuid().safeParse(query.after);
@@ -30,13 +42,15 @@ export default async function AgentsPage({
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         title="Agents"
-        description={factory.status === "archived" ? `${factory.name} · Archived` : factory.name}
         actions={
-          canEditPrompt ? (
-            <Link className="ui-button ui-button-primary" href="#new-agent">
-              New agent
-            </Link>
-          ) : undefined
+          <>
+            <FactorySelector factories={factories} selectedValue={factory.id} />
+            {canEditPrompt ? (
+              <Link className="ui-button ui-button-primary" href="#new-agent">
+                New agent
+              </Link>
+            ) : null}
+          </>
         }
         actionsRightOnDesktop
       />

@@ -10,7 +10,6 @@ type AppShellProps = {
   canManageGovernance?: boolean;
   creationFactory: CreationFactory | null;
   children: ReactNode;
-  factorySelector?: ReactNode;
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
   pathnameOverride?: string;
@@ -26,7 +25,6 @@ export function AppShell({
   canManageGovernance,
   creationFactory,
   children,
-  factorySelector,
   onboarding,
   pathnameOverride,
   viewerAvatarUrl,
@@ -44,7 +42,6 @@ export function AppShell({
     <div className="min-h-[100svh] min-w-0 bg-canvas" data-app-shell="">
       <ShellHeader
         creationFactory={creationFactory}
-        factorySelector={factorySelector}
         navItems={navItems}
         onboarding={onboarding}
         pathnameOverride={pathnameOverride}

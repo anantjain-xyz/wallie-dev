@@ -19,6 +19,7 @@ import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
 
 type SessionsPageProps = {
   factoryQuery?: string;
+  factorySelector?: ReactNode;
   initialData: SessionListPageData;
   initialNow?: string;
   readOnly?: boolean;
@@ -86,6 +87,7 @@ function withExplicitScope(href: string, scope: SessionFilterKey) {
  */
 export function SessionsPage({
   factoryQuery,
+  factorySelector,
   initialData,
   initialNow,
   readOnly = false,
@@ -231,13 +233,17 @@ export function SessionsPage({
       <VisibleInteractionBoundary action="pipeline_to_sessions" />
       <PageHeader
         actions={
-          <Link
-            className="ui-button"
-            href={withFactoryQuery(workspaceRunsPath(workspaceSlug), factoryQuery)}
-          >
-            Runs
-          </Link>
+          <>
+            {factorySelector}
+            <Link
+              className="ui-button"
+              href={withFactoryQuery(workspaceRunsPath(workspaceSlug), factoryQuery)}
+            >
+              Runs
+            </Link>
+          </>
         }
+        actionsRightOnDesktop
         className="mb-4 sm:mb-8"
         title="Sessions"
       />

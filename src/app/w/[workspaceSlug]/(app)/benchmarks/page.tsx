@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { benchmarkPurposeLabel } from "@/features/factory-benchmarks/curation-labels";
 import { SuiteCurationForm } from "@/features/factory-benchmarks/suite-curation-form";
@@ -12,6 +14,8 @@ import {
   loadBenchmarkTaskChoices,
 } from "@/features/factory-benchmarks/suites-data";
 import { workspaceBenchmarksPath, workspaceBenchmarkSuitePath } from "@/lib/routes";
+
+const BENCHMARKS_FACTORY_RESET_PARAMS = ["revision", "newSuite"] as const;
 
 export default async function BenchmarksPage({
   params,
@@ -27,8 +31,24 @@ export default async function BenchmarksPage({
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
   const after = z.string().uuid().optional().safeParse(query.after);
   if (!after.success) notFound();
-  const scope = await loadBenchmarkScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Benchmarks" workspaceSlug={workspaceSlug} />;
+  const [scope, factories] = await Promise.all([
+    loadBenchmarkScope(workspaceSlug, query.factory),
+    loadWorkspaceFactoryOptions(workspaceSlug),
+  ]);
+  if (!scope)
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={factories}
+            resetParams={BENCHMARKS_FACTORY_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Benchmarks"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   const { factory, workspaceId, canEdit } = scope;
   const factoryQuery = { factory: factory.id };
@@ -41,17 +61,23 @@ export default async function BenchmarksPage({
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         title="Benchmarks"
-        description={factory.status === "archived" ? `${factory.name} · Archived` : factory.name}
         actionsRightOnDesktop
         actions={
-          canEdit ? (
-            <Link
-              className="ui-button ui-button-primary"
-              href={`${workspaceBenchmarksPath(workspaceSlug, { ...factoryQuery, after: after.data, newSuite: "1" })}#new-suite`}
-            >
-              New suite
-            </Link>
-          ) : null
+          <>
+            <FactorySelector
+              factories={factories}
+              resetParams={BENCHMARKS_FACTORY_RESET_PARAMS}
+              selectedValue={factory.id}
+            />
+            {canEdit ? (
+              <Link
+                className="ui-button ui-button-primary"
+                href={`${workspaceBenchmarksPath(workspaceSlug, { ...factoryQuery, after: after.data, newSuite: "1" })}#new-suite`}
+              >
+                New suite
+              </Link>
+            ) : null}
+          </>
         }
       />
       <div className="space-y-8">

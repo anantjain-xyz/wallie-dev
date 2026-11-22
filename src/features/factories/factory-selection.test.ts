@@ -4,7 +4,7 @@ import {
   defaultsToAllFactories,
   factorySwitchHref,
   isFactoryAggregatePath,
-  isFactorySelectorPath,
+  isManagedFactoryPath,
   resolveFactorySelection,
   resolveGovernanceFactorySelection,
   withFactoryQuery,
@@ -24,7 +24,7 @@ const secondary = {
   status: "archived",
 } satisfies FactorySelectionOption;
 
-describe("factory scope on aggregate routes", () => {
+describe("factory scope and selection", () => {
   it("resolves the authorized default or explicit visible factory", () => {
     const factories = [factory, secondary];
     expect(resolveFactorySelection(factories, undefined)).toEqual({ kind: "factory", factory });
@@ -59,73 +59,54 @@ describe("factory scope on aggregate routes", () => {
     expect(isFactoryAggregatePath("/w/acme/runs", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/activity", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/inbox", "acme")).toBe(true);
+    expect(isFactoryAggregatePath("/w/acme/agents", "acme")).toBe(false);
+    expect(isFactoryAggregatePath("/w/acme/analytics", "acme")).toBe(false);
+    expect(isFactoryAggregatePath("/w/acme/overview", "acme")).toBe(false);
+    expect(isFactoryAggregatePath("/w/acme/governance", "acme")).toBe(false);
+    expect(isFactoryAggregatePath("/w/acme/memory", "acme")).toBe(false);
     expect(isFactoryAggregatePath("/w/acme/sessions/42", "acme")).toBe(false);
     expect(isFactoryAggregatePath("/w/acme/runs/c66", "acme")).toBe(false);
     expect(isFactoryAggregatePath("/w/acme/settings", "acme")).toBe(false);
   });
 
-  it("defaults Inbox to every permitted factory and drops a previous cursor when switching", () => {
+  it("identifies managed factory destinations", () => {
+    expect(isManagedFactoryPath("/w/acme/governance", "acme")).toBe(true);
+    expect(isManagedFactoryPath("/w/acme/context", "acme")).toBe(true);
+    expect(isManagedFactoryPath("/w/acme/memory", "acme")).toBe(true);
+    expect(isManagedFactoryPath("/w/acme/agents", "acme")).toBe(false);
+  });
+
+  it("defaults Inbox and Activity to every permitted factory and drops base pagination cursors", () => {
     expect(defaultsToAllFactories("/w/acme/inbox", "acme")).toBe(true);
+    expect(defaultsToAllFactories("/w/acme/activity", "acme")).toBe(true);
     expect(defaultsToAllFactories("/w/acme/sessions", "acme")).toBe(false);
     expect(factorySwitchHref("/w/acme/inbox", "cursor=old", secondary.id)).toBe(
       "/w/acme/inbox?factory=secondary-id",
     );
   });
 
-  it("resets only scope-specific filters and preserves unrelated state", () => {
+  it("resets base scope-specific filters and preserves unrelated state", () => {
     const result = factorySwitchHref(
       "/w/acme/sessions",
-      "q=auth&sort=oldest&cursor=old&stage=custom&create=1&sessionId=session&stageId=stage",
+      "q=auth&sort=oldest&cursor=old&stage=custom&create=1&sessionId=session&stageId=stage&after=next",
       secondary.id,
     );
     expect(result).toBe("/w/acme/sessions?q=auth&sort=oldest&factory=secondary-id");
   });
 
-  it("drops a factory-scoped canary selection when switching Analytics factories", () => {
-    expect(
-      factorySwitchHref("/w/acme/analytics", "routingCanary=old&dimension=agent", secondary.id),
-    ).toBe("/w/acme/analytics?dimension=agent&factory=secondary-id");
-  });
-
-  it("shows a single-factory selector for the Agents list and resets its pagination", () => {
-    expect(isFactoryAggregatePath("/w/acme/agents", "acme")).toBe(false);
-    expect(isFactorySelectorPath("/w/acme/agents", "acme")).toBe(true);
-    expect(isFactorySelectorPath("/w/acme/agents/1", "acme")).toBe(false);
-    expect(factorySwitchHref("/w/acme/agents", "after=cursor", secondary.id)).toBe(
-      "/w/acme/agents?factory=secondary-id",
+  it("resets caller-declared page params while keeping preserved filters", () => {
+    const navigation = factorySwitchHref(
+      "/w/acme/analytics",
+      "factory=old&from=2026-05-01&to=2026-05-31&compare=previous&dimension=model&environment=staging&metric=throughput&period=compare&bucket=old&cursor=old&facet=old&routingCanary=old&routingAlert=alert",
+      secondary.id,
+      ["metric", "period", "facet", "bucket", "routingCanary", "routingAlert"],
+    );
+    expect(navigation).toBe(
+      "/w/acme/analytics?factory=secondary-id&from=2026-05-01&to=2026-05-31&compare=previous&dimension=model&environment=staging",
     );
   });
 
-  it.each(["analytics", "overview"])(
-    "preserves outcome filters and clears scoped evidence when changing the factory on %s",
-    (route) => {
-      const path = `/w/acme/${route}`;
-      expect(isFactorySelectorPath(path, "acme")).toBe(true);
-      expect(isFactoryAggregatePath(path, "acme")).toBe(false);
-      const navigation = factorySwitchHref(
-        path,
-        "factory=old&from=2026-05-01&to=2026-05-31&compare=previous&dimension=model&environment=staging&metric=throughput&period=compare&bucket=old&cursor=old&facet=old",
-        secondary.id,
-      );
-      expect(navigation).toBe(
-        `${path}?factory=secondary-id&from=2026-05-01&to=2026-05-31&compare=previous&dimension=model&environment=staging`,
-      );
-    },
-  );
-
-  it.each(["scorers", "benchmarks"])(
-    "clears revision and pagination IDs when switching factories on %s",
-    (route) => {
-      const path = `/w/acme/${route}`;
-      expect(isFactorySelectorPath(path, "acme")).toBe(true);
-      expect(isFactorySelectorPath(`${path}/1`, "acme")).toBe(false);
-      expect(factorySwitchHref(path, "after=cursor&revision=previous", secondary.id)).toBe(
-        `${path}?factory=secondary-id`,
-      );
-    },
-  );
-
-  it("offers Governance only for factories the viewer manages and resets resource filters", () => {
+  it("offers Governance only for factories the viewer manages", () => {
     const managed = { ...secondary, canManage: true };
     expect(resolveGovernanceFactorySelection([factory, managed], undefined)).toEqual({
       kind: "factory",
@@ -135,15 +116,6 @@ describe("factory scope on aggregate routes", () => {
       kind: "unavailable",
     });
     expect(resolveGovernanceFactorySelection([managed], "all")).toEqual({ kind: "unavailable" });
-    expect(isFactorySelectorPath("/w/acme/governance", "acme")).toBe(true);
-    expect(isFactoryAggregatePath("/w/acme/governance", "acme")).toBe(false);
-    expect(
-      factorySwitchHref(
-        "/w/acme/governance",
-        "grant=old&beforeAudit=older&actor=previous",
-        managed.id,
-      ),
-    ).toBe("/w/acme/governance?factory=secondary-id");
   });
 
   it("carries explicit scope including duplicates without changing other query values", () => {
@@ -152,34 +124,4 @@ describe("factory scope on aggregate routes", () => {
       "/w/acme/sessions?sort=number&factory=all&factory=secondary-id",
     );
   });
-});
-
-it("switches Context and Memory to the selected factory and clears scoped history", () => {
-  expect(isFactorySelectorPath("/w/acme/context", "acme")).toBe(true);
-  expect(isFactorySelectorPath("/w/acme/memory", "acme")).toBe(true);
-  expect(isFactoryAggregatePath("/w/acme/memory", "acme")).toBe(false);
-  expect(
-    factorySwitchHref(
-      "/w/acme/context",
-      "factory=old&source=s&revision=r&grantAfter=g&repoAfter=p",
-      "new-factory",
-    ),
-  ).toBe("/w/acme/context?factory=new-factory");
-  expect(
-    factorySwitchHref(
-      "/w/acme/memory",
-      "factory=old&memory=m&revision=r&decision=d&proposal=a&version=2",
-      "new-factory",
-    ),
-  ).toBe("/w/acme/memory?factory=new-factory");
-});
-
-it("clears an Analytics scorer cohort and drilldown when switching factories", () => {
-  expect(
-    factorySwitchHref(
-      "/w/acme/analytics",
-      "factory=old&from=2026-11-01&to=2026-12-01&cohort=c&scorerRevision=r&scoreSnapshot=s&evaluationDay=d&evaluationStatus=fail&beforeRunFinishedAt=at&beforeScoreRun=run&beforeRevisionAt=rat&beforeRevisionPolicy=rid&beforeCohortAt=cat&beforeCohortPolicy=cid",
-      "new-factory",
-    ),
-  ).toBe("/w/acme/analytics?factory=new-factory&from=2026-11-01&to=2026-12-01");
 });

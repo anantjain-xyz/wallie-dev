@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/app-shell/app-shell";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import { FactorySelector } from "@/features/factories/factory-selector";
 import { isWorkspaceOperator } from "@/features/workspaces/authenticated-context";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 
@@ -31,7 +30,6 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
       canManageFactoryDefinition={isWorkspaceOperator(currentMember)}
       canManageGovernance={factories.some(({ canManage }) => canManage)}
       creationFactory={defaultFactory ? { id: defaultFactory.id, name: defaultFactory.name } : null}
-      factorySelector={<FactorySelector factories={factories} workspaceSlug={workspaceSlug} />}
       onboarding={onboarding}
       viewerAvatarUrl={viewerAvatarUrl}
       viewerEmail={user.email ?? null}

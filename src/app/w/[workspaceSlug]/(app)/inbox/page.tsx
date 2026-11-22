@@ -5,6 +5,7 @@ import {
   FACTORY_QUERY_PARAM,
   resolveFactorySelection,
 } from "@/features/factories/factory-selection";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { FactoryInboxPage } from "@/features/factory-inbox/inbox-page";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
@@ -21,11 +22,17 @@ export default async function InboxPage({
   const factoryQuery = search[FACTORY_QUERY_PARAM] ?? "all";
   const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
-    factoryQuery === "all" ? [] : loadWorkspaceFactoryOptions(workspaceSlug),
+    loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const selection = resolveFactorySelection(factories, factoryQuery);
   if (selection.kind === "unavailable")
-    return <FactoryUnavailable title="Inbox" workspaceSlug={workspaceSlug} />;
+    return (
+      <FactoryUnavailable
+        actions={<FactorySelector allowAll factories={factories} selectedValue="unavailable" />}
+        title="Inbox"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   const factoryId = selection.kind === "factory" ? selection.factory.id : null;
   const cursor = search.cursor ?? null;
@@ -45,6 +52,9 @@ export default async function InboxPage({
       key={JSON.stringify([workspace.id, factoryId, cursor])}
       cursor={cursor}
       factoryId={factoryId}
+      factorySelector={
+        <FactorySelector allowAll factories={factories} selectedValue={factoryId ?? "all"} />
+      }
       initialInbox={inbox}
       initialNow={new Date().toISOString()}
       memberId={currentMember.id}

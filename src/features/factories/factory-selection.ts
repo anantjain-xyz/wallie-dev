@@ -1,18 +1,11 @@
 import {
   workspaceActivityPath,
-  workspaceAgentsPath,
-  workspaceAnalyticsPath,
   workspaceBasePath,
-  workspaceBenchmarksPath,
   workspaceContextPath,
-  workspaceFailureGroupsPath,
   workspaceGovernancePath,
-  workspaceImprovementsPath,
   workspaceInboxPath,
   workspaceMemoryPath,
-  workspaceOverviewPath,
   workspaceRunsPath,
-  workspaceScorersPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
 
@@ -96,25 +89,14 @@ export function isManagedFactoryPath(pathname: string, workspaceSlug: string) {
   );
 }
 
-export function isFactoryOutcomePath(pathname: string, workspaceSlug: string) {
-  return (
-    pathname === workspaceAnalyticsPath(workspaceSlug) ||
-    pathname === workspaceOverviewPath(workspaceSlug)
-  );
-}
-
-export function isFactorySelectorPath(pathname: string, workspaceSlug: string) {
-  return (
-    isFactoryAggregatePath(pathname, workspaceSlug) ||
-    pathname === workspaceAgentsPath(workspaceSlug) ||
-    pathname === workspaceScorersPath(workspaceSlug) ||
-    pathname === workspaceBenchmarksPath(workspaceSlug) ||
-    pathname === workspaceFailureGroupsPath(workspaceSlug) ||
-    pathname === workspaceImprovementsPath(workspaceSlug) ||
-    isFactoryOutcomePath(pathname, workspaceSlug) ||
-    isManagedFactoryPath(pathname, workspaceSlug)
-  );
-}
+export const BASE_FACTORY_SWITCH_RESET_PARAMS = [
+  "cursor",
+  "stage",
+  "stageId",
+  "sessionId",
+  "create",
+  "after",
+] as const;
 
 export function withFactoryQuery(
   href: string,
@@ -129,66 +111,15 @@ export function withFactoryQuery(
   return url.pathname + url.search + url.hash;
 }
 
-export function factorySwitchHref(pathname: string, search: string, value: string) {
+export function factorySwitchHref(
+  pathname: string,
+  search: string,
+  value: string,
+  resetParams: readonly string[] = [],
+) {
   const params = new URLSearchParams(search);
-  for (const key of ["cursor", "stage", "stageId", "sessionId", "create", "after"])
-    params.delete(key);
-  if (pathname.endsWith("/analytics") || pathname.endsWith("/overview")) {
-    for (const key of ["metric", "period", "facet", "bucket"]) params.delete(key);
-  }
-  if (pathname.endsWith("/analytics")) {
-    for (const key of [
-      "scorerRevision",
-      "cohort",
-      "scoreSnapshot",
-      "evaluationDay",
-      "evaluationStatus",
-      "beforeRunFinishedAt",
-      "beforeScoreRun",
-      "beforeRevisionAt",
-      "beforeRevisionPolicy",
-      "beforeCohortAt",
-      "beforeCohortPolicy",
-      "routingCanary",
-    ])
-      params.delete(key);
-  }
-  if (
-    pathname.endsWith("/scorers") ||
-    pathname.endsWith("/benchmarks") ||
-    pathname.endsWith("/failure-groups")
-  )
-    params.delete("revision");
-  if (pathname.endsWith("/improvements")) params.delete("cohort");
-  if (pathname.endsWith("/governance")) {
-    for (const key of [
-      "principal",
-      "grant",
-      "binding",
-      "mcpBinding",
-      "event",
-      "actor",
-      "afterGrant",
-      "afterPrincipal",
-      "afterBinding",
-      "beforeAudit",
-    ])
-      params.delete(key);
-  }
-  if (pathname.endsWith("/context") || pathname.endsWith("/memory")) {
-    for (const key of [
-      "source",
-      "revision",
-      "memory",
-      "decision",
-      "proposal",
-      "version",
-      "before",
-      "grantAfter",
-      "repoAfter",
-    ])
-      params.delete(key);
-  }
+  for (const key of BASE_FACTORY_SWITCH_RESET_PARAMS) params.delete(key);
+  for (const key of resetParams) params.delete(key);
   params.set(FACTORY_QUERY_PARAM, value);
   return `${pathname}?${params}`;
 }
