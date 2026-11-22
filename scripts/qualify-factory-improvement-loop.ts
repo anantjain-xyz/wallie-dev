@@ -8,7 +8,7 @@ import { chromium } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
-import { signInViaMagicLink } from "../e2e/helpers/auth";
+import { authenticateQualificationOwner } from "../e2e/helpers/factory-improvement-loop-qualification";
 import type { Database } from "../src/lib/supabase/database.types";
 import {
   factoryImprovementLoopManifestSchema,
@@ -146,6 +146,7 @@ async function loadLocalContext(
   const dbUrl = loopbackQualificationUrl(config.DB_URL, ["postgresql:", "postgres:"]).toString();
   improvementQualificationDatabaseEnvironment(dbUrl);
   process.env.NEXT_PUBLIC_SUPABASE_URL = apiUrl;
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = config.ANON_KEY;
   process.env.SUPABASE_SECRET_KEY = config.SERVICE_ROLE_KEY;
   return {
     apiUrl,
@@ -254,11 +255,7 @@ async function run() {
     const browser = await chromium.launch();
     try {
       const page = await browser.newPage();
-      const destination = `/w/${fixture.workspaceSlug}/improvements/${fixture.proposalId}?factory=${fixture.factoryId}&revision=${fixture.proposalRevisionId}`;
-      await signInViaMagicLink(page, destination, {
-        baseURL: fixture.appOrigin,
-        email: fixture.ownerEmail,
-      });
+      await authenticateQualificationOwner(page, fixture);
       const publication = await publishImprovementLoop({
         context,
         fixture,

@@ -46,7 +46,10 @@ export function qualificationAppOrigin(manifest: Manifest, requested: string | u
   return app.origin;
 }
 
-export async function authenticateQualificationOwner(page: Page, manifest: Manifest) {
+export async function authenticateQualificationOwner(
+  page: Page,
+  manifest: Pick<Manifest, "actorUserId" | "appOrigin" | "ownerEmail">,
+) {
   const raw = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   const supabase = loopbackQualificationUrl(raw, ["http:"]);
   const serviceKey = process.env.SUPABASE_SECRET_KEY;
