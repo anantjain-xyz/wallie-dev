@@ -33,6 +33,7 @@ import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
+import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
   reconcileBenchmarkSchedules,
@@ -333,6 +334,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["factory flow projection", () => processFactoryFlowProjection(admin)],
       ["factory scorer sampling", () => processFactoryScorerSampling(admin)],
       ["factory evaluation queue", () => maintainFactoryEvaluationQueue(admin)],
+      ["factory failure cohorts", () => processFactoryFailureCohorts(admin)],
       ["routing canary alerts", () => processFactoryRoutingCanaryAlerts(admin)],
       ["analytics export cleanup", () => pruneFactoryAnalyticsExports(admin)],
       ["run exports", () => drainRunExports(admin)],
