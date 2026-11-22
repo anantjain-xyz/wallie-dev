@@ -153,6 +153,140 @@ returns jsonb language sql stable set search_path = '' as $$
     'routingRuleIds', array(select distinct rule_id from cited where rule_id is not null order by rule_id));
 $$;
 
+-- Expiry and session erasure already take this workspace fence. Direct
+-- service-role validation marker inserts must participate before they hide evidence.
+create function internal.lock_validation_withholding_workspace()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  perform workspace.id from public.session_validation_assets asset
+  join public.workspaces workspace on workspace.id = asset.workspace_id
+  where asset.id = new.asset_id for no key update of workspace;
+  return new;
+end;
+$$;
+create trigger lock_validation_withholding_workspace before insert on public.session_validation_asset_withholdings
+  for each row execute function internal.lock_validation_withholding_workspace();
+
+-- Scorer code-diff availability also depends on mutable GitHub metadata when
+-- the checkpoint changed. Lock installation before repository, like definition
+-- activation, and retry instead of waiting while holding the workspace fence.
+create function internal.lock_factory_improvement_source_repositories(diagnosis internal.factory_diagnoses)
+returns void language plpgsql set search_path = '' as $$
+declare
+  repository_ids uuid[];
+  installation_ids uuid[];
+  locked_count integer;
+begin
+  select array_agg(distinct checkpoint.repository_id) into repository_ids
+  from internal.factory_failure_cohort_members member
+  join public.factory_evaluation_receipts receipt on
+    (receipt.workspace_id, receipt.factory_id, receipt.session_id, receipt.run_id, receipt.attempt_id,
+     receipt.job_id, receipt.scorer_revision_id, receipt.target_commit_sha) =
+    (member.workspace_id, member.factory_id, member.session_id, member.run_id, member.evaluation_attempt_id,
+     member.evaluation_job_id, member.scorer_revision_id, member.target_commit_sha)
+  join public.session_git_checkpoints checkpoint on
+    (checkpoint.workspace_id, checkpoint.session_id, checkpoint.run_id, checkpoint.output_sha) =
+    (member.workspace_id, member.session_id, member.run_id, member.target_commit_sha)
+  where (member.workspace_id, member.factory_id, member.cohort_id) =
+    (diagnosis.workspace_id, diagnosis.factory_id, diagnosis.cohort_id)
+    and member.id = any(diagnosis.member_ids) and member.source_kind = 'scorer'
+    and checkpoint.input_sha <> checkpoint.output_sha
+    and receipt.result->'evidence' @> jsonb_build_array(jsonb_build_object('kind','code_diff','id',checkpoint.run_id));
+  if repository_ids is null then return; end if;
+
+  select coalesce(array_agg(distinct repository.github_installation_id), '{}') into installation_ids
+  from public.github_repositories repository
+  where (repository.workspace_id, repository.factory_id) = (diagnosis.workspace_id, diagnosis.factory_id)
+    and repository.id = any(repository_ids);
+  begin
+    perform installation.id from public.github_installations installation
+    where installation.workspace_id = diagnosis.workspace_id and installation.id = any(installation_ids)
+    order by installation.id for share nowait;
+    get diagnostics locked_count = row_count;
+    if locked_count <> cardinality(installation_ids) then
+      raise exception 'GitHub source metadata changed. Retry saving the proposal.' using errcode = 'PT409';
+    end if;
+    perform repository.id from public.github_repositories repository
+    where (repository.workspace_id, repository.factory_id) = (diagnosis.workspace_id, diagnosis.factory_id)
+      and repository.id = any(repository_ids)
+    order by repository.id for share nowait;
+    get diagnostics locked_count = row_count;
+    if locked_count <> cardinality(repository_ids) then
+      raise exception 'GitHub source metadata changed. Retry saving the proposal.' using errcode = 'PT409';
+    end if;
+  exception when lock_not_available then
+    raise exception 'GitHub source metadata is changing. Retry saving the proposal.' using errcode = 'PT409';
+  end;
+  if exists (select 1 from public.github_repositories repository
+    where (repository.workspace_id, repository.factory_id) = (diagnosis.workspace_id, diagnosis.factory_id)
+      and repository.id = any(repository_ids) and not (repository.github_installation_id = any(installation_ids))) then
+    raise exception 'GitHub source metadata changed. Retry saving the proposal.' using errcode = 'PT409';
+  end if;
+end;
+$$;
+
+-- Upload recovery can remove a command object without a retention marker.
+-- Hold the exact metadata rows through settlement, just as for GitHub metadata.
+create function internal.lock_factory_improvement_source_objects(diagnosis internal.factory_diagnoses)
+returns void language plpgsql set search_path = '' as $$
+begin
+  perform object.id from storage.objects object
+  join (
+    with members as materialized (
+      select member.* from internal.factory_failure_cohort_members member
+      where (member.workspace_id, member.factory_id, member.cohort_id) =
+        (diagnosis.workspace_id, diagnosis.factory_id, diagnosis.cohort_id)
+        and member.id = any(diagnosis.member_ids)
+    ), scored_assets as materialized (
+      select member.workspace_id, member.session_id, member.run_id,
+        (reference.value->>'id')::uuid as asset_id, reference.value->>'kind' as kind
+      from members member
+      join public.factory_evaluation_receipts receipt on
+        (receipt.workspace_id, receipt.factory_id, receipt.session_id, receipt.run_id, receipt.attempt_id,
+         receipt.job_id, receipt.scorer_revision_id, receipt.target_commit_sha) =
+        (member.workspace_id, member.factory_id, member.session_id, member.run_id, member.evaluation_attempt_id,
+         member.evaluation_job_id, member.scorer_revision_id, member.target_commit_sha)
+      cross join lateral jsonb_array_elements(receipt.result->'evidence') reference(value)
+      where member.source_kind = 'scorer'
+        and reference.value->>'kind' in ('validation_report', 'browser_screenshot', 'browser_recording')
+    )
+    select asset.storage_path from members member
+    join public.session_validation_evidence receipt on
+      (receipt.workspace_id, receipt.session_id, receipt.run_id, receipt.attempt_count, receipt.commit_sha,
+       receipt.validation_tree_sha) =
+      (member.workspace_id, member.session_id, member.validation_run_id, member.run_attempt_count,
+       member.target_commit_sha, member.target_tree_sha)
+    cross join lateral jsonb_array_elements(receipt.records) command(value)
+    join public.session_validation_assets asset on (asset.workspace_id, asset.session_id, asset.run_id) =
+      (member.workspace_id, member.session_id, member.run_id)
+    left join public.session_validation_plans plan on plan.run_id = member.run_id
+    where member.source_kind = 'validation' and command.value->>'key' = member.validation_record_key
+      and (
+        asset.evidence_key = member.validation_record_key || '/log'
+        or command.value->'reportKeys' ? asset.evidence_key
+        or exists (select 1 from jsonb_array_elements(plan.plan->'commands') planned(value)
+          cross join lateral jsonb_array_elements(planned.value->'reports') report(value)
+          where planned.value->>'key' = member.validation_record_key and report.value->'required' = 'true'
+            and asset.evidence_key = member.validation_record_key || '/' || (report.value->>'key'))
+      )
+    union
+    select asset.storage_path from scored_assets ref join public.session_validation_assets asset on
+      (asset.workspace_id, asset.session_id, asset.run_id, asset.id) =
+      (ref.workspace_id, ref.session_id, ref.run_id, ref.asset_id)
+    where ref.kind = 'validation_report' and asset.kind = 'report'
+    union
+    select asset.storage_path from scored_assets ref join public.session_browser_verification_assets asset on
+      (asset.workspace_id, asset.session_id, asset.run_id, asset.id) =
+      (ref.workspace_id, ref.session_id, ref.run_id, ref.asset_id)
+    where ref.kind in ('browser_screenshot','browser_recording')
+  ) source on object.name = source.storage_path
+  where object.bucket_id = 'session-validation-evidence'
+  order by object.id for share of object nowait;
+exception when lock_not_available then
+  raise exception 'Evidence storage is changing. Retry saving the proposal.' using errcode = 'PT409';
+end;
+$$;
+
 create function internal.assert_factory_improvement_routing_targets(
   p_workspace_id uuid, p_factory_id uuid, p_candidate jsonb, p_edits jsonb
 ) returns void language plpgsql set search_path = '' as $$
@@ -485,6 +619,7 @@ declare
   actor uuid;
   base_definition jsonb;
   expected_definition jsonb;
+  diagnostics jsonb := p_diagnostics;
   candidate_id uuid;
   proposal_id uuid := p_proposal_id;
   proposal_revision_number integer := 1;
@@ -528,7 +663,28 @@ begin
     if p_definition_json::jsonb is distinct from expected_definition then
       raise exception 'The compiled candidate changes fields outside the exact authorized edits.' using errcode = 'PT422';
     end if;
-    perform internal.assert_factory_improvement_routing_targets(p_workspace_id, p_factory_id, expected_definition, p_edits);
+    begin
+      perform internal.assert_factory_improvement_routing_targets(p_workspace_id, p_factory_id, expected_definition, p_edits);
+    exception when sqlstate 'PT409' or sqlstate 'PT422' then
+      diagnostics := jsonb_build_array(jsonb_build_object(
+        'path', jsonb_build_array('modelRouting'), 'code', 'unsupported_capability',
+        'message', case sqlstate when 'PT409' then
+          'The reviewed routing evidence changed. Run a new comparison for this routing target.'
+        else 'Use a qualified routing target that preserves execution scope and meets the rule constraints.' end));
+    end;
+  end if;
+
+  select * into strict diagnosis from internal.factory_diagnoses job
+  where (job.workspace_id, job.factory_id, job.id) = (p_workspace_id, p_factory_id, p_diagnosis_id);
+  perform internal.lock_factory_improvement_source_repositories(diagnosis);
+  perform internal.lock_factory_improvement_source_objects(diagnosis);
+  -- The workspace SHARE lock taken before membership and factory locks remains
+  -- held for saving. Check the exact sources again under their availability fences.
+  if not internal.factory_diagnosis_sources_current(diagnosis) then
+    raise exception 'Current cited diagnosis evidence is required.' using errcode = 'PT422';
+  end if;
+
+  if p_definition_json is not null and diagnostics = '[]' then
     insert into public.factory_definition_revisions(workspace_id, factory_id, schema_version,
       definition_json, canonical_digest, created_by)
     values (p_workspace_id, p_factory_id, coalesce((expected_definition->>'schemaVersion')::integer, 1),
@@ -547,8 +703,6 @@ begin
   end if;
   select member.id into strict actor from public.workspace_members member
   where (member.workspace_id, member.user_id, member.kind) = (p_workspace_id, p_actor_user_id, 'human');
-  select * into strict diagnosis from internal.factory_diagnoses job
-  where (job.workspace_id, job.factory_id, job.id) = (p_workspace_id, p_factory_id, p_diagnosis_id);
   insert into internal.factory_improvement_proposal_revisions(workspace_id, factory_id, proposal_id,
     revision_number, previous_revision_id, base_activation_number, base_revision_id, base_digest,
     request_id, author_member_id, intent, evidence_digest, cited_member_ids,
@@ -558,7 +712,8 @@ begin
     actor, internal.factory_improvement_intent(p_diagnosis_id, p_activation_number, p_base_revision_id, p_base_digest,
       p_rationale, p_expected_benefit, p_regression_risks, p_edits, p_proposal_id, p_expected_revision_id),
     diagnosis.evidence_digest, internal.factory_improvement_cited_members(diagnosis),
-    candidate_id, p_candidate_digest, p_diff, p_diagnostics)
+    candidate_id, case when candidate_id is not null then p_candidate_digest end,
+    case when candidate_id is not null then p_diff end, diagnostics)
   returning * into receipt;
   return jsonb_build_object('proposal', internal.project_factory_improvement_revision(receipt), 'replay', false);
 end;
@@ -591,6 +746,9 @@ revoke all on function
   internal.project_factory_improvement_revision(internal.factory_improvement_proposal_revisions),
   internal.factory_improvement_cited_members(internal.factory_diagnoses),
   internal.factory_improvement_edit_grant(internal.factory_diagnoses, uuid[]),
+  internal.lock_validation_withholding_workspace(),
+  internal.lock_factory_improvement_source_repositories(internal.factory_diagnoses),
+  internal.lock_factory_improvement_source_objects(internal.factory_diagnoses),
   internal.apply_factory_improvement_edits(uuid, uuid, jsonb, jsonb, jsonb, jsonb),
   internal.assert_factory_improvement_routing_targets(uuid, uuid, jsonb, jsonb),
   internal.factory_improvement_intent(uuid, bigint, uuid, text, text, text, text, jsonb, uuid, uuid),

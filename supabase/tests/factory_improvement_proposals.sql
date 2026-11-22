@@ -2,8 +2,10 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 \set diagnosis_fixture_prefix 63600000
+\set diagnosis_include_uncited_stage true
 \set diagnosis_inference_ciphertext v2.AAAAAAAAAAAAAAAA.YWJj.AAAAAAAAAAAAAAAAAAAAAA
 \ir fixtures/factory_diagnosis_source.psql
+\unset diagnosis_include_uncited_stage
 
 create temp table improvement_diagnosis as
 select public.request_factory_diagnosis(scope.workspace_id, scope.factory_id, scope.owner_id,
@@ -72,9 +74,14 @@ select is(pg_temp.prepare_improvement(62)->'grant', jsonb_build_object(
   'skillRevisionIds', '[]'::jsonb, 'scorerRevisionIds', '[]'::jsonb, 'routingRuleIds', '[]'::jsonb),
   'the grant contains exactly the cited stage and agent, with empty uncited skill, scorer, and routing arrays')
 from improvement_diagnosis;
-select throws_ok($$select pg_temp.prepare_improvement(62, p_edits => pg_temp.improvement_prompt_edit(
-  p_stage_id => pg_temp.diagnosis_fixture_id(99)))$$, 'PT422', null,
-  'a cited run cannot authorize edits to another stage');
+select throws_ok($$
+  select pg_temp.prepare_improvement(62, p_edits => jsonb_build_array(jsonb_build_object(
+    'kind', 'stage_prompt', 'stageId', stage->'id', 'promptTemplateMd', 'Publish everything.',
+    'expectedPromptSha256', encode(sha256(convert_to(stage->>'promptTemplateMd', 'UTF8')), 'hex'))))
+  from public.factory_definition_revisions base
+  cross join lateral jsonb_array_elements(base.definition_json::jsonb->'stages') stage
+  where base.id = pg_temp.diagnosis_fixture_id(51) and stage->>'id' = pg_temp.diagnosis_fixture_id(33)::text
+$$, 'PT422', null, 'the real pinned uncited stage is rejected despite its exact prior prompt hash');
 select throws_ok($$select pg_temp.prepare_improvement(62, p_edits => pg_temp.improvement_prompt_edit()
   || pg_temp.improvement_prompt_edit('Second amendment.'))$$, 'PT422', null,
   'one edit per target is enforced before compilation');
@@ -166,6 +173,46 @@ select ok(not has_table_privilege('authenticated', 'internal.factory_improvement
     'public.prepare_factory_improvement_proposal(uuid,uuid,uuid,uuid,bigint,uuid,text,uuid,text,text,text,jsonb,uuid,uuid)', 'EXECUTE')
   and not has_function_privilege('anon', 'public.get_factory_improvement_proposal_revision(uuid,uuid,uuid,uuid)', 'EXECUTE'),
   'history tables stay private and only the authorized roles may use each RPC');
+
+-- Isolate the save boundary from building another qualified routing experiment.
+-- The replacement only rejects qualification and is restored in this transaction.
+do $$
+declare
+  original text := pg_get_functiondef('internal.assert_factory_improvement_routing_targets(uuid,uuid,jsonb,jsonb)'::regprocedure);
+  command_slot integer;
+begin
+  execute $stub$
+    create or replace function internal.assert_factory_improvement_routing_targets(
+      p_workspace_id uuid, p_factory_id uuid, p_candidate jsonb, p_edits jsonb
+    ) returns void language plpgsql set search_path = '' as $reject$
+    begin
+      raise exception 'Fixture provider detail must not be returned.'
+        using errcode = current_setting('wallie.improvement_routing_fixture_error');
+    end;
+    $reject$
+  $stub$;
+  foreach command_slot in array array[68, 69] loop
+    perform set_config('wallie.improvement_routing_fixture_error',
+      case when command_slot = 68 then 'PT422' else 'PT409' end, true);
+    insert into improvement_save_results
+      select 'routing-rejected-' || command_slot, pg_temp.save_improvement(command_slot, p_candidate => expected::text)
+      from improvement_candidates;
+  end loop;
+  execute original;
+end;
+$$;
+select ok((select count(*) = 2 and bool_and(value @> '{"status":"invalid","candidate":null,"diff":null}'
+  and value#>'{diagnostics,0,path}' = '["modelRouting"]'
+  and value::text not like '%Fixture provider detail%')
+  from improvement_receipts where label like 'routing-rejected-%'),
+  'current and stale routing requalification failures retain safe invalid diagnostics without a candidate or diff');
+select is(pg_temp.save_improvement(68, p_candidate => expected::text),
+  (select jsonb_build_object('proposal', value, 'replay', true) from improvement_receipts where label = 'routing-rejected-68'),
+  'retrying rejected routing qualification returns the same recorded diagnostic')
+from improvement_candidates;
+select is((select count(*)::int from public.factory_definition_revisions
+  where workspace_id = pg_temp.diagnosis_fixture_id(11)), 2,
+  'a routing requalification failure materializes no extra definition');
 
 select public.archive_factory(workspace_id, factory_id, owner_id) from diagnosis_scope;
 select is(pg_temp.prepare_improvement(62)->'replay'->>'revisionNumber', '1',

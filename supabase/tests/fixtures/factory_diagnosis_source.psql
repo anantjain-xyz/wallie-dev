@@ -1,4 +1,8 @@
 -- The pgTAP suite and the PostgREST smoke both run this setup in a transaction.
+\if :{?diagnosis_include_uncited_stage}
+\else
+\set diagnosis_include_uncited_stage false
+\endif
 set local request.jwt.claim.role = 'service_role';
 select set_config('wallie.diagnosis_fixture_prefix', :'diagnosis_fixture_prefix', true);
 
@@ -33,6 +37,9 @@ select pg_temp.diagnosis_fixture_id(31), workspace_id, factory_id, 'Diagnosis fi
 insert into public.pipeline_stages(id, workspace_id, pipeline_id, position, slug, name, prompt_template_md)
 values (pg_temp.diagnosis_fixture_id(32), pg_temp.diagnosis_fixture_id(11), pg_temp.diagnosis_fixture_id(31),
   1, 'build', 'Build', 'Produce a report.');
+insert into public.pipeline_stages(id, workspace_id, pipeline_id, position, slug, name, prompt_template_md)
+select pg_temp.diagnosis_fixture_id(33), pg_temp.diagnosis_fixture_id(11), pg_temp.diagnosis_fixture_id(31),
+  2, 'publish', 'Publish', 'Publish the report.' where :diagnosis_include_uncited_stage;
 insert into public.github_installations(id, workspace_id, installation_id, installation_url, app_id, target_type,
   target_name, permissions)
 values (pg_temp.diagnosis_fixture_id(40), pg_temp.diagnosis_fixture_id(11), :'diagnosis_fixture_prefix'::bigint + 40,
@@ -67,7 +74,11 @@ with compiled as (
       'maxRetries', 3, 'maxTurns', 5), 'stages', jsonb_build_array(jsonb_build_object(
         'id', pg_temp.diagnosis_fixture_id(32), 'slug', 'build', 'name', 'Build', 'description', '',
         'promptTemplateMd', 'Produce a report.', 'anyoneCanApprove', true,
-        'previousStageIds', '[]'::jsonb, 'approverMemberIds', '[]'::jsonb)))::text as definition
+        'previousStageIds', '[]'::jsonb, 'approverMemberIds', '[]'::jsonb)) ||
+      case when :diagnosis_include_uncited_stage then jsonb_build_array(jsonb_build_object(
+        'id', pg_temp.diagnosis_fixture_id(33), 'slug', 'publish', 'name', 'Publish', 'description', '',
+        'promptTemplateMd', 'Publish the report.', 'anyoneCanApprove', true,
+        'previousStageIds', '[]'::jsonb, 'approverMemberIds', '[]'::jsonb)) else '[]'::jsonb end)::text as definition
   from diagnosis_scope scope cross join diagnosis_skill skill
 ), revision as (
   insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version,
