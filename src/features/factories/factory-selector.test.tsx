@@ -192,6 +192,37 @@ describe("FactorySelector", () => {
     });
   });
 
+  it("allows long factory names and archived markers to wrap instead of clipping in the listbox", async () => {
+    const user = userEvent.setup();
+    mocked.pathname = "/w/acme-corp/sessions";
+    mocked.searchParams = new URLSearchParams("factory=factory-prod");
+
+    renderSelector([
+      {
+        id: "factory-prod",
+        name: "Customer tools — production environment",
+        isDefault: true,
+        status: "active",
+      },
+      {
+        id: "factory-prod-archived",
+        name: "Customer tools — production environment",
+        isDefault: false,
+        status: "archived",
+      },
+    ]);
+
+    await user.click(screen.getByRole("combobox", { name: "Factory" }));
+    const listbox = await screen.findByRole("listbox", { name: "Factory" });
+    expect(listbox).toHaveClass("w-max");
+
+    const archivedOption = within(listbox).getByRole("option", {
+      name: "Customer tools — production environment (archived)",
+    });
+    expect(archivedOption.querySelector(".truncate")).toBeNull();
+    expect(archivedOption.querySelector(".break-words")).toHaveClass("whitespace-normal");
+  });
+
   it("returns null outside factory-scoped paths", () => {
     mocked.pathname = "/w/acme-corp/sessions/42";
     renderSelector();

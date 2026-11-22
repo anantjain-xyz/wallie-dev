@@ -70,16 +70,24 @@ export function FactorySelector({
         accessibleLabel="Factory"
         aria-busy={pending}
         className="max-w-full sm:max-w-52"
+        data-value={selectedValue}
       />
-      <SelectContent align="end">
+      <SelectContent
+        align="end"
+        className="w-max min-w-[max(12rem,var(--radix-select-trigger-width))] max-w-[min(24rem,var(--radix-select-content-available-width,100vw),calc(100vw-(var(--overlay-gutter-inline)*2)))]"
+      >
         {selectedValue === "unavailable" ? (
-          <SelectItem disabled value="unavailable">
+          <SelectItem disabled value="unavailable" wrap>
             Factory unavailable
           </SelectItem>
         ) : null}
-        {allowAll ? <SelectItem value="all">All factories</SelectItem> : null}
+        {allowAll ? (
+          <SelectItem value="all" wrap>
+            All factories
+          </SelectItem>
+        ) : null}
         {options.map((factory) => (
-          <SelectItem key={factory.id} value={factory.id}>
+          <SelectItem key={factory.id} value={factory.id} wrap>
             {factoryOptionLabel(factory)}
           </SelectItem>
         ))}

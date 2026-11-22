@@ -840,7 +840,6 @@ describe("accessible overlay primitives", () => {
     );
 
     const trigger = screen.getByRole("combobox", { name: "Factory" });
-    expect(trigger).toHaveAttribute("data-value", "default");
 
     // Top-right desktop placement: aligns right edge to trigger right edge (1440 - 1420 = 20px).
     stubRect(trigger, { height: 36, left: 1280, top: 6, width: 140 });

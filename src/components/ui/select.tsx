@@ -440,7 +440,6 @@ export function SelectTrigger({
       aria-haspopup="listbox"
       aria-label={accessibleLabel}
       className={cn("ui-select-trigger", className)}
-      data-value={context.value}
       disabled={context.disabled}
       onClick={(event) => {
         props.onClick?.(event);
@@ -513,6 +512,7 @@ export function SelectContent({
         : Math.max(placeAbove ? spaceAbove : spaceBelow, boundaryRect ? 0 : 96);
 
       listbox.style.setProperty("--radix-select-trigger-width", `${rect.width}px`);
+      listbox.style.removeProperty("--radix-select-content-available-width");
 
       const measuredWidth = listbox.getBoundingClientRect().width;
       const preferredWidth = measuredWidth > 0 ? measuredWidth : Math.max(rect.width, 192);
@@ -619,6 +619,7 @@ type SelectItemProps = {
   disabled?: boolean;
   leading?: ReactNode;
   value: string;
+  wrap?: boolean;
 };
 
 export function SelectItem({
@@ -627,6 +628,7 @@ export function SelectItem({
   disabled = false,
   leading,
   value,
+  wrap = false,
 }: SelectItemProps) {
   const context = useSelectContext();
   const highlighted = context.highlightedValue === value;
@@ -636,7 +638,7 @@ export function SelectItem({
     <div
       aria-disabled={disabled || undefined}
       aria-selected={selected}
-      className={cn("ui-select-item", className)}
+      className={cn("ui-select-item", wrap && "items-start", className)}
       data-disabled={disabled ? "" : undefined}
       data-highlighted={highlighted ? "" : undefined}
       data-value={value}
@@ -652,12 +654,14 @@ export function SelectItem({
       tabIndex={highlighted ? 0 : -1}
     >
       {selected ? (
-        <span aria-hidden="true" className="absolute left-2.5">
+        <span aria-hidden="true" className={cn("absolute left-2.5", wrap && "top-2.5")}>
           <CheckIcon />
         </span>
       ) : null}
       {leading}
-      <span className="min-w-0 truncate">{children}</span>
+      <span className={wrap ? "min-w-0 whitespace-normal break-words" : "min-w-0 truncate"}>
+        {children}
+      </span>
     </div>
   );
 }
