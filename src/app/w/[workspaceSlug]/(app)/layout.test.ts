@@ -81,7 +81,6 @@ describe("workspace app route group layout", () => {
         canManageGovernance: boolean;
         creationFactory: { id: string; name: string } | null;
         children: string;
-        factorySelector: ReactElement;
         onboarding: typeof onboarding;
         viewerAvatarUrl: string | null;
         viewerEmail: string;
@@ -96,7 +95,6 @@ describe("workspace app route group layout", () => {
         canManageGovernance: managesFactory,
         creationFactory: canStart ? { id: "factory-1", name: "Northwind" } : null,
         children: "app-page",
-        factorySelector: { props: { factories, workspaceSlug: "northwind" } },
         onboarding,
         viewerAvatarUrl: "https://cdn.example.com/owner.png",
         viewerEmail: "owner@example.com",

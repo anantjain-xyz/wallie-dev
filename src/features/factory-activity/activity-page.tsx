@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { TimeDisplay } from "@/components/shared/time-display";
@@ -16,11 +17,13 @@ export function FactoryActivityPage({
   data,
   workspaceSlug,
   factory,
+  factorySelector,
   actorId,
 }: {
   data: FactoryActivityData;
   workspaceSlug: string;
   factory: ActivityScope;
+  factorySelector?: ReactNode;
   actorId?: string;
 }) {
   const { sessions, runs, capturedAt } = data;
@@ -34,24 +37,31 @@ export function FactoryActivityPage({
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
-        actions={<ActivityRefresh capturedAt={hasSnapshot ? capturedAt : null} />}
+        actions={
+          <>
+            {factorySelector}
+            <ActivityRefresh capturedAt={hasSnapshot ? capturedAt : null} />
+          </>
+        }
         actionsRightOnDesktop
         title="Activity"
       />
-      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted">
-        <p>{factory.label}</p>
-        {actorId ? (
-          <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="break-all">Actor · {actorLabel}</span>
-            <Link
-              className="underline underline-offset-2 hover:text-foreground"
-              href={workspaceActivityPath(workspaceSlug, { factory: factory.id })}
-            >
-              Clear actor filter
-            </Link>
-          </p>
-        ) : null}
-      </div>
+      {!factorySelector || actorId ? (
+        <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted">
+          {!factorySelector ? <p>{factory.label}</p> : null}
+          {actorId ? (
+            <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="break-all">Actor · {actorLabel}</span>
+              <Link
+                className="underline underline-offset-2 hover:text-foreground"
+                href={workspaceActivityPath(workspaceSlug, { factory: factory.id })}
+              >
+                Clear actor filter
+              </Link>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="space-y-5">
         <ActivityList
           actorId={actorId}

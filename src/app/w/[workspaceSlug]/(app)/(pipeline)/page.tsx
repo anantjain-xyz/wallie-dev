@@ -3,6 +3,7 @@ import {
   FACTORY_QUERY_PARAM,
   resolveFactorySelection,
 } from "@/features/factories/factory-selection";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { loadPipelineDashboardData } from "@/features/pipeline/data";
 import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
@@ -19,7 +20,13 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
   const selection = resolveFactorySelection(factories, search[FACTORY_QUERY_PARAM]);
   if (selection.kind === "unavailable")
-    return <FactoryUnavailable title="Pipeline" workspaceSlug={workspaceSlug} />;
+    return (
+      <FactoryUnavailable
+        actions={<FactorySelector allowAll factories={factories} selectedValue="unavailable" />}
+        title="Pipeline"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   const factory = selection.kind === "factory" ? selection.factory : undefined;
   const data = await loadPipelineDashboardData(workspaceSlug, factory?.id);
@@ -27,6 +34,13 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
 
   return (
     <PipelinePageClient
+      factorySelector={
+        <FactorySelector
+          allowAll
+          factories={factories}
+          selectedValue={factory ? factory.id : "all"}
+        />
+      }
       initialData={{
         ...data,
         showCreationOnboarding: !!factory?.isDefault && factory.status === "active",

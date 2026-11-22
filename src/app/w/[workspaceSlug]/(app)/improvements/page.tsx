@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { loadImprovementScope } from "@/features/factory-proposals/improvement-scope";
 import {
@@ -15,6 +17,8 @@ import {
   workspaceImprovementsPath,
 } from "@/lib/routes";
 
+const IMPROVEMENTS_FACTORY_RESET_PARAMS = ["cohort"] as const;
+
 export default async function ImprovementsPage({
   params,
   searchParams,
@@ -23,15 +27,38 @@ export default async function ImprovementsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const scope = await loadImprovementScope(workspaceSlug, search.factory);
-  if (!scope) return <FactoryUnavailable title="Improvements" workspaceSlug={workspaceSlug} />;
+  const [scope, factories] = await Promise.all([
+    loadImprovementScope(workspaceSlug, search.factory),
+    loadWorkspaceFactoryOptions(workspaceSlug),
+  ]);
+  if (!scope)
+    return (
+      <FactoryUnavailable
+        actions={
+          <FactorySelector
+            factories={factories}
+            resetParams={IMPROVEMENTS_FACTORY_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+        title="Improvements"
+        workspaceSlug={workspaceSlug}
+      />
+    );
+  const factorySelector = (
+    <FactorySelector
+      factories={factories}
+      resetParams={IMPROVEMENTS_FACTORY_RESET_PARAMS}
+      selectedValue={scope.factoryId}
+    />
+  );
   const after = factoryProposalUuidSchema.optional().safeParse(search.after);
   const cohort = factoryProposalUuidSchema.optional().safeParse(search.cohort);
   const factoryQuery = { factory: scope.factoryId };
   if (!after.success || !cohort.success) {
     return (
       <PageContainer>
-        <PageHeader title="Improvements" description={scope.factory.name} />
+        <PageHeader actions={factorySelector} actionsRightOnDesktop title="Improvements" />
         <section className="ui-sheet space-y-3 p-5">
           <p className="type-secondary">Check the proposal filters and try again.</p>
           <Link className="ui-button" href={workspaceImprovementsPath(workspaceSlug, factoryQuery)}>
@@ -50,7 +77,7 @@ export default async function ImprovementsPage({
 
   return (
     <PageContainer>
-      <PageHeader title="Improvements" description={scope.factory.name} />
+      <PageHeader actions={factorySelector} actionsRightOnDesktop title="Improvements" />
       <div className="space-y-4">
         {cohort.data ? (
           <nav aria-label="Failure group filter" className="flex flex-wrap items-center gap-2">

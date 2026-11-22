@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { TimeDisplay } from "@/components/shared/time-display";
@@ -21,10 +22,12 @@ export function RunsList({
   data,
   initialNow,
   factoryQuery,
+  factorySelector,
 }: {
   data: RunsListData;
   initialNow: string;
   factoryQuery?: string;
+  factorySelector?: ReactNode;
 }) {
   const { workspaceSlug, query, state } = data;
   const runs = state.kind === "ready" ? state.page.runs : [];
@@ -62,7 +65,13 @@ export function RunsList({
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
-        actions={<RunsListRefresh />}
+        actions={
+          <>
+            {factorySelector}
+            <RunsListRefresh />
+          </>
+        }
+        actionsRightOnDesktop
         description="Every execution attempt across your workspace. Open a run to inspect its activity and outcome."
         eyebrow={
           <Link className="hover:text-foreground" href={sessionsHref}>

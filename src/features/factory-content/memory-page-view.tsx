@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { TimeDisplay } from "@/components/shared/time-display";
@@ -37,10 +38,12 @@ const decisionLabels = {
 export function MemoryPageView({
   scope,
   data,
+  factorySelector,
   query,
 }: {
   scope: Pick<GovernanceScope, "workspaceId" | "workspaceSlug" | "factory">;
   data: Awaited<ReturnType<typeof loadMemoryPage>> | null;
+  factorySelector?: ReactNode;
   query: Parameters<typeof loadMemoryPage>[1];
 }) {
   const { workspaceSlug } = scope;
@@ -58,11 +61,15 @@ export function MemoryPageView({
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
+        actions={factorySelector}
+        actionsRightOnDesktop
         title="Memory"
         description={
-          scope.factory.status === "archived"
-            ? `${scope.factory.name} · Archived`
-            : scope.factory.name
+          factorySelector
+            ? undefined
+            : scope.factory.status === "archived"
+              ? `${scope.factory.name} · Archived`
+              : scope.factory.name
         }
       />
       <div className="space-y-8">

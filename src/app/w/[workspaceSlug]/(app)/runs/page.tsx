@@ -3,6 +3,7 @@ import {
   FACTORY_QUERY_PARAM,
   resolveFactorySelection,
 } from "@/features/factories/factory-selection";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { RunsList } from "@/features/wallie/runs-list";
 import { loadRunsListData } from "@/features/wallie/runs-list-data";
@@ -21,7 +22,13 @@ export default async function RunsPage({
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
   const selection = resolveFactorySelection(factories, factoryQuery);
   if (selection.kind === "unavailable")
-    return <FactoryUnavailable title="Runs" workspaceSlug={workspaceSlug} />;
+    return (
+      <FactoryUnavailable
+        actions={<FactorySelector allowAll factories={factories} selectedValue="unavailable" />}
+        title="Runs"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   const data = await loadRunsListData(
     workspaceSlug,
@@ -32,6 +39,13 @@ export default async function RunsPage({
     <RunsList
       data={data}
       factoryQuery={typeof factoryQuery === "string" ? factoryQuery : undefined}
+      factorySelector={
+        <FactorySelector
+          allowAll
+          factories={factories}
+          selectedValue={selection.kind === "factory" ? selection.factory.id : "all"}
+        />
+      }
       initialNow={new Date().toISOString()}
     />
   );

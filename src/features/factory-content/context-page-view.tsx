@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { TimeDisplay } from "@/components/shared/time-display";
@@ -31,10 +32,12 @@ function sourceStatus(saved: string, access: string | undefined): [StatusValue, 
 export function ContextPageView({
   scope,
   data,
+  factorySelector,
   query,
 }: {
   scope: Pick<GovernanceScope, "workspaceId" | "workspaceSlug" | "factory">;
   data: Awaited<ReturnType<typeof loadContextPage>> | null;
+  factorySelector?: ReactNode;
   query: Parameters<typeof loadContextPage>[1];
 }) {
   const { workspaceSlug } = scope;
@@ -54,11 +57,15 @@ export function ContextPageView({
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
+        actions={factorySelector}
+        actionsRightOnDesktop
         title="Context"
         description={
-          scope.factory.status === "archived"
-            ? `${scope.factory.name} · Archived`
-            : scope.factory.name
+          factorySelector
+            ? undefined
+            : scope.factory.status === "archived"
+              ? `${scope.factory.name} · Archived`
+              : scope.factory.name
         }
       />
       <div className="space-y-8">

@@ -10,7 +10,7 @@ import type { FactorySelectionOption } from "@/features/factories/factory-select
 import { FactorySelector } from "@/features/factories/factory-selector";
 
 const mocked = vi.hoisted(() => ({
-  pathname: "/w/acme-corp",
+  pathname: "/w/acme-corp/sessions",
   push: vi.fn(),
   searchParams: new URLSearchParams(),
 }));
@@ -45,16 +45,31 @@ const factories: readonly FactorySelectionOption[] = [
   },
 ];
 
-function renderSelector(options: readonly FactorySelectionOption[] = factories) {
+function renderSelector({
+  allowAll = false,
+  options = factories,
+  resetParams,
+  selectedValue = "factory-1",
+}: {
+  allowAll?: boolean;
+  options?: readonly FactorySelectionOption[];
+  resetParams?: readonly string[];
+  selectedValue?: string;
+} = {}) {
   return render(
     <OverlayProvider>
-      <FactorySelector factories={options} workspaceSlug="acme-corp" />
+      <FactorySelector
+        allowAll={allowAll}
+        factories={options}
+        resetParams={resetParams}
+        selectedValue={selectedValue}
+      />
     </OverlayProvider>,
   );
 }
 
 beforeEach(() => {
-  mocked.pathname = "/w/acme-corp";
+  mocked.pathname = "/w/acme-corp/sessions";
   mocked.searchParams = new URLSearchParams();
   mocked.push.mockReset();
 });
@@ -69,7 +84,7 @@ describe("FactorySelector", () => {
     mocked.pathname = "/w/acme-corp/sessions";
     mocked.searchParams = new URLSearchParams("factory=factory-1&stage=plan&q=auth&sort=oldest");
 
-    const { container } = renderSelector();
+    const { container } = renderSelector({ allowAll: true, selectedValue: "factory-1" });
 
     expect(container.querySelector("select")).toBeNull();
 
@@ -104,12 +119,37 @@ describe("FactorySelector", () => {
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
   });
 
+  it("resets declared page-specific query params when switching factories", async () => {
+    const user = userEvent.setup();
+    mocked.pathname = "/w/acme-corp/analytics";
+    mocked.searchParams = new URLSearchParams(
+      "factory=factory-1&dimension=agent&routingCanary=old&metric=flow",
+    );
+
+    renderSelector({
+      resetParams: ["metric", "routingCanary"],
+      selectedValue: "factory-1",
+    });
+
+    await user.click(screen.getByRole("combobox", { name: "Factory" }));
+    await user.click(
+      within(await screen.findByRole("listbox", { name: "Factory" })).getByRole("option", {
+        name: "Customer tools",
+      }),
+    );
+
+    expect(mocked.push).toHaveBeenCalledWith(
+      "/w/acme-corp/analytics?factory=factory-2&dimension=agent",
+      { scroll: false },
+    );
+  });
+
   it("does not trigger navigation when re-selecting the active factory", async () => {
     const user = userEvent.setup();
     mocked.pathname = "/w/acme-corp/sessions";
     mocked.searchParams = new URLSearchParams("factory=factory-1&stage=plan");
 
-    renderSelector();
+    renderSelector({ allowAll: true, selectedValue: "factory-1" });
 
     await user.click(screen.getByRole("combobox", { name: "Factory" }));
     await user.click(await screen.findByRole("option", { name: "Default factory" }));
@@ -117,12 +157,11 @@ describe("FactorySelector", () => {
     expect(mocked.push).not.toHaveBeenCalled();
   });
 
-  it("omits All factories on single-factory routes and filters managed routes", async () => {
+  it("omits All factories when allowAll is false and renders only the passed factories", async () => {
     const user = userEvent.setup();
     mocked.pathname = "/w/acme-corp/agents";
-    mocked.searchParams = new URLSearchParams("factory=factory-2");
 
-    const { unmount } = renderSelector();
+    const { unmount } = renderSelector({ selectedValue: "factory-2" });
     await user.click(screen.getByRole("combobox", { name: "Factory" }));
     expect(
       within(await screen.findByRole("listbox", { name: "Factory" }))
@@ -132,8 +171,8 @@ describe("FactorySelector", () => {
     unmount();
 
     mocked.pathname = "/w/acme-corp/governance";
-    mocked.searchParams = new URLSearchParams();
-    renderSelector();
+    const managed = factories.filter(({ canManage }) => canManage);
+    renderSelector({ options: managed, selectedValue: "factory-2" });
     const trigger = screen.getByRole("combobox", { name: "Factory" });
     expect(trigger).toHaveTextContent("Customer tools");
     await user.click(trigger);
@@ -149,7 +188,7 @@ describe("FactorySelector", () => {
     mocked.pathname = "/w/acme-corp/sessions";
     mocked.searchParams = new URLSearchParams("factory=missing-factory");
 
-    renderSelector();
+    renderSelector({ allowAll: true, selectedValue: "unavailable" });
 
     const trigger = screen.getByRole("combobox", { name: "Factory" });
     expect(trigger).toHaveTextContent("Factory unavailable");
@@ -170,12 +209,20 @@ describe("FactorySelector", () => {
     });
   });
 
+  it("falls back to Factory unavailable if selectedValue is not permitted by allowAll or options", () => {
+    renderSelector({ allowAll: false, selectedValue: "all" });
+
+    const trigger = screen.getByRole("combobox", { name: "Factory" });
+    expect(trigger).toHaveTextContent("Factory unavailable");
+    expect(trigger).toHaveAttribute("data-value", "unavailable");
+  });
+
   it("supports keyboard navigation and returns focus on Escape", async () => {
     const user = userEvent.setup();
     mocked.pathname = "/w/acme-corp/sessions";
     mocked.searchParams = new URLSearchParams("factory=factory-1");
 
-    renderSelector();
+    renderSelector({ allowAll: true, selectedValue: "factory-1" });
 
     const trigger = screen.getByRole("combobox", { name: "Factory" });
     trigger.focus();
@@ -197,20 +244,24 @@ describe("FactorySelector", () => {
     mocked.pathname = "/w/acme-corp/sessions";
     mocked.searchParams = new URLSearchParams("factory=factory-prod");
 
-    renderSelector([
-      {
-        id: "factory-prod",
-        name: "Customer tools — production environment",
-        isDefault: true,
-        status: "active",
-      },
-      {
-        id: "factory-prod-archived",
-        name: "Customer tools — production environment",
-        isDefault: false,
-        status: "archived",
-      },
-    ]);
+    renderSelector({
+      allowAll: true,
+      options: [
+        {
+          id: "factory-prod",
+          name: "Customer tools — production environment",
+          isDefault: true,
+          status: "active",
+        },
+        {
+          id: "factory-prod-archived",
+          name: "Customer tools — production environment",
+          isDefault: false,
+          status: "archived",
+        },
+      ],
+      selectedValue: "factory-prod",
+    });
 
     await user.click(screen.getByRole("combobox", { name: "Factory" }));
     const listbox = await screen.findByRole("listbox", { name: "Factory" });
@@ -221,11 +272,5 @@ describe("FactorySelector", () => {
     });
     expect(archivedOption.querySelector(".truncate")).toBeNull();
     expect(archivedOption.querySelector(".break-words")).toHaveClass("whitespace-normal");
-  });
-
-  it("returns null outside factory-scoped paths", () => {
-    mocked.pathname = "/w/acme-corp/sessions/42";
-    renderSelector();
-    expect(screen.queryByRole("combobox", { name: "Factory" })).toBeNull();
   });
 });

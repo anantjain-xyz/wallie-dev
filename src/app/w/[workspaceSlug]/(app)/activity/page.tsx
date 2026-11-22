@@ -7,6 +7,7 @@ import {
   FACTORY_QUERY_PARAM,
   resolveFactorySelection,
 } from "@/features/factories/factory-selection";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { loadFactoryActivityData } from "@/features/factory-activity/activity-data";
 import { FactoryActivityPage } from "@/features/factory-activity/activity-page";
@@ -28,24 +29,44 @@ export default async function ActivityPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const factory = factoryQuery.safeParse(search[FACTORY_QUERY_PARAM]);
-  if (!factory.success)
-    return <FactoryUnavailable title="Activity" workspaceSlug={workspaceSlug} />;
-
   const [{ supabase, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
-    factory.data === "all" ? [] : loadWorkspaceFactoryOptions(workspaceSlug),
+    loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
+  const factory = factoryQuery.safeParse(search[FACTORY_QUERY_PARAM]);
+  if (!factory.success)
+    return (
+      <FactoryUnavailable
+        actions={<FactorySelector allowAll factories={factories} selectedValue="unavailable" />}
+        title="Activity"
+        workspaceSlug={workspaceSlug}
+      />
+    );
 
   const selection = resolveFactorySelection(factories, factory.data);
   if (selection.kind === "unavailable")
-    return <FactoryUnavailable title="Activity" workspaceSlug={workspaceSlug} />;
+    return (
+      <FactoryUnavailable
+        actions={<FactorySelector allowAll factories={factories} selectedValue="unavailable" />}
+        title="Activity"
+        workspaceSlug={workspaceSlug}
+      />
+    );
+
+  const selectedFactory = selection.kind === "factory" ? selection.factory : null;
+  const selector = (
+    <FactorySelector
+      allowAll
+      factories={factories}
+      selectedValue={selectedFactory ? selectedFactory.id : "all"}
+    />
+  );
 
   const actor = actorQuery.safeParse(search.actor);
   if (!actor.success) {
     return (
       <PageContainer className="pt-5 sm:pt-10">
-        <PageHeader title="Activity" />
+        <PageHeader actions={selector} actionsRightOnDesktop title="Activity" />
         <section className="ui-sheet space-y-3 px-6 py-12 text-center">
           <h2 className="text-sm font-semibold text-foreground">Actor filter unavailable</h2>
           <Link
@@ -59,7 +80,6 @@ export default async function ActivityPage({
     );
   }
 
-  const selectedFactory = selection.kind === "factory" ? selection.factory : null;
   const data = await loadFactoryActivityData({
     supabase,
     workspaceId: workspace.id,
@@ -79,6 +99,7 @@ export default async function ActivityPage({
               label: "All factories",
             }
       }
+      factorySelector={selector}
       workspaceSlug={workspace.slug}
     />
   );
