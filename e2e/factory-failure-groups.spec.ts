@@ -12,8 +12,8 @@ const scorerSeed = z.object({
 });
 const failureSeed = z.object({
   revisions: z.tuple([z.uuid(), z.uuid()]),
-  runs: z.tuple([z.uuid(), z.uuid(), z.uuid(), z.uuid()]),
-  storagePaths: z.array(z.string().min(1)).length(3),
+  runs: z.array(z.uuid()).length(27),
+  storagePaths: z.array(z.string().min(1)).length(26),
 });
 
 test.use({ actionTimeout: 15_000 });
@@ -129,6 +129,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
     const emptyGroups = new URL(groupsPath, fixture.app);
     emptyGroups.searchParams.set("symptom", "scorer");
     emptyGroups.searchParams.set("revision", seeded.revisions[1]);
+    emptyGroups.searchParams.set("disposition", "open");
     await page.goto(emptyGroups.toString(), { waitUntil: "domcontentloaded" });
     await expect(
       page
@@ -137,6 +138,10 @@ test("reviews recurring failures and preserves source evidence across filters, s
     ).toBeVisible();
     await capture(page, info, "04-empty-filters-mobile");
     await page.getByRole("link", { name: "Clear filters", exact: true }).click();
+    await expect(symptom).toHaveValue("");
+    await expect(revision).toHaveValue("");
+    await expect(page.getByRole("combobox", { name: "Review state", exact: true })).toHaveValue("");
+    await capture(page, info, "04a-cleared-filter-inputs");
 
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Switch to light mode" }).click();
@@ -169,10 +174,10 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await originalGroup.click();
     await expect(
       page.getByRole("link", { name: "Open validation receipt", exact: true }),
-    ).toHaveCount(3);
+    ).toHaveCount(25);
     await expect(
       page.getByRole("link", { name: "Producing configuration", exact: true }),
-    ).toHaveCount(3);
+    ).toHaveCount(25);
     const staleReviewer = await page.context().newPage();
     try {
       await staleReviewer.goto(originalGroupPath);
@@ -200,12 +205,23 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await capture(page, info, "06-reviewed-group-desktop");
 
     await main.getByText("Split by run", { exact: true }).press("Enter");
-    const run = page.getByRole("checkbox", {
-      name: new RegExp(`Run ${seeded.runs[0].slice(0, 8)}`),
-    });
-    await expect(run).toBeVisible();
-    await run.press("Space");
-    await expect(run).toBeChecked();
+    const splitRuns = page.getByRole("checkbox", { name: /^Run / });
+    await expect(splitRuns).toHaveCount(25);
+    const firstRun = z.uuid().parse(await splitRuns.first().getAttribute("value"));
+    await splitRuns.first().press("Space");
+    await expect(splitRuns.first()).toBeChecked();
+    await page.getByRole("link", { name: "More runs", exact: true }).click();
+    await expect(splitRuns).toHaveCount(1);
+    await expect(main.getByText("1 run selected", { exact: true })).toBeVisible();
+    const secondRun = z.uuid().parse(await splitRuns.first().getAttribute("value"));
+    expect(secondRun).not.toBe(firstRun);
+    await splitRuns.first().press("Space");
+    await expect(main.getByText("2 runs selected", { exact: true })).toBeVisible();
+    await capture(page, info, "06a-cross-page-run-selection", true);
+    await page.getByRole("link", { name: "First runs page", exact: true }).click();
+    await expect(splitRuns).toHaveCount(25);
+    await expect(splitRuns.first()).toBeChecked();
+    await expect(main.getByText("2 runs selected", { exact: true })).toBeVisible();
     const [splitResponse] = await Promise.all([
       page.waitForResponse(
         (response) =>
@@ -224,7 +240,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Open validation receipt", exact: true }),
-    ).toHaveCount(3);
+    ).toHaveCount(25);
     await capture(page, info, "07-original-group-after-split");
 
     const selectedGroupPath = z
@@ -240,22 +256,26 @@ test("reviews recurring failures and preserves source evidence across filters, s
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Open validation receipt", exact: true }),
-    ).toHaveCount(1);
-    await expect(
-      page.getByRole("link", { name: `Run ${seeded.runs[0].slice(0, 8)}`, exact: true }),
-    ).toHaveAttribute("href", new RegExp(`/runs/${seeded.runs[0]}$`));
-    const receiptHref = z
-      .string()
-      .parse(
-        await page
-          .getByRole("link", { name: "Open validation receipt", exact: true })
-          .getAttribute("href"),
-      );
+    ).toHaveCount(2);
+    for (const run of [firstRun, secondRun]) {
+      await expect(
+        page.getByRole("link", { name: `Run ${run.slice(0, 8)}`, exact: true }),
+      ).toHaveAttribute("href", new RegExp(`/runs/${run}$`));
+    }
+    const receiptHref = z.string().parse(
+      await page
+        .getByRole("listitem")
+        .filter({
+          has: page.getByRole("link", { name: `Run ${firstRun.slice(0, 8)}`, exact: true }),
+        })
+        .getByRole("link", { name: "Open validation receipt", exact: true })
+        .getAttribute("href"),
+    );
     const receipt = await page.request.get(receiptHref);
     expect(receipt.ok()).toBe(true);
     expect(await receipt.json()).toMatchObject({
       evidence: [
-        { run_id: seeded.runs[0], records: [{ key: "reconciliation-tests", status: "failed" }] },
+        { run_id: firstRun, records: [{ key: "reconciliation-tests", status: "failed" }] },
       ],
     });
     await capture(page, info, "08-selected-split-group");
@@ -295,6 +315,28 @@ test("reviews recurring failures and preserves source evidence across filters, s
     } finally {
       await reader.close();
     }
+
+    await page.goto(missingGroupPath, { waitUntil: "domcontentloaded" });
+    const profile = page.getByRole("link", { name: "Producing configuration", exact: true });
+    await expect(profile).toHaveAttribute(
+      "href",
+      new RegExp(`/runs/${seeded.runs.at(-1)}\\?attempt=2#execution-profile$`),
+    );
+    const profilePath = new URL(z.string().parse(await profile.getAttribute("href")), fixture.app);
+    await page.goto(profilePath.toString(), { waitUntil: "domcontentloaded" });
+    const profileSection = page.locator("#execution-profile");
+    await expect(profileSection.getByText("Attempt 2", { exact: true })).toBeVisible();
+    await expect(
+      profileSection.getByRole("heading", { name: "Recorded execution profile", exact: true }),
+    ).toBeVisible();
+    profilePath.searchParams.set("attempt", "1");
+    await page.goto(profilePath.toString(), { waitUntil: "domcontentloaded" });
+    await expect(profileSection.getByText("Attempt 1", { exact: true })).toBeVisible();
+    await expect(
+      profileSection.getByText("This attempt has no recorded execution profile.", { exact: true }),
+    ).toBeVisible();
+    await profileSection.scrollIntoViewIfNeeded();
+    await capture(page, info, "09-historical-attempt-profile-unavailable", true);
   } catch (error) {
     workflowError = error;
     throw error;

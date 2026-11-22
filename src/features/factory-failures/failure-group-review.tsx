@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition, type FormEvent } from "react";
 import { z } from "zod";
 
 import {
   failureCohortReviewResultSchema,
+  maxFailureCohortSplitRuns,
   type FailureCohortReview,
 } from "@/lib/factory-failures/cohort-contracts";
 
@@ -15,6 +17,94 @@ type ReviewInput =
   | { action: "split"; membershipDigest: string; selectedRunIds: string[] };
 
 const errorResponse = z.object({ error: z.string() });
+
+type SplitPage = {
+  digest: string;
+  runs: { id: string; label: string }[];
+  firstPage: string | null;
+  nextPage: string | null;
+};
+
+function SplitForm({
+  split,
+  disabled,
+  onSubmit,
+}: {
+  split: SplitPage;
+  disabled: boolean;
+  onSubmit: (input: Extract<ReviewInput, { action: "split" }>) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  function changeSelection(runId: string, checked: boolean) {
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (checked && next.size < maxFailureCohortSplitRuns) next.add(runId);
+      if (!checked) next.delete(runId);
+      return next;
+    });
+  }
+
+  return (
+    <details className="p-4 sm:p-5">
+      <summary className="type-label cursor-pointer py-2">Split by run</summary>
+      <form
+        className="mt-3 space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (disabled || !selected.size) return;
+          onSubmit({
+            action: "split",
+            membershipDigest: split.digest,
+            selectedRunIds: [...selected].sort(),
+          });
+        }}
+      >
+        <fieldset className="space-y-2" disabled={disabled}>
+          <legend className="type-secondary mb-2 text-muted">
+            Select runs for the first group. The second group contains the remaining runs.
+          </legend>
+          {split.runs.map((run) => (
+            <label
+              className="type-secondary flex min-h-10 items-center gap-2 break-words"
+              key={run.id}
+            >
+              <input
+                checked={selected.has(run.id)}
+                disabled={selected.size === maxFailureCohortSplitRuns && !selected.has(run.id)}
+                type="checkbox"
+                value={run.id}
+                onChange={(event) => changeSelection(run.id, event.target.checked)}
+              />
+              {run.label}
+            </label>
+          ))}
+        </fieldset>
+        {split.firstPage || split.nextPage ? (
+          <nav aria-label="Split run pages" className="flex flex-wrap gap-2">
+            {split.firstPage ? (
+              <Link className="ui-button" href={split.firstPage} scroll={false}>
+                First runs page
+              </Link>
+            ) : null}
+            {split.nextPage ? (
+              <Link className="ui-button" href={split.nextPage} scroll={false}>
+                More runs
+              </Link>
+            ) : null}
+          </nav>
+        ) : null}
+        <p aria-live="polite" className="type-secondary text-muted">
+          {selected.size} {selected.size === 1 ? "run" : "runs"} selected
+          {selected.size === maxFailureCohortSplitRuns ? " (maximum per split)" : ""}
+        </p>
+        <button className="ui-button" type="submit" disabled={disabled || !selected.size}>
+          Split group
+        </button>
+      </form>
+    </details>
+  );
+}
 
 export function FailureGroupReview({
   endpoint,
@@ -27,7 +117,7 @@ export function FailureGroupReview({
   revision: number;
   label: string | null;
   dismissed: boolean;
-  split: { digest: string; runs: { id: string; label: string }[] } | null;
+  split: SplitPage | null;
 }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -89,16 +179,6 @@ export function FailureGroupReview({
     void submit({ action: "label", label: value });
   }
 
-  function submitSplit(event: FormEvent<HTMLFormElement>, membershipDigest: string) {
-    event.preventDefault();
-    const selectedRunIds = new FormData(event.currentTarget).getAll("run").map(String).sort();
-    if (selectedRunIds.length === 0) {
-      setMessage({ text: "Select at least one run for the split.", error: true });
-      return;
-    }
-    void submit({ action: "split", membershipDigest, selectedRunIds });
-  }
-
   return (
     <div className="ui-sheet divide-y divide-border">
       <div className="space-y-3 p-4 sm:p-5">
@@ -131,28 +211,12 @@ export function FailureGroupReview({
         ) : null}
       </div>
       {split ? (
-        <details className="p-4 sm:p-5">
-          <summary className="type-label cursor-pointer py-2">Split by run</summary>
-          <form className="mt-3 space-y-3" onSubmit={(event) => submitSplit(event, split.digest)}>
-            <fieldset className="space-y-2" disabled={busy || conflict}>
-              <legend className="type-secondary mb-2 text-muted">
-                Select runs for the first group. The second group contains the remaining runs.
-              </legend>
-              {split.runs.map((run) => (
-                <label
-                  className="type-secondary flex min-h-10 items-center gap-2 break-words"
-                  key={run.id}
-                >
-                  <input name="run" type="checkbox" value={run.id} />
-                  {run.label}
-                </label>
-              ))}
-            </fieldset>
-            <button className="ui-button" type="submit" disabled={busy || conflict}>
-              Split group
-            </button>
-          </form>
-        </details>
+        <SplitForm
+          key={`${endpoint}:${revision}:${split.digest}`}
+          split={split}
+          disabled={busy || conflict}
+          onSubmit={(input) => void submit(input)}
+        />
       ) : null}
       {message ? (
         <div className="space-y-2 p-4 sm:p-5">

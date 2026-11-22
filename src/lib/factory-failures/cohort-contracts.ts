@@ -100,6 +100,8 @@ const reviewFields = {
   requestId: id,
 };
 
+export const maxFailureCohortSplitRuns = 100;
+
 export const failureCohortReviewSchema = z.discriminatedUnion("action", [
   z.strictObject({
     ...reviewFields,
@@ -114,7 +116,7 @@ export const failureCohortReviewSchema = z.discriminatedUnion("action", [
     selectedRunIds: z
       .array(id)
       .min(1)
-      .max(100)
+      .max(maxFailureCohortSplitRuns)
       .refine((ids) => new Set(ids).size === ids.length),
   }),
 ]);

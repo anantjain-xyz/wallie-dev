@@ -36,6 +36,7 @@ declare
   revisions uuid[] := '{}';
   fixture record;
   case_number integer;
+  attempt integer;
   validation_key text;
   fixture_run_id uuid;
   run_ids uuid[] := '{}';
@@ -71,8 +72,8 @@ begin
     )), 'rules', '[]'::jsonb, 'onUnmatched', '{"kind":"escalate"}'::jsonb)
   );
 
-  for case_number in 1..4 loop
-    if case_number in (1, 4) then
+  for case_number in 1..27 loop
+    if case_number in (1, 27) then
       definition := jsonb_set(original_definition, '{operatingRulesMd}',
         to_jsonb('Fixture rules ' || next_activation::text))::text;
       insert into public.factory_definition_revisions (
@@ -92,19 +93,24 @@ begin
       p_actor => row(p_workspace_id, p_factory_id, p_owner_member_id, null, null, null, null, repo.id, null)
         ::internal.session_mutation_actor,
       p_expected_definition_digest => encode(sha256(convert_to(definition, 'UTF8')), 'hex'));
+    attempt := case when case_number = 27 then 2 else 1 end;
     update public.agent_jobs set git_continuity_release_revision = (select revision from public.get_git_continuity_release_state()),
-      status = 'running', attempt_count = 1 where id = fixture.job_id;
-    fixture_run_id := public.start_session_job_attempt(fixture.job_id, 1, p_stage_id, 0,
+      status = 'running', attempt_count = attempt where id = fixture.job_id;
+    fixture_run_id := public.start_session_job_attempt(fixture.job_id, attempt, p_stage_id, 0,
       'codex', 'gpt-5.5', 'project', 'wallie/failure-groups-' || fixture.job_id::text);
     if fixture_run_id is null then raise exception 'Could not start validation browser fixture run.'; end if;
-    perform public.pin_session_job_git_input(fixture.job_id, 1, fixture_run_id, repo.id, 'main', commit_sha);
+    perform public.pin_session_job_git_input(fixture.job_id, attempt, fixture_run_id, repo.id, 'main', commit_sha);
+    if attempt = 2 and not public.pin_session_attempt_manifest(fixture.job_id, fixture_run_id, attempt,
+      repeat('d', 64), 24, 3, commit_sha, '[]', 'node', null, null, p_owner_member_id) then
+      raise exception 'Could not pin the exact validation browser fixture attempt.';
+    end if;
 
-    validation_key := case when case_number = 4 then 'schema-compatibility' else 'reconciliation-tests' end;
+    validation_key := case when case_number = 27 then 'schema-compatibility' else 'reconciliation-tests' end;
     perform public.pin_session_validation_plan(fixture_run_id, commit_sha, tree_sha, jsonb_build_object('version', 1,
       'commands', jsonb_build_array(jsonb_build_object('key', validation_key, 'command', 'pnpm test',
         'timeoutSeconds', 60, 'reports', '[]'::jsonb))));
     assets := '[]';
-    if case_number < 4 then
+    if case_number < 27 then
       log_id := gen_random_uuid();
       storage_path := p_workspace_id::text || '/' || fixture_run_id::text || '/' || log_id::text;
       insert into storage.objects(bucket_id, name, metadata)

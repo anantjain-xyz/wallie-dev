@@ -87,8 +87,15 @@ export function workspaceInboxPath(workspaceSlug: string, query?: Record<string,
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/inbox`, query);
 }
 
-export function workspaceRunDetailPath(workspaceSlug: string, runId: string) {
-  return `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`;
+export function workspaceRunDetailPath(
+  workspaceSlug: string,
+  runId: string,
+  query?: { attempt?: number },
+) {
+  return withSearchParams(
+    `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`,
+    query,
+  );
 }
 
 export function workspaceActivityPath(workspaceSlug: string, query?: Record<string, QueryValue>) {

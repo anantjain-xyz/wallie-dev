@@ -59,6 +59,7 @@ export default async function FailureGroupsPage({
       <PageHeader title="Failure groups" description={scope.factory.name} />
       <form
         action={base}
+        key={JSON.stringify(preserved)}
         className="ui-sheet grid gap-4 p-4 sm:grid-cols-[1fr_minmax(0,1.6fr)_1fr] sm:items-end sm:p-5"
       >
         <input type="hidden" name="factory" value={scope.factoryId} />

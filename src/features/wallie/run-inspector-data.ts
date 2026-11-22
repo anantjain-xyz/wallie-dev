@@ -272,7 +272,11 @@ export async function loadRunInspectorContext({
   return parsed.success ? { kind: "recorded", context: parsed.data } : { kind: "unavailable" };
 }
 
-export async function loadRunInspectorData(workspaceSlug: string, runId: string) {
+export async function loadRunInspectorData(
+  workspaceSlug: string,
+  runId: string,
+  executionProfileAttempt?: number,
+) {
   const { currentMember, supabase, workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
   if (!runCatalogItemParamsSchema.safeParse({ workspaceId: workspace.id, runId }).success) {
     notFound();
@@ -301,7 +305,10 @@ export async function loadRunInspectorData(workspaceSlug: string, runId: string)
       loadRunInspectorSkills({ ...context, run }),
       loadRunInspectorCredential({ ...context, run }),
       loadRunInspectorMcpManifest({ ...context, run }),
-      loadRunInspectorExecutionProfile({ ...context, run }),
+      loadRunInspectorExecutionProfile({
+        ...context,
+        run: { id: run.id, attemptCount: executionProfileAttempt ?? run.attemptCount },
+      }),
       loadRunInspectorContext({ ...context, run }),
       loadRunInspectorRoutingDecision({ ...context, run }),
     ]);

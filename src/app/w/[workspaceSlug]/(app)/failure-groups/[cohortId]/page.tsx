@@ -50,6 +50,9 @@ function FailureMember({
 }) {
   const { source, configuration } = member;
   const run = workspaceRunDetailPath(workspaceSlug, member.run_id);
+  const configurationPath = workspaceRunDetailPath(workspaceSlug, member.run_id, {
+    attempt: member.run_attempt_count,
+  });
   const evaluation =
     source.kind === "scorer"
       ? runAttemptHref(
@@ -91,7 +94,11 @@ function FailureMember({
             Open validation receipt
           </Link>
         ) : null}
-        <Link className="ui-button" href={`${run}#execution-profile`} prefetch={false}>
+        <Link
+          className="ui-button"
+          href={`${configurationPath}#execution-profile`}
+          prefetch={false}
+        >
           Producing configuration
         </Link>
         <Link
@@ -181,6 +188,13 @@ export default async function FailureGroupPage({
   const { cohort, members, membership_digest: digest } = data;
   const { after, revision } = query.data;
   const pageQuery = { ...factoryQuery, ...filters };
+  const firstPage = after ? workspaceFailureGroupPath(workspaceSlug, id.data, pageQuery) : null;
+  const nextPage = data.next_member_id
+    ? workspaceFailureGroupPath(workspaceSlug, id.data, {
+        ...pageQuery,
+        after: data.next_member_id,
+      })
+    : null;
   const uniqueRuns = new Map<string, { id: string; label: string }>();
   for (const member of members) {
     if (!uniqueRuns.has(member.run_id)) {
@@ -191,8 +205,8 @@ export default async function FailureGroupPage({
     }
   }
   const split =
-    digest && !revision && cohort.failure_count > 1 && uniqueRuns.size
-      ? { digest, runs: [...uniqueRuns.values()] }
+    digest && !revision && cohort.failure_count > 1
+      ? { digest, runs: [...uniqueRuns.values()], firstPage, nextPage }
       : null;
   return (
     <PageContainer>
@@ -264,27 +278,18 @@ export default async function FailureGroupPage({
                 There are no more members on this page.
               </p>
             )}
-            {after || data.next_member_id ? (
+            {firstPage || nextPage ? (
               <nav
                 aria-label="Evidence pages"
                 className="flex flex-wrap gap-2 border-t border-border p-4"
               >
-                {after ? (
-                  <Link
-                    className="ui-button"
-                    href={workspaceFailureGroupPath(workspaceSlug, id.data, pageQuery)}
-                  >
+                {firstPage ? (
+                  <Link className="ui-button" href={firstPage}>
                     First page
                   </Link>
                 ) : null}
-                {data.next_member_id ? (
-                  <Link
-                    className="ui-button"
-                    href={workspaceFailureGroupPath(workspaceSlug, id.data, {
-                      ...pageQuery,
-                      after: data.next_member_id,
-                    })}
-                  >
+                {nextPage ? (
+                  <Link className="ui-button" href={nextPage}>
                     More evidence
                   </Link>
                 ) : null}

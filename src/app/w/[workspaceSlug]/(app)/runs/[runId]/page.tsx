@@ -1,8 +1,18 @@
+import { notFound } from "next/navigation";
+import { z } from "zod";
+
 import { CaptureBenchmarkRun } from "@/features/factory-benchmarks/capture-run.client";
 import { RunScoreSection } from "@/features/factory-scorers/run-score-section";
 import { RunInspector } from "@/features/wallie/run-inspector";
 import { loadRunInspectorData } from "@/features/wallie/run-inspector-data";
 import { RunTranscriptLive } from "@/features/wallie/run-transcript-live";
+
+const executionProfileAttempt = z
+  .string()
+  .regex(/^[1-9]\d*$/)
+  .transform(Number)
+  .pipe(z.number().int().max(2_147_483_647))
+  .optional();
 
 export default async function RunInspectorPage({
   params,
@@ -12,7 +22,9 @@ export default async function RunInspectorPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug, runId }, query] = await Promise.all([params, searchParams]);
-  const data = await loadRunInspectorData(workspaceSlug, runId);
+  const attempt = executionProfileAttempt.safeParse(query.attempt);
+  if (!attempt.success) notFound();
+  const data = await loadRunInspectorData(workspaceSlug, runId, attempt.data);
   const canCaptureBenchmark =
     (data.run.status === "success" ||
       data.run.status === "error" ||
@@ -33,6 +45,7 @@ export default async function RunInspectorPage({
       canOpenRoutingPolicy={data.canOpenRoutingPolicy}
       credential={data.credential}
       executionProfile={data.executionProfile}
+      executionProfileAttempt={attempt.data}
       frozenContext={data.frozenContext}
       evaluations={
         <RunScoreSection
