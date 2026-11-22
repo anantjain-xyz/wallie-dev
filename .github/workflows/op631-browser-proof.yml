@@ -1,0 +1,301 @@
+name: OP-631 hosted browser proof
+
+on:
+  push:
+    branches:
+      - codex/op-631-routing-browser-proof
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wallie-op631-hosted-browser-proof
+  cancel-in-progress: true
+
+jobs:
+  rollback-browser-proof:
+    if: github.repository == 'anantjain-xyz/wallie-dev' && github.ref == 'refs/heads/codex/op-631-routing-browser-proof'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SUPABASE_TELEMETRY_DISABLED: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+      WALLIE_DEPLOY_ENV: preview
+      WALLIE_FACTORY_BENCHMARKS_E2E: "1"
+      WALLIE_ENABLED_SANDBOX_PROVIDERS: vercel
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3100
+      PLAYWRIGHT_HOST: 127.0.0.1
+      PLAYWRIGHT_PORT: "3100"
+
+    steps:
+      - name: Check out exact proof ref
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: pnpm
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@aa3515eac405eac768fa4a72147c22d88a283c7b
+        with:
+          version: 2.113.0
+
+      - name: Create isolated proof checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_source="$RUNNER_TEMP/wallie-op631-proof-source"
+          proof_private="$RUNNER_TEMP/wallie-op631-proof-private"
+          mkdir -m 700 "$proof_source" "$proof_private"
+          git archive --format=tar HEAD | tar -xf - -C "$proof_source"
+          printf 'WALLIE_PROOF_SOURCE=%s\nWALLIE_PROOF_PRIVATE=%s\n' "$proof_source" "$proof_private" >> "$GITHUB_ENV"
+
+      - name: Install browser and database client
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes postgresql-client
+          fi
+          cd "$WALLIE_PROOF_SOURCE"
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Initialize loopback Supabase and export local credentials privately
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$WALLIE_PROOF_SOURCE"
+          timeout --kill-after=20s 8m supabase start --exclude studio,edge-runtime,logflare,vector,supavisor > "$WALLIE_PROOF_PRIVATE/supabase-start.log" 2>&1
+          umask 077
+          timeout 30s supabase status -o env > "$WALLIE_PROOF_PRIVATE/supabase-status.env" 2> "$WALLIE_PROOF_PRIVATE/supabase-status.stderr"
+          python3 - <<'PY'
+          import os
+          import secrets
+          import shlex
+          from pathlib import Path
+          from urllib.parse import urlsplit
+
+          private = Path(os.environ['WALLIE_PROOF_PRIVATE'])
+          status = private / 'supabase-status.env'
+          names = {'API_URL', 'DB_URL', 'PUBLISHABLE_KEY', 'ANON_KEY', 'SECRET_KEY', 'SERVICE_ROLE_KEY'}
+          values = {}
+          for line in status.read_text().splitlines():
+              name, separator, value = line.partition('=')
+              if separator and name in names:
+                  fields = shlex.split(value, posix=True)
+                  if len(fields) == 1:
+                      values[name] = fields[0]
+          status.unlink()
+
+          api_url = values.get('API_URL', '')
+          database_url = values.get('DB_URL', '')
+          api = urlsplit(api_url)
+          database = urlsplit(database_url)
+          loopback = {'127.0.0.1', 'localhost', '::1'}
+          if api.scheme != 'http' or api.hostname not in loopback or api.port != 54321 or api.username or api.password:
+              raise SystemExit('Supabase did not start on the expected local API port')
+          if database.scheme != 'postgresql' or database.hostname not in loopback or database.port != 54322 or database.path != '/postgres':
+              raise SystemExit('Supabase did not start the expected local PostgreSQL database')
+
+          local_env = {
+              'NEXT_PUBLIC_SUPABASE_URL': api_url,
+              'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': values.get('PUBLISHABLE_KEY') or values.get('ANON_KEY'),
+              'SUPABASE_SECRET_KEY': values.get('SECRET_KEY') or values.get('SERVICE_ROLE_KEY'),
+              'WALLIE_FACTORY_ANALYTICS_DATABASE_URL': database_url,
+              'WALLIE_ENCRYPTION_KEY': secrets.token_hex(32),
+          }
+          if not all(value and '\n' not in value and '\r' not in value for value in local_env.values()):
+              raise SystemExit('The disposable Supabase stack did not provide all required values')
+          for name, value in local_env.items():
+              if name != 'NEXT_PUBLIC_SUPABASE_URL':
+                  print(f'::add-mask::{value}')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              for name, value in local_env.items():
+                  output.write(f'{name}={value}\n')
+          PY
+          curl --fail --silent --show-error --max-time 10 http://127.0.0.1:54321/auth/v1/health >/dev/null
+          pg_isready -h 127.0.0.1 -p 54322 -d postgres -t 10
+
+      - name: Build exact app from the isolated proof checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$WALLIE_PROOF_SOURCE"
+          pnpm typecheck > "$WALLIE_PROOF_PRIVATE/typecheck.log" 2>&1
+          # Use the proven scratch-only workaround for Next's generated route validator.
+          # The unmodified checkout's TypeScript check has already run in this job.
+          python3 - <<'PY'
+          from pathlib import Path
+          config = Path('next.config.ts')
+          old = config.read_text()
+          needle = 'const nextConfig: NextConfig = {\n'
+          if old.count(needle) != 1:
+              raise SystemExit('Could not identify the isolated Next config entry point')
+          config.write_text(old.replace(needle, needle + '  typescript: { ignoreBuildErrors: true },\n', 1))
+          PY
+          timeout --kill-after=15s 6m pnpm build --webpack > "$WALLIE_PROOF_PRIVATE/next-build.log" 2>&1
+
+      - name: Run the exact rollback Chromium spec
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$WALLIE_PROOF_SOURCE"
+          cat > playwright.hosted-routing-rollback.config.ts <<'TS'
+          import { defineConfig, devices } from "@playwright/test";
+          const baseURL = "http://127.0.0.1:3100";
+          export default defineConfig({
+            testDir: "./e2e",
+            testMatch: "factory-routing-rollback.spec.ts",
+            workers: 1,
+            retries: 0,
+            reporter: "list",
+            outputDir: "./routing-rollback-proof-results",
+            expect: { timeout: 15_000 },
+            use: {
+              ...devices["Desktop Chrome"],
+              baseURL,
+              navigationTimeout: 90_000,
+              screenshot: "only-on-failure",
+              trace: "on",
+            },
+            webServer: {
+              command: "pnpm start --hostname 127.0.0.1 --port 3100",
+              url: baseURL,
+              reuseExistingServer: false,
+              timeout: 60_000,
+              stdout: "pipe",
+              stderr: "pipe",
+            },
+          });
+          TS
+          timeout --kill-after=15s 8m pnpm exec playwright test --config playwright.hosted-routing-rollback.config.ts > "$WALLIE_PROOF_PRIVATE/playwright-and-app.log" 2>&1
+
+      - name: Stage screenshots and scrubbed trace and app logs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import shutil
+          from pathlib import Path
+          from urllib.parse import quote, quote_plus
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          runner = Path(os.environ['RUNNER_TEMP'])
+          private = runner / 'wallie-op631-proof-private'
+          raw = runner / 'wallie-op631-proof-source' / 'routing-rollback-proof-results'
+          publish = runner / 'wallie-op631-proof-artifact'
+          results = publish / 'routing-rollback-proof-results'
+          results.mkdir(parents=True, exist_ok=True)
+          sensitive_env = ('SUPABASE_SECRET_KEY', 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
+                           'WALLIE_ENCRYPTION_KEY', 'WALLIE_FACTORY_ANALYTICS_DATABASE_URL')
+          variants = set()
+          for name in sensitive_env:
+              value = os.environ.get(name)
+              if value:
+                  encoded = value.encode()
+                  variants.update((value, quote(value, safe=''), quote_plus(value),
+                                   base64.b64encode(encoded).decode(),
+                                   base64.urlsafe_b64encode(encoded).decode().rstrip('=')))
+          variants = sorted(variants, key=len, reverse=True)
+          jwt = re.compile(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+')
+          encoded_cookie = re.compile(r'base64-[A-Za-z0-9_=-]{16,}')
+          credential_url = re.compile(r'(?i)postgres(?:ql)?://[^\s\"\'<>]+')
+          query_secret = re.compile(r'(?i)((?:token_hash|access_token|refresh_token|code_verifier|email_otp|token|code)(?:=|%3d))[^&\s\"\'<>]+')
+          secret_names = {'authorization', 'proxy-authorization', 'apikey', 'cookie', 'set-cookie',
+                          'password', 'token', 'token_hash', 'access_token', 'refresh_token',
+                          'hashed_token', 'email_otp', 'code_verifier'}
+
+          def clean(text):
+              for value in variants:
+                  text = text.replace(value, '[redacted]')
+              text = jwt.sub('[redacted-token]', text)
+              text = encoded_cookie.sub('[redacted-cookie]', text)
+              text = credential_url.sub('[redacted-database-url]', text)
+              return query_secret.sub(r'\1[redacted]', text)
+
+          def scrub(value):
+              if isinstance(value, str):
+                  return clean(value)
+              if isinstance(value, list):
+                  return [scrub(item) for item in value]
+              if isinstance(value, dict):
+                  tag = value.get('name')
+                  clean_dict = {}
+                  for key, item in value.items():
+                      lower = key.lower()
+                      if lower == 'cookies':
+                          clean_dict[key] = []
+                      elif lower in secret_names or (lower == 'value' and isinstance(tag, str) and tag.lower() in secret_names):
+                          clean_dict[key] = '[redacted]'
+                      else:
+                          clean_dict[key] = scrub(item)
+                  return clean_dict
+              return value
+
+          for name in ('supabase-start.log', 'typecheck.log', 'next-build.log', 'playwright-and-app.log'):
+              source = private / name
+              if source.is_file():
+                  (publish / name).write_text(clean(source.read_text(errors='replace')))
+
+          screenshots = {'routing-retained-alert-mobile-dark.png', 'reviewed-routing-rollback-light.png',
+                         'routing-active-attempt-after-rollback.png'}
+          for source in raw.rglob('*.png'):
+              if source.name in screenshots and source.is_file() and not source.is_symlink():
+                  target = results / source.relative_to(raw)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source, target)
+
+          for source in raw.rglob('trace.zip'):
+              target = results / source.relative_to(raw)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              with ZipFile(source) as captured, ZipFile(target, 'w', ZIP_DEFLATED) as safe:
+                  for name in captured.namelist():
+                      if '/' in name or not name.endswith(('.trace', '.network', '.stacks')):
+                          continue
+                      events = []
+                      for line in captured.read(name).decode('utf-8', errors='replace').splitlines():
+                          try:
+                              events.append(json.dumps(scrub(json.loads(line)), separators=(',', ':')))
+                          except json.JSONDecodeError:
+                              continue
+                      safe.writestr(name, '\n'.join(events) + '\n')
+          (publish / 'README.txt').write_text(
+              'Chromium proof of the exact OP-631 rollback browser spec.\n'
+              'Trace event metadata is scrubbed. Raw trace resources and environment files are not included.\n'
+          )
+          PY
+
+      - name: Stop the disposable database
+        if: always()
+        shell: bash
+        run: |
+          if [[ -d "${WALLIE_PROOF_SOURCE:-}/supabase" ]]; then
+            cd "$WALLIE_PROOF_SOURCE"
+            timeout 60s supabase stop --no-backup > /dev/null 2>&1 || true
+          fi
+
+      - name: Upload scrubbed browser proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: op631-routing-rollback-browser-proof
+          path: ${{ runner.temp }}/wallie-op631-proof-artifact
+          if-no-files-found: error
+          retention-days: 3
+          include-hidden-files: false
