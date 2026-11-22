@@ -94,3 +94,18 @@ The bundle replaces aliases with stable IDs. The compiler sorts and deduplicates
 `canonicalDigest` is the lowercase SHA-256 of the exact UTF-8 bytes in `definitionJson`. The records migration checks those bytes at persistence. See [Factory definition records](factory-definition-records.md).
 
 Compilation uses the supplied catalog without external calls. [Publication and activation](factory-definition-activation.md) verify current authority. [Session input records](factory-session-inputs.md) capture the active revision at admission and the exact inputs used by each attempt.
+
+## Typed workflow graphs
+
+`compileWorkflowGraph` compiles version 1 graph definitions to canonical JSON and a SHA-256 digest. Nodes, edges, and grant declarations are ordered by stable ID. The caller supplies the eligible agent prompt revisions, approvers, and grant revisions for the factory.
+
+| Node                                        | Transitions                                                                                           |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Agent, deterministic step, human gate, join | At most one forward successor                                                                         |
+| Route                                       | A choice among distinct destinations, with at least one forward option                                |
+| Branch                                      | Two or more isolated agents, including at least one required agent. Every result feeds the same join. |
+
+- Every node must be reachable from the entry through forward edges. Forward edges form a directed acyclic graph.
+- A loop returns to its route or an ancestor. Each loop limit applies across the root execution, including re-entry and recovery. Multiplying the node count by one plus the total allowed loop traversals must fit within 1,024 visits.
+- A join receives the named results of one branch. Its inputs retain the identity and required status of each branch edge.
+- `projectSerialWorkflow` derives an agent node and a human gate for each stored stage, in order. The stage UUID anchors both identities. The gate retains its original approval settings, including the owner and admin fallback. Published serial bytes and digests continue to identify the existing execution inputs.

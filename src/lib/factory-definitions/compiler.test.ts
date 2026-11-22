@@ -17,7 +17,12 @@ import type { FactoryDefinitionCatalog } from "./references";
 import { compiledFactoryDefinitionSchema, type SerialFactoryDefinitionInput } from "./schema";
 import { factoryWritableRepositoryIds } from "./repository-bindings";
 import { loadQualifiedModelRoutingConfigurations } from "./routing-catalog";
-import { factoryDefinitionFromBundle, recompileStoredFactoryDefinition } from "./stored-definition";
+import {
+  factoryDefinitionFromBundle,
+  readVerifiedFactoryDefinition,
+  recompileStoredFactoryDefinition,
+} from "./stored-definition";
+import { projectSerialWorkflow } from "./workflow-compiler";
 
 const workspaceId = "c5410000-0000-4000-8000-000000000001";
 const otherWorkspaceId = "c5410000-0000-4000-8000-000000000002";
@@ -359,6 +364,97 @@ describe("factory model routing", () => {
 });
 
 describe("compileFactoryDefinition", () => {
+  it("projects seeded plan/build approval order from a verified version 1 bundle", () => {
+    const source = candidate();
+    const compiled = compile({
+      ...source,
+      operatingRulesMd: "",
+      stages: [
+        { ...source.stages[0], slug: "plan", name: "Plan" },
+        {
+          id: lastStageId,
+          slug: "build",
+          name: "Build",
+          approverMemberIds: [approverId],
+          promptTemplateMd: "Use {{artifact.previousStages.plan}}.",
+        },
+      ],
+    });
+    if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics));
+    const verified = readVerifiedFactoryDefinition(
+      compiled.definitionJson,
+      compiled.canonicalDigest,
+    );
+    if (!verified) throw new Error("Cannot read the stored serial revision.");
+
+    const workflow = projectSerialWorkflow(verified);
+    const plan = `stage.${firstStageId}`;
+    const planApproval = `approval.${firstStageId}`;
+    const build = `stage.${lastStageId}`;
+    const buildApproval = `approval.${lastStageId}`;
+    expect(workflow.entryNodeId).toBe(plan);
+    expect(workflow.nodes).toMatchObject([
+      { id: plan, kind: "agent", stage: { slug: "plan", previousStageIds: [] } },
+      {
+        id: planApproval,
+        kind: "human-gate",
+        approval: { anyoneCanApprove: true, approverMemberIds: [] },
+      },
+      { id: build, kind: "agent", stage: { slug: "build", previousStageIds: [firstStageId] } },
+      {
+        id: buildApproval,
+        kind: "human-gate",
+        approval: { anyoneCanApprove: false, approverMemberIds: [approverId] },
+      },
+    ]);
+    expect(workflow.edges.map(({ from, to }) => [from, to])).toEqual([
+      [plan, planApproval],
+      [planApproval, build],
+      [build, buildApproval],
+    ]);
+    expect(
+      recompileStoredFactoryDefinition(compiled.definitionJson, compiled.canonicalDigest, catalog),
+    ).toEqual(compiled);
+  });
+
+  it("projects custom version 2 stages without inferring omitted stages or approvals", () => {
+    const source = candidate();
+    const compiled = compile({
+      ...source,
+      schemaVersion: 2,
+      scorerRevisionIds: [],
+      operatingRulesMd: "",
+      stages: [{ ...source.stages[0], anyoneCanApprove: false }],
+    });
+    if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics));
+    const verified = readVerifiedFactoryDefinition(
+      compiled.definitionJson,
+      compiled.canonicalDigest,
+    );
+    if (!verified) throw new Error("Cannot read the stored serial revision.");
+
+    expect(projectSerialWorkflow(verified)).toMatchObject({
+      entryNodeId: `stage.${firstStageId}`,
+      nodes: [
+        {
+          kind: "agent",
+          stage: {
+            id: firstStageId,
+            slug: "discover-risk",
+            promptTemplateMd: "Inspect {{session.prompt}}.",
+            previousStageIds: [],
+          },
+        },
+        {
+          kind: "human-gate",
+          stageId: firstStageId,
+          approval: { anyoneCanApprove: false, approverMemberIds: [] },
+        },
+      ],
+      edges: [{ from: `stage.${firstStageId}`, to: `approval.${firstStageId}` }],
+    });
+  });
+
   it("keeps the default runtime MCP list explicitly empty without changing the canonical digest", () => {
     const original = compile(candidate());
     expect(original.ok).toBe(true);
