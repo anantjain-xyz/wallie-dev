@@ -24,7 +24,8 @@ export default async function InboxPage({
     factoryQuery === "all" ? [] : loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const selection = resolveFactorySelection(factories, factoryQuery);
-  if (selection.kind === "unavailable") return <FactoryUnavailable title="Inbox" />;
+  if (selection.kind === "unavailable")
+    return <FactoryUnavailable title="Inbox" workspaceSlug={workspaceSlug} />;
 
   const factoryId = selection.kind === "factory" ? selection.factory.id : null;
   const cursor = search.cursor ?? null;

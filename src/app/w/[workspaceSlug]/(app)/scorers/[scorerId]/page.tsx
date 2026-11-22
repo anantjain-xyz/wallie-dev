@@ -47,7 +47,7 @@ export default async function ScorerDetailPage({
   const before = revisionNumber.optional().safeParse(query.before);
   if (!scorerKey.success || !revision.success || !before.success) notFound();
   const scope = await loadScorerPageScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Scorers" />;
+  if (!scope) return <FactoryUnavailable title="Scorers" workspaceSlug={workspaceSlug} />;
   const data = await loadScorerDetail(scope, {
     scorerId: scorerKey.data,
     revisionId: revision.data,

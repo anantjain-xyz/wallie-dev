@@ -29,7 +29,8 @@ export default async function ActivityPage({
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
   const factory = factoryQuery.safeParse(search[FACTORY_QUERY_PARAM]);
-  if (!factory.success) return <FactoryUnavailable title="Activity" />;
+  if (!factory.success)
+    return <FactoryUnavailable title="Activity" workspaceSlug={workspaceSlug} />;
 
   const [{ supabase, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
@@ -37,7 +38,8 @@ export default async function ActivityPage({
   ]);
 
   const selection = resolveFactorySelection(factories, factory.data);
-  if (selection.kind === "unavailable") return <FactoryUnavailable title="Activity" />;
+  if (selection.kind === "unavailable")
+    return <FactoryUnavailable title="Activity" workspaceSlug={workspaceSlug} />;
 
   const actor = actorQuery.safeParse(search.actor);
   if (!actor.success) {

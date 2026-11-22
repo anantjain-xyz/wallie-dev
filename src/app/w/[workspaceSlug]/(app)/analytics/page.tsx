@@ -48,7 +48,7 @@ export default async function AnalyticsPage({
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const factory = resolveAnalyticsFactory(factories, query.factoryId);
-  if (!factory) return <FactoryUnavailable title="Analytics" />;
+  if (!factory) return <FactoryUnavailable title="Analytics" workspaceSlug={workspaceSlug} />;
 
   const scope = { supabase, workspaceId: workspace.id, factoryId: factory.id, query };
   const trendQuery = parseScorerTrendQuery(search, {

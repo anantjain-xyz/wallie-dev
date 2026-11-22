@@ -28,7 +28,7 @@ export default async function BenchmarksPage({
   const after = z.string().uuid().optional().safeParse(query.after);
   if (!after.success) notFound();
   const scope = await loadBenchmarkScope(workspaceSlug, query.factory);
-  if (!scope) return <FactoryUnavailable title="Benchmarks" />;
+  if (!scope) return <FactoryUnavailable title="Benchmarks" workspaceSlug={workspaceSlug} />;
 
   const { factory, workspaceId, canEdit } = scope;
   const factoryQuery = { factory: factory.id };
