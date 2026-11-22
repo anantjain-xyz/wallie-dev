@@ -11,6 +11,7 @@ describe("AppShell", () => {
   it("lets the document scroll while the workspace shell grows to at least the viewport", () => {
     const element = AppShell({
       children: "Settings",
+      creationFactory: null,
       onboarding: null,
       viewerAvatarUrl: null,
       viewerEmail: "owner@example.com",

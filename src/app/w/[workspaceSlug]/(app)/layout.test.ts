@@ -79,7 +79,7 @@ describe("workspace app route group layout", () => {
       })) as ReactElement<{
         canManageFactoryDefinition: boolean;
         canManageGovernance: boolean;
-        canStartDefaultFactorySession: boolean;
+        creationFactory: { id: string; name: string } | null;
         children: string;
         factorySelector: ReactElement;
         onboarding: typeof onboarding;
@@ -94,7 +94,7 @@ describe("workspace app route group layout", () => {
       expect(element.props).toMatchObject({
         canManageFactoryDefinition: canManage,
         canManageGovernance: managesFactory,
-        canStartDefaultFactorySession: canStart,
+        creationFactory: canStart ? { id: "factory-1", name: "Northwind" } : null,
         children: "app-page",
         factorySelector: { props: { factories, workspaceSlug: "northwind" } },
         onboarding,

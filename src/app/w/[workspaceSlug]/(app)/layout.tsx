@@ -22,14 +22,15 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
     loadWorkspaceLayoutContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
+  const defaultFactory = factories.find(
+    (factory) => factory.isDefault && factory.status === "active",
+  );
 
   return (
     <AppShell
       canManageFactoryDefinition={isWorkspaceOperator(currentMember)}
       canManageGovernance={factories.some(({ canManage }) => canManage)}
-      canStartDefaultFactorySession={factories.some(
-        (factory) => factory.isDefault && factory.status === "active",
-      )}
+      creationFactory={defaultFactory ? { id: defaultFactory.id, name: defaultFactory.name } : null}
       factorySelector={<FactorySelector factories={factories} workspaceSlug={workspaceSlug} />}
       onboarding={onboarding}
       viewerAvatarUrl={viewerAvatarUrl}
