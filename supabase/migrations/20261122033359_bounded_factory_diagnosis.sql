@@ -169,7 +169,6 @@ begin
     raise exception 'Diagnosis requires a request, cohort and agent prompt revision.' using errcode = '22023';
   end if;
   requester_id := internal.assert_factory_manager(p_workspace_id, p_factory_id, p_actor_user_id);
-  perform internal.assert_factory_accepts_work(p_workspace_id, p_factory_id);
   select * into diagnosis from internal.factory_diagnoses existing
   where (existing.workspace_id, existing.factory_id, existing.request_id) = (p_workspace_id, p_factory_id, p_request_id);
   if found then
@@ -179,6 +178,7 @@ begin
     end if;
     return internal.project_factory_diagnosis(diagnosis);
   end if;
+  perform internal.assert_factory_accepts_work(p_workspace_id, p_factory_id);
   select * into cohort from internal.factory_failure_cohorts chosen
   where (chosen.workspace_id, chosen.factory_id, chosen.id) = (p_workspace_id, p_factory_id, p_cohort_id);
   if not found then raise exception 'Failure cohort is unavailable.' using errcode = 'P0002'; end if;
@@ -369,9 +369,8 @@ returns boolean language plpgsql immutable set search_path = '' as $$
 declare claim jsonb;
 begin
   if jsonb_typeof(p_result) is distinct from 'object' or octet_length(p_result::text) > 8192
-    or not p_result ?& array['version', 'summary', 'uncertainty', 'claims'] or p_result - array['version','summary','uncertainty','claims'] <> '{}'
-    or p_result->'version' is distinct from '1'::jsonb or not internal.valid_factory_diagnosis_text(p_result->'summary')
-    or not internal.valid_factory_diagnosis_text(p_result->'uncertainty')
+    or not p_result ?& array['version', 'claims'] or p_result - array['version','claims'] <> '{}'
+    or p_result->'version' is distinct from '1'::jsonb
     or jsonb_typeof(p_result->'claims') is distinct from 'array' then return false; end if;
   if jsonb_array_length(p_result->'claims') > 8 then return false; end if;
   for claim in select value from jsonb_array_elements(p_result->'claims') loop
@@ -390,6 +389,29 @@ begin
   end loop;
   return true;
 end;
+$$;
+
+create function internal.completed_factory_diagnosis_result(p_diagnosis internal.factory_diagnoses, p_claims jsonb)
+returns jsonb language sql immutable set search_path = '' as $$
+  with observations as (
+    select count(distinct (member.value->>'producing_agent_id', member.value->>'stage_id',
+      member.value->>'agent_prompt_revision_id', member.value->>'definition_revision_id', member.value->>'execution_revision_id')) as producing_contexts,
+      bool_or(member.value->>'stage_id' is null or member.value->>'definition_revision_id' is null
+        or member.value->>'execution_revision_id' is null) as incomplete_context
+    from jsonb_array_elements(p_diagnosis.evidence) member(value)
+  )
+  select jsonb_build_object('version', 1, 'claims', p_claims,
+    'summary', format('Reviewed %s frozen %s and retained %s cited %s.', p_diagnosis.support_count,
+      case when p_diagnosis.support_count = 1 then 'observation' else 'observations' end, jsonb_array_length(p_claims),
+      case when jsonb_array_length(p_claims) = 1 then 'hypothesis' else 'hypotheses' end),
+    'uncertainty', concat_ws(' ',
+      case when p_diagnosis.support_count < p_diagnosis.minimum_support then
+        format('Only %s of the %s independent sessions needed for qualified support are available.',
+          p_diagnosis.support_count, p_diagnosis.minimum_support) end,
+      case when observations.producing_contexts > 1 then 'The observations span multiple producing steps, agents, or configurations.' end,
+      case when observations.incomplete_context then 'Some observations lack exact producing step or configuration identifiers.' end,
+      'The cause remains uncertain.'))
+  from observations;
 $$;
 
 create function internal.valid_factory_diagnosis_metadata(p_trace jsonb, p_usage jsonb, p_model_id text)
@@ -419,7 +441,10 @@ create function public.finish_factory_diagnosis(
   p_workspace_id uuid, p_factory_id uuid, p_diagnosis_id uuid, p_attempt_id uuid, p_lease_id uuid, p_status text,
   p_result jsonb default null, p_trace jsonb default null, p_usage jsonb default null
 ) returns boolean language plpgsql security definer set search_path = '' as $$
-declare diagnosis internal.factory_diagnoses; outcome text := p_status;
+declare
+  diagnosis internal.factory_diagnoses;
+  outcome text := p_status;
+  settled_at timestamptz;
 begin
   perform internal.assert_checkpoint_publication_service();
   if p_status is null or p_status not in ('completed', 'invalid_result', 'provider_unavailable', 'timeout', 'budget_exhausted')
@@ -428,12 +453,13 @@ begin
   end if;
   select * into diagnosis from internal.factory_diagnoses job
   where (job.workspace_id, job.factory_id, job.id, job.attempt_id, job.lease_id) =
-    (p_workspace_id, p_factory_id, p_diagnosis_id, p_attempt_id, p_lease_id) and job.status = 'running'
-    and job.lease_expires_at > clock_timestamp() for update;
+    (p_workspace_id, p_factory_id, p_diagnosis_id, p_attempt_id, p_lease_id) and job.status = 'running' for update;
   if not found then return false; end if;
+  settled_at := clock_timestamp();
+  if diagnosis.lease_expires_at <= settled_at then return false; end if;
   if not internal.factory_diagnosis_authority_current(diagnosis) then outcome := 'authorization_revoked';
   elsif not internal.factory_diagnosis_sources_current(diagnosis) then outcome := 'evidence_unavailable';
-  elsif diagnosis.deadline_at <= clock_timestamp() then outcome := 'timeout';
+  elsif diagnosis.deadline_at <= settled_at then outcome := 'timeout';
   elsif not internal.valid_factory_diagnosis_metadata(p_trace, p_usage, diagnosis.model_id) then
     raise exception 'Invalid diagnosis trace or usage.' using errcode = '22023';
   elsif (p_usage->>'output_tokens')::numeric > diagnosis.max_output_tokens then outcome := 'budget_exhausted';
@@ -442,8 +468,8 @@ begin
     where jsonb_typeof(member.value->'stage_id') = 'string'
   )) then outcome := 'invalid_result';
   end if;
-  update internal.factory_diagnoses set status = outcome, finished_at = clock_timestamp(),
-    result = case when outcome = 'completed' then p_result end,
+  update internal.factory_diagnoses set status = outcome, finished_at = settled_at,
+    result = case when outcome = 'completed' then internal.completed_factory_diagnosis_result(diagnosis, p_result->'claims') end,
     trace = case when internal.valid_factory_diagnosis_metadata(p_trace, p_usage, diagnosis.model_id) then nullif(p_trace, '{}') end,
     usage = case when internal.valid_factory_diagnosis_metadata(p_trace, p_usage, diagnosis.model_id) then nullif(p_usage, '{}') end
   where id = diagnosis.id;
@@ -481,7 +507,8 @@ $$;
 revoke all on function internal.preserve_factory_diagnosis(), internal.factory_diagnosis_sources_current(internal.factory_diagnoses),
   internal.factory_diagnosis_authority_current(internal.factory_diagnoses), internal.factory_diagnosis_budget(internal.factory_diagnoses),
   internal.project_factory_diagnosis(internal.factory_diagnoses), internal.valid_factory_diagnosis_text(jsonb),
-  internal.valid_factory_diagnosis_result(jsonb, uuid[]), internal.valid_factory_diagnosis_metadata(jsonb, jsonb, text),
+  internal.valid_factory_diagnosis_result(jsonb, uuid[]), internal.completed_factory_diagnosis_result(internal.factory_diagnoses, jsonb),
+  internal.valid_factory_diagnosis_metadata(jsonb, jsonb, text),
   internal.get_factory_diagnosis(uuid, uuid, uuid), public.get_factory_diagnosis(uuid, uuid, uuid),
   public.request_factory_diagnosis(uuid, uuid, uuid, uuid, uuid, uuid), public.claim_factory_diagnosis(),
   public.prepare_factory_diagnosis(uuid, uuid, uuid, uuid, uuid), public.begin_factory_diagnosis(uuid, uuid, uuid, uuid, uuid, text),

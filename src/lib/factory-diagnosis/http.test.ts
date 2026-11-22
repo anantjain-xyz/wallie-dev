@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { POST as cancel } from "@/app/api/workspaces/[workspaceId]/factories/[factoryId]/diagnoses/[diagnosisId]/cancel/route";
 import { GET as read } from "@/app/api/workspaces/[workspaceId]/factories/[factoryId]/diagnoses/[diagnosisId]/route";
@@ -16,6 +16,7 @@ const cohortId = id(3);
 const diagnosisId = id(4);
 const signedIn = id(5);
 const command = { requestId: id(6), promptRevisionId: id(7) };
+const appOrigin = "https://wallie.test";
 
 const receipt = {
   diagnosis_id: diagnosisId,
@@ -71,10 +72,12 @@ function transport(response: () => Response, factoryVisible = true) {
   return rpc;
 }
 
-function request(body: object) {
-  return new Request("https://wallie.test", {
+function request(body: object, origin: string | null = appOrigin) {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (origin !== null) headers.set("Origin", origin);
+  return new Request(appOrigin, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 }
@@ -82,7 +85,34 @@ function request(body: object) {
 const cohortParams = { params: Promise.resolve({ ...scope, cohortId }) };
 const diagnosisParams = { params: Promise.resolve({ ...scope, diagnosisId }) };
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", appOrigin);
+});
+afterEach(() => vi.unstubAllEnvs());
+
+it.each([null, "https://unrelated.test", "null"])(
+  "rejects diagnosis mutations with invalid request origin %s before touching authentication",
+  async (origin) => {
+    const rpc = transport(() => Response.json(receipt));
+    expect((await enqueue(request(command, origin), cohortParams)).status).toBe(403);
+    expect((await cancel(request({}, origin), diagnosisParams)).status).toBe(403);
+    expect(mocks.access).not.toHaveBeenCalled();
+    expect(mocks.admin).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  },
+);
+
+it("requires JSON for a same-origin diagnosis request", async () => {
+  const rpc = transport(() => Response.json(receipt));
+  const incoming = new Request(appOrigin, {
+    method: "POST",
+    headers: { Origin: appOrigin, "Content-Type": "text/plain" },
+    body: JSON.stringify(command),
+  });
+  expect((await enqueue(incoming, cohortParams)).status).toBe(415);
+  expect(rpc).not.toHaveBeenCalled();
+});
 
 it("enqueues the exact cohort using the authenticated actor and strips non-receipt fields", async () => {
   const rpc = transport(() =>

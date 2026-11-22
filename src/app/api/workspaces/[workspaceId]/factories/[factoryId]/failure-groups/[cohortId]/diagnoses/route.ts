@@ -2,6 +2,7 @@ import { diagnosisRequestSchema, diagnosisTargetIdSchema } from "@/lib/factory-d
 import { diagnosisError, diagnosisFailure, diagnosisResponse } from "@/lib/factory-diagnosis/http";
 import { resolveFactoryRouteContext } from "@/lib/factories/route-context";
 import { readBoundedJsonBody } from "@/lib/http/bounded-json-body";
+import { isSameOriginFactoryOAuthPost } from "@/lib/factory-oauth/browser-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type RouteContext = {
@@ -9,6 +10,9 @@ type RouteContext = {
 };
 
 export async function POST(request: Request, { params }: RouteContext) {
+  if (!isSameOriginFactoryOAuthPost(request))
+    return diagnosisError("Send this request from Wallie.", 403);
+
   const cohort = diagnosisTargetIdSchema.safeParse((await params).cohortId);
   if (!cohort.success) return diagnosisError("Provide a valid failure cohort ID.", 400);
 

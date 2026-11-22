@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import type { Database } from "@/lib/supabase/database.types";
 
-import type { DiagnosisClaim, DiagnosisPreparation, DiagnosisResult } from "./contracts";
+import type { DiagnosisClaim, DiagnosisPreparation, DiagnosisInferenceResult } from "./contracts";
 import { runDiagnosisInference } from "./inference";
 import { drainFactoryDiagnoses, runClaimedFactoryDiagnosis } from "./worker";
 
@@ -52,10 +52,8 @@ const preparation: DiagnosisPreparation = {
   support_count: 1,
   budget: { max_input_bytes: 40_000, max_output_tokens: 1_200, max_execution_ms: 30_000 },
 };
-const output: DiagnosisResult = {
+const output: DiagnosisInferenceResult = {
   version: 1,
-  summary: "The validation failure is associated with a specific step.",
-  uncertainty: "A failed validation can result from a fixture mismatch.",
   claims: [
     {
       member_ids: [member.member_id],
@@ -65,13 +63,17 @@ const output: DiagnosisResult = {
   ],
 };
 
-function providerOutput(result: DiagnosisResult = output, extra: object = {}, tokens = 22) {
+function providerOutput(
+  result: unknown = output,
+  extra: object = {},
+  usage: object = { prompt_tokens: 64, completion_tokens: 22, cost: 0.003 },
+) {
   return Response.json({
     model: preparation.model_id,
     provider: "Vendor",
     id: "synthetic-provider-request-id",
     choices: [{ finish_reason: "stop", message: { content: JSON.stringify(result), ...extra } }],
-    usage: { prompt_tokens: 64, completion_tokens: tokens, cost: 0.003 },
+    usage,
   });
 }
 
@@ -135,6 +137,10 @@ it("drains one exact scoped diagnosis, treats injected guidance as data, and set
       max_tokens: 1_200,
     });
     expect(body).not.toHaveProperty("tools");
+    expect(Object.keys(body.response_format.json_schema.schema.properties)).toEqual([
+      "version",
+      "claims",
+    ]);
     expect(body.messages[0].content).toContain("Do not generate patches");
     expect(body.messages[0].content).not.toContain(prompt);
     expect(body.messages[1].content).toContain("Source: diagnosis.instructions");
@@ -162,10 +168,7 @@ it("drains one exact scoped diagnosis, treats injected guidance as data, and set
     p_attempt_id: claim.attempt_id,
     p_lease_id: claim.lease_id,
     p_status: "completed",
-    p_result: {
-      ...output,
-      uncertainty: "Sample support is below the cohort minimum. " + output.uncertainty,
-    },
+    p_result: output,
     p_trace: {
       worker_runtime: "node",
       provider_model: "vendor/model",
@@ -195,50 +198,88 @@ it.each([
   ).resolves.toMatchObject({ status: "invalid_result" });
 });
 
-it("makes mixed producers uncertain and strips credentials from result text", async () => {
+it("keeps model narratives attached to validated citations and strips credentials", async () => {
+  const signal = new AbortController().signal;
+  const unsupported = ["summary", "uncertainty"];
+  for (const field of unsupported) {
+    await expect(
+      runDiagnosisInference({
+        preparation,
+        apiKey: key,
+        signal,
+        fetcher: async () => providerOutput({ ...output, [field]: "Uncited narration" }),
+      }),
+    ).resolves.toMatchObject({ status: "invalid_result" });
+  }
+
+  const claim = output.claims[0];
   const response = await runDiagnosisInference({
-    preparation: {
-      ...preparation,
-      evidence: [
-        ...preparation.evidence,
-        { ...member, member_id: id(99), producing_agent_id: id(98) },
-      ],
-    },
+    preparation,
     apiKey: key,
-    signal: new AbortController().signal,
-    fetcher: async () => providerOutput({ ...output, summary: "Untrusted echo " + key }),
+    signal,
+    fetcher: async () =>
+      providerOutput({
+        ...output,
+        claims: [{ ...claim, inferred_cause: "Untrusted echo " + key }],
+      }),
   });
   expect(response).toMatchObject({
     status: "completed",
-    result: {
-      summary: "Untrusted echo [REDACTED]",
-      uncertainty: expect.stringContaining(
-        "Evidence spans multiple producing steps or configurations.",
-      ),
-    },
+    result: { version: 1, claims: [{ ...claim, inferred_cause: "Untrusted echo [REDACTED]" }] },
   });
   expect(JSON.stringify(response)).not.toContain(key);
 });
 
-it("enforces input and output budgets without reporting unavailable usage as zero", async () => {
-  const fetcher = vi.fn<typeof fetch>(async () => providerOutput(output, {}, 1_201));
-  const signal = new AbortController().signal;
+it("accepts a diagnosis without hypotheses when there is no supported attribution", async () => {
+  await expect(
+    runDiagnosisInference({
+      preparation,
+      apiKey: key,
+      signal: new AbortController().signal,
+      fetcher: async () => providerOutput({ version: 1, claims: [] }),
+    }),
+  ).resolves.toMatchObject({ status: "completed", result: { version: 1, claims: [] } });
+});
+
+it("enforces the request byte budget before calling the provider", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => providerOutput());
   await expect(
     runDiagnosisInference({
       preparation: { ...preparation, budget: { ...preparation.budget, max_input_bytes: 100 } },
       apiKey: key,
-      signal,
+      signal: new AbortController().signal,
       fetcher,
     }),
   ).resolves.toEqual({ status: "budget_exhausted" });
   expect(fetcher).not.toHaveBeenCalled();
-  await expect(
-    runDiagnosisInference({ preparation, apiKey: key, signal, fetcher }),
-  ).resolves.toMatchObject({
-    status: "budget_exhausted",
-    usage: { output_tokens: 1_201 },
+});
+
+it.each([
+  { reported: { prompt_tokens: 64 }, retained: { input_tokens: 64 } },
+  { reported: { completion_tokens: 0, prompt_tokens: -1 }, retained: { output_tokens: 0 } },
+  { reported: { completion_tokens: 22 }, retained: { output_tokens: 22 } },
+])("validates each partial usage axis independently", async ({ reported, retained }) => {
+  const outcome = await runDiagnosisInference({
+    preparation,
+    apiKey: key,
+    signal: new AbortController().signal,
+    fetcher: async () => providerOutput(output, {}, reported),
   });
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(outcome.status).toBe("completed");
+  expect(outcome.usage).toEqual(retained);
+});
+
+it("fences an output budget breach when input token usage is unavailable", async () => {
+  const { admin, claim, requests } = workingDiagnosis();
+  vi.stubGlobal("fetch", async () => providerOutput(output, {}, { completion_tokens: 1_201 }));
+
+  await expect(runClaimedFactoryDiagnosis(admin, claim, "node")).resolves.toBe(true);
+  expect(requests.at(-1)?.body).toMatchObject({
+    p_status: "budget_exhausted",
+    p_usage: { output_tokens: 1_201 },
+  });
+  expect(requests.at(-1)?.body).not.toHaveProperty("p_usage.input_tokens");
+  expect(requests.at(-1)?.body).not.toHaveProperty("p_result");
 });
 
 it("settles an unexpected model as invalid without trusting the provider model identity", async () => {

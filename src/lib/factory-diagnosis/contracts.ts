@@ -15,10 +15,8 @@ const resultText = z
 export const maximumDiagnosisMembers = 12;
 export const maximumDiagnosisDurationMs = 60_000;
 
-export const diagnosisResultSchema = z.strictObject({
+export const diagnosisInferenceResultSchema = z.strictObject({
   version: z.literal(1),
-  summary: resultText,
-  uncertainty: resultText,
   claims: z
     .array(
       z.strictObject({
@@ -30,7 +28,12 @@ export const diagnosisResultSchema = z.strictObject({
     .max(8),
 });
 
-export type DiagnosisResult = z.infer<typeof diagnosisResultSchema>;
+export type DiagnosisInferenceResult = z.infer<typeof diagnosisInferenceResultSchema>;
+
+const diagnosisReceiptResultSchema = diagnosisInferenceResultSchema.extend({
+  summary: resultText,
+  uncertainty: resultText,
+});
 
 export const diagnosisMemberSchema = z.object({
   member_id: id,
@@ -150,7 +153,7 @@ export const diagnosisReceiptSchema = diagnosisPinsSchema.extend({
   evidence_digest: digest.nullable(),
   evidence_state: z.enum(["available", "unavailable"]),
   evidence: z.array(diagnosisMemberSchema).max(maximumDiagnosisMembers).nullable(),
-  result: diagnosisResultSchema.nullable(),
+  result: diagnosisReceiptResultSchema.nullable(),
   trace: diagnosisTraceSchema.nullable(),
   usage: diagnosisUsageSchema.nullable(),
 });

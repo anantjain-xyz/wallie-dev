@@ -34,8 +34,7 @@ create function pg_temp.diagnosis_is_current(p_label text) returns boolean langu
 $$;
 
 create function pg_temp.diagnosis_result(p_label text, p_member_id uuid default null) returns jsonb language sql as $$
-  select jsonb_build_object('version', 1, 'summary', 'The exact validation step returned a failure.',
-    'uncertainty', 'Only one independent run is available.', 'claims', jsonb_build_array(jsonb_build_object(
+  select jsonb_build_object('version', 1, 'claims', jsonb_build_array(jsonb_build_object(
       'member_ids', jsonb_build_array(coalesce(p_member_id, (receipt#>>'{evidence,0,member_id}')::uuid)),
       'inferred_cause', 'A regression is possible.', 'uncertainty', 'The log does not isolate the cause.')))
   from diagnosis_requests where label = p_label;
@@ -63,6 +62,14 @@ select throws_ok($$select pg_temp.request_diagnosis(60, 3)$$, '42501', null,
 insert into diagnosis_requests(label, receipt) values ('smoke', pg_temp.request_diagnosis(61));
 select is(pg_temp.request_diagnosis(61), (select receipt from diagnosis_requests where label = 'smoke'),
   'retrying a human request returns the same frozen diagnosis');
+select public.archive_factory(workspace_id, factory_id, owner_id) from diagnosis_scope;
+select is(pg_temp.request_diagnosis(61), (select receipt from diagnosis_requests where label = 'smoke'),
+  'an authorized stable retry returns the original diagnosis after archival');
+select throws_ok($$select pg_temp.request_diagnosis(61, 3)$$, '42501', null,
+  'an archived diagnosis retry still checks current management access');
+select throws_ok($$select pg_temp.request_diagnosis(62)$$, 'P0011', null,
+  'archived factories cannot admit new diagnosis work');
+select public.restore_factory(workspace_id, factory_id, owner_id) from diagnosis_scope;
 select throws_ok($$select pg_temp.request_diagnosis(61, 2)$$, 'PT409', null,
   'a differing actor cannot repurpose the same idempotency key');
 select throws_ok($$select pg_temp.request_diagnosis(62)$$, 'PT409', null,
@@ -91,14 +98,23 @@ select ok(pg_temp.finish_diagnosis('smoke', pg_temp.diagnosis_result('smoke'), '
   'the exact running lease settles a bounded diagnosis with structured uncertainty');
 select is(pg_temp.finish_diagnosis('smoke', pg_temp.diagnosis_result('smoke')), false,
   'duplicate provider completion cannot replace terminal results or usage');
+select ok(derived.receipt->>'uncertainty' like '%span multiple producing steps, agents, or configurations.%'
+    and derived.receipt->>'uncertainty' like '%lack exact producing step or configuration identifiers.%',
+  'mixed or incomplete producing configurations add explicit evidence-derived uncertainty')
+from internal.factory_diagnoses job
+cross join lateral internal.completed_factory_diagnosis_result(jsonb_populate_record(job, jsonb_build_object('evidence', job.evidence ||
+  jsonb_build_array(job.evidence->0 || jsonb_build_object('definition_revision_id', null,
+    'execution_revision_id', pg_temp.diagnosis_fixture_id(90))))), '[]') derived(receipt)
+where job.request_id = pg_temp.diagnosis_fixture_id(61);
 
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = '63500000-0000-4000-8000-000000000003';
 select ok(pg_temp.read_diagnosis('smoke') @> '{"status":"completed","evidence_state":"available",
-    "usage":{"input_tokens":500,"output_tokens":50},"result":{"uncertainty":"Only one independent run is available."}}'
+    "usage":{"input_tokens":500,"output_tokens":50},"result":{"summary":"Reviewed 1 frozen observation and retained 1 cited hypothesis.",
+    "uncertainty":"Only 1 of the 3 independent sessions needed for qualified support are available. The cause remains uncertain."}}'
     and pg_temp.read_diagnosis('smoke')::text not like '%encrypted_api_key%',
-  'an authorized reader can inspect uncertainty and measured usage without worker credentials');
+  'an authorized reader can inspect evidence-derived uncertainty and measured usage without worker credentials');
 set local request.jwt.claim.sub = '63500000-0000-4000-8000-000000000004';
 select throws_ok($$select pg_temp.read_diagnosis('smoke')$$, 'P0002', null, 'other workspaces cannot read diagnosis records');
 reset role;
@@ -111,6 +127,22 @@ select (pg_temp.begin_diagnosis('injected') is not null) as started;
 select ok(pg_temp.finish_diagnosis('injected', pg_temp.diagnosis_result('injected', pg_temp.diagnosis_fixture_id(90))),
   'an unsupported attribution settles without publishing the forged result');
 
+insert into diagnosis_requests(label, receipt) values ('uncited-summary', pg_temp.request_diagnosis(69));
+update diagnosis_requests set claim = public.claim_factory_diagnosis() where label = 'uncited-summary';
+select ok(pg_temp.begin_diagnosis('uncited-summary') is not null, 'the uncited narrative fixture starts a real invocation');
+select ok(pg_temp.finish_diagnosis('uncited-summary', pg_temp.diagnosis_result('uncited-summary') ||
+    '{"summary":"A fabricated narrative outside the cited claims."}'),
+  'a provider-authored summary settles only as invalid output even when its claim is cited');
+
+insert into diagnosis_requests(label, receipt) values ('empty', pg_temp.request_diagnosis(70));
+update diagnosis_requests set claim = public.claim_factory_diagnosis() where label = 'empty';
+select ok(pg_temp.begin_diagnosis('empty') is not null, 'the no-hypothesis fixture starts a real invocation');
+select ok(pg_temp.finish_diagnosis('empty', '{"version":1,"claims":[]}'),
+  'a provider may complete without inventing any claim');
+select ok((select result @> '{"summary":"Reviewed 1 frozen observation and retained 0 cited hypotheses.","claims":[]}'
+  from internal.factory_diagnoses where request_id = pg_temp.diagnosis_fixture_id(70) and status = 'completed'),
+  'the persisted zero-claim result retains a deterministic observation summary');
+
 insert into diagnosis_requests(label, receipt) values ('budget', pg_temp.request_diagnosis(64));
 update diagnosis_requests set claim = public.claim_factory_diagnosis() where label = 'budget';
 select (pg_temp.begin_diagnosis('budget') is not null) as started;
@@ -119,7 +151,7 @@ select ok(pg_temp.finish_diagnosis('budget', pg_temp.diagnosis_result('budget'),
 
 insert into diagnosis_requests(label, receipt) values ('canceled', pg_temp.request_diagnosis(65));
 update diagnosis_requests set claim = public.claim_factory_diagnosis() where label = 'canceled';
-select (pg_temp.begin_diagnosis('canceled') is not null) as started;
+select ok(pg_temp.begin_diagnosis('canceled') is not null, 'the invocation has really started before cancellation');
 select ok(public.cancel_factory_diagnosis(scope.workspace_id, scope.factory_id, scope.owner_id, (job.receipt->>'diagnosis_id')::uuid),
   'a current manager can cancel the isolated diagnosis')
 from diagnosis_scope scope cross join diagnosis_requests job where job.label = 'canceled';
@@ -134,6 +166,20 @@ where id = (select (receipt->>'diagnosis_id')::uuid from diagnosis_requests wher
 alter table internal.factory_diagnoses enable trigger factory_diagnoses_immutable;
 select is(public.claim_factory_diagnosis(), null::jsonb, 'an expired worker lease is terminal rather than admitting another paid attempt');
 select is(pg_temp.begin_diagnosis('expired'), null::jsonb, 'an expired exact lease cannot acquire a credential afterward');
+
+insert into diagnosis_requests(label, receipt) values ('timed-out', pg_temp.request_diagnosis(71));
+update diagnosis_requests set claim = public.claim_factory_diagnosis() where label = 'timed-out';
+select ok(pg_temp.begin_diagnosis('timed-out') is not null, 'the deadline fixture starts before the tested settlement');
+alter table internal.factory_diagnoses disable trigger factory_diagnoses_immutable;
+update internal.factory_diagnoses set started_at = clock_timestamp() - interval '2 seconds',
+  deadline_at = clock_timestamp() - interval '1 second'
+where id = (select (receipt->>'diagnosis_id')::uuid from diagnosis_requests where label = 'timed-out');
+alter table internal.factory_diagnoses enable trigger factory_diagnoses_immutable;
+select ok(pg_temp.finish_diagnosis('timed-out', pg_temp.diagnosis_result('timed-out')),
+  'a worker with a current lease can settle a provider completion after its execution deadline');
+select ok((select status = 'timeout' and result is null and finished_at >= deadline_at and finished_at < lease_expires_at
+  from internal.factory_diagnoses where request_id = pg_temp.diagnosis_fixture_id(71)),
+  'the settlement instant consistently determines the deadline breach and recorded finish time');
 
 insert into diagnosis_requests(label, receipt) values ('revoked', pg_temp.request_diagnosis(67, 2));
 update diagnosis_requests set claim = public.claim_factory_diagnosis() where label = 'revoked';
@@ -152,6 +198,7 @@ set local request.jwt.claim.sub = '63500000-0000-4000-8000-000000000001';
 select ok(pg_temp.read_diagnosis('smoke') @> '{"evidence_state":"unavailable","evidence_digest":null,"evidence":null,"result":null}',
   'the same retention change also redacts already settled diagnosis content');
 select is(pg_temp.read_diagnosis('injected')->>'status', 'invalid_result', 'a foreign citation is recorded as invalid, not as a claim');
+select is(pg_temp.read_diagnosis('uncited-summary')->>'status', 'invalid_result', 'an uncited provider summary never enters a diagnosis receipt');
 select is(pg_temp.read_diagnosis('budget')->>'status', 'budget_exhausted', 'an over-budget execution stores no successful result');
 select is(pg_temp.read_diagnosis('canceled')->>'status', 'canceled', 'late settlement preserves cancellation');
 select is(pg_temp.read_diagnosis('expired')->>'status', 'lease_expired', 'expiry produces a distinct terminal reason');

@@ -102,7 +102,13 @@ select public.record_session_validation_evidence(run_id, repeat('a', 40), repeat
   jsonb_build_array(jsonb_build_object('id', asset_id, 'key', 'tests/log', 'kind', 'log', 'required', false, 'sha256', repeat('c', 64),
     'contentType', 'text/plain', 'sizeBytes', 20, 'storagePath', pg_temp.diagnosis_fixture_id(11)::text || '/' || run_id::text || '/' || asset_id::text)))
 from diagnosis_source;
-select public.process_factory_failure_cohorts(100);
+do $$
+begin
+  while public.process_factory_failure_cohorts(100) > 0 loop
+    null;
+  end loop;
+end;
+$$;
 
 create temp table diagnosis_cohort as
 select cohort.id from internal.factory_failure_cohorts cohort join diagnosis_scope scope

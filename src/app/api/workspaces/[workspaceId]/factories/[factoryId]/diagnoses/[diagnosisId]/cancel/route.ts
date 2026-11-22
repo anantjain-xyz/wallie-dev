@@ -1,13 +1,17 @@
 import { diagnosisTargetIdSchema } from "@/lib/factory-diagnosis/contracts";
 import { diagnosisError, diagnosisFailure } from "@/lib/factory-diagnosis/http";
 import { factoryResponseHeaders, resolveFactoryRouteContext } from "@/lib/factories/route-context";
+import { isSameOriginFactoryOAuthPost } from "@/lib/factory-oauth/browser-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type RouteContext = {
   params: Promise<{ workspaceId: string; factoryId: string; diagnosisId: string }>;
 };
 
-export async function POST(_request: Request, { params }: RouteContext) {
+export async function POST(request: Request, { params }: RouteContext) {
+  if (!isSameOriginFactoryOAuthPost(request))
+    return diagnosisError("Send this request from Wallie.", 403);
+
   const diagnosis = diagnosisTargetIdSchema.safeParse((await params).diagnosisId);
   if (!diagnosis.success) return diagnosisError("Provide a valid diagnosis ID.", 400);
 

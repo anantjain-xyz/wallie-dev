@@ -167,8 +167,6 @@ it.skipIf(!workdir)("executes one real scoped diagnosis through the Node worker"
             message: {
               content: JSON.stringify({
                 version: 1,
-                summary: "The retained build step returned a validation failure.",
-                uncertainty: "The evidence does not establish what caused the failure.",
                 claims: [
                   {
                     member_ids: [evidence.member_id],
@@ -181,7 +179,7 @@ it.skipIf(!workdir)("executes one real scoped diagnosis through the Node worker"
             },
           },
         ],
-        usage: { prompt_tokens: 122, completion_tokens: 64 },
+        usage: { completion_tokens: 64 },
       });
     });
     vi.stubGlobal("fetch", syntheticFetch);
@@ -207,12 +205,16 @@ it.skipIf(!workdir)("executes one real scoped diagnosis through the Node worker"
       status: "completed",
       evidence: [evidence],
       result: {
-        uncertainty: expect.stringContaining("Sample support is below the cohort minimum."),
+        summary: "Reviewed 1 frozen observation and retained 1 cited hypothesis.",
+        uncertainty: expect.stringContaining(
+          "Only 1 of the 3 independent sessions needed for qualified support are available.",
+        ),
         claims: [{ member_ids: [evidence.member_id] }],
       },
       trace: { provider_request_id: "synthetic-diagnosis-smoke", worker_runtime: "node" },
-      usage: { input_tokens: 122, output_tokens: 64 },
     });
+    expect(completed.result?.uncertainty).toMatch(/The cause remains uncertain\.$/);
+    expect(completed.usage).toEqual({ output_tokens: 64 });
     expect(JSON.stringify(fetched.data)).not.toContain(apiKey);
     const after = await run();
     expect(after.error).toBeNull();
