@@ -4,7 +4,14 @@ import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { expect, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
+import {
+  expect,
+  type Locator,
+  type Page,
+  type Response,
+  type Route,
+  type TestInfo,
+} from "@playwright/test";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
@@ -116,6 +123,7 @@ export async function observeQualificationPost(
   const failed = Promise.withResolvers<never>();
   let active = true;
   let forwardingStarted = false;
+  let observedResponse: Response | undefined;
   await page.route(endpoint, async (route: Route) => {
     if (route.request().method() !== "POST") return route.fallback();
     if (!active) return route.abort();
@@ -138,7 +146,11 @@ export async function observeQualificationPost(
     const [result] = await Promise.race([
       Promise.all([
         page.waitForResponse(
-          (entry) => entry.url() === endpoint && entry.request().method() === "POST",
+          (entry) => {
+            if (entry.url() !== endpoint || entry.request().method() !== "POST") return false;
+            observedResponse = entry;
+            return true;
+          },
           { timeout: 110_000 },
         ),
         submit(),
@@ -147,6 +159,7 @@ export async function observeQualificationPost(
     ]);
     return result;
   } catch (error) {
+    if (observedResponse) return observedResponse;
     if (forwardingStarted) throw new QualificationPostResponseLost(error);
     throw error;
   } finally {

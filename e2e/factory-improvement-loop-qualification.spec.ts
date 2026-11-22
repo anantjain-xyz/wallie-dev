@@ -230,7 +230,7 @@ test("aborts the browser POST and drains its checkpoint after observation ends",
   });
   const persistenceStarted = Promise.withResolvers<void>();
   const completePersistence = Promise.withResolvers<void>();
-  const unregistering = Promise.withResolvers<void>();
+  const unregistering = Promise.withResolvers<Parameters<Page["unrouteAll"]>>();
   const sent = Promise.withResolvers<boolean>();
   const cancellation = new Error("Simulated browser observation failure.");
   try {
@@ -246,7 +246,7 @@ test("aborts the browser POST and drains its checkpoint after observation ends",
       {
         route: page.route.bind(page),
         unrouteAll: (...args) => {
-          unregistering.resolve();
+          unregistering.resolve(args);
           return page.unrouteAll(...args);
         },
         waitForResponse: page.waitForResponse.bind(page),
@@ -275,7 +275,7 @@ test("aborts the browser POST and drains its checkpoint after observation ends",
       finished = true;
     });
     const rejected = expect(operation).rejects.toBe(cancellation);
-    await unregistering.promise;
+    expect(await unregistering.promise).toEqual([{ behavior: "wait" }]);
     await setImmediate();
     expect(finished).toBe(false);
     completePersistence.resolve();
@@ -284,6 +284,44 @@ test("aborts the browser POST and drains its checkpoint after observation ends",
     expect(receivedPosts).toBe(0);
   } finally {
     completePersistence.resolve();
+    await server[Symbol.asyncDispose]();
+  }
+});
+
+test("keeps the browser's HTTP 500 when submit later rejects", async ({ page }) => {
+  const server = createServer((request, response) => {
+    if (request.method === "POST") {
+      response.writeHead(500, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ message: "Qualification failed." }));
+    } else {
+      response.end("qualification");
+    }
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing loopback address.");
+    const origin = `http://127.0.0.1:${address.port}`;
+    await page.goto(origin);
+    const expected = { test: "qualification" };
+    const response = await observeQualificationPost(
+      page,
+      `${origin}/submit`,
+      expected,
+      async () => {},
+      async () => {
+        const status = await page.evaluate(async (body) => {
+          const result = await fetch("/submit", { method: "POST", body });
+          return result.status;
+        }, JSON.stringify(expected));
+        expect(status).toBe(500);
+        throw new Error("Simulated UI failure after response.");
+      },
+    );
+    expect(response.status()).toBe(500);
+    expect(await response.json()).toEqual({ message: "Qualification failed." });
+  } finally {
     await server[Symbol.asyncDispose]();
   }
 });
