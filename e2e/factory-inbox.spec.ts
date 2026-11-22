@@ -254,7 +254,8 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
       page.getByRole("link", { name: "Inbox", exact: true }).press("Enter"),
     ]);
     await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
-    await expect(factory).toHaveValue("all");
+    await expect(factory).toHaveText("All factories");
+    await expect(factory).toHaveAttribute("data-value", "all");
     await expect(main.getByText("2 awaiting review · 0 clarifications")).toBeVisible();
     await expect(main.getByText(delegatedTitle, { exact: true })).toBeVisible();
     await expect(main.getByText("Directors only", { exact: true })).toHaveCount(0);
@@ -304,8 +305,13 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await expect(main.getByText("1 awaiting review · 0 clarifications")).toBeVisible();
     await expect(defaultLink).toHaveCount(0);
 
-    await factory.selectOption({ label: "Customer Tools" });
-    await expect(factory).toHaveValue(delegated.id);
+    await factory.click();
+    await page
+      .getByRole("listbox", { name: "Factory", exact: true })
+      .getByRole("option", { name: "Customer Tools", exact: true })
+      .click();
+    await expect(factory).toHaveText("Customer Tools");
+    await expect(factory).toHaveAttribute("data-value", delegated.id);
     await expect(main.getByText(delegatedTitle, { exact: true })).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });

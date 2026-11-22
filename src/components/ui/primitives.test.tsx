@@ -806,4 +806,72 @@ describe("accessible overlay primitives", () => {
     const modal = document.querySelector("[role='dialog'][aria-label='Legacy modal']");
     expect(modal).toContainElement(listbox);
   });
+
+  it("aligns end-aligned SelectContent to the trigger right edge and flips on narrow left edges", async () => {
+    const user = userEvent.setup();
+
+    function stubRect(
+      element: Element,
+      rect: { height: number; left: number; top: number; width: number },
+    ) {
+      vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+        bottom: rect.top + rect.height,
+        height: rect.height,
+        left: rect.left,
+        right: rect.left + rect.width,
+        toJSON() {
+          return this;
+        },
+        top: rect.top,
+        width: rect.width,
+        x: rect.left,
+        y: rect.top,
+      } as DOMRect);
+    }
+
+    renderWithOverlays(
+      <Select defaultValue="default">
+        <SelectTrigger accessibleLabel="Factory" />
+        <SelectContent align="end">
+          <SelectItem value="all">All factories</SelectItem>
+          <SelectItem value="default">Default factory</SelectItem>
+        </SelectContent>
+      </Select>,
+    );
+
+    const trigger = screen.getByRole("combobox", { name: "Factory" });
+
+    // Top-right desktop placement: aligns right edge to trigger right edge (1440 - 1420 = 20px).
+    stubRect(trigger, { height: 36, left: 1280, top: 6, width: 140 });
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(1440);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(900);
+
+    await user.click(trigger);
+    const desktopListbox = await screen.findByRole("listbox", { name: "Factory" });
+    expect(desktopListbox.style.right).toBe("20px");
+    expect(desktopListbox.style.left).toBe("");
+    expect(desktopListbox.style.getPropertyValue("--radix-select-content-transform-origin")).toBe(
+      "top right",
+    );
+    expect(screen.getByRole("option", { name: "Default factory" })).toHaveAttribute(
+      "data-value",
+      "default",
+    );
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+
+    // Mobile wrapped left-edge placement: flips to start-aligned so it stays in the viewport.
+    stubRect(trigger, { height: 44, left: 8, top: 52, width: 140 });
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(390);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(844);
+
+    await user.click(trigger);
+    const mobileListbox = await screen.findByRole("listbox", { name: "Factory" });
+    expect(mobileListbox.style.left).toBe("8px");
+    expect(mobileListbox.style.right).toBe("");
+    expect(mobileListbox.style.getPropertyValue("--radix-select-content-transform-origin")).toBe(
+      "top left",
+    );
+  });
 });

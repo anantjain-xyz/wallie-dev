@@ -59,9 +59,11 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
     await page.getByRole("link", { name: "Analytics", exact: true }).click();
     await waitForAnalytics(page);
 
+    await page.getByRole("combobox", { name: "Factory", exact: true }).click();
     await page
-      .getByRole("combobox", { name: "Factory", exact: true })
-      .selectOption(fixture.factoryId);
+      .getByRole("listbox", { name: "Factory", exact: true })
+      .locator(`[role="option"][data-value="${fixture.factoryId}"]`)
+      .click();
     await expect(page).toHaveURL(new RegExp(`[?&]factory=${fixture.factoryId}(?:&|$)`));
     await page.getByLabel("From date", { exact: true }).fill(fixture.from);
     await page.getByLabel("To date", { exact: true }).fill(fixture.to);

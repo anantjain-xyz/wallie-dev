@@ -58,7 +58,8 @@ test("Overview matches Analytics, keeps projection controls scoped, and exposes 
       .getByRole("link", { name: "Overview", exact: true })
       .click();
     await expect(view).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveValue(
+    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveAttribute(
+      "data-value",
       fixture.factoryId,
     );
     await page.getByLabel("From date", { exact: true }).fill(fixture.from);

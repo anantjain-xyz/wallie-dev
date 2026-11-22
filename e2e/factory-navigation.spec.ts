@@ -140,7 +140,20 @@ async function seedFactoryWork(
 }
 
 async function selectFactory(page: Page, name: string) {
-  await page.getByRole("combobox", { name: "Factory", exact: true }).selectOption({ label: name });
+  await page.getByRole("combobox", { name: "Factory", exact: true }).click();
+  await page
+    .getByRole("listbox", { name: "Factory", exact: true })
+    .getByRole("option", { name, exact: true })
+    .click();
+}
+
+async function expectFactoryOptions(page: Page, labels: string[]) {
+  const factory = page.getByRole("combobox", { name: "Factory", exact: true });
+  await factory.click();
+  const listbox = page.getByRole("listbox", { name: "Factory", exact: true });
+  await expect(listbox.getByRole("option")).toHaveText(labels);
+  await page.keyboard.press("Escape");
+  await expect(listbox).toHaveCount(0);
 }
 
 async function capture(page: Page, info: TestInfo, name: string) {
@@ -280,11 +293,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     );
     await expect(defaultLink).toBeVisible();
     await expect(visibleLink).toHaveCount(0);
-    await expect(factory.locator("option")).toHaveText([
-      "All factories",
-      defaultFactory.name,
-      visibleFactory.name,
-    ]);
+    await expectFactoryOptions(page, ["All factories", defaultFactory.name, visibleFactory.name]);
     await expect(page.getByRole("link", { name: "Factory definition", exact: true })).toHaveCount(
       0,
     );
@@ -301,7 +310,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
       page.getByRole("heading", { name: "Agents", exact: true, level: 1 }),
     ).toBeVisible();
     expect(new URL(page.url()).searchParams.get("factory")).toBe(visibleFactory.id);
-    await expect(factory.locator("option")).toHaveText([defaultFactory.name, visibleFactory.name]);
+    await expectFactoryOptions(page, [defaultFactory.name, visibleFactory.name]);
     await expect(page.getByRole("link", { name: "New agent" })).toHaveCount(0);
     const agents = page.getByRole("region", { name: "Factory agents" });
     const secondaryAgentHref = await agents.getByRole("link").getAttribute("href");
@@ -357,11 +366,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
       page.getByText("Customer tools session 1", { exact: true }).filter({ visible: true }),
     ).toBeVisible();
     await expect(page.getByText("Default session 1", { exact: true })).toHaveCount(0);
-    await expect(factory.locator("option")).toHaveText([
-      "All factories",
-      defaultFactory.name,
-      visibleFactory.name,
-    ]);
+    await expectFactoryOptions(page, ["All factories", defaultFactory.name, visibleFactory.name]);
     await capture(page, info, "02-mobile-dark-factory-selector");
     const trigger = page.getByRole("button", { name: "Workspace navigation: Pipeline" });
     await trigger.press("Enter");
@@ -398,7 +403,8 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto(activityPath);
     await expect(page.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
-    await expect(factory).toHaveValue("all");
+    await expect(factory).toHaveText("All factories");
+    await expect(factory).toHaveAttribute("data-value", "all");
     await expect(page.getByRole("main").getByText(/Restricted/u)).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Governance", exact: true })).toHaveCount(0);
     // The total reflects all authorized rows even when only a bounded preview is visible.
@@ -495,8 +501,9 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto(governancePath);
     await expect(page.getByRole("heading", { name: "Governance", level: 1 })).toBeVisible();
-    await expect(factory).toHaveValue(visibleFactory.id);
-    await expect(factory.locator("option")).toHaveText([visibleFactory.name]);
+    await expect(factory).toHaveText(visibleFactory.name);
+    await expect(factory).toHaveAttribute("data-value", visibleFactory.id);
+    await expectFactoryOptions(page, [visibleFactory.name]);
     await expect(page.getByRole("link", { name: "Governance", exact: true })).toBeVisible();
 
     await page.getByRole("textbox", { name: "Principal name", exact: true }).fill("Release runner");
