@@ -16,7 +16,11 @@ import {
   resolveGovernanceFactorySelection,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
-import { workspaceBenchmarksPath, workspaceFailureGroupsPath } from "@/lib/routes";
+import {
+  workspaceBenchmarksPath,
+  workspaceFailureGroupsPath,
+  workspaceImprovementsPath,
+} from "@/lib/routes";
 
 export function FactorySelector({
   factories,
@@ -44,7 +48,8 @@ export function FactorySelector({
         {
           useFirstVisible:
             pathname === workspaceBenchmarksPath(workspaceSlug) ||
-            pathname === workspaceFailureGroupsPath(workspaceSlug),
+            pathname === workspaceFailureGroupsPath(workspaceSlug) ||
+            pathname === workspaceImprovementsPath(workspaceSlug),
         },
       );
   const selectedValue = isFactoryOutcomePath(pathname, workspaceSlug)
