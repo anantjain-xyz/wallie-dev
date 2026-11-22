@@ -3,9 +3,11 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { POST } from "@/app/api/workspaces/[workspaceId]/factories/[factoryId]/improvement-proposals/[proposalId]/revisions/[proposalRevisionId]/adoption/route";
 import { mintSandboxRepositoryToken } from "@/features/github/sandbox-token";
 import { compileFactoryDefinition } from "@/lib/factory-definitions/compiler";
 import type { FactoryDefinitionCatalog } from "@/lib/factory-definitions/references";
+import { clearRateLimitsForTesting } from "@/lib/rate-limit";
 import type { Database } from "@/lib/supabase/database.types";
 
 import type {
@@ -20,6 +22,9 @@ import {
 import { adoptFactoryImprovement } from "./adoption-server";
 import type { FactoryImprovementPublication } from "./publication-contracts";
 
+const { access, admin } = vi.hoisted(() => ({ access: vi.fn(), admin: vi.fn() }));
+vi.mock("@/lib/workspaces/access", () => ({ requireWorkspaceAccessById: access }));
+vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: admin }));
 vi.mock("@/features/github/sandbox-token", () => ({ mintSandboxRepositoryToken: vi.fn() }));
 vi.mock("./adoption-github", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./adoption-github")>()),
@@ -40,6 +45,7 @@ const skillRevisionId = id(8);
 const memberId = id(9);
 const installationId = id(10);
 const repositoryFullName = "fixture/definitions";
+const origin = "https://wallie.test";
 const token = "fixture-read-token";
 const createdAt = "2026-01-01T12:00:00Z";
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -225,6 +231,10 @@ function fixture({
             trace.push("activation");
             activationRequests.push(await request.json());
             return Response.json({ adoption, replay: false });
+          case "/rest/v1/factories":
+            expect(searchParams.get("workspace_id")).toBe(`eq.${ids.workspaceId}`);
+            expect(searchParams.get("id")).toBe(`eq.${ids.factoryId}`);
+            return Response.json({ id: ids.factoryId });
           case "/rest/v1/workspace_members":
             return Response.json([{ id: memberId }]);
           case "/rest/v1/pipelines":
@@ -261,8 +271,24 @@ function fixture({
     },
   });
   const scope = { ...ids, client, signal: controller.signal };
+  access.mockResolvedValue({
+    ok: true,
+    context: { supabase: client, user: { id: ids.actorUserId } },
+  });
+  admin.mockReturnValue(client);
   return {
     adopt: () => adoptFactoryImprovement(scope, command),
+    submit: () => {
+      const { workspaceId, factoryId, proposalId, proposalRevisionId } = ids;
+      const endpoint = `/api/workspaces/${workspaceId}/factories/${factoryId}/improvement-proposals/${proposalId}/revisions/${proposalRevisionId}/adoption`;
+      const request = new Request(`${origin}${endpoint}`, {
+        method: "POST",
+        headers: { origin, "Content-Type": "application/json" },
+        body: JSON.stringify(command),
+        signal: controller.signal,
+      });
+      return POST(request, { params: Promise.resolve(ids) });
+    },
     adoption,
     trace,
     activationRequests,
@@ -272,15 +298,20 @@ function fixture({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearRateLimitsForTesting();
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", origin);
   vi.stubEnv("WALLIE_ENABLED_SANDBOX_PROVIDERS", "vercel");
 });
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe("adoptFactoryImprovement", () => {
-  it("sends only the reviewed bytes and scoped activation proof after refreshing authority", async () => {
-    const { adopt, adoption, trace, activationRequests } = fixture();
-    await expect(adopt()).resolves.toEqual({ adoption, replay: false });
+  it("activates through the first POST using the exact reviewed bytes and fresh authority", async () => {
+    const { submit, adoption, trace, activationRequests } = fixture();
+    const response = await submit();
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({ adoption, replay: false });
     expect(trace).toEqual([
       "hosted bytes",
       "scoped skill catalog",
@@ -385,10 +416,14 @@ describe("adoptFactoryImprovement", () => {
   });
 
   it("aborts the in-flight catalog read and returns a retryable error when the adoption deadline expires", async () => {
-    const { adopt, trace, activationRequests, catalogSignals } = fixture({
+    const { submit, trace, activationRequests, catalogSignals } = fixture({
       abortDuringCatalog: true,
     });
-    await expect(adopt()).rejects.toMatchObject({ code: "PT502" });
+    const response = await submit();
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Retry the same proposal revision."),
+    });
     expect(catalogSignals.map((signal) => signal.aborted)).toEqual([true]);
     expect(trace).toEqual(["hosted bytes", "scoped skill catalog"]);
     expect(activationRequests).toEqual([]);

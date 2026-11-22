@@ -107,7 +107,7 @@ function adoptionFailure(error: unknown) {
     (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
   ) {
     return failure(
-      "Could not verify the reviewed merge with GitHub. Retry the same proposal revision.",
+      "Could not finish verifying the reviewed configuration. Retry the same proposal revision.",
       502,
     );
   }
