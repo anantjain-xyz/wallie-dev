@@ -1,0 +1,54 @@
+-- Run only against an isolated local Supabase stack. Set base_branch to a unique smoke ref.
+\set ON_ERROR_STOP on
+\if :{?cleanup}
+begin;
+set local storage.allow_delete_query = 'true';
+delete from public.workspaces where id = '62300000-0000-4000-9000-000000000011'
+  and slug = 'benchmark-frontier-test';
+delete from storage.objects
+where bucket_id = 'session-source-checkpoints'
+  and name like '62300000-0000-4000-9000-000000000011/benchmark/%';
+delete from auth.users where id = '62300000-0000-4000-9000-000000000001'
+  and email = 'benchmark-frontier-owner@example.test';
+commit;
+\else
+begin;
+set local request.jwt.claim.role = 'service_role';
+select not exists (select 1 from public.agent_jobs where status = 'queued')
+  and not exists (select 1 from public.factory_benchmark_schedules where state = 'active')
+  and :'base_branch' ~ '^wallie/improvement-smoke/[0-9a-f-]{36}/base$' as isolated_fixture \gset
+\if :isolated_fixture
+\else
+\echo 'The smoke requires a unique smoke branch and a disposable database without other runnable work.'
+select 1 / 0;
+\endif
+\o /dev/null
+\ir ../../supabase/tests/fixtures/factory_improvement_publication.psql
+select pg_temp.execute_publication_fixture(true);
+select public.reconcile_factory_benchmark_evaluations(100);
+select pg_temp.frontier_score(p_fail_position => 1);
+select pg_temp.execute_publication_fixture(false);
+select public.reconcile_factory_benchmark_evaluations(100);
+select pg_temp.frontier_score();
+update public.github_repositories
+set repo_id = 1196742316, name = 'wallie-dev', full_name = 'anantjain-xyz/wallie-dev',
+    html_url = 'https://github.com/anantjain-xyz/wallie-dev', private = false
+where id = pg_temp.live_id(360) and workspace_id = pg_temp.live_id(11);
+select public.set_factory_improvement_publication_target(workspace_id, factory_id, owner_id,
+  pg_temp.live_id(360), :'base_branch') from live_scope;
+select (public.get_factory_improvement_validation(workspace_id, factory_id, owner_id,
+  pg_temp.live_id(300), pg_temp.live_id(312))->>'status' = 'qualified') as qualified_fixture from live_scope \gset
+\if :qualified_fixture
+\else
+\echo 'The synthetic paired benchmark did not qualify.'
+select 1 / 0;
+\endif
+\o
+select jsonb_build_object('workspaceId', scope.workspace_id, 'factoryId', scope.factory_id, 'actorUserId', scope.owner_id,
+  'proposalId', proposal.proposal_id, 'proposalRevisionId', proposal.id, 'baseBranch', :'base_branch',
+  'baselineDefinitionJson', base.definition_json, 'baselineDigest', proposal.base_digest,
+  'candidateDigest', proposal.candidate_digest)
+from live_scope scope join internal.factory_improvement_proposal_revisions proposal on proposal.id = pg_temp.live_id(312)
+join public.factory_definition_revisions base on base.id = proposal.base_revision_id;
+commit;
+\endif

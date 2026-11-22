@@ -50,6 +50,24 @@ describe("sandbox repository tokens", () => {
     );
   });
 
+  it("reauthorizes a frozen numeric repository for read-only pull request recovery", async () => {
+    const input = {
+      installationId: 123,
+      repositoryFullName: "acme/definitions",
+      purpose: "pull-request-read" as const,
+    };
+    await expect(mintSandboxRepositoryToken(input)).rejects.toThrow("numeric repository identity");
+    await mintSandboxRepositoryToken({ ...input, repositoryId: 777 });
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      "POST /app/installations/{installation_id}/access_tokens",
+      {
+        installation_id: 123,
+        repository_ids: [777],
+        permissions: { contents: "read", pull_requests: "read" },
+      },
+    );
+  });
+
   it.each(["read-context", "benchmark-checkout"] as const)(
     "limits %s to a numeric repository and contents read permission",
     async (purpose) => {

@@ -8,14 +8,20 @@ export async function mintSandboxRepositoryToken(input: {
   repositoryId?: number;
   signal?: AbortSignal;
   /** Execution is reserved for trusted publication. */
-  purpose: "checkout" | "execution" | "capability-check" | "read-context" | "benchmark-checkout";
+  purpose:
+    | "checkout"
+    | "execution"
+    | "capability-check"
+    | "read-context"
+    | "benchmark-checkout"
+    | "pull-request-read";
 }): Promise<string> {
   const [owner, repository, extra] = input.repositoryFullName.split("/");
   if (!owner || !repository || extra !== undefined || /\s/.test(input.repositoryFullName)) {
     throw new Error("A sandbox token requires one owner/repository name.");
   }
   if (
-    ((input.purpose === "read-context" || input.purpose === "benchmark-checkout") &&
+    (["read-context", "benchmark-checkout", "pull-request-read"].includes(input.purpose) &&
       input.repositoryId === undefined) ||
     (input.repositoryId !== undefined &&
       (!Number.isSafeInteger(input.repositoryId) || input.repositoryId <= 0))
@@ -36,7 +42,9 @@ export async function mintSandboxRepositoryToken(input: {
       permissions:
         input.purpose === "execution"
           ? { contents: "write", pull_requests: "write" }
-          : { contents: "read" },
+          : input.purpose === "pull-request-read"
+            ? { contents: "read", pull_requests: "read" }
+            : { contents: "read" },
       ...(input.signal ? { request: { signal: input.signal, redirect: "error" } } : {}),
     },
   );
