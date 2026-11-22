@@ -171,7 +171,7 @@ describe("ShellHeader", () => {
     mountShell({ creationFactory: null });
 
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Switch to/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: "New session" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -180,6 +180,8 @@ describe("ShellHeader", () => {
     ["the explicit default factory scope", "/w/acme-corp", "factory=factory-1"],
     ["a case-insensitive default factory id", "/w/acme-corp", "factory=FACTORY-1"],
     ["a runs list page", "/w/acme-corp/runs", ""],
+    ["an unscoped session detail page", "/w/acme-corp/sessions/42", ""],
+    ["an unscoped run detail page", "/w/acme-corp/runs/run-1", ""],
   ])("keeps the New session launcher on %s", (_label, pathname, query) => {
     mocked.pathname = pathname;
     mocked.searchParams = new URLSearchParams(query);
@@ -188,17 +190,7 @@ describe("ShellHeader", () => {
     expect(html).toContain("New session");
     expect(html).not.toContain("Switch to create");
     expect(html).not.toContain("New session in ");
-  });
-
-  it.each([
-    ["a session detail page", "/w/acme-corp/sessions/42"],
-    ["a run detail page", "/w/acme-corp/runs/run-1"],
-  ])("names the default factory on the launcher from unscoped %s", (_label, pathname) => {
-    mocked.pathname = pathname;
-    const html = renderShell();
-
-    expect(html).toContain("New session in Default Factory");
-    expect(html).not.toContain("Switch to create");
+    expect(html).not.toContain("Default Factory");
   });
 
   it.each([
@@ -206,14 +198,15 @@ describe("ShellHeader", () => {
     ["the all-factories aggregate", "factory=all"],
     ["a repeated malformed scope", "factory=factory-1&factory=other-factory"],
     ["an unknown factory id", "factory=missing-factory"],
-  ])("offers an explicit named switch to the default factory from %s", (_label, query) => {
+  ])("routes New session to the default factory from %s", (_label, query) => {
     mocked.searchParams = new URLSearchParams(query);
     mountShell();
 
     const link = screen.getByRole("link", {
-      name: "Switch to create in Default Factory",
+      name: "New session",
     });
     expect(link).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
+    expect(link).toHaveTextContent("New session");
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
   });
 
@@ -227,20 +220,21 @@ describe("ShellHeader", () => {
     mocked.pathname = pathname;
     mountShell();
 
-    expect(
-      screen.getByRole("link", { name: "Switch to create in Default Factory" }),
-    ).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
+    const link = screen.getByRole("link", { name: "New session" });
+    expect(link).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
+    expect(link).toHaveTextContent("New session");
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
   });
 
-  it("shows only the switch action for a create deep link outside the default scope", () => {
+  it("links to default-factory creation for a create deep link outside the default scope", () => {
     mocked.searchParams = new URLSearchParams("create=1&factory=other-factory");
     mountShell();
 
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(
-      screen.getByRole("link", { name: "Switch to create in Default Factory" }),
-    ).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
+    expect(screen.getByRole("link", { name: "New session" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/sessions?factory=factory-1&create=1",
+    );
   });
 
   it("keeps an unsent draft mounted while the factory scope changes", async () => {
@@ -266,7 +260,7 @@ describe("ShellHeader", () => {
     mocked.searchParams = new URLSearchParams("factory=other-factory");
     view.rerender(shell());
     await waitFor(() => expect(screen.queryByLabelText("Prompt")).toBeNull());
-    expect(screen.getByRole("link", { name: "Switch to create in Default Factory" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "New session" })).toBeVisible();
 
     mocked.searchParams = new URLSearchParams();
     view.rerender(shell());
