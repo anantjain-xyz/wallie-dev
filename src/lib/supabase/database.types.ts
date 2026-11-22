@@ -10345,6 +10345,18 @@ export type Database = {
         }
         Returns: boolean
       }
+      advance_factory_improvement_publication: {
+        Args: {
+          p_action: string
+          p_actor_user_id: string
+          p_claim_id: string
+          p_factory_id: string
+          p_publication_id: string
+          p_values: Json
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       answer_session_specification_clarification_once: {
         Args: {
           p_actor_member_id: string
@@ -11072,6 +11084,16 @@ export type Database = {
           lease_id: string
           subscription_revision: number
         }[]
+      }
+      claim_factory_improvement_publication: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_proposal_id: string
+          p_proposal_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       claim_factory_judge_job: {
         Args: never
@@ -12779,6 +12801,16 @@ export type Database = {
           p_factory_id: string
           p_proposal_id: string
           p_revision_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_factory_improvement_publication: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_proposal_id: string
+          p_proposal_revision_id: string
           p_workspace_id: string
         }
         Returns: Json
@@ -16102,6 +16134,16 @@ export type Database = {
           target_workspace_id: string
         }
         Returns: string
+      }
+      set_factory_improvement_publication_target: {
+        Args: {
+          p_actor_user_id: string
+          p_base_branch: string
+          p_factory_id: string
+          p_repository_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       set_git_continuity_release: {
         Args: {

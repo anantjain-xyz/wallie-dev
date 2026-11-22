@@ -213,6 +213,7 @@ export function createCanonicalPrApi(input: {
   baseBranch: string;
   token: string;
   signal: AbortSignal;
+  fetcher?: typeof fetch;
 }) {
   const parsed = inputSchema.safeParse(input);
   if (!parsed.success) throw new CanonicalPrApiError("pr_invalid_input");
@@ -247,7 +248,7 @@ export function createCanonicalPrApi(input: {
         (async () => {
           signal.throwIfAborted();
           started = true;
-          const response = await fetch(`${prefix}/${path}`, {
+          const response = await (input.fetcher ?? fetch)(`${prefix}/${path}`, {
             method: creating ? "POST" : "GET",
             signal,
             redirect: "manual",

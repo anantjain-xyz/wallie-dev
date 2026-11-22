@@ -1,0 +1,71 @@
+-- Use the genuine benchmark fold with matched execution inputs and measured judge receipts.
+\ir factory_benchmark_frontier.psql
+\ir factory_improvement_validation.psql
+
+-- Publication targets a separate configuration repository, not the benchmark execution repository.
+insert into public.github_repositories(id, workspace_id, factory_id, github_installation_id, repo_id, name,
+  full_name, private, html_url, default_branch)
+select pg_temp.live_id(360), workspace_id, factory_id, pg_temp.live_id(35), 62300360,
+  'improvement-config', 'fixture/improvement-config', true, 'https://github.com/fixture/improvement-config', 'main'
+from live_scope;
+
+-- The HTTP publisher verifies compiled bundles as well as their digests. The frontier's
+-- smaller execution fixtures intentionally omit fields used only by that compiler bundle.
+with definitions as (
+  select source.workspace_id, source.factory_id, source.created_by, variant.target_slot,
+    (source.definition_json::jsonb || jsonb_build_object(
+      'agent', (source.definition_json::jsonb->'agent') ||
+        '{"stallTimeoutMs":120000,"maxRetries":0,"maxTurns":10}'::jsonb,
+      'executionPolicyRevisionId', null, 'deliveryPolicyRevisionId', null,
+      'skillIds', '[]'::jsonb, 'toolIds', '[]'::jsonb, 'operatingRuleStageIds', '[]'::jsonb,
+      'stages', jsonb_build_array(jsonb_build_object('id', pg_temp.live_id(41), 'slug', 'review', 'name', 'Review',
+        'promptTemplateMd', case variant.target_slot when 161 then 'Review the task.' else 'Review the task against the acceptance criteria.' end,
+        'previousStageIds', '[]'::jsonb))))::text as body
+  from (values (101,161), (102,162)) variant(source_slot, target_slot)
+  join public.factory_definition_revisions source on source.id = pg_temp.live_id(variant.source_slot)
+)
+insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version, definition_json,
+  canonical_digest, created_by)
+select pg_temp.live_id(target_slot), workspace_id, factory_id, 1, body,
+  encode(sha256(convert_to(body, 'UTF8')), 'hex'), created_by from definitions;
+insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
+select workspace_id, factory_id, pg_temp.live_id(161), 2, owner_id from live_scope;
+insert into internal.factory_improvement_proposal_revisions(id, workspace_id, factory_id, proposal_id, revision_number,
+  previous_revision_id, base_activation_number, base_revision_id, base_digest, request_id, author_member_id, intent,
+  evidence_digest, cited_member_ids, candidate_revision_id, candidate_digest, diff, diagnostics)
+select pg_temp.live_id(312), previous.workspace_id, previous.factory_id, previous.proposal_id, 2, previous.id,
+  2, baseline.id, baseline.canonical_digest, pg_temp.live_id(322), previous.author_member_id,
+  jsonb_set(previous.intent, '{base}', jsonb_build_object('activationNumber', 2,
+    'revisionId', baseline.id, 'digest', baseline.canonical_digest)),
+  previous.evidence_digest, previous.cited_member_ids, candidate.id, candidate.canonical_digest, previous.diff, '[]'
+from internal.factory_improvement_proposal_revisions previous
+join public.factory_definition_revisions baseline on baseline.id = pg_temp.live_id(161)
+join public.factory_definition_revisions candidate on candidate.id = pg_temp.live_id(162)
+where previous.id = pg_temp.live_id(311);
+
+create temp table publication_validation as
+select public.start_factory_improvement_validation(args.workspace_id, args.factory_id, args.owner_id,
+  pg_temp.live_id(300), pg_temp.live_id(312), pg_temp.live_id(330), args.targeted_suite_id,
+  args.holdout_suite_id, args.policy_id, args.scorer_id, scoped.axes, scoped.axes, args.execution, args.thresholds)->'validation' as receipt
+from validation_arguments args cross join lateral (select jsonb_set(jsonb_set(args.axes,
+  '{0,definitionRevisionId}', to_jsonb(pg_temp.live_id(161))), '{1,definitionRevisionId}', to_jsonb(pg_temp.live_id(162)))) scoped(axes);
+
+create function pg_temp.execute_publication_fixture(p_targeted boolean) returns void language plpgsql as $$
+declare
+  scope record;
+begin
+  select live.*, (receipt#>>'{targeted,experimentId}')::uuid as targeted_id,
+    (receipt#>>'{holdout,experimentId}')::uuid as holdout_id
+  into strict scope from live_scope live cross join publication_validation;
+
+  if p_targeted then
+    update public.agent_jobs set scheduled_at = clock_timestamp() + interval '1 hour'
+    where workspace_id <> scope.workspace_id and status = 'queued';
+    perform public.control_factory_benchmark_schedule(scope.workspace_id, scope.factory_id, scope.holdout_id, scope.owner_id, 'pause');
+  else
+    perform public.control_factory_benchmark_schedule(scope.workspace_id, scope.factory_id, scope.targeted_id, scope.owner_id, 'pause');
+    perform public.control_factory_benchmark_schedule(scope.workspace_id, scope.factory_id, scope.holdout_id, scope.owner_id, 'resume');
+  end if;
+  perform pg_temp.frontier_execute(p_latency_floor_ms => 2000) from generate_series(1,4);
+end;
+$$;
