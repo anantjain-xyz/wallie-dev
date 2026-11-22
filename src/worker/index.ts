@@ -10,6 +10,7 @@ import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
+import { drainFactoryDiagnoses } from "@/lib/factory-diagnosis/worker";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
@@ -210,6 +211,7 @@ async function main() {
     let maintainingEvaluationQueue = false;
     let processingFailureCohorts = false;
     let evaluatingFactoryJudges = false;
+    let runningFactoryDiagnosis = false;
     let checkingRoutingCanaries = false;
     let reconcilingBenchmarkSchedules = false;
     let reconcilingBenchmarkEvaluations = false;
@@ -272,6 +274,16 @@ async function main() {
               await drainFactoryJudges(admin, "node");
             } finally {
               evaluatingFactoryJudges = false;
+            }
+          });
+        }
+        if (!runningFactoryDiagnosis) {
+          runningFactoryDiagnosis = true;
+          timerTasks.run("factory diagnosis", async () => {
+            try {
+              await drainFactoryDiagnoses(admin, "node");
+            } finally {
+              runningFactoryDiagnosis = false;
             }
           });
         }

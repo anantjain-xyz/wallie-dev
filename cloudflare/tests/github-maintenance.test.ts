@@ -11,6 +11,7 @@ import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
 import { pruneFactoryOAuthCredentials } from "@/lib/factory-oauth/maintenance";
 import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorization/maintenance";
+import { drainFactoryDiagnoses } from "@/lib/factory-diagnosis/worker";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import { requestFactoryEventDispatch } from "@/lib/factory-event-subscriptions/relay";
@@ -36,6 +37,7 @@ vi.mock("@/lib/factory-oauth/maintenance", () => ({ pruneFactoryOAuthCredentials
 vi.mock("@/lib/factory-command-authorization/maintenance", () => ({
   pruneFactoryCommandAdmissions: vi.fn(),
 }));
+vi.mock("@/lib/factory-diagnosis/worker", () => ({ drainFactoryDiagnoses: vi.fn() }));
 vi.mock("@/lib/factory-evaluations/judge-worker", () => ({ drainFactoryJudges: vi.fn() }));
 vi.mock("@/lib/factory-event-subscriptions/maintenance", () => ({
   pruneFactoryEventOutbox: vi.fn(),
@@ -258,6 +260,7 @@ it.each([
       );
       expect(cleanupRunExports).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainFactoryJudges).toHaveBeenCalledExactlyOnceWith(admin, "workerd");
+      expect(drainFactoryDiagnoses).toHaveBeenCalledExactlyOnceWith(admin, "workerd");
       expect(vi.mocked(cleanupRunExports).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(drainFactoryJudges).mock.invocationCallOrder[0],
       );

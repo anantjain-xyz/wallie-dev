@@ -10689,6 +10689,17 @@ export type Database = {
         }
         Returns: Json
       }
+      begin_factory_diagnosis: {
+        Args: {
+          p_attempt_id: string
+          p_diagnosis_id: string
+          p_evidence_digest: string
+          p_factory_id: string
+          p_lease_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       begin_factory_event_send: {
         Args: {
           p_delivery_id: string
@@ -10899,6 +10910,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      cancel_factory_diagnosis: {
+        Args: {
+          p_actor_user_id: string
+          p_diagnosis_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       cancel_factory_evaluation_job: {
         Args: {
           p_actor_user_id: string
@@ -11026,6 +11046,7 @@ export type Database = {
           status: string
         }[]
       }
+      claim_factory_diagnosis: { Args: never; Returns: Json }
       claim_factory_evaluation_job: {
         Args: never
         Returns: {
@@ -12457,6 +12478,20 @@ export type Database = {
         }
         Returns: boolean
       }
+      finish_factory_diagnosis: {
+        Args: {
+          p_attempt_id: string
+          p_diagnosis_id: string
+          p_factory_id: string
+          p_lease_id: string
+          p_result?: Json
+          p_status: string
+          p_trace?: Json
+          p_usage?: Json
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       finish_factory_judge_invocation: {
         Args: {
           p_attempt_id: string
@@ -12685,6 +12720,14 @@ export type Database = {
           p_factory_id: string
           p_from: string
           p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_factory_diagnosis: {
+        Args: {
+          p_diagnosis_id: string
+          p_factory_id: string
           p_workspace_id: string
         }
         Returns: Json
@@ -13077,6 +13120,16 @@ export type Database = {
       }
       is_factory_benchmark_inference_request_open: {
         Args: { p_request_id: string }
+        Returns: boolean
+      }
+      is_factory_diagnosis_claim_current: {
+        Args: {
+          p_attempt_id: string
+          p_diagnosis_id: string
+          p_factory_id: string
+          p_lease_id: string
+          p_workspace_id: string
+        }
         Returns: boolean
       }
       issue_factory_machine_token: {
@@ -13890,6 +13943,16 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      prepare_factory_diagnosis: {
+        Args: {
+          p_attempt_id: string
+          p_diagnosis_id: string
+          p_factory_id: string
+          p_lease_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       prepare_factory_judge_invocation: {
         Args: {
@@ -14836,6 +14899,17 @@ export type Database = {
           id: string
           role: Database["public"]["Enums"]["member_role"]
         }[]
+      }
+      request_factory_diagnosis: {
+        Args: {
+          p_actor_user_id: string
+          p_cohort_id: string
+          p_factory_id: string
+          p_prompt_revision_id: string
+          p_request_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       request_factory_scorer_reevaluation: {
         Args: {

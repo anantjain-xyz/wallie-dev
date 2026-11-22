@@ -12,6 +12,7 @@ export type TrustedPromptSource =
   | "stage.slug"
   | "wallie.titleInstructions"
   | "wallie.evaluationJudgeInstructions"
+  | "wallie.failureDiagnosisInstructions"
   | "wallie.artifactEvidencePolicy"
   | "wallie.buildGitPublicationPolicy"
   | "wallie.readContextInstructions"
@@ -36,6 +37,8 @@ export type UntrustedPromptSource =
   | `benchmark.memory.${string}`
   | "evaluation.rubric"
   | `evaluation.evidence.${string}`
+  | "diagnosis.instructions"
+  | "diagnosis.evidence"
   | "session.prompt"
   | "session.attachments"
   | `skill.repositoryRevision.${string}`
