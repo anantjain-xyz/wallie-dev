@@ -1,7 +1,6 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { open, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -12,6 +11,7 @@ import { z } from "zod";
 import { authenticateQualificationOwner } from "../e2e/helpers/factory-improvement-loop-qualification";
 import type { Database } from "../src/lib/supabase/database.types";
 import {
+  claimImprovementQualificationStateFile,
   factoryImprovementLoopManifestSchema,
   improvementLoopPreparedSchema,
   improvementQualificationDatabaseEnvironment,
@@ -33,7 +33,20 @@ const statusSchema = z.object({
   SERVICE_ROLE_KEY: z.string().min(1),
   JWT_SECRET: z.string().min(1),
 });
-const preparingSchema = z.object({ preparing: z.literal(true), runId: z.string().uuid() }).strict();
+const pausedContinuitySchema = z.strictObject({
+  revision: z
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER - 2),
+  reason: z.string().min(1),
+});
+const preparingSchema = z.strictObject({
+  preparing: z.literal(true),
+  runId: z.string().uuid(),
+  pausedContinuity: pausedContinuitySchema.optional(),
+});
+type PreparingState = z.output<typeof preparingSchema>;
 const savedPreparationSchema = improvementLoopPreparedSchema.extend({
   baseProof: improvementLoopBaseProofSchema.optional(),
   installationId: z.number().int().positive().safe().nullable(),
@@ -65,7 +78,7 @@ function commandArguments() {
     !values.state
   ) {
     throw new Error(
-      "Use prepare or publish with --state and either --workdir or a private local --status-file. Prepare also needs --app-origin.",
+      "Use prepare or publish with --state and either --workdir or a private local --status-file. Fresh preparation also needs --app-origin.",
     );
   }
   return {
@@ -92,34 +105,6 @@ async function saveState(path: string, state: SavedState) {
   const temporary = `${path}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   await rename(temporary, path);
-}
-
-async function claimStateFile(path: string) {
-  const lock = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
-  try {
-    // flock belongs to the inherited file description. The parent holds it until close or exit.
-    const result = spawnSync(
-      "perl",
-      [
-        "-MFcntl=:flock",
-        "-e",
-        'open my $lock, ">&=3" or exit 2; flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 2);',
-      ],
-      { stdio: ["ignore", "ignore", "ignore", lock.fd], timeout: 5_000 },
-    );
-    if (result.status === 75) {
-      throw new Error("Another qualification process owns this state file.");
-    }
-    if (result.status !== 0) {
-      throw new Error("Could not lock the qualification state file with Perl flock.", {
-        cause: result.error,
-      });
-    }
-    return lock;
-  } catch (error) {
-    await lock.close();
-    throw error;
-  }
 }
 
 async function loadLocalContext(
@@ -156,56 +141,110 @@ async function loadLocalContext(
   };
 }
 
-async function withLoopbackContinuity<T>(
+const legacyContinuityReason = "Isolated M10 improvement qualification";
+const continuityReasonPrefix = `${legacyContinuityReason} run `;
+
+async function readContinuity(context: ImprovementLoopContext) {
+  const { data, error } = await context.admin.rpc("get_git_continuity_release_state");
+  if (error || !data[0]) throw new Error("Could not read the isolated continuity gate.");
+  return data[0];
+}
+
+async function setContinuity(
   context: ImprovementLoopContext,
-  verify: () => Promise<T>,
+  enabled: boolean,
+  revision: number,
+  reason: string,
 ) {
-  async function current() {
-    const { data, error } = await context.admin.rpc("get_git_continuity_release_state");
-    if (error || !data[0]) throw new Error("Could not read the isolated continuity gate.");
-    return data[0];
+  const { data, error } = await context.admin.rpc("set_git_continuity_release", {
+    p_enabled: enabled,
+    p_expected_revision: revision,
+    p_reason: reason,
+  });
+  const updated = data?.[0];
+  if (
+    error ||
+    updated?.enabled !== enabled ||
+    updated.revision !== revision + 1 ||
+    updated.reason !== reason
+  ) {
+    throw new Error("The isolated continuity gate changed unexpectedly.");
   }
-  async function set(enabled: boolean, revision: number) {
-    const { data, error } = await context.admin.rpc("set_git_continuity_release", {
-      p_enabled: enabled,
-      p_expected_revision: revision,
-      p_reason: "Isolated M10 improvement qualification",
-    });
-    if (error || data[0]?.enabled !== enabled)
-      throw new Error("The isolated continuity gate changed unexpectedly.");
+}
+
+async function restoreOwnedContinuity(context: ImprovementLoopContext, state: PreparingState) {
+  if (!state.pausedContinuity) return false;
+  const gate = await readContinuity(context);
+  const ownedRevision = state.pausedContinuity.revision + 1;
+  if (
+    !gate.enabled ||
+    gate.revision !== ownedRevision ||
+    gate.reason !== `${continuityReasonPrefix}${state.runId}`
+  ) {
+    return false;
   }
-  const initial = await current();
-  if (!initial.enabled) await set(true, initial.revision);
-  try {
-    return await verify();
-  } finally {
-    if (!initial.enabled) await set(false, (await current()).revision);
-  }
+  await setContinuity(context, false, ownedRevision, state.pausedContinuity.reason);
+  return true;
 }
 
 async function run() {
   const args = commandArguments();
-  const lock = await claimStateFile(`${args.statePath}.lock`);
+  const lock = await claimImprovementQualificationStateFile(args.statePath);
   try {
     const previous = await readState(args.statePath);
     if (args.command === "prepare") {
+      if (previous && "preparing" in previous) {
+        const restored = previous.pausedContinuity
+          ? await restoreOwnedContinuity(await loadLocalContext(args, previous.runId), previous)
+          : false;
+        const result = restored
+          ? "Restored the continuity gate to its prior paused state."
+          : "This saved preparation owns no current continuity change.";
+        throw new Error(`${result} Start a fresh disposable fixture scope with a new state file.`);
+      }
       if (previous)
         throw new Error("Use a fresh state file for preparation. Use publish with prepared state.");
       if (!args.appOrigin) throw new Error("Provide the loopback Wallie application origin.");
       const appOrigin = loopbackQualificationUrl(args.appOrigin, ["http:"]).origin;
       const local = await loadLocalContext(args, randomUUID());
+      const initial = await readContinuity(local);
+      if (
+        initial.enabled &&
+        (initial.reason === legacyContinuityReason ||
+          initial.reason.startsWith(continuityReasonPrefix))
+      ) {
+        throw new Error(
+          "The continuity gate belongs to another qualification run. Recover its saved state or use a fresh disposable fixture database.",
+        );
+      }
       const context = args.live
         ? { ...local, githubInstallation: await readImprovementLoopGitHubInstallation() }
         : local;
-      await saveState(args.statePath, { preparing: true, runId: context.runId });
-      const prepared = await withLoopbackContinuity(context, async () => {
+      const preparing = preparingSchema.parse({
+        preparing: true,
+        runId: context.runId,
+        pausedContinuity: initial.enabled
+          ? undefined
+          : { revision: initial.revision, reason: initial.reason },
+      });
+      await saveState(args.statePath, preparing);
+      let prepared: z.output<typeof improvementLoopPreparedSchema>;
+      try {
+        if (preparing.pausedContinuity) {
+          await setContinuity(
+            context,
+            true,
+            preparing.pausedContinuity.revision,
+            `${continuityReasonPrefix}${preparing.runId}`,
+          );
+        }
         const { baseline, candidate, ...source } = await prepareImprovementLoopSource(context);
         const validation = await qualifyImprovementLoopValidation(context, {
           ...source,
           baseline,
           candidate,
         });
-        return improvementLoopPreparedSchema.parse({
+        prepared = improvementLoopPreparedSchema.parse({
           ...source,
           ...validation,
           appOrigin,
@@ -217,7 +256,15 @@ async function run() {
           },
           candidate: { revisionId: candidate.revisionId, digest: candidate.digest },
         });
-      });
+      } catch (error) {
+        await restoreOwnedContinuity(context, preparing).catch(() => {
+          console.error("Continuity cleanup failed. Rerun prepare with this state file.");
+        });
+        throw error;
+      }
+      if (preparing.pausedContinuity && !(await restoreOwnedContinuity(context, preparing))) {
+        throw new Error("The qualification lost ownership of the continuity gate before cleanup.");
+      }
       await saveState(args.statePath, {
         ...prepared,
         installationId: context.githubInstallation?.id ?? null,

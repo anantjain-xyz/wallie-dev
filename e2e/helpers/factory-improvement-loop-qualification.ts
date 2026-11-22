@@ -100,26 +100,40 @@ export function qualificationCheckpoint(manifestPath: string, manifest: Manifest
   };
 }
 
+export class QualificationPostResponseLost extends Error {
+  constructor(cause: unknown) {
+    super("The forwarded qualification POST did not return an observed response.", { cause });
+  }
+}
+
 export async function observeQualificationPost(
-  page: Page,
+  page: Pick<Page, "route" | "unrouteAll" | "waitForResponse">,
   endpoint: string,
   expected: unknown,
   persistDispatch: () => Promise<unknown>,
   submit: () => Promise<void>,
 ) {
   const failed = Promise.withResolvers<never>();
-  const forward = async (route: Route) => {
+  let active = true;
+  let forwardingStarted = false;
+  await page.route(endpoint, async (route: Route) => {
     if (route.request().method() !== "POST") return route.fallback();
+    if (!active) return route.abort();
     try {
       expect(route.request().postDataJSON()).toEqual(expected);
       await persistDispatch();
     } catch (error) {
-      failed.reject(error);
+      if (active) failed.reject(error);
       return route.abort();
     }
-    return route.continue();
-  };
-  await page.route(endpoint, forward);
+    if (!active) return route.abort();
+    forwardingStarted = true;
+    try {
+      await route.continue();
+    } catch (error) {
+      if (active) failed.reject(error);
+    }
+  });
   try {
     const [result] = await Promise.race([
       Promise.all([
@@ -132,8 +146,13 @@ export async function observeQualificationPost(
       failed.promise,
     ]);
     return result;
+  } catch (error) {
+    if (forwardingStarted) throw new QualificationPostResponseLost(error);
+    throw error;
   } finally {
-    await page.unroute(endpoint, forward);
+    active = false;
+    // Disabling interception first releases paused Chromium requests. Let their handlers abort first.
+    await page.unrouteAll({ behavior: "wait" });
   }
 }
 

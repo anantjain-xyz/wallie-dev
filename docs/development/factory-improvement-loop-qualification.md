@@ -31,6 +31,8 @@ pnpm check:db-tests --workdir "$M10_SUPABASE_DIR" \
 
 The regression fixtures exercise a held-out regression, stale authorization and activation, and altered candidate bytes in rollback-only tests. The live candidate keeps its frozen comparison results.
 
+If preparation is interrupted, rerun `prepare` with the same `--state` and disposable Supabase project to restore the execution gate owned by that run. The command reports when cleanup is complete. Start the next preparation with a fresh disposable project and an unused state path.
+
 ## Publish and resume after review
 
 1. Run the local app and the qualification commands with the same configured GitHub App. Install that App with Contents and Pull Requests write access for `anantjain-xyz/wallie-dev`. Run `prepare --live` with a fresh state file so the disposable workspace starts with the verified installation.

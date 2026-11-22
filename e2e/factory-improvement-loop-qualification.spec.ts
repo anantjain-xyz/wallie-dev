@@ -1,6 +1,9 @@
+import { once } from "node:events";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 
 import {
   expect,
@@ -22,6 +25,7 @@ import {
   workspaceRunDetailPath,
 } from "../src/lib/routes";
 import {
+  claimImprovementQualificationStateFile,
   factoryImprovementLoopManifestSchema,
   improvementQualificationBase,
   improvementQualificationRepository,
@@ -39,6 +43,7 @@ import {
   prepareQualificationRollbackSmoke,
   qualificationAppOrigin,
   qualificationCheckpoint,
+  QualificationPostResponseLost,
 } from "./helpers/factory-improvement-loop-qualification";
 
 type Manifest = FactoryImprovementLoopManifest;
@@ -215,17 +220,94 @@ test("refuses an altered publication or a different app origin before authentica
   }
 });
 
-test.describe("Live reviewed qualification", () => {
-  const manifestPath = process.env.WALLIE_FACTORY_IMPROVEMENT_MANIFEST;
-  test.skip(
-    !manifestPath,
+test("aborts the browser POST and drains its checkpoint after observation ends", async ({
+  page,
+}) => {
+  let receivedPosts = 0;
+  const server = createServer((request, response) => {
+    if (request.method === "POST") receivedPosts += 1;
+    response.end("qualification");
+  });
+  const persistenceStarted = Promise.withResolvers<void>();
+  const completePersistence = Promise.withResolvers<void>();
+  const unregistering = Promise.withResolvers<void>();
+  const sent = Promise.withResolvers<boolean>();
+  const cancellation = new Error("Simulated browser observation failure.");
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing loopback address.");
+    const origin = `http://127.0.0.1:${address.port}`;
+    await page.goto(origin);
+    const expected = { test: "qualification" };
+    let finished = false;
+    const operation = observeQualificationPost(
+      {
+        route: page.route.bind(page),
+        unrouteAll: (...args) => {
+          unregistering.resolve();
+          return page.unrouteAll(...args);
+        },
+        waitForResponse: page.waitForResponse.bind(page),
+      },
+      `${origin}/submit`,
+      expected,
+      async () => {
+        persistenceStarted.resolve();
+        await completePersistence.promise;
+      },
+      async () => {
+        sent.resolve(
+          page.evaluate(
+            (body) =>
+              fetch("/submit", { method: "POST", body }).then(
+                () => true,
+                () => false,
+              ),
+            JSON.stringify(expected),
+          ),
+        );
+        await persistenceStarted.promise;
+        throw cancellation;
+      },
+    ).finally(() => {
+      finished = true;
+    });
+    const rejected = expect(operation).rejects.toBe(cancellation);
+    await unregistering.promise;
+    await setImmediate();
+    expect(finished).toBe(false);
+    completePersistence.resolve();
+    await rejected;
+    expect(await sent.promise).toBe(false);
+    expect(receivedPosts).toBe(0);
+  } finally {
+    completePersistence.resolve();
+    await server[Symbol.asyncDispose]();
+  }
+});
+
+const liveTest = test.extend<{ manifestPath: string }>({
+  manifestPath: async ({}, providePath) => {
+    const path = process.env.WALLIE_FACTORY_IMPROVEMENT_MANIFEST;
+    if (!path) throw new Error("The live qualification manifest is required.");
+    const lock = await claimImprovementQualificationStateFile(path);
+    try {
+      await providePath(path);
+    } finally {
+      await lock.close();
+    }
+  },
+});
+
+liveTest.describe("Live reviewed qualification", () => {
+  liveTest.skip(
+    !process.env.WALLIE_FACTORY_IMPROVEMENT_MANIFEST,
     "Requires the scoped OP642 manifest and a genuinely approved, merged draft.",
   );
-  test("qualifies a real reviewed improvement through adoption and exact rollback", async ({
-    page,
-  }, info) => {
-    if (!manifestPath) throw new Error("The live qualification manifest is required.");
-    test.setTimeout(240_000);
+  liveTest("qualifies reviewed adoption and rollback", async ({ page, manifestPath }, info) => {
+    liveTest.setTimeout(240_000);
     const manifest = await readFactoryImprovementLoopManifest(manifestPath);
     const app = qualificationAppOrigin(manifest, process.env.PLAYWRIGHT_BASE_URL);
     const store = qualificationCheckpoint(manifestPath, manifest);
@@ -339,7 +421,9 @@ test.describe("Live reviewed qualification", () => {
     if (!adoption) {
       const retry = Boolean(progress.adoptionRequest);
       await adoptionPanel.getByRole("button", { name: "Adopt configuration" }).press("Enter");
-      const confirm = page.getByRole("alertdialog", { name: "Adopt the reviewed configuration?" });
+      const confirm = page.getByRole("alertdialog", {
+        name: "Adopt the reviewed configuration?",
+      });
       await expect(confirm).toBeVisible();
       let response: Response | undefined;
       try {
@@ -353,7 +437,8 @@ test.describe("Live reviewed qualification", () => {
           () => confirm.getByRole("button", { name: "Verify GitHub and adopt" }).press("Enter"),
         );
       } catch (error) {
-        if (!progress.adoptionRequest) throw error;
+        if (!(error instanceof QualificationPostResponseLost) || !progress.adoptionRequest)
+          throw error;
         const durable = await inspectQualificationProgress(manifest);
         if (!durable.adoption) throw error;
         adoption = durable.adoption;
@@ -382,7 +467,10 @@ test.describe("Live reviewed qualification", () => {
       validationId: manifest.validationId,
       actorMemberId: adoptedProgress.actorMemberId,
       baseline: manifest.baseline,
-      adopted: { ...manifest.candidate, activationNumber: manifest.baseline.activationNumber + 1 },
+      adopted: {
+        ...manifest.candidate,
+        activationNumber: manifest.baseline.activationNumber + 1,
+      },
       review: {
         repositoryNumericId: manifest.publication.repositoryNumericId,
         pullNumber: manifest.publication.number,
@@ -463,7 +551,11 @@ test.describe("Live reviewed qualification", () => {
           () => restoreDialog.getByRole("button", { name: "Activate revision" }).press("Enter"),
         );
       } catch (error) {
-        if (!progress.rollbackRequest || !(await inspectQualificationProgress(manifest)).rollback) {
+        if (
+          !(error instanceof QualificationPostResponseLost) ||
+          !progress.rollbackRequest ||
+          !(await inspectQualificationProgress(manifest)).rollback
+        ) {
           throw error;
         }
       }

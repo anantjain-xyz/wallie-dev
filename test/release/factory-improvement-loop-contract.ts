@@ -1,4 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { constants } from "node:fs";
+import { open, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
@@ -161,4 +164,33 @@ export type FactoryImprovementLoopManifest = z.output<typeof factoryImprovementL
 export async function readFactoryImprovementLoopManifest(path: string) {
   const body: unknown = JSON.parse(await readFile(path, "utf8"));
   return factoryImprovementLoopManifestSchema.parse(body);
+}
+
+export async function claimImprovementQualificationStateFile(statePath: string) {
+  const path = `${resolve(statePath)}.lock`;
+  const lock = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+  try {
+    // flock belongs to the inherited file description. The parent holds it until close or exit.
+    const result = spawnSync(
+      "perl",
+      [
+        "-MFcntl=:flock",
+        "-e",
+        'open my $lock, ">&=3" or exit 2; flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 2);',
+      ],
+      { stdio: ["ignore", "ignore", "ignore", lock.fd], timeout: 5_000 },
+    );
+    if (result.status === 75) {
+      throw new Error("Another qualification process owns this state file.");
+    }
+    if (result.status !== 0) {
+      throw new Error("Could not lock the qualification state file with Perl flock.", {
+        cause: result.error,
+      });
+    }
+    return lock;
+  } catch (error) {
+    await lock.close();
+    throw error;
+  }
 }
