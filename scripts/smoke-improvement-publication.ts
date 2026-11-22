@@ -34,6 +34,7 @@ const objectSchema = z.object({ sha });
 const pullSchema = z.object({
   number: z.number().int().positive(),
   state: z.literal("open"),
+  draft: z.literal(true),
   base: z.object({ ref: z.string(), sha }),
   head: z.object({ ref: z.string(), sha }),
 });
@@ -276,6 +277,7 @@ async function main() {
   assert.equal(pulls.length, 1);
   const [pull] = pulls;
   assert.equal(pull.number, published.pullRequest.number);
+  assert.equal(published.pullRequest.state, "draft");
   assert.deepEqual(pull.base, { ref: fixture.baseBranch, sha: baseCommit.sha });
   assert.deepEqual(pull.head, { ref: headBranch, sha: published.headCommitSha });
   const comparison = z.object({
@@ -294,6 +296,7 @@ async function main() {
       baseSha: pull.base.sha,
       headSha: pull.head.sha,
       onePostAfterResponseLoss: true,
+      verifiedDraft: true,
       mainUnchanged: true,
       attribution: "GitHub CLI operator",
     }),

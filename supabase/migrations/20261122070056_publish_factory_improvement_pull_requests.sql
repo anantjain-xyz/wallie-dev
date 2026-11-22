@@ -29,9 +29,10 @@ create table internal.factory_improvement_publications (
   head_commit_sha text check (head_commit_sha ~ '^[a-f0-9]{40}$'),
   head_tree_sha text check (head_tree_sha ~ '^[a-f0-9]{40}$'),
   creation_armed boolean not null default false,
+  creation_claim_id uuid,
   pull_number integer check (pull_number > 0),
   pull_url text,
-  pull_state text check (pull_state in ('open','closed','merged')),
+  pull_state text check (pull_state in ('draft','open','closed','merged')),
   unique (workspace_id, factory_id, proposal_id, proposal_revision_id),
   foreign key (workspace_id, factory_id, proposal_id, proposal_revision_id)
     references internal.factory_improvement_proposal_revisions(workspace_id, factory_id, proposal_id, id) on delete cascade,
@@ -40,6 +41,8 @@ create table internal.factory_improvement_publications (
   check ((head_commit_sha is null) = (head_tree_sha is null)),
   check (head_commit_sha is null or base_commit_sha is not null),
   check (not creation_armed or head_commit_sha is not null),
+  constraint factory_improvement_publications_creation_claim_check
+    check (creation_armed = (creation_claim_id is not null)),
   check ((pull_number is null) = (pull_url is null) and (pull_number is null) = (pull_state is null)),
   check (pull_number is null or (creation_armed and claim_id is null))
 );
@@ -62,10 +65,10 @@ begin
   end if;
   if old.pull_number is not null
     or (to_jsonb(new) - array['claim_id','lease_until','base_commit_sha','base_tree_sha',
-      'head_commit_sha','head_tree_sha','creation_armed','pull_number','pull_url','pull_state'])
+      'head_commit_sha','head_tree_sha','creation_armed','creation_claim_id','pull_number','pull_url','pull_state'])
       is distinct from
       (to_jsonb(old) - array['claim_id','lease_until','base_commit_sha','base_tree_sha',
-      'head_commit_sha','head_tree_sha','creation_armed','pull_number','pull_url','pull_state'])
+      'head_commit_sha','head_tree_sha','creation_armed','creation_claim_id','pull_number','pull_url','pull_state'])
     or (old.base_commit_sha is not null and
       (new.base_commit_sha,new.base_tree_sha) is distinct from (old.base_commit_sha,old.base_tree_sha))
     or (old.head_commit_sha is not null and
@@ -96,6 +99,21 @@ create function internal.factory_improvement_publication_target(
     on (installation.workspace_id,installation.id) = (repository.workspace_id,repository.github_installation_id)
     and not installation.suspended and installation.installation_id between 1 and 9007199254740991
   where (target.workspace_id,target.factory_id) = (p_workspace_id,p_factory_id);
+$$;
+
+create function internal.factory_improvement_publication_repository_authorized(
+  publication internal.factory_improvement_publications
+) returns boolean language sql stable set search_path = '' as $$
+  select exists (select 1 from public.github_repositories repository
+    join public.github_installations installation
+      on (installation.workspace_id,installation.id) = (repository.workspace_id,repository.github_installation_id)
+      and not installation.suspended
+    where (repository.workspace_id,repository.factory_id,repository.id) =
+      (publication.workspace_id,publication.factory_id,(publication.target->>'repositoryId')::uuid)
+      and not repository.is_archived
+      and repository.full_name = publication.target->>'repositoryFullName'
+      and repository.repo_id = (publication.target->>'repositoryNumericId')::bigint
+      and installation.installation_id = (publication.target->>'installationId')::bigint);
 $$;
 
 create function internal.factory_improvement_publication_scope_current(publication internal.factory_improvement_publications)
@@ -184,12 +202,18 @@ begin
     return jsonb_build_object('status','published','publication',internal.project_factory_improvement_publication(publication),
       'claim',null,'candidateDefinitionJson',null);
   end if;
-  target := internal.factory_improvement_publication_target(p_workspace_id,p_factory_id,p_proposal_revision_id);
-  if publication.id is not null and target is distinct from publication.target then
-    raise exception 'The configuration publication target changed.' using errcode = 'PT409';
-  end if;
-  if target is null then
-    raise exception 'Configure an active definition repository first.' using errcode = 'PT422';
+  if publication.creation_armed then
+    if not internal.factory_improvement_publication_repository_authorized(publication) then
+      raise exception 'The previously armed publication repository is no longer authorized.' using errcode = 'PT409';
+    end if;
+  else
+    target := internal.factory_improvement_publication_target(p_workspace_id,p_factory_id,p_proposal_revision_id);
+    if publication.id is not null and target is distinct from publication.target then
+      raise exception 'The configuration publication target changed.' using errcode = 'PT409';
+    end if;
+    if target is null then
+      raise exception 'Configure an active definition repository first.' using errcode = 'PT422';
+    end if;
   end if;
   if publication.lease_until > clock_timestamp() then
     return jsonb_build_object('status','busy','publication',internal.project_factory_improvement_publication(publication),
@@ -291,6 +315,9 @@ begin
   end if;
 
   if p_action in ('freeze_base','pin_head','authorize_head','arm_create') then
+    if publication.creation_armed then
+      raise exception 'Reconcile the previously armed pull request before creating another.' using errcode = 'PT409';
+    end if;
     if not coalesce(internal.factory_improvement_publication_scope_current(publication),false) then
       raise exception 'The proposal, publication target, or active base changed.' using errcode = 'PT409';
     end if;
@@ -326,16 +353,26 @@ begin
       end if;
       return internal.project_factory_improvement_publication(publication);
     when 'arm_create' then
-      if publication.head_commit_sha is null or publication.creation_armed then
-        raise exception 'Reconcile the previously armed pull request before creating another.' using errcode = 'PT409';
+      if publication.head_commit_sha is null then
+        raise exception 'Pin the exact candidate before arming pull request creation.' using errcode = 'PT409';
       end if;
       publication.creation_armed := true;
+      publication.creation_claim_id := p_claim_id;
     when 'reset_create' then
+      if publication.creation_armed and publication.creation_claim_id is distinct from p_claim_id then
+        raise exception 'A recovery lease cannot reset a previously armed pull request.' using errcode = 'PT409';
+      end if;
       publication.creation_armed := false;
+      publication.creation_claim_id := null;
+      publication.claim_id := null;
+      publication.lease_until := null;
     when 'record_pr' then
       if not publication.creation_armed or not coalesce(pg_input_is_valid(p_values->>'pullNumber','integer'),false)
-        or coalesce(p_values->>'pullState','') not in ('open','closed','merged') then
+        or coalesce(p_values->>'pullState','') not in ('draft','open','closed','merged') then
         raise exception 'Verify the previously armed pull request.' using errcode = 'PT409';
+      end if;
+      if not internal.factory_improvement_publication_repository_authorized(publication) then
+        raise exception 'The previously armed publication repository is no longer authorized.' using errcode = 'PT409';
       end if;
       pull_number := (p_values->>'pullNumber')::integer;
       if pull_number < 1 or p_values->>'pullUrl' is distinct from
@@ -355,7 +392,8 @@ begin
     claim_id = publication.claim_id, lease_until = publication.lease_until,
     base_commit_sha = publication.base_commit_sha, base_tree_sha = publication.base_tree_sha,
     head_commit_sha = publication.head_commit_sha, head_tree_sha = publication.head_tree_sha,
-    creation_armed = publication.creation_armed, pull_number = publication.pull_number,
+    creation_armed = publication.creation_armed, creation_claim_id = publication.creation_claim_id,
+    pull_number = publication.pull_number,
     pull_url = publication.pull_url, pull_state = publication.pull_state
   where saved.id = publication.id returning * into publication;
   return internal.project_factory_improvement_publication(publication);
@@ -364,6 +402,7 @@ $$;
 
 revoke all on function internal.preserve_factory_improvement_publication(),
   internal.factory_improvement_publication_target(uuid,uuid,uuid),
+  internal.factory_improvement_publication_repository_authorized(internal.factory_improvement_publications),
   internal.factory_improvement_publication_scope_current(internal.factory_improvement_publications),
   internal.project_factory_improvement_publication(internal.factory_improvement_publications),
   public.set_factory_improvement_publication_target(uuid,uuid,uuid,uuid,text),

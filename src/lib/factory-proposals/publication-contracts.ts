@@ -69,7 +69,7 @@ export const factoryImprovementPublicationSchema = z.object({
     .object({
       number: safeInteger,
       url: z.string().url(),
-      state: z.enum(["open", "closed", "merged"]),
+      state: z.enum(["draft", "open", "closed", "merged"]),
     })
     .nullable(),
   current: z.boolean(),

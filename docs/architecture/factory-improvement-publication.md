@@ -10,7 +10,8 @@ A factory manager binds a connected GitHub repository and a dedicated definition
 
 - Publication binds the latest qualified proposal, its active base, both frozen comparisons, and the configured repository. The PR body records those identities and the rollout expectation.
 - A leased publisher pins one commit whose parent is the frozen base and whose tree replaces only the definition file. The publisher creates its revision-specific head with create-only semantics.
-- If GitHub's create response is uncertain, retry the same revision. The publisher searches all PR states and verifies repository, refs, commits, and candidate bytes before attaching a PR. A pending response preserves the outstanding request.
+- The publisher opens a draft and attaches it only after verifying the repository, commits, and exact candidate file. Confirm the attached head SHA before marking the draft ready for human review. [GitHub draft review controls](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/changing-the-stage-of-a-pull-request)
+- If GitHub's create response is uncertain, retry the same revision. The publisher searches all PR states in the original authorized repository. A pending response preserves the outstanding request.
 - GitHub review and merge are separate from activation. Wallie records the published identity for a later explicit adoption decision.
 
-The scoped smoke uses the existing `anantjain-xyz/wallie-dev` repository, a unique test base, and synthetic definitions. It drops the successful create response, checks that a retry attaches the same PR, and verifies the exact file diff and untouched default ref.
+The scoped smoke uses the existing `anantjain-xyz/wallie-dev` repository, a unique test base, and synthetic definitions. It drops the successful create response, checks that a retry attaches the same draft, and verifies the exact file diff and untouched default ref.

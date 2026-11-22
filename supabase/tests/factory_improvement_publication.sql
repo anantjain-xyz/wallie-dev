@@ -4,6 +4,15 @@ select no_plan();
 set local request.jwt.claim.role = 'service_role';
 \ir fixtures/factory_improvement_publication.psql
 
+insert into public.factories(id, workspace_id, name, slug, is_default)
+select pg_temp.live_id(370), workspace_id, 'Other factory', 'other-publication-factory', false
+from live_scope;
+insert into public.github_repositories(id, workspace_id, factory_id, github_installation_id, repo_id, name,
+  full_name, private, html_url, default_branch)
+select pg_temp.live_id(371), workspace_id, pg_temp.live_id(370), pg_temp.live_id(35), 62300371,
+  'other-config', 'fixture/other-config', true, 'https://github.com/fixture/other-config', 'main'
+from live_scope;
+
 create function pg_temp.set_publication_target(
   p_repository uuid default pg_temp.live_id(360),
   p_branch text default 'wallie/smoke/improvement-base',
@@ -27,8 +36,8 @@ $$;
 
 select throws_ok($$select pg_temp.set_publication_target(p_actor => pg_temp.live_id(999))$$, '42501', null,
   'only a current factory manager can bind the configuration repository');
-select throws_ok($$select pg_temp.set_publication_target(p_repository => pg_temp.live_id(999))$$, 'PT422', null,
-  'a repository outside the scoped installation cannot become the configuration target');
+select throws_ok($$select pg_temp.set_publication_target(p_repository => pg_temp.live_id(371))$$, 'PT422', null,
+  'a live repository in another factory of the same installation cannot become the configuration target');
 select throws_ok($$select pg_temp.set_publication_target(p_branch => 'main')$$, 'PT422', null,
   'the repository default branch cannot become the improvement publication base');
 select lives_ok($$select pg_temp.set_publication_target()$$, 'a manager binds the separate configuration repository');
@@ -90,9 +99,9 @@ select throws_ok($$select pg_temp.advance_publication('record_pr',
   '{"pullNumber":592,"pullUrl":"https://github.com/fixture/improvement-config/pull/592","pullState":"open"}')$$, 'PT409', null,
   'a pull request cannot be recorded before the exact create attempt is armed');
 
-create function pg_temp.try_publication_advance(p_action text) returns text language plpgsql as $$
+create function pg_temp.try_publication_advance(p_action text, p_values jsonb default '{}') returns text language plpgsql as $$
 begin
-  perform pg_temp.advance_publication(p_action);
+  perform pg_temp.advance_publication(p_action,p_values);
   return '00000';
 exception when others then return sqlstate;
 end;
@@ -139,6 +148,21 @@ rollback to savepoint before_revoked_evidence;
 release savepoint before_revoked_evidence;
 select is(:'revoked_evidence_state'::text, 'PT422', 'revoked holdout evidence prevents arming the GitHub write');
 
+savepoint before_creation_reset;
+select pg_temp.advance_publication('reset_create');
+select pg_temp.try_publication_advance('arm_create') as late_initial_arm_state \gset
+update publication_claim set receipt = pg_temp.claim_publication();
+select (receipt->>'status' = 'claimed' and receipt#>>'{publication,creationArmed}' = 'false'
+  and receipt->>'candidateDefinitionJson' is not null) as safe_retry_claim from publication_claim \gset
+select pg_temp.advance_publication('arm_create');
+select pg_temp.advance_publication('reset_create');
+select pg_temp.try_publication_advance('arm_create') as late_reset_arm_state \gset
+rollback to savepoint before_creation_reset;
+release savepoint before_creation_reset;
+select ok(:'safe_retry_claim'::boolean and :'late_initial_arm_state' = 'PT409',
+  'reset fences an unacknowledged arm and permits a fresh unarmed claim');
+select is(:'late_reset_arm_state'::text, 'PT409', 'reset of a known safe failure invalidates the arming lease atomically');
+
 select ok(pg_temp.advance_publication('arm_create')->>'creationArmed' = 'true', 'a single durable create attempt is armed');
 select throws_ok($$select pg_temp.advance_publication('arm_create')$$, 'PT409', null,
   'a second external POST cannot be armed while the first is unresolved');
@@ -158,6 +182,49 @@ rollback to savepoint before_historical_recovery;
 release savepoint before_historical_recovery;
 select ok(:'historical_claim'::boolean and :'historical_arm_state' = 'PT409' and :'historical_published'::boolean,
   'an armed historical publication can recover its PR without exposing candidate bytes or arming another POST');
+
+savepoint before_rebound_recovery;
+select pg_temp.advance_publication('release');
+select pg_temp.set_publication_target(p_repository => pg_temp.live_id(42), p_branch => 'wallie/smoke/rebound-base');
+update publication_claim set receipt = pg_temp.claim_publication();
+select (receipt->>'status' = 'claimed' and receipt#>>'{publication,creationArmed}' = 'true'
+  and receipt#>>'{publication,current}' = 'false' and receipt->>'candidateDefinitionJson' is null
+  and receipt#>>'{publication,target,repositoryId}' = pg_temp.live_id(360)::text
+  and receipt#>>'{publication,target,baseBranch}' = 'wallie/smoke/improvement-base') as rebound_recovery_claim
+from publication_claim \gset
+select pg_temp.try_publication_advance('arm_create') as rebound_recovery_arm_state,
+  pg_temp.try_publication_advance('authorize_head') as rebound_recovery_head_state,
+  pg_temp.try_publication_advance('reset_create') as rebound_recovery_reset_state \gset
+select (pg_temp.advance_publication('record_pr',
+  '{"pullNumber":592,"pullUrl":"https://github.com/fixture/improvement-config/pull/592","pullState":"draft"}')
+  @> '{"current":false,"pullRequest":{"number":592,"state":"draft"}}') as rebound_draft_receipt \gset
+rollback to savepoint before_rebound_recovery;
+release savepoint before_rebound_recovery;
+select ok(:'rebound_recovery_claim'::boolean and :'rebound_recovery_arm_state' = 'PT409'
+  and :'rebound_recovery_head_state' = 'PT409' and :'rebound_recovery_reset_state' = 'PT409',
+  'a replacement target permits only read-only recovery against the exact originally armed repository');
+select ok(:'rebound_draft_receipt'::boolean, 'read-only recovery accepts and records the verified draft PR');
+
+savepoint before_archived_source_repository;
+select pg_temp.advance_publication('release');
+select pg_temp.set_publication_target(p_repository => pg_temp.live_id(42), p_branch => 'wallie/smoke/rebound-base');
+update public.github_repositories set is_archived = true where id = pg_temp.live_id(360);
+select pg_temp.try_publication_claim() as archived_original_state \gset
+rollback to savepoint before_archived_source_repository;
+release savepoint before_archived_source_repository;
+select is(:'archived_original_state'::text, 'PT409', 'archiving the originally armed repository blocks recovery even after rebind');
+
+savepoint before_suspended_source_installation;
+update public.github_installations set suspended = true where id = pg_temp.live_id(35);
+select pg_temp.try_publication_advance('record_pr',
+  '{"pullNumber":592,"pullUrl":"https://github.com/fixture/improvement-config/pull/592","pullState":"draft"}')
+  as suspended_original_record_state \gset
+select pg_temp.advance_publication('release');
+select pg_temp.try_publication_claim() as suspended_original_claim_state \gset
+rollback to savepoint before_suspended_source_installation;
+release savepoint before_suspended_source_installation;
+select ok(:'suspended_original_record_state' = 'PT409' and :'suspended_original_claim_state' = 'PT409',
+  'suspending the original installation blocks both receipt recording and reacquisition');
 
 create temp table previous_publication_claim as select receipt from publication_claim;
 select pg_temp.advance_publication('release');

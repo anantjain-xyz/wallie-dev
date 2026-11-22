@@ -41,12 +41,13 @@ type PublicationResult = {
   state: "pending" | "published";
   replay: boolean;
 };
+type PullState = NonNullable<FactoryImprovementPublication["pullRequest"]>["state"];
 type Step =
   | { action: "freeze_base"; values: { baseCommitSha: string; baseTreeSha: string } }
   | { action: "pin_head"; values: { headCommitSha: string; headTreeSha: string } }
   | {
       action: "record_pr";
-      values: { pullNumber: number; pullUrl: string; pullState: CanonicalPullRequest["state"] };
+      values: { pullNumber: number; pullUrl: string; pullState: PullState };
     }
   | {
       action: "authorize_head" | "arm_create" | "reset_create" | "release";
@@ -72,6 +73,23 @@ class PublicationError extends Error {
   constructor(readonly code: "PT409" | "PT502") {
     super("Could not verify the factory improvement publication.");
   }
+}
+
+function normalizedFactoryScope(scope: FactoryScope): FactoryScope {
+  return {
+    ...scope,
+    workspaceId: scope.workspaceId.toLowerCase(),
+    factoryId: scope.factoryId.toLowerCase(),
+    actorUserId: scope.actorUserId.toLowerCase(),
+  };
+}
+
+function normalizedPublicationScope(scope: PublicationScope): PublicationScope {
+  return {
+    ...normalizedFactoryScope(scope),
+    proposalId: scope.proposalId.toLowerCase(),
+    proposalRevisionId: scope.proposalRevisionId.toLowerCase(),
+  };
 }
 
 function factoryArguments({ workspaceId, factoryId, actorUserId }: FactoryScope) {
@@ -100,20 +118,22 @@ function publicationInScope(publication: FactoryImprovementPublication, scope: P
 }
 
 export async function setFactoryImprovementPublicationTarget(
-  scope: FactoryScope,
+  input: FactoryScope,
   command: ImprovementPublicationTargetCommand,
 ) {
+  const scope = normalizedFactoryScope(input);
+  const repositoryId = command.repositoryId.toLowerCase();
   const { data, error, status } = await scope.client
     .rpc("set_factory_improvement_publication_target", {
       ...factoryArguments(scope),
-      p_repository_id: command.repositoryId,
+      p_repository_id: repositoryId,
       p_base_branch: command.baseBranch,
     })
     .abortSignal(scope.signal);
   if (error) throw status === 0 ? new PublicationError("PT502") : error;
   const target = improvementPublicationTargetSchema.parse(data);
   if (
-    target.repositoryId !== command.repositoryId ||
+    target.repositoryId !== repositoryId ||
     target.baseBranch !== command.baseBranch ||
     target.configPath !== `.wallie/factory-definitions/${scope.factoryId}.json`
   )
@@ -121,7 +141,8 @@ export async function setFactoryImprovementPublicationTarget(
   return target;
 }
 
-export async function readFactoryImprovementPublication(scope: PublicationScope) {
+export async function readFactoryImprovementPublication(input: PublicationScope) {
+  const scope = normalizedPublicationScope(input);
   const { data, error, status } = await scope.client
     .rpc("get_factory_improvement_publication", proposalArguments(scope))
     .abortSignal(scope.signal);
@@ -185,9 +206,10 @@ function publicationFailure(error: unknown) {
 }
 
 export async function publishFactoryImprovement(
-  scope: PublicationScope,
+  input: PublicationScope,
   dependencies: Partial<PublicationDependencies> = {},
 ): Promise<PublicationResult> {
+  const scope = normalizedPublicationScope(input);
   const signal = AbortSignal.any([scope.signal, AbortSignal.timeout(100_000)]);
   const { data, error, status } = await scope.client
     .rpc("claim_factory_improvement_publication", proposalArguments(scope))
@@ -207,6 +229,7 @@ export async function publishFactoryImprovement(
   const target = publication.target;
   const candidateDigest = publication.candidate.digest;
   const definitionJson = claim.candidateDefinitionJson;
+  let claimClosed = false;
 
   async function advance(step: Step, stepSignal = signal) {
     const { data, error, status } = await scope.client
@@ -224,8 +247,9 @@ export async function publishFactoryImprovement(
     publication = advanced;
   }
 
-  function resetCreate() {
-    return advance({ action: "reset_create", values: {} }, AbortSignal.timeout(5_000));
+  async function resetCreate() {
+    await advance({ action: "reset_create", values: {} }, AbortSignal.timeout(5_000));
+    claimClosed = true;
   }
 
   try {
@@ -235,7 +259,7 @@ export async function publishFactoryImprovement(
           installationId: target.installationId,
           repositoryId: target.repositoryNumericId,
           repositoryFullName: target.repositoryFullName,
-          purpose: "execution",
+          purpose: publication.creationArmed ? "pull-request-read" : "execution",
           signal,
         }));
     signal.throwIfAborted();
@@ -265,7 +289,6 @@ export async function publishFactoryImprovement(
         headCommitSha,
         signal,
       });
-      if (canonical.draft) throw new PublicationError("PT409");
       await git.verifyHead({
         base: {
           commitSha: baseCommitSha,
@@ -282,7 +305,7 @@ export async function publishFactoryImprovement(
         values: {
           pullNumber: canonical.number,
           pullUrl: `https://github.com/${target.repositoryFullName}/pull/${canonical.number}`,
-          pullState: canonical.state,
+          pullState: canonical.state === "open" && canonical.draft ? "draft" : canonical.state,
         },
       });
       return { publication, state: "published", replay };
@@ -358,7 +381,7 @@ export async function publishFactoryImprovement(
       created = await pull.create({
         title: `Wallie factory improvement ${scope.proposalRevisionId}`,
         body: pullRequestBody(publication),
-        draft: false,
+        draft: true,
       });
     } catch (error) {
       const retryCreationSafe = error instanceof CanonicalPrApiError && error.retryCreationSafe;
@@ -381,7 +404,7 @@ export async function publishFactoryImprovement(
   } catch (error) {
     throw publicationFailure(error);
   } finally {
-    if (!publication.pullRequest) {
+    if (!claimClosed && !publication.pullRequest) {
       // A fresh, bounded signal releases the lease after a disconnected caller.
       await advance({ action: "release", values: {} }, AbortSignal.timeout(5_000)).catch(
         () => undefined,
