@@ -361,8 +361,6 @@ export async function publishImprovementLoop({
     "The saved active definition bytes no longer match the qualified baseline.",
   );
 
-  const remote = await openScopedGitHub("execution");
-  check(remote.installation.id === installationId, "The prepared GitHub App installation changed.");
   const factoryPath = `${fixture.appOrigin}/api/workspaces/${workspaceId}/factories/${factoryId}`;
   const endpoint = `${factoryPath}/improvement-proposals/${proposalId}/revisions/${proposalRevisionId}/publication`;
   const headers = { origin: fixture.appOrigin };
@@ -374,17 +372,28 @@ export async function publishImprovementLoop({
   );
   const recorded =
     existing.status() === 200 ? receiptSchema.parse(await existing.json()).publication : null;
+  const reconcileExisting = Boolean(recorded?.pullRequest || recorded?.creationArmed);
+  const remote = await openScopedGitHub(reconcileExisting ? "pull-request-read" : "execution");
+  check(remote.installation.id === installationId, "The prepared GitHub App installation changed.");
 
   let publication = recorded;
   let recovered = Boolean(recorded?.pullRequest);
   let base: FixtureBase;
-  if (publication?.pullRequest) {
+  if (recorded && reconcileExisting) {
     check(baseProof, "Recovering a publication requires the saved base intent.");
     base = {
       baseBranch: improvementQualificationBase(fixture.runId),
       baseCommitSha: baseProof.baseCommitSha,
       configPath: `.wallie/factory-definitions/${fixture.factoryId}.json`,
     };
+    check(
+      recorded.baseCommitSha === base.baseCommitSha &&
+        recorded.target.repositoryNumericId === repositoryId &&
+        recorded.target.installationId === installationId &&
+        recorded.target.baseBranch === base.baseBranch &&
+        recorded.target.configPath === base.configPath,
+      "The recorded publication does not match the saved fixture base intent.",
+    );
     await verifyFixtureBase(remote, fixture, base.configPath, baseProof);
   } else {
     const localRepositoryId = await connectFixtureRepository(admin, fixture, remote);
@@ -404,6 +413,8 @@ export async function publishImprovementLoop({
       baseProof,
       saveBase,
     );
+  }
+  if (!publication?.pullRequest) {
     const response = await browser.post(endpoint, { headers, timeout: 125_000 });
     check(
       [200, 201, 202].includes(response.status()),
@@ -414,7 +425,8 @@ export async function publishImprovementLoop({
       .extend({ state: z.literal("published"), replay: z.boolean() })
       .parse(await response.json());
     check(
-      response.status() === (result.replay ? 200 : 201),
+      response.status() === (result.replay ? 200 : 201) &&
+        (!recorded?.creationArmed || result.replay),
       "The publication status did not match its replay receipt.",
     );
     publication = result.publication;

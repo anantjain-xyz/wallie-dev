@@ -38,7 +38,8 @@ If preparation is interrupted, rerun `prepare` with the same `--state` and dispo
 1. Run the local app and the qualification commands with the same configured GitHub App. Install that App with Contents and Pull Requests write access for `anantjain-xyz/wallie-dev`. Run `prepare --live` with a fresh state file so the disposable workspace starts with the verified installation.
 2. Save the reported draft and exact head. If publication is pending or the response is lost, rerun `publish` with the same state file. Wallie recovers the same publication intent.
 3. In GitHub, mark the draft ready. Have an independent eligible human approve the exact head. Use a merge commit or squash merge into the named fixture base while it still points at the published base commit.
-4. Resume the browser fixture against the same local app and database. It signs in again, verifies the frozen receipts, and exercises adoption, production admissions, and the shared Settings rollback.
+4. Set `M10_PROOF_DIR` to a dedicated local path outside the checkout. Create it once with `mkdir -m 700 "$M10_PROOF_DIR"`.
+5. Resume the browser fixture against the same local app and database. It verifies that it can write screenshots to the private directory before signing in.
 
 ```sh
 node --import ./scripts/register-server-only.mjs --import tsx \
@@ -52,7 +53,7 @@ PLAYWRIGHT_BASE_URL="$M10_APP_ORIGIN" \
   pnpm exec playwright test --config e2e/factory-improvement-loop-qualification.config.ts
 ```
 
-Keep the state file and the fixture PR for review. The state file records evidence IDs, digests, refs, and the PR identity. If Chromium stops after submitting adoption or rollback, rerun the same browser command. Keep the same state file, database, app origin, proof directory, and private `${M10_STATE}.browser-progress.json` file. The browser checks the saved submission and actual activation before continuing. Local app and database credentials come from the process environment or the disposable Supabase project. Close a stopped fixture’s local services through their scoped project controls after verification.
+Keep the state file and the fixture PR for review. The state file records evidence IDs, digests, refs, and the PR identity. If Chromium stops after submitting adoption or rollback, rerun the same browser command. Keep the same state file, database, app origin, proof directory, and private `${M10_STATE}.browser-progress.json` file. The browser checks the saved submission and actual activation before continuing. After rollback, the browser reuses `03-shared-settings-rollback-dark-mobile.png` from the original proof directory. A missing Settings screenshot fails the run. Local app and database credentials come from the process environment or the disposable Supabase project. Close a stopped fixture’s local services through their scoped project controls after verification.
 
 ## Pause production admission independently
 

@@ -34,11 +34,13 @@ import {
   improvementQualificationDatabaseEnvironment,
   improvementQualificationFixtureId,
   improvementQualificationInstallationSlot,
-  loopbackQualificationUrl,
   type ImprovementLoopContext,
   type ImprovementLoopSource,
 } from "./factory-improvement-loop-contract";
+import { assertImprovementLoopProject } from "./factory-improvement-loop-project";
 import { improvementLoopFixtureJudge } from "./factory-improvement-loop-replay-contract";
+
+export { assertImprovementLoopProject } from "./factory-improvement-loop-project";
 
 const runnerModel = "gpt-4.1-2025-04-14";
 const baselinePrompt = "Implement {{session.prompt}}.";
@@ -188,7 +190,7 @@ export async function prepareImprovementLoopSource(
 ): Promise<ImprovementLoopSource> {
   const { admin } = context;
   const workspaceId = z.uuid().parse(context.runId);
-  loopbackQualificationUrl(context.apiUrl, ["http:"]);
+  await assertImprovementLoopProject(context);
   const databaseEnv = improvementQualificationDatabaseEnvironment(context.dbUrl);
   const slot = (value: number) => improvementQualificationFixtureId(workspaceId, value);
   const workspaceSlug = `m10-${workspaceId}`;

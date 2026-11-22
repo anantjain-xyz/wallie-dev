@@ -23,7 +23,10 @@ import {
   publishImprovementLoop,
   readImprovementLoopGitHubInstallation,
 } from "../test/release/factory-improvement-loop-publication";
-import { prepareImprovementLoopSource } from "../test/release/factory-improvement-loop-source";
+import {
+  assertImprovementLoopProject,
+  prepareImprovementLoopSource,
+} from "../test/release/factory-improvement-loop-source";
 import { qualifyImprovementLoopValidation } from "../test/release/factory-improvement-loop-validation";
 
 const statusSchema = z.object({
@@ -129,7 +132,7 @@ async function loadLocalContext(
   process.env.NEXT_PUBLIC_SUPABASE_URL = apiUrl;
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = config.ANON_KEY;
   process.env.SUPABASE_SECRET_KEY = config.SERVICE_ROLE_KEY;
-  return {
+  const context: ImprovementLoopContext = {
     apiUrl,
     dbUrl,
     runId,
@@ -139,6 +142,8 @@ async function loadLocalContext(
       auth: { persistSession: false, autoRefreshToken: false },
     }),
   };
+  await assertImprovementLoopProject(context);
+  return context;
 }
 
 const legacyContinuityReason = "Isolated M10 improvement qualification";

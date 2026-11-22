@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +35,7 @@ import {
 } from "../test/release/factory-improvement-loop-contract";
 import {
   admitQualificationSession,
+  attachSavedQualificationEvidence,
   auditQualificationRollback,
   authenticateQualificationOwner,
   captureQualificationEvidence,
@@ -44,10 +45,12 @@ import {
   qualificationAppOrigin,
   qualificationCheckpoint,
   QualificationPostResponseLost,
+  requireQualificationProofDirectory,
 } from "./helpers/factory-improvement-loop-qualification";
 
 type Manifest = FactoryImprovementLoopManifest;
 const qualificationSubmitTimeout = 20_000;
+const rollbackEvidence = "03-shared-settings-rollback-dark-mobile";
 const adoptionRead = z.object({
   publication: factoryImprovementPublicationSchema.nullable(),
   adoption: factoryImprovementAdoptionSchema.nullable(),
@@ -131,6 +134,44 @@ async function expectComparisonLinks(adoptionPanel: Locator, app: string, manife
 
 test.describe.configure({ retries: 0 });
 test.use({ trace: "off", video: "off", screenshot: "off" });
+
+test("requires a writable private proof directory and reuses the saved Settings screenshot", async ({
+  page,
+}, info) => {
+  await expect(requireQualificationProofDirectory(undefined)).rejects.toThrow("PROOF_DIR");
+  const root = await mkdtemp(join(tmpdir(), "wallie-improvement-proof-"));
+  try {
+    const directory = join(root, "proof");
+    await expect(requireQualificationProofDirectory(directory)).rejects.toThrow("0700 directory");
+    await mkdir(directory, { mode: 0o700 });
+    const alias = join(root, "alias");
+    await symlink(directory, alias);
+    await expect(requireQualificationProofDirectory(alias)).rejects.toThrow("0700 directory");
+    await chmod(directory, 0o755);
+    await expect(requireQualificationProofDirectory(directory)).rejects.toThrow("0700 directory");
+    await chmod(directory, 0o700);
+    await expect(requireQualificationProofDirectory(directory)).resolves.toBe(directory);
+    await expect(
+      attachSavedQualificationEvidence(info, directory, rollbackEvidence),
+    ).rejects.toThrow("Required proof");
+    await page.setContent("<main>Restore settings</main>");
+    await captureQualificationEvidence(
+      page,
+      info,
+      directory,
+      rollbackEvidence,
+      page.getByRole("main"),
+    );
+    const path = join(directory, `${rollbackEvidence}.png`);
+    const original = await readFile(path);
+    expect((await lstat(path)).mode & 0o777).toBe(0o600);
+    await attachSavedQualificationEvidence(info, directory, rollbackEvidence);
+    expect(await readFile(path)).toEqual(original);
+    expect(info.attachments.map(({ name }) => name)).toEqual([rollbackEvidence, rollbackEvidence]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("refuses an altered publication or a different app origin before authentication", async () => {
   const id = (slot: number) => `62300000-0000-4000-9000-${String(slot).padStart(12, "0")}`;
@@ -460,6 +501,9 @@ liveTest.describe("Live reviewed qualification", () => {
     liveTest.setTimeout(240_000);
     const manifest = await readFactoryImprovementLoopManifest(manifestPath);
     const app = qualificationAppOrigin(manifest, process.env.PLAYWRIGHT_BASE_URL);
+    const proofDirectory = await requireQualificationProofDirectory(
+      process.env.WALLIE_FACTORY_IMPROVEMENT_PROOF_DIR,
+    );
     const store = qualificationCheckpoint(manifestPath, manifest);
     const checkpoint = await store.read();
     const { workspaceId, factoryId, workspaceSlug, proposalId, proposalRevisionId } = manifest;
@@ -522,7 +566,7 @@ liveTest.describe("Live reviewed qualification", () => {
       pullRequest: {
         number: manifest.publication.number,
         url: manifest.publication.url,
-        state: expect.stringMatching(/^(draft|open)$/),
+        state: expect.stringMatching(/^(draft|open|merged)$/),
       },
     });
     if (!before.adoption) {
@@ -544,6 +588,7 @@ liveTest.describe("Live reviewed qualification", () => {
     await captureQualificationEvidence(
       page,
       info,
+      proofDirectory,
       "01-retained-production-evidence-light",
       evidence,
     );
@@ -647,7 +692,13 @@ liveTest.describe("Live reviewed qualification", () => {
     await expect(
       adoptionPanel.getByText(`Approved on GitHub by ${adoption.review.reviewerLogin}`),
     ).toBeVisible();
-    await captureQualificationEvidence(page, info, "02-exact-hosted-adoption-light", adoptionPanel);
+    await captureQualificationEvidence(
+      page,
+      info,
+      proofDirectory,
+      "02-exact-hosted-adoption-light",
+      adoptionPanel,
+    );
 
     const adoptedPin =
       progress.adopted ?? (await admitQualificationSession(manifest, "adopted", adoption.adopted));
@@ -667,7 +718,9 @@ liveTest.describe("Live reviewed qualification", () => {
     if (adoptedProgress.rollback && !progress.rollbackRequest) {
       throw new Error("The restored head has no recorded Settings submission for this run.");
     }
-    if (!adoptedProgress.rollback) {
+    if (adoptedProgress.rollback) {
+      await attachSavedQualificationEvidence(info, proofDirectory, rollbackEvidence);
+    } else {
       await prepareQualificationRollbackSmoke(manifest, adoption.adopted);
       const rollbackTarget = `${workspaceFactoryDefinitionPath(workspaceSlug, {
         factory: factoryId,
@@ -689,7 +742,8 @@ liveTest.describe("Live reviewed qualification", () => {
       await captureQualificationEvidence(
         page,
         info,
-        "03-shared-settings-rollback-dark-mobile",
+        proofDirectory,
+        rollbackEvidence,
         restoreDialog,
       );
       let response: Response | undefined;
@@ -761,6 +815,12 @@ liveTest.describe("Live reviewed qualification", () => {
     await expect(prLink).toHaveAttribute("href", manifest.publication.url);
     const retained = adoptionRead.parse(await accepted(await page.request.get(adoptionApi), 200));
     expect(retained.adoption).toEqual(adoption);
-    await captureQualificationEvidence(page, info, "04-restored-outcomes-dark-mobile", outcomes);
+    await captureQualificationEvidence(
+      page,
+      info,
+      proofDirectory,
+      "04-restored-outcomes-dark-mobile",
+      outcomes,
+    );
   });
 });

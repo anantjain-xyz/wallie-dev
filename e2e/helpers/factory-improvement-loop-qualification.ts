@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -72,6 +72,17 @@ function manifestDigest(manifest: Manifest) {
   return createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
 }
 
+async function writePrivateQualificationFile(path: string, content: string | Buffer) {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  await writeFile(temporary, content, { flag: "wx", mode: 0o600 });
+  try {
+    await rename(temporary, path);
+  } catch (error) {
+    await unlink(temporary);
+    throw error;
+  }
+}
+
 export function qualificationCheckpoint(manifestPath: string, manifest: Manifest) {
   const path = `${manifestPath}.browser-progress.json`;
   const digest = manifestDigest(manifest);
@@ -94,14 +105,7 @@ export function qualificationCheckpoint(manifestPath: string, manifest: Manifest
     },
     async save(progress: Omit<QualificationCheckpoint, "manifestDigest">) {
       const checkpoint = checkpointSchema.parse({ ...progress, manifestDigest: digest });
-      const temporary = `${path}.${randomUUID()}.tmp`;
-      await writeFile(temporary, `${JSON.stringify(checkpoint)}\n`, { flag: "wx", mode: 0o600 });
-      try {
-        await rename(temporary, path);
-      } catch (error) {
-        await unlink(temporary);
-        throw error;
-      }
+      await writePrivateQualificationFile(path, `${JSON.stringify(checkpoint)}\n`);
       return checkpoint;
     },
   };
@@ -355,9 +359,56 @@ export async function auditQualificationRollback(
   return audit.outcomes;
 }
 
+export async function requireQualificationProofDirectory(configured: string | undefined) {
+  const message =
+    "Set WALLIE_FACTORY_IMPROVEMENT_PROOF_DIR to an existing writable 0700 directory.";
+  if (!configured) throw new Error(message);
+  const directory = resolve(configured);
+  try {
+    const entry = await lstat(directory);
+    const owner = process.getuid?.();
+    if (
+      !entry.isDirectory() ||
+      (entry.mode & 0o777) !== 0o700 ||
+      (owner !== undefined && entry.uid !== owner)
+    ) {
+      throw new Error("The proof path must be a real private directory owned by the current user.");
+    }
+    const probe = resolve(directory, `.write-probe-${randomUUID()}`);
+    await writeFile(probe, "", { flag: "wx", mode: 0o600 });
+    await unlink(probe);
+  } catch (error) {
+    throw new Error(message, { cause: error });
+  }
+  return directory;
+}
+
+export async function attachSavedQualificationEvidence(
+  info: TestInfo,
+  directory: string,
+  name: string,
+) {
+  const path = resolve(directory, `${name}.png`);
+  let body: Buffer;
+  try {
+    if (!(await lstat(path)).isFile()) throw new Error("The evidence path is not a regular file.");
+    body = await readFile(path);
+    if (body.length <= 8 || body.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
+      throw new Error("The evidence file must contain a PNG.");
+    }
+  } catch (error) {
+    throw new Error(
+      `Required proof ${name}.png is missing or invalid in the original proof directory.`,
+      { cause: error },
+    );
+  }
+  await info.attach(name, { body, contentType: "image/png" });
+}
+
 export async function captureQualificationEvidence(
   page: Page,
   info: TestInfo,
+  directory: string,
   name: string,
   region: Locator,
 ) {
@@ -365,15 +416,12 @@ export async function captureQualificationEvidence(
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
   ).toBeLessThanOrEqual(1);
-  const directory = process.env.WALLIE_FACTORY_IMPROVEMENT_PROOF_DIR;
-  if (!directory) return;
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const path = resolve(directory, `${name}.png`);
-  await region.screenshot({
-    path,
+  const body = await region.screenshot({
+    type: "png",
     animations: "disabled",
     caret: "hide",
     style: '[data-shell-header], a[href="#main-content"] { visibility: hidden !important; }',
   });
-  await info.attach(name, { path, contentType: "image/png" });
+  await writePrivateQualificationFile(resolve(directory, `${name}.png`), body);
+  await info.attach(name, { body, contentType: "image/png" });
 }
