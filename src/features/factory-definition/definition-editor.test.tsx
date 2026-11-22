@@ -313,6 +313,7 @@ function receipt(
 
 function setup({
   selection = null,
+  initialActivationNumber = 2,
   initialDraftPasses = true,
   initialDraft = draft,
   initialPublished = published,
@@ -320,7 +321,8 @@ function setup({
   credentials,
   routingPreview,
 }: {
-  selection?: { draft: string; test: string } | null;
+  selection?: Parameters<typeof FactoryDefinitionEditor>[0]["selection"];
+  initialActivationNumber?: number;
   initialDraftPasses?: boolean;
   initialDraft?: FactoryEditorDocument;
   initialPublished?: FactoryEditorDocument;
@@ -329,7 +331,7 @@ function setup({
   routingPreview?: (body: Record<string, unknown>) => Response;
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
-    activationNumber: 2,
+    activationNumber: initialActivationNumber,
     published: initialPublished,
     draft: initialDraft,
     baseline: null,
@@ -345,7 +347,10 @@ function setup({
   const credentialReads: string[] = [];
   const tests = new Map<string, CandidateSmokeTest[]>([
     [initialDraft.id, initialDraftPasses ? [receipt(initialDraft, "passed", 41)] : []],
-    [previous.id, [receipt(previous, "passed", 42)]],
+    [
+      previous.id,
+      [{ ...receipt(previous, "passed", 42), baseActivationNumber: initialActivationNumber }],
+    ],
   ]);
   let testCount = 50;
   vi.stubGlobal("fetch", async (url: string, options?: RequestInit) => {
@@ -718,6 +723,18 @@ it("activates an immutable selected revision using the displayed activation guar
       targetActivationNumber: 1,
     },
   });
+});
+
+it("keeps a proposal rollback link pinned when Settings loads a newer active revision", async () => {
+  const { requests } = setup({
+    selection: { revision: previous.id, activation: 1, restoreFrom: 2 },
+    initialActivationNumber: 3,
+  });
+  const tests = within(await screen.findByRole("region", { name: "Revision configuration tests" }));
+  expect(await screen.findByText(/rollback link is stale/i)).toBeVisible();
+  expect(tests.getByRole("button", { name: "Retest configuration" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Roll back to this revision" })).toBeDisabled();
+  expect(requests).toHaveLength(0);
 });
 
 it("shows stale qualification and disables reviewed activation despite passing smoke", async () => {

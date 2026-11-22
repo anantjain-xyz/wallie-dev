@@ -5,6 +5,7 @@ import Link from "next/link";
 import { PageSection } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import { ImprovementAdoptionAction } from "@/features/factory-proposals/improvement-adoption-action";
+import { ImprovementOutcomes } from "@/features/factory-proposals/improvement-outcomes";
 import type { loadImprovementScope } from "@/features/factory-proposals/improvement-scope";
 import { ImprovementTime } from "@/features/factory-proposals/improvement-status";
 import { readFactoryImprovementAdoption } from "@/lib/factory-proposals/adoption-server";
@@ -151,7 +152,7 @@ export async function ImprovementAdoption({
     { label: "Held-out comparison", comparison: holdout },
   ];
 
-  return (
+  const adoptionPanel = (
     <PageSection anchorId="adoption" title="Adoption">
       <div className="ui-sheet min-w-0 space-y-4 p-4 sm:p-5">
         <div className="flex flex-wrap items-center gap-2">
@@ -253,5 +254,13 @@ export async function ImprovementAdoption({
         )}
       </div>
     </PageSection>
+  );
+  return (
+    <>
+      {adoptionPanel}
+      {adoption ? (
+        <ImprovementOutcomes scope={scope} workspaceSlug={workspaceSlug} adoption={adoption} />
+      ) : null}
+    </>
   );
 }

@@ -68,11 +68,29 @@ create trigger fixture_browser_proposal before insert on internal.factory_improv
 for each row when (new.proposal_id = '62300000-0000-4000-9000-000000000300')
 execute function pg_temp.browser_proposal_revision();
 
+\if :{?definition_bundles}
+-- Settings rechecks the exact compiled bytes when it restores a revision.
+create temp table browser_definition_bundles as select :'definition_bundles'::jsonb as bundles;
+create function pg_temp.browser_compiled_definition() returns trigger language plpgsql as $$
+begin
+  select bundles->>new.id::text into strict new.definition_json from browser_definition_bundles;
+  new.canonical_digest := encode(sha256(convert_to(new.definition_json,'UTF8')),'hex');
+  return new;
+end;
+$$;
+create trigger fixture_browser_compiled_definition before insert on public.factory_definition_revisions
+for each row when (new.id in ('62300000-0000-4000-9000-000000000161','62300000-0000-4000-9000-000000000162'))
+execute function pg_temp.browser_compiled_definition();
+\endif
+
 \o /dev/null
 \ir ../../supabase/tests/fixtures/factory_improvement_adoption.psql
 drop trigger fixture_order_frontier_drafts on public.factory_definition_drafts;
 drop trigger fixture_browser_diagnosis on internal.factory_diagnoses;
 drop trigger fixture_browser_proposal on internal.factory_improvement_proposal_revisions;
+\if :{?definition_bundles}
+drop trigger fixture_browser_compiled_definition on public.factory_definition_revisions;
+\endif
 \o
 
 update public.workspaces set slug = :'workspace_slug', name = 'Factory improvement review'

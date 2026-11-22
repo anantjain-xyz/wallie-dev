@@ -61,7 +61,10 @@ import {
 } from "@/lib/routes";
 
 type AgentSelection = { agentId: string; promptRevisionId: string };
-type Selection = ({ revision: string; activation?: number } | { draft: string }) & {
+type Selection = (
+  | { revision: string; activation?: number; restoreFrom?: number }
+  | { draft: string }
+) & {
   test?: string;
 };
 type Input =
@@ -262,6 +265,15 @@ export function FactoryDefinitionEditor({
   const requestedRevision = selection && "revision" in selection ? selection.revision : null;
   const requestedActivation =
     selection && "revision" in selection ? selection.activation : undefined;
+  const requestedRestoreFrom =
+    selection && "revision" in selection ? selection.restoreFrom : undefined;
+  const restoreHeadChanged =
+    snapshot !== null &&
+    requestedRestoreFrom !== undefined &&
+    requestedRestoreFrom !== activationNumber;
+  const restoreConflict = restoreHeadChanged
+    ? "The rollback link is stale. Return to the proposal to review the current activation."
+    : null;
   const draftTests = useCandidateTests({
     api,
     target: draft,
@@ -299,8 +311,9 @@ export function FactoryDefinitionEditor({
     Boolean(edit && workingTarget && workingTarget.id === capabilityTarget?.id) &&
     !locked &&
     !dirty;
-  const anchorCandidate =
-    historyCandidate && selection?.test ? historyCandidate : (draft ?? historyCandidate);
+  const useHistoricalTestAnchor =
+    requestedRestoreFrom !== undefined || Boolean(historyCandidate && selection?.test);
+  const anchorCandidate = useHistoricalTestAnchor ? historyCandidate : (draft ?? historyCandidate);
   const anchorReady =
     Boolean(anchorCandidate) &&
     (!selection?.test || anchorCandidate?.id === (requestedRevision ?? requestedDraft));
@@ -589,6 +602,7 @@ export function FactoryDefinitionEditor({
     if (
       dirty ||
       locked ||
+      restoreHeadChanged ||
       !revisionTests.eligible ||
       selectedRevision !== revisionId ||
       selectedActivationNumber !== targetActivationNumber ||
@@ -620,7 +634,15 @@ export function FactoryDefinitionEditor({
     const query =
       document.kind === "draft"
         ? { draft: document.id, test }
-        : { revision: document.id, activation: document.activationNumber, test };
+        : {
+            revision: document.id,
+            activation: document.activationNumber,
+            restoreFrom:
+              document.id === requestedRevision && document.activationNumber === requestedActivation
+                ? requestedRestoreFrom
+                : undefined,
+            test,
+          };
     return `${workspaceFactoryDefinitionPath(workspaceSlug, { ...query, factory: factoryId })}#candidate-tests`;
   }
 
@@ -985,7 +1007,7 @@ export function FactoryDefinitionEditor({
             {draft ? (
               <div
                 className="scroll-mt-8"
-                id={historyCandidate && selection?.test ? undefined : "candidate-tests"}
+                id={useHistoricalTestAnchor ? undefined : "candidate-tests"}
               >
                 <CandidateTestPanel
                   {...draftTests.panel}
@@ -1118,13 +1140,18 @@ export function FactoryDefinitionEditor({
             nextBeforeActivationNumber={history?.nextBeforeActivationNumber ?? null}
             busy={busy}
             canManage={!dirty && !stale && !conflict}
-            activationEligible={revisionTests.eligible}
+            activationEligible={!restoreHeadChanged && revisionTests.eligible}
             candidateTests={
               historyCandidate ? (
                 <div
                   className="scroll-mt-8"
-                  id={!draft || selection?.test ? "candidate-tests" : undefined}
+                  id={!draft || useHistoricalTestAnchor ? "candidate-tests" : undefined}
                 >
+                  {restoreConflict ? (
+                    <p className="ui-sheet type-secondary mb-3 p-4 text-muted" role="status">
+                      {restoreConflict}
+                    </p>
+                  ) : null}
                   <CandidateTestPanel
                     {...revisionTests.panel}
                     activationNumber={activationNumber}
@@ -1134,7 +1161,7 @@ export function FactoryDefinitionEditor({
                       digest: historyCandidate.digest,
                     }}
                     purpose={isRollbackCandidate ? "rollback" : "history"}
-                    allowStart={!locked && !dirty && revisionTests.canTest}
+                    allowStart={!restoreHeadChanged && !locked && !dirty && revisionTests.canTest}
                     disableReason={
                       conflictReason ??
                       (dirty && isRollbackCandidate

@@ -237,6 +237,7 @@ export function workspaceFactoryDefinitionPath(
     scorerRevision?: string;
     revision?: string;
     activation?: number;
+    restoreFrom?: number;
     draft?: string;
     test?: string;
   },

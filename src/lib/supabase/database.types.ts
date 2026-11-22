@@ -12827,6 +12827,16 @@ export type Database = {
         }
         Returns: Json
       }
+      get_factory_improvement_outcomes: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_proposal_id: string
+          p_proposal_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_factory_improvement_proposal_revision: {
         Args: {
           p_factory_id: string
