@@ -20,7 +20,8 @@ export default async function RunsPage({
   );
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
   const selection = resolveFactorySelection(factories, factoryQuery);
-  if (selection.kind === "unavailable") return <FactoryUnavailable title="Runs" />;
+  if (selection.kind === "unavailable")
+    return <FactoryUnavailable title="Runs" workspaceSlug={workspaceSlug} />;
 
   const data = await loadRunsListData(
     workspaceSlug,

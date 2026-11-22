@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { createElement } from "react";
@@ -31,13 +31,24 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => mocked.searchParams,
 }));
 
+const clientMocks = vi.hoisted(() => ({
+  createSessionFromClient: vi.fn(),
+  deletePendingSessionAttachmentFromClient: vi.fn().mockResolvedValue(undefined),
+  loadSessionRepositoryOptionsFromClient: vi.fn(),
+  uploadSessionAttachmentFromClient: vi.fn(),
+}));
+
+vi.mock("@/features/sessions/client", () => clientMocks);
+
 const workspace = { id: "workspace-1", name: "Acme Corp", slug: "acme-corp" };
 const navItems = getWorkspaceNavItems(workspace.slug);
+const creationFactory = { id: "factory-1", name: "Default Factory" };
 
 function createShellProps(
   props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {},
 ): Omit<Parameters<typeof ShellHeader>[0], "children"> {
   return {
+    creationFactory,
     navItems,
     onboarding: { currentStep: "verify", status: "completed" } as const,
     viewerAvatarUrl: null,
@@ -91,6 +102,22 @@ describe("ShellHeader", () => {
         removeEventListener: vi.fn(),
       })),
     });
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+      configurable: true,
+      value: () => false,
+    });
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+      configurable: true,
+      value: () => undefined,
+    });
+    Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+      configurable: true,
+      value: () => undefined,
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: () => undefined,
+    });
   });
 
   afterEach(async () => {
@@ -141,10 +168,110 @@ describe("ShellHeader", () => {
 
   it("blocks the default-factory creation deep link for an unauthorized viewer", () => {
     mocked.searchParams = new URLSearchParams("create=1");
-    mountShell({ canStartDefaultFactorySession: false });
+    mountShell({ creationFactory: null });
 
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Switch to/ })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it.each([
+    ["the workspace home", "/w/acme-corp", ""],
+    ["the explicit default factory scope", "/w/acme-corp", "factory=factory-1"],
+    ["a case-insensitive default factory id", "/w/acme-corp", "factory=FACTORY-1"],
+    ["a runs list page", "/w/acme-corp/runs", ""],
+  ])("keeps the New session launcher on %s", (_label, pathname, query) => {
+    mocked.pathname = pathname;
+    mocked.searchParams = new URLSearchParams(query);
+    const html = renderShell();
+
+    expect(html).toContain("New session");
+    expect(html).not.toContain("Switch to create");
+    expect(html).not.toContain("New session in ");
+  });
+
+  it.each([
+    ["a session detail page", "/w/acme-corp/sessions/42"],
+    ["a run detail page", "/w/acme-corp/runs/run-1"],
+  ])("names the default factory on the launcher from unscoped %s", (_label, pathname) => {
+    mocked.pathname = pathname;
+    const html = renderShell();
+
+    expect(html).toContain("New session in Default Factory");
+    expect(html).not.toContain("Switch to create");
+  });
+
+  it.each([
+    ["another factory", "factory=other-factory"],
+    ["the all-factories aggregate", "factory=all"],
+    ["a repeated malformed scope", "factory=factory-1&factory=other-factory"],
+    ["an unknown factory id", "factory=missing-factory"],
+  ])("offers an explicit named switch to the default factory from %s", (_label, query) => {
+    mocked.searchParams = new URLSearchParams(query);
+    mountShell();
+
+    const link = screen.getByRole("link", {
+      name: "Switch to create in Default Factory",
+    });
+    expect(link).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+  });
+
+  it.each([
+    ["Inbox", "/w/acme-corp/inbox"],
+    ["Activity", "/w/acme-corp/activity"],
+    ["Governance", "/w/acme-corp/governance"],
+    ["Context", "/w/acme-corp/context"],
+    ["Memory", "/w/acme-corp/memory"],
+  ])("routes creation through the default factory from implicit %s scope", (_label, pathname) => {
+    mocked.pathname = pathname;
+    mountShell();
+
+    expect(
+      screen.getByRole("link", { name: "Switch to create in Default Factory" }),
+    ).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+  });
+
+  it("shows only the switch action for a create deep link outside the default scope", () => {
+    mocked.searchParams = new URLSearchParams("create=1&factory=other-factory");
+    mountShell();
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Switch to create in Default Factory" }),
+    ).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
+  });
+
+  it("keeps an unsent draft mounted while the factory scope changes", async () => {
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      pipelineId: null,
+      repositoryOptions: [],
+      stageOptions: [],
+    });
+    const shell = (props: Parameters<typeof createShellProps>[0] = {}) =>
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(ShellHeader, createShellProps(props), "Page body"),
+      );
+    const view = render(shell());
+
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    const prompt = await screen.findByLabelText("Prompt");
+    fireEvent.change(prompt, { target: { value: "Keep this draft" } });
+    expect(prompt).toHaveValue("Keep this draft");
+
+    mocked.searchParams = new URLSearchParams("factory=other-factory");
+    view.rerender(shell());
+    await waitFor(() => expect(screen.queryByLabelText("Prompt")).toBeNull());
+    expect(screen.getByRole("link", { name: "Switch to create in Default Factory" })).toBeVisible();
+
+    mocked.searchParams = new URLSearchParams();
+    view.rerender(shell());
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    expect(await screen.findByLabelText("Prompt")).toHaveValue("Keep this draft");
   });
 
   it("renders the theme toggle with a hydration-safe accessible label", () => {

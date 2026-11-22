@@ -407,7 +407,7 @@ test("one exact factory session survives browser, API and MCP handoffs", async (
         try {
           await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
           await expect(
-            page.getByText("Inbox unavailable. Refresh to check your access."),
+            page.getByText("You’re offline. Reconnect to refresh your Inbox."),
           ).toBeVisible();
           await proveSharedWorkOutboxRevocation(database, fixture, {
             sessionId,

@@ -22,6 +22,36 @@ import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 
 const ACCESS_RECHECK_MS = 30_000;
 
+type InboxView =
+  | { inbox: FactoryInbox; kind: "ready" }
+  | { kind: "checking" | "offline" | "unavailable" | "error" };
+
+type HiddenInboxKind = Exclude<InboxView["kind"], "ready">;
+
+const HIDDEN_INBOX_MESSAGES: Record<HiddenInboxKind, string> = {
+  checking: "Checking Inbox access…",
+  offline: "You’re offline. Reconnect to refresh your Inbox.",
+  unavailable: "Inbox unavailable. Refresh to check your access.",
+  error: "Couldn’t load Inbox. Refresh to try again.",
+};
+
+class InboxRefreshError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super("Inbox unavailable.");
+    this.status = status;
+  }
+}
+
+function isInboxAccessDenied(error: unknown) {
+  return error instanceof InboxRefreshError && [401, 403, 404].includes(error.status);
+}
+
+function isOnline() {
+  return typeof navigator === "undefined" || navigator.onLine;
+}
+
 export function FactoryInboxPage({
   cursor,
   factoryId,
@@ -41,7 +71,10 @@ export function FactoryInboxPage({
 }) {
   const config = useSupabasePublicConfig();
   const { recovery } = useRealtimeRecovery();
-  const [inbox, setInbox] = useState(initialInbox);
+  const [view, setView] = useState<InboxView>(() =>
+    initialInbox ? { inbox: initialInbox, kind: "ready" } : { kind: "unavailable" },
+  );
+  const inbox = view.kind === "ready" ? view.inbox : null;
 
   useEffect(() => {
     let active = true;
@@ -60,23 +93,41 @@ export function FactoryInboxPage({
       async refresh(signal) {
         const request = ++requestSequence;
         const isCurrent = () => active && request === requestSequence;
-        const clearIfCurrent = () => {
-          if (isCurrent()) setInbox(null);
+        const hideIfCurrent = (kind: HiddenInboxKind) => {
+          if (isCurrent()) setView({ kind });
         };
+        const clearIfCurrent = () => hideIfCurrent(isOnline() ? "checking" : "offline");
         signal.addEventListener("abort", clearIfCurrent, { once: true });
+        // Hidden views move to checking while a read runs; fresh rows stay
+        // visible so a revalidation never flashes the list empty.
+        setView((current) => {
+          if (current.kind === "ready") return current;
+          const kind: HiddenInboxKind = isOnline() ? "checking" : "offline";
+          return current.kind === kind ? current : { kind };
+        });
         try {
           const response = await fetch(`/api/factories/inbox?${query}`, {
             cache: "no-store",
             signal,
           });
-          if (!response.ok) throw new Error("Inbox unavailable.");
+          if (!response.ok) throw new InboxRefreshError(response.status);
           const verified = factoryInboxSchema.parse(await response.json());
           if (isCurrent() && !signal.aborted) {
             lastVerifiedAt = Date.now();
-            setInbox(verified);
+            setView({ inbox: verified, kind: "ready" });
           }
         } catch (error) {
-          clearIfCurrent();
+          if (isCurrent()) {
+            setView(
+              !isOnline()
+                ? { kind: "offline" }
+                : signal.aborted
+                  ? { kind: "checking" }
+                  : isInboxAccessDenied(error)
+                    ? { kind: "unavailable" }
+                    : { kind: "error" },
+            );
+          }
           throw error;
         } finally {
           signal.removeEventListener("abort", clearIfCurrent);
@@ -112,7 +163,7 @@ export function FactoryInboxPage({
                 },
                 () => {
                   if (!isCurrent()) return;
-                  hideSnapshot();
+                  hideSnapshot(isOnline() ? "checking" : "offline");
                   recovery.invalidate();
                 },
               ),
@@ -123,24 +174,32 @@ export function FactoryInboxPage({
     });
     function recheck() {
       if (document.visibilityState !== "visible") return;
+      if (!isOnline()) {
+        hideSnapshot("offline");
+        return;
+      }
       if (Date.now() - lastVerifiedAt >= ACCESS_RECHECK_MS) hideSnapshot();
       recovery.invalidate();
     }
-    function hideSnapshot() {
+    function hideSnapshot(kind: HiddenInboxKind = "checking") {
       requestSequence++;
-      setInbox(null);
+      setView((current) => (current.kind === kind ? current : { kind }));
+    }
+    function hideOffline() {
+      hideSnapshot("offline");
     }
     const interval = window.setInterval(recheck, ACCESS_RECHECK_MS);
     window.addEventListener("focus", recheck);
-    window.addEventListener("offline", hideSnapshot);
+    window.addEventListener("offline", hideOffline);
     document.addEventListener("visibilitychange", recheck);
+    if (!isOnline()) hideOffline();
     recovery.invalidate();
     return () => {
       active = false;
       unregister();
       window.clearInterval(interval);
       window.removeEventListener("focus", recheck);
-      window.removeEventListener("offline", hideSnapshot);
+      window.removeEventListener("offline", hideOffline);
       document.removeEventListener("visibilitychange", recheck);
     };
   }, [config, cursor, factoryId, initialNow, memberId, recovery, workspaceId]);
@@ -170,17 +229,17 @@ export function FactoryInboxPage({
             </p>
           ) : null}
         </div>
-        {!inbox ? (
+        {view.kind !== "ready" ? (
           <p role="status" className="px-4 py-8 text-sm text-muted sm:px-5">
-            Inbox unavailable. Refresh to check your access.
+            {HIDDEN_INBOX_MESSAGES[view.kind]}
           </p>
-        ) : inbox.items.length === 0 ? (
+        ) : view.inbox.items.length === 0 ? (
           <p className="px-4 py-8 text-sm text-muted sm:px-5">
             {cursor ? "No items on this page." : "You’re all caught up."}
           </p>
         ) : (
           <ul className="divide-y divide-border">
-            {inbox.items.map((item) => (
+            {view.inbox.items.map((item) => (
               <InboxRow
                 initialNow={initialNow}
                 item={item}

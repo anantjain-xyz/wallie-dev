@@ -30,6 +30,7 @@ import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
+  defaultsToAllFactories,
   FACTORY_QUERY_PARAM,
   isFactoryAggregatePath,
   isFactorySelectorPath,
@@ -45,6 +46,7 @@ import {
   type WorkspaceNavItem,
   workspaceBasePath,
   workspaceOnboardingPath,
+  workspaceRunsPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
 import {
@@ -56,8 +58,13 @@ import {
 import { cn } from "@/lib/utils";
 import type { SessionCreationPreview } from "@/features/sessions/pending-session-creation";
 
+export type CreationFactory = {
+  id: string;
+  name: string;
+};
+
 type ShellHeaderProps = {
-  canStartDefaultFactorySession?: boolean;
+  creationFactory: CreationFactory | null;
   children?: ReactNode;
   factorySelector?: ReactNode;
   navItems: WorkspaceNavItem[];
@@ -253,7 +260,7 @@ export function prefetchShellNavHrefOnIntent(
 }
 
 export function ShellHeader({
-  canStartDefaultFactorySession = true,
+  creationFactory,
   children,
   factorySelector,
   navItems,
@@ -311,15 +318,33 @@ export function ShellHeader({
 
   // `?create=1` is a deep-link entrypoint (legacy redirect targets, bookmarks)
   // that auto-opens the dialog regardless of which page in the workspace the
-  // user lands on.
+  // user lands on. Creation only targets the workspace default factory, so the
+  // dialog stays closed outside that factory's explicit scope.
+  const factory = searchParams?.getAll(FACTORY_QUERY_PARAM) ?? [];
+  const isDirectCreationScope =
+    creationFactory !== null &&
+    (factory.length > 0
+      ? factory.length === 1 && factory[0].toLowerCase() === creationFactory.id
+      : !defaultsToAllFactories(pathname, workspace.slug) &&
+        !isManagedFactoryPath(pathname, workspace.slug));
+  // Unscoped session/run detail pages can belong to any factory, so creation
+  // stays available but names its default-factory destination up front.
+  const isAmbiguousCreationScope =
+    isDirectCreationScope &&
+    factory.length === 0 &&
+    (pathname.startsWith(`${workspaceSessionsPath(workspace.slug)}/`) ||
+      pathname.startsWith(`${workspaceRunsPath(workspace.slug)}/`));
   const createFromUrl = searchParams?.get("create") === "1";
   const [userCreateOpen, setUserCreateOpen] = useState(false);
   const createScope = `${viewerId}:${workspace.id}`;
   const createUrlKey = `${createScope}:${pathname}`;
   const [dismissedCreateUrlKey, setDismissedCreateUrlKey] = useState<string | null>(null);
   if (!createFromUrl && dismissedCreateUrlKey) setDismissedCreateUrlKey(null);
+  // Leaving the direct scope closes the dialog but keeps it mounted: drafts and
+  // attachments live inside it. Reopening takes an explicit new action.
+  if (!isDirectCreationScope && userCreateOpen) setUserCreateOpen(false);
   const createOpen =
-    canStartDefaultFactorySession &&
+    isDirectCreationScope &&
     !shouldResumeSetup &&
     (userCreateOpen || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
   const [creationPreview, setCreationPreview] = useState<{
@@ -384,7 +409,6 @@ export function ShellHeader({
 
   const pipelineHref = workspaceBasePath(workspace.slug);
   const activeNavItem = navItems.find((item) => isActiveNavItem(pathname, workspace.slug, item));
-  const factory = searchParams?.getAll(FACTORY_QUERY_PARAM);
   const scopedPipelineHref = withFactoryQuery(pipelineHref, factory);
 
   function handleNavClick(
@@ -454,14 +478,45 @@ export function ShellHeader({
         </Link>
       );
     }
-    if (!canStartDefaultFactorySession) return null;
+    if (!creationFactory) return null;
+
+    if (!isDirectCreationScope) {
+      const creationSwitchHref = workspaceSessionsPath(workspace.slug, {
+        factory: creationFactory.id,
+        create: 1,
+      });
+      return (
+        <Link
+          aria-label={`Switch to create in ${creationFactory.name}`}
+          className="ui-button-primary inline-flex min-h-9 items-center justify-center gap-2 whitespace-nowrap px-2.5 text-[13px]"
+          href={creationSwitchHref}
+          onClick={(event) => {
+            if (isUnmodifiedPrimaryClick(event)) visibleCreationPreview?.dismiss();
+          }}
+          {...navPrefetchHandlers(creationSwitchHref)}
+        >
+          <PlusIcon className="h-3.5 w-3.5" />
+          <span className="max-w-48 truncate">
+            Switch to create
+            <span className="hidden lg:inline"> in {creationFactory.name}</span>
+          </span>
+        </Link>
+      );
+    }
 
     return (
       <button
         ref={createButtonRef}
         type="button"
-        className="ui-button-primary inline-flex size-9 items-center justify-center gap-2 px-0 lg:min-h-9 lg:w-auto lg:px-3"
-        aria-label="New session"
+        className={cn(
+          "ui-button-primary inline-flex items-center justify-center gap-2 whitespace-nowrap",
+          isAmbiguousCreationScope
+            ? "min-h-9 w-auto max-w-full px-2.5 text-[13px]"
+            : "size-9 px-0 lg:min-h-9 lg:w-auto lg:px-3",
+        )}
+        aria-label={
+          isAmbiguousCreationScope ? `New session in ${creationFactory.name}` : "New session"
+        }
         onClick={() => {
           startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
           setUserCreateOpen(true);
@@ -470,7 +525,11 @@ export function ShellHeader({
         onPointerEnter={preloadCreateDialog}
       >
         <PlusIcon className="h-3.5 w-3.5" />
-        <span className="hidden lg:inline">New session</span>
+        {isAmbiguousCreationScope ? (
+          <span className="max-w-48 truncate">New session in {creationFactory.name}</span>
+        ) : (
+          <span className="hidden lg:inline">New session</span>
+        )}
       </button>
     );
   }
@@ -593,12 +652,13 @@ export function ShellHeader({
         </div>
       </div>
 
-      {canStartDefaultFactorySession && mountedCreateScope === createScope ? (
+      {creationFactory && mountedCreateScope === createScope ? (
         <CreateSessionLoadingCloseContext.Provider
           value={{ onClose: handleCreateClose, open: createOpen }}
         >
           <CreateSessionDialog
             key={createScope}
+            creationFactoryName={creationFactory.name}
             open={createOpen}
             onClose={handleCreateClose}
             onPreviewChange={handleCreationPreview}

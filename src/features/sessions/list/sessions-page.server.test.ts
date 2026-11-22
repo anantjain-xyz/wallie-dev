@@ -86,8 +86,9 @@ describe("Sessions ledger server render", () => {
         }),
       ),
     );
-    expect(archivedOnlyDefault).toContain("No matching sessions");
+    expect(archivedOnlyDefault).toContain("No active sessions");
     expect(archivedOnlyDefault).not.toContain("No sessions yet");
+    expect(archivedOnlyDefault).not.toContain("No matching sessions");
 
     const one = renderToStaticMarkup(
       createElement(
@@ -169,6 +170,118 @@ describe("Sessions ledger server render", () => {
     expect(html).toContain("sessions-ledger-cell-label");
     expect(html).toContain(">Repository<");
     expect(html).not.toContain('aria-hidden="true" class="sessions-ledger-header"');
+  });
+
+  it("renders scoped empty states with honest actions and preserved scope", () => {
+    const renderPage = (
+      initialData: SessionListPageData,
+      options: { factoryQuery?: string; showCreationOnboarding?: boolean } = {},
+    ) =>
+      renderToStaticMarkup(
+        createElement(
+          OverlayProvider,
+          null,
+          createElement(SessionsPage, {
+            factoryQuery: options.factoryQuery,
+            initialData,
+            showCreationOnboarding: options.showCreationOnboarding ?? false,
+          }),
+        ),
+      );
+    const emptyData = (overrides: Partial<SessionListPageData> = {}) => ({
+      ...makeData(0),
+      ...overrides,
+    });
+    const queryState = (overrides: Partial<SessionListPageData["queryState"]>) => ({
+      cursor: null,
+      query: "",
+      scope: "active" as const,
+      sort: "updated" as const,
+      stageSlug: null,
+      ...overrides,
+    });
+
+    const pagedOut = renderPage(
+      emptyData({
+        hasAnySession: true,
+        queryState: queryState({
+          cursor: "cursor-token",
+          query: "deploy",
+          scope: "archived",
+          sort: "oldest",
+          stageSlug: "plan",
+        }),
+      }),
+      { factoryQuery: "factory-9" },
+    );
+    expect(pagedOut).toContain("No more sessions on this page");
+    expect(pagedOut).toContain("Back to first page");
+    expect(pagedOut).toContain("q=deploy");
+    expect(pagedOut).toContain("scope=archived");
+    expect(pagedOut).toContain("stage=plan");
+    expect(pagedOut).toContain("sort=oldest");
+    expect(pagedOut).toContain("factory=factory-9");
+    expect(pagedOut).not.toContain("cursor=cursor-token");
+
+    const filtered = renderPage(
+      emptyData({
+        hasAnySession: true,
+        queryState: queryState({ query: "deploy", stageSlug: "plan" }),
+      }),
+      { factoryQuery: "factory-9" },
+    );
+    expect(filtered).toContain("No matching sessions");
+    expect(filtered).toContain("Clear filters");
+    expect(filtered).toContain("scope=active");
+    expect(filtered).toContain("factory=factory-9");
+    expect(filtered).not.toContain("q=deploy");
+    expect(filtered).not.toContain("stage=plan");
+
+    const filteredAllScope = renderPage(
+      emptyData({
+        hasAnySession: true,
+        queryState: queryState({ query: "deploy", scope: "all" }),
+      }),
+    );
+    expect(filteredAllScope).toContain("Clear filters");
+    expect(filteredAllScope).toContain("scope=all");
+
+    const noSessionsSingle = renderPage(emptyData(), { factoryQuery: "factory-9" });
+    expect(noSessionsSingle).toContain("No sessions yet");
+    expect(noSessionsSingle).toContain("View sessions across factories");
+    expect(noSessionsSingle).toContain('href="/w/acme/sessions?factory=all"');
+    expect(noSessionsSingle).not.toContain("New session");
+
+    const noSessionsAggregate = renderPage(emptyData(), { factoryQuery: "all" });
+    expect(noSessionsAggregate).toContain("No sessions yet");
+    expect(noSessionsAggregate).toContain("across accessible factories");
+    expect(noSessionsAggregate).not.toContain("View sessions across factories");
+    expect(noSessionsAggregate).not.toContain("New session");
+
+    const archivedSlice = renderPage(
+      emptyData({
+        hasAnySession: true,
+        queryState: queryState({ scope: "archived" }),
+      }),
+      { factoryQuery: "factory-9" },
+    );
+    expect(archivedSlice).toContain("No archived sessions");
+    expect(archivedSlice).toContain("View all sessions");
+    expect(archivedSlice).toContain("scope=all");
+    expect(archivedSlice).toContain("factory=factory-9");
+    expect(archivedSlice).not.toContain("New session");
+
+    const allSliceEmpty = renderPage(
+      emptyData({
+        hasAnySession: true,
+        queryState: queryState({ scope: "all" }),
+      }),
+      { factoryQuery: "factory-9" },
+    );
+    expect(allSliceEmpty).toContain("No sessions yet");
+    expect(allSliceEmpty).toContain("View sessions across factories");
+    expect(allSliceEmpty).not.toContain("No active sessions");
+    expect(allSliceEmpty).not.toContain("New session");
   });
 
   it("hydrates command bar and row islands instead of a monolithic page client", () => {
