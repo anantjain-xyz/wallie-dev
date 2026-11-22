@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,6 +106,7 @@ async function expectEvidence(page: Page, app: string, factoryApi: string, manif
   expect(diagnosis.support_count).toBeGreaterThanOrEqual(diagnosis.minimum_support);
   const citations = new Set(diagnosis.result?.claims.flatMap((claim) => claim.member_ids));
   const runs = (diagnosis.evidence ?? []).filter((run) => citations.has(run.member_id));
+  expect(new Set(runs.map((run) => run.member_id))).toEqual(citations);
   expect(new Set(runs.map((run) => run.run_id))).toEqual(new Set(manifest.sourceRunIds));
   expect(new Set(runs.map((run) => run.session_id)).size).toBeGreaterThanOrEqual(3);
   const citedRuns = evidence.getByRole("list", { name: "Cited run evidence" });
@@ -135,50 +136,12 @@ async function expectComparisonLinks(adoptionPanel: Locator, app: string, manife
 test.describe.configure({ retries: 0 });
 test.use({ trace: "off", video: "off", screenshot: "off" });
 
-test("requires a writable private proof directory and reuses the saved Settings screenshot", async ({
-  page,
-}, info) => {
-  await expect(requireQualificationProofDirectory(undefined)).rejects.toThrow("PROOF_DIR");
-  const root = await mkdtemp(join(tmpdir(), "wallie-improvement-proof-"));
-  try {
-    const directory = join(root, "proof");
-    await expect(requireQualificationProofDirectory(directory)).rejects.toThrow("0700 directory");
-    await mkdir(directory, { mode: 0o700 });
-    const alias = join(root, "alias");
-    await symlink(directory, alias);
-    await expect(requireQualificationProofDirectory(alias)).rejects.toThrow("0700 directory");
-    await chmod(directory, 0o755);
-    await expect(requireQualificationProofDirectory(directory)).rejects.toThrow("0700 directory");
-    await chmod(directory, 0o700);
-    await expect(requireQualificationProofDirectory(directory)).resolves.toBe(directory);
-    await expect(
-      attachSavedQualificationEvidence(info, directory, rollbackEvidence),
-    ).rejects.toThrow("Required proof");
-    await page.setContent("<main>Restore settings</main>");
-    await captureQualificationEvidence(
-      page,
-      info,
-      directory,
-      rollbackEvidence,
-      page.getByRole("main"),
-    );
-    const path = join(directory, `${rollbackEvidence}.png`);
-    const original = await readFile(path);
-    expect((await lstat(path)).mode & 0o777).toBe(0o600);
-    await attachSavedQualificationEvidence(info, directory, rollbackEvidence);
-    expect(await readFile(path)).toEqual(original);
-    expect(info.attachments.map(({ name }) => name)).toEqual([rollbackEvidence, rollbackEvidence]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+const id = (slot: number) => `62300000-0000-4000-9000-${String(slot).padStart(12, "0")}`;
 
-test("refuses an altered publication or a different app origin before authentication", async () => {
-  const id = (slot: number) => `62300000-0000-4000-9000-${String(slot).padStart(12, "0")}`;
-  const runId = id(1);
+function qualificationFixtureManifest(runId = id(1)) {
   const factoryId = id(3);
   const revisionId = id(7);
-  const expected = {
+  return {
     runId,
     appOrigin: "http://127.0.0.1:3200",
     workspaceId: id(2),
@@ -208,6 +171,82 @@ test("refuses an altered publication or a different app origin before authentica
       configPath: `.wallie/factory-definitions/${factoryId}.json`,
     },
   };
+}
+
+test("reuses only decodable Settings proof for the exact qualification manifest", async ({
+  page,
+}, info) => {
+  const manifest = factoryImprovementLoopManifestSchema.parse(qualificationFixtureManifest());
+  await expect(requireQualificationProofDirectory(undefined, manifest)).rejects.toThrow(
+    "PROOF_DIR",
+  );
+  const root = await mkdtemp(join(tmpdir(), "wallie-improvement-proof-"));
+  try {
+    const proofRoot = join(root, "proof");
+    await expect(requireQualificationProofDirectory(proofRoot, manifest)).rejects.toThrow(
+      "0700 directory",
+    );
+    await mkdir(proofRoot, { mode: 0o700 });
+    const alias = join(root, "alias");
+    await symlink(proofRoot, alias);
+    await expect(requireQualificationProofDirectory(alias, manifest)).rejects.toThrow(
+      "0700 directory",
+    );
+    await chmod(proofRoot, 0o755);
+    await expect(requireQualificationProofDirectory(proofRoot, manifest)).rejects.toThrow(
+      "0700 directory",
+    );
+    await chmod(proofRoot, 0o700);
+    const directory = await requireQualificationProofDirectory(proofRoot, manifest);
+    expect(directory).toMatch(new RegExp(`/${manifest.runId}-[a-f0-9]{64}$`));
+    expect((await lstat(directory)).mode & 0o777).toBe(0o700);
+    await expect(requireQualificationProofDirectory(proofRoot, manifest)).resolves.toBe(directory);
+    await expect(
+      attachSavedQualificationEvidence(page, info, directory, rollbackEvidence),
+    ).rejects.toThrow("Required proof");
+    await page.setContent("<main>Restore settings</main>");
+    await captureQualificationEvidence(
+      page,
+      info,
+      directory,
+      rollbackEvidence,
+      page.getByRole("main"),
+    );
+    const path = join(directory, `${rollbackEvidence}.png`);
+    const original = await readFile(path);
+    expect((await lstat(path)).mode & 0o777).toBe(0o600);
+    await attachSavedQualificationEvidence(page, info, directory, rollbackEvidence);
+    expect(await readFile(path)).toEqual(original);
+
+    for (const other of [
+      qualificationFixtureManifest(id(20)),
+      { ...manifest, validationId: id(19) },
+    ]) {
+      const otherManifest = factoryImprovementLoopManifestSchema.parse(other);
+      const otherDirectory = await requireQualificationProofDirectory(proofRoot, otherManifest);
+      expect(otherDirectory).not.toBe(directory);
+      await expect(
+        attachSavedQualificationEvidence(page, info, otherDirectory, rollbackEvidence),
+      ).rejects.toThrow("Required proof");
+    }
+
+    for (const malformed of [
+      original.subarray(0, -12),
+      Buffer.concat([original.subarray(0, 33), original.subarray(-12)]),
+    ]) {
+      await writeFile(path, malformed);
+      await expect(
+        attachSavedQualificationEvidence(page, info, directory, rollbackEvidence),
+      ).rejects.toThrow("Required proof");
+    }
+    expect(info.attachments.map(({ name }) => name)).toEqual([rollbackEvidence, rollbackEvidence]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("refuses an altered publication or a different app origin before authentication", async () => {
+  const expected = qualificationFixtureManifest();
   const accepted = factoryImprovementLoopManifestSchema.parse(expected);
   expect(qualificationAppOrigin(accepted, expected.appOrigin)).toBe(expected.appOrigin);
   expect(() => qualificationAppOrigin(accepted, "http://127.0.0.1:9999")).toThrow();
@@ -493,16 +532,17 @@ const liveTest = test.extend<{ manifestPath: string }>({
 });
 
 liveTest.describe("Live reviewed qualification", () => {
+  liveTest.describe.configure({ timeout: 360_000 });
   liveTest.skip(
     !process.env.WALLIE_FACTORY_IMPROVEMENT_MANIFEST,
     "Requires the scoped OP642 manifest and a genuinely approved, merged pull request.",
   );
   liveTest("qualifies reviewed adoption and rollback", async ({ page, manifestPath }, info) => {
-    liveTest.setTimeout(240_000);
     const manifest = await readFactoryImprovementLoopManifest(manifestPath);
     const app = qualificationAppOrigin(manifest, process.env.PLAYWRIGHT_BASE_URL);
     const proofDirectory = await requireQualificationProofDirectory(
       process.env.WALLIE_FACTORY_IMPROVEMENT_PROOF_DIR,
+      manifest,
     );
     const store = qualificationCheckpoint(manifestPath, manifest);
     const checkpoint = await store.read();
@@ -719,7 +759,7 @@ liveTest.describe("Live reviewed qualification", () => {
       throw new Error("The restored head has no recorded Settings submission for this run.");
     }
     if (adoptedProgress.rollback) {
-      await attachSavedQualificationEvidence(info, proofDirectory, rollbackEvidence);
+      await attachSavedQualificationEvidence(page, info, proofDirectory, rollbackEvidence);
     } else {
       await prepareQualificationRollbackSmoke(manifest, adoption.adopted);
       const rollbackTarget = `${workspaceFactoryDefinitionPath(workspaceSlug, {

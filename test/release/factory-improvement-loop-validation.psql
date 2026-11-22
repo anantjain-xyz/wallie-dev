@@ -8,6 +8,14 @@ select item.* from jsonb_to_recordset(:'inputs'::jsonb) as item(
   input_ref text, checkout_sha text, context_manifest jsonb
 );
 
+-- Retain a separate completed run for the first session to exercise holdout source overlap.
+create temp table qualification_attempts on commit drop as
+select * from qualification_inputs
+union all
+select slot,session_id,:'overlap_job_id'::uuid,:'overlap_run_id'::uuid,title,prompt,
+  input_ref,checkout_sha,context_manifest
+from qualification_inputs where slot = 1;
+
 create temp table qualification_scope on commit drop as
 select revision.*, (revision.definition_json::jsonb->>'pipelineId')::uuid as pipeline_id,
   (revision.definition_json::jsonb->>'repositoryId')::uuid as repository_id,
@@ -33,6 +41,9 @@ do $$ begin
   if (select count(*) from qualification_scope) <> 1
     or (select count(*) from qualification_inputs) <> 4
     or (select count(distinct session_id) from qualification_inputs) <> 4
+    or (select count(*) from qualification_attempts) <> 5
+    or (select count(distinct job_id) from qualification_attempts) <> 5
+    or (select count(distinct run_id) from qualification_attempts) <> 5
   then raise exception 'The improvement replay fixture requires one synthetic factory and four independent sources.';
   end if;
 end $$;
@@ -63,14 +74,14 @@ from qualification_scope scope cross join qualification_inputs input;
 insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,trigger_type,status,attempt_count,started_at,finished_at)
 select input.job_id,scope.workspace_id,input.session_id,scope.stage_id,scope.stage_slug,'manual_run','success',1,
   clock_timestamp() - interval '1 minute',clock_timestamp()
-from qualification_scope scope cross join qualification_inputs input;
+from qualification_scope scope cross join qualification_attempts input;
 
 insert into public.agent_runs(id,workspace_id,session_id,agent_job_id,stage_id,stage_slug,run_type,model_provider,
   model_name,status,attempt_count,started_at,finished_at,agent_id,agent_prompt_revision_id)
 select input.run_id,scope.workspace_id,input.session_id,input.job_id,scope.stage_id,scope.stage_slug,'project',
   scope.agent_provider,scope.agent_model,'success',1,clock_timestamp() - interval '1 minute',clock_timestamp(),
   scope.agent_id,scope.agent_prompt_id
-from qualification_scope scope cross join qualification_inputs input;
+from qualification_scope scope cross join qualification_attempts input;
 
 insert into public.session_attempt_manifests(run_id,workspace_id,session_id,job_id,attempt_count,stage_id,
   definition_provenance,definition_revision_id,definition_digest,definition_skill_ids,definition_tool_ids,
@@ -80,10 +91,10 @@ select input.run_id,scope.workspace_id,input.session_id,input.job_id,1,scope.sta
   scope.canonical_digest,'{}','{}',scope.repository_id,scope.full_name,'main',input.checkout_sha,
   input.checkout_sha,input.input_ref,input.checkout_sha,encode(sha256(convert_to(input.prompt,'UTF8')),'hex'),
   octet_length(input.prompt),6,'[]','workerd','project',scope.agent_provider,scope.agent_model
-from qualification_scope scope cross join qualification_inputs input;
+from qualification_scope scope cross join qualification_attempts input;
 
 insert into public.session_run_context_manifests(run_id,workspace_id,session_id,job_id,attempt_count,manifest,manifest_sha256)
 select input.run_id,scope.workspace_id,input.session_id,input.job_id,1,input.context_manifest,
   encode(sha256(convert_to(input.context_manifest::text,'UTF8')),'hex')
-from qualification_scope scope cross join qualification_inputs input;
+from qualification_scope scope cross join qualification_attempts input;
 commit;

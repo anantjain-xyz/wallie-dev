@@ -146,10 +146,11 @@ async function captureReplaySuite(
   source: ImprovementLoopSource,
   purpose: "regression" | "holdout",
   inputs: ReturnType<typeof prepareReplaySource>[],
+  suiteName = `Improvement loop ${purpose}`,
 ) {
   const suiteId = randomUUID();
   let suiteRevisionId: string | undefined;
-  const tasks: ImprovementLoopReplayWitness["tasks"] = [];
+  const tasks: (ImprovementLoopReplayWitness["tasks"][number] & { taskId: string })[] = [];
   for (const { input, replay } of inputs) {
     const captured = benchmarkCaptureResultSchema.parse(
       await receipt(
@@ -165,17 +166,17 @@ async function captureReplaySuite(
           ...(suiteRevisionId
             ? { p_expected_revision_id: suiteRevisionId }
             : {
-                p_new_suite_name: `Improvement loop ${purpose}`,
+                p_new_suite_name: suiteName,
                 p_new_suite_purpose: purpose,
               }),
         }),
       ),
     );
     suiteRevisionId = captured.suiteRevisionId;
-    tasks.push({ taskRevisionId: captured.taskRevisionId, ...replay });
+    tasks.push({ taskId: captured.taskId, taskRevisionId: captured.taskRevisionId, ...replay });
   }
   assert(suiteRevisionId);
-  return { suiteRevisionId, tasks };
+  return { suiteId, suiteRevisionId, tasks };
 }
 
 async function runNativeReplay(
@@ -390,6 +391,10 @@ export async function qualifyImprovementLoopValidation(
     const inputs = scenarios.map((scenario, index) =>
       prepareReplaySource(directory, context.runId, scenario, index),
     );
+    const overlapSource = {
+      ...inputs[0],
+      input: { ...inputs[0].input, job_id: randomUUID(), run_id: randomUUID() },
+    };
     localSql(context, new URL("./factory-improvement-loop-validation.psql", import.meta.url), {
       workspace_id: source.workspaceId,
       workspace_slug: source.workspaceSlug,
@@ -398,17 +403,52 @@ export async function qualifyImprovementLoopValidation(
       activation_number: String(source.baseline.activationNumber),
       baseline_id: source.baseline.revisionId,
       baseline_digest: source.baseline.digest,
+      overlap_job_id: overlapSource.input.job_id,
+      overlap_run_id: overlapSource.input.run_id,
       inputs: JSON.stringify(inputs.map(({ input }) => input)),
     });
     const targeted = await captureReplaySuite(context, source, "regression", inputs.slice(0, 2));
     const holdout = await captureReplaySuite(context, source, "holdout", inputs.slice(2));
-    const overlappingTasks = [targeted.tasks[0], holdout.tasks[0]];
+    const [targetedTask] = targeted.tasks;
+    const [independentHoldoutTask] = holdout.tasks;
+    const overlapName = "Rejected overlapping holdout";
+    const overlappingSuite = await captureReplaySuite(
+      context,
+      source,
+      "holdout",
+      [overlapSource],
+      overlapName,
+    );
+    const [overlappingTask] = overlappingSuite.tasks;
+    assert.notEqual(overlappingTask.taskId, targetedTask.taskId);
+    assert.notEqual(overlappingTask.taskRevisionId, targetedTask.taskRevisionId);
+    const sharedSource = await receipt(
+      admin
+        .from("factory_benchmark_task_inputs")
+        .select("source_session_id,source_run_id")
+        .eq("workspace_id", source.workspaceId)
+        .eq("factory_id", source.factoryId)
+        .in("task_id", [targetedTask.taskId, overlappingTask.taskId]),
+    );
+    assert.deepEqual(
+      sharedSource.map(({ source_session_id }) => source_session_id),
+      [overlapSource.input.session_id, overlapSource.input.session_id],
+    );
+    assert.deepEqual(
+      new Set(sharedSource.map(({ source_run_id }) => source_run_id)),
+      new Set([inputs[0].input.run_id, overlapSource.input.run_id]),
+    );
     const overlap = await receipt(
       admin.rpc("save_factory_benchmark_suite_revision", {
         ...args,
-        p_name: "Rejected overlapping holdout",
+        p_name: overlapName,
         p_purpose: "holdout",
-        p_task_revision_ids: overlappingTasks.map(({ taskRevisionId }) => taskRevisionId),
+        p_suite_id: overlappingSuite.suiteId,
+        p_expected_revision_id: overlappingSuite.suiteRevisionId,
+        p_task_revision_ids: [
+          overlappingTask.taskRevisionId,
+          independentHoldoutTask.taskRevisionId,
+        ],
       }),
     );
     const scope = { ...source, client: admin, signal: AbortSignal.timeout(240_000) };

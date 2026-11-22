@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -359,21 +359,31 @@ export async function auditQualificationRollback(
   return audit.outcomes;
 }
 
-export async function requireQualificationProofDirectory(configured: string | undefined) {
+async function assertPrivateProofDirectory(directory: string) {
+  const entry = await lstat(directory);
+  const owner = process.getuid?.();
+  if (
+    !entry.isDirectory() ||
+    (entry.mode & 0o777) !== 0o700 ||
+    (owner !== undefined && entry.uid !== owner)
+  ) {
+    throw new Error("The proof path must be a real private directory owned by the current user.");
+  }
+}
+
+export async function requireQualificationProofDirectory(
+  configured: string | undefined,
+  manifest: Manifest,
+) {
   const message =
     "Set WALLIE_FACTORY_IMPROVEMENT_PROOF_DIR to an existing writable 0700 directory.";
   if (!configured) throw new Error(message);
-  const directory = resolve(configured);
+  const root = resolve(configured);
+  const directory = resolve(root, `${manifest.runId}-${manifestDigest(manifest)}`);
   try {
-    const entry = await lstat(directory);
-    const owner = process.getuid?.();
-    if (
-      !entry.isDirectory() ||
-      (entry.mode & 0o777) !== 0o700 ||
-      (owner !== undefined && entry.uid !== owner)
-    ) {
-      throw new Error("The proof path must be a real private directory owned by the current user.");
-    }
+    await assertPrivateProofDirectory(root);
+    await mkdir(directory, { mode: 0o700, recursive: true });
+    await assertPrivateProofDirectory(directory);
     const probe = resolve(directory, `.write-probe-${randomUUID()}`);
     await writeFile(probe, "", { flag: "wx", mode: 0o600 });
     await unlink(probe);
@@ -384,6 +394,7 @@ export async function requireQualificationProofDirectory(configured: string | un
 }
 
 export async function attachSavedQualificationEvidence(
+  page: Page,
   info: TestInfo,
   directory: string,
   name: string,
@@ -393,9 +404,17 @@ export async function attachSavedQualificationEvidence(
   try {
     if (!(await lstat(path)).isFile()) throw new Error("The evidence path is not a regular file.");
     body = await readFile(path);
-    if (body.length <= 8 || body.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
-      throw new Error("The evidence file must contain a PNG.");
+    if (
+      body.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a" ||
+      body.subarray(-12).toString("hex") !== "0000000049454e44ae426082"
+    ) {
+      throw new Error("The evidence file must contain a complete PNG.");
     }
+    await page.evaluate(async (base64) => {
+      const bytes = Uint8Array.from(atob(base64), (entry) => entry.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      bitmap.close();
+    }, body.toString("base64"));
   } catch (error) {
     throw new Error(
       `Required proof ${name}.png is missing or invalid in the original proof directory.`,

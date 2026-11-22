@@ -192,8 +192,10 @@ class QualificationSandbox extends FakeSandbox {
         }),
       );
       assert.equal(usage?.accepted, true);
+      opts?.signal?.throwIfAborted();
       const artifact = `${syntheticMarker}: ${output.pass ? "present" : "absent"}. The scripted qualification agent updated result.txt.`;
       await this.writeFile(artifactFile, artifact);
+      opts?.signal?.throwIfAborted();
       const lines = [
         { type: "item.completed", item: { type: "agent_message", text: artifact } },
         { type: "turn.completed", usage: { input_tokens: 40, output_tokens: 12 } },
@@ -320,6 +322,22 @@ async function control(
   assert.equal(
     z.object({ state: z.string() }).parse(result).state,
     action === "pause" ? "paused" : "active",
+  );
+}
+
+async function assertExclusiveJudgeQueue(admin: QualificationAdmin, workspaceId: string) {
+  const competing = await receipt(
+    admin
+      .from("factory_evaluation_jobs")
+      .select("id")
+      .neq("workspace_id", workspaceId)
+      .in("status", ["queued", "claimed"])
+      .limit(1),
+  );
+  assert.equal(
+    competing.length,
+    0,
+    "The qualification judge requires a disposable project without queued or claimed evaluation jobs in other workspaces.",
   );
 }
 
@@ -517,6 +535,7 @@ async function executeExperiment(
   );
   // The fixture workspace has one evaluation slot. Wait for each drain before claiming the next.
   for (let index = 0; index < slots.length; index += 1) {
+    await assertExclusiveJudgeQueue(admin, scope.workspace);
     await drainFactoryJudges(admin, "workerd");
   }
   const samples = await receipt(
