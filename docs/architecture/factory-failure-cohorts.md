@@ -35,3 +35,17 @@ agent revision identities when recorded. A missing identity remains unknown.
   qualification a reader can see. Private asset content stays behind its
   existing authorized reader. A missing expected validation log leaves the
   failure visible with unavailable evidence.
+
+## Reviewed groups
+
+Open **Improve → Failure groups** to filter a factory by symptom, producing
+definition revision, or review state. The member list opens the exact run,
+evaluation or validation receipt, and the recorded execution profile.
+
+An active factory manager can label, dismiss, or split a group. Each action
+records a review revision. A stale form asks the reviewer to reload.
+
+A split puts the selected runs in one group and the remaining runs in another.
+Both groups reference the reviewed snapshot of the original members. The
+original group retains its source history and can receive new failures.
+Current evidence access determines which members and counts each reader sees.

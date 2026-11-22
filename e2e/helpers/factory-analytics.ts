@@ -90,6 +90,7 @@ export async function seedFactoryAnalytics(baseURL: string | undefined, windowDa
       | "factory-benchmark-frontier-seed.sql"
       | "factory-benchmark-results-seed.sql"
       | "factory-benchmark-trial-media-seed.sql"
+      | "factory-failure-groups-seed.sql"
       | "factory-outcome-release.sql"
       | "factory-routing-rollback-seed.sql"
       | "factory-score-trends-seed.sql"
