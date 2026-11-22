@@ -448,6 +448,7 @@ export function ShellHeader({
           item.id === "scorers" ||
           item.id === "analytics" ||
           item.id === "benchmarks" ||
+          item.id === "failure-groups" ||
           item.id === "overview" ||
           item.id === "factory-definition" ||
           isManagedFactoryPath(item.href, workspace.slug)

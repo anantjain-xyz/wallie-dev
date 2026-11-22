@@ -13,6 +13,7 @@ export type WorkspaceNavItem = {
     | "activity"
     | "analytics"
     | "benchmarks"
+    | "failure-groups"
     | "context"
     | "memory"
     | "agents"
@@ -86,8 +87,15 @@ export function workspaceInboxPath(workspaceSlug: string, query?: Record<string,
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/inbox`, query);
 }
 
-export function workspaceRunDetailPath(workspaceSlug: string, runId: string) {
-  return `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`;
+export function workspaceRunDetailPath(
+  workspaceSlug: string,
+  runId: string,
+  query?: { attempt?: number },
+) {
+  return withSearchParams(
+    `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`,
+    query,
+  );
 }
 
 export function workspaceActivityPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
@@ -100,6 +108,24 @@ export function workspaceAnalyticsPath(workspaceSlug: string, query?: Record<str
 
 export function workspaceBenchmarksPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/benchmarks`, query);
+}
+
+export function workspaceFailureGroupsPath(
+  workspaceSlug: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/failure-groups`, query);
+}
+
+export function workspaceFailureGroupPath(
+  workspaceSlug: string,
+  cohortId: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(
+    `${workspaceFailureGroupsPath(workspaceSlug)}/${encodeURIComponent(cohortId)}`,
+    query,
+  );
 }
 
 export function workspaceBenchmarkSuitePath(
@@ -235,6 +261,12 @@ export function getWorkspaceNavItems(
       id: "benchmarks",
       href: workspaceBenchmarksPath(workspaceSlug),
       label: "Benchmarks",
+      section: "Improve",
+    },
+    {
+      id: "failure-groups",
+      href: workspaceFailureGroupsPath(workspaceSlug),
+      label: "Failure groups",
       section: "Improve",
     },
     {

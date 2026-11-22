@@ -12753,6 +12753,7 @@ export type Database = {
         Args: {
           p_after_member_id?: string
           p_cohort_id: string
+          p_definition_revision_id?: string
           p_factory_id: string
           p_limit?: number
           p_workspace_id: string
@@ -13452,8 +13453,11 @@ export type Database = {
       list_factory_failure_cohorts: {
         Args: {
           p_after_cohort_id?: string
+          p_definition_revision_id?: string
+          p_disposition?: string
           p_factory_id: string
           p_limit?: number
+          p_symptom_kind?: string
           p_workspace_id: string
         }
         Returns: Json
@@ -15070,6 +15074,20 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: boolean
+      }
+      review_factory_failure_cohort: {
+        Args: {
+          p_action: string
+          p_cohort_id: string
+          p_expected_membership_digest?: string
+          p_expected_review_revision: number
+          p_factory_id: string
+          p_label?: string
+          p_request_id: string
+          p_selected_run_ids?: string[]
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       review_factory_memory: {
         Args: {
