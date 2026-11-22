@@ -121,10 +121,11 @@ export async function observeQualificationPost(
   submit: () => Promise<void>,
 ) {
   const failed = Promise.withResolvers<never>();
+  const handlers = new Set<Promise<void>>();
   let active = true;
   let forwardingStarted = false;
   let observedResponse: Response | undefined;
-  await page.route(endpoint, async (route: Route) => {
+  const handleRoute = async (route: Route) => {
     if (route.request().method() !== "POST") return route.fallback();
     if (!active) return route.abort();
     try {
@@ -141,7 +142,15 @@ export async function observeQualificationPost(
     } catch (error) {
       if (active) failed.reject(error);
     }
+  };
+  await page.route(endpoint, (route) => {
+    const handling = handleRoute(route);
+    handlers.add(handling);
+    return handling.finally(() => {
+      handlers.delete(handling);
+    });
   });
+  let outcome: { response: Response } | { error: unknown } | undefined;
   try {
     const [result] = await Promise.race([
       Promise.all([
@@ -157,16 +166,25 @@ export async function observeQualificationPost(
       ]),
       failed.promise,
     ]);
-    return result;
+    outcome = { response: result };
   } catch (error) {
-    if (observedResponse) return observedResponse;
-    if (forwardingStarted) throw new QualificationPostResponseLost(error);
-    throw error;
+    outcome = observedResponse
+      ? { response: observedResponse }
+      : { error: forwardingStarted ? new QualificationPostResponseLost(error) : error };
   } finally {
     active = false;
     // Disabling interception first releases paused Chromium requests. Let their handlers abort first.
-    await page.unrouteAll({ behavior: "wait" });
+    try {
+      await page.unrouteAll({ behavior: "wait" });
+    } catch (error) {
+      if (!outcome) throw error;
+    } finally {
+      // A closing page can reject route cleanup while a checkpoint write is still in flight.
+      await Promise.allSettled(handlers);
+    }
   }
+  if ("response" in outcome) return outcome.response;
+  throw outcome.error;
 }
 
 const auditSchema = z.object({

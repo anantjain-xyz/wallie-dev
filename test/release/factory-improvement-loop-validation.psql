@@ -45,6 +45,13 @@ select input.session_id,scope.workspace_id,scope.factory_id,scope.current_number
   'approved',clock_timestamp(),'pinned',scope.id,true
 from qualification_scope scope cross join qualification_inputs input;
 
+insert into internal.workspace_issue_counters as counters(workspace_id,last_issue_number)
+select owner.workspace_id,max(owner.number)
+from public.sessions owner join qualification_scope scope on scope.workspace_id = owner.workspace_id
+group by owner.workspace_id
+on conflict (workspace_id) do update
+set last_issue_number = greatest(counters.last_issue_number,excluded.last_issue_number);
+
 insert into public.session_factory_admission_inputs(session_id,workspace_id,factory_id,activation_number,
   definition_revision_id,definition_digest,pipeline_id,selected_stage_ids,github_repository_id,
   model_provider,model_name,title_sha256,prompt_sha256,original_title,original_prompt_md)

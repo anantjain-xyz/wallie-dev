@@ -78,11 +78,14 @@ cross join lateral (
 \else
 
 \if :{?admit}
-select enabled as release_was_enabled from public.get_git_continuity_release_state() \gset
-\o /dev/null
-select public.set_git_continuity_release(true,revision,'Improvement qualification admission')
-from public.get_git_continuity_release_state() where not enabled;
-\o
+select enabled as release_was_enabled, revision as release_initial_revision, reason as release_initial_reason
+from public.get_git_continuity_release_state() \gset
+\if :release_was_enabled
+\else
+select revision as release_enabled_revision
+from public.set_git_continuity_release(true,:'release_initial_revision'::bigint,'Improvement qualification admission')
+where enabled and revision = :'release_initial_revision'::bigint + 1 \gset
+\endif
 \endif
 
 select head.revision_id as active_revision_id, revision.canonical_digest as active_digest
@@ -125,10 +128,9 @@ where (input.workspace_id,input.factory_id,input.session_id,input.activation_num
 
 \if :release_was_enabled
 \else
-\o /dev/null
-select public.set_git_continuity_release(false,revision,'Restore qualification admission control')
-from public.get_git_continuity_release_state() where enabled;
-\o
+select revision as release_restored_revision
+from public.set_git_continuity_release(false,:'release_enabled_revision'::bigint,:'release_initial_reason')
+where not enabled and revision = :'release_enabled_revision'::bigint + 1 and reason = :'release_initial_reason' \gset
 \endif
 
 \elif :{?smoke}

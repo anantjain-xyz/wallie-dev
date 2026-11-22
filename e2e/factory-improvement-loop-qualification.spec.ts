@@ -220,9 +220,7 @@ test("refuses an altered publication or a different app origin before authentica
   }
 });
 
-test("aborts the browser POST and drains its checkpoint after observation ends", async ({
-  page,
-}) => {
+async function expectCanceledQualificationPost(page: Page, cleanupFails: boolean) {
   let receivedPosts = 0;
   const server = createServer((request, response) => {
     if (request.method === "POST") receivedPosts += 1;
@@ -233,6 +231,7 @@ test("aborts the browser POST and drains its checkpoint after observation ends",
   const unregistering = Promise.withResolvers<Parameters<Page["unrouteAll"]>>();
   const sent = Promise.withResolvers<boolean>();
   const cancellation = new Error("Simulated browser observation failure.");
+  const cleanupFailure = new Error("Simulated page closure during route cleanup.");
   try {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -245,9 +244,10 @@ test("aborts the browser POST and drains its checkpoint after observation ends",
     const operation = observeQualificationPost(
       {
         route: page.route.bind(page),
-        unrouteAll: (...args) => {
+        unrouteAll: async (...args) => {
           unregistering.resolve(args);
-          return page.unrouteAll(...args);
+          if (cleanupFails) throw cleanupFailure;
+          await page.unrouteAll(...args);
         },
         waitForResponse: page.waitForResponse.bind(page),
       },
@@ -284,13 +284,31 @@ test("aborts the browser POST and drains its checkpoint after observation ends",
     expect(receivedPosts).toBe(0);
   } finally {
     completePersistence.resolve();
+    if (cleanupFails) await page.unrouteAll({ behavior: "wait" });
     await server[Symbol.asyncDispose]();
   }
+}
+
+test("aborts the browser POST and drains its checkpoint after observation ends", async ({
+  page,
+}) => {
+  await expectCanceledQualificationPost(page, false);
 });
 
-test("keeps the browser's HTTP 500 when submit later rejects", async ({ page }) => {
+test("aborts the browser POST and drains its checkpoint after route cleanup fails", async ({
+  page,
+}) => {
+  await expectCanceledQualificationPost(page, true);
+});
+
+test("keeps a browser HTTP error or uncertain delivery when route cleanup fails", async ({
+  page,
+}) => {
+  const unanswered = Promise.withResolvers<void>();
   const server = createServer((request, response) => {
-    if (request.method === "POST") {
+    if (request.method === "POST" && request.url === "/unanswered") {
+      unanswered.resolve();
+    } else if (request.method === "POST") {
       response.writeHead(500, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ message: "Qualification failed." }));
     } else {
@@ -305,8 +323,16 @@ test("keeps the browser's HTTP 500 when submit later rejects", async ({ page }) 
     const origin = `http://127.0.0.1:${address.port}`;
     await page.goto(origin);
     const expected = { test: "qualification" };
+    const observedPage = {
+      route: page.route.bind(page),
+      unrouteAll: async (...args: Parameters<Page["unrouteAll"]>) => {
+        await page.unrouteAll(...args);
+        throw new Error("Simulated page closure during route cleanup.");
+      },
+      waitForResponse: page.waitForResponse.bind(page),
+    };
     const response = await observeQualificationPost(
-      page,
+      observedPage,
       `${origin}/submit`,
       expected,
       async () => {},
@@ -321,7 +347,28 @@ test("keeps the browser's HTTP 500 when submit later rejects", async ({ page }) 
     );
     expect(response.status()).toBe(500);
     expect(await response.json()).toEqual({ message: "Qualification failed." });
+
+    const lostResponse = new Error("Simulated loss after sending the POST.");
+    const uncertain = observeQualificationPost(
+      observedPage,
+      `${origin}/unanswered`,
+      expected,
+      async () => {},
+      async () => {
+        void page
+          .evaluate(
+            (body) => fetch("/unanswered", { method: "POST", body }),
+            JSON.stringify(expected),
+          )
+          .catch(() => {});
+        await unanswered.promise;
+        throw lostResponse;
+      },
+    );
+    await expect(uncertain).rejects.toBeInstanceOf(QualificationPostResponseLost);
+    await expect(uncertain).rejects.toMatchObject({ cause: lostResponse });
   } finally {
+    server.closeAllConnections();
     await server[Symbol.asyncDispose]();
   }
 });

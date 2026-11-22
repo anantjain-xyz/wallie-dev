@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout as wait } from "node:timers/promises";
 
 import { env } from "cloudflare:workers";
 import { it, vi } from "vitest";
@@ -148,7 +149,23 @@ class QualificationSandbox extends FakeSandbox {
           }),
         ),
       );
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      try {
+        await wait(350, undefined, { signal: opts?.signal });
+        opts?.signal?.throwIfAborted();
+      } catch (error) {
+        if (opts?.signal?.aborted) {
+          const settlement = await admin
+            .rpc("finish_factory_benchmark_inference_request", {
+              p_request_id: request.requestId,
+              p_status: "unavailable",
+            })
+            .abortSignal(AbortSignal.timeout(5_000));
+          if (settlement.error || settlement.data !== true) {
+            console.warn("Could not settle the cancelled fixture inference receipt.");
+          }
+        }
+        throw error;
+      }
       assert.equal(
         await receipt(
           admin.rpc("finish_factory_benchmark_inference_request", {
@@ -347,11 +364,35 @@ async function executeExperiment(
       .in("id", [witness.baselineRevisionId, witness.candidateRevisionId]),
   );
   assert.equal(definitions.length, 2);
+  const experimentTrialIds = slots.map(({ trial_id }) => trial_id);
   const seen = new Set<string>();
   for (let index = 0; index < slots.length; index += 1) {
     assert.equal(
       await receipt(admin.rpc("reconcile_factory_benchmark_schedules", { p_limit: 10 })),
       1,
+    );
+    const current = await receipt(
+      admin
+        .from("factory_benchmark_trials")
+        .select("id,job_id,run_id,status")
+        .eq("workspace_id", scope.workspace)
+        .eq("factory_id", scope.factory)
+        .in("id", experimentTrialIds)
+        .eq("status", "queued")
+        .single(),
+    );
+    const competing = await receipt(
+      admin
+        .from("agent_jobs")
+        .select("id")
+        .in("status", ["queued", "started", "running"])
+        .neq("id", current.job_id)
+        .limit(1),
+    );
+    assert.equal(
+      competing.length,
+      0,
+      "The qualification dispatcher requires an exclusive queue with only its exact admitted job.",
     );
     const [dispatch] = await receipt(
       admin.rpc("claim_next_worker_dispatch", {
@@ -362,15 +403,7 @@ async function executeExperiment(
       }),
     );
     assert(dispatch);
-    const current = await receipt(
-      admin
-        .from("factory_benchmark_trials")
-        .select("id,job_id,run_id,status")
-        .eq("workspace_id", scope.workspace)
-        .eq("factory_id", scope.factory)
-        .eq("job_id", dispatch.job_id)
-        .single(),
-    );
+    assert.equal(dispatch.job_id, current.job_id);
     assert(!seen.has(current.id));
     seen.add(current.id);
     const slot = slots.find(({ trial_id }) => trial_id === current.id);

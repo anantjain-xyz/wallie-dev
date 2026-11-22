@@ -437,6 +437,9 @@ export async function publishImprovementLoop({
       user: z.object({ type: z.literal("Bot"), login: z.literal(remote.author) }),
       state: z.enum(["open", "closed"]),
       draft: z.boolean(),
+      merged: z.boolean(),
+      merged_at: z.iso.datetime().nullable(),
+      merge_commit_sha: sha.nullable(),
       base: z.object({
         ref: z.literal(base.baseBranch),
         sha: z.literal(base.baseCommitSha),
@@ -453,6 +456,11 @@ export async function publishImprovementLoop({
     check(
       pull.state === "open" && pull.draft,
       "The initial qualification publication must be an open GitHub draft.",
+    );
+  } else if (pull.state === "closed") {
+    check(
+      pull.merged && pull.merged_at && pull.merge_commit_sha,
+      "The scoped qualification pull request was closed without being merged.",
     );
   }
   const [difference, candidate] = await Promise.all([
@@ -471,7 +479,7 @@ export async function publishImprovementLoop({
     "The App-authored pull request must contain the exact tested candidate bytes.",
   );
 
-  return factoryImprovementLoopManifestSchema.parse({
+  const manifest = factoryImprovementLoopManifestSchema.parse({
     ...fixture,
     publication: {
       ...base,
@@ -483,4 +491,5 @@ export async function publishImprovementLoop({
       repositoryNumericId: repositoryId,
     },
   });
+  return { manifest, merged: pull.merged };
 }

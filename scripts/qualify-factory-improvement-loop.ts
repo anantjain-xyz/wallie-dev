@@ -311,12 +311,12 @@ async function run() {
         console.info(JSON.stringify({ status: "publication-pending", runId: fixture.runId }));
         return;
       }
-      await saveState(args.statePath, publication);
+      await saveState(args.statePath, publication.manifest);
       console.info(
         JSON.stringify({
-          status: "awaiting-human-review",
-          pullRequest: publication.publication.url,
-          head: publication.publication.headCommitSha,
+          status: publication.merged ? "awaiting-adoption" : "awaiting-human-review",
+          pullRequest: publication.manifest.publication.url,
+          head: publication.manifest.publication.headCommitSha,
         }),
       );
     } finally {
