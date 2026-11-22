@@ -113,7 +113,11 @@ function desktopRailButton(html: string, label: string) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = html
     .match(/<button\b[^]*?<\/button>/g)
-    ?.find((button) => new RegExp(`<span[^>]*>${escapedLabel}(?:<|$)`).test(button));
+    ?.find(
+      (button) =>
+        !button.includes('role="combobox"') &&
+        new RegExp(`<span[^>]*>${escapedLabel}(?:<|$)`).test(button),
+    );
   if (!match) {
     throw new Error(`${label} rail button was not rendered.`);
   }
@@ -1138,9 +1142,9 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Choose the coding agent Wallie uses for runs.");
     expect(html).toContain("Model identifier passed to the selected provider.");
     expect(html).toContain("Reasoning effort passed to the selected provider.");
-    expect(html).toContain(">Provider</span>");
+    expect(html).toContain(">Provider</label>");
     expect(html).toContain(">Model</span>");
-    expect(html).toContain(">Effort</span>");
+    expect(html).toContain(">Effort</label>");
     expect(html).not.toContain("Agent provider");
     expect(html).not.toContain("Agent model");
     expect(html).not.toContain("Agent effort");

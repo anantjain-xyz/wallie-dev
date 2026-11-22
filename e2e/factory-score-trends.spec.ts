@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { expectDropdownValue, openDropdownListbox, selectDropdownOption } from "./helpers/select";
 
 test.use({ actionTimeout: 10_000 });
 
@@ -65,13 +66,15 @@ test("a factory reader inspects frozen score coverage and exact run evidence", a
     await signInViaMagicLink(page, initial, { baseURL: fixture.app, email: fixture.viewerEmail });
     const trend = page.locator("#scorer-trends:visible");
     const cohortPicker = trend.getByRole("combobox", { name: "Sampling cohort" });
-    const firstPolicy = cohortPicker.locator(`option[value="${data.policies[0]}"]`);
-    await expect(firstPolicy).toHaveCount(0);
+    const initialCohortList = await openDropdownListbox(cohortPicker);
+    await expect(
+      initialCohortList.locator(`[role="option"][data-value=${JSON.stringify(data.policies[0])}]`),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await trend.getByRole("link", { name: "Older sampling cohorts", exact: true }).click();
-    await expect(firstPolicy).toHaveCount(1);
-    await cohortPicker.selectOption(data.policies[0]);
+    await selectDropdownOption(cohortPicker, data.policies[0]);
     await trend.getByRole("button", { name: "Apply scorer filters" }).click();
-    await expect(cohortPicker).toHaveValue(data.policies[0]);
+    await expectDropdownValue(cohortPicker, data.policies[0]);
     const coverage = trend.locator("dl:visible");
     await expect(coverage.getByText("/ 3 sampled", { exact: true })).toBeVisible();
     await expect(coverage.getByText("/ 2 usable", { exact: true })).toBeVisible();
@@ -96,7 +99,7 @@ test("a factory reader inspects frozen score coverage and exact run evidence", a
     await daily.getByRole("link").click();
     await expect(page).toHaveURL(/scoreSnapshot=/);
     await expect(trend.locator("#scorer-cohort-results")).toContainText("3 matching runs");
-    await trend.getByRole("combobox", { name: "Result state" }).selectOption("fail");
+    await selectDropdownOption(trend.getByRole("combobox", { name: "Result state" }), "fail");
     await trend.getByRole("button", { name: "Filter results" }).click();
     await expect(trend.locator("#scorer-cohort-results")).toContainText("1 matching");
     await trend.getByRole("link", { name: "Open run", exact: true }).click();
@@ -129,14 +132,18 @@ test("a factory reader inspects frozen score coverage and exact run evidence", a
     await page.getByRole("button", { name: "Switch to light mode" }).click();
     await page.goto(`${base}/analytics?${scope}`);
     const revisionPicker = trend.getByRole("combobox", { name: "Scorer revision" });
-    const secondRevision = revisionPicker.locator(`option[value="${data.revisions[1]}"]`);
-    await expect(secondRevision).toHaveCount(0);
+    const initialRevisionList = await openDropdownListbox(revisionPicker);
+    await expect(
+      initialRevisionList.locator(
+        `[role="option"][data-value=${JSON.stringify(data.revisions[1])}]`,
+      ),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await trend.getByRole("link", { name: "Older scorer revisions", exact: true }).click();
-    await expect(secondRevision).toHaveCount(1);
-    await revisionPicker.selectOption(data.revisions[1]);
+    await selectDropdownOption(revisionPicker, data.revisions[1]);
     await trend.getByRole("button", { name: "Show revision" }).click();
-    await expect(revisionPicker).toHaveValue(data.revisions[1]);
-    await expect(cohortPicker).toHaveValue(data.policies[1]);
+    await expectDropdownValue(revisionPicker, data.revisions[1]);
+    await expectDropdownValue(cohortPicker, data.policies[1]);
     await expect(
       trend.locator("#scorer-cohort-results").getByText("Missing evidence", { exact: true }),
     ).toBeVisible();

@@ -1,3 +1,4 @@
+import { SelectField } from "@/components/ui/select";
 import type { AnalyticsQuery } from "@/features/factory-analytics/analytics-query";
 import { dimensionLabels, windowLabel } from "@/features/factory-analytics/analytics-view-shared";
 
@@ -44,16 +45,14 @@ export function AnalyticsFilters({
             type="date"
           />
         </label>
-        <label className="type-label flex flex-col gap-1.5">
-          Break down throughput by
-          <select className="ui-input" defaultValue={query.dimension} name="dimension">
-            {Object.entries(dimensionLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectField
+          className="min-w-44"
+          defaultValue={query.dimension}
+          label="Break down throughput by"
+          labelClassName="type-label"
+          name="dimension"
+          options={Object.entries(dimensionLabels).map(([value, label]) => ({ label, value }))}
+        />
         <label className="type-label flex flex-col gap-1.5">
           Deployment environment
           <input

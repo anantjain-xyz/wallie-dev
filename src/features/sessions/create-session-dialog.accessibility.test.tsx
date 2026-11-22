@@ -1211,7 +1211,12 @@ describe("optimistic session creation", () => {
     render(<OptimisticDraftHarness />);
     await fillImageDraft(user);
     const choice = await screen.findByRole("combobox", { name: "Configuration for this session" });
-    await user.selectOptions(choice, routingTarget);
+    await user.click(choice);
+    await user.click(
+      (
+        await screen.findByRole("listbox", { name: "Configuration for this session" })
+      ).querySelector(`[role="option"][data-value="${routingTarget}"]`) as HTMLElement,
+    );
     expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
     await user.type(screen.getByLabelText("Reason for override"), routingReason);
     await user.click(screen.getByRole("button", { name: "Start session" }));
@@ -1260,9 +1265,14 @@ describe("optimistic session creation", () => {
     const user = userEvent.setup();
     render(<OptimisticDraftHarness />);
     const choice = await screen.findByRole("combobox", { name: "Configuration for this session" });
-    expect(choice).toHaveValue("");
+    expect(choice).toHaveAttribute("data-value", "");
     await user.type(screen.getByLabelText("Prompt"), "Start the routing task");
-    await user.selectOptions(choice, routingTarget);
+    await user.click(choice);
+    await user.click(
+      (
+        await screen.findByRole("listbox", { name: "Configuration for this session" })
+      ).querySelector(`[role="option"][data-value="${routingTarget}"]`) as HTMLElement,
+    );
     await user.type(screen.getByLabelText("Reason for override"), routingReason);
     await user.click(screen.getByRole("button", { name: "Start session" }));
     expect(
@@ -1275,7 +1285,12 @@ describe("optimistic session creation", () => {
       name: "Configuration for this session",
     });
     await waitFor(() => expect(refreshedChoice).toBeEnabled());
-    await user.selectOptions(refreshedChoice, routingTarget);
+    await user.click(refreshedChoice);
+    await user.click(
+      (
+        await screen.findByRole("listbox", { name: "Configuration for this session" })
+      ).querySelector(`[role="option"][data-value="${routingTarget}"]`) as HTMLElement,
+    );
     expect(screen.getByLabelText("Reason for override")).toHaveValue(routingReason);
     await user.click(screen.getByRole("button", { name: "Start session" }));
     await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledTimes(2));

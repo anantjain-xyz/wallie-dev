@@ -142,18 +142,28 @@ describe("structured factory definition editor", () => {
     fireEvent.change(skills, { target: { value: "issue-planning\n" } });
     expect(skills).toHaveValue("issue-planning\n");
     fireEvent.change(skills, { target: { value: "issue-planning\ncode-review" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "Default writable repository" }), {
-      target: { value: repositories[1].id },
-    });
+    fireEvent.click(screen.getByRole("combobox", { name: "Default writable repository" }));
+    fireEvent.click(
+      within(screen.getByRole("listbox", { name: "Default writable repository" })).getByRole(
+        "option",
+        { name: repositories[1].fullName },
+      ),
+    );
     fireEvent.change(screen.getByRole("textbox", { name: "Delivery policy revision" }), {
       target: { value: "" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Sandbox provider" }), {
-      target: { value: "e2b" },
-    });
-    fireEvent.change(screen.getByRole("combobox", { name: "Agent provider" }), {
-      target: { value: "cursor" },
-    });
+    fireEvent.click(screen.getByRole("combobox", { name: "Sandbox provider" }));
+    fireEvent.click(
+      within(screen.getByRole("listbox", { name: "Sandbox provider" })).getByRole("option", {
+        name: "E2B",
+      }),
+    );
+    fireEvent.click(screen.getByRole("combobox", { name: "Agent provider" }));
+    fireEvent.click(
+      within(screen.getByRole("listbox", { name: "Agent provider" })).getByRole("option", {
+        name: "Cursor",
+      }),
+    );
     fireEvent.change(screen.getByRole("spinbutton", { name: "Stall timeout (minutes)" }), {
       target: { value: "12.5" },
     });
@@ -183,12 +193,35 @@ describe("structured factory definition editor", () => {
     const { current } = renderEditor();
     const writable = screen.getByRole("combobox", { name: "Other writable repositories" });
     const readContext = screen.getByRole("combobox", { name: "Read-only context repositories" });
-    expect(within(readContext).queryByRole("option", { name: "wallie/archive" })).toBeNull();
-    expect(within(readContext).queryByRole("option", { name: "wallie/notes" })).toBeNull();
+    fireEvent.click(readContext);
+    const initialReadContextList = screen.getByRole("listbox", {
+      name: "Read-only context repositories",
+    });
+    expect(
+      within(initialReadContextList).queryByRole("option", { name: "wallie/archive" }),
+    ).toBeNull();
+    expect(
+      within(initialReadContextList).queryByRole("option", { name: "wallie/notes" }),
+    ).toBeNull();
+    fireEvent.click(readContext);
 
-    fireEvent.change(writable, { target: { value: repositories[1].id } });
-    expect(within(readContext).queryByRole("option", { name: "wallie/runtime" })).toBeNull();
-    fireEvent.change(readContext, { target: { value: repositories[2].id } });
+    fireEvent.click(writable);
+    fireEvent.click(
+      within(screen.getByRole("listbox", { name: "Other writable repositories" })).getByRole(
+        "option",
+        { name: repositories[1].fullName },
+      ),
+    );
+    fireEvent.click(readContext);
+    const updatedReadContextList = screen.getByRole("listbox", {
+      name: "Read-only context repositories",
+    });
+    expect(
+      within(updatedReadContextList).queryByRole("option", { name: "wallie/runtime" }),
+    ).toBeNull();
+    fireEvent.click(
+      within(updatedReadContextList).getByRole("option", { name: repositories[2].fullName }),
+    );
     expect(current()).toMatchObject({
       repository: "wallie/notes",
       writableRepositories: [repositories[1].id],
@@ -201,7 +234,13 @@ describe("structured factory definition editor", () => {
       }),
     );
     expect(current().readContextRepositories).toBeUndefined();
-    expect(within(writable).getByRole("option", { name: "wallie/docs" })).toBeInTheDocument();
+    fireEvent.click(writable);
+    expect(
+      within(screen.getByRole("listbox", { name: "Other writable repositories" })).getByRole(
+        "option",
+        { name: "wallie/docs" },
+      ),
+    ).toBeInTheDocument();
   });
 
   it("moves stages with stable identities and keeps focus on edited stages", () => {
@@ -282,9 +321,13 @@ it("adds and orders routing classes and rules through the structured definition"
   fireEvent.change(routing.getByRole("spinbutton", { name: "Quality floor (%)" }), {
     target: { value: "83.25" },
   });
-  fireEvent.change(routing.getByRole("combobox", { name: "When the primary is unavailable" }), {
-    target: { value: "fallback" },
-  });
+  fireEvent.click(routing.getByRole("combobox", { name: "When the primary is unavailable" }));
+  fireEvent.click(
+    within(screen.getByRole("listbox", { name: "When the primary is unavailable" })).getByRole(
+      "option",
+      { name: "Use fallback" },
+    ),
+  );
   const fallback = within(routing.getByRole("group", { name: "Rule fallback configuration" }));
   fireEvent.change(fallback.getByRole("textbox", { name: "Model ID" }), {
     target: { value: "openai/gpt-5.5" },
@@ -295,9 +338,12 @@ it("adds and orders routing classes and rules through the structured definition"
   });
   expect(current().modelRouting?.rules[1]?.onUnavailable).toEqual({ kind: "escalate" });
 
-  fireEvent.change(routing.getByRole("combobox", { name: "When no rule matches" }), {
-    target: { value: "fallback" },
-  });
+  fireEvent.click(routing.getByRole("combobox", { name: "When no rule matches" }));
+  fireEvent.click(
+    within(screen.getByRole("listbox", { name: "When no rule matches" })).getByRole("option", {
+      name: "Use fallback",
+    }),
+  );
   expect(
     routing.getByRole("group", { name: "Unmatched-task fallback configuration" }),
   ).toBeVisible();

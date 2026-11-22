@@ -1034,40 +1034,36 @@ function CreateSessionDialogBody({
             {overrideTargets.length || overrideChoice ? (
               <fieldset className="min-w-0 space-y-3 rounded-md border border-border p-3">
                 <legend className="px-1 text-sm font-medium">Routing override</legend>
-                <label className="block space-y-1.5">
-                  <span className="block text-sm font-medium">Configuration for this session</span>
-                  <select
-                    className="ui-select"
-                    disabled={isSubmitting || unconfirmed || repositorySnapshot.isStale}
-                    onChange={(event) => {
-                      const target = event.target.value;
-                      if (target) setOverrideChoice({ scope: overrideScope, target });
-                      else {
-                        setOverrideChoice(null);
-                        setOverrideReason("");
-                      }
-                    }}
-                    value={
-                      overrideTarget
-                        ? routingTargetKey(overrideTarget)
-                        : overrideNeedsSelection
-                          ? "review"
-                          : ""
+                <SelectField
+                  disabled={isSubmitting || unconfirmed || repositorySnapshot.isStale}
+                  emptyOption={{ label: "Use routing policy", value: "" }}
+                  label="Configuration for this session"
+                  labelClassName="text-sm font-medium"
+                  onValueChange={(target) => {
+                    if (target) setOverrideChoice({ scope: overrideScope, target });
+                    else {
+                      setOverrideChoice(null);
+                      setOverrideReason("");
                     }
-                  >
-                    <option value="">Use routing policy</option>
-                    {overrideNeedsSelection ? (
-                      <option value="review" disabled>
-                        Choose again
-                      </option>
-                    ) : null}
-                    {overrideTargets.map((target) => (
-                      <option key={routingTargetKey(target)} value={routingTargetKey(target)}>
-                        {routingTargetLabel(target)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  }}
+                  options={[
+                    ...(overrideNeedsSelection
+                      ? [{ disabled: true, label: "Choose again", value: "review" }]
+                      : []),
+                    ...overrideTargets.map((target) => ({
+                      label: routingTargetLabel(target),
+                      value: routingTargetKey(target),
+                    })),
+                  ]}
+                  value={
+                    overrideTarget
+                      ? routingTargetKey(overrideTarget)
+                      : overrideNeedsSelection
+                        ? "review"
+                        : ""
+                  }
+                  wrap
+                />
                 {overrideNeedsSelection && !unconfirmed ? (
                   <p className="type-secondary text-warning" role="status">
                     Choose a routing override again or use the routing policy.

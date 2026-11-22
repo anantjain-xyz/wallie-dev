@@ -2,6 +2,7 @@ import Link from "next/link";
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { AGENT_PROVIDER_LABELS } from "@/components/shared/agent-provider-options";
+import { SelectField } from "@/components/ui/select";
 import { AGENT_PROVIDERS } from "@/lib/agent-config/contracts";
 import {
   modelRoutingConfigurationSchema,
@@ -113,16 +114,15 @@ function FailureChoice({
   onChange: (kind: FailureKind) => void;
 }) {
   return (
-    <RoutingField label={label}>
-      <select
-        className="ui-select"
-        value={value}
-        onChange={(event) => onChange(event.target.value === "fallback" ? "fallback" : "escalate")}
-      >
-        <option value="escalate">Escalate</option>
-        <option value="fallback">Use fallback</option>
-      </select>
-    </RoutingField>
+    <SelectField
+      label={label}
+      onValueChange={(next) => onChange(next === "fallback" ? "fallback" : "escalate")}
+      options={[
+        { label: "Escalate", value: "escalate" },
+        { label: "Use fallback", value: "fallback" },
+      ]}
+      value={value}
+    />
   );
 }
 
@@ -157,39 +157,30 @@ function ConfigurationFields({
             />
           </RoutingField>
         ))}
-        <RoutingField label="Harness">
-          <select
-            className="ui-select"
-            value={value.harness}
-            onChange={(event) => {
-              const harness = modelRoutingConfigurationSchema.shape.harness.parse(
-                event.target.value,
-              );
-              onChange({ ...value, harness });
-            }}
-          >
-            {AGENT_PROVIDERS.map((provider) => (
-              <option key={provider} value={provider}>
-                {AGENT_PROVIDER_LABELS[provider]}
-              </option>
-            ))}
-          </select>
-        </RoutingField>
-        <RoutingField label="Worker runtime">
-          <select
-            className="ui-select"
-            value={value.workerRuntime}
-            onChange={(event) => {
-              const workerRuntime = modelRoutingConfigurationSchema.shape.workerRuntime.parse(
-                event.target.value,
-              );
-              onChange({ ...value, workerRuntime });
-            }}
-          >
-            <option value="node">Node.js</option>
-            <option value="workerd">Cloudflare Workers</option>
-          </select>
-        </RoutingField>
+        <SelectField
+          label="Harness"
+          onValueChange={(next) => {
+            const harness = modelRoutingConfigurationSchema.shape.harness.parse(next);
+            onChange({ ...value, harness });
+          }}
+          options={AGENT_PROVIDERS.map((provider) => ({
+            label: AGENT_PROVIDER_LABELS[provider],
+            value: provider,
+          }))}
+          value={value.harness}
+        />
+        <SelectField
+          label="Worker runtime"
+          onValueChange={(next) => {
+            const workerRuntime = modelRoutingConfigurationSchema.shape.workerRuntime.parse(next);
+            onChange({ ...value, workerRuntime });
+          }}
+          options={[
+            { label: "Node.js", value: "node" },
+            { label: "Cloudflare Workers", value: "workerd" },
+          ]}
+          value={value.workerRuntime}
+        />
       </div>
     </fieldset>
   );
@@ -521,24 +512,21 @@ export function ModelRoutingEditor({
                     key={rule.id}
                   >
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <RoutingField label="Rule task class">
-                        <select
-                          className="ui-select"
-                          value={rule.taskClassId}
-                          onChange={(event) => {
-                            const match = taskClasses.find(({ id }) => id === event.target.value);
-                            if (match) updateRule(index, { ...rule, taskClassId: match.id });
-                          }}
-                        >
-                          {taskClasses
-                            .filter(({ id }) => id === rule.taskClassId || !usedClasses.has(id))
-                            .map(({ id, name, slug }) => (
-                              <option value={id} key={id}>
-                                {name || slug || "Unnamed task class"}
-                              </option>
-                            ))}
-                        </select>
-                      </RoutingField>
+                      <SelectField
+                        label="Rule task class"
+                        onValueChange={(next) => {
+                          const match = taskClasses.find(({ id }) => id === next);
+                          if (match) updateRule(index, { ...rule, taskClassId: match.id });
+                        }}
+                        options={taskClasses
+                          .filter(({ id }) => id === rule.taskClassId || !usedClasses.has(id))
+                          .map(({ id, name, slug }) => ({
+                            label: name || slug || "Unnamed task class",
+                            value: id,
+                          }))}
+                        value={rule.taskClassId}
+                        wrap
+                      />
                       {rule.configuration.modelKey ? (
                         <p className="type-secondary min-w-0 self-end break-words text-muted">
                           {rule.configuration.modelKey}

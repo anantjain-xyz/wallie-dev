@@ -848,9 +848,12 @@ it("enrolls the exact reviewed class at the confirmed share and links to its out
   expect(confirm).toBeDisabled();
 
   const taskClass = dialog.getByRole("combobox", { name: "Canary task class" });
-  expect(within(taskClass).getAllByRole("option")).toHaveLength(2);
-  expect(within(taskClass).getByRole("option", { name: "Planning (plan)" })).toHaveValue(id(70));
-  fireEvent.change(taskClass, { target: { value: id(70) } });
+  fireEvent.click(taskClass);
+  const taskClassList = within(dialog.getByRole("listbox", { name: "Canary task class" }));
+  expect(taskClassList.getAllByRole("option")).toHaveLength(2);
+  const planningOption = taskClassList.getByRole("option", { name: "Planning (plan)" });
+  expect(planningOption).toHaveAttribute("data-value", id(70));
+  fireEvent.click(planningOption);
   const share = dialog.getByRole("spinbutton", { name: "Candidate share (%)" });
   fireEvent.change(share, { target: { value: "100" } });
   expect(confirm).toBeDisabled();

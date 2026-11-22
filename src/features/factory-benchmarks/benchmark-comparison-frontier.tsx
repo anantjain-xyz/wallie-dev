@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { PageSection } from "@/components/ui/page-shell";
+import { SelectField } from "@/components/ui/select";
 import type {
   BenchmarkFrontier,
   BenchmarkFrontierCandidate,
@@ -100,20 +101,18 @@ function Constraints({
               <input key={name} name={name} type="hidden" value={value} />
             ),
           )}
-          <label className="type-label col-span-2 grid gap-1.5 sm:min-w-48">
-            Frozen scorer
-            <select
-              className="ui-input w-full min-w-0"
-              name="scorerRevisionId"
-              defaultValue={scorer.id}
-            >
-              {scorers.map(({ id, name, revisionNumber }) => (
-                <option key={id} value={id}>
-                  {name} · r{revisionNumber}
-                </option>
-              ))}
-            </select>
-          </label>
+          <SelectField
+            className="col-span-2 sm:min-w-48"
+            defaultValue={scorer.id}
+            label="Frozen scorer"
+            labelClassName="type-label"
+            name="scorerRevisionId"
+            options={scorers.map(({ id, name, revisionNumber }) => ({
+              label: `${name} · r${revisionNumber}`,
+              value: id,
+            }))}
+            wrap
+          />
           <label className="type-label grid gap-1.5">
             Quality floor (%)
             <input

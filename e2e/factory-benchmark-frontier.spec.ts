@@ -8,6 +8,7 @@ import { benchmarkFrontierSchema } from "@/lib/factory-benchmarks/frontier-contr
 import { routingDraftResponseSchema } from "@/lib/model-routing/draft-contracts";
 
 import { signInViaMagicLink } from "./helpers/auth";
+import { selectDropdownOption } from "./helpers/select";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
 
 async function capture(page: Page, section: Locator, info: TestInfo, name: string) {
@@ -182,7 +183,7 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
     await expect(section.getByText(/\$0\.15 per trial · 100% pass rate\./)).toBeVisible();
 
     const scorer = section.getByRole("combobox", { name: "Frozen scorer" });
-    await scorer.selectOption(seeded.validationScorerRevisionId);
+    await selectDropdownOption(scorer, seeded.validationScorerRevisionId);
     await apply.click();
     await page.waitForURL(
       (url) => url.searchParams.get("scorerRevisionId") === seeded.validationScorerRevisionId,

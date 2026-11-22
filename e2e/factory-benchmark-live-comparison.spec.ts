@@ -20,6 +20,7 @@ import { serializeFactoryDefinition } from "@/lib/factory-definitions/serializat
 import type { Database } from "@/lib/supabase/database.types";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { expectDropdownValue, selectDropdownOption } from "./helpers/select";
 
 const nativeModel = "gpt-4.1-2025-04-14";
 const canonicalModel = `openai/${nativeModel}`;
@@ -97,14 +98,18 @@ async function seedLiveReplay(fields: Record<string, string>) {
 }
 
 async function selectWorkerd(card: Locator, harness: "codex" | "opencode", definitionId: string) {
-  await card.getByRole("combobox", { name: "Model", exact: true }).selectOption(canonicalModel);
-  await card.getByRole("combobox", { name: "Harness", exact: true }).selectOption(harness);
+  await selectDropdownOption(
+    card.getByRole("combobox", { name: "Model", exact: true }),
+    canonicalModel,
+  );
+  await selectDropdownOption(card.getByRole("combobox", { name: "Harness", exact: true }), harness);
   const runtime = card.getByRole("combobox", { name: "Worker runtime", exact: true });
-  await runtime.selectOption("workerd");
-  await expect(runtime).toHaveValue("workerd");
-  await card
-    .getByRole("combobox", { name: "Factory revision", exact: true })
-    .selectOption(definitionId);
+  await selectDropdownOption(runtime, "workerd");
+  await expectDropdownValue(runtime, "workerd");
+  await selectDropdownOption(
+    card.getByRole("combobox", { name: "Factory revision", exact: true }),
+    definitionId,
+  );
   await card.getByText("Exact configuration pins", { exact: true }).click();
 }
 
@@ -254,8 +259,8 @@ test("a manager freezes both Workerd harness pins and configures a live schedule
       await expect(card.getByText(definition.canonicalDigest, { exact: true })).toBeVisible();
     }
     const policy = form.getByRole("combobox", { name: "Replay policy revision" });
-    await policy.selectOption(suite.policyRevisionId);
-    await expect(policy.locator("option:checked")).toHaveText(/blocked/i);
+    await selectDropdownOption(policy, suite.policyRevisionId);
+    await expect(policy).toHaveText(/blocked/i);
     await form.getByRole("spinbutton", { name: "Repetitions" }).fill("1");
     const freeze = form.getByRole("button", { name: "Freeze comparison", exact: true });
     await expect(freeze).toBeEnabled();

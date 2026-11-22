@@ -2,6 +2,8 @@
 
 import { createClient, REALTIME_SUBSCRIBE_STATES } from "@supabase/supabase-js";
 import { useEffect, useMemo, useState } from "react";
+
+import { SelectField } from "@/components/ui/select";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
@@ -214,37 +216,31 @@ export function RunHistoryPreview() {
         </p>
       </div>
       <div className="flex flex-wrap items-end gap-4">
-        <label className="grid gap-1 text-sm">
-          Session state
-          <select
-            className="ui-input"
-            value={scenario}
-            onChange={(event) => {
-              const next = scenarios.find((value) => value === event.target.value);
-              if (next) {
-                setScenario(next);
-                setData(fixtureData(next));
-                setRequests(0);
-              }
-            }}
-          >
-            {scenarios.map((value) => (
-              <option key={value}>{value}</option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-sm">
-          Retry response
-          <select
-            className="ui-input"
-            value={result}
-            onChange={(event) => setResult(event.target.value)}
-          >
-            <option>success</option>
-            <option>loading</option>
-            <option>error</option>
-          </select>
-        </label>
+        <SelectField
+          className="min-w-44"
+          label="Session state"
+          onValueChange={(value) => {
+            const next = scenarios.find((item) => item === value);
+            if (next) {
+              setScenario(next);
+              setData(fixtureData(next));
+              setRequests(0);
+            }
+          }}
+          options={scenarios.map((value) => ({ label: value, value }))}
+          value={scenario}
+        />
+        <SelectField
+          className="min-w-40"
+          label="Retry response"
+          onValueChange={setResult}
+          options={[
+            { label: "success", value: "success" },
+            { label: "loading", value: "loading" },
+            { label: "error", value: "error" },
+          ]}
+          value={result}
+        />
       </div>
       <p className="text-sm text-muted" role="status">
         Mock retry requests: {requests}

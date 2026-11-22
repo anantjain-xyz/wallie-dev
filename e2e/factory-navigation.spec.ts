@@ -6,6 +6,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
+import { selectDropdownOption } from "./helpers/select";
 
 type Admin = SupabaseClient<Database>;
 
@@ -517,18 +518,22 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     const principal = await read(
       admin.from("service_principals").select("id").eq("factory_id", visibleFactory.id).single(),
     );
-    await page
-      .getByRole("combobox", { name: "Service principal", exact: true })
-      .selectOption(principal.id);
-    await page
-      .getByRole("combobox", { name: "Writable repository", exact: true })
-      .selectOption(repository.id);
-    await page
-      .getByRole("combobox", { name: "Execution policy", exact: true })
-      .selectOption(budget.id);
-    await page
-      .getByRole("combobox", { name: "Budget payer", exact: true })
-      .selectOption(current.id);
+    await selectDropdownOption(
+      page.getByRole("combobox", { name: "Service principal", exact: true }),
+      principal.id,
+    );
+    await selectDropdownOption(
+      page.getByRole("combobox", { name: "Writable repository", exact: true }),
+      repository.id,
+    );
+    await selectDropdownOption(
+      page.getByRole("combobox", { name: "Execution policy", exact: true }),
+      budget.id,
+    );
+    await selectDropdownOption(
+      page.getByRole("combobox", { name: "Budget payer", exact: true }),
+      current.id,
+    );
     await page.getByLabel("Expires at", { exact: true }).fill(
       await page.evaluate(() => {
         const expiry = new Date(Date.now() + 2 * 60 * 60 * 1000);

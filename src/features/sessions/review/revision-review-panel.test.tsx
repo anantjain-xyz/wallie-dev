@@ -252,7 +252,7 @@ describe("revision review workspace", () => {
   it("compares exact sources and keeps original blocking requests in keyboard-accessible groups", async () => {
     setup();
     expect(await screen.findByText("+ Added")).toBeVisible();
-    expect(screen.getByLabelText("Compare version 2 with")).toHaveValue("old");
+    expect(screen.getByLabelText("Compare version 2 with")).toHaveAttribute("data-value", "old");
     const unresolved = within(screen.getByRole("region", { name: "Unresolved feedback" }));
     expect(unresolved.getByText(/Blocking request · Open · Reviewer A/)).toBeVisible();
     expect(unresolved.getByRole("link")).toHaveAttribute(

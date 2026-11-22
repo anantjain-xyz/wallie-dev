@@ -2,6 +2,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { expectDropdownValue, selectDropdownOption } from "./helpers/select";
 
 test.use({ actionTimeout: 10_000 });
 
@@ -56,11 +57,11 @@ test("an operator copies, edits, and publishes a scorer preset", async ({
     await page.getByLabel("Scorer name", { exact: true }).fill("Unsaved draft");
     await rubric.fill("Unsaved rubric change.");
     const scale = page.getByRole("combobox", { name: "Score scale", exact: true });
-    await scale.selectOption("numeric");
+    await selectDropdownOption(scale, "numeric");
     await page.getByRole("button", { name: "Restore preset", exact: true }).click();
     await expect(page.getByLabel("Scorer name", { exact: true })).toHaveValue(redundantPreset);
     await expect(rubric).toHaveValue(original);
-    await expect(scale).toHaveValue("boolean");
+    await expectDropdownValue(scale, "boolean");
 
     await page.getByLabel("Scorer name", { exact: true }).fill("Invoice regression coverage");
     await page.getByLabel("Identifier", { exact: true }).fill("invoice-regression");

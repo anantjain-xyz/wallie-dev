@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { selectDropdownOption } from "./helpers/select";
 
 const governanceSeed = z.object({
   scorerId: z.uuid(),
@@ -74,17 +75,22 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     await expect(page).toHaveURL(/evaluationAttempt=/);
     const attemptId = z.uuid().parse(new URL(page.url()).searchParams.get("evaluationAttempt"));
     await expect(page.getByRole("heading", { name: "Adjudication", exact: true })).toBeVisible();
-    await page
-      .getByRole("combobox", { name: "Adjudication outcome" })
-      .selectOption({ label: "Dispute verdict" });
-    await page.getByRole("combobox", { name: "Expected outcome" }).selectOption({ label: "Pass" });
+    await selectDropdownOption(page.getByRole("combobox", { name: "Adjudication outcome" }), {
+      label: "Dispute verdict",
+    });
+    await selectDropdownOption(page.getByRole("combobox", { name: "Expected outcome" }), {
+      label: "Pass",
+    });
     await page.getByRole("textbox", { name: "Adjudication note" }).fill(note);
     await page.getByRole("button", { name: "Save adjudication", exact: true }).click();
     await expect(page.getByText(note, { exact: true })).toBeVisible();
     const evaluations = page.locator("#scorer-evaluations");
     await expect(evaluations.getByText("Failed", { exact: true }).first()).toBeVisible();
 
-    await page.getByRole("combobox", { name: "Target rubric revision" }).selectOption(revision);
+    await selectDropdownOption(
+      page.getByRole("combobox", { name: "Target rubric revision" }),
+      revision,
+    );
     await page.getByRole("button", { name: "Queue re-evaluation", exact: true }).click();
     await expect(page.getByText("Re-evaluation queued.", { exact: true })).toBeVisible();
     await expect(evaluations.getByText("Failed", { exact: true }).first()).toBeVisible();
