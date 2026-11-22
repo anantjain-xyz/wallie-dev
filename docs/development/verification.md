@@ -337,6 +337,12 @@ artifacts are under `.wallie/m08-qualification/`. Run the hosted provider
 rehearsal separately with the test factory and dedicated OpenAI project in
 [benchmark replay qualification](../architecture/benchmark-qualification.md).
 
+### Factory improvement loop qualification
+
+Use the [factory improvement loop fixture](factory-improvement-loop-qualification.md)
+for exact cohort-to-proposal validation, a scoped GitHub draft with human review,
+and the authenticated adoption and rollback proof.
+
 ## Browser and benchmark commands
 
 The checked-in Playwright suites are targeted rather than one universal E2E

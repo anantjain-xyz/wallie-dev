@@ -1,0 +1,180 @@
+-- Native session admissions and bounded rollback smoke for the prepared local run.
+\set ON_ERROR_STOP on
+\if :{?inspect}
+begin isolation level repeatable read read only;
+\elif :{?audit}
+begin isolation level repeatable read read only;
+\else
+begin;
+\endif
+set local request.jwt.claim.role = 'service_role';
+
+select member.id as actor_member_id
+from public.workspaces workspace
+join public.factories factory on (factory.workspace_id,factory.id) = (workspace.id,:'factory_id'::uuid)
+join public.workspace_members member on
+  (member.workspace_id,member.user_id) = (workspace.id,:'actor_user_id'::uuid)
+where workspace.id = :'workspace_id' and workspace.slug = :'workspace_slug'
+  and workspace.deletion_requested_at is null and factory.status = 'active'
+  and member.kind = 'human' and member.is_active and member.role in ('owner','admin') \gset
+
+select coalesce(receipt->>'id' = :'publication_id'
+    and receipt->>'headCommitSha' = :'publication_head_sha'
+    and receipt#>>'{base,activationNumber}' = :'baseline_activation'
+    and receipt#>>'{base,revisionId}' = :'baseline_revision_id'
+    and receipt#>>'{base,digest}' = :'baseline_digest'
+    and receipt#>>'{candidate,revisionId}' = :'candidate_revision_id'
+    and receipt#>>'{candidate,digest}' = :'candidate_digest'
+    and receipt->'pullRequest' <> 'null', false) as publication_matches
+from public.get_factory_improvement_publication(:'workspace_id', :'factory_id', :'actor_user_id',
+  :'proposal_id', :'proposal_revision_id') receipt \gset
+\if :publication_matches
+\else
+\echo 'The local publication does not match the exact qualification manifest.'
+select 1 / 0;
+\endif
+
+\if :{?inspect}
+select jsonb_build_object('actorMemberId',:'actor_member_id',
+  'head',jsonb_build_object('activationNumber',activation.activation_number,'revisionId',activation.revision_id,
+    'digest',revision.canonical_digest),
+  'adoption',public.get_factory_improvement_adoption(:'workspace_id',:'factory_id',:'actor_user_id',
+    :'proposal_id',:'proposal_revision_id'),
+  'rollback',public.get_factory_improvement_outcomes(:'workspace_id',:'factory_id',:'actor_user_id',
+    :'proposal_id',:'proposal_revision_id') #> '{restore,receipt}')
+from public.factory_definition_activations activation
+join public.factory_definition_revisions revision on (revision.workspace_id,revision.factory_id,revision.id) =
+  (activation.workspace_id,activation.factory_id,activation.revision_id)
+where (activation.workspace_id,activation.factory_id) = (:'workspace_id'::uuid,:'factory_id'::uuid)
+order by activation.activation_number desc limit 1;
+\elif :{?audit}
+with requested(phase,id) as (
+  values ('baseline',:'baseline_session_id'::uuid), ('adopted',:'adopted_session_id'::uuid),
+    ('restored',:'restored_session_id'::uuid)
+), pins as (
+  select jsonb_object_agg(requested.phase, jsonb_build_object('sessionId',input.session_id,
+    'activationNumber',input.activation_number,'revisionId',input.definition_revision_id,
+    'digest',input.definition_digest,'pinHash',encode(sha256(convert_to(to_jsonb(input)::text,'UTF8')),'hex'))) as data
+  from requested
+  join public.session_factory_admission_inputs input on input.session_id = requested.id
+  join public.sessions session on (session.workspace_id,session.factory_id,session.id) =
+    (input.workspace_id,input.factory_id,input.session_id)
+  where (input.workspace_id,input.factory_id) = (:'workspace_id'::uuid,:'factory_id'::uuid)
+    and session.execution_purpose = 'production' and session.execute_pinned_definition
+)
+select pins.data || jsonb_build_object('head',head.data,
+  'outcomes',public.get_factory_improvement_outcomes(:'workspace_id', :'factory_id', :'actor_user_id',
+    :'proposal_id', :'proposal_revision_id'))
+from pins
+cross join lateral (
+  select jsonb_build_object('activationNumber',activation.activation_number,'revisionId',activation.revision_id,
+    'digest',revision.canonical_digest) as data
+  from public.factory_definition_activations activation
+  join public.factory_definition_revisions revision on (revision.workspace_id,revision.factory_id,revision.id) =
+    (activation.workspace_id,activation.factory_id,activation.revision_id)
+  where (activation.workspace_id,activation.factory_id) = (:'workspace_id'::uuid,:'factory_id'::uuid)
+  order by activation.activation_number desc limit 1
+) head;
+\else
+
+\if :{?admit}
+select enabled as release_was_enabled, revision as release_initial_revision, reason as release_initial_reason
+from public.get_git_continuity_release_state() \gset
+\if :release_was_enabled
+\else
+select revision as release_enabled_revision
+from public.set_git_continuity_release(true,:'release_initial_revision'::bigint,'Improvement qualification admission')
+where enabled and revision = :'release_initial_revision'::bigint + 1 \gset
+\endif
+\endif
+
+select head.revision_id as active_revision_id, revision.canonical_digest as active_digest
+from internal.lock_factory_definition_head(:'workspace_id', :'factory_id', :'actor_user_id', :'expected_activation') head
+join public.factory_definition_revisions revision on (revision.workspace_id,revision.factory_id,revision.id) =
+  (head.workspace_id,head.factory_id,head.revision_id) \gset
+select :'active_revision_id' = :'expected_revision_id' and :'active_digest' = :'expected_digest' as exact_head \gset
+\if :exact_head
+\else
+\echo 'The local factory head does not match the intended qualification activation.'
+select 1 / 0;
+\endif
+
+\if :{?admit}
+with definition as (
+  select revision.definition_json::jsonb as bundle
+  from public.factory_definition_revisions revision where (revision.workspace_id,revision.factory_id,revision.id) =
+    (:'workspace_id'::uuid,:'factory_id'::uuid,:'expected_revision_id'::uuid)
+)
+select admitted.session_id as admitted_session_id
+from definition
+cross join lateral public.create_session_once_with_first_job(:'workspace_id', :'actor_member_id', :'request_id',
+  encode(sha256(convert_to(:'phase' || ':' || :'expected_digest','UTF8')),'hex'),
+  'Improvement qualification: ' || :'phase','Verify the exact immutable factory admission.',
+  bundle#>>'{agent,provider}',bundle#>>'{agent,model}','{}'::uuid[],
+  session_github_repository_id => (bundle->>'repositoryId')::uuid,
+  selected_pipeline_id => (bundle->>'pipelineId')::uuid,
+  selected_stage_ids => array(select (stage->>'id')::uuid
+    from jsonb_array_elements(bundle->'stages') with ordinality stages(stage,position) order by position)) admitted \gset
+select jsonb_build_object('sessionId',input.session_id,'activationNumber',input.activation_number,
+  'revisionId',input.definition_revision_id,'digest',input.definition_digest,
+  'pinHash',encode(sha256(convert_to(to_jsonb(input)::text,'UTF8')),'hex')) as admitted_pin
+from public.session_factory_admission_inputs input
+join public.sessions session on (session.workspace_id,session.factory_id,session.id) =
+  (input.workspace_id,input.factory_id,input.session_id)
+where (input.workspace_id,input.factory_id,input.session_id,input.activation_number,input.definition_revision_id,input.definition_digest) =
+  (:'workspace_id'::uuid,:'factory_id'::uuid,:'admitted_session_id'::uuid,:'expected_activation'::bigint,
+  :'expected_revision_id'::uuid,:'expected_digest')
+  and session.execution_purpose = 'production' and session.execute_pinned_definition \gset
+
+\if :release_was_enabled
+\else
+select revision as release_restored_revision
+from public.set_git_continuity_release(false,:'release_enabled_revision'::bigint,:'release_initial_reason')
+where not enabled and revision = :'release_enabled_revision'::bigint + 1 and reason = :'release_initial_reason' \gset
+\endif
+
+\elif :{?smoke}
+select coalesce(adoption->>'publicationId' = :'publication_id'
+    and adoption#>>'{adopted,activationNumber}' = :'expected_activation'
+    and adoption#>>'{adopted,revisionId}' = :'expected_revision_id'
+    and adoption#>>'{adopted,digest}' = :'expected_digest', false) as exact_adoption
+from public.get_factory_improvement_adoption(:'workspace_id', :'factory_id', :'actor_user_id',
+  :'proposal_id', :'proposal_revision_id') adoption \gset
+\if :exact_adoption
+\else
+\echo 'A verified exact adoption must exist before preparing its rollback smoke.'
+select 1 / 0;
+\endif
+
+select test.id as smoke_id
+from public.factory_definition_revisions revision
+cross join lateral public.start_factory_definition_smoke_test(:'workspace_id', :'factory_id', :'actor_user_id',
+  :'expected_activation','revision',revision.id,revision.canonical_digest,
+  array[revision.definition_json::jsonb->>'sandboxProvider'],array['agentCli','git','node','packageManager']) test
+where (revision.workspace_id,revision.factory_id,revision.id,revision.canonical_digest) =
+  (:'workspace_id'::uuid,:'factory_id'::uuid,:'baseline_revision_id'::uuid,:'baseline_digest')
+  and test.status = 'running' \gset
+
+-- Provider output is synthetic. Reservation, expiry and transfer to Settings use production commands.
+with definition as (
+  select revision.definition_json::jsonb as bundle
+  from public.factory_definition_revisions revision where (revision.workspace_id,revision.factory_id,revision.id) =
+    (:'workspace_id'::uuid,:'factory_id'::uuid,:'baseline_revision_id'::uuid)
+), result as (
+  select jsonb_build_object('runtimeProfile',bundle->>'sandboxProvider',
+    'stageCount',jsonb_array_length(bundle->'stages'),'completedStageCount',jsonb_array_length(bundle->'stages'),
+    'stages',(select jsonb_agg(jsonb_build_object('stageId',stage->>'id',
+      'promptDigest',encode(sha256(convert_to(stage->>'promptTemplateMd','UTF8')),'hex')) order by position)
+      from jsonb_array_elements(bundle->'stages') with ordinality stages(stage,position))) as evidence
+  from definition
+)
+select jsonb_build_object('smokePassed',
+  public.finish_factory_definition_smoke_test(:'workspace_id', :'smoke_id','passed',evidence,null))
+from result;
+\endif
+\endif
+
+commit;
+\if :{?admitted_pin}
+\echo :admitted_pin
+\endif

@@ -1,0 +1,100 @@
+-- Retain four independent replay source sessions inside the disposable factory.
+begin;
+set local request.jwt.claim.role = 'service_role';
+
+create temp table qualification_inputs on commit drop as
+select item.* from jsonb_to_recordset(:'inputs'::jsonb) as item(
+  slot integer, session_id uuid, job_id uuid, run_id uuid, title text, prompt text,
+  input_ref text, checkout_sha text, context_manifest jsonb
+);
+
+-- Retain a separate completed run for the first session to exercise holdout source overlap.
+create temp table qualification_attempts on commit drop as
+select * from qualification_inputs
+union all
+select slot,session_id,:'overlap_job_id'::uuid,:'overlap_run_id'::uuid,title,prompt,
+  input_ref,checkout_sha,context_manifest
+from qualification_inputs where slot = 1;
+
+create temp table qualification_scope on commit drop as
+select revision.*, (revision.definition_json::jsonb->>'pipelineId')::uuid as pipeline_id,
+  (revision.definition_json::jsonb->>'repositoryId')::uuid as repository_id,
+  (revision.definition_json::jsonb#>>'{stages,0,id}')::uuid as stage_id,
+  revision.definition_json::jsonb#>>'{stages,0,slug}' as stage_slug,
+  revision.definition_json::jsonb#>>'{agent,provider}' as agent_provider,
+  revision.definition_json::jsonb#>>'{agent,model}' as agent_model,
+  (revision.definition_json::jsonb#>>'{implementationAgent,agentId}')::uuid as agent_id,
+  (revision.definition_json::jsonb#>>'{implementationAgent,promptRevisionId}')::uuid as agent_prompt_id,
+  member.id as member_id, repo.full_name,
+  coalesce((select max(number) from public.sessions owner where owner.workspace_id = revision.workspace_id),0) as current_number
+from public.factory_definition_revisions revision
+join public.workspaces workspace on workspace.id = revision.workspace_id
+join public.workspace_members member on (member.workspace_id,member.user_id,member.role,member.kind,member.is_active) =
+  (revision.workspace_id,:'actor_id'::uuid,'owner','human',true)
+join public.github_repositories repo on (repo.workspace_id,repo.factory_id,repo.id) =
+  (revision.workspace_id,revision.factory_id,(revision.definition_json::jsonb->>'repositoryId')::uuid)
+where (revision.workspace_id,revision.factory_id,revision.id,revision.canonical_digest) =
+  (:'workspace_id'::uuid,:'factory_id'::uuid,:'baseline_id'::uuid,:'baseline_digest')
+  and workspace.slug = :'workspace_slug' and repo.full_name = 'fixture/' || workspace.slug;
+
+do $$ begin
+  if (select count(*) from qualification_scope) <> 1
+    or (select count(*) from qualification_inputs) <> 4
+    or (select count(distinct session_id) from qualification_inputs) <> 4
+    or (select count(*) from qualification_attempts) <> 5
+    or (select count(distinct job_id) from qualification_attempts) <> 5
+    or (select count(distinct run_id) from qualification_attempts) <> 5
+  then raise exception 'The improvement replay fixture requires one synthetic factory and four independent sources.';
+  end if;
+end $$;
+
+insert into public.sessions(id,workspace_id,factory_id,number,title,prompt_md,pipeline_id,current_stage_id,
+  creator_member_id,github_repository_id,phase_status,archived_at,factory_definition_provenance,
+  factory_definition_revision_id,execute_pinned_definition)
+select input.session_id,scope.workspace_id,scope.factory_id,scope.current_number + input.slot,
+  input.title,input.prompt,scope.pipeline_id,scope.stage_id,scope.member_id,scope.repository_id,
+  'approved',clock_timestamp(),'pinned',scope.id,true
+from qualification_scope scope cross join qualification_inputs input;
+
+insert into internal.workspace_issue_counters as counters(workspace_id,last_issue_number)
+select owner.workspace_id,max(owner.number)
+from public.sessions owner join qualification_scope scope on scope.workspace_id = owner.workspace_id
+group by owner.workspace_id
+on conflict (workspace_id) do update
+set last_issue_number = greatest(counters.last_issue_number,excluded.last_issue_number);
+
+insert into public.session_factory_admission_inputs(session_id,workspace_id,factory_id,activation_number,
+  definition_revision_id,definition_digest,pipeline_id,selected_stage_ids,github_repository_id,
+  model_provider,model_name,title_sha256,prompt_sha256,original_title,original_prompt_md)
+select input.session_id,scope.workspace_id,scope.factory_id,:'activation_number'::bigint,scope.id,
+  scope.canonical_digest,scope.pipeline_id,array[scope.stage_id],scope.repository_id,scope.agent_provider,scope.agent_model,
+  encode(sha256(convert_to(input.title,'UTF8')),'hex'),encode(sha256(convert_to(input.prompt,'UTF8')),'hex'),input.title,input.prompt
+from qualification_scope scope cross join qualification_inputs input;
+
+insert into public.agent_jobs(id,workspace_id,session_id,stage_id,stage_slug,trigger_type,status,attempt_count,started_at,finished_at)
+select input.job_id,scope.workspace_id,input.session_id,scope.stage_id,scope.stage_slug,'manual_run','success',1,
+  clock_timestamp() - interval '1 minute',clock_timestamp()
+from qualification_scope scope cross join qualification_attempts input;
+
+insert into public.agent_runs(id,workspace_id,session_id,agent_job_id,stage_id,stage_slug,run_type,model_provider,
+  model_name,status,attempt_count,started_at,finished_at,agent_id,agent_prompt_revision_id)
+select input.run_id,scope.workspace_id,input.session_id,input.job_id,scope.stage_id,scope.stage_slug,'project',
+  scope.agent_provider,scope.agent_model,'success',1,clock_timestamp() - interval '1 minute',clock_timestamp(),
+  scope.agent_id,scope.agent_prompt_id
+from qualification_scope scope cross join qualification_attempts input;
+
+insert into public.session_attempt_manifests(run_id,workspace_id,session_id,job_id,attempt_count,stage_id,
+  definition_provenance,definition_revision_id,definition_digest,definition_skill_ids,definition_tool_ids,
+  repository_id,repository_full_name,base_branch,initial_base_sha,input_sha,input_ref,checkout_sha,
+  prompt_sha256,prompt_utf8_bytes,renderer_version,predecessors,worker_runtime,run_type,model_provider,model_name)
+select input.run_id,scope.workspace_id,input.session_id,input.job_id,1,scope.stage_id,'pinned',scope.id,
+  scope.canonical_digest,'{}','{}',scope.repository_id,scope.full_name,'main',input.checkout_sha,
+  input.checkout_sha,input.input_ref,input.checkout_sha,encode(sha256(convert_to(input.prompt,'UTF8')),'hex'),
+  octet_length(input.prompt),6,'[]','workerd','project',scope.agent_provider,scope.agent_model
+from qualification_scope scope cross join qualification_attempts input;
+
+insert into public.session_run_context_manifests(run_id,workspace_id,session_id,job_id,attempt_count,manifest,manifest_sha256)
+select input.run_id,scope.workspace_id,input.session_id,input.job_id,1,input.context_manifest,
+  encode(sha256(convert_to(input.context_manifest::text,'UTF8')),'hex')
+from qualification_scope scope cross join qualification_attempts input;
+commit;
