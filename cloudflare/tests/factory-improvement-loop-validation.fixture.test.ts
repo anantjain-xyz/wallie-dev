@@ -199,7 +199,21 @@ class QualificationSandbox extends FakeSandbox {
         JSON.stringify({ commitSha: output.outputSha, treeSha: output.outputTree, clean: true }),
       );
     }
-    if (cmd === "env" && command === "-i") this.reply(cmd, output.diff);
+    if (
+      cmd === "env" &&
+      command === "-i" &&
+      args.at(-7) === "node" &&
+      args.at(-6) === "-e" &&
+      args.at(-5)?.includes('"diff", "--patch", "--no-ext-diff"')
+    ) {
+      assert.deepEqual(args.slice(-4), [
+        task.inputSha,
+        task.inputTree,
+        output.outputSha,
+        output.outputTree,
+      ]);
+      this.reply(cmd, output.diff);
+    }
     return super.exec(cmd, args, opts);
   }
 
@@ -506,6 +520,7 @@ it.skipIf(!configured.success)(
     const { admin, config } = createQualificationClients(raw);
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://improvement-loop-fixture.example.test");
     vi.stubGlobal("fetch", fixtureTransport(config.url, witness));
+    let replayFailed = false;
     try {
       for (const task of witness.tasks) {
         assert.equal(
@@ -522,19 +537,33 @@ it.skipIf(!configured.success)(
         );
       }
       await control(admin, witness, witness.holdoutExperimentId, "pause");
-      try {
-        await executeExperiment(admin, witness, witness.targetedExperimentId);
-        await control(admin, witness, witness.targetedExperimentId, "pause");
-        await control(admin, witness, witness.holdoutExperimentId, "resume");
-        await executeExperiment(admin, witness, witness.holdoutExperimentId);
-      } finally {
-        await control(admin, witness, witness.targetedExperimentId, "pause");
-        await control(admin, witness, witness.holdoutExperimentId, "pause");
-      }
+      await executeExperiment(admin, witness, witness.targetedExperimentId);
+      await control(admin, witness, witness.targetedExperimentId, "pause");
+      await control(admin, witness, witness.holdoutExperimentId, "resume");
+      await executeExperiment(admin, witness, witness.holdoutExperimentId);
+    } catch (error) {
+      replayFailed = true;
+      throw error;
     } finally {
-      vi.unstubAllEnvs();
-      vi.unstubAllGlobals();
-      vi.clearAllMocks();
+      try {
+        const pauses = await Promise.allSettled([
+          control(admin, witness, witness.targetedExperimentId, "pause"),
+          control(admin, witness, witness.holdoutExperimentId, "pause"),
+        ]);
+        const failures = pauses.filter((result) => result.status === "rejected");
+        if (failures.length > 0) {
+          const cleanup = new AggregateError(
+            failures.map(({ reason }) => reason),
+            "Could not pause both improvement qualification schedules.",
+          );
+          if (!replayFailed) throw cleanup;
+          console.warn(cleanup);
+        }
+      } finally {
+        vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
+        vi.clearAllMocks();
+      }
     }
   },
   180_000,

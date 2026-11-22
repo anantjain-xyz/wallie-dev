@@ -104,10 +104,30 @@ function authenticatedReader(context: ImprovementLoopContext, userId: string) {
 
 async function runSyntheticDiagnosis(
   context: ImprovementLoopContext,
+  databaseEnv: NodeJS.ProcessEnv,
   queued: z.infer<typeof diagnosisReceiptSchema>,
 ) {
   const members = queued.evidence ?? [];
   assert.equal(members.length, 3);
+  // The global claim also expires pending rows in other workspaces.
+  const solePendingDiagnosis = sourceSql(
+    databaseEnv,
+    `set transaction read only;
+    select count(*) = 1 and count(*) filter (where
+      (workspace_id,factory_id,id) = (:'workspace_id'::uuid,:'factory_id'::uuid,:'diagnosis_id'::uuid)
+      and status = 'queued' and requested_at + interval '10 minutes' > clock_timestamp()) = 1
+    from internal.factory_diagnoses where status in ('queued','claimed','running');`,
+    {
+      workspace_id: queued.workspace_id,
+      factory_id: queued.factory_id,
+      diagnosis_id: queued.diagnosis_id,
+    },
+  );
+  assert.equal(
+    solePendingDiagnosis,
+    "t",
+    "Diagnosis qualification requires the exact fixture diagnosis to be the only pending job in an exclusive database.",
+  );
   const loopbackOrigin = new URL(context.apiUrl).origin;
   const fetchBefore = globalThis.fetch;
   let requests = 0;
@@ -440,7 +460,7 @@ export async function prepareImprovementLoopSource(
   );
   assert.equal(queued.status, "queued");
   assert(queued.evidence?.every((member) => member.producing_agent_id === builder.agent_id));
-  await runSyntheticDiagnosis(context, queued);
+  await runSyntheticDiagnosis(context, databaseEnv, queued);
   const diagnosed = diagnosisReceiptSchema.parse(
     await receipt(
       reader.rpc("get_factory_diagnosis", { ...scope, p_diagnosis_id: queued.diagnosis_id }),

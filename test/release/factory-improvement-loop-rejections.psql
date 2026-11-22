@@ -35,7 +35,8 @@ do $$ begin
     select 1 from rejected_comparison fixture
     where public.get_factory_improvement_validation(fixture.workspace_id,fixture.factory_id,fixture.owner_id,
       pg_temp.live_id(300),pg_temp.live_id(311)) @>
-      '{"status":"failed","targeted":{"resolvedPairs":2},"holdout":{"status":"failed","regressions":2,"reasons":["known_regression"]}}'
+      '{"status":"failed","targeted":{"status":"qualified","resolvedPairs":2},
+        "holdout":{"status":"failed","regressions":2,"reasons":["known_regression"]}}'
   ) then
     raise exception 'The paired holdout regression did not veto qualification.';
   end if;

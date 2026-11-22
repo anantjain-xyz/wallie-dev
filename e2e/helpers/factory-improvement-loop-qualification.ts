@@ -1,14 +1,18 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { expect, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
+import {
+  factoryImprovementAdoptionCommandSchema,
+  factoryImprovementAdoptionSchema,
+} from "../../src/lib/factory-proposals/adoption-contracts";
 import { factoryImprovementOutcomesSchema } from "../../src/lib/factory-proposals/outcome-contracts";
 import type { Database } from "../../src/lib/supabase/database.types";
 import {
@@ -30,7 +34,111 @@ const pinSchema = z.object({
 });
 type Pin = z.output<typeof pinSchema>;
 
+export const qualificationRollbackCommandSchema = z.strictObject({
+  action: z.literal("rollback"),
+  expectedActivationNumber: z.number().int().positive(),
+  revisionId: z.string().uuid(),
+  targetActivationNumber: z.number().int().positive(),
+});
+const rollbackReceipt = factoryImprovementOutcomesSchema.shape.restore.shape.receipt;
+const checkpointSchema = z
+  .strictObject({
+    manifestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    baseline: pinSchema,
+    adoptionRequest: factoryImprovementAdoptionCommandSchema.optional(),
+    adoption: factoryImprovementAdoptionSchema.optional(),
+    adopted: pinSchema.optional(),
+    rollbackRequest: qualificationRollbackCommandSchema.optional(),
+    rollback: rollbackReceipt.unwrap().optional(),
+  })
+  .refine(
+    (value) =>
+      (!value.adoption || value.adoptionRequest) &&
+      (!value.adopted || value.adoption) &&
+      (!value.rollbackRequest || value.adopted) &&
+      (!value.rollback || value.rollbackRequest),
+    "The browser checkpoint must preserve each preceding operation.",
+  );
+export type QualificationCheckpoint = z.output<typeof checkpointSchema>;
+
+function manifestDigest(manifest: Manifest) {
+  return createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+}
+
+export function qualificationCheckpoint(manifestPath: string, manifest: Manifest) {
+  const path = `${manifestPath}.browser-progress.json`;
+  const digest = manifestDigest(manifest);
+  return {
+    async read() {
+      try {
+        const file = await lstat(path);
+        if (!file.isFile() || (file.mode & 0o077) !== 0) {
+          throw new Error("The browser checkpoint must be a private regular file.");
+        }
+        const checkpoint = checkpointSchema.parse(JSON.parse(await readFile(path, "utf8")));
+        if (checkpoint.manifestDigest !== digest) {
+          throw new Error("The browser checkpoint belongs to a different qualification manifest.");
+        }
+        return checkpoint;
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+        throw error;
+      }
+    },
+    async save(progress: Omit<QualificationCheckpoint, "manifestDigest">) {
+      const checkpoint = checkpointSchema.parse({ ...progress, manifestDigest: digest });
+      const temporary = `${path}.${randomUUID()}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(checkpoint)}\n`, { flag: "wx", mode: 0o600 });
+      try {
+        await rename(temporary, path);
+      } catch (error) {
+        await unlink(temporary);
+        throw error;
+      }
+      return checkpoint;
+    },
+  };
+}
+
+export async function observeQualificationPost(
+  page: Page,
+  endpoint: string,
+  expected: unknown,
+  persistDispatch: () => Promise<unknown>,
+  submit: () => Promise<void>,
+) {
+  const failed = Promise.withResolvers<never>();
+  const forward = async (route: Route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    try {
+      expect(route.request().postDataJSON()).toEqual(expected);
+      await persistDispatch();
+    } catch (error) {
+      failed.reject(error);
+      return route.abort();
+    }
+    return route.continue();
+  };
+  await page.route(endpoint, forward);
+  try {
+    const [result] = await Promise.race([
+      Promise.all([
+        page.waitForResponse(
+          (entry) => entry.url() === endpoint && entry.request().method() === "POST",
+          { timeout: 110_000 },
+        ),
+        submit(),
+      ]),
+      failed.promise,
+    ]);
+    return result;
+  } finally {
+    await page.unroute(endpoint, forward);
+  }
+}
+
 const auditSchema = z.object({
+  head: factoryImprovementAdoptionSchema.shape.baseline,
   baseline: pinSchema,
   adopted: pinSchema,
   restored: pinSchema,
@@ -90,8 +198,8 @@ export async function authenticateQualificationOwner(
 
 async function runQualificationSql(
   manifest: Manifest,
-  action: "admit" | "smoke" | "audit",
-  values: Record<string, string>,
+  action: "admit" | "smoke" | "audit" | "inspect",
+  values: Record<string, string> = {},
 ) {
   const databaseEnvironment = improvementQualificationDatabaseEnvironment(
     process.env.WALLIE_FACTORY_IMPROVEMENT_DB_URL ?? "",
@@ -130,6 +238,17 @@ async function runQualificationSql(
     },
   );
   return JSON.parse(stdout) as unknown;
+}
+
+export async function inspectQualificationProgress(manifest: Manifest) {
+  return z
+    .object({
+      actorMemberId: z.string().uuid(),
+      head: factoryImprovementAdoptionSchema.shape.baseline,
+      adoption: factoryImprovementAdoptionSchema.nullable(),
+      rollback: rollbackReceipt,
+    })
+    .parse(await runQualificationSql(manifest, "inspect"));
 }
 
 function admissionRequestId(runId: string, phase: AdmissionPhase) {
@@ -180,6 +299,7 @@ export async function auditQualificationRollback(
   expect(audit.baseline).toEqual(pins.baseline);
   expect(audit.adopted).toEqual(pins.adopted);
   expect(audit.restored).toEqual(pins.restored);
+  expect(pins.restored).toMatchObject(audit.head);
   return audit.outcomes;
 }
 

@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -93,36 +94,31 @@ async function saveState(path: string, state: SavedState) {
   await rename(temporary, path);
 }
 
-function errorCode(error: unknown) {
-  return error && typeof error === "object" && "code" in error ? error.code : undefined;
-}
-
-async function claimStateFile(lock: string) {
-  const write = () => writeFile(lock, `${process.pid}\n`, { mode: 0o600, flag: "wx" });
+async function claimStateFile(path: string) {
+  const lock = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
   try {
-    await write();
-  } catch (error) {
-    if (errorCode(error) !== "EEXIST") throw error;
-    const recovery = `${lock}.recovery`;
-    await writeFile(recovery, `${process.pid}\n`, { mode: 0o600, flag: "wx" });
-    try {
-      const owner = z.coerce
-        .number()
-        .int()
-        .positive()
-        .parse((await readFile(lock, "utf8")).trim());
-      try {
-        process.kill(owner, 0);
-      } catch (probe) {
-        if (errorCode(probe) !== "ESRCH") throw probe;
-        await unlink(lock);
-        await write();
-        return;
-      }
+    // flock belongs to the inherited file description. The parent holds it until close or exit.
+    const result = spawnSync(
+      "perl",
+      [
+        "-MFcntl=:flock",
+        "-e",
+        'open my $lock, ">&=3" or exit 2; flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 2);',
+      ],
+      { stdio: ["ignore", "ignore", "ignore", lock.fd], timeout: 5_000 },
+    );
+    if (result.status === 75) {
       throw new Error("Another qualification process owns this state file.");
-    } finally {
-      await unlink(recovery);
     }
+    if (result.status !== 0) {
+      throw new Error("Could not lock the qualification state file with Perl flock.", {
+        cause: result.error,
+      });
+    }
+    return lock;
+  } catch (error) {
+    await lock.close();
+    throw error;
   }
 }
 
@@ -189,8 +185,7 @@ async function withLoopbackContinuity<T>(
 
 async function run() {
   const args = commandArguments();
-  const lockPath = `${args.statePath}.lock`;
-  await claimStateFile(lockPath);
+  const lock = await claimStateFile(`${args.statePath}.lock`);
   try {
     const previous = await readState(args.statePath);
     if (args.command === "prepare") {
@@ -281,7 +276,7 @@ async function run() {
       await browser.close();
     }
   } finally {
-    await unlink(lockPath);
+    await lock.close();
   }
 }
 

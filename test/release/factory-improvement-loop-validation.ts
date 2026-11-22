@@ -475,7 +475,10 @@ export async function qualifyImprovementLoopValidation(
       directory,
     );
 
-    const result = await readFactoryImprovementValidation(scope);
+    const result = await readFactoryImprovementValidation({
+      ...scope,
+      signal: AbortSignal.timeout(30_000),
+    });
     assert(result);
     assert.equal(result.status, "qualified", JSON.stringify(result));
     assert.equal(result.id, validation.id);

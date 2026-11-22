@@ -1,4 +1,15 @@
-import { expect, test, type APIResponse, type Locator, type Page } from "@playwright/test";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  expect,
+  test,
+  type APIResponse,
+  type Locator,
+  type Page,
+  type Response,
+} from "@playwright/test";
 import { z } from "zod";
 
 import { diagnosisReceiptSchema } from "../src/lib/factory-diagnosis/contracts";
@@ -23,8 +34,11 @@ import {
   auditQualificationRollback,
   authenticateQualificationOwner,
   captureQualificationEvidence,
+  inspectQualificationProgress,
+  observeQualificationPost,
   prepareQualificationRollbackSmoke,
   qualificationAppOrigin,
+  qualificationCheckpoint,
 } from "./helpers/factory-improvement-loop-qualification";
 
 type Manifest = FactoryImprovementLoopManifest;
@@ -112,7 +126,7 @@ async function expectComparisonLinks(adoptionPanel: Locator, app: string, manife
 test.describe.configure({ retries: 0 });
 test.use({ trace: "off", video: "off", screenshot: "off" });
 
-test("refuses an altered publication or a different app origin before authentication", () => {
+test("refuses an altered publication or a different app origin before authentication", async () => {
   const id = (slot: number) => `62300000-0000-4000-9000-${String(slot).padStart(12, "0")}`;
   const runId = id(1);
   const factoryId = id(3);
@@ -163,6 +177,42 @@ test("refuses an altered publication or a different app origin before authentica
   ]) {
     expect(factoryImprovementLoopManifestSchema.safeParse(changed).success).toBe(false);
   }
+  const directory = await mkdtemp(join(tmpdir(), "wallie-improvement-progress-"));
+  try {
+    const path = join(directory, "manifest.json");
+    const store = qualificationCheckpoint(path, accepted);
+    expect(await store.read()).toBeNull();
+    const baseline = { ...accepted.baseline, sessionId: id(18), pinHash: "e".repeat(64) };
+    await expect(
+      store.save({
+        baseline,
+        rollbackRequest: {
+          action: "rollback",
+          expectedActivationNumber: 4,
+          revisionId: accepted.baseline.revisionId,
+          targetActivationNumber: 3,
+        },
+      }),
+    ).rejects.toThrow("preceding operation");
+    const adoptionRequest = {
+      publicationId: accepted.publication.id,
+      expectedActivationNumber: 3,
+      candidateDigest: accepted.candidate.digest,
+      headCommitSha: accepted.publication.headCommitSha,
+    };
+    await store.save({ baseline, adoptionRequest });
+    expect(await qualificationCheckpoint(path, accepted).read()).toMatchObject({
+      baseline,
+      adoptionRequest,
+    });
+    await expect(
+      qualificationCheckpoint(path, { ...accepted, validationId: id(19) }).read(),
+    ).rejects.toThrow("different qualification manifest");
+    await chmod(`${path}.browser-progress.json`, 0o644);
+    await expect(store.read()).rejects.toThrow("private regular file");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test.describe("Live reviewed qualification", () => {
@@ -178,6 +228,8 @@ test.describe("Live reviewed qualification", () => {
     test.setTimeout(240_000);
     const manifest = await readFactoryImprovementLoopManifest(manifestPath);
     const app = qualificationAppOrigin(manifest, process.env.PLAYWRIGHT_BASE_URL);
+    const store = qualificationCheckpoint(manifestPath, manifest);
+    const checkpoint = await store.read();
     const { workspaceId, factoryId, workspaceSlug, proposalId, proposalRevisionId } = manifest;
     const factoryApi = `/api/workspaces/${workspaceId}/factories/${factoryId}`;
     const proposalApi = `${factoryApi}/improvement-proposals/${proposalId}/revisions/${proposalRevisionId}`;
@@ -201,10 +253,23 @@ test.describe("Live reviewed qualification", () => {
     ).toBeVisible();
 
     const before = adoptionRead.parse(await accepted(await page.request.get(adoptionApi), 200));
-    expect(
-      before.adoption,
-      "The live fixture requires its first adoption through the real UI.",
-    ).toBeNull();
+    const initial = await inspectQualificationProgress(manifest);
+    expect(before.adoption).toEqual(initial.adoption);
+    if (before.adoption && !checkpoint?.adoptionRequest) {
+      throw new Error("The existing adoption has no recorded browser submission for this run.");
+    }
+    if (checkpoint?.adoption) expect(before.adoption).toEqual(checkpoint.adoption);
+    if (initial.rollback && !checkpoint?.rollbackRequest) {
+      throw new Error("The existing rollback has no recorded Settings submission for this run.");
+    }
+    if (checkpoint?.rollback) expect(initial.rollback).toEqual(checkpoint.rollback);
+    const expectedRestore = {
+      ...manifest.baseline,
+      activationNumber: manifest.baseline.activationNumber + 2,
+    };
+    expect(initial.head).toEqual(
+      initial.rollback ? expectedRestore : (before.adoption?.adopted ?? manifest.baseline),
+    );
     expect(before.publication).toMatchObject({
       id: manifest.publication.id,
       proposalId,
@@ -227,20 +292,22 @@ test.describe("Live reviewed qualification", () => {
         url: manifest.publication.url,
         state: "draft",
       },
-      current: true,
     });
-    const { validation } = validationRead.parse(
-      await accepted(await page.request.get(new URL(`${proposalApi}/validation`, app).href), 200),
-    );
-    expect(validation).toMatchObject({
-      id: manifest.validationId,
-      proposalId,
-      proposalRevisionId,
-      base: manifest.baseline,
-      candidate: manifest.candidate,
-      targeted: { experimentId: manifest.targetedExperimentId },
-      holdout: { experimentId: manifest.holdoutExperimentId },
-    });
+    if (!before.adoption) {
+      expect(before.publication?.current).toBe(true);
+      const { validation } = validationRead.parse(
+        await accepted(await page.request.get(new URL(`${proposalApi}/validation`, app).href), 200),
+      );
+      expect(validation).toMatchObject({
+        id: manifest.validationId,
+        proposalId,
+        proposalRevisionId,
+        base: manifest.baseline,
+        candidate: manifest.candidate,
+        targeted: { experimentId: manifest.targetedExperimentId },
+        holdout: { experimentId: manifest.holdoutExperimentId },
+      });
+    }
     const evidence = await expectEvidence(page, app, factoryApi, manifest);
     await captureQualificationEvidence(
       page,
@@ -255,35 +322,65 @@ test.describe("Live reviewed qualification", () => {
     });
     await expect(prLink).toHaveAttribute("href", manifest.publication.url);
 
-    const baselinePin = await admitQualificationSession(manifest, "baseline", manifest.baseline);
-    const adopt = adoptionPanel.getByRole("button", { name: "Adopt configuration" });
-    await adopt.press("Enter");
-    const confirm = page.getByRole("alertdialog", { name: "Adopt the reviewed configuration?" });
-    await expect(confirm).toBeVisible();
-    const [adoptionResponse] = await Promise.all([
-      page.waitForResponse(
-        (entry) => entry.url() === adoptionApi && entry.request().method() === "POST",
-        { timeout: 110_000 },
-      ),
-      confirm.getByRole("button", { name: "Verify GitHub and adopt" }).press("Enter"),
-    ]);
-    expect(adoptionResponse.request().postDataJSON()).toEqual({
+    let progress =
+      checkpoint ??
+      (await store.save({
+        baseline: await admitQualificationSession(manifest, "baseline", manifest.baseline),
+      }));
+    expect(progress.baseline).toMatchObject(manifest.baseline);
+    const adoptionRequest = {
       publicationId: manifest.publication.id,
       expectedActivationNumber: manifest.baseline.activationNumber,
       candidateDigest: manifest.candidate.digest,
       headCommitSha: manifest.publication.headCommitSha,
-    });
-    const { adoption } = z
-      .object({
-        adoption: factoryImprovementAdoptionSchema,
-        replay: z.literal(false),
-      })
-      .parse(await accepted(adoptionResponse, 201));
+    };
+    if (progress.adoptionRequest) expect(progress.adoptionRequest).toEqual(adoptionRequest);
+    let adoption = before.adoption;
+    if (!adoption) {
+      const retry = Boolean(progress.adoptionRequest);
+      await adoptionPanel.getByRole("button", { name: "Adopt configuration" }).press("Enter");
+      const confirm = page.getByRole("alertdialog", { name: "Adopt the reviewed configuration?" });
+      await expect(confirm).toBeVisible();
+      let response: Response | undefined;
+      try {
+        response = await observeQualificationPost(
+          page,
+          adoptionApi,
+          adoptionRequest,
+          async () => {
+            progress = await store.save({ ...progress, adoptionRequest });
+          },
+          () => confirm.getByRole("button", { name: "Verify GitHub and adopt" }).press("Enter"),
+        );
+      } catch (error) {
+        if (!progress.adoptionRequest) throw error;
+        const durable = await inspectQualificationProgress(manifest);
+        if (!durable.adoption) throw error;
+        adoption = durable.adoption;
+        await page.reload({ waitUntil: "domcontentloaded" });
+      }
+      if (response) {
+        const status = retry && response.status() === 200 ? 200 : 201;
+        adoption = z
+          .object({
+            adoption: factoryImprovementAdoptionSchema,
+            replay: z.literal(status === 200),
+          })
+          .parse(await accepted(response, status)).adoption;
+      }
+    }
+    if (!adoption) throw new Error("The exact adoption receipt is unavailable.");
+    const adoptedProgress = await inspectQualificationProgress(manifest);
+    expect(adoptedProgress.adoption).toEqual(adoption);
+    expect(adoptedProgress.head).toEqual(
+      adoptedProgress.rollback ? expectedRestore : adoption.adopted,
+    );
     expect(adoption).toMatchObject({
       proposalId,
       proposalRevisionId,
       publicationId: manifest.publication.id,
       validationId: manifest.validationId,
+      actorMemberId: adoptedProgress.actorMemberId,
       baseline: manifest.baseline,
       adopted: { ...manifest.candidate, activationNumber: manifest.baseline.activationNumber + 1 },
       review: {
@@ -301,6 +398,7 @@ test.describe("Live reviewed qualification", () => {
     expect(Date.parse(adoption.review.reviewedAt)).toBeLessThanOrEqual(
       Date.parse(adoption.review.mergedAt),
     );
+    progress = await store.save({ ...progress, adoption });
     await expect(adoptionPanel.getByText("Adopted", { exact: true })).toBeVisible();
     await expect(
       adoptionPanel.getByText(adoption.review.mergeCommitSha, { exact: true }),
@@ -310,61 +408,89 @@ test.describe("Live reviewed qualification", () => {
     ).toBeVisible();
     await captureQualificationEvidence(page, info, "02-exact-hosted-adoption-light", adoptionPanel);
 
-    const adoptedPin = await admitQualificationSession(manifest, "adopted", adoption.adopted);
-    await prepareQualificationRollbackSmoke(manifest, adoption.adopted);
-    const rollbackTarget = `${workspaceFactoryDefinitionPath(workspaceSlug, {
-      factory: factoryId,
-      revision: manifest.baseline.revisionId,
-      activation: manifest.baseline.activationNumber,
-      restoreFrom: adoption.adopted.activationNumber,
-    })}#candidate-tests`;
+    const adoptedPin =
+      progress.adopted ?? (await admitQualificationSession(manifest, "adopted", adoption.adopted));
+    expect(adoptedPin).toMatchObject(adoption.adopted);
+    progress = await store.save({ ...progress, adopted: adoptedPin });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "Switch to dark mode" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     const outcomes = page.locator("#outcomes:visible");
-    const rollback = outcomes.getByRole("link", { name: "Review rollback" });
-    await expect(rollback).toHaveAttribute("href", rollbackTarget);
-    await rollback.press("Enter");
-    await expect(page).toHaveURL(new URL(rollbackTarget, app).href);
-    const restore = page.getByRole("button", { name: "Roll back to this revision" });
-    await expect(restore).toBeEnabled({ timeout: 35_000 });
-    await restore.press("Enter");
-    const restoreDialog = page.getByRole("alertdialog", { name: "Activate this revision?" });
-    await expect(restoreDialog.getByText(manifest.baseline.digest, { exact: true })).toBeVisible();
-    await captureQualificationEvidence(
-      page,
-      info,
-      "03-shared-settings-rollback-dark-mobile",
-      restoreDialog,
-    );
-    const [rollbackResponse] = await Promise.all([
-      page.waitForResponse(
-        (entry) => entry.url() === definitionApi && entry.request().method() === "POST",
-      ),
-      restoreDialog.getByRole("button", { name: "Activate revision" }).press("Enter"),
-    ]);
-    expect(rollbackResponse.request().postDataJSON()).toEqual({
-      action: "rollback",
+    const rollbackRequest = {
+      action: "rollback" as const,
       expectedActivationNumber: adoption.adopted.activationNumber,
       revisionId: manifest.baseline.revisionId,
       targetActivationNumber: manifest.baseline.activationNumber,
-    });
-    const expectedRestore = {
-      revisionId: manifest.baseline.revisionId,
-      activationNumber: adoption.adopted.activationNumber + 1,
     };
-    expect(await accepted(rollbackResponse, 201)).toMatchObject({
-      activation: {
-        ...expectedRestore,
-        previousActivationNumber: adoption.adopted.activationNumber,
-      },
+    if (progress.rollbackRequest) expect(progress.rollbackRequest).toEqual(rollbackRequest);
+    if (adoptedProgress.rollback && !progress.rollbackRequest) {
+      throw new Error("The restored head has no recorded Settings submission for this run.");
+    }
+    if (!adoptedProgress.rollback) {
+      await prepareQualificationRollbackSmoke(manifest, adoption.adopted);
+      const rollbackTarget = `${workspaceFactoryDefinitionPath(workspaceSlug, {
+        factory: factoryId,
+        revision: manifest.baseline.revisionId,
+        activation: manifest.baseline.activationNumber,
+        restoreFrom: adoption.adopted.activationNumber,
+      })}#candidate-tests`;
+      const rollback = outcomes.getByRole("link", { name: "Review rollback" });
+      await expect(rollback).toHaveAttribute("href", rollbackTarget);
+      await rollback.press("Enter");
+      await expect(page).toHaveURL(new URL(rollbackTarget, app).href);
+      const restore = page.getByRole("button", { name: "Roll back to this revision" });
+      await expect(restore).toBeEnabled({ timeout: 35_000 });
+      await restore.press("Enter");
+      const restoreDialog = page.getByRole("alertdialog", { name: "Activate this revision?" });
+      await expect(
+        restoreDialog.getByText(manifest.baseline.digest, { exact: true }),
+      ).toBeVisible();
+      await captureQualificationEvidence(
+        page,
+        info,
+        "03-shared-settings-rollback-dark-mobile",
+        restoreDialog,
+      );
+      let response: Response | undefined;
+      try {
+        response = await observeQualificationPost(
+          page,
+          definitionApi,
+          rollbackRequest,
+          async () => {
+            progress = await store.save({ ...progress, rollbackRequest });
+          },
+          () => restoreDialog.getByRole("button", { name: "Activate revision" }).press("Enter"),
+        );
+      } catch (error) {
+        if (!progress.rollbackRequest || !(await inspectQualificationProgress(manifest)).rollback) {
+          throw error;
+        }
+      }
+      if (response) {
+        expect(await accepted(response, 201)).toMatchObject({
+          activation: {
+            revisionId: expectedRestore.revisionId,
+            activationNumber: expectedRestore.activationNumber,
+            previousActivationNumber: adoption.adopted.activationNumber,
+          },
+        });
+      }
+    }
+    const restored = await inspectQualificationProgress(manifest);
+    expect(restored.adoption).toEqual(adoption);
+    expect(restored.head).toEqual(expectedRestore);
+    expect(restored.rollback).toMatchObject({
+      activationNumber: expectedRestore.activationNumber,
+      previousActivationNumber: adoption.adopted.activationNumber,
+      targetActivationNumber: manifest.baseline.activationNumber,
+      targetRevisionId: manifest.baseline.revisionId,
     });
-    const restoredPin = await admitQualificationSession(manifest, "restored", {
-      ...expectedRestore,
-      digest: manifest.baseline.digest,
-    });
+    if (!restored.rollback) throw new Error("The exact rollback receipt is unavailable.");
+    progress = await store.save({ ...progress, rollback: restored.rollback });
+    const restoredPin = await admitQualificationSession(manifest, "restored", expectedRestore);
     const audit = await auditQualificationRollback(manifest, {
-      baseline: baselinePin,
+      baseline: progress.baseline,
       adopted: adoptedPin,
       restored: restoredPin,
     });

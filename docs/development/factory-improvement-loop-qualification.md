@@ -12,8 +12,8 @@ Use an exclusive loopback Supabase project and a compiled local Wallie app. The 
 ## Prepare the local evidence
 
 - Start Supabase for an empty disposable project without demo jobs or workers. Set `M10_SUPABASE_DIR` to its workdir. Compile Wallie and serve it at `M10_APP_ORIGIN`. Set the app’s `NEXT_PUBLIC_APP_URL` to that exact loopback origin.
-- Configure the app and fixture for that Supabase project. Use the same `WALLIE_ENCRYPTION_KEY` in both processes. Install the Chromium binary with `pnpm exec playwright install chromium`.
-- Set `M10_STATE` to a new private local JSON file outside the checkout. Keep the same disposable database and state file across review.
+- Configure the app and fixture for that Supabase project. Use the same `WALLIE_ENCRYPTION_KEY` in both processes. Have `psql` and Perl available. Install the Chromium binary with `pnpm exec playwright install chromium`.
+- Set `M10_STATE` to an unused path in a private local directory outside the checkout. The CLI creates the JSON file. Keep the same disposable database and state file across review.
 - A separately managed loopback stack can supply its Supabase status JSON with `--status-file` in place of `--workdir`. Set its file mode to `0600` because the status includes local connection credentials.
 - Set `M10_LOCAL_DB_URL` to the same status file's `DB_URL` for the browser run. Use the project's direct loopback PostgreSQL connection or a native PostgreSQL URL with `?host=` set to the URL-encoded, owner-only `/private/tmp/wallie-…/socket` directory.
 
@@ -50,11 +50,11 @@ PLAYWRIGHT_BASE_URL="$M10_APP_ORIGIN" \
   pnpm exec playwright test --config e2e/factory-improvement-loop-qualification.config.ts
 ```
 
-Keep the state file and the fixture PR for review. It records evidence IDs, digests, refs, and the PR identity. Local app and database credentials come from the process environment or the disposable Supabase project. Close a stopped fixture’s local services through their scoped project controls after verification.
+Keep the state file and the fixture PR for review. The state file records evidence IDs, digests, refs, and the PR identity. If Chromium stops after submitting adoption or rollback, rerun the same browser command. Keep the same state file, database, app origin, proof directory, and private `${M10_STATE}.browser-progress.json` file. The browser checks the saved submission and actual activation before continuing. Local app and database credentials come from the process environment or the disposable Supabase project. Close a stopped fixture’s local services through their scoped project controls after verification.
 
 ## Pause production admission independently
 
-Use one disabled custom rule per operation in the Wallie Vercel project. Combine **Environment** equals **Production**, **Method** equals **POST**, and **Route** equals the framework path below. Verify the match with **Log**, switch the selected rule to **Deny** to pause it, and disable that rule to resume admission. History reads and the shared Settings rollback use separate routes. [Vercel WAF rule configuration](https://vercel.com/docs/vercel-firewall/vercel-waf/rule-configuration)
+Configure one custom rule per operation in the Wallie Vercel project. Combine **Environment** equals **Production**, **Method** equals **POST**, and **Route** equals the framework path below. Enable the rule with the **Log** action and select **Review Changes** then **Publish** before checking the matches. To pause admission, switch the selected rule to **Deny** and publish. To resume, disable that rule and publish again. History reads and the shared Settings rollback use separate routes. [Vercel custom rules](https://vercel.com/docs/vercel-firewall/vercel-waf/custom-rules) · [Rule configuration](https://vercel.com/docs/vercel-firewall/vercel-waf/rule-configuration)
 
 | Operation   | Vercel Route                                                                                                                        | Work already admitted                                                                                                           |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |

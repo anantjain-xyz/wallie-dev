@@ -1,7 +1,9 @@
 -- Native session admissions and bounded rollback smoke for the prepared local run.
 \set ON_ERROR_STOP on
-\if :{?audit}
-begin read only;
+\if :{?inspect}
+begin isolation level repeatable read read only;
+\elif :{?audit}
+begin isolation level repeatable read read only;
 \else
 begin;
 \endif
@@ -32,7 +34,20 @@ from public.get_factory_improvement_publication(:'workspace_id', :'factory_id', 
 select 1 / 0;
 \endif
 
-\if :{?audit}
+\if :{?inspect}
+select jsonb_build_object('actorMemberId',:'actor_member_id',
+  'head',jsonb_build_object('activationNumber',activation.activation_number,'revisionId',activation.revision_id,
+    'digest',revision.canonical_digest),
+  'adoption',public.get_factory_improvement_adoption(:'workspace_id',:'factory_id',:'actor_user_id',
+    :'proposal_id',:'proposal_revision_id'),
+  'rollback',public.get_factory_improvement_outcomes(:'workspace_id',:'factory_id',:'actor_user_id',
+    :'proposal_id',:'proposal_revision_id') #> '{restore,receipt}')
+from public.factory_definition_activations activation
+join public.factory_definition_revisions revision on (revision.workspace_id,revision.factory_id,revision.id) =
+  (activation.workspace_id,activation.factory_id,activation.revision_id)
+where (activation.workspace_id,activation.factory_id) = (:'workspace_id'::uuid,:'factory_id'::uuid)
+order by activation.activation_number desc limit 1;
+\elif :{?audit}
 with requested(phase,id) as (
   values ('baseline',:'baseline_session_id'::uuid), ('adopted',:'adopted_session_id'::uuid),
     ('restored',:'restored_session_id'::uuid)
@@ -47,10 +62,19 @@ with requested(phase,id) as (
   where (input.workspace_id,input.factory_id) = (:'workspace_id'::uuid,:'factory_id'::uuid)
     and session.execution_purpose = 'production' and session.execute_pinned_definition
 )
-select data || jsonb_build_object('outcomes',
-  public.get_factory_improvement_outcomes(:'workspace_id', :'factory_id', :'actor_user_id',
+select pins.data || jsonb_build_object('head',head.data,
+  'outcomes',public.get_factory_improvement_outcomes(:'workspace_id', :'factory_id', :'actor_user_id',
     :'proposal_id', :'proposal_revision_id'))
-from pins;
+from pins
+cross join lateral (
+  select jsonb_build_object('activationNumber',activation.activation_number,'revisionId',activation.revision_id,
+    'digest',revision.canonical_digest) as data
+  from public.factory_definition_activations activation
+  join public.factory_definition_revisions revision on (revision.workspace_id,revision.factory_id,revision.id) =
+    (activation.workspace_id,activation.factory_id,activation.revision_id)
+  where (activation.workspace_id,activation.factory_id) = (:'workspace_id'::uuid,:'factory_id'::uuid)
+  order by activation.activation_number desc limit 1
+) head;
 \else
 
 \if :{?admit}
