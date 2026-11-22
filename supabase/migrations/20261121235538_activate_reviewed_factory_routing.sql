@@ -115,7 +115,7 @@ declare
   scope_key text;
   personal_user_id uuid;
 begin
-  select frozen.model, frozen.sandbox_provider, frozen.sandbox_connection_revision, frozen.definition_digest,
+  select frozen.model, frozen.harness, frozen.sandbox_provider, frozen.sandbox_connection_revision, frozen.definition_digest,
     revision.definition_json::jsonb as body into candidate
   from public.factory_benchmark_experiment_candidates frozen
   join public.factory_definition_revisions revision
@@ -165,7 +165,9 @@ begin
       admission.execution_grant_id, admission.credential_owner_service_principal_id);
   end if;
   return jsonb_build_object('version', 1, 'configuration', configuration, 'benchmarkCandidateKey', candidate_key,
-    'definitionDigest', candidate.definition_digest, 'modelName', candidate.model, 'sandboxProvider', candidate.sandbox_provider,
+    'definitionDigest', candidate.definition_digest, 'modelName', candidate.model,
+    'effort', case when candidate.harness = 'codex' then target#>>'{agent,effort}' end,
+    'sandboxProvider', candidate.sandbox_provider,
     'sandboxConnectionRevision', candidate.sandbox_connection_revision, 'credentialBindingId', target->>'credentialBindingId',
     'implementationAgent', jsonb_build_object('agentId', snapshot->>'agentId',
       'promptRevisionId', snapshot->>'promptRevisionId', 'promptSha256', snapshot->>'promptSha256'));

@@ -98,7 +98,10 @@ from live_scope scope;
 -- Distinct frozen definitions reuse the same exact qualified harness/model.
 with revisions as (
   select slot,base.workspace_id,base.factory_id,base.created_by,
-    (base.definition_json::jsonb || jsonb_build_object('operatingRulesMd','Frontier fixture variant ' || slot))::text as config
+    (base.definition_json::jsonb || jsonb_build_object(
+      'operatingRulesMd','Frontier fixture variant ' || slot,
+      'agent',(base.definition_json::jsonb->'agent') || jsonb_build_object(
+        'effort',case slot when 101 then 'high' when 105 then 'low' end)))::text as config
   from public.factory_definition_revisions base cross join generate_series(101,105) slot
   where base.id = pg_temp.live_id(43)
 )
@@ -792,6 +795,9 @@ select ok((select admission.routing_decision->>'mode'='active'
   and admission.routing_execution#>>'{implementationAgent,promptRevisionId}'=pg_temp.live_id(48)::text
   from public.session_factory_admission_inputs admission join reviewed_active_run using(session_id)),
   'a new admission pins the reviewed recommendation and exact executable profile');
+select is((select admission.routing_execution->>'effort'
+  from public.session_factory_admission_inputs admission join reviewed_active_run using(session_id)),
+  'high','the automatic admission pins the selected Codex reasoning effort');
 select ok((select admission.routing_decision->>'mode'='shadow' and admission.routing_execution is null
   from public.session_factory_admission_inputs admission join inspected_routing_run using(session_id)),
   'the earlier admission stays pinned in shadow mode after reviewed activation');
@@ -809,6 +815,9 @@ select ok((select admission.routing_decision->>'benchmarkCandidateKey'=pg_temp.f
 select is((select public.get_session_factory_routing_execution(scope.workspace_id,scope.factory_id,run.session_id)
   ->>'benchmarkCandidateKey' from live_scope scope cross join reviewed_override_run run),
   pg_temp.frontier_result(5)->>'candidateKey','the worker reads the authorized alternate as its effective pin');
+select is((select public.get_session_factory_routing_execution(scope.workspace_id,scope.factory_id,run.session_id)
+  ->>'effort' from live_scope scope cross join reviewed_override_run run),
+  'low','the override pins the alternate Codex effort independently of the workflow effort');
 select throws_ok($$update public.session_factory_routing_overrides set reason='Unapproved change'$$,'23514',null,
   'the one-task override is immutable');
 select public.grant_factory_membership(scope.workspace_id,scope.factory_id,scope.owner_id,pg_temp.live_id(21),'member')
@@ -867,23 +876,28 @@ update public.agent_runs set sandbox_provider='vercel',sandbox_connection_revisi
   sandbox_id='sbx_reviewed_worker',sandbox_vercel_team_id='team_live',sandbox_vercel_project_id='prj_live'
 where id=(select run_id from reviewed_active_run);
 select throws_ok($$select public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
-  repeat('a',40),'[]','node',null,null,pg_temp.live_id(21)) from reviewed_active_run$$,
+  repeat('a',40),'[]','node',null,'high',pg_temp.live_id(21)) from reviewed_active_run$$,
   '23514','The attempt manifest does not match the pinned routing configuration.',
   'a manifest from the wrong runtime cannot authorize this attempt');
 update public.agent_runs set sandbox_connection_revision=pg_temp.live_id(299)
 where id=(select run_id from reviewed_active_run);
 select throws_ok($$select public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
-  repeat('a',40),'[]','workerd',null,null,pg_temp.live_id(21)) from reviewed_active_run$$,
+  repeat('a',40),'[]','workerd',null,'high',pg_temp.live_id(21)) from reviewed_active_run$$,
   '23514','The attempt manifest does not match the pinned routing configuration.',
   'a manifest from a different sandbox connection cannot authorize this attempt');
 update public.agent_runs set sandbox_connection_revision=pg_temp.live_id(50)
 where id=(select run_id from reviewed_active_run);
+select throws_ok($$select public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
+  repeat('a',40),'[]','workerd',null,'xhigh',pg_temp.live_id(21)) from reviewed_active_run$$,
+  '23514','The attempt manifest does not match the pinned routing configuration.',
+  'the unqualified default effort cannot replace the exact benchmarked effort');
 select ok(public.pin_session_attempt_manifest(job_id,run_id,1,repeat('b',64),24,3,
-  repeat('a',40),'[]','workerd',null,null,pg_temp.live_id(21)),
-  'the exact claimed runtime and sandbox connection pin the manifest') from reviewed_active_run;
+  repeat('a',40),'[]','workerd',null,'high',pg_temp.live_id(21)),
+  'the exact runtime, sandbox connection, and effort pin the manifest') from reviewed_active_run;
 select ok((select manifest.routing_decision_session_id=target.session_id
     and manifest.definition_revision_id=admission.definition_revision_id
     and manifest.model_name=admission.routing_execution->>'modelName'
+    and manifest.agent_effort=admission.routing_execution->>'effort'
     and run.agent_prompt_revision_id::text=admission.routing_execution#>>'{implementationAgent,promptRevisionId}'
   from reviewed_active_run target join public.session_attempt_manifests manifest using(run_id)
   join public.session_factory_admission_inputs admission on admission.session_id=target.session_id

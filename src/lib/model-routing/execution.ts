@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
+import { agentConfigValueSchemas } from "@/lib/agent-config/contracts";
 import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
 import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
@@ -18,14 +19,16 @@ const routedExecutionSchema = z
     benchmarkCandidateKey: digest,
     definitionDigest: digest,
     modelName: z.string().min(1),
+    effort: agentConfigValueSchemas.agent_effort.nullable(),
     sandboxProvider: sandboxProviderSchema,
     sandboxConnectionRevision: z.string().uuid(),
     credentialBindingId: z.string().uuid().nullable(),
     implementationAgent: factoryAgentPromptSnapshotSchema.omit({ promptMd: true }),
   })
   .refine(
-    ({ configuration, implementationAgent }) =>
-      configuration.agentId === implementationAgent.agentId,
+    ({ configuration, effort, implementationAgent }) =>
+      configuration.agentId === implementationAgent.agentId &&
+      (configuration.harness === "codex" || effort === null),
   );
 
 export type RoutedFactoryExecution = z.infer<typeof routedExecutionSchema>;
@@ -53,12 +56,15 @@ export function resolveRoutedFactoryExecutionProfile(
   creatorMemberId?: string | null,
 ) {
   if (!routing) return resolveFactoryExecutionProfile(definition, creatorMemberId);
-  // Comparison axes may qualify a different harness and native model from the
-  // source revision. Use normalized provider defaults for options the axis did not measure.
+  // Qualified replay and this profile share the Codex default when effort is unset.
   return resolveFactoryExecutionProfile(
     {
       ...definition,
-      agent: { provider: routing.configuration.harness, model: routing.modelName },
+      agent: {
+        provider: routing.configuration.harness,
+        model: routing.modelName,
+        effort: routing.effort,
+      },
       sandboxProvider: routing.sandboxProvider,
       implementationAgent: routing.implementationAgent,
       credentialBindingId: routing.credentialBindingId ?? undefined,

@@ -44,7 +44,7 @@ begin
   -- admitted policy revision. Only the qualified execution identities change.
   return definition || jsonb_build_object(
     'agent', definition->'agent' || jsonb_build_object('provider', routing#>>'{configuration,harness}',
-      'model', routing->>'modelName', 'effort', null),
+      'model', routing->>'modelName', 'effort', routing->'effort'),
     'sandboxProvider', routing->>'sandboxProvider', 'implementationAgent', routed_agent
   );
 end;
@@ -310,6 +310,7 @@ returns trigger language plpgsql security invoker set search_path = '' as $$
 declare
   factory_id uuid;
   routing jsonb;
+  expected_effort text;
 begin
   select admission.session_id, admission.factory_id into new.routing_decision_session_id, factory_id
   from public.session_factory_admission_inputs admission
@@ -321,10 +322,14 @@ begin
     and admission.routing_decision is not null;
   if new.routing_decision_session_id is null then return new; end if;
   routing := internal.effective_factory_routing_execution(new.workspace_id, factory_id, new.session_id);
+  -- Codex replay and production both default to xhigh if the candidate omitted effort.
+  expected_effort := case when routing#>>'{configuration,harness}' = 'codex'
+    then coalesce(routing->>'effort', 'xhigh') end;
   if routing is not null and (
     (new.model_provider, new.model_name, new.worker_runtime, new.sandbox_provider, new.sandbox_connection_revision::text)
       is distinct from (routing#>>'{configuration,harness}', routing->>'modelName',
         routing#>>'{configuration,workerRuntime}', routing->>'sandboxProvider', routing->>'sandboxConnectionRevision')
+    or new.agent_effort is distinct from expected_effort
     or internal.factory_connected_sandbox_revision(new.workspace_id, new.sandbox_provider)
       is distinct from new.sandbox_connection_revision
     or not exists (select 1 from public.agent_runs run

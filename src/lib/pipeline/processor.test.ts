@@ -1690,9 +1690,14 @@ describe("processPipelineJob (generic stage runner)", () => {
     },
   );
 
-  it.each(["workerd", "node", "changed sandbox"] as const)(
-    "uses the exact reviewed execution pin for a retry on %s",
-    async (runtime) => {
+  it.each([
+    ["workerd", "medium", "medium"],
+    ["workerd", null, "xhigh"],
+    ["node", "medium", "medium"],
+    ["changed sandbox", "medium", "medium"],
+  ] as const)(
+    "uses the exact reviewed execution pin for a retry on %s with benchmark effort %s",
+    async (runtime, benchmarkEffort, expectedEffort) => {
       const id = (suffix: number) => `77900000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
       const [stageId, pipelineId, repositoryId, revisionId] = [id(1), id(2), id(3), id(4)];
       const baseAgent = {
@@ -1716,6 +1721,7 @@ describe("processPipelineJob (generic stage runner)", () => {
         benchmarkCandidateKey: "a".repeat(64),
         definitionDigest: "b".repeat(64),
         modelName: "gpt-4.1-2025-04-14",
+        effort: benchmarkEffort,
         sandboxProvider: "vercel",
         sandboxConnectionRevision: id(11),
         credentialBindingId: null,
@@ -1860,10 +1866,10 @@ describe("processPipelineJob (generic stage runner)", () => {
       );
       expect(rpc).toHaveBeenCalledWith(
         "pin_session_attempt_manifest",
-        expect.objectContaining({ p_worker_runtime: "workerd" }),
+        expect.objectContaining({ p_worker_runtime: "workerd", p_agent_effort: expectedEffort }),
       );
       expect(mocked.createAgentRunner).toHaveBeenCalledWith("codex", {
-        codex: expect.objectContaining({ model: routing.modelName }),
+        codex: expect.objectContaining({ model: routing.modelName, effort: expectedEffort }),
       });
     },
   );
