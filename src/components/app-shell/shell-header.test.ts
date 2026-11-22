@@ -396,16 +396,13 @@ describe("ShellHeader", () => {
     ).toHaveAttribute("href", "/w/acme-corp/overview");
   });
 
-  it("restores desktop collapse when the shell mounts again", () => {
-    const first = mountShell();
-    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    first.unmount();
+  it("keeps the desktop sidebar always expanded without a collapse control", () => {
+    window.localStorage.setItem("wallie-sidebar:v1", "collapsed");
     mountShell();
 
-    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Expand sidebar" })).toBeNull();
+    expect(document.querySelector("[data-shell-rail]")).not.toHaveAttribute("data-collapsed");
     expect(screen.getByRole("link", { name: "Runs" })).toBeVisible();
   });
 
