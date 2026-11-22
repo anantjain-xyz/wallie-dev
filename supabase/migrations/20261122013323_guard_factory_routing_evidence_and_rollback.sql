@@ -269,6 +269,7 @@ declare
   evidence_id uuid;
   reasons text[] := '{}';
   targets jsonb;
+  baseline jsonb;
 begin
   if auth.uid() is null or not internal.can_manage_factory(p_workspace_id,p_factory_id) then
     raise exception 'Routing qualification status is unavailable.' using errcode = '42501';
@@ -329,9 +330,26 @@ begin
     select reason.value from jsonb_array_elements(targets) target(value)
     cross join jsonb_array_elements_text(target.value->'reasons') reason(value)
   ) all_reasons;
+
+  -- A reviewed control can carry different qualified evidence from the
+  -- candidate. A shadow control has no reviewed routing to qualify.
+  select internal.get_factory_routing_qualification_status(p_workspace_id,p_factory_id,
+    canary.baseline_activation_number,null) into baseline
+  from public.factory_routing_canaries canary
+  join public.factory_routing_activations control
+    on (control.workspace_id,control.factory_id,control.activation_number,control.revision_id) =
+       (canary.workspace_id,canary.factory_id,canary.baseline_activation_number,canary.baseline_revision_id)
+  join public.factory_definition_revisions control_revision
+    on (control_revision.workspace_id,control_revision.factory_id,control_revision.id,control_revision.canonical_digest) =
+       (control.workspace_id,control.factory_id,control.revision_id,control.draft_digest)
+  where (canary.workspace_id,canary.factory_id,canary.activation_number,canary.candidate_revision_id) =
+    (p_workspace_id,p_factory_id,activation.activation_number,revision.id);
   return jsonb_build_object('activationNumber',activation.activation_number,'draftId',draft.id,'revisionId',revision.id,
-    'definitionDigest',definition_digest,'status',case when cardinality(reasons)=0 then 'current' else 'stale' end,
-    'reasons',reasons,'targets',targets);
+    'definitionDigest',definition_digest,'status',case when cardinality(reasons)=0 and baseline->>'status' is distinct from 'stale'
+      then 'current' else 'stale' end,'reasons',reasons,'targets',targets)
+    || case when baseline is null then '{}'::jsonb else jsonb_build_object('baseline',jsonb_build_object(
+      'activationNumber',baseline->'activationNumber','revisionId',baseline->'revisionId',
+      'status',baseline->'status','reasons',baseline->'reasons')) end;
 end;
 $$;
 revoke all on function internal.get_factory_routing_qualification_status(uuid,uuid,bigint,uuid)

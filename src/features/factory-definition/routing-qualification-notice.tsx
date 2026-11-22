@@ -17,6 +17,19 @@ const reasonLabels: Record<string, string> = {
   replay_policy_revoked: "The benchmark replay policy or a fixture was revoked.",
 };
 
+function QualificationReasons({ reasons }: { reasons: ReadonlySet<string> }) {
+  if (!reasons.size) return null;
+  return (
+    <ul className="mt-1 list-disc space-y-1 pl-5 text-muted">
+      {[...reasons].map((reason) => (
+        <li key={reason}>
+          {reasonLabels[reason] ?? "A routing input differs from its qualified evidence."}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function RoutingQualificationNotice({
   status,
   subject,
@@ -29,17 +42,18 @@ export function RoutingQualificationNotice({
     ...status.reasons,
     ...status.targets.flatMap((target) => target.reasons),
   ]);
+  const baseline = status.baseline?.status === "stale" ? status.baseline : null;
   return (
     <div className="type-secondary rounded-[6px] border border-border bg-control-muted p-3">
       <p className="font-medium text-foreground">{subject} routing needs requalification</p>
-      {reasons.size ? (
-        <ul className="mt-1 list-disc space-y-1 pl-5 text-muted">
-          {[...reasons].map((reason) => (
-            <li key={reason}>
-              {reasonLabels[reason] ?? "A routing input differs from its qualified evidence."}
-            </li>
-          ))}
-        </ul>
+      <QualificationReasons reasons={reasons} />
+      {baseline ? (
+        <div className="mt-2">
+          <p className="font-medium text-foreground">
+            Baseline activation #{baseline.activationNumber}
+          </p>
+          <QualificationReasons reasons={new Set(baseline.reasons)} />
+        </div>
       ) : null}
     </div>
   );
