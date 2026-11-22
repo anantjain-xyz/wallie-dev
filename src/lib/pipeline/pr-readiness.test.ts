@@ -4,13 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import type { Tables } from "@/lib/supabase/database.types";
 import { BROWSER_CAPTURE_POLICY } from "@/lib/validation-evidence/browser-contract";
+import {
+  evaluateExactRunValidationEvidence,
+  storedEvidenceRecordsSchema,
+} from "@/lib/validation-evidence/read-run-evidence";
 
 import {
   evaluatePrReadiness,
   evaluateSessionPrReadiness,
   loadSessionPrReadinessDetails,
   reconcilePrReadiness,
-  storedEvidenceRecordsSchema,
   type GitHubObservationPayload,
   type PrReadinessEvaluatorInput,
 } from "./pr-readiness";
@@ -642,6 +645,57 @@ function serviceTables(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe("exact run validation evidence", () => {
+  const source = {
+    ...exactAttempt,
+    output_sha: shaB,
+    validation_tree_sha: shaC,
+  };
+
+  function validationOnlyTables() {
+    return {
+      session_validation_evidence: queryableTable(validationReceipt),
+      session_validation_plans: queryableTable(validationPlan),
+      session_validation_assets: queryableTable([reportAsset]),
+      session_validation_asset_withholdings: queryableTable(null),
+    };
+  }
+
+  it("passes exact harness evidence without GitHub or a canonical PR", async () => {
+    const { storage, download } = privateStorage();
+    const rpc = vi.fn();
+    const admin = buildServiceAdminClient(validationOnlyTables(), rpc, storage);
+    await expect(
+      evaluateExactRunValidationEvidence({
+        admin: admin as never,
+        source,
+        requiredKeys: ["tests"],
+      }),
+    ).resolves.toEqual([{ key: "tests", status: "passed" }]);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { output_sha: shaA, status: "stale" },
+    { validation_tree_sha: shaA, status: "stale" },
+    { attempt_count: exactAttempt.attempt_count + 1, status: "missing" },
+    { repository_id: "different-repository", status: "missing" },
+  ])("rejects mismatched source %j without downloading private bytes", async (fixture) => {
+    const { status, ...mismatch } = fixture;
+    const { storage, download } = privateStorage();
+    const admin = buildServiceAdminClient(validationOnlyTables(), vi.fn(), storage);
+    await expect(
+      evaluateExactRunValidationEvidence({
+        admin: admin as never,
+        source: { ...source, ...mismatch },
+        requiredKeys: ["tests"],
+      }),
+    ).resolves.toEqual([{ key: "tests", status }]);
+    expect(download).not.toHaveBeenCalled();
+  });
+});
+
 describe("session readiness service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1080,6 +1134,21 @@ describe("review readiness details", () => {
     );
     expect(ready?.evaluation.state).toBe("ready");
     expect(ready?.evidence?.required).toEqual([{ key: visualKey, status: "passed" }]);
+
+    const staleTree = privateStorage(bytes);
+    await expect(
+      evaluateExactRunValidationEvidence({
+        admin: buildServiceAdminClient(tables, vi.fn(), staleTree.storage) as never,
+        source: {
+          ...exactAttempt,
+          session_id: browserSessionId,
+          output_sha: shaB,
+          validation_tree_sha: shaA,
+        },
+        requiredKeys: [visualKey],
+      }),
+    ).resolves.toEqual([{ key: visualKey, status: "stale" }]);
+    expect(staleTree.download).not.toHaveBeenCalled();
 
     const pendingRemoval = privateStorage(bytes);
     const withheld = await loadSessionPrReadinessDetails(

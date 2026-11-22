@@ -11075,6 +11075,20 @@ export type Database = {
         }
         Returns: string
       }
+      check_factory_workflow_execution_policy: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_occurrence_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          exhaustion_code: string
+          policy_revision_id: string
+        }[]
+      }
       check_session_agent_credential: {
         Args: {
           p_agent_model: string
@@ -14736,6 +14750,21 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      record_factory_workflow_command_result: {
+        Args: {
+          p_evidence_ref: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_occurrence_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          result_id: string
+        }[]
+      }
       record_factory_workflow_node_result: {
         Args: {
           p_evidence_ref?: string
@@ -15036,6 +15065,20 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      register_factory_workflow_graph_revision: {
+        Args: {
+          p_definition_digest: string
+          p_definition_revision_id: string
+          p_factory_id: string
+          p_workflow_digest: string
+          p_workflow_json: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          graph_revision_id: string
+        }[]
       }
       reject_session_stage: {
         Args: {
@@ -16526,6 +16569,21 @@ export type Database = {
           p_root_session_id: string
           p_workflow_digest: string
           p_workflow_json: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          entry_occurrence_id: string
+          execution_generation: number
+          ownership_token: string
+        }[]
+      }
+      start_factory_workflow_graph_execution: {
+        Args: {
+          p_factory_id: string
+          p_graph_revision_id: string
+          p_input_run_id?: string
+          p_root_session_id: string
           p_workspace_id: string
         }
         Returns: {
