@@ -125,6 +125,30 @@ describe("Sentry monitoring intake", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("cancels a slow body before the Sentry response deadline", async () => {
+    const { rpc, admin } = makeAdmin();
+    const signed = signedRequest(payload());
+    let fallback: ReturnType<typeof setTimeout>;
+    const cancel = vi.fn(() => clearTimeout(fallback));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"));
+        fallback = setTimeout(() => controller.close(), 1_250);
+      },
+      cancel,
+    });
+    const request = new Request(signed.url, {
+      method: "POST",
+      headers: signed.headers,
+      body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+
+    expect((await handleSentryAlert(request, bindingId, admin)).status).toBe(503);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("rejects a disabled or unknown binding with the authentication response", async () => {
     const { rpc, admin } = makeAdmin({ configured: false });
     expect((await handleSentryAlert(signedRequest(payload()), bindingId, admin)).status).toBe(401);

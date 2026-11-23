@@ -132,8 +132,11 @@ select is(public.admit_next_factory_monitoring_incident(), null::jsonb,
 
 update internal.factory_monitoring_incidents set suppress_until = clock_timestamp() - interval '1 second'
 where binding_id = pg_temp.op651_id(270) and sentry_issue_id = '751';
-select isnt(pg_temp.monitor_alert(5, p_binding => pg_temp.op651_id(272))->>'incidentId', item->>'incidentId',
-  'a new qualified alert after expiry opens a new incident') from monitor_first;
+create temp table monitor_after_expiry as select pg_temp.monitor_alert(5, p_binding => pg_temp.op651_id(272)) item;
+select ok(next.item->>'status' = 'queued' and next.item->>'incidentId' is not null
+  and next.item->>'incidentId' <> original.item->>'incidentId',
+  'a new qualified alert after expiry opens a new incident')
+from monitor_after_expiry next cross join monitor_first original;
 select is(pg_temp.monitor_alert(1, p_binding => pg_temp.op651_id(272))->>'incidentId', item->>'incidentId',
   'a replay after suppression expiry still resolves to the original incident') from monitor_first;
 

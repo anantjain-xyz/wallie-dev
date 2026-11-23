@@ -1,4 +1,8 @@
-export async function readBoundedJsonBytes(request: Request, maxBodyBytes: number) {
+export async function readBoundedJsonBytes(
+  request: Request,
+  maxBodyBytes: number,
+  signal?: AbortSignal,
+) {
   const contentType = request.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase();
   if (contentType !== "application/json") {
     return { ok: false, code: "unsupported_media_type" } as const;
@@ -7,18 +11,23 @@ export async function readBoundedJsonBytes(request: Request, maxBodyBytes: numbe
   if (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBodyBytes)) {
     return { ok: false, code: "request_too_large" } as const;
   }
-  if (!request.body) return { ok: false, code: "invalid_request" } as const;
+  if (!request.body || signal?.aborted) return { ok: false, code: "invalid_request" } as const;
 
   const reader = request.body.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
   const parts: Uint8Array[] = [];
   let size = 0;
   try {
     for (;;) {
       const { value, done } = await reader.read();
+      if (signal?.aborted) return { ok: false, code: "invalid_request" } as const;
       if (done) break;
       size += value.byteLength;
       if (size > maxBodyBytes) {
-        void reader.cancel().catch(() => undefined);
+        cancel();
         return { ok: false, code: "request_too_large" } as const;
       }
       parts.push(value);
@@ -33,6 +42,7 @@ export async function readBoundedJsonBytes(request: Request, maxBodyBytes: numbe
   } catch {
     return { ok: false, code: "invalid_request" } as const;
   } finally {
+    signal?.removeEventListener("abort", cancel);
     reader.releaseLock();
   }
 }

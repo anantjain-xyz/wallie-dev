@@ -30,7 +30,9 @@ export async function handleSentryAlert(
   if (request.headers.get("Sentry-Hook-Resource") !== "event_alert")
     return response(400, "invalid_request");
 
-  const raw = await readBoundedJsonBytes(request, maximumBodyBytes);
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(850)]);
+  const raw = await readBoundedJsonBytes(request, maximumBodyBytes, signal);
+  if (signal.aborted) return response(503, "unavailable");
   if (!raw.ok) {
     const status = { request_too_large: 413, unsupported_media_type: 415, invalid_request: 400 };
     return response(status[raw.code], raw.code);
@@ -38,7 +40,6 @@ export async function handleSentryAlert(
 
   try {
     admin ??= createSupabaseAdminClient();
-    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(850)]);
     const { data: config, error: readError } = await admin
       .rpc("read_factory_monitoring_secret", { p_binding_id: bindingId.data })
       .abortSignal(signal);
