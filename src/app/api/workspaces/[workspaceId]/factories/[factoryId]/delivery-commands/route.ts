@@ -72,7 +72,7 @@ export async function POST(request: Request, { params }: Context) {
   if (!context.ok) return context.response;
   if (new URL(request.url).search) return failure(400, "Unexpected delivery command query.");
 
-  const raw = await readBoundedJsonBody(request, 4096);
+  const raw = await readBoundedJsonBody(request, 24_576);
   if (!raw.ok) {
     if (raw.code === "request_too_large")
       return failure(413, "The JSON request exceeds the supported size.");
@@ -91,17 +91,28 @@ export async function POST(request: Request, { params }: Context) {
     p_actor_user_id: context.access.user.id,
     p_command_id: input.commandId,
   };
-  const { data, error } =
-    input.action === "prepare"
-      ? await admin.rpc("prepare_factory_delivery_command", {
-          ...actor,
-          p_session_id: input.sessionId,
-          p_checkpoint_run_id: input.checkpointRunId,
-          p_approval_id: input.approvalId,
-          p_policy_revision_id: input.policyRevisionId,
-          p_merge_observation_id: input.mergeObservationId,
-          p_deployment_source_id: input.deploymentSourceId,
-        })
-      : await admin.rpc("cancel_factory_delivery_command", actor);
+  if (input.action === "cancel") {
+    const { data, error } = await admin.rpc("cancel_factory_delivery_command", actor);
+    return commandResponse(data, error);
+  }
+  const evidence = {
+    ...actor,
+    p_session_id: input.sessionId,
+    p_checkpoint_run_id: input.checkpointRunId,
+    p_approval_id: input.approvalId,
+    p_policy_revision_id: input.policyRevisionId,
+    p_merge_observation_id: input.mergeObservationId,
+    p_deployment_source_id: input.deploymentSourceId,
+  };
+  const { actions } = input;
+  const { data, error } = actions
+    ? await admin.rpc("prepare_factory_actions_delivery_command", {
+        ...evidence,
+        p_workflow_id: actions.workflowId,
+        p_workflow_path: actions.workflowPath,
+        p_tag: actions.tag,
+        p_inputs: actions.inputs,
+      })
+    : await admin.rpc("prepare_factory_delivery_command", evidence);
   return commandResponse(data, error);
 }

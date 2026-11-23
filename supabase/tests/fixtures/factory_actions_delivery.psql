@@ -1,0 +1,92 @@
+insert into delivery_sources
+select target.environment, (public.approve_factory_deployment_source(
+  grant_row.workspace_id, grant_row.factory_id, pg_temp.op651_id(1), grant_row.id, grant_row.version,
+  'github-actions', '701', target.environment, true
+)->>'sourceId')::uuid
+from delivery_grant grant_row cross join (values ('actions-ci'), ('actions-revoked')) target(environment);
+
+create function pg_temp.actions_prepare(p_slot integer, p_environment text, p_workflow bigint default 701,
+  p_tag text default 'releases/approved', p_inputs jsonb default '{"lane":"fixture"}'::jsonb)
+returns jsonb language sql as $$
+  select public.prepare_factory_actions_delivery_command(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+    pg_temp.op651_id(p_slot), checkpoint.session_id, checkpoint.run_id, approval.id, policy.id, merged.observation_id,
+    source.source_id, p_workflow, '.github/workflows/delivery.yml', p_tag, p_inputs)
+  from delivery_checkpoint checkpoint cross join op651_scope scope cross join delivery_policy policy
+  join delivery_sources source on source.name = p_environment
+  join public.session_stage_approval_receipts approval on approval.session_id = checkpoint.session_id
+  join internal.current_factory_canonical_pull_request_merges merged on merged.session_id = checkpoint.session_id
+$$;
+
+create function pg_temp.actions_prepare_unconfigured() returns void language plpgsql as $$
+begin
+  perform pg_temp.delivery_prepare(270, 'actions-ci');
+  set constraints internal.factory_actions_delivery_requires_configuration immediate;
+end;
+$$;
+
+select throws_ok($$select pg_temp.actions_prepare_unconfigured()$$, 'PT409', null,
+  'an Actions destination requires an explicit target in its prepare transaction');
+select throws_ok($$select pg_temp.actions_prepare(270, 'actions-ci', 702)$$, 'PT409', null,
+  'a different workflow cannot use the approved deployment source');
+select throws_ok($$select pg_temp.actions_prepare(270, 'actions-ci', p_inputs => '{"wallie_run_nonce":"operator-value"}')$$,
+  '22023', null, 'the manager cannot supply the private run nonce');
+
+create temp table actions_intent as select pg_temp.actions_prepare(271, 'actions-ci') as result;
+select ok(result->'actions'->>'tag' = 'releases/approved' and result->'actions'->>'workflowId' = '701'
+  and result->'actions'->>'reason' = 'awaiting_dispatch' and not ((result->'actions') ?| array['runNonce','inputs']),
+  'the manager can confirm the immutable target without reading the private inputs or correlation nonce')
+from actions_intent;
+select is(pg_temp.actions_prepare(271, 'actions-ci'), result, 'an identical configured request reuses the delivery command')
+from actions_intent;
+select throws_ok($$select pg_temp.actions_prepare(271, 'actions-ci', p_tag => 'releases/different')$$,
+  'PT409', null, 'a reissued command cannot rebind its GitHub ref');
+select is(jsonb_array_length(public.list_factory_actions_dispatches()), 1, 'only the explicitly configured queued command is due');
+
+create function pg_temp.actions_claim(p_slot integer) returns jsonb language sql as $$
+  select public.claim_factory_actions_dispatch(workspace_id, factory_id, pg_temp.op651_id(p_slot))
+  from op651_scope
+$$;
+create temp table actions_claim as select pg_temp.actions_claim(271) as packet;
+select ok(packet->>'tag' = 'releases/approved' and packet->>'workflowId' = '701'
+  and packet->>'sourceRevision' = repeat('c', 40) and packet->>'leaseId' is not null
+  and packet->>'runNonce' is not null, 'only the scoped worker lease sees the exact outbound packet')
+from actions_claim;
+select is(pg_temp.actions_claim(271), null::jsonb, 'a second worker cannot claim an Actions dispatch');
+select is(public.settle_factory_actions_dispatch(workspace_id, factory_id, pg_temp.op651_id(271), gen_random_uuid(),
+  'accepted', 'awaiting_run', 801), false, 'a different lease cannot store a provider run')
+from op651_scope;
+select ok(public.settle_factory_actions_dispatch(workspace_id, factory_id, pg_temp.op651_id(271),
+  (packet->>'leaseId')::uuid, 'unknown', 'dispatch_unknown'), 'the lost provider response is durably unknown')
+from actions_claim cross join op651_scope;
+select is(pg_temp.delivery_state(271)->>'outcome', 'unknown', 'unknown delivery never presents a successful deployment');
+select is(pg_temp.actions_claim(271), null::jsonb, 'unknown Actions dispatch is never reissued');
+
+create temp table actions_observation as
+select reservation.value as packet from jsonb_array_elements(public.reserve_factory_actions_observations()) reservation(value);
+select is(jsonb_array_length(public.reserve_factory_actions_observations()), 0, 'a second worker cannot own the same read-only reconciliation window');
+select is(public.settle_factory_actions_observation(workspace_id, factory_id, pg_temp.op651_id(271), gen_random_uuid(),
+  'run_verified', 801, 'completed', 'success'), false, 'stale observers cannot attach workflow evidence')
+from op651_scope;
+select ok(public.settle_factory_actions_observation(workspace_id, factory_id, pg_temp.op651_id(271),
+  (packet->>'observationId')::uuid, 'run_verified', 801, 'completed', 'success'), 'a current exact read-only probe links the Actions run')
+from actions_observation cross join op651_scope;
+select ok(command->>'dispatchState' = 'accepted' and command->>'outcome' = 'pending'
+  and command->'actions'->>'runId' = '801' and command->'actions'->>'runConclusion' = 'success'
+  and command->>'deploymentObservationId' is null, 'a successful workflow run still awaits independent M06 deployment evidence')
+from (select pg_temp.delivery_state(271) as command) state;
+select pg_temp.delivery_report(273, 271, 1, 'actions-ci', 'succeeded', repeat('c', 40));
+select ok(command->>'outcome' = 'succeeded' and command->>'deploymentObservationId' is not null
+  and command->'actions'->>'runId' = '801', 'only a correlated M06 report supplies the successful deployment outcome')
+from (select pg_temp.delivery_state(271) as command) state;
+
+select pg_temp.actions_prepare(272, 'actions-revoked');
+update public.github_installations set suspended = true where id = pg_temp.op651_id(33);
+select is(pg_temp.actions_claim(272), null::jsonb, 'the local installation revocation stops dispatch before GitHub');
+select ok(command->>'dispatchState' = 'blocked' and command->'actions'->>'reason' = 'installation_unavailable'
+  and command->>'outcome' is null, 'the manager can see blocked installation readiness')
+from (select pg_temp.delivery_state(272) as command) state;
+update public.github_installations set suspended = false where id = pg_temp.op651_id(33);
+
+select ok(not has_table_privilege('authenticated', 'internal.factory_actions_delivery_requests', 'select')
+  and not has_function_privilege('authenticated', 'public.claim_factory_actions_dispatch(uuid,uuid,uuid)', 'execute'),
+  'the browser cannot read private inputs or claim delivery authority');

@@ -24,6 +24,7 @@ import { drainFactoryDiagnoses } from "@/lib/factory-diagnosis/worker";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/admission-service";
+import { reconcileFactoryActionsDelivery } from "@/lib/factory-delivery-commands/actions-maintenance";
 import { expireFactoryDeliveryDispatches } from "@/lib/factory-delivery-commands/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
@@ -240,6 +241,7 @@ async function main() {
     let reconcilingBenchmarkSchedules = false;
     let reconcilingBenchmarkEvaluations = false;
     let admittingFactoryAutomationOccurrences = false;
+    let reconcilingFactoryActionsDelivery = false;
     let expiringFactoryDeliveryDispatches = false;
     maintenanceTimers.push(
       setInterval(() => {
@@ -350,6 +352,17 @@ async function main() {
               await expireFactoryDeliveryDispatches(admin);
             } finally {
               expiringFactoryDeliveryDispatches = false;
+            }
+          });
+        }
+        if (!reconcilingFactoryActionsDelivery) {
+          reconcilingFactoryActionsDelivery = true;
+          timerTasks.run("GitHub Actions delivery", async () => {
+            try {
+              const result = await reconcileFactoryActionsDelivery(admin);
+              if (result.failed > 0) console.warn("[worker] GitHub Actions delivery", result);
+            } finally {
+              reconcilingFactoryActionsDelivery = false;
             }
           });
         }

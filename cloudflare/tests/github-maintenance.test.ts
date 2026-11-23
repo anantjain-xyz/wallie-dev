@@ -168,6 +168,12 @@ it.each([
       );
     const rpc = vi.fn((name: string) => {
       if (name === "expire_factory_delivery_dispatches") return { abortSignal: expiry };
+      if (
+        name === "list_factory_actions_dispatches" ||
+        name === "reserve_factory_actions_observations"
+      ) {
+        return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
+      }
       if (name === "reconcile_factory_benchmark_schedules") {
         return {
           abortSignal: () =>
@@ -370,6 +376,8 @@ it.each([
       expect(rpc).toHaveBeenNthCalledWith(9, "admit_next_factory_automation_occurrence");
       expect(rpc).toHaveBeenNthCalledWith(10, "expire_factory_delivery_dispatches");
       expect(expiry).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal));
+      expect(rpc).toHaveBeenCalledWith("list_factory_actions_dispatches");
+      expect(rpc).toHaveBeenCalledWith("reserve_factory_actions_observations");
       if (expiryFailure) {
         expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
           task: "factory delivery dispatch expiry",

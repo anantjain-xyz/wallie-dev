@@ -255,6 +255,8 @@ select ok(pg_temp.delivery_settle(253, (packet->>'leaseId')::uuid, 'accepted'),
   'the exact worker lease can record provider acceptance') from second_delivery_lease;
 select is(pg_temp.delivery_state(253)->>'outcome', 'pending', 'provider acceptance is still awaiting deployment outcome');
 
+\ir fixtures/factory_actions_delivery.psql
+
 select pg_temp.delivery_prepare(254, 'stale');
 select ok(pg_temp.delivery_observe_merge(repeat('d', 40)), 'a newer canonical fact supersedes the original merge');
 select is(pg_temp.delivery_claim(254), null::jsonb, 'claim checks merge identity again after preparation');
