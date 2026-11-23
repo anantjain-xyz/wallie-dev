@@ -10597,6 +10597,26 @@ export type Database = {
           run_ids: string[]
         }[]
       }
+      apply_observed_linear_session_transition: {
+        Args: {
+          p_agent_model_name?: string
+          p_agent_model_provider?: string
+          p_expected_routing_updated_at: string
+          p_expected_session_updated_at: string
+          p_observation: Json
+          p_retain_terminal_span: boolean
+          p_run_type?: string
+          p_status_name: string
+          p_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          job_ids: string[]
+          outcome: string
+          run_id: string
+          run_ids: string[]
+        }[]
+      }
       approve_factory_deployment_source: {
         Args: {
           p_actor_user_id: string
@@ -11617,6 +11637,19 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: boolean
+      }
+      commit_linear_automation_span_page: {
+        Args: {
+          p_expected_generation: number
+          p_observations: Json
+          p_session_links: Json
+          p_workspace_id?: string
+        }
+        Returns: {
+          after_session_id: string
+          generation: number
+          occurrence_count: number
+        }[]
       }
       commit_run_export_page: {
         Args: {
@@ -15539,6 +15572,13 @@ export type Database = {
           graph_revision_id: string
           stage_id: string
           workflow_digest: string
+        }[]
+      }
+      read_linear_automation_span_cursor: {
+        Args: { p_workspace_id?: string }
+        Returns: {
+          after_session_id: string
+          generation: number
         }[]
       }
       read_run_export_page: {

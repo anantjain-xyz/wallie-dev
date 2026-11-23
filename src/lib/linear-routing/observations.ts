@@ -15,9 +15,11 @@ const pageSchema = z.object({
   pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
 });
 const issueSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().uuid().toLowerCase(),
   updatedAt: z.string().datetime({ offset: true }),
   state: z.object({ id: z.string().min(1), name: z.string().min(1) }),
+  team: z.object({ id: z.string().min(1) }).nullable(),
+  project: z.object({ id: z.string().min(1) }).nullable(),
   stateHistory: pageSchema,
 });
 const responseSchema = z.object({
@@ -31,23 +33,26 @@ const responseSchema = z.object({
     )
     .optional(),
 });
-const fields = `id updatedAt state { id name }
+const fields = `id updatedAt state { id name } team { id } project { id }
   stateHistory(first: 50, after: $after) {
     nodes { id stateId startedAt endedAt }
     pageInfo { hasNextPage endCursor }
   }`;
 
 export type LinearStateObservation = {
+  issueId: string;
   issueUpdatedAt: string;
   spanId: string;
   startedAt: string;
   stateId: string;
   statusName: string;
+  teamId: string | null;
+  projectId: string | null;
 };
 
 export class LinearRateLimitedError extends Error {
   constructor() {
-    super("Linear rate limit persisted after retry");
+    super("Linear observation request was rate limited.");
     this.name = "LinearRateLimitedError";
   }
 }
@@ -56,7 +61,7 @@ async function request(
   apiKey: string,
   query: string,
   variables: Record<string, unknown>,
-  sleep: (ms: number) => Promise<void>,
+  sleep?: (ms: number) => Promise<void>,
 ) {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(endpoint, {
@@ -69,7 +74,7 @@ async function request(
       response.status === 429 ||
       payload?.errors?.some((error) => error.extensions?.code === "RATELIMITED")
     ) {
-      if (attempt >= 1) throw new LinearRateLimitedError();
+      if (!sleep || attempt >= 1) throw new LinearRateLimitedError();
       const seconds = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
       await sleep(
         Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, 30_000) : 1_000,
@@ -92,7 +97,7 @@ async function request(
 export async function fetchLinearStateObservations(
   apiKey: string,
   issueIds: string[],
-  sleep: (ms: number) => Promise<void>,
+  sleep?: (ms: number) => Promise<void>,
 ): Promise<Map<string, LinearStateObservation>> {
   const result = new Map<string, LinearStateObservation>();
   if (issueIds.length === 0) return result;
@@ -125,11 +130,14 @@ export async function fetchLinearStateObservations(
           throw new Error(`Linear state history is inconsistent for ${issueId}`);
         }
         result.set(issueId, {
+          issueId: initial.id,
           issueUpdatedAt: initial.updatedAt,
           spanId: span.id,
           startedAt: span.startedAt,
           stateId: span.stateId,
           statusName: initial.state.name,
+          teamId: initial.team?.id ?? null,
+          projectId: initial.project?.id ?? null,
         });
         break;
       }
@@ -149,7 +157,9 @@ export async function fetchLinearStateObservations(
         next.id !== initial.id ||
         next.updatedAt !== initial.updatedAt ||
         next.state.id !== initial.state.id ||
-        next.state.name !== initial.state.name
+        next.state.name !== initial.state.name ||
+        next.team?.id !== initial.team?.id ||
+        next.project?.id !== initial.project?.id
       ) {
         throw new Error(`Linear issue changed while reading state history for ${issueId}`);
       }

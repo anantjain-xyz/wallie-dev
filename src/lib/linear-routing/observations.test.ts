@@ -3,10 +3,13 @@ import { fetchLinearStateObservations, LinearRateLimitedError } from "./observat
 
 const stamp = "2026-10-02T00:00:00Z";
 const span = { id: "span-1", stateId: "state-1", startedAt: stamp, endedAt: null };
+const issueId = "66310000-0000-4000-8000-000000000001";
 const issue = {
-  id: "issue-uuid",
+  id: issueId,
   updatedAt: stamp,
   state: { id: "state-1", name: "Rework" },
+  team: { id: "team-1" },
+  project: null,
   stateHistory: { nodes: [span], pageInfo: { hasNextPage: false, endCursor: null } },
 };
 const fetchMock = vi.fn();
@@ -21,15 +24,18 @@ afterEach(() => vi.unstubAllGlobals());
 describe("fetchLinearStateObservations", () => {
   it("batches identifier-safe issue lookups with state-span identity", async () => {
     fetchMock.mockResolvedValue(
-      response({ issue0: issue, issue1: { ...issue, id: "other-uuid" } }),
+      response({ issue0: issue, issue1: { ...issue, id: "66310000-0000-4000-8000-000000000002" } }),
     );
     const result = await fetchLinearStateObservations("secret", ["ENG-123", "uuid"], sleep);
     expect(result.get("ENG-123")).toEqual({
+      issueId,
       issueUpdatedAt: stamp,
       spanId: "span-1",
       startedAt: stamp,
       stateId: "state-1",
       statusName: "Rework",
+      teamId: "team-1",
+      projectId: null,
     });
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
     expect(body.query).toContain("issue0: issue(id: $id0)");
@@ -75,7 +81,7 @@ describe("fetchLinearStateObservations", () => {
       (await fetchLinearStateObservations("key", ["ENG-123"], sleep)).get("ENG-123")?.spanId,
     ).toBe("span-1");
     expect(JSON.parse(fetchMock.mock.calls[1]![1].body).variables).toEqual({
-      id: "issue-uuid",
+      id: issueId,
       after: "older-page",
     });
   });
@@ -124,6 +130,15 @@ describe("fetchLinearStateObservations", () => {
   it("skips an issue explicitly absent from Linear", async () => {
     fetchMock.mockResolvedValue(response({ issue0: null }));
     expect((await fetchLinearStateObservations("key", ["ENG-123"], sleep)).size).toBe(0);
+  });
+  it("returns the first rate limit without retrying when no sleep is configured", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("", { status: 429, headers: { "Retry-After": "30" } }),
+    );
+    await expect(fetchLinearStateObservations("key", ["ENG-123"])).rejects.toBeInstanceOf(
+      LinearRateLimitedError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("retries HTTP throttling once and caps the wait", async () => {
     fetchMock
