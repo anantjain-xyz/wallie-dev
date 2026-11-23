@@ -46,3 +46,11 @@ The worker retains the provider run ID and checks its workflow, ref, actor, comm
 | `run_verified` with pending outcome                    | Inspect the linked run by ID and wait for the deployment reporter.                                                                      |
 
 Unknown requests remain protected from redispatch. The read-only reconciliation window is 30 minutes. An Actions conclusion supplies the workflow result. The M06 receipt supplies deployment success or failure.
+
+## Isolated GitHub qualification
+
+The effectless fixture checks its tag, exact source SHA, command ID, and fixture environment. It runs without a repository checkout or write permissions.
+
+A smoke-test tag used the same fixture at an existing registered workflow path. GitHub accepted the dispatch. The fixture transport discarded the response, then the adapter found one run by its exact tag, SHA, workflow ID, actor, and correlation nonce. The job emitted the expected command ID and source SHA. [GitHub Actions evidence](https://github.com/anantjain-xyz/wallie-dev/actions/runs/45263916505)
+
+The smoke test used fixture-injected repository credentials and immutable-release metadata. The separate App authentication and database tests cover denied or revoked installation access, rejected refs, and the requirement for a current M06 receipt before deployment can succeed.
