@@ -38,6 +38,7 @@ import {
   makeNode,
   nextEditorId,
   nodeLabels,
+  updateEditorEdge,
   workflowLayers,
   type WorkflowGraphDraft,
 } from "./editor-graph";
@@ -207,6 +208,7 @@ const diagnosticLabels = {
   routePolicy: "Route policy",
   delegationPolicy: "Delegation policy",
   grants: "Grants",
+  repositorySets: "Repository writers",
 } as Readonly<Record<string, string>>;
 
 function diagnosticLabel(path: EditorDiagnostic["path"], graph: WorkflowGraphDraft) {
@@ -222,6 +224,7 @@ const catalogLabels = {
   prompts: "prompt revisions",
   approvers: "approvers",
   profiles: "execution profiles",
+  writers: "repository writers",
 } satisfies Record<WorkflowReferenceKind, string>;
 
 function appendReferencePage(choices: WorkflowEditorCatalog, page: WorkflowReferencePage) {
@@ -278,6 +281,7 @@ export function WorkflowEditor({
     stepCatalogs.push("prompts", "profiles");
   }
   if (selectedNode?.kind === "review") stepCatalogs.push("prompts");
+  if (selectedNode?.kind === "join") stepCatalogs.push("writers");
   if (selectedNode?.kind === "human-gate" && !selectedNode.anyoneCanApprove) {
     stepCatalogs.push("approvers");
   }
@@ -302,6 +306,10 @@ export function WorkflowEditor({
     ) {
       const node = graph.nodes.findIndex(({ id }) => id === path[2]);
       if (node !== -1) setNodeIndex(node);
+    }
+    if (path[0] === "repositorySets" && typeof index === "string") {
+      const join = graph.nodes.findIndex(({ id }) => id === index);
+      if (join !== -1) setNodeIndex(join);
     }
     setFocusRequest({ fieldId: workflowFieldId(path) });
   }
@@ -699,10 +707,7 @@ export function WorkflowEditor({
                   className="ui-button mt-3"
                   disabled={!!action}
                   onClick={() => {
-                    setGraph({
-                      ...graph,
-                      edges: graph.edges.filter((_, index) => index !== edgeIndex),
-                    });
+                    setGraph(updateEditorEdge(graph, edgeIndex));
                     setEdgeIndex(Math.max(0, Math.min(edgeIndex, graph.edges.length - 2)));
                   }}
                 >

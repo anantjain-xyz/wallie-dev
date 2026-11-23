@@ -93,7 +93,16 @@ async function compileScopedWorkflow(
   if (!definition) return null;
 
   const { executionGrant, repositoryId, executionPolicyRevisionId } = definition;
-  const [references, grantResult] = await Promise.all([
+  const secondary = Object.values(graph.repositorySets ?? {}).flat();
+  const declaredGrants = new Set(graph.grants.map(({ id }) => id));
+  const secondaryIds = [
+    ...new Set(
+      secondary.flatMap(({ writerGrant }) =>
+        declaredGrants.has(writerGrant.id) ? [writerGrant.id] : [],
+      ),
+    ),
+  ];
+  const [references, grantResult, writerResult] = await Promise.all([
     loadWorkflowGraphReferences(admin, { workspaceId, factoryId, graph }),
     executionGrant && repositoryId && executionPolicyRevisionId && graph.grants.length
       ? admin
@@ -111,15 +120,36 @@ async function compileScopedWorkflow(
           .contains("tool_ids", definition.toolIds)
           .maybeSingle()
       : { data: null, error: null },
+    executionGrant && repositoryId && executionPolicyRevisionId && secondaryIds.length
+      ? admin
+          .from("factory_execution_grants")
+          .select("id, version, workspace_id, github_repository_id")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factoryId)
+          .eq("execution_policy_revision_id", executionPolicyRevisionId)
+          .in("id", secondaryIds)
+          .neq("github_repository_id", repositoryId)
+          .is("revoked_at", null)
+          .gt("expires_at", new Date().toISOString())
+      : { data: [], error: null },
   ]);
   if (grantResult.error) throw grantResult.error;
+  if (writerResult.error) throw writerResult.error;
+  const writerGrants = (writerResult.data ?? []).filter((row) =>
+    secondary.some(
+      ({ repositoryId: targetRepository, writerGrant }) =>
+        row.id === writerGrant.id &&
+        row.version === writerGrant.version &&
+        row.github_repository_id === targetRepository,
+    ),
+  );
   const grant = grantResult.data;
   return compileWorkflowGraph(source, {
     workspaceId,
     ...references,
-    approvedGrants: grant
-      ? [{ id: grant.id, version: grant.version, workspaceId: grant.workspace_id }]
-      : [],
+    approvedGrants: [...(grant ? [grant] : []), ...writerGrants].map(
+      ({ id, version, workspace_id }) => ({ id, version, workspaceId: workspace_id }),
+    ),
   });
 }
 

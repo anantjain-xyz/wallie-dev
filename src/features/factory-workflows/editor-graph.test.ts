@@ -8,7 +8,9 @@ import {
   makeEdge,
   makeNode,
   setEditorNode,
+  setEditorRepositoryWriters,
   setNodeRoute,
+  updateEditorEdge,
   workflowLayers,
   type WorkflowGraphDraft,
 } from "./editor-graph";
@@ -154,5 +156,35 @@ describe("workflow editing", () => {
     expect(setEditorNode(graph, 1, makeNode("route", "deterministic")).routePolicy).toEqual(
       expectedPolicy,
     );
+  });
+
+  it("keeps secondary writer authority tied to the selected branch and its join", () => {
+    const primary = { id: "655d0000-0000-4000-8000-000000000011", version: 1 };
+    const secondary = { id: "655d0000-0000-4000-8000-000000000012", version: 2 };
+    const repositoryId = "655d0000-0000-4000-8000-000000000013";
+    const graph: WorkflowGraphDraft = {
+      ...initialGraph,
+      entryNodeId: "split",
+      nodes: [makeNode("split", "branch"), makeNode("writer", "agent"), makeNode("join", "join")],
+      edges: [
+        makeEdge({ id: "work", from: "split", to: "writer" }, "branch"),
+        makeEdge({ id: "output", from: "writer", to: "join" }, "branch-result"),
+      ],
+      grants: [primary],
+    };
+    const assigned = setEditorRepositoryWriters(graph, "join", [
+      { repositoryId, writerGrant: secondary, branchEdgeIds: ["work"] },
+    ]);
+    expect(assigned.nodes[1]).toMatchObject({ grantId: secondary.id });
+    expect(assigned.grants).toEqual([primary, secondary]);
+    expect(updateEditorEdge(assigned, 0, { ...assigned.edges[0], id: "output" })).toBe(assigned);
+    const renamed = updateEditorEdge(assigned, 0, { ...assigned.edges[0], id: "build" });
+    expect(renamed.repositorySets?.join[0].branchEdgeIds).toEqual(["build"]);
+    const changedJoin = setEditorNode(renamed, 2, makeNode("integrate", "join"));
+    expect(changedJoin.repositorySets?.integrate[0].branchEdgeIds).toEqual(["build"]);
+    const removed = deleteEditorNode(changedJoin, 2);
+    expect(removed.repositorySets).toBeUndefined();
+    expect(removed.nodes[1]).not.toMatchObject({ grantId: secondary.id });
+    expect(removed.grants).toEqual([primary]);
   });
 });

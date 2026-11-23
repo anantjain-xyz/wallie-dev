@@ -16,9 +16,18 @@ export type RouteDraft = Omit<Route, "allowedDestinationIds" | "fallback"> & {
 export type RoutePolicyDraft = Omit<WorkflowRoutePolicy, "nodes"> & {
   nodes: Record<string, RouteDraft>;
 };
-export type WorkflowGraphDraft = Omit<InputGraph, "routePolicy" | "delegationPolicy"> & {
+export type RepositoryWriterDraft = {
+  repositoryId: string;
+  writerGrant: { id: string; version: number };
+  branchEdgeIds: string[];
+};
+export type WorkflowGraphDraft = Omit<
+  InputGraph,
+  "routePolicy" | "delegationPolicy" | "repositorySets"
+> & {
   routePolicy?: RoutePolicyDraft;
   delegationPolicy?: WorkflowDelegationPolicy;
+  repositorySets?: Record<string, RepositoryWriterDraft[]>;
 };
 export type WorkflowNodeDraft = WorkflowGraphDraft["nodes"][number];
 export type WorkflowEdgeDraft = WorkflowGraphDraft["edges"][number];
@@ -27,6 +36,7 @@ export type WorkflowEditorChoices = {
   approvers: { id: string; label: string }[];
   profiles: { id: string; digest: string; label: string }[];
   grant: WorkflowGraphDefinition["grants"][number] | null;
+  writers: { repositoryId: string; id: string; version: number; label: string }[];
 };
 
 export const nodeLabels = {
@@ -107,8 +117,15 @@ export function nextEditorId(prefix: string, used: readonly { id: string }[]) {
 }
 
 export function setNodeRoute(graph: WorkflowGraphDraft, id: string, update: RouteDraft) {
-  const policy = graph.routePolicy ?? { maxNodeVisits: 32, maxLoopTraversals: 4, nodes: {} };
-  return { ...graph, routePolicy: { ...policy, nodes: { ...policy.nodes, [id]: update } } };
+  const policy = graph.routePolicy ?? {
+    maxNodeVisits: 32,
+    maxLoopTraversals: 4,
+    nodes: {},
+  };
+  return {
+    ...graph,
+    routePolicy: { ...policy, nodes: { ...policy.nodes, [id]: update } },
+  };
 }
 
 export function setEditorNode(graph: WorkflowGraphDraft, index: number, node: WorkflowNodeDraft) {
@@ -123,8 +140,18 @@ export function setEditorNode(graph: WorkflowGraphDraft, index: number, node: Wo
     ...graph,
     entryNodeId: alias(graph.entryNodeId),
     nodes: graph.nodes.map((value, position) => (position === index ? node : value)),
-    edges: graph.edges.map((edge) => ({ ...edge, from: alias(edge.from), to: alias(edge.to) })),
+    edges: graph.edges.map((edge) => ({
+      ...edge,
+      from: alias(edge.from),
+      to: alias(edge.to),
+    })),
   };
+  if (graph.repositorySets) {
+    const sets = Object.entries(graph.repositorySets).flatMap(([id, writers]) =>
+      id === prior.id && node.kind !== "join" ? [] : [[alias(id), writers] as const],
+    );
+    next.repositorySets = sets.length ? Object.fromEntries(sets) : undefined;
+  }
   if (graph.routePolicy) {
     const routes = Object.entries(graph.routePolicy.nodes).flatMap(([id, route]) => {
       if (id === prior.id && node.kind !== "route") return [];
@@ -133,7 +160,10 @@ export function setEditorNode(graph: WorkflowGraphDraft, index: number, node: Wo
         allowedDestinationIds: route.allowedDestinationIds.map(alias),
         fallback:
           route.fallback.kind === "route"
-            ? { ...route.fallback, destinationId: alias(route.fallback.destinationId) }
+            ? {
+                ...route.fallback,
+                destinationId: alias(route.fallback.destinationId),
+              }
             : route.fallback,
       };
       return [[alias(id), updated] as const];
@@ -144,19 +174,25 @@ export function setEditorNode(graph: WorkflowGraphDraft, index: number, node: Wo
     const targets = Object.entries(graph.delegationPolicy.targets).flatMap(([id, target]) =>
       id === prior.id && node.kind !== "agent" ? [] : [[alias(id), target] as const],
     );
-    next.delegationPolicy = { ...graph.delegationPolicy, targets: Object.fromEntries(targets) };
+    next.delegationPolicy = {
+      ...graph.delegationPolicy,
+      targets: Object.fromEntries(targets),
+    };
   }
   if (
     node.kind === "route" &&
     (!next.routePolicy || !Object.hasOwn(next.routePolicy.nodes, node.id))
   ) {
-    return setNodeRoute(next, node.id, {
-      minimumConfidence: 0.8,
-      allowedDestinationIds: [],
-      fallback: { kind: "clarification" },
-    });
+    return syncRepositoryWriters(
+      graph,
+      setNodeRoute(next, node.id, {
+        minimumConfidence: 0.8,
+        allowedDestinationIds: [],
+        fallback: { kind: "clarification" },
+      }),
+    );
   }
-  return next;
+  return renamed || prior.kind !== node.kind ? syncRepositoryWriters(graph, next) : next;
 }
 
 export function deleteEditorNode(graph: WorkflowGraphDraft, index: number) {
@@ -165,7 +201,7 @@ export function deleteEditorNode(graph: WorkflowGraphDraft, index: number) {
   const nodes = graph.nodes.filter((_, position) => position !== index);
   const withoutPolicy = setEditorNode(graph, index, makeNode(removed.id, "deterministic"));
   const routePolicy = withoutPolicy.routePolicy;
-  return {
+  return syncRepositoryWriters(graph, {
     ...withoutPolicy,
     nodes,
     entryNodeId: graph.entryNodeId === removed.id ? (nodes[0]?.id ?? "") : graph.entryNodeId,
@@ -190,7 +226,104 @@ export function deleteEditorNode(graph: WorkflowGraphDraft, index: number) {
           ),
         }
       : undefined,
-  } satisfies WorkflowGraphDraft;
+  } satisfies WorkflowGraphDraft);
+}
+
+export function branchEdgesForJoin(graph: WorkflowGraphDraft, joinId: string) {
+  const joinedAgents = new Set(
+    graph.edges
+      .filter((edge) => edge.kind === "branch-result" && edge.to === joinId)
+      .map(({ from }) => from),
+  );
+  return graph.edges.filter((edge) => edge.kind === "branch" && joinedAgents.has(edge.to));
+}
+
+function syncRepositoryWriters(
+  previous: WorkflowGraphDraft,
+  updated: WorkflowGraphDraft,
+): WorkflowGraphDraft {
+  if (!previous.repositorySets && !updated.repositorySets) return updated;
+  const assignments = new Map<string, string>();
+  const writers = new Map<string, RepositoryWriterDraft["writerGrant"]>();
+  const repositorySets = Object.fromEntries(
+    Object.entries(updated.repositorySets ?? {}).map(([joinId, entries]) => {
+      const branches = new Map(
+        branchEdgesForJoin(updated, joinId).map((edge) => [edge.id, edge.to]),
+      );
+      return [
+        joinId,
+        entries.map((entry) => {
+          writers.set(entry.writerGrant.id, entry.writerGrant);
+          const branchEdgeIds = entry.branchEdgeIds.filter((id) => {
+            const agent = branches.get(id);
+            if (!agent) return false;
+            assignments.set(agent, entry.writerGrant.id);
+            return true;
+          });
+          return { ...entry, branchEdgeIds };
+        }),
+      ];
+    }),
+  );
+  const previousWriters = new Set(
+    Object.values(previous.repositorySets ?? {}).flatMap((entries) =>
+      entries.map(({ writerGrant }) => writerGrant.id),
+    ),
+  );
+  const nodes = updated.nodes.map((node) => {
+    if (node.kind !== "agent") return node;
+    const writerId = assignments.get(node.id);
+    if (writerId) return { ...node, grantId: writerId };
+    if (node.grantId && previousWriters.has(node.grantId)) return { ...node, grantId: undefined };
+    return node;
+  });
+  return {
+    ...updated,
+    nodes,
+    repositorySets: Object.keys(repositorySets).length ? repositorySets : undefined,
+    grants: [
+      ...updated.grants.filter(({ id }) => !previousWriters.has(id) && !writers.has(id)),
+      ...writers.values(),
+    ],
+  };
+}
+
+export function setEditorRepositoryWriters(
+  graph: WorkflowGraphDraft,
+  joinId: string,
+  entries: RepositoryWriterDraft[],
+) {
+  const repositorySets = { ...graph.repositorySets };
+  if (entries.length) repositorySets[joinId] = entries;
+  else delete repositorySets[joinId];
+  return syncRepositoryWriters(graph, { ...graph, repositorySets });
+}
+
+export function updateEditorEdge(
+  graph: WorkflowGraphDraft,
+  index: number,
+  edge?: WorkflowEdgeDraft,
+) {
+  const prior = graph.edges[index];
+  if (!prior) return graph;
+  if (edge && prior.id !== edge.id && graph.edges.some(({ id }) => id === edge.id)) return graph;
+  const edges = edge
+    ? graph.edges.map((item, position) => (position === index ? edge : item))
+    : graph.edges.filter((_, position) => position !== index);
+  const sets = Object.entries(graph.repositorySets ?? {}).map(([id, writers]) => [
+    id,
+    writers.map((writer) => ({
+      ...writer,
+      branchEdgeIds: writer.branchEdgeIds.flatMap((id) =>
+        id === prior.id ? (edge?.kind === "branch" ? [edge.id] : []) : [id],
+      ),
+    })),
+  ]);
+  return syncRepositoryWriters(graph, {
+    ...graph,
+    edges,
+    repositorySets: sets.length ? Object.fromEntries(sets) : undefined,
+  });
 }
 
 export function workflowLayers(graph: WorkflowGraphDraft) {

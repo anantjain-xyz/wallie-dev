@@ -74,6 +74,11 @@ function mockSignedInPostgrest(manageable = true) {
     canonical_digest: digest,
     created_at: index === 0 ? oldest : newest,
   }));
+  const writers = Array.from({ length: 102 }, (_, index) => ({
+    id: id(index + 400),
+    github_repository_id: id(index + 600),
+    version: 2,
+  }));
   const fetch = vi.fn(async (input: string | URL | Request) => {
     const url = new URL(String(input));
     const resource = url.pathname.split("/").at(-1);
@@ -87,6 +92,14 @@ function mockSignedInPostgrest(manageable = true) {
     const dated = url.searchParams.get("order")?.startsWith("created_at.desc");
     const boundary = url.searchParams.get("or");
     const afterId = url.searchParams.get("id")?.replace(/^gt\./, "");
+    if (resource === "factory_execution_grants") {
+      const limit = Number(url.searchParams.get("limit"));
+      return Response.json(writers.filter(({ id }) => !afterId || id > afterId).slice(0, limit));
+    }
+    if (resource === "github_repositories") {
+      const ids = url.searchParams.get("id")?.slice(4, -1).split(",") ?? [];
+      return Response.json(ids.map((id) => ({ id, full_name: `fixture/${id.slice(-3)}` })));
+    }
     let matching = rows.toSorted((a, b) =>
       dated
         ? b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)
@@ -146,10 +159,11 @@ it("loads the current exact base grant and caps each catalog with a keyset curso
         prompts: { id: id(202), createdAt: newest },
         approvers: { id: id(299) },
         profiles: { id: id(202), createdAt: newest },
+        writers: { id: id(499), baseActivationId: activationId },
       },
     },
   });
-  for (const catalog of ["prompts", "approvers", "profiles"]) {
+  for (const catalog of ["prompts", "approvers", "profiles", "writers"]) {
     expect(editor.choices[catalog]).toHaveLength(100);
   }
   const requests = fetch.mock.calls.map(([url]) => new URL(String(url)));
@@ -160,6 +174,38 @@ it("loads the current exact base grant and caps each catalog with a keyset curso
     workspace_id: `eq.${scope.workspaceId}`,
     factory_id: `eq.${scope.factoryId}`,
   });
+});
+
+it("paginates exact secondary writer choices under the current base activation", async () => {
+  const { fetch } = mockSignedInPostgrest();
+  const response = await get(`catalog=writers&afterId=${id(499)}&baseActivationId=${activationId}`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    catalog: "writers",
+    items: [
+      { id: id(500), repositoryId: id(700), version: 2, label: "fixture/700 · Grant version 2" },
+      { id: id(501), repositoryId: id(701), version: 2, label: "fixture/701 · Grant version 2" },
+    ],
+    nextCursor: null,
+  });
+  const requests = fetch.mock.calls.map(([url]) => new URL(String(url)));
+  const writerRequest = requests.find((url) => url.pathname.endsWith("/factory_execution_grants"));
+  expect(Object.fromEntries(writerRequest?.searchParams ?? [])).toMatchObject({
+    workspace_id: `eq.${scope.workspaceId}`,
+    factory_id: `eq.${scope.factoryId}`,
+    execution_policy_revision_id: `eq.${id(9)}`,
+    github_repository_id: `neq.${id(8)}`,
+    revoked_at: "is.null",
+    id: `gt.${id(499)}`,
+    limit: "101",
+  });
+  fetch.mockClear();
+  expect((await get(`catalog=writers&afterId=${id(499)}&baseActivationId=${id(190)}`)).status).toBe(
+    409,
+  );
+  expect(fetch.mock.calls.every(([url]) => !String(url).includes("factory_execution_grants"))).toBe(
+    true,
+  );
 });
 
 it.each([

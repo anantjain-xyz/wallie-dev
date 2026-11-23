@@ -50,8 +50,9 @@ const choices: WorkflowEditorCatalog = {
   prompts: [],
   approvers: [],
   profiles: [],
+  writers: [],
   grant: { id: id(5), version: 1 },
-  nextCursors: { prompts: promptCursor, approvers: null, profiles: null },
+  nextCursors: { writers: null, prompts: promptCursor, approvers: null, profiles: null },
 };
 
 function openEditor() {

@@ -44,7 +44,18 @@ export async function GET(request: Request, { params }: Context) {
     );
     if (!snapshot) return workflowAuthoringResponse({ error: "Workflow draft not found." }, 404);
     if ("catalog" in selection.data) {
-      return workflowAuthoringResponse(await loadWorkflowReferencePage(scope, selection.data));
+      if (
+        selection.data.catalog === "writers" &&
+        selection.data.baseActivationId !== snapshot.baseDefinition?.activationId
+      ) {
+        return workflowAuthoringResponse(
+          { error: "The active base definition changed. Load the current draft." },
+          409,
+        );
+      }
+      return workflowAuthoringResponse(
+        await loadWorkflowReferencePage(scope, selection.data, snapshot.baseDefinition),
+      );
     }
     if ("includeChoices" in selection.data) {
       const choices = await loadWorkflowEditorChoices(scope, snapshot.baseDefinition);

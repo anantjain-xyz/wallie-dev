@@ -31,7 +31,7 @@ function Inspector({
       <NodeFields
         {...fields}
         index={node}
-        choices={{ prompts: [], approvers: [], profiles: [], grant: null }}
+        choices={{ prompts: [], approvers: [], profiles: [], grant: null, writers: [] }}
       />
       {edge === undefined ? null : <EdgeFields {...fields} index={edge} />}
     </>

@@ -118,8 +118,10 @@ declare
   refs text[];
   matched integer;
   base_grant public.factory_execution_grants;
+  repository_envelope public.factory_execution_grants;
   profile_grant public.factory_execution_grants;
-  profile_ref jsonb;
+  profile_ref record;
+  named_writer record;
   profile jsonb;
 begin
   select array_agg(distinct case when node->>'kind' = 'review' then node->>'reviewerPromptRevisionId'
@@ -151,32 +153,84 @@ begin
     base_grant:=internal.resolve_definition_execution_grant(p_workspace_id,p_factory_id,p_base,
       (p_base->>'repositoryId')::uuid,(p_base->>'executionPolicyRevisionId')::uuid);
   end if;
-  -- The existing single writer runtime accepts only the base grant. OP653 can
-  -- authorize an additional declared writer through its separate exact policy.
+  -- Secondary writers are scoped by their exact declared repository set.
+  for named_writer in
+    select (entry->>'repositoryId')::uuid as repository_id,
+      (entry#>>'{writerGrant,id}')::uuid as id,(entry#>>'{writerGrant,version}')::bigint as version
+    from jsonb_each(coalesce(p_plan->'repositorySets','{}'::jsonb)) groups
+    cross join lateral jsonb_array_elements(groups.value) entry
+    order by repository_id,id,version
+  loop
+    if base_grant.id is null or named_writer.repository_id is null
+      or named_writer.repository_id=base_grant.github_repository_id then
+      raise exception 'A secondary repository requires a distinct, declared writer.' using errcode='PT422';
+    end if;
+    perform internal.require_current_factory_execution_grant(p_workspace_id,p_factory_id,
+      named_writer.id,named_writer.version,named_writer.repository_id,'{}'::uuid[],'{}'::text[],
+      base_grant.execution_policy_revision_id);
+  end loop;
   if exists (select 1 from jsonb_array_elements(p_plan->'grants') referenced
-    where (referenced->>'id',referenced->>'version') is distinct from (base_grant.id::text,base_grant.version::text))
+    where (referenced->>'id',referenced->>'version') is distinct from (base_grant.id::text,base_grant.version::text)
+      and not exists(
+        select 1 from jsonb_each(coalesce(p_plan->'repositorySets','{}'::jsonb)) groups
+        cross join lateral jsonb_array_elements(groups.value) entry
+        where entry->'writerGrant'=referenced
+      ))
     or exists (select 1 from jsonb_array_elements(p_plan->'nodes') node
       where node ? 'grantId' and not exists (select 1 from jsonb_array_elements(p_plan->'grants') referenced
         where referenced->>'id'=node->>'grantId'))
-    then raise exception 'Workflow grant does not match the base definition.' using errcode='PT422'; end if;
+    then raise exception 'Workflow grant does not match the base definition or a declared repository writer.' using errcode='PT422'; end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_plan->'nodes') node
+    where node ? 'grantId' and node->>'grantId' is distinct from base_grant.id::text
+      and not exists (
+        select 1 from jsonb_each(coalesce(p_plan->'repositorySets','{}'::jsonb)) groups
+        cross join lateral jsonb_array_elements(groups.value) writer
+        cross join lateral jsonb_array_elements(p_plan->'edges') branch
+        where node->>'kind'='agent' and branch->>'kind'='branch' and branch->>'to'=node->>'id'
+          and writer#>>'{writerGrant,id}'=node->>'grantId' and writer->'branchEdgeIds' ? (branch->>'id')
+          and exists (select 1 from jsonb_array_elements(p_plan->'edges') output
+            where (output->>'kind',output->>'from',output->>'to')=('branch-result',node->>'id',groups.key))
+      )
+  ) then
+    raise exception 'Use the secondary writer only on its declared branch.' using errcode='PT422';
+  end if;
 
   for profile_ref in
-    select selected.value from jsonb_each(coalesce(p_plan#>'{delegationPolicy,targets}','{}'::jsonb)) selected
-    union
-    select selected.value->'foremanProfile' from jsonb_each(coalesce(p_plan#>'{routePolicy,nodes}','{}'::jsonb)) selected
+    select selected.key as node_id,selected.value as reference,'agent' as kind
+    from jsonb_each(coalesce(p_plan#>'{delegationPolicy,targets}','{}'::jsonb)) selected
+    union all
+    select selected.key,selected.value->'foremanProfile','route'
+    from jsonb_each(coalesce(p_plan#>'{routePolicy,nodes}','{}'::jsonb)) selected
     where selected.value ? 'foremanProfile'
   loop
     select definition_json::jsonb into profile from public.factory_definition_revisions
     where (workspace_id,factory_id,id::text,canonical_digest)=
-      (p_workspace_id,p_factory_id,profile_ref->>'definitionRevisionId',profile_ref->>'definitionDigest');
+      (p_workspace_id,p_factory_id,profile_ref.reference->>'definitionRevisionId',profile_ref.reference->>'definitionDigest');
     if not found then raise exception 'Workflow execution profile is unavailable.' using errcode='PT422'; end if;
     profile_grant:=internal.resolve_definition_execution_grant(p_workspace_id,p_factory_id,profile,
       (profile->>'repositoryId')::uuid,(profile->>'executionPolicyRevisionId')::uuid);
+    repository_envelope:=base_grant;
+    repository_envelope.github_repository_id:=profile_grant.github_repository_id;
     if profile_grant.id is null or base_grant.id is null
       or (profile_grant.service_principal_id,profile_grant.budget_payer_member_id,profile_grant.execution_policy_revision_id,
-        profile_grant.github_repository_id) is distinct from (base_grant.service_principal_id,base_grant.budget_payer_member_id,
-        base_grant.execution_policy_revision_id,base_grant.github_repository_id)
-      then raise exception 'Workflow execution profile exceeds the base authority.' using errcode='PT422'; end if;
+        profile_grant.workspace_id) is distinct from (base_grant.service_principal_id,base_grant.budget_payer_member_id,
+        base_grant.execution_policy_revision_id,base_grant.workspace_id)
+      or (profile_grant.github_repository_id <> base_grant.github_repository_id and (
+        profile_ref.kind <> 'agent'
+        or internal.factory_workflow_delegated_scope_is_subset(profile_grant,repository_envelope,profile,p_base) is not true
+        or not exists (
+          select 1 from jsonb_each(coalesce(p_plan->'repositorySets','{}'::jsonb)) groups
+          cross join lateral jsonb_array_elements(groups.value) entry
+          cross join lateral jsonb_array_elements(p_plan->'edges') branch
+          where branch->>'kind'='branch' and branch->>'to'=profile_ref.node_id
+            and entry->'branchEdgeIds' ? (branch->>'id')
+            and exists (select 1 from jsonb_array_elements(p_plan->'edges') output
+              where (output->>'kind',output->>'from',output->>'to')=('branch-result',profile_ref.node_id,groups.key))
+            and (entry->>'repositoryId',entry#>>'{writerGrant,id}',entry#>>'{writerGrant,version}') =
+              (profile_grant.github_repository_id::text,profile_grant.id::text,profile_grant.version::text)
+        )
+      )) then raise exception 'Workflow execution profile exceeds the base authority.' using errcode='PT422'; end if;
   end loop;
 exception when lock_not_available then
   raise exception 'Workflow reference access is changing. Retry shortly.' using errcode='PT409';

@@ -40,6 +40,7 @@ export async function loadMoreWorkflowReferences(
 ) {
   const query = new URLSearchParams({ catalog, afterId: cursor.id });
   if ("createdAt" in cursor) query.set("afterCreatedAt", cursor.createdAt);
+  if ("baseActivationId" in cursor) query.set("baseActivationId", cursor.baseActivationId);
   const page = await fetchFactoryEditor(`${endpoint}?${query}`, workflowReferencePageSchema);
   if (page.catalog !== catalog) throw new Error("The workflow reference page could not be loaded.");
   return page;

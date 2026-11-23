@@ -108,10 +108,67 @@ async function loadProfileChoices(
   );
 }
 
+async function loadWriterChoices(
+  { supabase, workspaceId, factoryId }: CatalogScope,
+  base: WorkflowBaseDefinition | null,
+  definition: ReturnType<typeof readVerifiedFactoryDefinition>,
+  afterId?: string,
+) {
+  if (
+    !base ||
+    !definition?.repositoryId ||
+    !definition.executionPolicyRevisionId ||
+    !definition.executionGrant
+  ) {
+    return { items: [], nextCursor: null };
+  }
+  const query = supabase
+    .from("factory_execution_grants")
+    .select("id, version, github_repository_id")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
+    .eq("execution_policy_revision_id", definition.executionPolicyRevisionId)
+    .neq("github_repository_id", definition.repositoryId)
+    .is("revoked_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .order("id")
+    .limit(workflowReferencePageSize + 1);
+  const { data, error } = await (afterId ? query.gt("id", afterId) : query);
+  if (error) throw error;
+  const page = referencePage(
+    data,
+    (row) => row,
+    ({ id }) => ({ id, baseActivationId: base.activationId }),
+  );
+  if (!page.items.length) return { items: [], nextCursor: page.nextCursor };
+  const repositories = [
+    ...new Set(page.items.map(({ github_repository_id }) => github_repository_id)),
+  ];
+  const { data: names, error: repositoryError } = await supabase
+    .from("github_repositories")
+    .select("id, full_name")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
+    .eq("is_archived", false)
+    .in("id", repositories);
+  if (repositoryError) throw repositoryError;
+  const byId = new Map(names.map(({ id, full_name }) => [id, full_name]));
+  return {
+    nextCursor: page.nextCursor,
+    items: page.items.flatMap(({ id, version, github_repository_id: repositoryId }) => {
+      const name = byId.get(repositoryId);
+      return name
+        ? [{ id, version, repositoryId, label: `${name} · Grant version ${version}` }]
+        : [];
+    }),
+  };
+}
+
 /** The caller checks the current manager authority before using the signed-in RLS client. */
 export async function loadWorkflowReferencePage(
   scope: CatalogScope,
   query: WorkflowReferenceQuery,
+  base: WorkflowBaseDefinition | null,
 ): Promise<WorkflowReferencePage> {
   const { afterId } = query;
   switch (query.catalog) {
@@ -127,10 +184,20 @@ export async function loadWorkflowReferencePage(
         catalog: query.catalog,
         ...(await loadProfileChoices(scope, { id: afterId, createdAt: query.afterCreatedAt })),
       };
+    case "writers":
+      return {
+        catalog: query.catalog,
+        ...(await loadWriterChoices(
+          scope,
+          base,
+          await loadWorkflowBaseDefinition(scope, base),
+          afterId,
+        )),
+      };
   }
 }
 
-async function loadWorkflowBaseGrant(
+async function loadWorkflowBaseDefinition(
   { supabase, workspaceId, factoryId }: CatalogScope,
   base: WorkflowBaseDefinition | null,
 ) {
@@ -144,30 +211,33 @@ async function loadWorkflowBaseGrant(
     .eq("canonical_digest", base.digest)
     .maybeSingle();
   if (error) throw error;
-  return data
-    ? (readVerifiedFactoryDefinition(data.definition_json, base.digest)?.executionGrant ?? null)
-    : null;
+  return data ? readVerifiedFactoryDefinition(data.definition_json, base.digest) : null;
 }
 
 export async function loadWorkflowEditorChoices(
   scope: CatalogScope,
   base: WorkflowBaseDefinition | null,
 ): Promise<WorkflowEditorCatalog> {
-  const [prompts, approvers, profiles, grant] = await Promise.all([
+  const [prompts, approvers, profiles, baseChoices] = await Promise.all([
     loadPromptChoices(scope),
     loadApproverChoices(scope),
     loadProfileChoices(scope),
-    loadWorkflowBaseGrant(scope, base),
+    loadWorkflowBaseDefinition(scope, base).then(async (definition) => ({
+      grant: definition?.executionGrant ?? null,
+      writers: await loadWriterChoices(scope, base, definition),
+    })),
   ]);
   return {
     prompts: prompts.items,
     approvers: approvers.items,
     profiles: profiles.items,
-    grant,
+    grant: baseChoices.grant,
+    writers: baseChoices.writers.items,
     nextCursors: {
       prompts: prompts.nextCursor,
       approvers: approvers.nextCursor,
       profiles: profiles.nextCursor,
+      writers: baseChoices.writers.nextCursor,
     },
   };
 }
@@ -193,7 +263,10 @@ async function loadWorkflowApprovers(
     );
     if (error) throw error;
     approvers.push(
-      ...(data ?? []).map(({ id, workspace_id }) => ({ id, workspaceId: workspace_id })),
+      ...(data ?? []).map(({ id, workspace_id }) => ({
+        id,
+        workspaceId: workspace_id,
+      })),
     );
   }
   return approvers;

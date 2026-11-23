@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import type { EditorDiagnostic } from "@/features/factory-definition/editor-requests";
 
 import {
+  branchEdgesForJoin,
   defaultDelegationPolicy,
   edgeLabels,
   makeEdge,
@@ -13,7 +14,10 @@ import {
   nextEditorId,
   nodeLabels,
   setEditorNode,
+  setEditorRepositoryWriters,
   setNodeRoute,
+  updateEditorEdge,
+  type RepositoryWriterDraft,
   type WorkflowEdgeDraft,
   type WorkflowEditorChoices,
   type WorkflowGraphDraft,
@@ -542,6 +546,99 @@ function ReviewFields({
   );
 }
 
+function JoinRepositoryFields({
+  graph,
+  edit,
+  diagnostics,
+  choices,
+  joinId,
+}: Fields & {
+  choices: WorkflowEditorChoices;
+  joinId: string;
+}) {
+  const rows = graph.repositorySets?.[joinId] ?? [];
+  const path = ["repositorySets", joinId];
+  const branchEdges = branchEdgesForJoin(graph, joinId);
+  const withBranches = (entries: RepositoryWriterDraft[]) =>
+    edit(setEditorRepositoryWriters(graph, joinId, entries));
+  const change = (index: number, next: RepositoryWriterDraft) =>
+    withBranches(rows.map((row, position) => (position === index ? next : row)));
+  const candidate = choices.writers.find(
+    (writer) => !rows.some(({ repositoryId }) => repositoryId === writer.repositoryId),
+  );
+
+  return (
+    <div className="grid gap-3 sm:col-span-2">
+      <h3 className="type-label">Secondary repositories</h3>
+      {rows.map((row, index) => {
+        const occupied = new Set(
+          rows.flatMap((entry, position) => (position === index ? [] : entry.branchEdgeIds)),
+        );
+        const options = choices.writers.filter(
+          (writer) =>
+            writer.repositoryId === row.repositoryId ||
+            !rows.some((entry) => entry.repositoryId === writer.repositoryId),
+        );
+        return (
+          <div key={index} className="grid gap-3 rounded-md border border-border p-3">
+            <WorkflowOptions
+              label="Repository and exact writer grant"
+              path={[...path, index, "writerGrant"]}
+              diagnostics={diagnostics}
+              options={options.map(({ id, label }) => ({ id, label }))}
+              value={row.writerGrant.id}
+              change={(id) => {
+                const writer = options.find((option) => option.id === id);
+                if (writer)
+                  change(index, {
+                    ...row,
+                    repositoryId: writer.repositoryId,
+                    writerGrant: { id, version: writer.version },
+                  });
+              }}
+            />
+            <MultipleOptions
+              label="Assigned branch outputs"
+              path={[...path, index, "branchEdgeIds"]}
+              diagnostics={diagnostics}
+              options={branchEdges
+                .filter(({ id }) => !occupied.has(id))
+                .map(({ id }) => ({ id, label: id }))}
+              value={row.branchEdgeIds}
+              change={(branchEdgeIds) => change(index, { ...row, branchEdgeIds })}
+            />
+            <button
+              type="button"
+              className="ui-button w-fit"
+              onClick={() => withBranches(rows.filter((_, position) => position !== index))}
+            >
+              Remove secondary repository
+            </button>
+          </div>
+        );
+      })}
+      {candidate && rows.length < 8 ? (
+        <button
+          type="button"
+          className="ui-button w-fit"
+          onClick={() =>
+            withBranches([
+              ...rows,
+              {
+                repositoryId: candidate.repositoryId,
+                writerGrant: { id: candidate.id, version: candidate.version },
+                branchEdgeIds: [],
+              },
+            ])
+          }
+        >
+          Add secondary repository
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function NodeFields({
   graph,
   edit,
@@ -641,15 +738,22 @@ export function NodeFields({
             label="Execution grant"
             path={[...path, "grantId"]}
             diagnostics={diagnostics}
-            options={graph.grants.map(({ id, version }) => ({
-              id,
-              label: `Factory grant · Version ${version}`,
-            }))}
+            options={graph.grants
+              .filter(({ id }) => id === choices.grant?.id || id === node.grantId)
+              .map(({ id, version }) => ({
+                id,
+                label:
+                  choices.writers.find((writer) => writer.id === id && writer.version === version)
+                    ?.label ?? `Factory grant · Version ${version}`,
+              }))}
             value={node.grantId ?? ""}
             empty="Use workflow default"
             change={(grantId) => update({ ...node, grantId: grantId || undefined })}
           />
         </>
+      ) : null}
+      {node.kind === "join" ? (
+        <JoinRepositoryFields {...{ graph, edit, diagnostics, choices }} joinId={node.id} />
       ) : null}
       {node.kind === "route" ? (
         <RouteFields {...{ graph, edit, diagnostics, choices }} id={node.id} />
@@ -672,20 +776,22 @@ export function EdgeFields({ graph, edit, diagnostics, index }: Fields & { index
   const edge = graph.edges[index];
   if (!edge) return null;
   const path = ["edges", index];
-  const update = (next: WorkflowEdgeDraft) =>
-    edit({
-      ...graph,
-      edges: graph.edges.map((item, position) => (position === index ? next : item)),
-    });
+  const update = (next: WorkflowEdgeDraft) => edit(updateEditorEdge(graph, index, next));
   const nodes = nodeOptions(graph.nodes);
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      <TextField
+      <UniqueIdField
+        key={index}
         label="Transition ID"
         path={[...path, "id"]}
         diagnostics={diagnostics}
         value={edge.id}
-        change={(id) => update({ ...edge, id })}
+        change={(id) => {
+          const next = updateEditorEdge(graph, index, { ...edge, id });
+          if (next === graph) return false;
+          edit(next);
+          return true;
+        }}
       />
       <WorkflowOptions
         label="Transition kind"
@@ -767,7 +873,20 @@ export function PolicyFields({
           value={graph.grants.some(
             ({ id, version }) => id === grant.id && version === grant.version,
           )}
-          change={(enabled) => edit({ ...graph, grants: enabled ? [grant] : [] })}
+          change={(enabled) => {
+            const others = graph.grants.filter(({ id }) => id !== grant.id);
+            edit({
+              ...graph,
+              grants: enabled ? [grant, ...others] : others,
+              nodes: enabled
+                ? graph.nodes
+                : graph.nodes.map((node) =>
+                    "grantId" in node && node.grantId === grant.id
+                      ? { ...node, grantId: undefined }
+                      : node,
+                  ),
+            });
+          }}
         />
       ) : null}
       {policy ? (

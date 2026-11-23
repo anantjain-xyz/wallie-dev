@@ -83,8 +83,10 @@ export const workflowReferencePageSize = 100;
 const referenceTimestamp = z.string().max(64).datetime({ offset: true });
 const memberReferenceCursor = z.strictObject({ id });
 const datedReferenceCursor = memberReferenceCursor.extend({ createdAt: referenceTimestamp });
+const writerReferenceCursor = memberReferenceCursor.extend({ baseActivationId: id });
 export const workflowReferenceQuerySchema = z.union([
   z.strictObject({ catalog: z.literal("approvers"), afterId: id }),
+  z.strictObject({ catalog: z.literal("writers"), afterId: id, baseActivationId: id }),
   z.strictObject({
     catalog: z.enum(["prompts", "profiles"]),
     afterId: id,
@@ -93,8 +95,13 @@ export const workflowReferenceQuerySchema = z.union([
 ]);
 const referenceChoice = z.strictObject({ id, label: z.string() });
 const profileChoice = referenceChoice.extend({ digest });
+const writerChoice = referenceChoice.extend({
+  repositoryId: id,
+  version: z.number().int().positive().safe(),
+});
 const referenceChoices = referenceChoice.array().max(workflowReferencePageSize);
 const profileChoices = profileChoice.array().max(workflowReferencePageSize);
+const writerChoices = writerChoice.array().max(workflowReferencePageSize);
 export const workflowReferencePageSchema = z.discriminatedUnion("catalog", [
   z.strictObject({
     catalog: z.literal("prompts"),
@@ -111,16 +118,23 @@ export const workflowReferencePageSchema = z.discriminatedUnion("catalog", [
     items: profileChoices,
     nextCursor: datedReferenceCursor.nullable(),
   }),
+  z.strictObject({
+    catalog: z.literal("writers"),
+    items: writerChoices,
+    nextCursor: writerReferenceCursor.nullable(),
+  }),
 ]);
 const workflowEditorChoicesSchema = z.strictObject({
   prompts: referenceChoices,
   approvers: referenceChoices,
   profiles: profileChoices,
+  writers: writerChoices,
   grant: z.strictObject({ id, version: z.number().int().positive().safe() }).nullable(),
   nextCursors: z.strictObject({
     prompts: datedReferenceCursor.nullable(),
     approvers: memberReferenceCursor.nullable(),
     profiles: datedReferenceCursor.nullable(),
+    writers: writerReferenceCursor.nullable(),
   }),
 });
 export const workflowAuthoringEditorSchema = z.strictObject({
