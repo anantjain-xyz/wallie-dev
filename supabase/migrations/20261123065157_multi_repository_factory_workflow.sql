@@ -57,12 +57,12 @@ create table internal.factory_workflow_repository_validation_attempts (
   join_id uuid not null,
   repository_id uuid not null,
   validation_session_id uuid not null,
-  validation_job_id uuid not null,
+  validation_job_id uuid not null unique,
   validation_run_id uuid not null unique,
   attempt_count integer not null check (attempt_count > 0),
   generation bigint not null,
   deadline_at timestamptz not null,
-  primary key (root_session_id, join_id, repository_id),
+  primary key (root_session_id, join_id, repository_id, validation_run_id),
   foreign key (root_session_id, join_id, repository_id)
     references internal.factory_workflow_repository_delivery_targets(root_session_id, join_id, repository_id)
     on delete cascade
@@ -72,14 +72,15 @@ create table internal.factory_workflow_repository_delivery_intents (
   root_session_id uuid not null,
   join_id uuid not null,
   repository_id uuid not null,
+  validation_run_id uuid not null,
   candidate_sha text not null check (candidate_sha collate "C" ~ '^[a-f0-9]{40}$'),
   tree_sha text not null check (tree_sha collate "C" ~ '^[a-f0-9]{40}$'),
   bundle_sha256 text check (bundle_sha256 collate "C" ~ '^[a-f0-9]{64}$'),
   retained_ref text,
   bundle_bytes bytea,
   primary key (root_session_id, join_id, repository_id),
-  foreign key (root_session_id, join_id, repository_id)
-    references internal.factory_workflow_repository_validation_attempts(root_session_id, join_id, repository_id)
+  foreign key (root_session_id, join_id, repository_id, validation_run_id)
+    references internal.factory_workflow_repository_validation_attempts(root_session_id, join_id, repository_id, validation_run_id)
     on delete cascade,
   check ((bundle_sha256 is null) = (retained_ref is null) and (bundle_sha256 is null) = (bundle_bytes is null)),
   check (bundle_bytes is null or (octet_length(bundle_bytes) between 1 and 4194304
@@ -185,7 +186,7 @@ $$;
 
 create function internal.factory_workflow_repository_validation_passes(
   p_target internal.factory_workflow_repository_delivery_targets,
-  p_candidate_sha text, p_tree_sha text,
+  p_validation_run_id uuid, p_candidate_sha text, p_tree_sha text,
   p_required_evidence jsonb
 ) returns boolean language plpgsql set search_path='' as $$
 declare
@@ -202,7 +203,8 @@ begin
   join public.session_job_git_inputs input on
     (input.job_id,input.workspace_id,input.session_id,input.repository_id,input.pinned_run_id,input.pinned_attempt_count,input.input_sha) =
     (bound.validation_job_id,p_target.workspace_id,bound.validation_session_id,p_target.repository_id,bound.validation_run_id,bound.attempt_count,p_target.base_sha)
-  where (bound.root_session_id,bound.join_id,bound.repository_id) = (p_target.root_session_id,p_target.join_id,p_target.repository_id)
+  where (bound.root_session_id,bound.join_id,bound.repository_id,bound.validation_run_id) =
+    (p_target.root_session_id,p_target.join_id,p_target.repository_id,p_validation_run_id)
     and (stored.commit_sha,stored.validation_tree_sha) = (p_candidate_sha,p_tree_sha);
   if not found or jsonb_typeof(p_required_evidence) is distinct from 'array' or jsonb_array_length(p_required_evidence) = 0
     then return false; end if;
@@ -219,7 +221,7 @@ $$;
 
 create function internal.seal_factory_workflow_repository_delivery(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_generation bigint, p_owner uuid,
-  p_join_id uuid, p_repository_id uuid, p_candidate_sha text, p_tree_sha text, p_bundle_sha256 text,
+  p_join_id uuid, p_repository_id uuid, p_validation_run_id uuid, p_candidate_sha text, p_tree_sha text, p_bundle_sha256 text,
   p_bundle_base64 text default null
 ) returns boolean language plpgsql security definer set search_path='' as $$
 declare
@@ -228,7 +230,7 @@ declare
   target internal.factory_workflow_repository_delivery_targets;
   prior internal.factory_workflow_repository_delivery_intents;
   writer internal.factory_workflow_repository_writers;
-  validation_run_id uuid;
+  validation_deadline timestamptz;
   ref text;
   bundle bytea;
 begin
@@ -250,7 +252,8 @@ begin
   select * into prior from internal.factory_workflow_repository_delivery_intents
   where (root_session_id,join_id,repository_id) = (p_root_session_id,p_join_id,p_repository_id);
   if found then
-    if (prior.candidate_sha,prior.tree_sha,prior.bundle_sha256) is distinct from (p_candidate_sha,p_tree_sha,p_bundle_sha256)
+    if (prior.validation_run_id,prior.candidate_sha,prior.tree_sha,prior.bundle_sha256)
+      is distinct from (p_validation_run_id,p_candidate_sha,p_tree_sha,p_bundle_sha256)
       then raise exception 'The repository delivery intent already owns a different output.' using errcode='PT409'; end if;
     return true;
   end if;
@@ -261,15 +264,17 @@ begin
     or p_tree_sha is null or p_tree_sha collate "C" !~ '^[a-f0-9]{40}$'
     or (p_candidate_sha = target.base_sha) is distinct from (p_bundle_sha256 is null)
     or (p_bundle_sha256 is not null and p_bundle_sha256 collate "C" !~ '^[a-f0-9]{64}$')
-    or not internal.factory_workflow_repository_validation_passes(target,p_candidate_sha,p_tree_sha,manifest.required_evidence)
+    or not internal.factory_workflow_repository_validation_passes(target,p_validation_run_id,p_candidate_sha,p_tree_sha,manifest.required_evidence)
     then return false; end if;
-  select bound.validation_run_id into strict validation_run_id
+  select bound.deadline_at into strict validation_deadline
   from internal.factory_workflow_repository_validation_attempts bound
-  where (bound.root_session_id,bound.join_id,bound.repository_id) = (p_root_session_id,p_join_id,p_repository_id);
-  if p_bundle_sha256 is not null then ref := 'refs/heads/wallie/checkpoints/' || validation_run_id || '/' || p_candidate_sha; end if;
+  where (bound.root_session_id,bound.join_id,bound.repository_id,bound.validation_run_id) =
+    (p_root_session_id,p_join_id,p_repository_id,p_validation_run_id);
+  if clock_timestamp() >= least(target.deadline_at, validation_deadline) then return false; end if;
+  if p_bundle_sha256 is not null then ref := 'refs/heads/wallie/checkpoints/' || p_validation_run_id || '/' || p_candidate_sha; end if;
   insert into internal.factory_workflow_repository_delivery_intents(root_session_id,join_id,repository_id,
-    candidate_sha,tree_sha,bundle_sha256,retained_ref,bundle_bytes)
-  values (p_root_session_id,p_join_id,p_repository_id,p_candidate_sha,p_tree_sha,p_bundle_sha256,ref,bundle);
+    validation_run_id,candidate_sha,tree_sha,bundle_sha256,retained_ref,bundle_bytes)
+  values (p_root_session_id,p_join_id,p_repository_id,p_validation_run_id,p_candidate_sha,p_tree_sha,p_bundle_sha256,ref,bundle);
   update internal.factory_workflow_repository_delivery_state set status='pending',next_attempt_at=clock_timestamp()
   where (root_session_id,join_id,repository_id) = (p_root_session_id,p_join_id,p_repository_id);
   return true;
@@ -321,7 +326,8 @@ begin
   where (root_session_id,join_id,repository_id) = (p_root_session_id,p_join_id,p_repository_id)
   returning * into progress;
   select * into strict validation from internal.factory_workflow_repository_validation_attempts
-  where (root_session_id,join_id,repository_id) = (p_root_session_id,p_join_id,p_repository_id);
+  where (root_session_id,join_id,repository_id,validation_run_id) =
+    (p_root_session_id,p_join_id,p_repository_id,intent.validation_run_id);
   return jsonb_build_object('target',to_jsonb(target),'intent',jsonb_build_object(
       'candidate_sha',intent.candidate_sha,'tree_sha',intent.tree_sha,
       'bundle_sha256',intent.bundle_sha256,'retained_ref',intent.retained_ref),
@@ -437,14 +443,13 @@ create function public.read_factory_workflow_repository_delivery(
     'lifecycleStatus',execution.lifecycle_status,
     'repositories',jsonb_agg(jsonb_build_object('repositoryId',target.repository_id,'repositoryName',target.repository_full_name,
       'status',progress.status,'baseSha',target.base_sha,'outputSha',intent.candidate_sha,'validationTreeSha',intent.tree_sha,
-      'validationRunId',validation.validation_run_id,
+      'validationRunId',intent.validation_run_id,
       'blocker',progress.blocker,'attempts',progress.attempts,'expectedHeadReceiptId',target.expected_head_receipt_id,
       'acceptedHeadReceiptId',progress.accepted_head_receipt_id,'remoteReconciliationRequired',progress.prospective_remote_ref)
       order by target.repository_id))
   from internal.factory_workflow_repository_delivery_targets target
   join internal.factory_workflow_repository_delivery_state progress using (root_session_id,join_id,repository_id)
   left join internal.factory_workflow_repository_delivery_intents intent using (root_session_id,join_id,repository_id)
-  left join internal.factory_workflow_repository_validation_attempts validation using (root_session_id,join_id,repository_id)
   join internal.factory_workflow_joins manifest using (root_session_id,join_id)
   join internal.factory_workflow_executions execution on execution.root_session_id=target.root_session_id
   left join internal.factory_workflow_join_outcomes terminal
@@ -454,10 +459,10 @@ create function public.read_factory_workflow_repository_delivery(
   group by manifest.repository_id,terminal.outcome,execution.lifecycle_status
 $$;
 
-revoke all on function internal.seal_factory_workflow_repository_delivery(uuid,uuid,uuid,bigint,uuid,uuid,uuid,text,text,text,text),
+revoke all on function internal.seal_factory_workflow_repository_delivery(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text,text,text),
   internal.resolve_factory_workflow_repository_writer(internal.factory_workflow_executions,internal.factory_workflow_joins,uuid),
   internal.read_factory_workflow_repository_installation(uuid,uuid,uuid),
-  internal.factory_workflow_repository_validation_passes(internal.factory_workflow_repository_delivery_targets,text,text,jsonb)
+  internal.factory_workflow_repository_validation_passes(internal.factory_workflow_repository_delivery_targets,uuid,text,text,jsonb)
 from public,anon,authenticated,service_role;
 revoke all on function
   public.claim_factory_workflow_repository_delivery(uuid,uuid,uuid,bigint,uuid,uuid,uuid),
@@ -1269,7 +1274,8 @@ create table internal.factory_workflow_repository_validation_jobs (
   root_session_id uuid not null,
   join_id uuid not null,
   repository_id uuid not null,
-  unique (root_session_id, join_id, repository_id),
+  admitted_generation bigint not null check (admitted_generation > 0),
+  unique (root_session_id, join_id, repository_id, admitted_generation),
   foreign key (root_session_id, join_id, repository_id)
     references internal.factory_workflow_repository_delivery_targets(root_session_id, join_id, repository_id) on delete cascade
 );
@@ -1363,7 +1369,7 @@ begin
   blocker := internal.factory_workflow_repository_authority_blocker(p_execution, p_manifest, p_target);
   if blocker is not null then return blocker; end if;
   if p_intent.join_id is null or not internal.factory_workflow_repository_validation_passes(
-    p_target, p_intent.candidate_sha, p_intent.tree_sha, p_manifest.required_evidence) then return 'validation_unavailable'; end if;
+    p_target, p_intent.validation_run_id, p_intent.candidate_sha, p_intent.tree_sha, p_manifest.required_evidence) then return 'validation_unavailable'; end if;
   return null;
 end;
 $$;
@@ -1383,24 +1389,36 @@ declare
   grant_row public.factory_execution_grants;
   actor internal.session_mutation_actor;
   queued record;
+  prior internal.factory_workflow_repository_validation_jobs;
+  current_job public.agent_jobs;
+  retirement record;
+  paused_attempt boolean;
   blocked_by text;
+  admission_detail text;
   candidate record;
+  checked_at timestamptz := clock_timestamp();
 begin
   perform internal.assert_checkpoint_publication_service();
   perform 1 from internal.git_continuity_release_control where singleton for share;
   for candidate in
-    select delivery as pinned, state.status, job.status as job_status
+    select delivery as pinned
     from internal.factory_workflow_repository_delivery_targets delivery
     join internal.factory_workflow_repository_delivery_state state using (root_session_id, join_id, repository_id)
     join internal.factory_workflow_join_outcomes terminal using (root_session_id, join_id)
     join internal.factory_workflow_executions workflow using (root_session_id)
     join public.workspaces workspace on workspace.id = delivery.workspace_id
     join public.factories factory on (factory.workspace_id, factory.id) = (delivery.workspace_id, delivery.factory_id)
-    left join internal.factory_workflow_repository_validation_jobs marker using (root_session_id, join_id, repository_id)
-    left join public.agent_jobs job on job.id = marker.job_id
+    left join lateral (
+      select marker.job_id from internal.factory_workflow_repository_validation_jobs marker
+      where (marker.root_session_id, marker.join_id, marker.repository_id) =
+        (delivery.root_session_id, delivery.join_id, delivery.repository_id)
+      order by marker.admitted_generation desc limit 1
+    ) latest on true
+    left join public.agent_jobs job on job.id = latest.job_id
     where state.status = 'awaiting_validation' and terminal.outcome = 'adopted'
       and workflow.lifecycle_status = 'running' and workspace.deletion_requested_at is null and factory.status = 'active'
-      and (marker.job_id is null or job.status in ('error', 'canceled'))
+      and (latest.job_id is null or job.status in ('error', 'canceled')
+        or delivery.deadline_at <= checked_at)
     order by delivery.deadline_at, delivery.root_session_id, delivery.repository_id limit 16
   loop
     target := candidate.pinned;
@@ -1426,13 +1444,44 @@ begin
     where (root_session_id, join_id) = (target.root_session_id, target.join_id);
 
     begin
+      current_job := null;
+      select marker.* into prior from internal.factory_workflow_repository_validation_jobs marker
+      where (marker.root_session_id, marker.join_id, marker.repository_id) =
+        (target.root_session_id, target.join_id, target.repository_id)
+      order by marker.admitted_generation desc limit 1;
+      if found then
+        perform 1 from public.sessions subject
+        where (subject.id, subject.workspace_id, subject.factory_id) =
+          (prior.session_id, target.workspace_id, target.factory_id) for no key update;
+        select * into strict current_job from public.agent_jobs job
+        where (job.id, job.workspace_id, job.session_id) =
+          (prior.job_id, target.workspace_id, prior.session_id) for update;
+        if current_job.status in ('queued', 'started', 'running') and target.deadline_at > clock_timestamp()
+          then continue; end if;
+      end if;
+
       blocked_by := internal.factory_workflow_repository_authority_blocker(execution, manifest, target);
-      if blocked_by is null and candidate.job_status in ('error', 'canceled') then blocked_by := 'validation_unavailable'; end if;
-      if blocked_by is null and exists (
-        select 1 from internal.factory_workflow_repository_validation_jobs existing
-        where (existing.root_session_id, existing.join_id, existing.repository_id) =
-          (target.root_session_id, target.join_id, target.repository_id)
-      ) then continue; end if;
+      if blocked_by = 'deadline_expired' and current_job.status in ('queued', 'started', 'running') then
+        select * into strict retirement from public.cancel_session_job_attempts(prior.session_id, target.workspace_id,
+          'Repository validation deadline expired.', prior.queued_run_id);
+        if not prior.job_id = any(retirement.job_ids) then continue; end if;
+      end if;
+      if blocked_by is null and prior.job_id is not null then
+        -- A canceled job can restart only when an actual workflow pause retired
+        -- that precise job and attempt. Each resumed generation owns a fresh job
+        -- and Git input; earlier jobs, runs, and proof remain immutable.
+        select current_job.status = 'canceled' and prior.admitted_generation < execution.generation and exists (
+          select 1 from internal.factory_workflow_lifecycle_commands command
+          cross join lateral jsonb_array_elements(command.receipt->'retired') member
+          cross join lateral jsonb_array_elements(member->'jobs') attempt
+          where (command.root_session_id, command.expected_generation, command.action) =
+            (target.root_session_id, prior.admitted_generation, 'pause')
+            and member->>'sessionId' = prior.session_id::text
+            and (attempt->>'jobId', attempt->>'attemptCount') =
+              (prior.job_id::text, current_job.attempt_count::text)
+        ) into paused_attempt;
+        if not paused_attempt then blocked_by := 'validation_unavailable'; end if;
+      end if;
       if blocked_by is null then
         select revision.* into strict profile
         from internal.factory_workflow_join_inputs input
@@ -1465,13 +1514,23 @@ begin
         insert into public.session_git_roots (session_id, workspace_id, repository_id, repository_full_name, base_branch, initial_base_sha)
         values (queued.session_id, target.workspace_id, target.repository_id, target.repository_full_name, target.base_branch, target.base_sha);
         perform internal.prepare_session_job_git_input(queued.job_id);
-        insert into internal.factory_workflow_repository_validation_jobs (job_id, session_id, queued_run_id, root_session_id, join_id, repository_id)
-        values (queued.job_id, queued.session_id, queued.run_id, target.root_session_id, target.join_id, target.repository_id);
+        if not internal.reserve_factory_workflow_attempt(execution, queued.session_id, queued.job_id, 1) then
+          raise exception 'No capacity is available for repository validation.'
+            using errcode = 'PT409', detail = 'workflow_child_attempt_limit';
+        end if;
+        insert into internal.factory_workflow_repository_validation_jobs
+          (job_id, session_id, queued_run_id, root_session_id, join_id, repository_id, admitted_generation)
+        values (queued.job_id, queued.session_id, queued.run_id, target.root_session_id, target.join_id, target.repository_id, execution.generation);
         return true;
       end if;
     exception when insufficient_privilege then
       blocked_by := 'authority_unavailable';
-    when no_data_found or sqlstate 'PT422' or sqlstate 'PT409' then
+    when sqlstate 'PT409' then
+      get stacked diagnostics admission_detail = pg_exception_detail;
+      if admission_detail = 'workflow_child_attempt_limit'
+        and not internal.factory_workflow_branch_attempt_budget_exhausted(execution) then continue; end if;
+      blocked_by := 'validation_unavailable';
+    when no_data_found or sqlstate 'PT422' then
       blocked_by := 'validation_unavailable';
     when lock_not_available then
       continue;
@@ -1520,7 +1579,9 @@ begin
   perform internal.lock_factory_workflow_root(marker.root_session_id, p_workspace_id, target.factory_id);
   select * into strict execution from internal.factory_workflow_executions
   where root_session_id = marker.root_session_id for no key update;
-  if execution.lifecycle_status <> 'running' then return jsonb_build_object('kind', 'retired'); end if;
+  if execution.lifecycle_status <> 'running' or execution.generation <> marker.admitted_generation then
+    return jsonb_build_object('kind', 'retired');
+  end if;
   select * into strict manifest from internal.factory_workflow_joins where (root_session_id, join_id) = (marker.root_session_id, marker.join_id);
   if exists (select 1 from internal.factory_workflow_repository_validation_attempts bound
     where bound.validation_job_id = p_job_id and bound.attempt_count = p_attempt_count) then
@@ -1531,6 +1592,8 @@ begin
   end if;
   blocked_by := internal.factory_workflow_repository_authority_blocker(execution, manifest, target);
   if blocked_by is not null then
+    perform public.cancel_session_job_attempts(p_session_id, p_workspace_id, 'Repository validation authority is unavailable.',
+      marker.queued_run_id);
     update internal.factory_workflow_repository_delivery_state set status = 'blocked', blocker = blocked_by
     where (root_session_id, join_id, repository_id, status) =
       (marker.root_session_id, marker.join_id, marker.repository_id, 'awaiting_validation');
@@ -1646,7 +1709,7 @@ begin
   then return false; end if;
   if p_result = 'passed' then
     if not internal.seal_factory_workflow_repository_delivery(p_root_session_id, p_workspace_id, p_factory_id,
-      p_generation, p_owner, p_join_id, p_repository_id, p_candidate_sha, p_tree_sha, p_bundle_sha256, p_bundle_base64)
+      p_generation, p_owner, p_join_id, p_repository_id, p_run_id, p_candidate_sha, p_tree_sha, p_bundle_sha256, p_bundle_base64)
       then return false; end if;
     update public.agent_runs set status = 'success', finished_at = clock_timestamp() where id = p_run_id;
     if not public.complete_session_job_attempt(p_job_id, p_attempt_count, p_run_id) then

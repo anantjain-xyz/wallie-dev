@@ -59,6 +59,6 @@ Join admission records an independent delivery obligation for each secondary rep
 | `blocked`       | The primary failed or delivery is blocked before any checkpoint was accepted.    |
 | `adopted`       | All declared repositories have accepted checkpoints. The graph can continue.     |
 
-Read a repository set with `GET /api/sessions/{sessionId}/workflow-join?joinId={joinId}`. The response includes each secondary base, validated output, validation run, and delivery status. The workflow lifecycle state remains visible while paused or canceled.
+Read a repository set with `GET /api/sessions/{sessionId}/workflow-join?joinId={joinId}`. The response includes each secondary base, validated output, validation run, and delivery status. The workflow lifecycle state remains visible while paused or canceled. Resume gives an unfinished validation a fresh attempt against the same repository base. A sealed checkpoint resumes publication without another validation run.
 
 Publication verifies the exact retained ref in each repository. A transient failure leaves the sealed checkpoint available for a fresh lease. The next claimant checks the remote ref before writing. A changed repository head, revoked writer, or incompatible remote ref blocks only that repository. The ledger records when a remote ref still needs reconciliation. Published repositories retain their adopted checkpoints while another repository recovers.

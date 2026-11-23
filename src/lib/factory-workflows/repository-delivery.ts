@@ -199,12 +199,17 @@ async function deliverRepository(admin: Admin, scope: DeliveryScope) {
 }
 
 export async function drainFactoryWorkflowRepositoryDeliveries(admin: Admin) {
-  for (let processed = 0; processed < 4; processed++) {
-    const { data, error } = await admin
-      .rpc("dispatch_next_factory_workflow_repository_validation")
-      .abortSignal(AbortSignal.timeout(5_000));
-    if (error) throw error;
-    if (!data) break;
+  let dispatchFailure: { reason: unknown } | undefined;
+  try {
+    for (let processed = 0; processed < 4; processed++) {
+      const { data, error } = await admin
+        .rpc("dispatch_next_factory_workflow_repository_validation")
+        .abortSignal(AbortSignal.timeout(5_000));
+      if (error) throw error;
+      if (!data) break;
+    }
+  } catch (reason) {
+    dispatchFailure = { reason };
   }
 
   const { data, error } = await admin
@@ -224,4 +229,5 @@ export async function drainFactoryWorkflowRepositoryDeliveries(admin: Admin) {
       }
     }),
   );
+  if (dispatchFailure) throw dispatchFailure.reason;
 }

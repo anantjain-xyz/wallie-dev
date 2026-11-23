@@ -98,6 +98,7 @@ function repository(name: string) {
     },
     pushes: 0,
     drop: null as "before" | "after" | null,
+    beforePush: () => {},
     afterPush: () => {},
   };
 }
@@ -207,10 +208,11 @@ function fixture() {
           repo.drop = null;
         }
         if (drop === "before") throw new Error("Injected Git transport failure");
+        if (isPush) repo.beforePush();
         const output = await promisify(execFile)(
           "git",
           args.map((arg) => (arg === remoteUrl ? `file://${repo.remote}` : arg)),
-          { ...options, encoding: "utf8" },
+          { ...options, encoding: "utf8", env: { ...options.env, PATH: process.env.PATH } },
         );
         if (isPush) repo.afterPush();
         if (drop === "after") throw new Error("Injected loss of Git acknowledgement");
@@ -294,6 +296,24 @@ describe("repository publication", () => {
       ref: repo.target.retainedRef,
       sha: repo.target.baseSha,
     });
+  });
+
+  it("preserves an incompatible ref created after the absent-ref read", async () => {
+    const f = fixture();
+    const { repo } = f.api;
+    repo.beforePush = () => {
+      repo.git(
+        "--git-dir",
+        repo.remote,
+        "update-ref",
+        repo.target.retainedRef,
+        repo.target.baseSha,
+      );
+    };
+
+    await expect(f.publish("api")).resolves.toBe("incompatible_ref");
+    expect(repo.pushes).toBe(1);
+    expect(repo.read(repo.target.retainedRef)).toBe(repo.target.baseSha);
   });
 
   it("denies other parents, foreign validation, and a newer same-SHA head identity before push", async () => {

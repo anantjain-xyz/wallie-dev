@@ -105,6 +105,8 @@ export async function withSourceGitSandbox<T>(
           } catch {
             await settleWorkspaceResource(context.admin, operationId, false).catch(() => undefined);
             throw new Error("Source delivery sandbox cleanup will retry.");
+          } finally {
+            await handle[Symbol.asyncDispose]?.().catch(() => undefined);
           }
         };
         try {
@@ -158,12 +160,15 @@ export async function readRetainedSourceRefInSandbox(
           timeout: 30_000,
         },
       );
-      const output = stdout.trim();
-      if (!output) return null;
-      const [sha, ref, extra] = output.split(/\s+/);
-      if (ref !== input.ref || extra !== undefined || !/^[a-f0-9]{40}$/.test(sha ?? ""))
+      const exactRows = stdout
+        .split("\n")
+        .map((line) => line.replace(/\r$/, "").split("\t"))
+        .filter(([, ref]) => ref === input.ref);
+      if (!exactRows.length) return null;
+      const [sha, , extra] = exactRows[0];
+      if (exactRows.length !== 1 || extra !== undefined || !/^[a-f0-9]{40}$/.test(sha))
         throw new Error("Retained checkpoint ref could not be verified.");
-      return sha ?? null;
+      return sha;
     } finally {
       await workspace.close();
     }
