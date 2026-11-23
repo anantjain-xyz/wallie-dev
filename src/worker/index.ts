@@ -4,6 +4,7 @@ import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachme
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
+import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbox-stop-drain";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
@@ -173,6 +174,7 @@ async function main() {
     // --- Reconciliation interval ---
     maintenanceTimers.push(
       setInterval(() => {
+        timerTasks.run("accepted triage route", () => drainAcceptedTriageRoute(admin));
         timerTasks.run("reconciliation", async () => {
           await drainCheckpointPublications(admin);
           await drainCanonicalPullRequests(admin);

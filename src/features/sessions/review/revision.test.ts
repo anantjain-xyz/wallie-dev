@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createArtifactSourceAnchor } from "./source-anchor";
-import { compareRevisionSources } from "./revision";
+import { compareRevisionSources, summarizeRevisionChanges } from "./revision";
 import { mapRevisionAnchor } from "./revision-anchor.server";
 
 describe("conservative revision anchors", () => {
@@ -65,5 +65,51 @@ describe("exact source diff", () => {
         .map((row) => row.text)
         .join(""),
     ).toBe(after);
+  });
+});
+
+describe("review brief", () => {
+  const scopeDirective = "<!-- wallie-accepted-scope: eyJ2ZXJzaW9uIjoxfQ -->\n";
+  const criteria = "## Acceptance criteria\n- Use UTC dates.";
+
+  it("presents visible criteria without the scope directive and retains exact source rows", () => {
+    const after = scopeDirective + criteria;
+    const { rows } = compareRevisionSources("Pending scope.", after);
+    expect(summarizeRevisionChanges(rows)).toEqual({
+      changes: [{ kind: "changed", excerpt: criteria }],
+      remaining: 0,
+    });
+    expect(
+      rows
+        .filter(({ kind }) => kind !== "removed")
+        .map(({ text }) => text)
+        .join(""),
+    ).toBe(after);
+  });
+
+  it("keeps embedded directive-looking text and ignores a leading scope-only change", () => {
+    const metadataOnly = compareRevisionSources(
+      scopeDirective + criteria,
+      scopeDirective.replace("eyJ2ZXJzaW9uIjoxfQ", "dXBkYXRlZA") + criteria,
+    );
+    expect(summarizeRevisionChanges(metadataOnly.rows)).toEqual({ changes: [], remaining: 0 });
+    const examples = compareRevisionSources("# Example\n", "# Example\n" + scopeDirective);
+    expect(summarizeRevisionChanges(examples.rows).changes[0]?.excerpt).toBe(scopeDirective.trim());
+  });
+
+  it("shows literal scope punctuation in plain excerpts and keeps escapes in ordinary excerpts", () => {
+    const escaped = "- Write \\&copy; and \\[UTC\\] in the report.";
+    const ordinary = compareRevisionSources("Old draft", escaped);
+    const scope = compareRevisionSources("Old draft", scopeDirective + escaped);
+    expect(summarizeRevisionChanges(ordinary.rows).changes[0]?.excerpt).toBe(escaped);
+    expect(summarizeRevisionChanges(scope.rows).changes[0]?.excerpt).toBe(
+      "- Write &copy; and [UTC] in the report.",
+    );
+    expect(
+      scope.rows
+        .filter((row) => row.kind !== "removed")
+        .map((row) => row.text)
+        .join(""),
+    ).toBe(scopeDirective + escaped);
   });
 });

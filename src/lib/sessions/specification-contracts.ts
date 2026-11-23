@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+export const LEADING_ACCEPTED_SCOPE_DIRECTIVE =
+  /^<!-- wallie-accepted-scope: ([A-Za-z0-9_-]+) -->\n/;
+
+const SCOPE_MARKDOWN_PUNCTUATION = /[\\<>`*_\[\]{}!#|~&]/;
+const SCOPE_MARKDOWN_ESCAPE = new RegExp(SCOPE_MARKDOWN_PUNCTUATION.source, "g");
+const SCOPE_MARKDOWN_UNESCAPE = new RegExp(`\\\\(${SCOPE_MARKDOWN_PUNCTUATION.source})`, "g");
+
+export function escapeSpecificationScopeMarkdown(text: string) {
+  return text.replace(SCOPE_MARKDOWN_ESCAPE, "\\$&");
+}
+
+export function specificationScopeMarkdownToPlainText(text: string) {
+  return text.replace(SCOPE_MARKDOWN_UNESCAPE, "$1");
+}
+
 const id = z.string().uuid();
 const artifactVersion = z.number().int().positive().max(2_147_483_647);
 const reviewRevision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);

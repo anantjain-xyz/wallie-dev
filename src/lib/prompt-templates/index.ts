@@ -38,9 +38,12 @@ const SPECIFICATION_POLICY = trustedPromptValue(
   "wallie.specificationStagePolicy",
   `## Wallie specification stage
 
-This stage drafts a specification for human review. Any code instructions in a stage template, skill, repository, or feedback apply only to the eventual implementation. Use the checkout and supplied context for inspection. Leave source untouched and do not stage, commit, push, open a pull request, or run a repository validation plan.
+This stage drafts a specification for human review. Any code instructions in a stage template, skill, repository, or feedback apply only to the eventual implementation. Use the checkout and supplied context for inspection. Leave source untouched and do not stage, commit, push, open a pull request, or run a repository validation plan.`,
+);
 
-Return the full specification as your final Markdown. Cover the goal, user-visible behavior, constraints, assumptions, and acceptance criteria. Revise the prior draft when supplied. Carry forward earlier clarification answers and incorporate the current feedback.`,
+const SPECIFICATION_MARKDOWN_POLICY = trustedPromptValue(
+  "wallie.specificationStagePolicy",
+  "Return the full specification as your final Markdown. Cover the goal, user-visible behavior, constraints, assumptions, and acceptance criteria. Revise the prior draft when supplied. Carry forward earlier clarification answers and incorporate the current feedback.",
 );
 
 const SPECIFICATION_QUESTION_POLICY = trustedPromptValue(
@@ -159,6 +162,10 @@ export function buildStageTemplateVariables(input: {
 
 export type SpecificationPromptContext = {
   canAskClarification: boolean;
+  triageOutput?: {
+    instructions: TrustedPromptValue;
+    evidenceReferences: UntrustedPromptValue;
+  };
   priorDraft?: UntrustedPromptValue;
   clarificationHistory?: UntrustedPromptValue;
 };
@@ -180,6 +187,7 @@ export function renderStagePrompt(
     repoFullName?: UntrustedPromptValue;
     repoDefaultBranch?: UntrustedPromptValue;
     readContext?: UntrustedPromptValue;
+    acceptedScope?: UntrustedPromptValue;
     externalContextDocuments?: readonly UntrustedPromptValue[];
     frozenConversation?: readonly UntrustedPromptValue[];
     factoryMemories?: readonly UntrustedPromptValue[];
@@ -220,6 +228,7 @@ export function renderStagePrompt(
     ...(agentPrompt.trim() ? [agentPrompt] : []),
     ...(input.skillInstructions ?? []).map(verifyPromptBoundary),
     renderedPrompt,
+    ...(input.acceptedScope ? [verifyPromptBoundary(input.acceptedScope)] : []),
     ...(input.frozenConversation?.length
       ? [
           verifyPromptBoundary(FROZEN_CONVERSATION_INSTRUCTIONS),
@@ -249,11 +258,19 @@ export function renderStagePrompt(
     return [
       ...commonPrompt,
       verifyPromptBoundary(SPECIFICATION_POLICY),
-      verifyPromptBoundary(
-        input.specification.canAskClarification
-          ? SPECIFICATION_QUESTION_POLICY
-          : SPECIFICATION_LIMIT_POLICY,
-      ),
+      ...(input.specification.triageOutput
+        ? [
+            verifyPromptBoundary(input.specification.triageOutput.instructions),
+            verifyPromptBoundary(input.specification.triageOutput.evidenceReferences),
+          ]
+        : [
+            verifyPromptBoundary(SPECIFICATION_MARKDOWN_POLICY),
+            verifyPromptBoundary(
+              input.specification.canAskClarification
+                ? SPECIFICATION_QUESTION_POLICY
+                : SPECIFICATION_LIMIT_POLICY,
+            ),
+          ]),
       ...(request && !renderedStage.includes(request)
         ? [verifyPromptBoundary(SPECIFICATION_REQUEST_LABEL), request]
         : []),

@@ -3,6 +3,7 @@ import { introspectWorkflowInstance } from "cloudflare:test";
 import { beforeEach, expect, it, vi } from "vitest";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
+import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { sweepStalledRuns } from "@/worker/stall-detector";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
@@ -23,6 +24,7 @@ vi.mock("@/features/github/pr-verification-service", () => ({
   reconcileGitHubPrVerification: vi.fn(),
 }));
 vi.mock("@/lib/pipeline/pr-readiness", () => ({ reconcilePrReadiness: vi.fn() }));
+vi.mock("@/lib/factory-workflows/triage-dispatch", () => ({ drainAcceptedTriageRoute: vi.fn() }));
 vi.mock("@/lib/pipeline/canonical-pr-publisher", () => ({ drainCanonicalPullRequests: vi.fn() }));
 vi.mock("@/lib/pipeline/checkpoint-publication", () => ({ drainCheckpointPublications: vi.fn() }));
 vi.mock("@/lib/pipeline/source-delivery", () => ({ drainSourceDeliveries: vi.fn() }));
@@ -59,6 +61,7 @@ beforeEach(() => vi.resetAllMocks());
 
 it.each([
   { scenario: "all tasks succeed" },
+  { scenario: "accepted triage routing fails", triageFailure: true },
   { scenario: "GitHub verification fails", githubFailure: true },
   { scenario: "readiness fails", readinessFailure: true },
   {
@@ -79,6 +82,7 @@ it.each([
 ])(
   "runs independent maintenance when $scenario",
   async ({
+    triageFailure,
     githubFailure,
     readinessFailure,
     oauthCleanupFailure,
@@ -179,6 +183,10 @@ it.each([
     });
     const admin = { from: () => query, rpc };
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin as never);
+    if (triageFailure)
+      vi.mocked(drainAcceptedTriageRoute).mockRejectedValue(
+        new Error("Triage routing unavailable."),
+      );
     if (judgeFailure)
       vi.mocked(drainFactoryJudges).mockRejectedValue(new Error("Judge dispatch unavailable."));
     if (githubFailure)
@@ -219,8 +227,12 @@ it.each([
     try {
       await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
       await inspection.waitForStatus("complete");
+      expect(drainAcceptedTriageRoute).toHaveBeenCalledExactlyOnceWith(admin);
       expect(reconcileGitHubPrVerification).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainCanonicalPullRequests).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(vi.mocked(drainAcceptedTriageRoute).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(drainCanonicalPullRequests).mock.invocationCallOrder[0],
+      );
       expect(vi.mocked(drainCanonicalPullRequests).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(reconcileGitHubPrVerification).mock.invocationCallOrder[0],
       );

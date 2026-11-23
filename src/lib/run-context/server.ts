@@ -346,6 +346,7 @@ export async function prepareRunContext(
     untrustedPromptValue(`conversation.message.${sequence}`, body),
   );
   return {
+    manifest: packed.manifest,
     documents: packed.documents,
     conversation,
     memories: packed.memories,

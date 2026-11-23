@@ -372,6 +372,7 @@ interface MockOptions {
   releaseDeferError?: { message: string };
   currentAttempt?: number;
   specificationClarificationCount?: number;
+  configuredTriageStageId?: string;
   specificationHistory?: Array<
     Pick<Tables<"session_specification_clarifications">, "ordinal" | "question" | "answer_text">
   >;
@@ -838,12 +839,24 @@ function buildAdminMock(opts: MockOptions) {
     if (fn === "record_late_factory_workflow_sandbox" && opts.lateSandboxRetained) {
       return { data: true, error: null };
     }
+    if (fn === "read_factory_workflow_delegated_scope") {
+      return { data: { status: "ordinary" }, error: null };
+    }
+    if (fn === "read_factory_workflow_triage_binding") {
+      return {
+        data: opts.configuredTriageStageId ? { stage_id: opts.configuredTriageStageId } : null,
+        error: null,
+      };
+    }
     if (fn === "get_session_factory_routing_execution") {
       return { data: opts.routingExecution ?? null, error: null };
     }
     if (fn === "pin_session_attempt_manifest") {
       const run = runRows.find((row) => row.id === payload.p_run_id && row.status === "running");
-      return { data: Boolean(run && run.attempt_count === payload.p_attempt_count), error: null };
+      return {
+        data: Boolean(run && run.attempt_count === payload.p_attempt_count),
+        error: null,
+      };
     }
     if (fn === "pin_session_job_git_input") {
       if (
@@ -1053,7 +1066,11 @@ function buildAdminMock(opts: MockOptions) {
   };
   const rpc = vi.fn((fn: string, args?: unknown) => {
     const pending = invokeRpc(fn, args);
-    return Object.assign(pending, { abortSignal: vi.fn(() => pending) });
+    const query = Object.assign(pending, {
+      abortSignal: vi.fn(() => query),
+      maybeSingle: () => pending,
+    });
+    return query;
   });
 
   return {
@@ -1950,7 +1967,11 @@ describe("processPipelineJob (generic stage runner)", () => {
     },
   );
 
-  it("carries clarification feedback linked at manual retry start and publishes only against the pinned input", async () => {
+  it.each([
+    { scenario: "ordinary specification", configuredTriage: false },
+    { scenario: "valid triage scope", configuredTriage: true },
+    { scenario: "invalid triage scope", configuredTriage: true, invalidTriage: true },
+  ])("handles the completed stream for $scenario", async ({ configuredTriage, invalidTriage }) => {
     const stageId = "77900000-0000-4000-8000-000000000001";
     const pipelineId = "77900000-0000-4000-8000-000000000002";
     const repositoryId = "77900000-0000-4000-8000-000000000003";
@@ -1966,7 +1987,10 @@ describe("processPipelineJob (generic stage runner)", () => {
       kind: "serial",
       pipelineId,
       repositoryId,
-      executionGrant: { id: "77900000-0000-4000-8000-000000000007", version: 1 },
+      executionGrant: {
+        id: "77900000-0000-4000-8000-000000000007",
+        version: 1,
+      },
       credentialBindingId: "77900000-0000-4000-8000-000000000009",
       sandboxProvider: "vercel",
       agent: {
@@ -2012,7 +2036,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       ],
     });
     const feedback = "Question: Which account?\nAnswer: Use Workspace ID.";
-    const { admin, updatedRuns } = buildAdminMock({
+    const { admin, capturedEvents, rpc, updatedRuns } = buildAdminMock({
       session: baseSession({
         execute_pinned_definition: true,
         factory_definition_provenance: "pinned",
@@ -2024,7 +2048,10 @@ describe("processPipelineJob (generic stage runner)", () => {
         specification_stage_id: stageId,
         github_repository_id: repositoryId,
       }),
-      pinnedDefinition: { definition_json: definitionJson, canonical_digest: canonicalDigest },
+      pinnedDefinition: {
+        definition_json: definitionJson,
+        canonical_digest: canonicalDigest,
+      },
       originalInput: {
         original_title: "Initial title",
         original_prompt_md: "Initial user prompt",
@@ -2037,13 +2064,51 @@ describe("processPipelineJob (generic stage runner)", () => {
       batchFeedbackLinkedAtStart: true,
       latestFeedback: { feedback_text: "A different job's note" },
       specificationClarificationCount: 3,
+      configuredTriageStageId: configuredTriage ? stageId : undefined,
       specificationHistory: [
-        { ordinal: 1, question: "Which provider?", answer_text: "Workspace." },
-        { ordinal: 2, question: "Which role?", answer_text: "Administrator." },
+        {
+          ordinal: 1,
+          question: "Which provider?",
+          answer_text: "Workspace.",
+        },
+        {
+          ordinal: 2,
+          question: "Which role?",
+          answer_text: "Administrator.",
+        },
       ],
       specificationDraft:
         '<!-- wallie-clarification: {"question":"Which account?"} -->\n# Current draft',
     });
+    if (configuredTriage) {
+      mocked.prepareRunContext.mockResolvedValueOnce({
+        documents: [],
+        conversation: [],
+        manifest: {
+          version: 1,
+          required: [{ key: "session/prompt", sha256: "b".repeat(64), utf8Bytes: 19 }],
+          documents: [],
+          conversation: { throughSequence: 0, olderOmitted: 0, messages: [] },
+          budget: {
+            maxUtf8Bytes: 128,
+            maxEstimatedTokens: 128,
+            usedUtf8Bytes: 19,
+            estimatedTokens: 19,
+          },
+        },
+      });
+    }
+    const finalOutput = configuredTriage
+      ? JSON.stringify({
+          version: 1,
+          decision: {
+            kind: "scope",
+            scope: "Use the confirmed workspace ID.",
+            acceptanceCriteria: ["The supplied workspace ID is used."],
+            evidenceReferences: ["required:session/prompt"],
+          },
+        })
+      : "Final specification";
     const agentStarted = Promise.withResolvers<void>();
     const finishAgent = Promise.withResolvers<void>();
     const runner: AgentRunner = {
@@ -2055,7 +2120,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           type: "completion",
           taskComplete: true,
           summary: "Done",
-          finalOutput: "Final specification",
+          finalOutput: invalidTriage ? "Not a triage decision." : finalOutput,
         };
       }),
     };
@@ -2080,7 +2145,26 @@ describe("processPipelineJob (generic stage runner)", () => {
       vi.useRealTimers();
     }
 
-    expect((await processing).result).toBe("success");
+    expect((await processing).result).toBe(invalidTriage ? "error" : "success");
+    if (invalidTriage) {
+      expect(capturedEvents).toContainEqual(
+        expect.objectContaining({
+          p_kind: "terminal",
+          p_payload: { status: "failed", message: expect.stringContaining("invalid_proposal") },
+        }),
+      );
+      expect(capturedEvents.at(-1)).toMatchObject({
+        p_kind: "capture_end",
+        p_payload: { status: "complete" },
+      });
+      expect(capturedEvents.some((event) => event.p_kind === "capture_gap")).toBe(false);
+      expect(rpc).toHaveBeenCalledWith(
+        "fail_session_job_attempt",
+        expect.objectContaining({ p_retry: false }),
+      );
+      expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+      return;
+    }
     expect(mocked.loadRunAgentPrompt).toHaveBeenCalledWith(
       admin,
       expect.objectContaining({ expected: implementationAgent }),
@@ -2088,7 +2172,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        attemptFeedback: expect.objectContaining({ trust: "untrusted", value: feedback }),
+        attemptFeedback: expect.objectContaining({
+          trust: "untrusted",
+          value: feedback,
+        }),
         specification: expect.objectContaining({
           canAskClarification: false,
           priorDraft: expect.objectContaining({
@@ -2102,16 +2189,44 @@ describe("processPipelineJob (generic stage runner)", () => {
         }),
       }),
     );
+    const triageRendering = expect.objectContaining({
+      specification: expect.objectContaining({
+        triageOutput: {
+          instructions: expect.objectContaining({ trust: "trusted" }),
+          evidenceReferences: expect.objectContaining({
+            trust: "untrusted",
+            value: "required:session/prompt",
+          }),
+        },
+      }),
+    });
+    if (configuredTriage) {
+      expect(mocked.renderStagePrompt).toHaveBeenCalledWith(expect.anything(), triageRendering);
+    } else {
+      expect(mocked.renderStagePrompt).not.toHaveBeenCalledWith(expect.anything(), triageRendering);
+    }
     expect(runner.start).toHaveBeenCalledOnce();
     expect(vi.mocked(runner.start).mock.calls[0]?.[0]).not.toHaveProperty("mcp");
     expect(mocked.restoreRetryInput).not.toHaveBeenCalled();
     expect(mocked.captureSourceCheckpoint).not.toHaveBeenCalled();
     expect(mocked.validateCheckpoint).not.toHaveBeenCalled();
-    expect(updatedRuns).not.toContainEqual({ source_recovery_required: true });
+    expect(updatedRuns).not.toContainEqual({
+      source_recovery_required: true,
+    });
     expect(mocked.prepareSourceDelivery).toHaveBeenCalledWith(
       expect.objectContaining({
-        checkpoint: { kind: "unchanged", baseSha: "a".repeat(40), headSha: "a".repeat(40) },
-        publication: expect.objectContaining({ artifactMarkdown: "Final specification" }),
+        checkpoint: {
+          kind: "unchanged",
+          baseSha: "a".repeat(40),
+          headSha: "a".repeat(40),
+        },
+        publication: expect.objectContaining({
+          artifactMarkdown: configuredTriage
+            ? expect.stringContaining(
+                "## Acceptance criteria\n- The supplied workspace ID is used.",
+              )
+            : "Final specification",
+        }),
       }),
     );
   });

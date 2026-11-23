@@ -6,7 +6,8 @@ import { expect, test } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
-import { workspaceSessionDetailPath } from "@/lib/routes";
+import { workspaceInboxPath, workspaceSessionDetailPath } from "@/lib/routes";
+import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import {
   sessionSpecificationStateSchema,
   specificationAnswerReceiptSchema,
@@ -15,6 +16,18 @@ import {
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
+import {
+  acceptanceCriterion,
+  literalAcceptanceCriterion,
+  acceptedScopeArtifact,
+  childTask,
+  childTitle,
+  configureTriageGraph,
+  dispatchFixtureForeman,
+  freezeFixtureContext,
+  readFixtureChildScope,
+  seedTriageAuthority,
+} from "./helpers/triage-fixture";
 
 type Admin = SupabaseClient<Database>;
 const fixtureExec = promisify(execFile);
@@ -27,6 +40,7 @@ const question = "Which group should receive the first invitations?";
 const answer = "Start with workspace administrators, then invite the pilot group.";
 const draft = "Restrict the first rollout to an identified group.";
 const revision = "Start with workspace administrators and expand to the pilot group.";
+const triageMode = process.env.WALLIE_TRIAGE_E2E === "1";
 
 test.use({ screenshot: "off", trace: "off" });
 
@@ -172,6 +186,15 @@ async function seedDefinition(
       }),
     ),
   ]);
+  const triageAuthority = triageMode
+    ? await seedTriageAuthority(admin, {
+        workspaceId,
+        factoryId,
+        userId,
+        repositoryId: repository.id,
+        agentId: agent.agent_id,
+      })
+    : null;
   const { definitionJson, canonicalDigest } = serializeFactoryDefinition({
     schemaVersion: 1,
     kind: "serial",
@@ -193,14 +216,46 @@ async function seedDefinition(
     },
     pipelineId: pipeline.id,
     repositoryId: repository.id,
-    executionPolicyRevisionId: null,
+    executionPolicyRevisionId: triageAuthority?.policyId ?? null,
+    ...(triageAuthority
+      ? {
+          executionGrant: triageAuthority.executionGrant,
+          credentialBindingId: triageAuthority.credentialBindingId,
+        }
+      : {}),
     deliveryPolicyRevisionId: null,
     skillIds: [],
     toolIds: [],
     operatingRulesMd: "",
     operatingRuleStageIds: [],
-    stages,
+    stages: triageAuthority ? stages.slice(0, 1) : stages,
   });
+  const connection = await row(
+    admin
+      .from("workspace_e2b_sandbox_connections")
+      .insert({ workspace_id: workspaceId, encrypted_api_key: "unused-local-fixture" })
+      .select("connection_revision")
+      .single(),
+  );
+  const probes = getSandboxProviderContract("e2b").capabilityProbes;
+  await checked(
+    admin.from("sandbox_capability_checks").insert({
+      workspace_id: workspaceId,
+      github_repository_id: repository.id,
+      sandbox_provider: "e2b",
+      sandbox_connection_revision: connection.connection_revision,
+      agent_provider: "codex",
+      agent_model: model,
+      factory_definition_digest: canonicalDigest,
+      status: "success",
+      capabilities: Object.fromEntries(
+        [...new Set([...probes.required, ...probes.requiredByAgent.codex])].map((probe) => [
+          probe,
+          { ok: true, detail: null },
+        ]),
+      ),
+    }),
+  );
   const revisionId = randomUUID();
   const encoded = Buffer.from(definitionJson, "utf8").toString("base64");
   // The fixture provisions a local, immutable activation without external smoke credentials.
@@ -231,7 +286,19 @@ async function seedDefinition(
     ],
     { env: { ...process.env, PGPASSWORD: decodeURIComponent(database.password) } },
   );
-  return { repositoryId: repository.id, stages, agent };
+  const triageGraph = triageAuthority
+    ? await configureTriageGraph(admin, {
+        workspaceId,
+        factoryId,
+        userId,
+        stageId: stages[0].id,
+        definitionRevisionId: revisionId,
+        definitionDigest: canonicalDigest,
+        promptRevisionId: agent.id,
+        grant: triageAuthority.executionGrant,
+      })
+    : null;
+  return { repositoryId: repository.id, stages, agent, triageGraph };
 }
 
 async function publish(
@@ -244,6 +311,8 @@ async function publish(
     repositoryId: string;
     releaseRevision: number;
     markdown: string;
+    freezeWorkspaceId?: string;
+    prepareResult?: (runId: string) => Promise<string>;
   },
 ) {
   // Simulate claiming only this test's queued job. The exact start, input pin,
@@ -255,6 +324,7 @@ async function publish(
         status: "running",
         attempt_count: 1,
         git_continuity_release_revision: input.releaseRevision,
+        claimed_worker_runtime: "node",
       })
       .eq("id", input.jobId)
       .eq("session_id", input.sessionId),
@@ -283,6 +353,14 @@ async function publish(
       })
       .single(),
   );
+  if (input.freezeWorkspaceId) {
+    await freezeFixtureContext(
+      admin,
+      { jobId: input.jobId, runId, workspaceId: input.freezeWorkspaceId },
+      [{ key: "session/prompt", body: userPrompt }],
+    );
+  }
+  const markdown = input.prepareResult ? await input.prepareResult(runId) : input.markdown;
   expect(
     await row(
       admin.rpc("prepare_session_source_and_checkpoint_publication", {
@@ -292,12 +370,12 @@ async function publish(
         p_base_sha: fixtureSha,
         p_head_sha: fixtureSha,
         p_title: title,
-        p_body: input.markdown,
+        p_body: markdown,
         p_checkpoint_path: "",
         p_bundle_sha256: "",
         p_bundle_base64: "",
         p_expected_artifact_version: input.expectedVersion,
-        p_artifact_md: input.markdown,
+        p_artifact_md: markdown,
       }),
     ),
   ).toBe(true);
@@ -327,13 +405,16 @@ function exactReviewPath(
   });
 }
 
-test("answers an exact specification once and advances only after the revised approval", async ({
-  browser,
-  page,
-  baseURL,
-}, testInfo) => {
-  test.skip(process.env.WALLIE_SPECIFICATION_E2E !== "1", "Requires disposable local services.");
-  test.setTimeout(90_000);
+const journeyTitle = triageMode
+  ? "pauses ambiguous triage and carries approved criteria to its configured delegated task"
+  : "answers an exact specification once and advances only after the revised approval";
+
+test(journeyTitle, async ({ browser, page, baseURL }, testInfo) => {
+  test.skip(
+    !triageMode && process.env.WALLIE_SPECIFICATION_E2E !== "1",
+    "Requires disposable local services.",
+  );
+  test.setTimeout(triageMode ? 180_000 : 90_000);
   const app = localUrl(baseURL, "http:").origin;
   const supabase = localUrl(process.env.NEXT_PUBLIC_SUPABASE_URL, "http:").origin;
   const database = localUrl(process.env.WALLIE_SPECIFICATION_DATABASE_URL, "postgresql:");
@@ -424,6 +505,7 @@ test("answers an exact specification once and advances only after the revised ap
       stageId: specStage.id,
       expectedVersion: 0,
       releaseRevision: release.revision,
+      ...(triageMode ? { freezeWorkspaceId: workspace.id } : {}),
       markdown: `<!-- wallie-clarification: ${JSON.stringify({ question })} -->\n\n# Rollout specification\n\n${draft}`,
     });
     const firstRun = await row(
@@ -440,6 +522,16 @@ test("answers an exact specification once and advances only after the revised ap
 
     await page.reload();
     const specification = page.getByRole("region", { name: "Specification", exact: true });
+    const expectRevisedScope = async () => {
+      if (fixture.triageGraph) {
+        await specification.getByRole("tab", { name: "Full artifact", exact: true }).click();
+        await expect(specification.getByText(acceptanceCriterion, { exact: true })).toBeVisible();
+        await expect(
+          specification.getByText(literalAcceptanceCriterion, { exact: true }),
+        ).toBeVisible();
+      }
+      await expect(specification.getByText(revision)).toBeVisible();
+    };
     const clarification = specification.getByRole("region", {
       name: "Specification clarification",
     });
@@ -459,6 +551,29 @@ test("answers an exact specification once and advances only after the revised ap
     if (!pending) throw new Error("The first version did not publish a clarification.");
     const firstReviewPath = exactReviewPath(slug, session.number, specStage, pending);
     const pendingReviewPath = exactReviewPath(slug, session.number, specStage, pending, pending.id);
+    if (fixture.triageGraph) {
+      const blocked = await admin.rpc("read_factory_workflow_execution", {
+        p_root_session_id: session.id,
+        p_workspace_id: workspace.id,
+        p_factory_id: factory.id,
+      });
+      expect(blocked.error).toBeNull();
+      expect(blocked.data).toBeNull();
+      const inbox = await page.context().newPage();
+      try {
+        await inbox.goto(workspaceInboxPath(slug));
+        const clarificationLink = inbox.getByRole("link", {
+          name: `Answer clarification for ${title}`,
+        });
+        await expect(clarificationLink).toHaveAttribute("href", pendingReviewPath);
+        await clarificationLink.click();
+        await expect(
+          inbox.getByRole("region", { name: "Specification clarification" }).getByText(question),
+        ).toBeVisible();
+      } finally {
+        await inbox.close();
+      }
+    }
     const staleApprove = await page.request.post(`/api/sessions/${session.id}/phase-action`, {
       data: {
         action: "approve",
@@ -477,21 +592,25 @@ test("answers an exact specification once and advances only after the revised ap
     });
     try {
       const phone = await mobile.newPage();
-      await phone.goto(pendingReviewPath);
-      await phone.waitForURL((url) => url.pathname === "/login");
-      await expect(phone.getByRole("heading", { name: "Sign in to Wallie" })).toBeVisible();
-      const returnPath = new URL(phone.url()).searchParams.get("next");
-      if (!returnPath) throw new Error("The sign-in page lost its exact review target.");
-      await expect(phone.locator('input[name="next"]')).toHaveValue(returnPath);
-      expect(new URL(returnPath, app).pathname).toBe(detail);
-      expect(Object.fromEntries(new URL(returnPath, app).searchParams)).toEqual(
-        Object.fromEntries(new URL(pendingReviewPath, app).searchParams),
-      );
-      await phone.screenshot({
-        path: testInfo.outputPath("06-exact-review-sign-in-mobile.png"),
-        fullPage: true,
-      });
-      await signInViaMagicLink(phone, returnPath, { baseURL: app, email });
+      if (fixture.triageGraph) {
+        await signInViaMagicLink(phone, pendingReviewPath, { baseURL: app, email });
+      } else {
+        await phone.goto(pendingReviewPath);
+        await phone.waitForURL((url) => url.pathname === "/login");
+        await expect(phone.getByRole("heading", { name: "Sign in to Wallie" })).toBeVisible();
+        const returnPath = new URL(phone.url()).searchParams.get("next");
+        if (!returnPath) throw new Error("The sign-in page lost its exact review target.");
+        await expect(phone.locator('input[name="next"]')).toHaveValue(returnPath);
+        expect(new URL(returnPath, app).pathname).toBe(detail);
+        expect(Object.fromEntries(new URL(returnPath, app).searchParams)).toEqual(
+          Object.fromEntries(new URL(pendingReviewPath, app).searchParams),
+        );
+        await phone.screenshot({
+          path: testInfo.outputPath("06-exact-review-sign-in-mobile.png"),
+          fullPage: true,
+        });
+        await signInViaMagicLink(phone, returnPath, { baseURL: app, email });
+      }
       await expect(phone.getByText(question, { exact: true })).toBeVisible();
       await expect(phone.getByRole("textbox", { name: "Your answer" })).toBeEnabled();
       expect(Object.fromEntries(new URL(phone.url()).searchParams)).toMatchObject({
@@ -514,7 +633,10 @@ test("answers an exact specification once and advances only after the revised ap
 
     await page.goto(pendingReviewPath);
     const answerField = clarification.getByRole("textbox", { name: "Your answer" });
-    const submitAnswer = clarification.getByRole("button", { name: "Submit answer", exact: true });
+    const submitAnswer = clarification.getByRole("button", {
+      name: "Submit answer",
+      exact: true,
+    });
     await expect(answerField).toBeEnabled();
     await answerField.fill(answer);
     await expect(submitAnswer).toBeEnabled();
@@ -586,7 +708,12 @@ test("answers an exact specification once and advances only after the revised ap
         stageId: specStage.id,
         expectedVersion: 1,
         releaseRevision: release.revision,
-        markdown: `# Revised rollout specification\n\n${revision}`,
+        ...(triageMode ? { freezeWorkspaceId: workspace.id } : {}),
+        markdown: fixture.triageGraph
+          ? acceptedScopeArtifact(revision)
+          : `# Revised rollout specification
+
+${revision}`,
       }),
     ).toBe(receipt.runId);
     const late = await page.request.post(endpoint, {
@@ -594,7 +721,18 @@ test("answers an exact specification once and advances only after the revised ap
     });
     expect(late.status()).toBe(409);
     await page.goto(detail);
-    await expect(specification.getByText(revision)).toBeVisible();
+    if (fixture.triageGraph) {
+      const brief = specification.getByRole("tabpanel", { name: "Review brief", exact: true });
+      await expect(brief.getByText(acceptanceCriterion)).toBeVisible();
+      await expect(brief).toContainText(literalAcceptanceCriterion);
+      await expect(brief).not.toContainText("\\&copy;");
+      await expect(brief.getByText(/wallie-accepted-scope/)).toHaveCount(0);
+      await page.screenshot({
+        path: testInfo.outputPath("04-approved-scope-review-brief.png"),
+        fullPage: true,
+      });
+    }
+    await expectRevisedScope();
     await expect(page.getByRole("button", { name: "Approve stage" })).toBeEnabled();
 
     await page.getByRole("button", { name: "Conversation", exact: true }).click();
@@ -620,7 +758,7 @@ test("answers an exact specification once and advances only after the revised ap
     await expect(page.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
     await specification.getByRole("tab", { name: "Versions", exact: true }).click();
     await specification.getByRole("button", { name: /Version 2/ }).click();
-    await expect(specification.getByText(revision)).toBeVisible();
+    await expectRevisedScope();
 
     const revised = await row(
       admin
@@ -630,6 +768,16 @@ test("answers an exact specification once and advances only after the revised ap
         .single(),
     );
     if (!revised.current_artifact_id) throw new Error("The revised artifact is missing.");
+    if (fixture.triageGraph) {
+      const source = await row(
+        admin
+          .from("session_artifacts")
+          .select("artifact_json")
+          .eq("id", revised.current_artifact_id)
+          .single(),
+      );
+      expect(source.artifact_json).toBe(acceptedScopeArtifact(revision));
+    }
     const revisedReviewPath = exactReviewPath(slug, session.number, specStage, {
       artifactId: revised.current_artifact_id,
       artifactVersion: revised.current_artifact_version,
@@ -660,7 +808,7 @@ test("answers an exact specification once and advances only after the revised ap
     expect(staleArtifact.status()).toBe(409);
     await openCurrentReview.click();
     await expect(page).toHaveURL(app + detail);
-    await expect(specification.getByText(revision)).toBeVisible();
+    await expectRevisedScope();
 
     const wrongArtifact = await page.request.get(
       `/api/sessions/${session.id}/artifacts?stage=${specStage.slug}&artifactId=${randomUUID()}`,
@@ -681,7 +829,10 @@ test("answers an exact specification once and advances only after the revised ap
     });
 
     await page.goto(revisedReviewPath);
-    await expect(specification.getByText(revision)).toBeVisible();
+    await expectRevisedScope();
+    if (fixture.triageGraph) {
+      await expect(specification.getByText(acceptanceCriterion, { exact: true })).toBeVisible();
+    }
     const approve = page.getByRole("button", { name: "Approve stage" });
     await expect(approve).toBeEnabled();
     await page.screenshot({
@@ -703,6 +854,84 @@ test("answers an exact specification once and advances only after the revised ap
       version: revised.current_artifact_version,
       expectedReviewRevision: revised.artifact_review_revision,
     });
+    const triageGraph = fixture.triageGraph;
+    if (triageGraph) {
+      const approval = await row(
+        admin
+          .from("session_stage_approval_receipts")
+          .select("id, artifact_id, artifact_version")
+          .eq("session_id", session.id)
+          .single(),
+      );
+      expect(approval).toMatchObject({
+        artifact_id: revised.current_artifact_id,
+        artifact_version: 2,
+      });
+      const child = await dispatchFixtureForeman(
+        admin,
+        {
+          rootSessionId: session.id,
+          workspaceId: workspace.id,
+          factoryId: factory.id,
+          graphDigest: triageGraph.digest,
+          approvedRunId: receipt.runId,
+        },
+        randomUUID(),
+      );
+      const childSession = await row(
+        admin
+          .from("sessions")
+          .select("number,title,prompt_md,current_stage_id")
+          .eq("workspace_id", workspace.id)
+          .eq("id", child.childSessionId)
+          .single(),
+      );
+      expect(childSession).toMatchObject({
+        title: childTitle,
+        prompt_md: childTask,
+        current_stage_id: specStage.id,
+      });
+      expect(
+        await publish(admin, {
+          ...fixture,
+          jobId: child.jobId,
+          sessionId: child.childSessionId,
+          stageId: specStage.id,
+          expectedVersion: 0,
+          releaseRevision: release.revision,
+          markdown: "",
+          async prepareResult(runId) {
+            const attempt = { workspaceId: workspace.id, jobId: child.jobId, runId };
+            const scope = await readFixtureChildScope(admin, attempt);
+            expect(scope.pin).toMatchObject({
+              rootSessionId: session.id,
+              approvalId: approval.id,
+              artifactId: revised.current_artifact_id,
+              artifactVersion: 2,
+              workflowDigest: triageGraph.digest,
+            });
+            expect(scope.body).toContain(acceptanceCriterion);
+            await freezeFixtureContext(admin, attempt, [
+              { key: "session/prompt", body: childTask },
+              { key: scope.key, body: scope.body },
+            ]);
+            return `## Delivered against approved scope
+
+${scope.body}`;
+          },
+        }),
+      ).toBe(child.runId);
+      await page.goto(workspaceSessionDetailPath(slug, childSession.number));
+      await expect(page.getByRole("heading", { name: childTitle, exact: true })).toBeVisible();
+      await expect(page.getByText(acceptanceCriterion, { exact: true })).toBeVisible();
+      await expect(page.getByText(literalAcceptanceCriterion, { exact: true })).toBeVisible();
+      await page.screenshot({
+        path: testInfo.outputPath("10-delegated-approved-scope-desktop.png"),
+        fullPage: true,
+      });
+      return;
+    }
+
     await expect
       .poll(
         async () =>
