@@ -144,7 +144,9 @@ create table internal.factory_workflow_branch_slot_dispatches (
   root_session_id uuid not null,
   slot_id uuid not null,
   last_attempted_at timestamptz,
-  terminal_blocker text check (terminal_blocker in ('workflow_child_limit', 'workflow_visit_limit_exhausted')),
+  terminal_blocker text check (terminal_blocker in (
+    'workflow_child_limit', 'workflow_visit_limit_exhausted', 'workflow_child_attempt_limit'
+  )),
   primary key (root_session_id, slot_id),
   foreign key (root_session_id, slot_id)
     references internal.factory_workflow_branch_slots(root_session_id, slot_id) on delete cascade
@@ -1293,6 +1295,67 @@ revoke all on function internal.queue_factory_workflow_branch_occurrence()
 create trigger queue_factory_workflow_branch_occurrence after insert on internal.factory_workflow_node_occurrences
   for each row when (new.node_kind = 'branch') execute function internal.queue_factory_workflow_branch_occurrence();
 
+-- The caller owns the root lock. Check whether one more reservation exceeds
+-- the caps even after all unbound holds release and provisional usage falls.
+-- The canonical admission check still accounts for those holds and concurrency.
+create function internal.factory_workflow_branch_attempt_budget_exhausted(
+  p_execution internal.factory_workflow_executions
+) returns boolean language sql stable set search_path = '' as $$
+  with policy as (
+    select p_execution.workflow_json::jsonb->'delegationPolicy' as graph_limits
+  ), caps as (
+    select (policy.graph_limits->>'maxAttempts')::integer as max_attempts,
+      (policy.graph_limits->>'maxTokensPerAttempt')::bigint as next_tokens,
+      (policy.graph_limits->>'maxCostUsdPerAttempt')::numeric as next_cost,
+      least((policy.graph_limits->>'maxTotalTokens')::bigint,
+        (revision.requirements->>'maxTotalTokens')::bigint) as max_tokens,
+      least((policy.graph_limits->>'maxCostUsd')::numeric,
+        (revision.requirements->>'maxCostUsd')::numeric) as max_cost
+    from policy cross join public.sessions root
+    left join public.execution_policy_revisions revision
+      on (revision.workspace_id, revision.id) = (root.workspace_id, root.execution_policy_revision_id)
+    where (root.id, root.workspace_id, root.factory_id) =
+      (p_execution.root_session_id, p_execution.workspace_id, p_execution.factory_id)
+  ), committed_attempts as (
+    -- Binding makes the attempt count durable. Exact measured reservation
+    -- receipts can only grow, even if they arrive after cancellation.
+    select case when reservation.token_provenance = 'measured' then reservation.reported_tokens end as tokens,
+      case when reservation.cost_provenance = 'measured' then reservation.reported_cost_usd end as cost
+    from internal.factory_workflow_attempt_reservations reservation
+    where reservation.root_session_id = p_execution.root_session_id and reservation.run_id is not null
+    union all
+    -- Match the canonical pre-enrollment root fallback exactly. Its legacy
+    -- writer can replace measurements while a run is still active.
+    select case when run.status in ('success', 'error', 'canceled') and run.token_provenance = 'measured'
+        then run.input_tokens::numeric + run.output_tokens end,
+      case when run.status in ('success', 'error', 'canceled') and run.cost_provenance = 'measured'
+        then run.total_cost_usd end
+    from public.agent_runs run
+    where run.session_id = p_execution.root_session_id and run.attempt_count > 0
+      and not exists (
+        select 1 from internal.factory_workflow_attempt_reservations reservation
+        where (reservation.job_id, reservation.attempt_count) = (run.agent_job_id, run.attempt_count)
+      )
+    union all
+    -- Foreman issues are one-shot and their observed usage only increases.
+    -- A partial receipt proves its known token components, not the hold.
+    select coalesce(invocation.input_tokens, 0)::numeric + coalesce(invocation.output_tokens, 0), invocation.cost_usd
+    from internal.factory_workflow_foreman_runs invocation
+    where invocation.root_session_id = p_execution.root_session_id
+  ), committed as (
+    select count(*) as attempts, coalesce(sum(tokens), 0) as tokens, coalesce(sum(cost), 0) as cost
+    from committed_attempts
+  )
+  select coalesce((
+    select committed.attempts + 1 > caps.max_attempts
+      or committed.tokens + caps.next_tokens > caps.max_tokens
+      or committed.cost + caps.next_cost > caps.max_cost
+    from caps cross join committed
+  ), false)
+$$;
+revoke all on function internal.factory_workflow_branch_attempt_budget_exhausted(internal.factory_workflow_executions)
+  from public, anon, authenticated, service_role;
+
 create function public.advance_factory_workflow_branch_occurrence(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid,
   p_expected_generation bigint, p_ownership_token uuid, p_occurrence_id uuid
@@ -1402,7 +1465,9 @@ begin
         );
       exception when sqlstate 'PT409' or sqlstate 'PT422' or insufficient_privilege then
         get stacked diagnostics current_blocker = pg_exception_detail;
-        if current_blocker in ('workflow_visit_limit_exhausted', 'workflow_child_limit') then
+        if current_blocker in ('workflow_visit_limit_exhausted', 'workflow_child_limit')
+          or (current_blocker = 'workflow_child_attempt_limit'
+            and internal.factory_workflow_branch_attempt_budget_exhausted(execution)) then
           insert into internal.factory_workflow_branch_slot_dispatches(root_session_id, slot_id, terminal_blocker)
           select slot.root_session_id, slot.slot_id, current_blocker
           from internal.factory_workflow_branch_slots slot

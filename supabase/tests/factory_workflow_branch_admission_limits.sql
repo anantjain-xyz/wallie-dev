@@ -8,8 +8,10 @@ select no_plan();
 
 create temp table capacity_roots as
 select spec.*, fields."sessionId" as session_id, fields."jobId" as job_id
-from (values ('wide', 201, 9, 9, 2), ('limited', 202, 2, 1, 1))
-  spec(scenario, request_slot, slot_count, lifetime_limit, concurrency_limit)
+from (values ('wide', 201, 9, 9, 2, 12, 1000, 2), ('limited', 202, 2, 1, 1, 12, 1000, 2),
+  ('attempts', 203, 2, 2, 1, 2, 1000, 2), ('tokens', 204, 2, 2, 1, 12, 140, 2),
+  ('spend', 205, 2, 2, 1, 12, 1000, 0.5))
+  spec(scenario, request_slot, slot_count, lifetime_limit, concurrency_limit, attempt_limit, token_limit, cost_limit)
 cross join lateral jsonb_to_record(pg_temp.op651_create_service_root(spec.request_slot, 'Branch capacity ' || spec.scenario))
   fields("sessionId" uuid, "jobId" uuid, "runId" uuid);
 create temp table capacity_inputs as
@@ -43,8 +45,8 @@ cross join lateral (select jsonb_build_object(
   'edges', fixture.admissions || fixture.outputs,
   'grants', jsonb_build_array(jsonb_build_object('id', grant_row.id, 'version', grant_row.version)),
   'delegationPolicy', jsonb_build_object('maxChildren', root.lifetime_limit, 'maxConcurrentChildren', root.concurrency_limit,
-    'maxAttempts', 12, 'maxTotalTokens', 1000, 'maxTokensPerAttempt', 50,
-    'maxCostUsd', 2, 'maxCostUsdPerAttempt', 0.2, 'targets', fixture.targets)
+    'maxAttempts', root.attempt_limit, 'maxTotalTokens', root.token_limit, 'maxTokensPerAttempt', 50,
+    'maxCostUsd', root.cost_limit, 'maxCostUsdPerAttempt', 0.2, 'targets', fixture.targets)
 )::text as body) graph
 cross join lateral public.register_factory_workflow_graph_revision(pin.workspace_id, pin.factory_id,
   pin.definition_revision_id, pin.definition_digest, graph.body, encode(sha256(convert_to(graph.body, 'UTF8')), 'hex')) registered
@@ -99,6 +101,63 @@ select ok((select dispatch.completed_at is not null from internal.factory_workfl
   'maintenance retires the finished group with an impossible required input');
 select is(pg_temp.advance_capacity('limited')->>'joinStatus', 'required_blocked',
   'replay shows the same persistent lifetime blocker');
+
+select is(pg_temp.advance_capacity('attempts')->>'joinStatus', 'pending',
+  'an unstarted reservation can release budget and leaves its sibling pending');
+select ok((select slot->'admissionBlocker' = 'null'::jsonb
+  from jsonb_array_elements(pg_temp.read_capacity('attempts')->'slots') slot
+  where slot#>>'{slot,branch_edge_id}' = 'run.agent.02'), 'temporary capacity pressure is not terminal');
+create temp table attempt_child as
+select marker.child_job_id, marker.child_session_id from internal.factory_workflow_delegations marker
+join capacity_graphs root on root.session_id = marker.root_session_id where root.scenario = 'attempts';
+update public.agent_jobs set created_at = '1900-01-01' where id = (select child_job_id from attempt_child);
+select is((select id from public.claim_next_agent_job(false, 5, 'node')),
+  (select child_job_id from attempt_child), 'the last reserved attempt can claim before its sibling');
+select pg_temp.adopt_branch_code(child_session_id, child_job_id, repeat('b', 40)) from attempt_child;
+select pg_temp.approve_branch(child_session_id) from attempt_child;
+select is(pg_temp.advance_capacity('attempts')->>'joinStatus', 'required_blocked',
+  'a completed final attempt turns the remaining required slot into a terminal budget blocker');
+select is((select slot->>'admissionBlocker'
+  from jsonb_array_elements(pg_temp.read_capacity('attempts')->'slots') slot
+  where slot#>>'{slot,branch_edge_id}' = 'run.agent.02'), 'workflow_child_attempt_limit',
+  'the branch projection distinguishes the consumed attempt limit from previous pending capacity');
+
+create function pg_temp.finish_metered_child(p_scenario text) returns uuid language plpgsql as $$
+declare
+  child record;
+  claimed public.agent_jobs;
+  run_id uuid;
+begin
+  perform pg_temp.advance_capacity(p_scenario);
+  select marker.child_job_id, marker.child_session_id into strict child
+  from internal.factory_workflow_delegations marker
+  join capacity_graphs root on root.session_id = marker.root_session_id where root.scenario = p_scenario;
+  update public.agent_jobs set created_at = '1900-01-01' where id = child.child_job_id;
+  select * into strict claimed from public.claim_next_agent_job(false, 5, 'node');
+  if claimed.id is distinct from child.child_job_id then raise exception 'Claimed a different metered branch.'; end if;
+  run_id := pg_temp.adopt_branch_code(child.child_session_id, child.child_job_id, repeat('b', 40));
+  perform pg_temp.approve_branch(child.child_session_id);
+  return run_id;
+end;
+$$;
+
+create temp table metered_branches as
+select readings.*, pg_temp.finish_metered_child(readings.scenario) as run_id
+from (values ('tokens', 105, 0.02), ('spend', 10, 0.35)) readings(scenario, tokens, cost);
+select receipt.accepted from metered_branches branch
+join public.agent_runs run on run.id = branch.run_id
+cross join lateral public.record_session_run_usage(run.agent_job_id, 1, branch.run_id,
+  branch.tokens, 0, 'estimated', branch.cost, 'estimated', 'fixture-estimator-v1', true) receipt;
+select is(pg_temp.advance_capacity(scenario)->>'joinStatus', 'pending',
+  'replaceable estimated usage does not terminally block the sibling: ' || scenario)
+from metered_branches;
+select receipt.accepted from metered_branches branch
+join public.agent_runs run on run.id = branch.run_id
+cross join lateral public.record_session_run_usage(run.agent_job_id, 1, branch.run_id,
+  branch.tokens, 0, 'measured', branch.cost, 'measured', null, true) receipt;
+select is(pg_temp.advance_capacity(scenario)->>'joinStatus', 'required_blocked',
+  'measured usage plus the next reservation exceeds the pinned limit: ' || scenario)
+from metered_branches;
 
 select * from finish();
 rollback;

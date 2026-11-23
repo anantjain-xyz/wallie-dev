@@ -14,6 +14,8 @@ flowchart LR
 
 Node and Workerd maintenance advance due branch groups. Each scheduler transaction locks one root and observes terminal child attempts. Required slots get first use of capacity. Within each tier, slots that have waited longer get the next attempt. A group waiting on capacity yields to other roots. Child admission and attempts share the root’s existing grant and budget checks.
 
+An unstarted reservation or estimated usage can leave another slot pending. Once exact attempts or measured usage exhaust the pinned budget, the remaining slots record a terminal admission blocker.
+
 | Join readiness     | Evidence                                                                                                      |
 | ------------------ | ------------------------------------------------------------------------------------------------------------- |
 | Pending            | A declared slot still needs admission, execution, or review.                                                  |
