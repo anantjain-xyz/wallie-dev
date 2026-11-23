@@ -27,6 +27,7 @@ import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/adm
 import { reconcileFactoryAutomationSchedules } from "@/lib/factory-automations/schedule-service";
 import { reconcileFactoryActionsDelivery } from "@/lib/factory-delivery-commands/actions-maintenance";
 import { expireFactoryDeliveryDispatches } from "@/lib/factory-delivery-commands/maintenance";
+import { drainFactoryMonitoringIncidents } from "@/lib/factory-monitoring/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
@@ -242,6 +243,7 @@ async function main() {
     let reconcilingBenchmarkSchedules = false;
     let reconcilingBenchmarkEvaluations = false;
     let admittingFactoryAutomationOccurrences = false;
+    let admittingFactoryMonitoringIncidents = false;
     let reconcilingFactoryAutomationSchedules = false;
     let reconcilingFactoryActionsDelivery = false;
     let expiringFactoryDeliveryDispatches = false;
@@ -385,6 +387,16 @@ async function main() {
               await drainFactoryAutomationOccurrences(admin);
             } finally {
               admittingFactoryAutomationOccurrences = false;
+            }
+          });
+        }
+        if (!admittingFactoryMonitoringIncidents) {
+          admittingFactoryMonitoringIncidents = true;
+          timerTasks.run("factory monitoring incidents", async () => {
+            try {
+              await drainFactoryMonitoringIncidents(admin);
+            } finally {
+              admittingFactoryMonitoringIncidents = false;
             }
           });
         }

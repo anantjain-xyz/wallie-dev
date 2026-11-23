@@ -48,6 +48,7 @@ import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/adm
 import { reconcileFactoryAutomationSchedules } from "@/lib/factory-automations/schedule-service";
 import { reconcileFactoryActionsDelivery } from "@/lib/factory-delivery-commands/actions-maintenance";
 import { expireFactoryDeliveryDispatches } from "@/lib/factory-delivery-commands/maintenance";
+import { drainFactoryMonitoringIncidents } from "@/lib/factory-monitoring/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
@@ -379,6 +380,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
             console.warn("[cloudflare-maintenance] GitHub Actions delivery", result);
         },
       ],
+      ["factory monitoring incidents", () => drainFactoryMonitoringIncidents(admin)],
     ] as const;
     for (const [name, task] of tasks) {
       try {
