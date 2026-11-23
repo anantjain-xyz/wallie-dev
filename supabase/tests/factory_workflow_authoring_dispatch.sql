@@ -16,25 +16,30 @@ select public.create_factory_workflow_authoring(
   workspace_id,factory_id,pg_temp.op651_id(1),workflow_id,'Authored fixture workflow'
 ) from authored_scope;
 
+create function pg_temp.save_authored_graph(
+  body text, request_slot integer, expected_draft uuid, expected_activation uuid
+) returns uuid language sql as $$
+  select (public.save_factory_workflow_authoring_draft(
+    p_workspace_id=>scope.workspace_id,p_factory_id=>scope.factory_id,p_actor_user_id=>pg_temp.op651_id(1),
+    p_workflow_id=>scope.workflow_id,p_request_id=>pg_temp.op651_id(request_slot),
+    p_expected_draft_id=>expected_draft,p_expected_activation_id=>expected_activation,
+    p_expected_base_activation_id=>scope.base_activation_id,p_expected_base_revision_id=>scope.base_revision_id,
+    p_expected_base_digest=>scope.base_digest,p_workflow_json=>body,
+    p_workflow_digest=>encode(sha256(convert_to(body,'UTF8')),'hex')
+  )->>'draftId')::uuid from authored_scope scope
+$$;
+
 create function pg_temp.publish_authored_graph(
   body text, request_slot integer, expected_draft uuid, expected_activation uuid
 ) returns table(draft_id uuid,activation_id uuid,graph_revision_id uuid) language plpgsql as $$
 declare
   scope record;
   digest text;
-  saved jsonb;
   published jsonb;
 begin
   select * into strict scope from authored_scope;
   digest:=encode(sha256(convert_to(body,'UTF8')),'hex');
-  saved:=public.save_factory_workflow_authoring_draft(
-    p_workspace_id=>scope.workspace_id,p_factory_id=>scope.factory_id,p_actor_user_id=>pg_temp.op651_id(1),
-    p_workflow_id=>scope.workflow_id,p_request_id=>pg_temp.op651_id(request_slot),
-    p_expected_draft_id=>expected_draft,p_expected_activation_id=>expected_activation,
-    p_expected_base_activation_id=>scope.base_activation_id,p_expected_base_revision_id=>scope.base_revision_id,
-    p_expected_base_digest=>scope.base_digest,p_workflow_json=>body,p_workflow_digest=>digest
-  );
-  draft_id:=(saved->>'draftId')::uuid;
+  draft_id:=pg_temp.save_authored_graph(body,request_slot,expected_draft,expected_activation);
   published:=public.publish_factory_workflow_authoring_draft(
     p_workspace_id=>scope.workspace_id,p_factory_id=>scope.factory_id,p_actor_user_id=>pg_temp.op651_id(1),
     p_workflow_id=>scope.workflow_id,p_request_id=>pg_temp.op651_id(request_slot+1),
@@ -49,12 +54,11 @@ end;
 $$;
 
 create function pg_temp.publish_authored(
-  first_node text, request_slot integer, expected_draft uuid default null, expected_activation uuid default null,
-  first_operation text default 'checkpoint'
+  first_node text, request_slot integer, expected_draft uuid default null, expected_activation uuid default null
 ) returns table(draft_id uuid,activation_id uuid,graph_revision_id uuid) language sql as $$
   select * from pg_temp.publish_authored_graph(jsonb_build_object(
     'schemaVersion',1,'kind','graph','entryNodeId',first_node,'grants','[]'::jsonb,
-    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation',first_operation),
+    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation','checkpoint'),
       jsonb_build_object('id','check.policy','kind','deterministic','operation','policy'),
       jsonb_build_object('id','human.review','kind','human-gate','anyoneCanApprove',false,
         'approverMemberIds',jsonb_build_array(pg_temp.op651_id(21)))),
@@ -303,9 +307,37 @@ select ok((select rejected.phase_status='rejected' and rejected.job_id is not nu
     'code',pg_temp.op651_id(21)) rejected),
   'the exact preparation of an unpinned workflow retains ordinary rejection');
 
+create temp table validation_draft as
+select pg_temp.save_authored_graph(jsonb_set(draft.workflow_json::jsonb,'{nodes,0,operation}','"validation"')::text,
+  219,version.draft_id,version.activation_id) as id
+from authored_version_b version join internal.factory_workflow_authoring_drafts draft on draft.id=version.draft_id;
+select is((select count(*) from validation_draft draft join internal.factory_workflow_authoring_drafts saved
+  on saved.id=draft.id),1::bigint,'a validation draft stays editable without a pinned delivery policy');
+select throws_ok($$
+  select public.publish_factory_workflow_authoring_draft(
+    scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),scope.workflow_id,pg_temp.op651_id(220),
+    draft.id,scope.base_activation_id,scope.base_revision_id,scope.base_digest,draft.workflow_digest,version.activation_id)
+  from authored_scope scope cross join authored_version_b version cross join validation_draft saved
+  join internal.factory_workflow_authoring_drafts draft on draft.id=saved.id
+$$,'PT422','The graph requires a pinned delivery policy with valid required evidence.',
+  'validation cannot publish against a base with no pinned delivery policy');
+
+-- Seed the previously permitted invalid activation for the recovery contract.
 create temp table authored_blocked_version as
-select later.* from authored_version_b version
-cross join lateral pg_temp.publish_authored('blocked.validation',219,version.draft_id,version.activation_id,'validation') later;
+with recorded as (
+  insert into internal.factory_workflow_authoring_activations(workspace_id,factory_id,workflow_id,activation_number,
+    previous_activation_id,draft_id,base_activation_id,base_activation_number,base_definition_revision_id,
+    base_definition_digest,graph_revision_id,workflow_digest,request_id,published_by_member_id)
+  select draft.workspace_id,draft.factory_id,draft.workflow_id,prior.activation_number+1,prior.id,draft.id,
+    draft.base_activation_id,draft.base_activation_number,draft.base_definition_revision_id,draft.base_definition_digest,
+    graph.graph_revision_id,draft.workflow_digest,pg_temp.op651_id(220),draft.created_by_member_id
+  from validation_draft saved join internal.factory_workflow_authoring_drafts draft on draft.id=saved.id
+  join internal.factory_workflow_authoring_activations prior on prior.id=draft.prior_activation_id
+  cross join lateral public.register_factory_workflow_graph_revision(draft.workspace_id,draft.factory_id,
+    draft.base_definition_revision_id,draft.base_definition_digest,draft.workflow_json,draft.workflow_digest) graph
+  returning draft_id,id,graph_revision_id
+)
+select draft_id,id as activation_id,graph_revision_id from recorded;
 create temp table blocked_preparation as
 select admitted.session_id,pg_temp.adopt_source_checkpoint(admitted.session_id,admitted.job_id) as run_id
 from authored_scope scope cross join authored_blocked_version activation

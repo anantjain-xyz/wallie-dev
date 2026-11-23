@@ -4,6 +4,7 @@ select plan(8);
 \set op651_fixture_namespace 65540000
 \set op651_open_groups false
 \set op651_parallel_only true
+\set op652_join_evidence true
 \ir fixtures/factory_workflow_branch.psql
 
 insert into auth.users(id,email)

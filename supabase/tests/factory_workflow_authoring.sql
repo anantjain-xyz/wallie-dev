@@ -298,24 +298,30 @@ select throws_ok($$select pg_temp.op655_save('broader-primary-profile',972,p_wor
 
 savepoint joined_gate_source_policy;
 insert into public.factory_definition_revisions(id,workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
-select pg_temp.op651_id(974),child.workspace_id,child.factory_id,1,profile.body,
+select pg_temp.op651_id(variant.slot),child.workspace_id,child.factory_id,1,profile.body,
   encode(sha256(convert_to(profile.body,'UTF8')),'hex'),pg_temp.op651_id(21)
 from scoped_revisions child
-cross join lateral (select jsonb_set(child.body::jsonb,'{stages,0,approverMemberIds}',
-  jsonb_build_array(pg_temp.op651_id(921)))::text body) profile
+cross join (values (974,true),(1010,false)) variant(slot,has_delivery_evidence)
+cross join lateral (select jsonb_set(jsonb_set(child.body::jsonb,'{stages,0,approverMemberIds}',
+  jsonb_build_array(pg_temp.op651_id(921))),'{deliveryPolicyRevisionId}',
+  case when variant.has_delivery_evidence then (select to_jsonb(id) from op651_fixture_delivery_policy)
+    else 'null'::jsonb end)::text body) profile
 where child.scenario='narrow';
 insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
 select workspace_id,factory_id,pg_temp.op651_id(974),6,pg_temp.op651_id(21) from op655_scope
 union all
-select workspace_id,factory_id,revision_id,7,pg_temp.op651_id(21) from op655_scope;
+select workspace_id,factory_id,pg_temp.op651_id(1010),7,pg_temp.op651_id(21) from op655_scope
+union all
+select workspace_id,factory_id,revision_id,8,pg_temp.op651_id(21) from op655_scope;
 select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(975),
   'Joined child approval policy') from op655_scope;
 insert into op655_graphs(label,body,digest)
 select variant.label,payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
 from op655_graphs graph
-join public.factory_definition_revisions profile on profile.id=pg_temp.op651_id(974)
 join public.factory_definition_revisions foreman on foreman.id=pg_temp.op651_id(43)
-cross join (values ('gate-after-child-join',false),('gate-before-child-join',true)) variant(label,before_join)
+cross join (values ('gate-after-child-join',false,974),('gate-before-child-join',true,974),
+  ('join-without-child-policy',false,1010)) variant(label,before_join,profile_slot)
+join public.factory_definition_revisions profile on profile.id=pg_temp.op651_id(variant.profile_slot)
 cross join lateral (
   select (graph.body::jsonb || jsonb_build_object('entryNodeId','select.parent',
     'nodes',graph.body::jsonb->'nodes' || jsonb_build_array(
@@ -344,13 +350,111 @@ select throws_ok($$select pg_temp.op655_publish('gate-before-child-join',977,(re
   p_reload=>true,p_workflow=>pg_temp.op651_id(975)) from before_join_gate_draft$$,
   'PT422','Approval settings for workflow gate "approve.child" must match its source stage.',
   'a routed child does not replace the root approval source before its join');
+create temp table missing_join_policy_draft as
+select pg_temp.op655_save('join-without-child-policy',1011,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(975)) as result from before_join_gate_draft;
+select throws_ok($$select pg_temp.op655_publish('join-without-child-policy',1012,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(975)) from missing_join_policy_draft$$,
+  'PT422','Workflow step "join.finish" requires its source to pin a delivery policy with valid required evidence.',
+  'a routed join cannot borrow the root delivery policy when its exact child parent lacks one');
 create temp table after_join_gate_draft as
 select pg_temp.op655_save('gate-after-child-join',978,(result->>'draftId')::uuid,
-  p_reload=>true,p_workflow=>pg_temp.op651_id(975)) as result from before_join_gate_draft;
+  p_reload=>true,p_workflow=>pg_temp.op651_id(975)) as result from missing_join_policy_draft;
 select ok((select (pg_temp.op655_publish('gate-after-child-join',979,(result->>'draftId')::uuid,
   p_reload=>true,p_workflow=>pg_temp.op651_id(975))->>'created')::boolean from after_join_gate_draft),
-  'a gate can publish with the exact policy of a routed child that owns its authoritative join');
+  'a join and gate can publish with the exact delivery and approval policies of their routed child source');
 rollback to joined_gate_source_policy;
+
+savepoint authored_delivery_policy;
+insert into public.delivery_policy_revisions(id,workspace_id,pipeline_id,revision,requirements,created_by)
+select pg_temp.op651_id(example.slot),policy.workspace_id,policy.pipeline_id,example.revision,
+  jsonb_set(policy.requirements,'{requiredEvidence}',example.evidence),policy.created_by
+from op651_fixture_delivery_policy pin join public.delivery_policy_revisions policy using (id)
+cross join (values (1013,2,'[]'::jsonb),(1014,3,'["a key with spaces"]'::jsonb)) example(slot,revision,evidence);
+insert into public.factory_definition_revisions(id,workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+select pg_temp.op651_id(example.slot),base.workspace_id,base.factory_id,1,definition.body,
+  encode(sha256(convert_to(definition.body,'UTF8')),'hex'),pg_temp.op651_id(21)
+from scoped_revisions base
+cross join (values (1015,1013),(1016,1014),(1017,null)) example(slot,delivery_policy_slot)
+cross join lateral (select case when example.delivery_policy_slot is null then
+  ((base.body::jsonb-array['executionGrant','credentialBindingId']) || '{"executionPolicyRevisionId":null}'::jsonb)::text
+  else jsonb_set(base.body::jsonb,'{deliveryPolicyRevisionId}',to_jsonb(pg_temp.op651_id(example.delivery_policy_slot)))::text
+end body) definition where base.scenario='root';
+insert into op655_graphs(label,body,digest)
+select operation||'-step',payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
+from (values ('checkpoint'),('validation'),('policy')) node(operation)
+cross join lateral (select jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId','check',
+  'nodes',jsonb_build_array(jsonb_build_object('id','check','kind','deterministic','operation',operation)),
+  'edges','[]'::jsonb,'grants','[]'::jsonb)::text body) payload;
+select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(1018),
+  'Pinned policy fixture') from op655_scope;
+
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,pg_temp.op651_id(1015),6,pg_temp.op651_id(21) from op655_scope;
+create temp table empty_policy_draft as
+select pg_temp.op655_save('validation-step',1019,p_reload=>true,p_workflow=>pg_temp.op651_id(1018)) as result;
+select throws_ok($$select pg_temp.op655_publish('validation-step',1020,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(1018)) from empty_policy_draft$$,
+  'PT422','The graph requires a pinned delivery policy with valid required evidence.',
+  'validation cannot publish with an empty exact policy even while the current pipeline policy has evidence');
+create temp table root_join_draft as
+select pg_temp.op655_save('initial',1021,(result->>'draftId')::uuid,p_reload=>true,p_workflow=>pg_temp.op651_id(1018))
+  as result from empty_policy_draft;
+select throws_ok($$select pg_temp.op655_publish('initial',1022,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(1018)) from root_join_draft$$,
+  'PT422','Workflow step "join.finish" requires its source to pin a delivery policy with valid required evidence.',
+  'a root join requires valid pinned evidence even without a validation step');
+
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,pg_temp.op651_id(1016),7,pg_temp.op651_id(21) from op655_scope;
+create temp table invalid_evidence_key_draft as
+select pg_temp.op655_save('validation-step',1023,(result->>'draftId')::uuid,p_reload=>true,p_rebase=>true,
+  p_workflow=>pg_temp.op651_id(1018)) as result from root_join_draft;
+select throws_ok($$select pg_temp.op655_publish('validation-step',1024,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(1018)) from invalid_evidence_key_draft$$,
+  'PT422','The graph requires a pinned delivery policy with valid required evidence.',
+  'a nonempty policy with an unusable validation key cannot publish a validation step');
+
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,pg_temp.op651_id(1017),8,pg_temp.op651_id(21) from op655_scope;
+create temp table no_execution_policy_draft as
+select pg_temp.op655_save('policy-step',1025,(result->>'draftId')::uuid,p_reload=>true,p_rebase=>true,
+  p_workflow=>pg_temp.op651_id(1018)) as result from invalid_evidence_key_draft;
+select throws_ok($$select pg_temp.op655_publish('policy-step',1026,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(1018)) from no_execution_policy_draft$$,
+  'PT422','The graph requires a pinned execution policy.','a policy step cannot publish with a missing exact execution policy');
+create temp table checkpoint_on_blank_policy as
+select pg_temp.op655_save('checkpoint-step',1027,(result->>'draftId')::uuid,p_reload=>true,
+  p_workflow=>pg_temp.op651_id(1018)) as result from no_execution_policy_draft;
+create temp table checkpoint_without_policy_activation as
+select pg_temp.op655_publish('checkpoint-step',1028,(result->>'draftId')::uuid,p_reload=>true,
+  p_workflow=>pg_temp.op651_id(1018)) as result from checkpoint_on_blank_policy;
+select is((select result->>'created' from checkpoint_without_policy_activation),'true',
+  'a checkpoint-only graph still publishes without a pinned execution policy');
+
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,revision_id,9,pg_temp.op651_id(21) from op655_scope;
+create temp table valid_validation_draft as
+select pg_temp.op655_save('validation-step',1029,(receipt.result->>'draftId')::uuid,(receipt.result->>'activationId')::uuid,
+  p_reload=>true,p_rebase=>true,p_workflow=>pg_temp.op651_id(1018)) as result from checkpoint_without_policy_activation receipt;
+create temp table valid_validation_activation as
+select pg_temp.op655_publish('validation-step',1030,(draft.result->>'draftId')::uuid,(prior.result->>'activationId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(1018)) as result
+from valid_validation_draft draft cross join checkpoint_without_policy_activation prior;
+create temp table valid_validation_preparation as
+select session.session_id,pg_temp.adopt_source_checkpoint(session.session_id,session.job_id) run_id
+from op655_scope scope cross join valid_validation_activation publication
+cross join lateral public.create_session_command_once(scope.workspace_id,pg_temp.op651_id(21),pg_temp.op651_id(1031),
+  repeat('d',64),scope.base_digest,'Validation policy proof','Run the exact validation.','codex','gpt-5.5','{}',
+  target_factory_id=>scope.factory_id,p_workflow_selection=>jsonb_build_object(
+    'workflowId',pg_temp.op651_id(1018),'activationId',publication.result->>'activationId')) session;
+select ok((select started.created and session.pinned_delivery_policy_revision_id=(select id from op651_fixture_delivery_policy)
+  from valid_validation_preparation source cross join valid_validation_activation publication
+  join public.sessions session on session.id=source.session_id
+  cross join lateral public.start_factory_workflow_graph_execution(session.id,session.workspace_id,session.factory_id,
+    (publication.result->>'graphRevisionId')::uuid,source.run_id) started),
+  'a validation workflow publishes and enrolls against the exact eligible delivery policy');
+rollback to authored_delivery_policy;
 
 -- Compose the published activation with real browser and machine create commands.
 create function pg_temp.workflow_request_selection(p_version text)

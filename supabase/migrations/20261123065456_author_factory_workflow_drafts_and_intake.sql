@@ -234,18 +234,37 @@ exception when lock_not_available then
 end;
 $$;
 
-create function internal.assert_factory_workflow_authoring_gate_policies(
+create function internal.factory_workflow_authoring_has_validation_policy(p_workspace_id uuid,p_definition jsonb)
+returns boolean language sql stable set search_path='' as $$
+  select exists (
+    select 1 from public.delivery_policy_revisions policy
+    where (policy.id,policy.workspace_id,policy.pipeline_id) =
+      ((p_definition->>'deliveryPolicyRevisionId')::uuid,p_workspace_id,(p_definition->>'pipelineId')::uuid)
+      and internal.factory_workflow_has_validation_evidence(policy.requirements)
+  )
+$$;
+
+create function internal.assert_factory_workflow_authoring_source_policies(
   p_workspace_id uuid,p_factory_id uuid,p_base jsonb,p_plan jsonb
 ) returns void language plpgsql stable set search_path='' as $$
-declare incompatible_gate text;
+declare incompatible_step record;
 begin
-  if not exists (select 1 from jsonb_array_elements(p_plan->'nodes') node where node->>'kind'='human-gate') then
+  if exists (select 1 from jsonb_array_elements(p_plan->'nodes') node where node->>'operation'='policy')
+    and not exists (select 1 from public.execution_policy_revisions policy
+      where (policy.id,policy.workspace_id)=((p_base->>'executionPolicyRevisionId')::uuid,p_workspace_id)) then
+    raise exception 'The graph requires a pinned execution policy.' using errcode='PT422';
+  end if;
+  -- Enrollment always checks the root policy for an explicit validation step.
+  if exists (select 1 from jsonb_array_elements(p_plan->'nodes') node where node->>'operation'='validation')
+    and not internal.factory_workflow_authoring_has_validation_policy(p_workspace_id,p_base) then
+    raise exception 'The graph requires a pinned delivery policy with valid required evidence.' using errcode='PT422';
+  end if;
+  if not exists (select 1 from jsonb_array_elements(p_plan->'nodes') node where node->>'kind' in ('human-gate','join')) then
     return;
   end if;
 
-  -- A gate observes the final preparation checkpoint until an adopted join
-  -- changes its source. A routed delegate can supply the parent of a later
-  -- join. Fan-out agents only contribute outputs to their existing parent.
+  -- Joins can use a routed delegate as their parent. Gates and validation
+  -- continue from the adopted checkpoint, and fan-out agents only add outputs.
   with recursive nodes as (
     select node->>'id' as id,node->>'kind' as kind,node
     from jsonb_array_elements(p_plan->'nodes') node
@@ -273,29 +292,38 @@ begin
         when target.kind in ('join','review') then null else reached.unjoined_delegate end
     from reachable reached join causal_edges edge on edge.source=reached.node_id
     join nodes target on target.id=edge.target
-  ), source_stages as (
-    select null::text as profile_id,p_base->'stages'->-1 as stage
+  ), source_definitions as (
+    select null::text as profile_id,p_base as definition,p_base->'stages'->-1 as stage
     union all
-    select profile.key,revision.definition_json::jsonb->'stages'->-1
+    select profile.key,revision.definition_json::jsonb,revision.definition_json::jsonb->'stages'->-1
     from jsonb_each(coalesce(p_plan#>'{delegationPolicy,targets}','{}'::jsonb)) profile
     join public.factory_definition_revisions revision
       on (revision.workspace_id,revision.factory_id,revision.id::text,revision.canonical_digest)=
         (p_workspace_id,p_factory_id,profile.value->>'definitionRevisionId',profile.value->>'definitionDigest')
   )
-  select gate.id into incompatible_gate
-  from reachable reached join nodes gate on gate.id=reached.node_id and gate.kind='human-gate'
-  left join source_stages source on source.profile_id is not distinct from reached.checkpoint_profile
-  where source.stage is null
-    or source.stage->'anyoneCanApprove' is distinct from gate.node->'anyoneCanApprove'
-    or array(select distinct id from jsonb_array_elements_text(source.stage->'approverMemberIds') member(id) order by id) <>
-       array(select distinct id from jsonb_array_elements_text(gate.node->'approverMemberIds') member(id) order by id)
-  order by gate.id limit 1;
+  select step.id,step.kind into incompatible_step
+  from reachable reached join nodes step on step.id=reached.node_id
+  left join source_definitions source on source.profile_id is not distinct from reached.checkpoint_profile
+  where case when step.kind='human-gate' then
+    source.stage is null
+      or source.stage->'anyoneCanApprove' is distinct from step.node->'anyoneCanApprove'
+      or array(select distinct id from jsonb_array_elements_text(source.stage->'approverMemberIds') member(id) order by id) <>
+         array(select distinct id from jsonb_array_elements_text(step.node->'approverMemberIds') member(id) order by id)
+  when step.kind='join' or step.node->>'operation'='validation' then
+    not internal.factory_workflow_authoring_has_validation_policy(p_workspace_id,source.definition)
+  else false end
+  order by step.id limit 1;
   if found then
-    raise exception 'Approval settings for workflow gate "%" must match its source stage.',incompatible_gate using errcode='PT422';
+    if incompatible_step.kind='human-gate' then
+      raise exception 'Approval settings for workflow gate "%" must match its source stage.',incompatible_step.id using errcode='PT422';
+    end if;
+    raise exception 'Workflow step "%" requires its source to pin a delivery policy with valid required evidence.',
+      incompatible_step.id using errcode='PT422';
   end if;
 end;
 $$;
-revoke all on function internal.assert_factory_workflow_authoring_gate_policies(uuid,uuid,jsonb,jsonb)
+revoke all on function internal.factory_workflow_authoring_has_validation_policy(uuid,jsonb),
+  internal.assert_factory_workflow_authoring_source_policies(uuid,uuid,jsonb,jsonb)
 from public,anon,authenticated,service_role;
 
 create function internal.validate_factory_workflow_authoring_payload(p_json text,p_digest text)
@@ -497,6 +525,11 @@ begin
   plan:=internal.validate_factory_workflow_authoring_payload(draft.workflow_json,draft.workflow_digest);
   perform internal.assert_factory_workflow_authoring_references(p_workspace_id,p_factory_id,base.definition,plan);
   if exists (select 1 from jsonb_array_elements(plan->'nodes') node
+    where coalesce(node->>'kind','') not in ('deterministic','human-gate','route','agent','branch','join','review')
+      or (node->>'kind'='deterministic' and coalesce(node->>'operation','') not in ('validation','policy','checkpoint'))) then
+    raise exception 'The graph requires workflow capabilities that are unavailable.' using errcode='PT422';
+  end if;
+  if exists (select 1 from jsonb_array_elements(plan->'nodes') node
     where node->>'kind'='route'
       and jsonb_typeof(plan#>array['routePolicy','nodes',node->>'id','foremanProfile']) is distinct from 'object') then
     raise exception 'Published workflow routes require a Foreman profile.' using errcode='PT422';
@@ -510,7 +543,7 @@ begin
   if not internal.is_enrollable_factory_workflow_review(p_workspace_id,p_factory_id,plan) then
     raise exception 'The review requires its scoped prompt, declared rules, and exact joined input.' using errcode='PT422';
   end if;
-  if exists (select 1 from jsonb_array_elements(plan->'nodes') node where node->>'kind'='branch') then
+  if exists (select 1 from jsonb_array_elements(plan->'nodes') node where node->>'kind' in ('branch','join')) then
     if not internal.is_bounded_factory_workflow_branch_graph(plan) then
       raise exception 'The graph requires workflow capabilities that are unavailable.' using errcode='PT422'; end if;
   elsif exists (select 1 from jsonb_array_elements(plan->'nodes') node where node->>'kind'='route') then
@@ -519,7 +552,7 @@ begin
   elsif not internal.is_bounded_factory_workflow_next_path(plan) then
     raise exception 'The graph requires workflow capabilities that are unavailable.' using errcode='PT422';
   end if;
-  perform internal.assert_factory_workflow_authoring_gate_policies(p_workspace_id,p_factory_id,base.definition,plan);
+  perform internal.assert_factory_workflow_authoring_source_policies(p_workspace_id,p_factory_id,base.definition,plan);
   select * into strict graph from public.register_factory_workflow_graph_revision(p_workspace_id,p_factory_id,
     base.revision_id,base.digest,draft.workflow_json,draft.workflow_digest);
   insert into internal.factory_workflow_authoring_activations(workspace_id,factory_id,workflow_id,activation_number,
