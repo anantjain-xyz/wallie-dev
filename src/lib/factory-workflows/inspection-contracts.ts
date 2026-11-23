@@ -1,28 +1,31 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+export const workflowInspectionUuidSchema = z
+  .string()
+  .uuid()
+  .transform((id) => id.toLowerCase());
 const positiveInteger = z.number().int().safe().positive();
 
 const workflowInspectionRootSchema = z.object({
-  sessionId: uuid,
+  sessionId: workflowInspectionUuidSchema,
   sessionNumber: positiveInteger,
-  workspaceId: uuid,
-  factoryId: uuid,
-  graphRevisionId: uuid,
+  workspaceId: workflowInspectionUuidSchema,
+  factoryId: workflowInspectionUuidSchema,
+  graphRevisionId: workflowInspectionUuidSchema,
   workflowDigest: z.string().regex(/^[a-f0-9]{64}$/),
   lifecycleStatus: z.enum(["running", "paused", "canceled"]),
   generation: positiveInteger,
   canManage: z.boolean(),
-  workflowId: uuid.nullish(),
-  activationId: uuid.nullish(),
+  workflowId: workflowInspectionUuidSchema.nullish(),
+  activationId: workflowInspectionUuidSchema.nullish(),
 });
 
 export const workflowInspectionHeaderSchema = z.object({
   root: workflowInspectionRootSchema,
   subject: z.object({
-    sessionId: uuid,
+    sessionId: workflowInspectionUuidSchema,
     sessionNumber: positiveInteger,
-    runId: uuid.nullable(),
+    runId: workflowInspectionUuidSchema.nullable(),
   }),
 });
 
@@ -44,7 +47,7 @@ const workflowInspectionEventKind = z.enum([
 ]);
 
 const label = z.string().nullish();
-const identity = uuid.nullish();
+const identity = workflowInspectionUuidSchema.nullish();
 const counter = z.number().int().safe().nonnegative();
 const nullableCounter = counter.nullish();
 const decimal = z.number().finite().nonnegative();
@@ -154,7 +157,7 @@ const workflowInspectionEventSchema = z.discriminatedUnion("kind", [
     groupId: identity,
     parentSessionId: identity,
     inputRunId: identity,
-    selectedOutcomeIds: z.array(uuid).nullish(),
+    selectedOutcomeIds: z.array(workflowInspectionUuidSchema).nullish(),
     omittedBranchEdgeIds: z.array(z.string()).nullish(),
     deliveryStatus: label,
     wholeJoinComplete: boolean,
@@ -257,9 +260,9 @@ const workflowInspectionBudgetSchema = z.object({
 });
 
 export const workflowInspectionCursorSchema = z.object({
-  rootSessionId: uuid,
-  sessionId: uuid,
-  runId: uuid.nullable(),
+  rootSessionId: workflowInspectionUuidSchema,
+  sessionId: workflowInspectionUuidSchema,
+  runId: workflowInspectionUuidSchema.nullable(),
   recordedAt,
   kind: workflowInspectionEventKind,
   id: receiptId,

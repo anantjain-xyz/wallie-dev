@@ -4,14 +4,14 @@ import {
   loadWorkflowInspection,
   parseWorkflowInspectionCursor,
 } from "@/lib/factory-workflows/inspection";
+import { workflowInspectionUuidSchema } from "@/lib/factory-workflows/inspection-contracts";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const preferredRegion = "home";
 
-const uuid = z.string().uuid();
 const querySchema = z.object({
-  runId: uuid.optional(),
+  runId: workflowInspectionUuidSchema.optional(),
   cursor: z
     .string()
     .regex(/^[A-Za-z0-9_-]{1,640}$/)
@@ -27,7 +27,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ sessionId: string }> },
 ) {
-  const sessionId = uuid.safeParse((await params).sessionId);
+  const sessionId = workflowInspectionUuidSchema.safeParse((await params).sessionId);
   if (!sessionId.success) return fail("Workflow not found.", 404);
 
   const search = new URL(request.url).searchParams;

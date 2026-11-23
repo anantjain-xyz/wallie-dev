@@ -16,8 +16,8 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 const rootSessionId = "11111111-1111-4111-8111-111111111111";
-const sessionId = "22222222-2222-4222-8222-222222222222";
-const runId = "33333333-3333-4333-8333-333333333333";
+const sessionId = "22222222-aaaa-4222-8222-222222222222";
+const runId = "33333333-bbbb-4333-8333-333333333333";
 const cursor = {
   rootSessionId,
   sessionId,
@@ -82,6 +82,27 @@ it("loads the exact child run and carries its positioned cursor into the next bo
     p_before: cursor,
     p_page_size: 25,
   });
+});
+
+it("continues pagination when validated UUIDs use different letter case", async () => {
+  const upperSession = sessionId.toUpperCase();
+  const upperRun = runId.toUpperCase();
+  for (const token of [
+    encode(cursor),
+    encode({ ...cursor, sessionId: upperSession, runId: upperRun }),
+  ]) {
+    const path = workflowInspectionApiPath(upperSession, { runId: upperRun, cursor: token });
+    const response = await GET(new Request("https://wallie.test" + path), {
+      params: Promise.resolve({ sessionId: upperSession }),
+    });
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenLastCalledWith("read_factory_workflow_inspection", {
+      p_session_id: sessionId,
+      p_run_id: runId,
+      p_before: cursor,
+      p_page_size: 25,
+    });
+  }
 });
 
 it("rejects a cursor borrowed from a different session or run before reading receipts", async () => {
