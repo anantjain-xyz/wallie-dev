@@ -1079,6 +1079,11 @@ language sql stable security definer set search_path = '' as $$
   ) published
   where (workflow.workspace_id, workflow.factory_id) = (p_workspace_id, p_factory_id)
     and factory.status = 'active' and published.base_activation_id = base.id
+    -- Selected workflows use the attributed creation path and its primary repository.
+    and jsonb_typeof(base.definition->'executionGrant') = 'object'
+    and base.definition->>'credentialBindingId' is not null
+    and base.definition#>>'{implementationAgent,agentId}' is not null
+    and base.definition->>'repositoryId' is not null
     and auth.uid() is not null and internal.can_access_factory(p_workspace_id, p_factory_id)
     and not exists (
       select 1 from public.workspaces workspace

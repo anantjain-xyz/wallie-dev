@@ -432,22 +432,83 @@ select pg_temp.op655_publish('checkpoint-step',1028,(result->>'draftId')::uuid,p
 select is((select result->>'created' from checkpoint_without_policy_activation),'true',
   'a checkpoint-only graph still publishes without a pinned execution policy');
 
+create function pg_temp.policy_fixture_create(p_request integer,p_activation_id text default null)
+returns table(session_id uuid,session_number integer,workspace_slug text,job_id uuid,run_id uuid) language sql as $$
+  select session.* from op655_scope scope
+  cross join lateral internal.factory_workflow_authoring_base(scope.workspace_id,scope.factory_id) base
+  cross join lateral public.create_session_command_once(scope.workspace_id,pg_temp.op651_id(21),pg_temp.op651_id(p_request),
+    repeat('d',64),base.digest,'Authored policy intake','Run from the confirmed factory.','codex','gpt-5.5','{}',
+    target_factory_id=>scope.factory_id,p_workflow_selection=>case when p_activation_id is not null then
+      jsonb_build_object('workflowId',pg_temp.op651_id(1018),'activationId',p_activation_id) end) session
+$$;
+create function pg_temp.hidden_checkpoint_retains_readback(p_activation_id text) returns boolean language sql stable as $$
+  select not exists (select 1 from public.list_factory_workflow_intake_options(scope.workspace_id,scope.factory_id))
+    and readback.snapshot->>'activationId'=p_activation_id
+    and readback.snapshot#>>'{baseDefinition,digest}'=base.digest
+  from op655_scope scope
+  cross join lateral internal.factory_workflow_authoring_base(scope.workspace_id,scope.factory_id) base
+  cross join lateral (select public.read_factory_workflow_authoring(scope.workspace_id,scope.factory_id,
+    pg_temp.op651_id(1018)) snapshot) readback
+$$;
+select set_config('request.jwt.claim.role','authenticated',true);
+select ok((select pg_temp.hidden_checkpoint_retains_readback(result->>'activationId') from checkpoint_without_policy_activation),
+  'a signed-in catalog hides the published checkpoint without a grant and preserves its authoring base digest');
+select set_config('request.jwt.claim.role','service_role',true);
+select throws_ok($$select created.* from checkpoint_without_policy_activation receipt
+  cross join lateral pg_temp.policy_fixture_create(1032,receipt.result->>'activationId') created$$,
+  'PT409','The selected workflow requires the confirmed factory admission.',
+  'a directly submitted activation without a grant cannot bypass picker eligibility');
+insert into public.user_codex_credentials(user_id,credential_type,encrypted_credential)
+values (pg_temp.op651_id(1),'platform_api_key','fixture-ciphertext');
+create temp table ordinary_policy_intake as select * from pg_temp.policy_fixture_create(1033);
+select ok((select session.factory_definition_revision_id=pg_temp.op651_id(1017)
+    and not exists (select 1 from internal.factory_workflow_authoring_session_pins where session_id=session.id)
+  from ordinary_policy_intake created join public.sessions session on session.id=created.session_id),
+  'the same confirmed grantless base can still create an ordinary serial session');
+
+insert into public.factory_definition_revisions(id,workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+select pg_temp.op651_id(1034),base.workspace_id,base.factory_id,1,definition.body,
+  encode(sha256(convert_to(definition.body,'UTF8')),'hex'),pg_temp.op651_id(21)
+from scoped_revisions base cross join lateral (select (base.body::jsonb-'credentialBindingId')::text body) definition
+where base.scenario='root';
 insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
-select workspace_id,factory_id,revision_id,9,pg_temp.op651_id(21) from op655_scope;
+select workspace_id,factory_id,pg_temp.op651_id(1034),9,pg_temp.op651_id(21) from op655_scope;
+create temp table no_credential_checkpoint_draft as
+select pg_temp.op655_save('checkpoint-step',1035,(result->>'draftId')::uuid,(result->>'activationId')::uuid,
+  p_reload=>true,p_rebase=>true,p_workflow=>pg_temp.op651_id(1018)) as result from checkpoint_without_policy_activation;
+create temp table no_credential_checkpoint_activation as
+select pg_temp.op655_publish('checkpoint-step',1036,(draft.result->>'draftId')::uuid,(prior.result->>'activationId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(1018)) as result
+from no_credential_checkpoint_draft draft cross join checkpoint_without_policy_activation prior;
+select set_config('request.jwt.claim.role','authenticated',true);
+select ok((select pg_temp.hidden_checkpoint_retains_readback(result->>'activationId') from no_credential_checkpoint_activation),
+  'a signed-in catalog hides the published checkpoint with a grant but no credential and preserves its authoring base digest');
+select set_config('request.jwt.claim.role','service_role',true);
+select throws_ok($$select created.* from no_credential_checkpoint_activation receipt
+  cross join lateral pg_temp.policy_fixture_create(1037,receipt.result->>'activationId') created$$,
+  'PT409','The selected workflow requires the confirmed factory admission.',
+  'a directly submitted activation with no credential cannot bypass picker eligibility');
+
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,revision_id,10,pg_temp.op651_id(21) from op655_scope;
 create temp table valid_validation_draft as
 select pg_temp.op655_save('validation-step',1029,(receipt.result->>'draftId')::uuid,(receipt.result->>'activationId')::uuid,
-  p_reload=>true,p_rebase=>true,p_workflow=>pg_temp.op651_id(1018)) as result from checkpoint_without_policy_activation receipt;
+  p_reload=>true,p_rebase=>true,p_workflow=>pg_temp.op651_id(1018)) as result from no_credential_checkpoint_activation receipt;
 create temp table valid_validation_activation as
 select pg_temp.op655_publish('validation-step',1030,(draft.result->>'draftId')::uuid,(prior.result->>'activationId')::uuid,
   p_reload=>true,p_workflow=>pg_temp.op651_id(1018)) as result
-from valid_validation_draft draft cross join checkpoint_without_policy_activation prior;
+from valid_validation_draft draft cross join no_credential_checkpoint_activation prior;
+select set_config('request.jwt.claim.role','authenticated',true);
+select ok(exists (select 1 from op655_scope scope cross join valid_validation_activation receipt
+  cross join lateral public.list_factory_workflow_intake_options(scope.workspace_id,scope.factory_id) option
+  where (option.workflow_id,option.activation_id,option.definition_digest)=
+    (pg_temp.op651_id(1018),(receipt.result->>'activationId')::uuid,scope.base_digest)),
+  'the signed-in catalog still returns the exact eligible activation and authoritative base digest');
+select set_config('request.jwt.claim.role','service_role',true);
 create temp table valid_validation_preparation as
 select session.session_id,pg_temp.adopt_source_checkpoint(session.session_id,session.job_id) run_id
-from op655_scope scope cross join valid_validation_activation publication
-cross join lateral public.create_session_command_once(scope.workspace_id,pg_temp.op651_id(21),pg_temp.op651_id(1031),
-  repeat('d',64),scope.base_digest,'Validation policy proof','Run the exact validation.','codex','gpt-5.5','{}',
-  target_factory_id=>scope.factory_id,p_workflow_selection=>jsonb_build_object(
-    'workflowId',pg_temp.op651_id(1018),'activationId',publication.result->>'activationId')) session;
+from valid_validation_activation publication
+cross join lateral pg_temp.policy_fixture_create(1031,publication.result->>'activationId') session;
 select ok((select started.created and session.pinned_delivery_policy_revision_id=(select id from op651_fixture_delivery_policy)
   from valid_validation_preparation source cross join valid_validation_activation publication
   join public.sessions session on session.id=source.session_id
