@@ -660,6 +660,55 @@ describe("reconcileLinearState", () => {
     expect((await work).rateLimited).toBe(true);
     expect(commitPage).toHaveBeenCalledTimes(2);
   });
+  it("routes later lifecycle pages while the current workspace's automation cursor waits on Linear", async () => {
+    const rows = [
+      ...Array.from({ length: 51 }, (_, index) =>
+        session(`session-${String(index).padStart(3, "0")}`),
+      ),
+      session("session-051", "workspace-2"),
+    ];
+    const { admin, readCursor, rpc, commitPage } = adminFor(rows);
+    readCursor.mockImplementation(async (_, input) => ({
+      data: [
+        input.p_workspace_id === "workspace-1"
+          ? { after_session_id: "session-049", generation: 7 }
+          : { after_session_id: null, generation: 3 },
+      ],
+      error: null,
+    }));
+    const retry = Promise.withResolvers<void>();
+    mocks.observations.mockImplementation(async (_key: string, ids: string[]) => {
+      if (ids.includes("ISSUE-session-050")) {
+        await retry.promise;
+        throw new LinearRateLimitedError();
+      }
+      return new Map(ids.map((id) => [id, observation]));
+    });
+
+    const work = reconcileLinearState(admin as never);
+    try {
+      await vi.waitFor(() => {
+        expect(mocks.observations).toHaveBeenCalledWith(
+          "decoded:workspace-1",
+          ["ISSUE-session-050"],
+          expect.any(Function),
+        );
+        expect(rpc).toHaveBeenCalledWith(
+          "apply_linear_session_transition",
+          expect.objectContaining({ p_session_id: "session-051" }),
+        );
+        expect(commitPage).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ p_workspace_id: "workspace-2", p_expected_generation: 3 }),
+        );
+      });
+    } finally {
+      retry.resolve();
+    }
+
+    expect((await work).rateLimited).toBe(true);
+    expect(commitPage).toHaveBeenCalledTimes(1);
+  });
+
   it("uses a unique ID cursor so equal creation timestamps cannot skip a page", async () => {
     const { admin, rpc, reads } = adminFor(
       Array.from({ length: 51 }, (_, index) =>

@@ -405,9 +405,9 @@ transition is not currently a successful compare-and-swap boundary.
 
 The reconciler reads nonarchived, Linear-linked sessions in unique ID order,
 50 at a time. It batches existing links by workspace, reads the current open
-provider state span, and uses that observation for both session routing and
-issue-state automations. Legacy stage routing still applies the workspace's
-status-name mappings and its exact per-session transition receipt.
+provider state span before routing a session. Legacy stage routing applies
+the workspace's status-name mappings and its exact per-session transition
+receipt.
 
 - Automation polling uses the canonical issue ID and provider span ID.
   Identifier and UUID links to one issue in the same factory identify the same
@@ -424,12 +424,14 @@ status-name mappings and its exact per-session transition receipt.
   read, or an unreadable configured key, leaves that workspace at its last
   committed page. A short final page resets its cursor to the beginning. Normal
   and workspace-scoped sweeps share the same workspace cursor.
-- Bounded workspace batches can route sessions and commit pages as soon as
-  their own observations are available. Lifecycle routing starts at the first
-  linked session each sweep and uses fresh page reads. A failed lifecycle read
-  leaves later automation pages eligible. Postgres retains the exact span and
-  applies terminal routing together under the current issue watermark. A failed
-  or stale write keeps the link available for another sweep.
+- Lifecycle routing starts at the first linked session each sweep. It reads
+  fresh state and can finish later pages while automation is polling its own
+  cursor. Automation may reuse fresh observations for links on its current page.
+  A nonterminal route outside that page does not retain an automation span.
+  If the issue leaves before automation polls its link, that span may be missed.
+- Postgres retains the exact span and applies terminal routing together under
+  the current issue watermark. A failed or stale write keeps the link available
+  for another sweep.
 
 Linear rate limits are retried once with a bounded delay. Persistent throttling
 ends polling for that workspace in the current sweep. The worker only reads

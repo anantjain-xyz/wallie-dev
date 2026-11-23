@@ -26,7 +26,8 @@ type Cursor = { after_session_id: string | null; generation: number };
 type IssueObservations = Map<string, LinearStateObservation | null>;
 
 const PAGE_SIZE = 50;
-const CONCURRENT_WORKSPACES = 10;
+const CONCURRENT_LIFECYCLE_WORKSPACES = 5;
+const CONCURRENT_AUTOMATION_WORKSPACES = 5;
 
 export interface ReconcileResult {
   checked: number;
@@ -215,7 +216,7 @@ async function forEachWorkspace<T>(
 ) {
   const pending = workspaces.entries();
   await Promise.all(
-    Array.from({ length: Math.min(CONCURRENT_WORKSPACES, workspaces.size) }, async () => {
+    Array.from({ length: Math.min(CONCURRENT_LIFECYCLE_WORKSPACES, workspaces.size) }, async () => {
       for (const [workspaceId, item] of pending) {
         try {
           await work(workspaceId, item);
@@ -278,7 +279,7 @@ async function advanceWorkspaceAutomation(
     sleep,
     observed,
   );
-  if (!observations) return null;
+  if (!observations || throttled.has(workspaceId)) return null;
   const next = await commitAutomationPage(admin, progress, sessions, observations, workspaceId);
   return next?.after_session_id ? next : null;
 }
@@ -293,83 +294,99 @@ export async function reconcileLinearState(
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const result: ReconcileResult = { checked: 0, canceled: 0, rateLimited: false };
   const throttled = new Set<string>();
-  const cursors = new Map<string, Cursor | null>();
+  const scheduledAutomation = new Set<string>();
+  const queuedAutomation = new Map<string, Cursor | null>();
+  const activeAutomation = new Set<Promise<void>>();
 
-  let lifecycleAfter: string | null = null;
-  for (;;) {
-    const sessions = await loadLinkedSessionPage(admin, lifecycleAfter, workspaceId);
-    if (!sessions?.length) break;
-    const workspaces = groupLinkedSessions(sessions);
-    const apiKeys = await loadLinearApiKeys(admin, [...workspaces.keys()]);
-    if (apiKeys) {
-      await forEachWorkspace(workspaces, async (scope, linked) => {
-        const apiKey = apiKeys.get(scope);
-        if (apiKey === null || throttled.has(scope)) return;
-        const fresh = await observeWorkspace(scope, linked, apiKey, throttled, sleep);
-        if (fresh?.size) {
-          try {
-            await routeLinkedSessions(admin, scope, linked, fresh, result);
-          } catch (error) {
-            console.error("[reconciler] failed to route Linear workspace", {
-              error: error instanceof Error ? error.message : String(error),
-              workspaceId: scope,
-            });
+  function startAutomation(
+    scope: string,
+    savedProgress: Cursor | null,
+    recent?: { apiKey: string | undefined; observations: IssueObservations | null },
+  ) {
+    const task = (async () => {
+      if (throttled.has(scope)) return;
+      const progress = savedProgress ?? (await readAutomationCursor(admin, scope));
+      if (!progress) return;
+      const apiKeys = recent ? undefined : await loadLinearApiKeys(admin, [scope]);
+      const apiKey = recent ? recent.apiKey : apiKeys?.get(scope);
+      if (apiKeys === null || apiKey === null || throttled.has(scope)) return;
+      const next = await advanceWorkspaceAutomation(
+        admin,
+        scope,
+        progress,
+        apiKey,
+        throttled,
+        sleep,
+        recent?.observations ?? undefined,
+      );
+      if (next) queuedAutomation.set(scope, next);
+    })()
+      .catch((error) => {
+        console.error("[reconciler] failed to advance Linear automation workspace", {
+          error: error instanceof Error ? error.message : String(error),
+          workspaceId: scope,
+        });
+      })
+      .finally(() => {
+        activeAutomation.delete(task);
+        const next = queuedAutomation.entries().next();
+        if (!next.done) {
+          const [scope, progress] = next.value;
+          queuedAutomation.delete(scope);
+          startAutomation(scope, progress);
+        }
+      });
+    activeAutomation.add(task);
+  }
+
+  function scheduleAutomation(
+    scope: string,
+    recent?: { apiKey: string | undefined; observations: IssueObservations | null },
+  ) {
+    if (scheduledAutomation.has(scope) || throttled.has(scope)) return;
+    scheduledAutomation.add(scope);
+    if (activeAutomation.size < CONCURRENT_AUTOMATION_WORKSPACES) {
+      startAutomation(scope, null, recent);
+    } else {
+      queuedAutomation.set(scope, null);
+    }
+  }
+
+  try {
+    let lifecycleAfter: string | null = null;
+    for (;;) {
+      const sessions = await loadLinkedSessionPage(admin, lifecycleAfter, workspaceId);
+      if (!sessions?.length) break;
+      const workspaces = groupLinkedSessions(sessions);
+      const apiKeys = await loadLinearApiKeys(admin, [...workspaces.keys()]);
+      if (apiKeys) {
+        await forEachWorkspace(workspaces, async (scope, linked) => {
+          const apiKey = apiKeys.get(scope);
+          if (apiKey === null || throttled.has(scope)) return;
+          const fresh = await observeWorkspace(scope, linked, apiKey, throttled, sleep);
+          if (fresh?.size) {
+            try {
+              await routeLinkedSessions(admin, scope, linked, fresh, result);
+            } catch (error) {
+              console.error("[reconciler] failed to route Linear workspace", {
+                error: error instanceof Error ? error.message : String(error),
+                workspaceId: scope,
+              });
+            }
           }
-        }
-
-        if (throttled.has(scope)) return;
-        const progress = cursors.has(scope)
-          ? cursors.get(scope)
-          : await readAutomationCursor(admin, scope);
-        if (progress) {
-          cursors.set(
-            scope,
-            await advanceWorkspaceAutomation(
-              admin,
-              scope,
-              progress,
-              apiKey,
-              throttled,
-              sleep,
-              fresh ?? undefined,
-            ),
-          );
-        } else {
-          cursors.set(scope, null);
-        }
-      });
+          scheduleAutomation(scope, { apiKey, observations: fresh });
+        });
+      }
+      if (sessions.length < PAGE_SIZE) break;
+      lifecycleAfter = sessions.at(-1)!.id;
     }
-    if (sessions.length < PAGE_SIZE) break;
-    lifecycleAfter = sessions.at(-1)!.id;
-  }
 
-  // A scoped maintenance sweep can reset an exhausted cursor after its final
-  // link was archived. The normal sweep discovers workspace IDs from live links.
-  if (workspaceId && !cursors.has(workspaceId) && !throttled.has(workspaceId)) {
-    cursors.set(workspaceId, await readAutomationCursor(admin, workspaceId));
-  }
-  const remaining = new Map(
-    [...cursors].filter(([scope, progress]) => progress && !throttled.has(scope)),
-  );
-  if (remaining.size) {
-    const apiKeys = await loadLinearApiKeys(admin, [...remaining.keys()]);
-    if (apiKeys) {
-      await forEachWorkspace(remaining, async (scope, savedProgress) => {
-        const apiKey = apiKeys.get(scope);
-        if (apiKey === null) return;
-        let progress = savedProgress;
-        while (progress) {
-          progress = await advanceWorkspaceAutomation(
-            admin,
-            scope,
-            progress,
-            apiKey,
-            throttled,
-            sleep,
-          );
-        }
-      });
-    }
+    // A scoped sweep can reset an exhausted cursor after its final link was archived.
+    if (workspaceId) scheduleAutomation(workspaceId);
+  } finally {
+    // Automation retries do not occupy a lifecycle slot. Drain before returning
+    // so the worker owns every persistence operation started by this sweep.
+    while (activeAutomation.size) await Promise.race(activeAutomation);
   }
 
   result.rateLimited = throttled.size > 0;
