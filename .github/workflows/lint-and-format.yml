@@ -1,38 +1,39 @@
-name: Lint and Format
+name: Wallie delivery fixture
+run-name: wallie:${{ inputs.wallie_run_nonce }}
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      wallie_command_id:
+        type: string
+        required: true
+      wallie_source_sha:
+        type: string
+        required: true
+      wallie_environment:
+        type: string
+        required: true
+      wallie_run_nonce:
+        type: string
+        required: true
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
-  lint-and-format:
+  verify:
+    if: startsWith(github.ref, 'refs/tags/wallie-m12-fixture-')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    timeout-minutes: 2
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.15.0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.13.0
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run fast validation
-        run: pnpm check:fast
+      - name: Record isolated delivery evidence
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.wallie_source_sha }}
+          COMMAND_ID: ${{ inputs.wallie_command_id }}
+          ENVIRONMENT: ${{ inputs.wallie_environment }}
+        run: |
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_SHA" == "$EXPECTED_SHA" ]]
+          [[ "$COMMAND_ID" =~ ^[0-9a-f-]{36}$ ]]
+          [[ "$ENVIRONMENT" == "wallie-m12-fixture" ]]
+          printf 'wallie-delivery-fixture %s %s %s\n' "$COMMAND_ID" "$GITHUB_SHA" "$ENVIRONMENT"
