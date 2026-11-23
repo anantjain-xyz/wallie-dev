@@ -231,7 +231,11 @@ export const e2bSandboxDriver: SandboxProviderDriver<E2BConnection> = {
     const sandbox = await Sandbox.create({
       apiKey: connection.credentials.apiKey,
       lifecycle: { onTimeout: "kill" },
-      metadata: { wallie_owner_id: input.ownerId, wallie_workspace_id: input.workspaceId },
+      metadata: {
+        wallie_owner_id: input.ownerId,
+        wallie_workspace_id: input.workspaceId,
+        ...(input.acquisition ? sandboxAcquisitionLabels(input.acquisition) : {}),
+      },
       timeoutMs: input.timeoutMs,
       signal: input.signal,
     });

@@ -8,6 +8,8 @@ import { workerRunCaptureEnvSchema } from "@/env/worker";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AttemptWorkerRuntime } from "@/lib/pipeline/attempt-manifest";
 import { processPipelineJob } from "@/lib/pipeline/processor";
+import { joinManagedResources } from "@/lib/factory-workflows/join-managed-resources";
+import { processFactoryWorkflowJoinJob } from "@/lib/factory-workflows/join-worker-runtime";
 import { WorkerAttemptDeadlineError } from "@/lib/pipeline/worker-attempt-deadline";
 
 import type { WorkerConfig } from "./config";
@@ -96,19 +98,28 @@ export async function runClaimedJob(
     const captureOrderedEvents =
       options.captureOrderedEvents ??
       workerRunCaptureEnvSchema.parse(process.env).WALLIE_ORDERED_RUN_CAPTURE_ENABLED;
+    const execution = {
+      admin,
+      job,
+      deadlineAt,
+      signal: controller.signal,
+      ...(options.browserRuntime ? { browserRuntime: options.browserRuntime } : {}),
+      ...(options.browserVideoRuntime ? { browserVideoRuntime: options.browserVideoRuntime } : {}),
+    };
     await Promise.race([
-      processPipelineJob({
-        admin,
-        job,
-        captureOrderedEvents,
-        deadlineAt,
-        signal: controller.signal,
-        workerRuntime: options.workerRuntime ?? "node",
-        ...(options.browserRuntime ? { browserRuntime: options.browserRuntime } : {}),
-        ...(options.browserVideoRuntime
-          ? { browserVideoRuntime: options.browserVideoRuntime }
-          : {}),
-      }),
+      (async () => {
+        const disposition = await processFactoryWorkflowJoinJob({
+          ...execution,
+          resources: joinManagedResources,
+        });
+        if (disposition === "ordinary") {
+          await processPipelineJob({
+            ...execution,
+            captureOrderedEvents,
+            workerRuntime: options.workerRuntime ?? "node",
+          });
+        }
+      })(),
       deadline,
     ]);
   } catch (error) {

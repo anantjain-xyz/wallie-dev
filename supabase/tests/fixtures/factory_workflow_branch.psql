@@ -77,6 +77,15 @@ on conflict (workspace_id) do update set active_provider = excluded.active_provi
 insert into public.workspace_e2b_sandbox_connections(workspace_id, encrypted_api_key)
 values (pg_temp.op651_id(11), 'fixture-sandbox-ciphertext');
 
+create temp table op651_fixture_delivery_policy(id uuid);
+\if :{?op652_join_evidence}
+insert into op651_fixture_delivery_policy
+select policy.id from public.save_delivery_policy(pg_temp.op651_id(11), pg_temp.op651_id(31),
+  pg_temp.op651_id(1), 0, '{"version":1,"deliveryMode":"code","requiredChecks":[],
+  "minimumApprovals":0,"requireCodeOwnerReview":false,"requireResolvedThreads":false,
+  "requiredEvidence":["tests"],"freshnessSeconds":300,"requireArtifactApprovalForDelivery":false}') policy;
+\endif
+
 create temp table scoped_revisions as
 select grant_row.scenario, pg_temp.op651_id(grant_row.revision_slot) as revision_id, grant_row.activation_number,
   grant_row.id as grant_id, grant_row.version as grant_version, binding.id as binding_id,
@@ -91,7 +100,8 @@ select grant_row.scenario, pg_temp.op651_id(grant_row.revision_slot) as revision
       'promptMd', prompt.prompt_md, 'promptSha256', prompt.prompt_sha256),
     'agent', jsonb_build_object('provider', 'codex', 'model', 'gpt-5.5', 'effort', 'high',
       'concurrencyLimit', 3, 'stallTimeoutMs', 900000, 'maxRetries', 3, 'maxTurns', 5),
-    'executionPolicyRevisionId', grant_row.execution_policy_revision_id, 'deliveryPolicyRevisionId', null,
+    'executionPolicyRevisionId', grant_row.execution_policy_revision_id, 'deliveryPolicyRevisionId',
+    case when grant_row.scenario='root' then (select id from op651_fixture_delivery_policy) end,
     'skillIds', '[]'::jsonb, 'toolIds', '[]'::jsonb, 'operatingRulesMd', '', 'operatingRuleStageIds', '[]'::jsonb,
     'stages', jsonb_build_array(jsonb_build_object('id', pg_temp.op651_id(32), 'slug', 'inspect-output',
       'name', 'Inspect output', 'description', '', 'promptTemplateMd', 'Inspect the admitted output.',

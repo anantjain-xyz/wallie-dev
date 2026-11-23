@@ -41,6 +41,8 @@ type ObserverInput<Target> = {
   pin: ObservationPin;
   target: Target;
   signal?: AbortSignal;
+  /** Scoped command source from the native causal ledger. Defaults to the root. */
+  causalSessionId?: string;
 };
 type AttemptRow = Pick<
   Tables<"session_git_checkpoints">,
@@ -73,20 +75,25 @@ function matchesAttempt(row: AttemptRow, scope: RootScope, target: RunTarget) {
   );
 }
 
-async function loadRootSession(admin: Admin, scope: RootScope, signal: AbortSignal) {
+async function loadObservedSession(
+  admin: Admin,
+  scope: RootScope,
+  sessionId: string,
+  signal: AbortSignal,
+) {
   const { data, error } = await admin
     .from("sessions")
     .select(
       "id, workspace_id, factory_id, factory_definition_revision_id, execute_pinned_definition, archived_at, phase_status, current_stage_id, current_artifact_id, current_artifact_version",
     )
-    .eq("id", scope.p_root_session_id)
+    .eq("id", sessionId)
     .eq("workspace_id", scope.p_workspace_id)
     .eq("factory_id", scope.p_factory_id)
     .abortSignal(signal)
     .maybeSingle();
   if (error) throw error;
   if (
-    data?.id !== scope.p_root_session_id ||
+    data?.id !== sessionId ||
     data.workspace_id !== scope.p_workspace_id ||
     data.factory_id !== scope.p_factory_id ||
     (data.archived_at && data.phase_status !== "approved")
@@ -100,12 +107,13 @@ export async function observeWorkflowCheckpoint({
   admin,
   pin,
   target,
+  causalSessionId = pin.p_root_session_id,
   signal = AbortSignal.timeout(5_000),
 }: ObserverInput<RunTarget>): Promise<CheckpointObservation> {
   const blocked = { status: "blocked", code: "checkpoint_unavailable" } as const;
-  if (target.sessionId !== pin.p_root_session_id) return blocked;
+  if (target.sessionId !== causalSessionId) return blocked;
   try {
-    const session = await loadRootSession(admin, pin, signal);
+    const session = await loadObservedSession(admin, pin, causalSessionId, signal);
     if (!session) return blocked;
     const { data: publication, error } = await admin
       .from("session_checkpoint_publications")
@@ -224,12 +232,13 @@ export async function observeWorkflowHumanApproval({
   admin,
   pin,
   target,
+  causalSessionId = pin.p_root_session_id,
   signal = AbortSignal.timeout(5_000),
 }: ObserverInput<GateTarget>): Promise<HumanApprovalObservation> {
   const blocked = { status: "blocked", code: "approval_blocked" } as const;
-  if (target.sessionId !== pin.p_root_session_id) return blocked;
+  if (target.sessionId !== causalSessionId) return blocked;
   try {
-    const session = await loadRootSession(admin, pin, signal);
+    const session = await loadObservedSession(admin, pin, causalSessionId, signal);
     if (!session) return blocked;
     const definition = await loadPinnedFactoryExecution(admin, session, signal);
     if (!definition) return blocked;
