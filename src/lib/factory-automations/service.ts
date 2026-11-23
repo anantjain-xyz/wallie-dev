@@ -6,6 +6,10 @@ import type { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
 
 import {
+  automationAdmissionControlSchema,
+  type AutomationAdmissionControlCommand,
+} from "./admission-control-contracts";
+import {
   factoryAutomationListSchema,
   factoryAutomationSnapshotSchema,
   type createFactoryAutomationSchema,
@@ -63,6 +67,34 @@ export async function dryRunFactoryAutomation(
   });
   if (error) throw error;
   return data === null ? null : automationDryRunResponseSchema.parse(data);
+}
+
+export async function readAutomationAdmissionControl(client: Client, scope: AutomationScope) {
+  const { data, error } = await client.rpc("read_factory_automation_admission_control", {
+    p_workspace_id: scope.workspaceId,
+    p_factory_id: scope.factoryId,
+    p_automation_id: scope.automationId,
+  });
+  if (error) throw error;
+  return data === null ? null : automationAdmissionControlSchema.parse(data);
+}
+
+export async function configureAutomationAdmission(
+  client: Client,
+  scope: AutomationScope & ActorScope,
+  command: AutomationAdmissionControlCommand,
+) {
+  const { data, error } = await client.rpc("configure_factory_automation_admission", {
+    p_workspace_id: scope.workspaceId,
+    p_factory_id: scope.factoryId,
+    p_actor_user_id: scope.actorUserId,
+    p_automation_id: scope.automationId,
+    p_expected_generation: command.expectedGeneration,
+    p_paused: command.paused,
+    p_max_concurrent_sessions: command.maxConcurrentSessions,
+  });
+  if (error) throw error;
+  return automationAdmissionControlSchema.parse(data);
 }
 
 export async function createFactoryAutomation(

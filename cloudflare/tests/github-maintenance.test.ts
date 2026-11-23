@@ -102,6 +102,7 @@ it.each([
   { scenario: "benchmark scheduling fails", benchmarkFailure: true },
   { scenario: "a judge dispatch fails", judgeFailure: true },
   { scenario: "a workflow sandbox stop fails", sandboxStopFailure: true },
+  { scenario: "automation occurrence admission fails", automationFailure: true },
 ])(
   "runs independent maintenance when $scenario",
   async ({
@@ -119,6 +120,7 @@ it.each([
     benchmarkFailure,
     judgeFailure,
     sandboxStopFailure,
+    automationFailure,
   }) => {
     const bindings = env as unknown as Env;
     const id = `maintenance-${crypto.randomUUID()}`;
@@ -191,6 +193,16 @@ it.each([
               canaryAlertFailure
                 ? { data: null, error: { message: "Routing alert evaluation unavailable" } }
                 : { data: { evaluated: 2, created: 1 }, error: null },
+            ),
+        };
+      }
+      if (name === "admit_next_factory_automation_occurrence") {
+        return {
+          abortSignal: () =>
+            Promise.resolve(
+              automationFailure
+                ? { data: null, error: { message: "Automation admission unavailable" } }
+                : { data: null, error: null },
             ),
         };
       }
@@ -308,6 +320,7 @@ it.each([
         p_limit: 8,
       });
       expect(rpc).toHaveBeenNthCalledWith(8, "prune_factory_analytics_exports", { p_limit: 100 });
+      expect(rpc).toHaveBeenNthCalledWith(9, "admit_next_factory_automation_occurrence");
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );

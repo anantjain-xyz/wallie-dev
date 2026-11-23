@@ -57,3 +57,28 @@ In workspace **Settings → Integrations**, choose **Preview automations**. Sele
 An empty filter list accepts every value for that field. The same revision and normalized event return the same filter decisions. The assignment check reads current factory authority and can change after a grant or credential is revoked. A preview returns both results without creating work or contacting an event provider.
 
 Send `POST /{automationId}/dry-run` with `revisionId` and `event` to preview through the API. The revision ID in the response identifies the exact stored rule that the request evaluated.
+
+## Occurrence admission
+
+Within a factory rule, the source namespace and source key identify one occurrence across revisions. The first receipt pins the event and revision. A replay of that event returns the original receipt, including any session already linked to it.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Pending: Record occurrence
+  Pending --> Pending: Paused, at capacity, or retry delayed
+  Pending --> Admitted: Commit session and receipt together
+  Pending --> Denied: Record a terminal reason
+```
+
+| Guard             | Admission behavior                                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Current rule      | Claim the exact published revision and apply its event filters.                                                           |
+| Current authority | Recheck the grant, credential binding, budget payer, and execution policy before creating the root session.               |
+| Capacity          | Count active sessions for the rule while holding its lock. The default is one active session.                             |
+| Pause             | Park pending occurrences until the rule is eligible again. Keep prior receipts available.                                 |
+| Recursion         | Reject causal work that would start another automatic chain from an automation-owned session.                             |
+| Transient failure | Preserve the occurrence key across up to five attempts. Retry delays start at five seconds and double after each failure. |
+
+An approved root still occupies a slot while its workflow has pending nodes, dispatches, or repository delivery.
+
+Factory managers can read `GET /{automationId}/admission-control` and send `POST` to the same path with `expectedGeneration`, `paused`, and `maxConcurrentSessions`. A stale generation returns a conflict. The occurrence worker and control change use the same rule lock.
