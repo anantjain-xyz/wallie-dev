@@ -1,0 +1,31 @@
+-- Synthetic downstream receipt to exercise recursion without a second GitHub dispatch.
+\getenv live_command WALLIE_M12_LIVE_COMMAND
+\getenv recursive_command WALLIE_M12_RECURSIVE_COMMAND
+\getenv incident_session WALLIE_M12_INCIDENT_SESSION
+begin;
+insert into internal.factory_delivery_commands (
+  workspace_id, factory_id, id, session_id, repository_id, checkpoint_run_id, approval_id, policy_revision_id,
+  artifact_review_revision, merge_id, merge_observation_id, approved_head_sha, source_sha,
+  deployment_source_id, provider, provider_project_id, environment, requested_by_member_id,
+  dispatch_state, outcome, dispatch_started_at
+)
+select command.workspace_id, command.factory_id, :'recursive_command'::uuid,
+  incident.session_id, command.repository_id, command.checkpoint_run_id, command.approval_id,
+  command.policy_revision_id, command.artifact_review_revision, command.merge_id, command.merge_observation_id,
+  command.approved_head_sha, command.source_sha, command.deployment_source_id, command.provider,
+  command.provider_project_id, command.environment, command.requested_by_member_id,
+  'accepted', 'pending', command.dispatch_started_at
+from internal.factory_delivery_commands command
+join internal.factory_monitoring_incidents incident on
+  (incident.workspace_id, incident.factory_id, incident.delivery_command_id) = (command.workspace_id, command.factory_id, command.id)
+where command.id = :'live_command'::uuid and command.outcome = 'succeeded'
+  and incident.session_id = :'incident_session'::uuid and incident.status = 'admitted';
+insert into internal.factory_actions_delivery_requests (
+  workspace_id, factory_id, command_id, installation_row_id, installation_id,
+  repository_numeric_id, repository_full_name, workflow_id, workflow_path, tag, inputs, reason, next_check_at
+)
+select workspace_id, factory_id, :'recursive_command'::uuid, installation_row_id, installation_id,
+  repository_numeric_id, repository_full_name, workflow_id, workflow_path, tag, inputs,
+  'observation_expired', 'infinity'
+from internal.factory_actions_delivery_requests where command_id = :'live_command'::uuid;
+commit;

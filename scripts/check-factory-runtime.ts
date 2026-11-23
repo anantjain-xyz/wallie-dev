@@ -1,7 +1,7 @@
 /** Run both real worker entry points against a disposable local database. */
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -65,13 +65,14 @@ async function runFactoryRuntime() {
     const m07 = extra.length === 1 && extra[0] === "--m07";
     const m08 = extra.length === 1 && extra[0] === "--m08";
     const m11 = extra.length === 1 && extra[0] === "--m11";
+    const m12 = extra.length === 1 && extra[0] === "--m12";
     if (
       flag !== "--workdir" ||
       !directory ||
-      (extra.length > 0 && !m05 && !m06 && !m07 && !m08 && !m11)
+      (extra.length > 0 && !m05 && !m06 && !m07 && !m08 && !m11 && !m12)
     ) {
       throw new FixtureConfigurationError(
-        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, --m07, --m08, or --m11.",
+        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, --m07, --m08, --m11, or --m12.",
       );
     }
     const status = JSON.parse(
@@ -117,7 +118,7 @@ async function runFactoryRuntime() {
 
     const fixture = { url, serviceKey, publishableKey };
     const env: NodeJS.ProcessEnv = {
-      ...(m07 || m08 || m11
+      ...(m07 || m08 || m11 || m12
         ? {
             NODE_ENV: "test",
             PATH: process.env.PATH,
@@ -149,16 +150,34 @@ async function runFactoryRuntime() {
         "The disposable database's local JWT secret is unavailable.",
       );
     }
-    if (m05 || m07 || m08) {
+    if (
+      m12 &&
+      [".env", ".env.local", ".env.production", ".env.production.local"].some((file) =>
+        existsSync(resolve(file)),
+      )
+    ) {
+      throw new FixtureConfigurationError(
+        "Run M12 qualification in a worktree without local application credentials.",
+      );
+    }
+    if (m05 || m07 || m08 || m12) {
       const port = await loopbackPort();
       const host = m08 ? "localhost" : "127.0.0.1";
       const appUrl = `http://${host}:${port}`;
       const next = resolve("node_modules/next/dist/bin/next");
-      if (m07 || m08) env.NEXT_PUBLIC_APP_URL = appUrl;
+      if (m07 || m08 || m12) env.NEXT_PUBLIC_APP_URL = appUrl;
+      if (m12) {
+        env.GITHUB_APP_ID = "1";
+        env.GITHUB_APP_PRIVATE_KEY = "fixture-no-github-app-private-key";
+        env.GITHUB_WEBHOOK_SECRET = randomBytes(32).toString("hex");
+      }
       const appEnv: NodeJS.ProcessEnv = {
         ...env,
         NEXT_PUBLIC_APP_URL: appUrl,
         NODE_ENV: "production",
+        ...(m12 && {
+          NODE_OPTIONS: "--import ./test/release/factory-automation-runtime-fetch.mjs",
+        }),
         ...(m08
           ? {
               WALLIE_WORKER_WAKE_URL: "",
@@ -197,6 +216,37 @@ async function runFactoryRuntime() {
           process.env.WALLIE_FACTORY_MEDIA_PROOF_DIR ?? ".wallie/m05-qualification",
         );
       }
+    }
+
+    if (m12) {
+      const runtime = spawn(
+        process.execPath,
+        [
+          "--import",
+          "./scripts/register-server-only.mjs",
+          "--import",
+          "tsx",
+          "test/release/factory-automation-runtime.ts",
+        ],
+        {
+          env: { ...env, WALLIE_M12_DATABASE_URL: databaseUrl },
+          stdio: "inherit",
+          timeout: 720_000,
+        },
+      );
+      const stopRuntime = () => runtime.kill("SIGTERM");
+      process.once("SIGINT", stopRuntime);
+      process.once("SIGTERM", stopRuntime);
+      try {
+        process.exitCode = await new Promise<number>((finished, failed) => {
+          runtime.once("error", failed);
+          runtime.once("exit", (code) => finished(code ?? 1));
+        });
+      } finally {
+        process.off("SIGINT", stopRuntime);
+        process.off("SIGTERM", stopRuntime);
+      }
+      return;
     }
 
     if (m08) {

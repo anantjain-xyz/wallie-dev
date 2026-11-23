@@ -1,0 +1,174 @@
+-- Install one schedule-driven guarded delivery in an exclusive local fixture database.
+\getenv live_tag WALLIE_M12_TAG
+\getenv live_sha WALLIE_M12_SOURCE_SHA
+\getenv live_token_id WALLIE_M12_REPORTER_ID
+\getenv live_token_digest WALLIE_M12_REPORTER_DIGEST
+\getenv live_secret_ciphertext WALLIE_M12_SENTRY_CIPHERTEXT
+
+begin;
+\set op651_fixture_namespace 66820000
+\ir ../../supabase/tests/fixtures/factory_automation_dry_run.psql
+\ir ../../supabase/tests/fixtures/factory_workflow_checkpoint_evidence.psql
+
+select public.set_git_continuity_release(true, revision, 'Isolated M12 release fixture')
+from public.get_git_continuity_release_state() where not enabled;
+
+update public.github_repositories
+set repo_id = 1196742316, name = 'wallie-dev', full_name = 'anantjain-xyz/wallie-dev',
+  html_url = 'https://github.com/anantjain-xyz/wallie-dev'
+where id = pg_temp.op651_id(34);
+insert into public.user_codex_credentials(user_id, credential_type, encrypted_credential)
+values (pg_temp.op651_id(1), 'platform_api_key', 'm12-fixture-unusable-ciphertext');
+
+create temp table live_policy as
+select policy.* from public.save_delivery_policy(pg_temp.op651_id(11), pg_temp.op651_id(31), pg_temp.op651_id(1),
+  0, '{"version":1,"deliveryMode":"code","requiredChecks":[],"minimumApprovals":0,
+  "requireCodeOwnerReview":false,"requireResolvedThreads":false,"requiredEvidence":[],
+  "freshnessSeconds":300,"requireArtifactApprovalForDelivery":true}') policy;
+with body as (
+  select base.workspace_id, base.factory_id, base.created_by,
+    jsonb_set(base.definition_json::jsonb, '{deliveryPolicyRevisionId}', to_jsonb(policy.id))::text as value
+  from public.factory_definition_revisions base cross join live_policy policy
+  where base.id = pg_temp.op651_id(43)
+), added as (
+  insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version, definition_json, canonical_digest, created_by)
+  select pg_temp.op651_id(230), workspace_id, factory_id, 1, value, encode(sha256(convert_to(value, 'UTF8')), 'hex'), created_by
+  from body returning *
+)
+insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
+select workspace_id, factory_id, id, 6, created_by from added;
+
+create temp table live_rule as
+select scope.*, (draft.value->>'automationId')::uuid as automation_id,
+  (draft.value->>'draftRevisionId')::uuid as revision_id
+from op651_scope scope
+cross join lateral (select pg_temp.create_dry_run_automation(101,
+  jsonb_set(
+    jsonb_set(pg_temp.dry_run_definition('schedule'), '{trigger}', '{"kind":"schedule","cron":"* * * * *","timeZone":"UTC"}'),
+    '{target,definitionRevisionId}', to_jsonb(pg_temp.op651_id(230))
+  )) as value) draft;
+select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, revision_id)
+from live_rule;
+update internal.factory_automation_schedule_cursors
+set activated_at = date_trunc('minute', clock_timestamp()) - interval '2 minutes',
+  scanned_through = date_trunc('minute', clock_timestamp()) - interval '2 minutes',
+  recheck_at = clock_timestamp() - interval '1 minute'
+where automation_id = (select automation_id from live_rule);
+create temp table live_schedule as
+select candidate from jsonb_array_elements(public.list_due_factory_automation_schedules()) candidate
+where candidate->>'automationId' = (select automation_id::text from live_rule);
+select public.commit_factory_automation_schedule(rule.workspace_id, rule.factory_id, rule.automation_id, rule.revision_id,
+  (candidate->>'cursorVersion')::bigint, (candidate->>'admissionGeneration')::bigint,
+  jsonb_build_object('through', candidate->>'through',
+    'occurrenceAt', date_trunc('minute', (candidate->>'through')::timestamptz),
+    'nextDueAt', date_trunc('minute', (candidate->>'through')::timestamptz) + interval '1 minute'))
+from live_rule rule cross join live_schedule;
+create temp table live_admission as select public.admit_next_factory_automation_occurrence() as outcome;
+do $$ begin
+  if (select outcome->>'status' from live_admission) is distinct from 'admitted' then
+    raise exception 'The real scheduled occurrence was not admitted: %', (select outcome from live_admission);
+  end if;
+end $$;
+select public.configure_factory_automation_admission(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, 0, true, 1)
+from live_rule;
+
+create temp table delivery_checkpoint as
+select session.id as session_id, job.id as job_id, null::uuid as run_id
+from live_admission admission join public.sessions session on session.id = (admission.outcome->>'sessionId')::uuid
+join public.agent_jobs job on job.session_id = session.id;
+update public.agent_jobs job set status = 'running', attempt_count = 1,
+  git_continuity_release_revision = (select revision from public.get_git_continuity_release_state())
+from delivery_checkpoint checkpoint where job.id = checkpoint.job_id;
+update delivery_checkpoint checkpoint
+set run_id = pg_temp.adopt_branch_code(checkpoint.session_id, checkpoint.job_id, repeat('b', 40));
+
+create function pg_temp.publish_reviewed_fixture(p_session_id uuid, p_merge_sha text) returns void
+language plpgsql as $$
+declare
+  operation public.session_pr_operations;
+  token uuid := public.claim_session_pr_sync(p_session_id);
+  url text := 'https://github.com/anantjain-xyz/wallie-dev/pull/668';
+  observation uuid;
+  refresh jsonb;
+  github public.session_pr_verification_observations;
+  readiness public.session_pr_verification_observations;
+  merged boolean;
+begin
+  select * into strict operation from public.session_pr_operations where claim_id = token;
+  if not public.arm_session_pr_creation(operation.epoch_id, operation.id, token) then
+    raise exception 'The fixture PR could not be armed.';
+  end if;
+  observation := public.begin_session_pr_sync_observation(operation.id, token, 668, url);
+  if not public.finish_session_pr_sync(operation.id, token, operation.desired_sha, operation.desired_fence_sha,
+    668, url, 'open', false, operation.desired_sha, clock_timestamp(), observation) then
+    raise exception 'The fixture PR could not be observed open.';
+  end if;
+  if not public.enqueue_session_pr_refresh(operation.workspace_id, p_session_id) then
+    raise exception 'The fixture PR refresh was not queued.';
+  end if;
+  refresh := public.claim_github_pr_refresh(operation.workspace_id);
+  if not public.finish_github_pr_refresh(p_session_id, (refresh->>'claim_token')::uuid, repeat('b', 40), repeat('a', 40),
+    jsonb_build_object('version', 1, 'githubAccess', 'available', 'checks', 'passed', 'reviews', 'passed',
+      'threads', 'passed', 'mergeability', 'passed', 'protection', 'verified', 'blockers', '[]'::jsonb,
+      'pr', jsonb_build_object('number', 668, 'state', 'open', 'draft', false, 'headSha', repeat('b', 40),
+        'baseSha', repeat('a', 40), 'updatedAt', clock_timestamp()))) then
+    raise exception 'The fixture PR verification was not observed.';
+  end if;
+  select observed.* into strict github from public.session_pr_refresh_queue queue
+  join public.session_pr_verification_observations observed on observed.id = queue.last_observation_id
+  where queue.session_id = p_session_id;
+  readiness := public.record_pr_verification_observation(github.workspace_id, github.session_id,
+    github.policy_revision_id, github.repository_id, github.repository_full_name, github.pr_epoch_id,
+    github.pr_number, github.head_sha, github.base_sha, github.checkpoint_run_id, github.artifact_review_revision,
+    'readiness', jsonb_build_object('githubAccess', 'available', 'checks', 'passed', 'reviews', 'passed',
+      'evidence', 'passed', 'threads', 'passed', 'sourceObservationId', github.id), clock_timestamp());
+  perform public.record_pr_verification_result(readiness.id, 'ready', '[]');
+  if pg_temp.approve_branch(p_session_id) is distinct from p_session_id then
+    raise exception 'The human approval did not retain the fixture checkpoint.';
+  end if;
+  select public.finish_session_pr_observation_with_merge(
+    public.begin_session_pr_observation(operation.workspace_id, pg_temp.op651_id(34), epoch.branch_name, 668),
+    url, 'merged', false, repeat('b', 40), clock_timestamp(), clock_timestamp() - interval '1 millisecond',
+    p_merge_sha, repeat('b', 40)) into merged
+  from public.session_pr_epochs epoch where epoch.id = operation.epoch_id;
+  if merged is distinct from true then raise exception 'The fixture merge could not be recorded.'; end if;
+end;
+$$;
+select pg_temp.publish_reviewed_fixture(session_id, :'live_sha') from delivery_checkpoint;
+
+create temp table live_grant as
+select approved.* from op651_grant existing
+cross join lateral public.approve_factory_execution_grant(existing.workspace_id, existing.factory_id,
+  pg_temp.op651_id(1), existing.service_principal_id, existing.github_repository_id, '{}', '{}',
+  existing.execution_policy_revision_id, existing.budget_payer_member_id, clock_timestamp() + interval '30 minutes',
+  0, null, '{deployments:observe}') approved;
+select public.issue_factory_machine_token(workspace_id, factory_id, pg_temp.op651_id(1), id, version,
+  :'live_token_id'::uuid, :'live_token_digest', 'M12 fixture reporter', '{deployments:observe}') from live_grant;
+create temp table live_source as
+select (public.approve_factory_deployment_source(workspace_id, factory_id, pg_temp.op651_id(1), id, version,
+  'github-actions', '428339459', 'wallie-m12-fixture', true)->>'sourceId')::uuid as source_id
+from live_grant;
+select public.approve_factory_monitoring_binding(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  pg_temp.op651_id(271), source.source_id, pg_temp.op651_id(272), '98765', :'live_secret_ciphertext', 3600)
+from op651_scope scope cross join live_source source;
+
+create temp table live_command as
+select public.prepare_factory_actions_delivery_command(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  pg_temp.op651_id(273), (candidate->>'sessionId')::uuid, (candidate->>'checkpointRunId')::uuid,
+  (candidate->>'approvalId')::uuid, (candidate->>'policyRevisionId')::uuid, (candidate->>'mergeObservationId')::uuid,
+  source.source_id, 428339459, '.github/workflows/wallie-delivery-fixture.yml', :'live_tag', '{}'::jsonb) as command
+from op651_scope scope cross join delivery_checkpoint checkpoint cross join live_source source
+cross join lateral public.read_factory_delivery_command_candidate(scope.workspace_id, scope.factory_id,
+  pg_temp.op651_id(1), checkpoint.session_id, source.source_id) candidate;
+
+select json_build_object(
+  'workspaceId', scope.workspace_id, 'factoryId', scope.factory_id, 'ownerId', pg_temp.op651_id(1),
+  'bindingId', pg_temp.op651_id(271), 'installationId', pg_temp.op651_id(272),
+  'projectId', 98765, 'sourceId', source.source_id,
+  'commandId', command->>'id', 'sourceSessionId', command->>'sessionId',
+  'sourceRevision', command->>'sourceRevision', 'approvedHead', command->>'approvedHeadSha', 'approvalId', command->>'approvalId',
+  'occurrenceId', occurrence.id, 'automationMutationReceiptId', occurrence.mutation_receipt_id
+)
+from live_command cross join op651_scope scope cross join live_source source
+join internal.factory_automation_occurrences occurrence on occurrence.session_id::text = command->>'sessionId';
+commit;

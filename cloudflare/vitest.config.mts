@@ -5,13 +5,17 @@ import { cloudflareTest } from "@cloudflare/vitest-plugin";
 const nativeHistoryFixture = process.env.WALLIE_NATIVE_HISTORY_FIXTURE;
 const factoryRuntimeFixture = process.env.WALLIE_FACTORY_RUNTIME_FIXTURE;
 const factoryOutcomeFixture = process.env.WALLIE_FACTORY_OUTCOME_RUNTIME_FIXTURE;
+const factoryAutomationFixture = process.env.WALLIE_FACTORY_AUTOMATION_RUNTIME_FIXTURE;
 
 export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
       remoteBindings: false,
-      ...(nativeHistoryFixture || factoryRuntimeFixture || factoryOutcomeFixture
+      ...(nativeHistoryFixture ||
+      factoryRuntimeFixture ||
+      factoryOutcomeFixture ||
+      factoryAutomationFixture
         ? {
             miniflare: {
               bindings: {
@@ -24,7 +28,12 @@ export default defineConfig({
                 ...(factoryOutcomeFixture && {
                   WALLIE_FACTORY_OUTCOME_RUNTIME_FIXTURE: factoryOutcomeFixture,
                 }),
-                ...((factoryRuntimeFixture || factoryOutcomeFixture) && {
+                ...(factoryAutomationFixture && {
+                  WALLIE_FACTORY_AUTOMATION_RUNTIME_FIXTURE: factoryAutomationFixture,
+                }),
+                ...((factoryRuntimeFixture ||
+                  factoryOutcomeFixture ||
+                  factoryAutomationFixture) && {
                   WALLIE_ENCRYPTION_KEY: process.env.WALLIE_ENCRYPTION_KEY,
                   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
                   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
