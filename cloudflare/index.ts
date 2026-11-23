@@ -109,6 +109,12 @@ export class Dispatcher extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(Date.now() + 60_000);
     const config = cloudflareEnvSchema.parse(this.env);
     const admin = createSupabaseAdminClient();
+    const maintenance =
+      config.WALLIE_WORKER_DISPATCH_ENABLED === "true"
+        ? this.maintain().catch(() => {
+            console.error("[cloudflare-dispatch] maintenance failed; recovery alarm armed");
+          })
+        : undefined;
     try {
       const result = await dispatchWork(
         admin,
@@ -120,10 +126,10 @@ export class Dispatcher extends DurableObject<Env> {
         },
       );
       if (result.delivered || result.failed) console.log("[cloudflare-dispatch] batch", result);
-      if (config.WALLIE_WORKER_DISPATCH_ENABLED === "true") await this.maintain();
     } catch {
       console.error("[cloudflare-dispatch] batch failed; recovery alarm armed");
     }
+    await maintenance;
     const active = await admin
       .from("agent_jobs")
       .select("id")

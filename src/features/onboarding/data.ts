@@ -395,25 +395,6 @@ type OnboardingSnapshotRpcName =
   | "load_workspace_onboarding_sandbox_checks"
   | "load_workspace_onboarding_secret_previews";
 
-type OnboardingSnapshotRpcResult = PromiseLike<{
-  data: Json | null;
-  error: unknown;
-}>;
-
-function loadOnboardingSnapshotRows(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  functionName: OnboardingSnapshotRpcName,
-  workspaceId: string,
-) {
-  // These forward-migration RPCs are intentionally not hand-added to generated database.types.ts.
-  const rpc = admin.rpc.bind(admin) as unknown as (
-    name: OnboardingSnapshotRpcName,
-    args: { target_workspace_id: string },
-  ) => OnboardingSnapshotRpcResult;
-
-  return rpc(functionName, { target_workspace_id: workspaceId });
-}
-
 function snapshotRows<T>(value: Json | null, source: OnboardingSnapshotRpcName): T[] {
   if (!Array.isArray(value)) {
     throw new Error(`Onboarding snapshot RPC ${source} returned a non-array payload.`);
@@ -555,7 +536,9 @@ function createOnboardingSnapshot(
       pipelinePromise,
       stagePromise,
       timing.segment("snapshot.secrets", () =>
-        loadOnboardingSnapshotRows(admin, "load_workspace_onboarding_secret_previews", workspaceId),
+        admin.rpc("load_workspace_onboarding_secret_previews", {
+          target_workspace_id: workspaceId,
+        }),
       ),
       timing.segment("snapshot.routing", () =>
         admin
@@ -616,7 +599,7 @@ function createOnboardingSnapshot(
         ]),
       ),
       timing.segment("snapshot.sandbox", () =>
-        loadOnboardingSnapshotRows(admin, "load_workspace_onboarding_sandbox_checks", workspaceId),
+        admin.rpc("load_workspace_onboarding_sandbox_checks", { target_workspace_id: workspaceId }),
       ),
       timing.segment("snapshot.sandbox-settings", () =>
         loadWorkspaceSandboxOverview(admin, workspaceId),

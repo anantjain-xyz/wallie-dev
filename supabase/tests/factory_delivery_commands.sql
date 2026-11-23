@@ -45,7 +45,7 @@ select public.issue_factory_machine_token(workspace_id, factory_id, pg_temp.op65
   pg_temp.op651_id(231), repeat('a', 64), 'Delivery observation fixture', '{deployments:observe}') from delivery_grant;
 create temp table delivery_sources as
 select environment.name, (source.payload->>'sourceId')::uuid as source_id
-from delivery_grant grant_row cross join (values ('timeout'), ('cancelled'), ('stale'), ('accepted')) environment(name)
+from delivery_grant grant_row cross join (values ('timeout'), ('cancelled'), ('stale'), ('accepted'), ('lease')) environment(name)
 cross join lateral (
   select public.approve_factory_deployment_source(grant_row.workspace_id, grant_row.factory_id, pg_temp.op651_id(1),
     grant_row.id, grant_row.version, 'fixture-ci', 'wallie-delivery-fixture', environment.name, true) as payload
@@ -197,7 +197,8 @@ select is(pg_temp.delivery_settle(250, (packet->>'leaseId')::uuid, 'accepted'), 
   'an expired worker reply cannot settle the dispatch') from delivery_lease;
 
 create function pg_temp.delivery_report(p_request integer, p_slot integer, p_revision integer,
-  p_environment text, p_outcome text, p_sha text) returns jsonb language plpgsql as $$
+  p_environment text, p_outcome text, p_sha text, p_provider_time timestamptz default clock_timestamp())
+returns jsonb language plpgsql as $$
 declare
   permit record;
   source uuid;
@@ -212,7 +213,7 @@ begin
   receipt := public.execute_factory_deployment_observation(pg_temp.op651_id(11), factory, 'machine_token',
     pg_temp.op651_id(231), repeat('a', 64), pg_temp.op651_id(p_request), repeat('b', 64), 'api',
     permit.admission_id, permit.lease_id, source, p_environment, pg_temp.op651_id(p_slot)::text, p_revision,
-    p_outcome, p_sha, clock_timestamp());
+    p_outcome, p_sha, p_provider_time);
   perform public.release_factory_command_admission(permit.admission_id, permit.lease_id);
   return receipt;
 end;
@@ -239,7 +240,12 @@ set source_id = (public.approve_factory_deployment_source(grant_row.workspace_id
   pg_temp.op651_id(1), grant_row.id, grant_row.version, 'fixture-ci', 'wallie-delivery-fixture', source.name,
   true)->>'sourceId')::uuid
 from delivery_grant grant_row where source.name = 'timeout';
-select pg_temp.delivery_report(266, 250, 6, 'timeout', 'succeeded', repeat('c', 40));
+select throws_ok($$select pg_temp.delivery_prepare(258, 'timeout')$$,
+  'PT409', null, 'reporter rotation cannot dispatch the same source and stable target while it is unknown');
+select pg_temp.delivery_report(266, 250, 6, 'timeout', 'succeeded', repeat('c', 40), clock_timestamp() - interval '1 hour');
+select is(pg_temp.delivery_state(250)->>'outcome', 'unknown',
+  'a delayed report whose authoritative provider time predates dispatch cannot prove success');
+select pg_temp.delivery_report(267, 250, 7, 'timeout', 'succeeded', repeat('c', 40));
 select is(pg_temp.delivery_state(250)->>'outcome', 'succeeded',
   'rotation of the authorized reporter preserves the original M06 deployment identity');
 
@@ -260,6 +266,7 @@ select ok(not has_table_privilege('authenticated', 'internal.factory_delivery_co
 -- Independent connections see the same committed, scoped test commands.
 select pg_temp.delivery_prepare(256, 'stale');
 select pg_temp.delivery_prepare(257, 'accepted');
+select pg_temp.delivery_prepare(259, 'lease');
 select public.set_git_continuity_release(false, gate.revision, 'Restore release gate after guarded delivery setup')
 from public.get_git_continuity_release_state() gate cross join delivery_release_before prior
 where gate.enabled and not prior.enabled;
@@ -299,6 +306,24 @@ select extensions.dblink_exec('op665_manager', 'commit');
 select ok(skipped, 'the competing worker receives no lease after the cancellation commits')
 from extensions.dblink_get_result('op665_worker') result(skipped boolean);
 select count(*) from extensions.dblink_get_result('op665_worker') result(skipped boolean);
+
+select extensions.dblink_exec('op665_manager', 'begin');
+select state from op651_scope scope cross join lateral extensions.dblink('op665_manager', format(
+  'select public.cancel_factory_delivery_command(%L,%L,%L,%L)->>''dispatchState''',
+  scope.workspace_id, scope.factory_id, pg_temp.op651_id(1), pg_temp.op651_id(259))) result(state text);
+select extensions.dblink_send_query('op665_worker', format(
+  'select public.claim_factory_delivery_command(%L,%L,%L,''fixture-ci'')',
+  workspace_id, factory_id, pg_temp.op651_id(259)))
+from op651_scope;
+select ok(pg_temp.delivery_wait_for_lock(pid), 'the worker waits for a second cancellation to settle')
+from delivery_worker_backend;
+create temp table delivery_rollback_marker as select clock_timestamp() as captured_at;
+select extensions.dblink_exec('op665_manager', 'rollback');
+select ok((packet->>'dispatchStartedAt')::timestamptz >= captured_at
+  and (packet->>'leaseExpiresAt')::timestamptz - (packet->>'dispatchStartedAt')::timestamptz = interval '60 seconds',
+  'a rolled-back cancellation leaves the worker the full lease from lock acquisition')
+from extensions.dblink_get_result('op665_worker') result(packet jsonb) cross join delivery_rollback_marker;
+select count(*) from extensions.dblink_get_result('op665_worker') result(packet jsonb);
 
 select extensions.dblink_exec('op665_manager', 'begin');
 select locked from extensions.dblink('op665_manager', format(

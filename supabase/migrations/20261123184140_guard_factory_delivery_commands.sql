@@ -15,6 +15,9 @@ create table internal.factory_delivery_commands (
   approved_head_sha text not null,
   source_sha text not null,
   deployment_source_id uuid not null,
+  provider text not null,
+  provider_project_id text not null,
+  environment text not null,
   requested_by_member_id uuid not null,
   requested_at timestamptz not null default clock_timestamp(),
   dispatch_state text not null default 'queued' check (dispatch_state in (
@@ -36,7 +39,9 @@ create table internal.factory_delivery_commands (
   check ((deployment_observation_id is null) = (deployment_observation_revision is null))
 );
 create unique index factory_delivery_commands_one_dispatch_idx
-  on internal.factory_delivery_commands (workspace_id, factory_id, session_id, deployment_source_id, source_sha)
+  on internal.factory_delivery_commands (
+    workspace_id, factory_id, session_id, repository_id, provider, provider_project_id, environment, source_sha
+  )
   where dispatch_state not in ('blocked', 'cancelled', 'rejected');
 create index factory_delivery_commands_expiring_idx
   on internal.factory_delivery_commands (lease_expires_at) where dispatch_state = 'dispatching';
@@ -210,6 +215,9 @@ begin
   binding.approved_head_sha := checkpoint.output_sha;
   binding.source_sha := merged.merge_commit_sha;
   binding.deployment_source_id := source.id;
+  binding.provider := source.provider;
+  binding.provider_project_id := source.provider_project_id;
+  binding.environment := source.environment;
   return binding;
 end;
 $$;
@@ -238,12 +246,12 @@ begin
     insert into internal.factory_delivery_commands (
       workspace_id, factory_id, id, session_id, repository_id, checkpoint_run_id, approval_id, policy_revision_id,
       artifact_review_revision, merge_id, merge_observation_id, approved_head_sha, source_sha, deployment_source_id,
-      requested_by_member_id
+      provider, provider_project_id, environment, requested_by_member_id
     ) values (
       p_workspace_id, p_factory_id, p_command_id, binding.session_id, binding.repository_id,
       binding.checkpoint_run_id, binding.approval_id, binding.policy_revision_id, binding.artifact_review_revision,
       binding.merge_id, binding.merge_observation_id, binding.approved_head_sha, binding.source_sha,
-      binding.deployment_source_id, actor
+      binding.deployment_source_id, binding.provider, binding.provider_project_id, binding.environment, actor
     ) on conflict (workspace_id, factory_id, id) do nothing returning * into command;
     if not found then
       select * into strict command from internal.factory_delivery_commands
@@ -340,12 +348,10 @@ create function public.claim_factory_delivery_command(
 declare
   command internal.factory_delivery_commands;
   binding internal.factory_delivery_commands;
-  source internal.factory_deployment_sources;
   started_at timestamptz;
 begin
   select target.* into command from internal.factory_delivery_commands target
-  join internal.factory_deployment_sources settings on settings.id = target.deployment_source_id
-  where (target.workspace_id, target.factory_id, target.id, settings.provider) =
+  where (target.workspace_id, target.factory_id, target.id, target.provider) =
     (p_workspace_id, p_factory_id, p_command_id, p_provider)
     and target.dispatch_state = 'queued';
   if not found then return null; end if;
@@ -359,20 +365,31 @@ begin
       where (workspace_id, factory_id, id, dispatch_state) = (p_workspace_id, p_factory_id, p_command_id, 'queued');
     return null;
   end;
-  if binding.artifact_review_revision is distinct from command.artifact_review_revision then
+  -- Cancellation owns the same command row. Start the provider lease after
+  -- the lock is acquired, even when a competing cancellation rolls back.
+  select target.* into command from internal.factory_delivery_commands target
+  where (target.workspace_id, target.factory_id, target.id, target.dispatch_state) =
+    (p_workspace_id, p_factory_id, p_command_id, 'queued')
+  for update;
+  if not found then return null; end if;
+  started_at := clock_timestamp();
+  if binding.artifact_review_revision is distinct from command.artifact_review_revision
+    or not exists (
+      select 1 from internal.factory_deployment_sources source
+      join public.factory_execution_grants reporter on reporter.id = source.execution_grant_id
+      where source.id = command.deployment_source_id and reporter.expires_at > started_at
+    ) then
     update internal.factory_delivery_commands set dispatch_state = 'blocked'
       where (workspace_id, factory_id, id, dispatch_state) = (p_workspace_id, p_factory_id, p_command_id, 'queued');
     return null;
   end if;
-  select * into strict source from internal.factory_deployment_sources where id = command.deployment_source_id;
-  started_at := clock_timestamp();
   update internal.factory_delivery_commands set dispatch_state = 'dispatching', lease_id = gen_random_uuid(),
     dispatch_started_at = started_at, lease_expires_at = started_at + interval '60 seconds'
     where (workspace_id, factory_id, id, dispatch_state) = (p_workspace_id, p_factory_id, p_command_id, 'queued')
     returning * into command;
   if not found then return null; end if;
   return internal.factory_delivery_command_summary(command) || jsonb_build_object(
-    'provider', source.provider, 'providerProjectId', source.provider_project_id, 'environment', source.environment,
+    'provider', command.provider, 'providerProjectId', command.provider_project_id, 'environment', command.environment,
     'externalDeploymentId', command.id::text, 'leaseId', command.lease_id, 'leaseExpiresAt', command.lease_expires_at
   );
 end;
@@ -418,16 +435,19 @@ create function internal.correlate_factory_delivery_observation()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
   update internal.factory_delivery_commands command
-    set dispatch_state = case when new.source_sha = command.source_sha then 'accepted' else 'unknown' end,
-      outcome = case when new.source_sha = command.source_sha then new.outcome else 'unknown' end,
+    set dispatch_state = case when new.source_sha = command.source_sha
+      and coalesce(new.authoritative_occurred_at, new.observed_at) >= command.dispatch_started_at
+      then 'accepted' else 'unknown' end,
+      outcome = case when new.source_sha = command.source_sha
+        and coalesce(new.authoritative_occurred_at, new.observed_at) >= command.dispatch_started_at
+        then new.outcome else 'unknown' end,
       lease_id = null, lease_expires_at = null, deployment_observation_id = new.id,
       deployment_observation_revision = new.revision
-    from internal.factory_deployments identity, internal.factory_deployment_sources configured
+    from internal.factory_deployments identity
     where identity.id = new.deployment_id
-      and configured.id = command.deployment_source_id
       and (command.workspace_id, command.factory_id, command.repository_id, command.id::text) =
         (identity.workspace_id, identity.factory_id, identity.repository_id, identity.external_deployment_id)
-      and (configured.provider, configured.provider_project_id, configured.environment) =
+      and (command.provider, command.provider_project_id, command.environment) =
         (identity.provider, identity.provider_project_id, identity.environment)
       and command.dispatch_state in ('dispatching', 'accepted', 'unknown')
       and new.observed_at >= command.dispatch_started_at
