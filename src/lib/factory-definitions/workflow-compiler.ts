@@ -64,10 +64,11 @@ export function compileWorkflowGraph(
   ];
   if (diagnostics.length) return { ok: false, diagnostics };
 
-  const { routePolicy, ...graphWithoutPolicy } = graph;
+  const { routePolicy, delegationPolicy, ...graphWithoutPolicies } = graph;
   const bundle = {
-    ...graphWithoutPolicy,
+    ...graphWithoutPolicies,
     ...(routePolicy ? { routePolicy: canonicalRoutePolicy(routePolicy) } : {}),
+    ...(delegationPolicy ? { delegationPolicy } : {}),
     nodes: graph.nodes.map(canonicalWorkflowNode).sort(compareIds),
     edges: [...graph.edges].sort(compareIds),
     grants: [...graph.grants].sort(compareIds),

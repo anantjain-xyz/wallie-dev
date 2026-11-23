@@ -519,3 +519,211 @@ describe("workflow route policies", () => {
     },
   );
 });
+
+const routeToAgentGraph = {
+  schemaVersion: 1,
+  kind: "graph",
+  entryNodeId: "decide",
+  nodes: [
+    { id: "decide", kind: "route", agentPromptRevisionId },
+    { id: "worker", kind: "agent", agentPromptRevisionId },
+    { id: "check", kind: "deterministic", operation: "policy" },
+  ],
+  edges: [
+    { id: "delegate", kind: "route", from: "decide", to: "worker" },
+    { id: "verify", kind: "next", from: "worker", to: "check" },
+  ],
+  grants: [],
+  routePolicy: {
+    maxNodeVisits: 3,
+    maxLoopTraversals: 0,
+    nodes: {
+      decide: {
+        minimumConfidence: 0.8,
+        allowedDestinationIds: ["worker"],
+        fallback: { kind: "clarification" },
+      },
+    },
+  },
+};
+
+const childProfile = {
+  definitionRevisionId: "c5410000-0000-4000-8000-000000000060",
+  definitionDigest: "c".repeat(64),
+};
+const delegationPolicy = {
+  maxChildren: 4,
+  maxConcurrentChildren: 2,
+  maxAttempts: 8,
+  maxTotalTokens: 10_000,
+  maxCostUsd: 3.5,
+  maxTokensPerAttempt: 1_000,
+  maxCostUsdPerAttempt: 0.5,
+  targets: { worker: childProfile },
+};
+
+describe("delegated agent policy", () => {
+  it("keeps identical canonical bytes when an existing graph carries no delegation policy", () => {
+    const existing = compile(routeToAgentGraph);
+    expect(existing).toMatchObject({
+      ok: true,
+      canonicalDigest: "d2336052e11de78e2ecf58769e25b6bbbfdb09cb5bac454caf1daf8fa5ad609f",
+    });
+    expect(compile({ ...routeToAgentGraph, delegationPolicy: undefined })).toEqual(existing);
+  });
+
+  it("pins the exact profile digest and canonical revision ID for each agent", () => {
+    const compiled = compile({
+      ...routeToAgentGraph,
+      delegationPolicy: {
+        ...delegationPolicy,
+        targets: {
+          worker: {
+            ...childProfile,
+            definitionRevisionId: childProfile.definitionRevisionId.toUpperCase(),
+          },
+        },
+      },
+    });
+    expect(compiled).toMatchObject({
+      ok: true,
+      bundle: { delegationPolicy },
+    });
+    if (compiled.ok) {
+      expect(JSON.parse(compiled.definitionJson).delegationPolicy.targets).toEqual({
+        worker: childProfile,
+      });
+    }
+  });
+
+  it("requires exactly the agent-node targets, including agents in branch graphs", () => {
+    expect(
+      compile({
+        ...routeToAgentGraph,
+        delegationPolicy: { ...delegationPolicy, targets: { decide: childProfile } },
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [
+        expect.objectContaining({
+          code: "invalid_delegation_policy",
+          path: ["delegationPolicy", "targets", "decide"],
+        }),
+        expect.objectContaining({
+          code: "invalid_delegation_policy",
+          path: ["delegationPolicy", "targets", "worker"],
+        }),
+      ],
+    });
+    expect(
+      compile({
+        ...parallelGraph(),
+        delegationPolicy: {
+          ...delegationPolicy,
+          targets: { services: childProfile, docs: childProfile },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("allows 128 distinct delegated agent targets", () => {
+    const nodes = Array.from({ length: 128 }, (_, index) => ({
+      id: `agent.${index}`,
+      kind: "agent",
+      agentPromptRevisionId,
+    }));
+    const graph = {
+      schemaVersion: 1,
+      kind: "graph",
+      entryNodeId: nodes[0].id,
+      nodes,
+      edges: nodes.slice(1).map(({ id }, index) => ({
+        id: `next.${index}`,
+        kind: "next",
+        from: nodes[index].id,
+        to: id,
+      })),
+      grants: [],
+      delegationPolicy: {
+        ...delegationPolicy,
+        maxChildren: 128,
+        maxAttempts: 128,
+        targets: Object.fromEntries(nodes.map(({ id }) => [id, childProfile])),
+      },
+    };
+
+    expect(compile(graph)).toMatchObject({ ok: true });
+  });
+
+  it("rejects an oversized delegation target map before reading malformed entries", () => {
+    const targets = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [`agent.${index}`, null]),
+    );
+    const readTarget = vi.fn(() => null);
+    Object.defineProperty(targets, "agent.0", { enumerable: true, get: readTarget });
+
+    const result = compile({
+      ...routeToAgentGraph,
+      delegationPolicy: { ...delegationPolicy, targets },
+    });
+
+    expect(readTarget).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: [
+        {
+          code: "invalid_schema",
+          path: ["delegationPolicy", "targets"],
+          message: "Declare at most 128 delegation targets.",
+        },
+      ],
+    });
+  });
+
+  it("rejects a live definition alias or malformed digest in a target", () => {
+    expect(
+      compile({
+        ...routeToAgentGraph,
+        delegationPolicy: {
+          ...delegationPolicy,
+          targets: { worker: { definitionRevisionId: "active", definitionDigest: "latest" } },
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          path: ["delegationPolicy", "targets", "worker", "definitionRevisionId"],
+        }),
+        expect.objectContaining({
+          path: ["delegationPolicy", "targets", "worker", "definitionDigest"],
+        }),
+      ]),
+    });
+  });
+
+  it.each([
+    ["maxChildren", 0],
+    ["maxChildren", 1025],
+    ["maxConcurrentChildren", 5],
+    ["maxAttempts", 1.5],
+    ["maxAttempts", 0],
+    ["maxTotalTokens", 1_000_000_000_001],
+    ["maxCostUsd", Infinity],
+    ["maxTokensPerAttempt", 10_001],
+    ["maxCostUsdPerAttempt", 3.51],
+    ["maxCostUsdPerAttempt", 0.0000001],
+  ])("rejects the out-of-bounds %s value %s", (key, value) => {
+    expect(
+      compile({
+        ...routeToAgentGraph,
+        delegationPolicy: { ...delegationPolicy, [key]: value },
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: "invalid_schema", path: ["delegationPolicy", key] }),
+      ]),
+    });
+  });
+});

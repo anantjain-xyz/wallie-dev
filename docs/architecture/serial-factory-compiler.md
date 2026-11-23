@@ -145,3 +145,12 @@ Route nodes use stable destination IDs and a pinned confidence threshold. The co
 The worker accepts bounded JSON with a destination, confidence, and reason, or an explicit unresolved reason. The reason is evidence text. The configured policy supplies every destination and permission.
 
 Admission checks the current grant and execution budget under the root lock. It records the decision before creating a target occurrence in the same transaction. A clarification retains the decision without creating a target. An exact retry returns the original receipt across ownership changes. A changed proposal for the same occurrence conflicts with the retained decision.
+
+## Delegated child sessions
+
+- A declared agent target pins an activated definition revision and its digest. Delegation requires the exact routed occurrence and the parent’s accepted checkpoint.
+- The child keeps the parent’s repository and receives only the repositories, tools, and credential authority allowed by the inherited grant and pinned profile.
+- One transaction records the child, its frozen Git input, its queued job, and the first root attempt reservation. An exact retry returns the original child.
+- The root shares child, concurrency, attempt, token, and spend limits across descendants. Retired claims that never started release their holds. Started attempts retain actual usage or a conservative debit while usage is unavailable. A trusted late receipt can reconcile its exact attempt.
+- Children can retain private checkpoints. The parent owns canonical pull request publication.
+- A child advances its agent occurrence after final approval of the exact artifact attached to its current adopted checkpoint. The resulting receipt preserves the child checkpoint identity. Any parent approval still follows its own gate.

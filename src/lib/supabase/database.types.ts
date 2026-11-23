@@ -10352,6 +10352,26 @@ export type Database = {
               workspace_id: string
             }[]
           }
+      admit_factory_workflow_delegated_session: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_parent_session_id: string
+          p_prompt_md: string
+          p_root_session_id: string
+          p_source_checkpoint_run_id: string
+          p_target_occurrence_id: string
+          p_title: string
+          p_workspace_id: string
+        }
+        Returns: {
+          child_session_id: string
+          created: boolean
+          job_id: string
+          run_id: string
+        }[]
+      }
       admit_factory_workflow_next: {
         Args: {
           p_edge_id: string
@@ -14795,6 +14815,20 @@ export type Database = {
       record_factory_workflow_command_result: {
         Args: {
           p_evidence_ref: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_occurrence_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          result_id: string
+        }[]
+      }
+      record_factory_workflow_delegated_result: {
+        Args: {
           p_expected_generation: number
           p_factory_id: string
           p_occurrence_id: string

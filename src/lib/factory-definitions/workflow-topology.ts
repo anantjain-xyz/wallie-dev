@@ -1,5 +1,6 @@
 import {
   MAX_WORKFLOW_NODE_VISITS,
+  type WorkflowDelegationPolicy,
   type WorkflowDiagnostic,
   type WorkflowGraphDefinition,
   type WorkflowRoutePolicy,
@@ -166,6 +167,35 @@ function validateRoutePolicy(
   return diagnostics;
 }
 
+function validateDelegationTargets(
+  targets: WorkflowDelegationPolicy["targets"],
+  nodes: readonly WorkflowNode[],
+): WorkflowDiagnostic[] {
+  const diagnostics: WorkflowDiagnostic[] = [];
+  const agentIds = new Set<string>(
+    nodes.filter(({ kind }) => kind === "agent").map(({ id }) => id),
+  );
+  for (const id of Object.keys(targets)) {
+    if (!agentIds.has(id)) {
+      diagnostics.push({
+        code: "invalid_delegation_policy",
+        path: ["delegationPolicy", "targets", id],
+        message: `Only agent nodes may name a delegated definition. "${id}" is not an agent node.`,
+      });
+    }
+  }
+  for (const id of agentIds) {
+    if (!Object.hasOwn(targets, id)) {
+      diagnostics.push({
+        code: "invalid_delegation_policy",
+        path: ["delegationPolicy", "targets", id],
+        message: `Pin a delegated definition revision and digest for agent node "${id}".`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
 export function validateWorkflowTopology(graph: WorkflowGraphDefinition): WorkflowDiagnostic[] {
   const diagnostics: WorkflowDiagnostic[] = [];
   const nodesById = new Map<NodeId, WorkflowNode>();
@@ -230,6 +260,9 @@ export function validateWorkflowTopology(graph: WorkflowGraphDefinition): Workfl
   if (!entry || diagnostics.length) return diagnostics;
   if (graph.routePolicy) {
     diagnostics.push(...validateRoutePolicy(graph.routePolicy, graph.nodes, outgoing));
+  }
+  if (graph.delegationPolicy) {
+    diagnostics.push(...validateDelegationTargets(graph.delegationPolicy.targets, graph.nodes));
   }
 
   if (entry.kind === "join" || incoming.get(entry.id)?.some(({ edge }) => edge.kind !== "loop")) {
