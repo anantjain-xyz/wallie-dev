@@ -6,6 +6,8 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { checkFactoryWorkflowHandoff } from "./check-factory-workflow-handoff";
+
 class FixtureConfigurationError extends Error {}
 
 function loopbackUrl(value: string | undefined, protocols: readonly string[]) {
@@ -62,9 +64,14 @@ async function runFactoryRuntime() {
     const m06 = extra.length === 1 && extra[0] === "--m06";
     const m07 = extra.length === 1 && extra[0] === "--m07";
     const m08 = extra.length === 1 && extra[0] === "--m08";
-    if (flag !== "--workdir" || !directory || (extra.length > 0 && !m05 && !m06 && !m07 && !m08)) {
+    const m11 = extra.length === 1 && extra[0] === "--m11";
+    if (
+      flag !== "--workdir" ||
+      !directory ||
+      (extra.length > 0 && !m05 && !m06 && !m07 && !m08 && !m11)
+    ) {
       throw new FixtureConfigurationError(
-        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, --m07, or --m08.",
+        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, --m07, --m08, or --m11.",
       );
     }
     const status = JSON.parse(
@@ -110,7 +117,7 @@ async function runFactoryRuntime() {
 
     const fixture = { url, serviceKey, publishableKey };
     const env: NodeJS.ProcessEnv = {
-      ...(m07 || m08
+      ...(m07 || m08 || m11
         ? {
             NODE_ENV: "test",
             PATH: process.env.PATH,
@@ -267,6 +274,17 @@ async function runFactoryRuntime() {
         }
       }
       console.log(`M08 local qualification evidence is in ${proof}.`);
+      return;
+    }
+
+    if (m11) {
+      try {
+        checkFactoryWorkflowHandoff(databaseUrl, fixture, env);
+      } catch (error) {
+        throw new FixtureConfigurationError(
+          error instanceof Error ? error.message : "The M11 workflow handoff failed.",
+        );
+      }
       return;
     }
 

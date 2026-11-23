@@ -1,0 +1,187 @@
+-- Stage deterministic observations for exact browser-owned jobs. Production
+-- worker handoff and real repository integration have independent fixtures.
+begin;
+create extension if not exists pgtap with schema extensions;
+select no_plan();
+set local request.jwt.claim.role='service_role';
+select set_config('wallie.m11_browser_fixture_namespace',:'op651_fixture_namespace',true);
+create function pg_temp.op651_id(slot integer) returns uuid language sql stable as $$
+  select (current_setting('wallie.m11_browser_fixture_namespace')||'-0000-4000-8000-'||lpad(slot::text,12,'0'))::uuid
+$$;
+select set_config('request.jwt.claim.sub',pg_temp.op651_id(1)::text,true);
+\ir ../../supabase/tests/fixtures/factory_workflow_checkpoint_evidence.psql
+
+create function pg_temp.record_join_validation(p_run uuid,p_commit text,p_tree text,p_pass boolean)
+returns void language plpgsql as $$
+begin
+  perform public.pin_session_validation_plan(p_run,p_commit,p_tree,
+    '{"version":1,"commands":[{"key":"tests","command":"pnpm test","timeoutSeconds":30,"reports":[]}]}');
+  perform public.record_session_validation_evidence(p_run,p_commit,p_tree,
+    jsonb_build_array(jsonb_build_object('key','tests','command','pnpm test','provenance','harness',
+      'status',case when p_pass then 'passed' else 'failed' end,'exitCode',case when p_pass then 0 else 1 end,
+      'startedAt',clock_timestamp(),'completedAt',clock_timestamp(),'commitSha',p_commit,'treeSha',p_tree,
+      'finalCommitSha',p_commit,'finalTreeSha',p_tree,'reportKeys','[]'::jsonb,'missingRequiredReports','[]'::jsonb)));
+end;
+$$;
+
+create function pg_temp.prepare_join(p_claim jsonb,p_commit text)
+returns boolean language sql as $$
+  select public.prepare_session_source_and_checkpoint_publication((p_claim->>'runId')::uuid,pg_temp.op651_id(34),'main',
+    repeat('a',40),p_commit,'Integrated output','Parent integration','',
+    encode(sha256(convert_to('Joined bundle fixture','UTF8')),'hex'),encode(convert_to('Joined bundle fixture','UTF8'),'base64'),
+    (p_claim->>'artifactVersion')::integer,'Joined output with exact validation.',(p_claim->>'deadlineAt')::timestamptz)
+$$;
+
+
+create temp table browser_admitted as
+select owner.id as session_id,owner.workspace_id,owner.factory_id,job.id as job_id,
+  pin.graph_revision_id,label.kind
+from (values (:'serial_session'::uuid,:'serial_job'::uuid,'serial'),(:'graph_session'::uuid,:'graph_job'::uuid,'graph')) label(session_id,job_id,kind)
+join public.sessions owner on owner.id=label.session_id and owner.workspace_id=pg_temp.op651_id(11)
+join public.agent_jobs job on (job.id,job.session_id,job.workspace_id)=(label.job_id,owner.id,owner.workspace_id)
+left join internal.factory_workflow_authoring_session_pins pin on pin.session_id=owner.id;
+select is((select count(*) from browser_admitted),2::bigint,'both synthetic browser roots own their jobs');
+select ok((select graph_revision_id is null from browser_admitted where kind='serial'),'serial intake has no authored pin');
+select pg_temp.adopt_source_checkpoint(session_id,job_id) from browser_admitted where kind='serial';
+create temp table template_run as
+select root.*,pg_temp.adopt_source_checkpoint(session_id,job_id,0,true) as run_id from browser_admitted root where kind='graph';
+create temp table template_started as
+select root.*,started.* from template_run root
+cross join lateral public.start_factory_workflow_graph_execution(root.session_id,root.workspace_id,root.factory_id,
+  root.graph_revision_id,root.run_id) started;
+create temp table checkpoint_result as
+select source.*, result.result_id from template_started source
+cross join lateral public.record_factory_workflow_command_result(source.session_id,source.workspace_id,source.factory_id,
+    source.execution_generation,source.ownership_token,source.entry_occurrence_id,'checkpoint:'||source.run_id) result;
+select ok((select admitted.target_occurrence_id is not null from checkpoint_result source
+  cross join lateral public.admit_factory_workflow_next(source.session_id,source.workspace_id,source.factory_id,
+    source.execution_generation,source.ownership_token,source.entry_occurrence_id,'source.fork',source.result_id) admitted),
+  'the authored scoped fix admits its fork from the exact accepted input checkpoint');
+select is((select public.advance_factory_workflow_branch_occurrence(root.session_id, root.workspace_id,
+    root.factory_id, workflow.generation, workflow.ownership_token, fork.occurrence_id)->>'joinStatus'
+  from template_run root
+  join internal.factory_workflow_executions workflow on workflow.root_session_id = root.session_id
+  join internal.factory_workflow_node_occurrences fork on fork.root_session_id = workflow.root_session_id
+    and fork.node_kind = 'branch'), 'pending', 'the normal dispatcher creates the exact branch children');
+
+create temp table triage_branch_children as
+select marker.* from internal.factory_workflow_delegations marker
+join template_run root on root.session_id = marker.root_session_id;
+select is((select count(*) from triage_branch_children), 2::bigint, 'both configured siblings are admitted');
+update public.agent_jobs job set status='running',attempt_count=1,
+  git_continuity_release_revision=(select revision from public.get_git_continuity_release_state())
+where job.id in (select child_job_id from triage_branch_children);
+create temp table triage_outputs as
+select marker.*, slot.branch_edge_id, pg_temp.adopt_branch_code(marker.child_session_id,marker.child_job_id,
+  repeat(case when slot.required then 'b' else 'c' end,40)) as checkpoint_run_id
+from triage_branch_children marker
+join internal.factory_workflow_branch_slots slot
+  on (slot.root_session_id,slot.slot_id)=(marker.root_session_id,marker.source_branch_slot_id);
+select pg_temp.approve_branch(child_session_id) from triage_outputs;
+
+create temp table triage_first_fork as
+select manifest.* from internal.factory_workflow_branch_groups manifest join template_run root
+  on (root.session_id,root.run_id)=(manifest.root_session_id,manifest.source_checkpoint_run_id);
+create temp table triage_outcome_receipts as
+select recorded.* from triage_first_fork fork cross join triage_outputs child
+join internal.factory_workflow_executions execution on execution.root_session_id=child.root_session_id
+cross join lateral public.record_factory_workflow_branch_outcome(fork.root_session_id,fork.workspace_id,fork.factory_id,
+  execution.generation,execution.ownership_token,fork.group_id,child.branch_edge_id,child.child_job_id,1,child.checkpoint_run_id) recorded;
+create temp table triage_join as
+select fork.*, public.enqueue_factory_workflow_join_for_user(fork.root_session_id,fork.workspace_id,fork.factory_id,pg_temp.op651_id(1),
+  execution.generation,gen_random_uuid(),fork.group_id,fork.source_checkpoint_run_id,
+  (select array_agg(outcome_id) from triage_outcome_receipts)) as receipt
+from triage_first_fork fork join internal.factory_workflow_executions execution using(root_session_id);
+select ok((select receipt->>'created'='true' from triage_join),'the authored root can queue its first join');
+update public.agent_jobs job set status='running',attempt_count=1,
+  git_continuity_release_revision=(select revision from public.get_git_continuity_release_state()),
+  claimed_worker_runtime='node'
+from triage_join join_row where (job.id,job.workspace_id,job.session_id,job.status) =
+  ((join_row.receipt->>'jobId')::uuid,join_row.workspace_id,join_row.root_session_id,'queued');
+create temp table triage_claimed_join as
+select job.* from public.agent_jobs job join triage_join join_row on job.id=(join_row.receipt->>'jobId')::uuid;
+create temp table triage_started_join as
+select public.start_factory_workflow_join_attempt(id,workspace_id,session_id,attempt_count,clock_timestamp()+interval '30 seconds') as receipt
+from triage_claimed_join;
+select ok((select receipt->>'kind'='started' from triage_started_join),'the exact join job starts an attempt');
+select ok((select public.record_active_factory_workflow_join_candidate(
+  (receipt->>'rootSessionId')::uuid,(receipt->>'workspaceId')::uuid,(receipt->>'factoryId')::uuid,
+  (receipt->>'generation')::bigint,(receipt->>'ownershipToken')::uuid,(receipt->>'joinId')::uuid,
+  (receipt->>'jobId')::uuid,(receipt->>'runId')::uuid,(receipt->>'attemptCount')::integer,
+  repeat('e',40),repeat('f',40),encode(sha256(convert_to('Joined bundle fixture','UTF8')),'hex'))
+  from triage_started_join),'the join seals the exact committed candidate');
+select pg_temp.record_join_validation((receipt->>'runId')::uuid,repeat('e',40),repeat('f',40),true) from triage_started_join;
+select ok((select pg_temp.prepare_join(receipt,repeat('e',40)) from triage_started_join),
+  'the join only prepares after binding its own exact validation');
+create temp table triage_join_publication as
+select (receipt->>'runId')::uuid as run_id, public.claim_session_checkpoint_publication((receipt->>'runId')::uuid) as lease
+from triage_started_join;
+create function pg_temp.adopt_fixture_join() returns boolean language sql as $$
+  select public.adopt_session_checkpoint_publication(joined.run_id, joined.lease, publication.retained_ref, repeat('e',40))
+  from triage_join_publication joined join public.session_checkpoint_publications publication using (run_id)
+$$;
+
+
+select ok(pg_temp.adopt_fixture_join(), 'the real join adopter advances the validated parent checkpoint');
+create temp table template_review_scope as
+select root.*, execution.generation, execution.ownership_token, admitted.target_occurrence_id as review_occurrence_id,
+  accepted.run_id as checkpoint_run_id
+from template_run root
+join internal.factory_workflow_executions execution on execution.root_session_id = root.session_id
+join internal.factory_workflow_transition_receipts admitted on admitted.root_session_id = root.session_id
+  and admitted.edge_id = 'join.review'
+cross join triage_join_publication accepted;
+select is((select count(*) from template_review_scope),1::bigint,
+  'the durable join result admits exactly one review successor');
+create temp table template_review as
+select scope.*, public.claim_factory_workflow_exact_review(session_id,workspace_id,factory_id,generation,ownership_token,
+  review_occurrence_id,pg_temp.op651_id(905)) claim from template_review_scope scope;
+select ok((select claim->>'checkpointRunId' = checkpoint_run_id::text and claim->>'treeSha' = repeat('f',40)
+  and claim->>'reviewerPromptRevisionId' = pg_temp.op651_id(94)::text from template_review),
+  'the review permit pins the exact joined commit and tree and distinct configured reviewer prompt');
+select ok((select public.record_factory_workflow_exact_review(session_id,workspace_id,factory_id,generation,
+  ownership_token,(claim->>'reviewId')::uuid,(claim->>'reviewRunId')::uuid,pg_temp.op651_id(905),
+  checkpoint_run_id,claim->>'commitSha',claim->>'treeSha','{"version":1,"verdict":"pass"}') is not null
+  from template_review), 'the exact passing review records its own review result');
+create temp table final_human_gate as
+select scope.session_id,scope.workspace_id,scope.factory_id,scope.checkpoint_run_id,scope.generation,
+  scope.ownership_token,admitted.target_occurrence_id as occurrence_id
+from template_review_scope scope join internal.factory_workflow_transition_receipts admitted
+  on (admitted.root_session_id,admitted.source_occurrence_id,admitted.edge_id) =
+    (scope.session_id,scope.review_occurrence_id,'review.approve');
+
+select ok((select (source.session_id,source.run_id) = (gate.session_id,gate.checkpoint_run_id)
+  from final_human_gate gate cross join lateral public.read_factory_workflow_command_source(
+    gate.session_id,gate.workspace_id,gate.factory_id,gate.occurrence_id) source),
+  'the independent human gate observes the exact causal checkpoint');
+select ok((select phase_status = 'awaiting_review' and not exists (
+  select 1 from public.session_stage_approval_receipts approval where approval.artifact_id = owner.current_artifact_id)
+  from final_human_gate gate join public.sessions owner on owner.id = gate.session_id),
+  'the user must still approve the current exact artifact');
+
+select jsonb_build_object('serial',target.serial,'graph',jsonb_build_object('root',target.graph,
+  'child',jsonb_build_object('sessionId',child.child_session_id,'runId',child.checkpoint_run_id),
+  'join',jsonb_build_object('id',manifest.join_id,'runId',gate.checkpoint_run_id),
+  'review',jsonb_build_object('receiptId',report.receipt_id,'runId',gate.checkpoint_run_id,
+    'commitSha',review.commit_sha,'treeSha',review.tree_sha),
+  'validation',jsonb_build_object('sessionId',gate.session_id,'runId',gate.checkpoint_run_id,
+    'commitSha',review.commit_sha,'treeSha',review.tree_sha,'requiredEvidenceKey','tests'),
+  'otherApprovalArtifactId',child_approval.artifact_id))::text
+from final_human_gate gate join internal.factory_workflow_exact_reviews review
+  on (review.root_session_id,review.checkpoint_run_id)=(gate.session_id,gate.checkpoint_run_id)
+join internal.factory_workflow_exact_review_reports report on report.review_id=review.review_id
+join internal.factory_workflow_joins manifest on manifest.join_id=review.join_id
+cross join lateral (select output.* from triage_outputs output where output.branch_edge_id='split.implementation') child
+join public.session_stage_approval_receipts child_approval on child_approval.session_id=child.child_session_id
+cross join lateral (
+  select jsonb_object_agg(kind,jsonb_build_object('sessionId',owner.id,'sessionNumber',owner.number,
+    'stageId',owner.current_stage_id,'stageSlug',artifact.stage_slug,'artifactId',owner.current_artifact_id,
+    'artifactVersion',owner.current_artifact_version,'reviewRevision',owner.artifact_review_revision)) ->'serial' as serial,
+    jsonb_object_agg(kind,jsonb_build_object('sessionId',owner.id,'sessionNumber',owner.number,
+    'stageId',owner.current_stage_id,'stageSlug',artifact.stage_slug,'artifactId',owner.current_artifact_id,
+    'artifactVersion',owner.current_artifact_version,'reviewRevision',owner.artifact_review_revision)) ->'graph' as graph
+  from browser_admitted browser join public.sessions owner on owner.id=browser.session_id
+  join public.session_artifacts artifact on artifact.id=owner.current_artifact_id
+) target;
+select * from finish();
+commit;

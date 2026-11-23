@@ -1,0 +1,59 @@
+-- Create two isolated synthetic identities, a single-stage base, and real scoped roles.
+\o /dev/null
+begin;
+\set op651_seed_only true
+\set op651_parallel_only true
+\set op652_join_evidence true
+\ir ../../supabase/tests/fixtures/factory_workflow_branch.psql
+update public.workspaces set name='Workflow recovery qualification' where id=pg_temp.op651_id(11);
+insert into auth.users(id,email,aud,role,instance_id,email_confirmed_at,created_at,updated_at,
+  confirmation_token,recovery_token,email_change_token_new,email_change,raw_app_meta_data,raw_user_meta_data)
+values(pg_temp.op651_id(2),('workflow-outsider-'||:'op651_fixture_namespace'||'@example.test'),'authenticated','authenticated',
+  '00000000-0000-0000-0000-000000000000',now(),now(),now(),'','','','',
+  '{"provider":"email","providers":["email"]}','{}');
+update auth.users set instance_id='00000000-0000-0000-0000-000000000000',aud='authenticated',role='authenticated',
+  email_confirmed_at=now(),created_at=now(),updated_at=now(),confirmation_token='',recovery_token='',
+  email_change_token_new='',email_change='',raw_app_meta_data='{"provider":"email","providers":["email"]}',raw_user_meta_data='{}'
+where id=pg_temp.op651_id(1);
+select public.create_workspace(pg_temp.op651_id(2),('workflow-outsider-'||:'op651_fixture_namespace'||'@example.test'),
+  ('workflow-outsider-'||:'op651_fixture_namespace'),'Unrelated workflow fixture');
+insert into public.workspace_onboarding(workspace_id,status,completed_at,selected_github_repository_id)
+values(pg_temp.op651_id(11),'completed',now(),pg_temp.op651_id(34))
+on conflict (workspace_id) do update set status=excluded.status,completed_at=excluded.completed_at,
+  selected_github_repository_id=excluded.selected_github_repository_id;
+insert into public.workspace_onboarding(workspace_id,status,completed_at)
+select id,'completed',now() from public.workspaces where slug=('workflow-outsider-'||:'op651_fixture_namespace')
+on conflict (workspace_id) do update set status=excluded.status,completed_at=excluded.completed_at;
+insert into public.factory_agent_prompt_revisions(id,workspace_id,factory_id,agent_id,revision_number,prompt_md,prompt_sha256,created_by)
+select pg_temp.op651_id(94),prior.workspace_id,prior.factory_id,prior.agent_id,3,'Review the exact joined tree.',
+  encode(sha256(convert_to('Review the exact joined tree.','UTF8')),'hex'),prior.created_by
+from public.factory_agent_prompt_revisions prior where prior.id=pg_temp.op651_id(91);
+insert into public.sandbox_capability_checks(workspace_id,github_repository_id,sandbox_provider,sandbox_connection_revision,
+  agent_provider,agent_model,factory_definition_digest,status,capabilities)
+select scope.workspace_id,pg_temp.op651_id(34),'e2b',connection.connection_revision,'codex','gpt-5.5',active.digest,'success',
+  (select jsonb_object_agg(probe,jsonb_build_object('ok',true,'detail',null)) from unnest(
+    array['git','node','packageManager','agentCli','playwrightPackage','chromium','screenshotSmoke','codexExternalSandbox']) probe)
+from op651_scope scope join public.workspace_e2b_sandbox_connections connection using(workspace_id)
+cross join lateral internal.factory_workflow_authoring_base(scope.workspace_id,scope.factory_id) active;
+select changed.* from public.get_git_continuity_release_state() release
+cross join lateral public.set_git_continuity_release(true,release.revision,'Disposable M11 browser fixture') changed
+where not release.enabled;
+\o
+select jsonb_build_object(
+  'workspaceId',scope.workspace_id,'factoryId',scope.factory_id,'workspaceSlug',('op651-'||:'op651_fixture_namespace'),
+  'ownerEmail',('op651-'||:'op651_fixture_namespace'||'@example.test'),'outsiderEmail',('workflow-outsider-'||:'op651_fixture_namespace'||'@example.test'),
+  'outsiderWorkspaceSlug',('workflow-outsider-'||:'op651_fixture_namespace'),
+  'baseDigest',active.digest,'baseActivation',active.id,'baseRevision',active.revision_id,
+  'preparationStageIds',jsonb_build_array(pg_temp.op651_id(32)),
+  'owner',pg_temp.op651_id(1),'approver',pg_temp.op651_id(21),'repo',pg_temp.op651_id(34),
+  'grant',jsonb_build_object('id',approved.id,'version',approved.version),
+  'implementation',jsonb_build_object('promptRevisionId',pg_temp.op651_id(91),'profile',
+    jsonb_build_object('definitionRevisionId',implementation.id,'definitionDigest',implementation.canonical_digest)),
+  'supporting',jsonb_build_object('promptRevisionId',pg_temp.op651_id(91),'profile',
+    jsonb_build_object('definitionRevisionId',supporting.id,'definitionDigest',supporting.canonical_digest)),
+  'reviewer',jsonb_build_object('promptRevisionId',pg_temp.op651_id(94),'ruleIds','["scope","tests"]'::jsonb))::text
+from op651_scope scope cross join op651_grant approved
+join public.factory_definition_revisions implementation on implementation.id=pg_temp.op651_id(44)
+join public.factory_definition_revisions supporting on supporting.id=pg_temp.op651_id(47)
+cross join lateral internal.factory_workflow_authoring_base(scope.workspace_id,scope.factory_id) active;
+commit;

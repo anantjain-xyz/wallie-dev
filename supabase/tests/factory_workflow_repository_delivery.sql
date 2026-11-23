@@ -5,6 +5,20 @@ select no_plan();
 \set op653_test_validation_seconds 600
 \ir fixtures/factory_workflow_repository_delivery.psql
 
+select results_eq(
+  $$select child.edge, replay.child_session_id, replay.job_id, replay.run_id
+    from multi_children child cross join lateral pg_temp.multi_admit(child.edge) replay order by child.edge$$,
+  $$select edge, child_session_id, job_id, run_id from multi_children order by edge$$,
+  'either completed slot reuses its original child, job and reserved run during partial delivery');
+select ok((select count(*) = 2 and bool_and(replay.outcome_id = outcome.outcome_id
+    and replay.outcome = 'succeeded' and not replay.created)
+  from multi_owner owner cross join multi_group grp cross join multi_children child
+  join internal.factory_workflow_branch_outcomes outcome on outcome.job_id = child.job_id
+  cross join lateral public.record_factory_workflow_branch_outcome(
+    owner."sessionId",owner.workspace_id,owner.factory_id,owner.execution_generation,owner.ownership_token,
+    grp.group_id,child.edge,child.job_id,outcome.attempt_count,outcome.run_id) replay),
+  'duplicate completion of either component reuses its exact successful receipt');
+
 select is(pg_temp.finish_multi_validation(), true, 'the exact passing secondary run durably seals its own candidate');
 select is(pg_temp.multi_status() #>> '{repositories,0,validationRunId}', (select claim->>'runId' from secondary_claim),
   'the delivery read preserves the validation identity without exposing the lease');
@@ -68,6 +82,11 @@ select is((select pg_temp.settle_secondary_delivery(claim,'retry') from first_se
   'publication_unavailable', 'transient remote failure retains immutable validated bytes and releases its lease');
 select is(pg_temp.multi_status() #>> '{repositories,0,blocker}', 'publication_unavailable',
   'publication failure surfaces as a recoverable repository-specific obligation');
+select ok((select head.checkpoint_run_id = (primary_run.claim->>'runId')::uuid
+    and pg_temp.multi_status()->>'status' = 'partial'
+  from multi_owner owner join public.session_git_heads head on head.session_id = owner."sessionId"
+  cross join primary_claim primary_run),
+  'the adopted primary head remains visible after secondary publication fails');
 update internal.factory_workflow_repository_delivery_state set next_attempt_at = clock_timestamp()
 where status = 'pending';
 create temp table second_secondary_lease as select pg_temp.claim_secondary_delivery() as claim;
@@ -79,20 +98,48 @@ select is((select pg_temp.settle_secondary_delivery(claim,'adopt',repeat('4',40)
 select is((select pg_temp.settle_secondary_delivery(claim,'adopt',repeat('4',40)) from second_secondary_lease),
   'adopted', 'the new worker can adopt the same verified repository ref');
 select is(pg_temp.multi_status()->>'status', 'adopted', 'the parent reports complete only after all repositories are adopted');
-select ok(exists(select 1 from internal.factory_workflow_node_results r join multi_join q
-  on r.occurrence_id = (q.receipt->>'occurrenceId')::uuid where r.outcome = 'succeeded'),
+select is((select count(*) from internal.factory_workflow_node_results result join multi_join q
+  on result.occurrence_id = (q.receipt->>'occurrenceId')::uuid where result.outcome = 'succeeded'), 1::bigint,
   'the last repository adoption publishes exactly one causal join result');
 
 select is((select count(*) from internal.factory_workflow_node_occurrences occurrence
   join multi_owner owner on owner."sessionId" = occurrence.root_session_id
   where occurrence.node_kind = 'review'), 1::bigint,
   'the durable whole-repository result admits the configured review once');
-select is((select public.claim_factory_workflow_exact_review(owner."sessionId", owner.workspace_id, owner.factory_id,
-    owner.execution_generation, owner.ownership_token, occurrence.occurrence_id, pg_temp.op651_id(490))->>'checkpointRunId'
+create temp table delivery_review_claim as
+select public.claim_factory_workflow_exact_review(owner."sessionId",owner.workspace_id,owner.factory_id,
+  owner.execution_generation,owner.ownership_token,occurrence.occurrence_id,pg_temp.op651_id(490)) as claim
   from internal.factory_workflow_node_occurrences occurrence join multi_owner owner on owner."sessionId" = occurrence.root_session_id
-  where occurrence.node_kind = 'review'),
-  (select claim->>'runId' from primary_claim),
-  'the review pins the exact accepted primary checkpoint');
+  where occurrence.node_kind = 'review';
+select ok((select review.claim->>'checkpointRunId' = primary_run.claim->>'runId'
+    and review.claim->>'commitSha' = repeat('a',40) and review.claim->>'treeSha' = repeat('3',40)
+  from delivery_review_claim review cross join primary_claim primary_run),
+  'the review pins the exact validated primary run, commit and tree');
+
+create function pg_temp.record_delivery_review(p_tree_sha text) returns uuid language sql as $$
+  select public.record_factory_workflow_exact_review(owner."sessionId",owner.workspace_id,owner.factory_id,
+    owner.execution_generation,owner.ownership_token,(claim->>'reviewId')::uuid,(claim->>'reviewRunId')::uuid,
+    pg_temp.op651_id(490),(claim->>'checkpointRunId')::uuid,claim->>'commitSha',p_tree_sha,'{"version":1,"verdict":"pass"}')
+  from multi_owner owner cross join delivery_review_claim
+$$;
+select is(pg_temp.record_delivery_review(repeat('5',40)),null::uuid,
+  'the secondary validation tree cannot substitute for the exact review target');
+create temp table delivery_review_report as select pg_temp.record_delivery_review(repeat('3',40)) as receipt;
+select ok((select report.receipt is not null and session.phase_status = 'awaiting_review'
+  from multi_owner owner join public.sessions session on session.id = owner."sessionId"
+  cross join delivery_review_report report),
+  'a saved automated review leaves the parent artifact awaiting human approval');
+select is(pg_temp.record_delivery_review(repeat('3',40)),(select receipt from delivery_review_report),
+  'replaying the review after lost acknowledgement returns the original report receipt');
+
+select pg_temp.approve_branch(owner."sessionId") from multi_owner owner;
+select is((select count(*) from primary_claim primary_run
+  join public.session_checkpoint_publications publication on publication.run_id = (primary_run.claim->>'runId')::uuid
+  join public.session_artifacts artifact on artifact.id = publication.artifact_id
+  join public.session_stage_approval_receipts approval
+    on (approval.workspace_id,approval.session_id,approval.stage_id,approval.artifact_id,approval.artifact_version) =
+      (artifact.workspace_id,artifact.session_id,artifact.stage_id,artifact.id,artifact.version)),1::bigint,
+  'the human decision records a separate approval of the exact adopted artifact version');
 
 select * from finish();
 rollback;

@@ -1,0 +1,74 @@
+-- Deterministic retained checkpoint observations. The caller owns the fixture session and job.
+create function pg_temp.adopt_source_checkpoint(
+  p_session_id uuid, p_job_id uuid, p_expected_artifact_version integer default 0,
+  p_freeze_validation boolean default false
+)
+returns uuid language plpgsql as $$
+declare
+  started uuid;
+  lease uuid;
+begin
+  update public.agent_jobs set status = 'running', attempt_count = 1,
+    git_continuity_release_revision = (select revision from public.get_git_continuity_release_state())
+  where id = p_job_id and status = 'queued';
+  started := public.start_session_job_attempt(p_job_id, 1, pg_temp.op651_id(32), p_expected_artifact_version,
+    'codex', 'gpt-5.5', 'code', 'wallie/op651-smoke-' || p_job_id);
+  if started is null then raise exception 'Root attempt failed to start.'; end if;
+  perform public.pin_session_job_git_input(p_job_id, 1, started, pg_temp.op651_id(34), 'main', repeat('a', 40));
+  if not found then raise exception 'The exact Git input could not be pinned.'; end if;
+  if p_freeze_validation then
+    perform public.pin_session_validation_plan(started,repeat('a',40),repeat('d',40),
+      '{"version":1,"commands":[{"key":"tests","command":"pnpm test","timeoutSeconds":30,"reports":[]}]}');
+  end if;
+  if not public.prepare_session_source_and_checkpoint_publication(started, pg_temp.op651_id(34), 'main',
+    repeat('a', 40), repeat('a', 40), 'Root source', 'Delegation source proof', '', '', '',
+    p_expected_artifact_version, 'Private root checkpoint.') then
+    raise exception 'Root checkpoint preparation failed.';
+  end if;
+  lease := public.claim_session_checkpoint_publication(started);
+  if lease is null or not public.adopt_session_checkpoint_publication(started, lease, null, null) then
+    raise exception 'Root checkpoint adoption failed.';
+  end if;
+  if not exists (select 1 from public.session_git_heads h where (h.session_id, h.checkpoint_run_id) = (p_session_id, started)) then
+    raise exception 'Root checkpoint did not become the accepted head.';
+  end if;
+  return started;
+end;
+$$;
+create function pg_temp.adopt_branch_code(p_session_id uuid, p_job_id uuid, p_output_sha text)
+returns uuid language plpgsql as $$
+declare
+  execution_id uuid;
+  lease uuid;
+  ref text;
+  bundle bytea := convert_to('retained-code-fixture ' || p_output_sha, 'UTF8');
+begin
+  execution_id := public.start_session_job_attempt(p_job_id, 1, pg_temp.op651_id(32), 0, 'codex', 'gpt-5.5', 'code',
+    'wallie/op651-branch-' || p_job_id);
+  if execution_id is null then raise exception 'The branch attempt did not start.'; end if;
+  perform public.pin_session_job_git_input(p_job_id, 1, execution_id, pg_temp.op651_id(34), 'main', repeat('a', 40));
+  if not public.prepare_session_source_and_checkpoint_publication(execution_id, pg_temp.op651_id(34), 'main',
+    repeat('a', 40), p_output_sha, 'Private branch output', 'Retained branch code', '',
+    encode(sha256(bundle), 'hex'), encode(bundle, 'base64'), 0, 'Private branch artifact.') then
+    raise exception 'The branch checkpoint was not prepared.';
+  end if;
+  lease := public.claim_session_checkpoint_publication(execution_id);
+  select publication.retained_ref into strict ref from public.session_checkpoint_publications publication
+  where publication.run_id = execution_id;
+  if lease is null or not public.adopt_session_checkpoint_publication(execution_id, lease, ref, p_output_sha) then
+    raise exception 'The branch checkpoint was not adopted.';
+  end if;
+  if not exists (select 1 from public.session_git_heads h where (h.session_id, h.checkpoint_run_id) = (p_session_id, execution_id)) then
+    raise exception 'The adopted branch output is missing its own head.';
+  end if;
+  return execution_id;
+end;
+$$;
+
+create function pg_temp.approve_branch(p_child_session_id uuid) returns uuid language sql as $$
+  select approved.id from public.sessions owner
+  cross join lateral public.approve_session_stage(owner.id, owner.workspace_id, owner.current_stage_id,
+    owner.current_artifact_id, owner.current_artifact_version,
+    pg_temp.op651_id(21), 'codex', 'gpt-5.5', 'code', owner.artifact_review_revision) approved
+  where owner.id = p_child_session_id
+$$;
