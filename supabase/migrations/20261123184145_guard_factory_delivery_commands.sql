@@ -398,15 +398,21 @@ $$;
 create function public.settle_factory_delivery_dispatch(
   p_workspace_id uuid, p_factory_id uuid, p_command_id uuid, p_lease_id uuid, p_dispatch_state text
 ) returns boolean language plpgsql security definer set search_path = '' as $$
+declare expires_at timestamptz;
 begin
   if p_dispatch_state is null or p_dispatch_state not in ('accepted', 'rejected', 'unknown') then
     raise exception 'Invalid provider dispatch result.' using errcode = '22023';
   end if;
+  select lease_expires_at into expires_at from internal.factory_delivery_commands
+    where (workspace_id, factory_id, id, lease_id, dispatch_state) =
+      (p_workspace_id, p_factory_id, p_command_id, p_lease_id, 'dispatching')
+    for update;
+  if not found or expires_at <= clock_timestamp() then return false; end if;
   update internal.factory_delivery_commands set dispatch_state = p_dispatch_state,
     outcome = case p_dispatch_state when 'accepted' then 'pending' when 'unknown' then 'unknown' end,
     lease_id = null, lease_expires_at = null
     where (workspace_id, factory_id, id, lease_id, dispatch_state) =
-      (p_workspace_id, p_factory_id, p_command_id, p_lease_id, 'dispatching') and lease_expires_at > clock_timestamp();
+      (p_workspace_id, p_factory_id, p_command_id, p_lease_id, 'dispatching');
   return found;
 end;
 $$;

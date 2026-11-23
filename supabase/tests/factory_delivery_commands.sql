@@ -275,7 +275,8 @@ begin;
 set local request.jwt.claim.role = 'service_role';
 
 select extensions.dblink_connect(connection, coalesce(nullif(current_setting('wallie.test_db_connection', true), ''),
-  'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'))
+  format('host=%L port=%L dbname=%L user=supabase_admin password=postgres',
+    inet_server_addr(), inet_server_port(), current_database())))
 from unnest(array['op665_manager', 'op665_worker']) connection;
 select extensions.dblink_exec(connection, 'set statement_timeout = ''15s''; set request.jwt.claim.role = ''service_role''')
 from unnest(array['op665_manager', 'op665_worker']) connection;
@@ -334,6 +335,31 @@ select throws_ok($$select pg_temp.delivery_claim(257)$$, '55P03', null,
 select is(pg_temp.delivery_state(257)->>'dispatchState', 'queued', 'a temporary grant fence leaves the command queued');
 select extensions.dblink_exec('op665_manager', 'rollback');
 select is(pg_temp.delivery_claim(257)->>'dispatchState', 'dispatching', 'the same command claims after the grant lock clears');
+
+select extensions.dblink_exec('op665_manager', format(
+  'update internal.factory_delivery_commands set lease_expires_at = clock_timestamp() + interval ''2 seconds'' where id = %L',
+  pg_temp.op651_id(259)));
+create temp table delivery_settlement_lease as
+select workspace_id, factory_id, id, lease_id, lease_expires_at
+from internal.factory_delivery_commands where id = pg_temp.op651_id(259);
+select extensions.dblink_exec('op665_manager', 'begin');
+select locked from extensions.dblink('op665_manager', format(
+  'select id from internal.factory_delivery_commands where id = %L for update',
+  pg_temp.op651_id(259))) result(locked uuid);
+select extensions.dblink_send_query('op665_worker', format(
+  'select public.settle_factory_delivery_dispatch(%L,%L,%L,%L,''accepted'')',
+  workspace_id, factory_id, id, lease_id))
+from delivery_settlement_lease;
+select ok(pg_temp.delivery_wait_for_lock(pid), 'settlement reaches the command lock before the lease expires')
+from delivery_worker_backend;
+select pg_sleep_until(lease_expires_at) from delivery_settlement_lease;
+select extensions.dblink_exec('op665_manager', 'rollback');
+select ok(not settled, 'settlement fails when the lease expires while the worker waits for the row')
+from extensions.dblink_get_result('op665_worker') result(settled boolean);
+select count(*) from extensions.dblink_get_result('op665_worker') result(settled boolean);
+select is(pg_temp.delivery_state(259)->>'dispatchState', 'dispatching', 'expired settlement leaves the dispatch for the reaper');
+select ok(public.expire_factory_delivery_dispatches() > 0, 'the reaper expires the abandoned lease');
+select is(pg_temp.delivery_state(259)->>'dispatchState', 'unknown', 'the reaper records an unknown provider response');
 
 select extensions.dblink_disconnect(connection) from unnest(array['op665_manager', 'op665_worker']) connection;
 delete from public.workspaces where id = pg_temp.op651_id(11);

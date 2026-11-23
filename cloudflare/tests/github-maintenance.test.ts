@@ -299,9 +299,6 @@ it.each([
         await state.storage.deleteAlarm();
         return state.storage.get<string>("maintenance");
       });
-      expect(loadPending).toHaveBeenCalledExactlyOnceWith(100);
-      expect(query.in).toHaveBeenCalledWith("status", ["queued", "started", "running"]);
-      expect(query.in).toHaveBeenCalledWith("status", ["starting", "processing", "prompted"]);
       if (!scheduled)
         throw new Error("Dispatch failure prevented maintenance from being scheduled.");
       id = scheduled;
@@ -309,7 +306,13 @@ it.each([
     const inspection = await introspectWorkflowInstance(bindings.MAINTENANCE, id);
     const warn = vi.spyOn(console, "warn");
     try {
-      if (!dispatchFailure) await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
+      if (dispatchFailure) {
+        expect(loadPending).toHaveBeenCalledExactlyOnceWith(100);
+        expect(query.in).toHaveBeenCalledWith("status", ["queued", "started", "running"]);
+        expect(query.in).toHaveBeenCalledWith("status", ["starting", "processing", "prompted"]);
+      } else {
+        await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
+      }
       await inspection.waitForStatus("complete");
       expect(drainAcceptedTriageRoute).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainAuthoredFactoryWorkflowBatch).toHaveBeenCalledExactlyOnceWith(admin);
