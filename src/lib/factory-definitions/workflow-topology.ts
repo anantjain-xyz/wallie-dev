@@ -260,6 +260,16 @@ export function validateWorkflowTopology(graph: WorkflowGraphDefinition): Workfl
   if (!entry || diagnostics.length) return diagnostics;
   if (graph.routePolicy) {
     diagnostics.push(...validateRoutePolicy(graph.routePolicy, graph.nodes, outgoing));
+    if (!graph.delegationPolicy) {
+      for (const [id, route] of Object.entries(graph.routePolicy.nodes)) {
+        if (route.foremanProfile)
+          diagnostics.push({
+            code: "invalid_route_policy",
+            path: ["routePolicy", "nodes", id, "foremanProfile"],
+            message: "A foreman profile requires a bounded delegation policy.",
+          });
+      }
+    }
   }
   if (graph.delegationPolicy) {
     diagnostics.push(...validateDelegationTargets(graph.delegationPolicy.targets, graph.nodes));

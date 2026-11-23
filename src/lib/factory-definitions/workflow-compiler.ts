@@ -81,10 +81,11 @@ function canonicalRoutePolicy(policy: WorkflowRoutePolicy): WorkflowRoutePolicy 
     ...policy,
     maxLoopTraversals: Math.max(0, policy.maxLoopTraversals),
     nodes: Object.fromEntries(
-      Object.entries(policy.nodes).map(([id, node]) => [
+      Object.entries(policy.nodes).map(([id, { foremanProfile, ...node }]) => [
         id,
         {
           ...node,
+          ...(foremanProfile ? { foremanProfile } : {}),
           minimumConfidence: Math.max(0, node.minimumConfidence),
           allowedDestinationIds: [...node.allowedDestinationIds].sort(),
         },

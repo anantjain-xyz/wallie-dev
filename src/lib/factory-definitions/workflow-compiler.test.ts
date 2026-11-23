@@ -562,6 +562,63 @@ const delegationPolicy = {
   targets: { worker: childProfile },
 };
 
+describe("foreman route profile", () => {
+  const profile = {
+    definitionRevisionId: "c5410000-0000-4000-8000-000000000061",
+    definitionDigest: "d".repeat(64),
+  };
+  const withForemanProfile = (foremanProfile: unknown) => ({
+    ...routeToAgentGraph,
+    routePolicy: {
+      ...routeToAgentGraph.routePolicy,
+      nodes: {
+        decide: { ...routeToAgentGraph.routePolicy.nodes.decide, foremanProfile },
+      },
+    },
+  });
+
+  it("pins the configured foreman profile alongside an independent worker profile", () => {
+    const compiled = compile({
+      ...withForemanProfile({
+        ...profile,
+        definitionRevisionId: profile.definitionRevisionId.toUpperCase(),
+      }),
+      delegationPolicy,
+    });
+    expect(compiled).toMatchObject({
+      ok: true,
+      bundle: { routePolicy: { nodes: { decide: { foremanProfile: profile } } }, delegationPolicy },
+    });
+  });
+
+  it("preserves the existing canonical graph when no foreman profile is provided", () => {
+    expect(compile(withForemanProfile(undefined))).toEqual(compile(routeToAgentGraph));
+  });
+
+  it("requires the root delegation budget and denies extra provider settings", () => {
+    expect(compile(withForemanProfile(profile))).toMatchObject({
+      ok: false,
+      diagnostics: [
+        {
+          code: "invalid_route_policy",
+          path: ["routePolicy", "nodes", "decide", "foremanProfile"],
+        },
+      ],
+    });
+    expect(
+      compile({
+        ...withForemanProfile({ ...profile, tools: ["other"] }),
+        delegationPolicy,
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [
+        { code: "invalid_schema", path: ["routePolicy", "nodes", "decide", "foremanProfile"] },
+      ],
+    });
+  });
+});
+
 describe("delegated agent policy", () => {
   it("keeps identical canonical bytes when an existing graph carries no delegation policy", () => {
     const existing = compile(routeToAgentGraph);

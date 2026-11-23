@@ -6,11 +6,14 @@ import { z } from "zod";
 
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
-import { isFactoryDefinitionText } from "@/lib/factory-definitions/text";
 import { workflowGraphSchema } from "@/lib/factory-definitions/workflow-schema";
 import type { Database } from "@/lib/supabase/database.types";
 import { evaluateExactRunValidationEvidence } from "@/lib/validation-evidence/read-run-evidence";
 
+import {
+  type WorkflowDelegationRequest,
+  workflowDelegationRequestSchema,
+} from "./delegation-request";
 import {
   runDeterministicWorkflowCommand,
   type DeterministicWorkflowCommands,
@@ -19,6 +22,7 @@ import {
   type WorkflowOccurrencePin,
   workflowVisitLimitBlocker,
 } from "./deterministic-command";
+import { executeFactoryWorkflowForeman } from "./foreman-store";
 import { observeWorkflowCheckpoint, observeWorkflowHumanApproval } from "./observe-evidence";
 import { parseWorkflowRouteProposal } from "./route-decision";
 
@@ -412,22 +416,6 @@ export async function submitFactoryWorkflowRouteProposal(
     : routeDecisionProgress(data);
 }
 
-function boundedWorkflowDelegationText(maxLength: number) {
-  return z
-    .string()
-    .trim()
-    .min(1)
-    .refine((text) => text.length <= maxLength * 2 && [...text].length <= maxLength)
-    .refine(isFactoryDefinitionText);
-}
-
-const workflowDelegationRequestSchema = z
-  .object({
-    title: boundedWorkflowDelegationText(200),
-    promptMd: boundedWorkflowDelegationText(20_000),
-  })
-  .strict();
-
 const workflowDelegationReceiptSchema = z.object({
   child_session_id: z.string().uuid(),
   job_id: z.string().uuid(),
@@ -443,7 +431,7 @@ export type WorkflowDelegationPin = WorkflowOccurrencePin & {
   readonly sourceCheckpointRunId: DelegationArgs["p_source_checkpoint_run_id"];
 };
 
-export type WorkflowDelegationRequest = z.input<typeof workflowDelegationRequestSchema>;
+export type { WorkflowDelegationRequest } from "./delegation-request";
 
 /** Admit explicitly requested work. The native ledger verifies the route, ancestry, source and budget. */
 export async function admitFactoryWorkflowDelegatedSession(
@@ -493,14 +481,26 @@ export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: Workfl
       p_route_occurrence_id: occurrence.occurrence_id,
     });
     if (error) throw error;
-    if (data !== null) return routeDecisionProgress(data);
+    const decision = data === null ? null : routeDecisionProgress(data);
+    const policy = graph.routePolicy.nodes[node.id];
+    const limitReached = execution.graph_visit_limit_exhausted && policy.fallback.kind === "route";
+
+    if (policy.foremanProfile) {
+      const foreman = await executeFactoryWorkflowForeman(admin, pin, {
+        freshIssueBlocker: decision
+          ? "route_already_decided"
+          : (execution.graph_route_blocker ??
+            (limitReached ? workflowVisitLimitBlocker.code : undefined)),
+      });
+      if (decision) return foreman.foremanRunId ? { ...decision, foreman } : decision;
+      if (foreman.status === "stale") return foreman;
+      return { status: "foreman", foreman } as const;
+    }
+
+    if (decision) return decision;
     if (execution.graph_route_blocker)
       return { status: "blocked", code: execution.graph_route_blocker } as const;
-    if (
-      execution.graph_visit_limit_exhausted &&
-      graph.routePolicy.nodes[node.id].fallback.kind === "route"
-    )
-      return workflowVisitLimitBlocker;
+    if (limitReached) return workflowVisitLimitBlocker;
     return { status: "pending", code: "route_proposal_required" } as const;
   }
   const nextEdge = graph.edges.find((edge) => edge.kind === "next" && edge.from === pin.nodeId);

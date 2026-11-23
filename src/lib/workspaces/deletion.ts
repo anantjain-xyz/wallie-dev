@@ -149,6 +149,7 @@ export async function resumeWorkspaceDeletion(admin: AdminClient, workspaceId: s
   await removeWorkspaceStoragePrefix(admin, "session-source-checkpoints", workspaceId);
   await removeWorkspaceStoragePrefix(admin, "session-validation-evidence", workspaceId);
   await removeWorkspaceStoragePrefix(admin, "workspace-run-exports", workspaceId);
+  await removeWorkspaceStoragePrefix(admin, "factory-workflow-usage-recovery", workspaceId);
   const { data: deleted, error: finishError } = await admin.rpc("finish_workspace_deletion", {
     p_workspace_id: workspaceId,
   });
