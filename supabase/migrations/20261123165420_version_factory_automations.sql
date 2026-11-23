@@ -89,6 +89,47 @@ language sql immutable set search_path = '' as $$
     else false end
 $$;
 
+create function internal.valid_factory_automation_cron(p_cron text) returns boolean
+language plpgsql immutable strict set search_path = '' as $$
+declare
+  minimums constant integer[] := array[0, 0, 1, 1, 0];
+  maximums constant integer[] := array[59, 23, 31, 12, 7];
+  fields text[];
+  item text;
+  parts text[];
+  first_value numeric;
+  last_value numeric;
+begin
+  if char_length(p_cron) > 120 then
+    return false;
+  end if;
+  fields := string_to_array(p_cron, ' ');
+  if cardinality(fields) <> 5 or '' = any(fields) then
+    return false;
+  end if;
+
+  for field_index in 1..5 loop
+    foreach item in array string_to_array(fields[field_index], ',') loop
+      parts := regexp_match(item, '^([*]|([0-9]+)(?:-([0-9]+))?)(?:/([0-9]+))?$');
+      if parts is null then
+        return false;
+      end if;
+      if parts[4] is not null and (parts[4] !~ '[1-9]' or (parts[1] <> '*' and parts[3] is null)) then
+        return false;
+      end if;
+      if parts[2] is not null then
+        first_value := parts[2]::numeric;
+        last_value := coalesce(parts[3]::numeric, first_value);
+        if first_value < minimums[field_index] or last_value > maximums[field_index] or first_value > last_value then
+          return false;
+        end if;
+      end if;
+    end loop;
+  end loop;
+  return true;
+end;
+$$;
+
 create function internal.normalize_factory_automation_definition(p_definition jsonb) returns jsonb
 language plpgsql immutable set search_path = '' as $$
 declare
@@ -121,8 +162,7 @@ begin
     when 'schedule' then
       if trigger_config - array['kind','cron','timeZone'] <> '{}'::jsonb or filters <> '{}'::jsonb
         or jsonb_typeof(trigger_config->'cron') is distinct from 'string'
-        or char_length(trigger_config->>'cron') > 120
-        or (trigger_config->>'cron') !~ '^[0-9*/,-]+( [0-9*/,-]+){4}$'
+        or not internal.valid_factory_automation_cron(trigger_config->>'cron')
         or jsonb_typeof(trigger_config->'timeZone') is distinct from 'string'
         or char_length(trigger_config->>'timeZone') > 80
         or (trigger_config->>'timeZone') !~ '^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$' then
@@ -467,6 +507,7 @@ revoke all on function
   internal.factory_automation_uuid(jsonb),
   internal.trim_factory_automation_text(text),
   internal.valid_factory_automation_filter_values(jsonb),
+  internal.valid_factory_automation_cron(text),
   internal.normalize_factory_automation_definition(jsonb),
   internal.assert_factory_automation_target(uuid, uuid, jsonb),
   internal.factory_automation_state(internal.factory_automations, uuid),

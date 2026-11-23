@@ -91,6 +91,10 @@ function command(body: unknown) {
   });
 }
 
+function scheduleDefinition(cron: string) {
+  return { ...definition, trigger: { kind: "schedule", cron, timeZone: "UTC" }, filters: {} };
+}
+
 describe("factory automation definition routes", () => {
   beforeEach(() => vi.resetAllMocks());
 
@@ -169,5 +173,30 @@ describe("factory automation definition routes", () => {
       400,
     );
     expect(mocked.adminClient).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "99 99 99 99 99",
+    "*/0 * * * *",
+    "- - - - -",
+    "20-10 * * * *",
+    "1/2 * * * *",
+    "0 9 * * 1\n",
+  ])("rejects invalid cron %s before a privileged write", async (cron) => {
+    fixture();
+    const result = await POST(command({ automationId, definition: scheduleDefinition(cron) }), {
+      params,
+    });
+    expect(result.status).toBe(400);
+    expect(mocked.adminClient).not.toHaveBeenCalled();
+  });
+
+  it("passes valid cron lists, ranges and steps through to the definition store", async () => {
+    const { writeFetch } = fixture();
+    const schedule = scheduleDefinition("05,59 8-23/2 1-31/3 */2 0,7");
+    const result = await POST(command({ automationId, definition: schedule }), { params });
+    expect(result.status).toBe(201);
+    const [, request] = writeFetch.mock.calls[0];
+    expect(JSON.parse(String(request?.body)).p_definition).toEqual(schedule);
   });
 });

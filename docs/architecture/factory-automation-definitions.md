@@ -20,6 +20,8 @@ flowchart LR
 | Target      | The active factory definition revision and its named implementation agent. A workflow target also names the workflow and its exact activation.         |
 | Authority   | The execution grant ID and version, service principal ID, budget payer member ID, and credential binding ID. Credentials stay in the credential store. |
 
+Cron expressions use five numeric fields in minute, hour, day-of-month, month, and day-of-week order. Fields accept wildcards, lists, and ascending ranges. Wildcards and ranges support positive steps. Use `0` or `7` for Sunday.
+
 ## Commands and audit
 
 | Command    | Guard                                                                                                                                                             |

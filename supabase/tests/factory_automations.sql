@@ -103,6 +103,19 @@ select throws_ok($$select pg_temp.create_automation(100, pg_temp.automation_defi
 select throws_ok($$select pg_temp.create_automation(100,
   jsonb_set(pg_temp.automation_definition(), '{target,apiKey}', '"synthetic-raw-credential"'))$$,
   '22023', null, 'an unknown nested credential field cannot enter stored automation JSON');
+select throws_ok(format($$
+  select pg_temp.create_automation(%s, jsonb_set(pg_temp.automation_definition(), '{trigger,cron}', to_jsonb(%L::text)))
+$$, invalid.slot, invalid.cron), '22023', 'The automation schedule trigger is invalid.', invalid.description)
+from (values
+  (110, '60 9 * * 1-5', 'a schedule cannot use a minute beyond 59'),
+  (111, '0 24 * * 1-5', 'a schedule cannot use an hour beyond 23'),
+  (112, '0 9 0 * 1-5', 'a schedule cannot use day zero'),
+  (113, '0 9 * 13 1-5', 'a schedule cannot use a month beyond 12'),
+  (114, '0 9 * * 8', 'a schedule cannot use a weekday beyond 7'),
+  (115, '*/0 9 * * 1-5', 'a schedule cannot use a zero step'),
+  (116, '0 9 * * 1--5', 'a schedule cannot use a malformed range'),
+  (117, '0 9 * * 5-1', 'a schedule cannot use a descending range')
+) as invalid(slot, cron, description);
 
 create temp table automation_draft as select pg_temp.create_automation(100, pg_temp.automation_definition()) as value;
 select is(value->>'automationId', pg_temp.op651_id(100)::text, 'a draft retains its stable automation identity')
@@ -111,14 +124,18 @@ select is(value->>'publishedRevisionId', null::text, 'creating a draft does not 
 from automation_draft;
 select is(value#>'{revision,definition}', pg_temp.automation_definition(),
   'a draft stores the exact definition including only the logical binding reference') from automation_draft;
+select is(value#>>'{revision,definition,trigger,cron}', '0 9 * * 1-5',
+  'a draft accepts a valid weekday schedule') from automation_draft;
 
 create temp table automation_edit as
 select public.save_factory_automation_draft(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
   pg_temp.op651_id(100), (draft.value->>'draftRevisionId')::uuid,
-  jsonb_set(pg_temp.automation_definition(), '{name}', '"Inspect changed rules"')) as value
+  jsonb_set(pg_temp.automation_definition(), '{trigger,cron}', '"*/15 9-17/2 * * 1-5"')) as value
 from op651_scope scope cross join automation_draft draft;
 select isnt(edit.value->>'draftRevisionId', draft.value->>'draftRevisionId', 'an edit appends a new draft identity')
 from automation_edit edit cross join automation_draft draft;
+select is(value#>>'{revision,definition,trigger,cron}', '*/15 9-17/2 * * 1-5',
+  'an edit accepts steps on both a wildcard and a range') from automation_edit;
 select throws_ok($$
   select public.save_factory_automation_draft(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
     pg_temp.op651_id(100), (draft.value->>'draftRevisionId')::uuid, pg_temp.automation_definition())

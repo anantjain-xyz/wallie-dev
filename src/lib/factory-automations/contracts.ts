@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { isFactoryDefinitionText } from "@/lib/factory-definitions/text";
 
+import { parseFactoryAutomationCron } from "./cron";
+
 const id = z.string().uuid().toLowerCase();
 const automationId = id.brand<"FactoryAutomationId">();
 const revisionId = id.brand<"FactoryAutomationRevisionId">();
@@ -64,10 +66,9 @@ export const factoryAutomationDefinitionSchema = z.union([
   automationAssignment.extend({
     trigger: z.strictObject({
       kind: z.literal("schedule"),
-      cron: z
-        .string()
-        .max(120)
-        .regex(/^[0-9*/,-]+(?: [0-9*/,-]+){4}$/),
+      cron: z.string().refine((value) => parseFactoryAutomationCron(value) !== null, {
+        message: "Provide five numeric cron fields using valid ranges and positive steps.",
+      }),
       timeZone: z
         .string()
         .max(80)
