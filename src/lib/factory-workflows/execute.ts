@@ -570,6 +570,36 @@ export async function executeFactoryWorkflowOccurrence(
           nextNodeId: nextEdge.to,
         };
   }
+  if (node.kind === "review") {
+    const { data, error } = await admin
+      .rpc("read_factory_workflow_exact_review_progress", {
+        ...scope,
+        p_occurrence_id: occurrence.occurrence_id,
+      })
+      .abortSignal(options?.signal ?? AbortSignal.timeout(5_000));
+    if (error) throw error;
+    return z
+      .object({
+        status: z.enum(["pending", "blocked"]),
+        code: z.enum([
+          "exact_review_pending",
+          "repair_pending",
+          "repair_unsuccessful",
+          "source_unavailable",
+          "provider_unavailable",
+          "invalid_report",
+          "deadline",
+          "generation_retired",
+          "budget_exhausted",
+          "stale_review",
+          "finding_ineligible",
+          "finding_repeated",
+          "repair_budget_exhausted",
+          "repair_stage_unavailable",
+        ]),
+      })
+      .parse(data);
+  }
   const rootInput = execution.graph_input_run_id
     ? { sessionId: pin.p_root_session_id, runId: execution.graph_input_run_id }
     : null;

@@ -26,6 +26,11 @@ import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
 import { drainFactoryWorkflowBranches } from "@/lib/factory-workflows/branch-dispatch";
+import {
+  drainExactFactoryWorkflowReview,
+  drainExactFactoryWorkflowReviewRepair,
+  expireExactFactoryWorkflowReview,
+} from "@/lib/factory-workflows/exact-review-runtime";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbox-stop-drain";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
@@ -314,6 +319,9 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["checkpoint publication", () => drainCheckpointPublications(admin)],
       ["accepted triage route", () => drainAcceptedTriageRoute(admin)],
       ["workflow branches", () => drainFactoryWorkflowBranches(admin)],
+      ["exact workflow review", () => drainExactFactoryWorkflowReview(admin)],
+      ["exact workflow review repair", () => drainExactFactoryWorkflowReviewRepair(admin)],
+      ["expired workflow review", () => expireExactFactoryWorkflowReview(admin)],
       ["canonical PR", () => drainCanonicalPullRequests(admin)],
       ["GitHub PR verification", () => reconcileGitHubPrVerification(admin)],
       [

@@ -14,6 +14,8 @@ export type TrustedPromptSource =
   | "wallie.evaluationJudgeInstructions"
   | "wallie.failureDiagnosisInstructions"
   | "wallie.foremanInstructions"
+  | "wallie.exactReviewInstructions"
+  | "workflow.repairInstructions"
   | "wallie.artifactEvidencePolicy"
   | "wallie.buildGitPublicationPolicy"
   | "wallie.readContextInstructions"
@@ -41,6 +43,9 @@ export type UntrustedPromptSource =
   | "diagnosis.instructions"
   | "diagnosis.evidence"
   | "foreman.context"
+  | "review.sourceDiff"
+  | "review.validationEvidence"
+  | "workflow.repairFindings"
   | "session.prompt"
   | "session.attachments"
   | `skill.repositoryRevision.${string}`

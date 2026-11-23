@@ -842,6 +842,9 @@ function buildAdminMock(opts: MockOptions) {
     if (fn === "read_factory_workflow_delegated_scope") {
       return { data: { status: "ordinary" }, error: null };
     }
+    if (fn === "read_factory_workflow_review_repair_input") {
+      return { data: null, error: null };
+    }
     if (fn === "read_factory_workflow_triage_binding") {
       return {
         data: opts.configuredTriageStageId ? { stage_id: opts.configuredTriageStageId } : null,
