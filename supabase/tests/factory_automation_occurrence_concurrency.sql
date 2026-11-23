@@ -181,7 +181,108 @@ select * from pg_temp.test_automation_retry_limit();
 select extensions.dblink_disconnect('op660_busy_payer')
 where 'op660_busy_payer' = any(coalesce(extensions.dblink_get_connections(), '{}'::text[]));
 
+create temp table installation_lock_occurrence as
+select pg_temp.record_test_occurrence('installation-lock', revision_id) as value from race_published_revision;
+
+create function pg_temp.test_automation_installation_contention() returns setof text language plpgsql as $$
+declare
+  occurrence_id uuid;
+  roots_before bigint;
+  lock_query text;
+  grant_check text;
+  deferred jsonb;
+  replay jsonb;
+  resumed jsonb;
+begin
+  select (value->>'occurrenceId')::uuid into strict occurrence_id from installation_lock_occurrence;
+  select count(*) into roots_before from public.sessions where workspace_id = pg_temp.op651_id(11);
+  select format('select id from public.github_installations where (workspace_id, id) = (%L::uuid, %L::uuid)
+    and not suspended for update', repository.workspace_id, repository.github_installation_id)
+  into strict lock_query from op651_grant approved join public.github_repositories repository on repository.id = approved.github_repository_id;
+  select format('select internal.require_factory_machine_grant(%L::uuid,%L::uuid,%L::uuid,%L::bigint)',
+    workspace_id, factory_id, id, version) into strict grant_check from op651_grant;
+  perform pg_temp.connect_automation_worker('op660_busy_installation');
+  perform extensions.dblink_exec('op660_busy_installation', 'begin');
+  perform locked.id from extensions.dblink('op660_busy_installation', lock_query) locked(id uuid);
+  if not found then raise exception 'The active installation was not locked.'; end if;
+  return next throws_ok(grant_check, 'PT409', 'Execution grant access is changing. Retry the operation.',
+    'the existing grant check detects the installation lock before common session creation');
+
+  deferred := public.admit_next_factory_automation_occurrence();
+  return next is(jsonb_build_array(deferred->>'status', deferred->>'reason'), '["pending", "authority_changing"]'::jsonb,
+    'automation admission retries when the active installation is temporarily locked');
+  return next ok(deferred->>'occurrenceId' = occurrence_id::text and deferred->>'attemptCount' = '1'
+    and (deferred->>'nextAttemptAt')::timestamptz > clock_timestamp()
+    and deferred->>'sessionId' is null and deferred->>'mutationReceiptId' is null,
+    'the blocked attempt preserves the exact occurrence and leaves no session or common receipt');
+  select pg_temp.record_test_occurrence('installation-lock', revision_id) into strict replay
+  from race_published_revision;
+  return next ok(replay->>'replayed' = 'true' and (replay - 'replayed') = (deferred - 'replayed'),
+    'redelivery while blocked returns the same durable retry receipt');
+  return next is((select count(*) from public.sessions where workspace_id = pg_temp.op651_id(11)), roots_before,
+    'the locked installation does not leave a partial root');
+
+  perform extensions.dblink_exec('op660_busy_installation', 'rollback');
+  update internal.factory_automation_occurrences occurrence set next_attempt_at = clock_timestamp() - interval '1 second'
+  where occurrence.id = occurrence_id and occurrence.status = 'pending';
+  resumed := public.admit_next_factory_automation_occurrence();
+  return next ok(resumed->>'occurrenceId' = occurrence_id::text and resumed->>'status' = 'admitted'
+    and resumed->>'attemptCount' = '2' and resumed->>'sessionId' is not null and resumed->>'mutationReceiptId' is not null,
+    'the same occurrence creates one session through the common command after the installation lock releases');
+  return next is((select count(*) from public.sessions where workspace_id = pg_temp.op651_id(11)), roots_before + 1,
+    'successful retry creates exactly one root');
+exception when query_canceled or others then
+  return next fail(format('automation installation contention failed (%s): %s', SQLSTATE, SQLERRM));
+end;
+$$;
+
+select * from pg_temp.test_automation_installation_contention();
+select extensions.dblink_disconnect('op660_busy_installation')
+where 'op660_busy_installation' = any(coalesce(extensions.dblink_get_connections(), '{}'::text[]));
+
 begin;
+insert into public.pipelines(id, workspace_id, factory_id, name)
+select pg_temp.op651_id(40), workspace_id, factory_id, 'Pipeline retired after publication' from op651_scope;
+insert into public.pipeline_stages(id, pipeline_id, workspace_id, position, slug, name)
+values (pg_temp.op651_id(41), pg_temp.op651_id(40), pg_temp.op651_id(11), 1, 'inspect-output', 'Inspect output');
+create temp table automation_missing_pipeline_definition as
+select scoped.workspace_id, scoped.factory_id, pg_temp.op651_id(49) as revision_id,
+  jsonb_set(jsonb_set(scoped.body::jsonb, '{pipelineId}', to_jsonb(pg_temp.op651_id(40))),
+    '{stages,0,id}', to_jsonb(pg_temp.op651_id(41)))::text as body
+from scoped_revisions scoped where scoped.scenario = 'root';
+insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version, definition_json, canonical_digest, created_by)
+select revision_id, workspace_id, factory_id, 1, body, encode(sha256(convert_to(body, 'UTF8')), 'hex'), pg_temp.op651_id(21)
+from automation_missing_pipeline_definition;
+insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
+select revision.workspace_id, revision.factory_id, revision.revision_id, active.activation_number + 1, pg_temp.op651_id(21)
+from automation_missing_pipeline_definition revision
+cross join lateral internal.factory_workflow_authoring_base(revision.workspace_id, revision.factory_id) active;
+create temp table missing_pipeline_rule as
+select revision.workspace_id, revision.factory_id, (draft.value->>'automationId')::uuid as automation_id,
+  (draft.value->>'draftRevisionId')::uuid as revision_id
+from automation_missing_pipeline_definition revision
+cross join lateral (select pg_temp.create_dry_run_automation(102, jsonb_set(pg_temp.dry_run_definition('schedule'),
+  '{target,definitionRevisionId}', to_jsonb(revision.revision_id))) as value) draft;
+select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, revision_id)
+from missing_pipeline_rule;
+create temp table missing_pipeline_occurrence as
+select public.record_factory_automation_occurrence(workspace_id, factory_id, automation_id, revision_id, 'schedule', 'pipeline-removed',
+  '{"kind":"schedule","scheduledFor":"2026-11-23T09:00:00-08:00"}'::jsonb) as value from missing_pipeline_rule;
+delete from public.pipelines where id = pg_temp.op651_id(40);
+select throws_ok($$
+  select public.create_session_command_once(rule.workspace_id, pg_temp.op651_id(21), pg_temp.op651_id(109), repeat('c', 64),
+    active.digest, 'Missing pipeline', 'Prove the missing pipeline error.', 'codex', 'gpt-5.5', '{}', target_factory_id => rule.factory_id)
+  from missing_pipeline_rule rule
+  cross join lateral internal.factory_workflow_authoring_base(rule.workspace_id, rule.factory_id) active
+$$, 'P0002', 'The factory definition pipeline is unavailable.', 'the canonical create command reports the actual missing pipeline');
+with result as (select public.admit_next_factory_automation_occurrence() as value)
+select is(jsonb_build_array(result.value->>'occurrenceId', result.value->>'status', result.value->>'reason'),
+  jsonb_build_array(recorded.value->>'occurrenceId', 'denied', 'invalid_assignment'),
+  'common session creation still denies an assignment whose published pipeline was actually removed')
+from result cross join missing_pipeline_occurrence recorded;
+select is(public.admit_next_factory_automation_occurrence(), null::jsonb,
+  'missing resources do not stay due for retry');
+
 delete from public.workspaces where id = pg_temp.op651_id(11);
 delete from auth.users where id in (pg_temp.op651_id(1), pg_temp.op651_id(2));
 select ok(not exists (select 1 from public.workspaces where id = pg_temp.op651_id(11))
