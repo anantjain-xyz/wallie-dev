@@ -10,6 +10,7 @@ import { workflowGraphSchema } from "@/lib/factory-definitions/workflow-schema";
 import type { Database } from "@/lib/supabase/database.types";
 import { evaluateExactRunValidationEvidence } from "@/lib/validation-evidence/read-run-evidence";
 
+import { advanceFactoryWorkflowBranchOccurrence } from "./branch-dispatch";
 import {
   type WorkflowDelegationRequest,
   workflowDelegationRequestSchema,
@@ -477,6 +478,13 @@ export async function executeFactoryWorkflowOccurrence(
   const observed = await readOccurrenceContext(admin, pin);
   if (observed.status !== "current") return observed;
   const { scope, execution, occurrence, node, results, graph } = observed;
+  if (
+    node.kind === "branch" ||
+    (node.kind === "agent" &&
+      graph.edges.some((edge) => edge.kind === "branch" && edge.to === node.id))
+  ) {
+    return advanceFactoryWorkflowBranchOccurrence(admin, pin, options?.signal);
+  }
   if (node.kind === "route") {
     if (!graph.routePolicy || !Object.hasOwn(graph.routePolicy.nodes, node.id))
       return { status: "blocked", code: "invalid_route_policy" } as const;

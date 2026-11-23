@@ -7,6 +7,7 @@ import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatc
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { sweepStalledRuns } from "@/worker/stall-detector";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
+import { drainFactoryWorkflowBranches } from "@/lib/factory-workflows/branch-dispatch";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
@@ -50,6 +51,9 @@ vi.mock("@/lib/factory-event-subscriptions/maintenance", () => ({
 }));
 vi.mock("@/lib/factory-event-subscriptions/relay", () => ({
   requestFactoryEventDispatch: vi.fn(),
+}));
+vi.mock("@/lib/factory-workflows/branch-dispatch", () => ({
+  drainFactoryWorkflowBranches: vi.fn(),
 }));
 vi.mock("@/lib/workspaces/deletion", () => ({ resumePendingWorkspaceDeletions: vi.fn() }));
 vi.mock("@/lib/run-exports/worker", () => ({
@@ -245,6 +249,7 @@ it.each([
       expect(vi.mocked(reconcilePrReadiness).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0],
       );
+      expect(drainFactoryWorkflowBranches).toHaveBeenCalledExactlyOnceWith(admin);
       expect(cleanupExpiredSessionAttachments).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainRunRetention).toHaveBeenCalledExactlyOnceWith(admin);
       expect(pruneFactoryOAuthCredentials).toHaveBeenCalledExactlyOnceWith(admin);
