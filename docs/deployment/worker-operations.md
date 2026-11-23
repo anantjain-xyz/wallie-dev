@@ -403,21 +403,31 @@ transition is not currently a successful compare-and-swap boundary.
 
 ### Linear reconciler
 
-The reconciler pages nonarchived, Linear-linked sessions in active phases,
-batches issue-state reads by workspace, and applies the workspace's routing
-configuration. Pagination orders only by `created_at`, limits each page to 50
-rows, and advances with `created_at > previous_cursor`. If more than 50 eligible
-sessions share the boundary timestamp, the remaining tied rows are skipped;
-subsequent sweeps repeat the same ordering and may never reach them. For rows
-that are reached, the reconciler may:
+The reconciler reads nonarchived, Linear-linked sessions in unique ID order,
+50 at a time. It batches existing links by workspace, reads the current open
+provider state span, and uses that observation for both session routing and
+issue-state automations. Legacy stage routing still applies the workspace's
+status-name mappings and its exact per-session transition receipt.
 
-- Ensure the current stage has work queued.
-- Cancel work and reroute to a configured stage.
-- Archive a session.
-- Pause or ignore an unmapped status.
+- Automation polling uses the canonical issue ID and provider span ID.
+  Identifier and UUID links to one issue in the same factory identify the same
+  source. State, team, and project filters use provider IDs.
+- The first coherent observation establishes a baseline. A subsequent entry
+  gets one occurrence per matching published rule. Leaving and returning can
+  trigger the rule again when the provider assigns the return a new span ID.
+- Unrelated edits and repeat reads of the same span do not rematch rules.
+  The first accepted filter payload is retained. Older snapshots cannot move
+  the issue watermark backward.
+- The scan cursor, issue watermarks, and matching occurrences commit together.
+  After a failed or throttled read, the next sweep resumes after the last
+  committed page.
+  A short final page resets the cursor to the beginning. Global and
+  workspace-scoped scans keep separate cursors and share span receipts.
 
 Linear rate limits are retried once with a bounded delay. Persistent throttling
-aborts the sweep so the next interval can continue later.
+ends the current sweep. The worker only reads existing links and only considers
+the current open span. Historical closed spans, issue discovery, and provider
+subscriptions are outside this polling path.
 
 ### Sandbox reaper
 
@@ -634,8 +644,6 @@ A healthy deployment should provide:
   newer in-flight job set.
 - The stall detector does not verify that its status-filtered run update won
   before performing the remaining recovery actions.
-- Linear reconciliation uses a `created_at`-only cursor and can skip sessions
-  tied at a 50-row page boundary.
 - Manager-triggered maintenance invokes the sandbox reaper without a workspace
   filter.
 - The reaper cannot discover a sandbox whose provider ID was never recorded on

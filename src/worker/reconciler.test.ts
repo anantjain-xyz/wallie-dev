@@ -22,11 +22,14 @@ import { LinearRateLimitedError } from "@/lib/linear-routing/observations";
 
 const updatedAt = "2026-10-02T00:00:00Z";
 const observation = {
+  issueId: "66310000-0000-4000-8000-000000000001",
   issueUpdatedAt: updatedAt,
   spanId: "span-1",
   startedAt: updatedAt,
   stateId: "state-1",
   statusName: "Rework",
+  teamId: "team-1",
+  projectId: null,
 };
 const session = (id = "session-1", workspace = "workspace-1", phase = "awaiting_review") => ({
   id,
@@ -49,8 +52,28 @@ function adminFor(rows = [session()]) {
     ],
     error: null,
   });
+  const readCursor = vi.fn().mockResolvedValue({
+    data: [{ after_session_id: null, generation: 0 }],
+    error: null,
+  });
+  const commitPage = vi.fn((input: { p_session_ids: string[]; p_expected_generation: number }) =>
+    Promise.resolve({
+      data: [
+        {
+          after_session_id: input.p_session_ids.length === 50 ? input.p_session_ids.at(-1) : null,
+          generation: input.p_expected_generation + 1,
+          occurrence_count: 0,
+        },
+      ],
+      error: null,
+    }),
+  );
   const admin = {
-    rpc,
+    rpc(name: string, input: never) {
+      if (name === "read_linear_automation_span_cursor") return readCursor(name, input);
+      if (name === "commit_linear_automation_span_page") return commitPage(input);
+      return rpc(name, input);
+    },
     from(table: string) {
       if (!["sessions", "workspace_secrets"].includes(table))
         throw new Error(`Unexpected direct read/write ${table}`);
@@ -101,7 +124,7 @@ function adminFor(rows = [session()]) {
       return builder;
     },
   };
-  return { admin, rpc, reads };
+  return { admin, rpc, reads, readCursor, commitPage };
 }
 
 beforeEach(() => {
@@ -218,18 +241,19 @@ describe("reconcileLinearState", () => {
     expect(rpc).toHaveBeenCalledTimes(2);
     expect(mocks.cleanup).toHaveBeenCalledTimes(1);
   });
-  it("fails closed when configuration could not be read", async () => {
+  it("keeps legacy routing closed when configuration is unavailable while retaining the provider span", async () => {
     mocks.routing.mockRejectedValue(new Error("configuration query failed"));
-    const { admin, rpc } = adminFor();
+    const { admin, rpc, commitPage } = adminFor();
     await reconcileLinearState(admin as never);
     expect(rpc).not.toHaveBeenCalled();
-    expect(mocks.observations).not.toHaveBeenCalled();
+    expect(commitPage).toHaveBeenCalledOnce();
   });
   it("fails closed on incomplete source history", async () => {
     mocks.observations.mockRejectedValue(new Error("missing open span"));
-    const { admin, rpc } = adminFor();
+    const { admin, rpc, commitPage } = adminFor();
     await reconcileLinearState(admin as never);
     expect(rpc).not.toHaveBeenCalled();
+    expect(commitPage).not.toHaveBeenCalled();
   });
   it("aborts a sweep on persistent source rate limit", async () => {
     mocks.observations.mockRejectedValue(new LinearRateLimitedError());
@@ -258,6 +282,56 @@ describe("reconcileLinearState", () => {
     expect(rpc).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ p_workspace_id: "workspace-2" }),
+    );
+  });
+  it("restarts from the persisted linked-session cursor with exact provider scope", async () => {
+    const { admin, reads, readCursor, commitPage, rpc } = adminFor([
+      session(),
+      session("session-2"),
+    ]);
+    readCursor.mockResolvedValue({
+      data: [{ after_session_id: "session-1", generation: 7 }],
+      error: null,
+    });
+
+    await reconcileLinearState(admin as never, { workspaceId: "workspace-1" });
+
+    expect(reads[0]?.filters).toMatchObject({ "gt.id": "session-1", workspace_id: "workspace-1" });
+    expect(commitPage).toHaveBeenCalledExactlyOnceWith({
+      p_expected_generation: 7,
+      p_session_ids: ["session-2"],
+      p_workspace_id: "workspace-1",
+      p_observations: [
+        {
+          sessionId: "session-2",
+          linkedIssueId: "ISSUE-session-2",
+          issueId: observation.issueId,
+          spanId: observation.spanId,
+          startedAt: updatedAt,
+          issueUpdatedAt: updatedAt,
+          stateId: "state-1",
+          teamId: "team-1",
+          projectId: null,
+        },
+      ],
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      "apply_linear_session_transition",
+      expect.objectContaining({ p_session_id: "session-2" }),
+    );
+  });
+  it("retains the source checkpoint on rate limiting and still routes already fetched workspaces", async () => {
+    mocks.observations
+      .mockResolvedValueOnce(new Map([["ISSUE-session-1", observation]]))
+      .mockRejectedValueOnce(new LinearRateLimitedError());
+    const { admin, rpc, commitPage } = adminFor([session(), session("session-2", "workspace-2")]);
+
+    expect((await reconcileLinearState(admin as never)).rateLimited).toBe(true);
+
+    expect(commitPage).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(
+      "apply_linear_session_transition",
+      expect.objectContaining({ p_session_id: "session-1" }),
     );
   });
   it("uses a unique ID cursor so equal creation timestamps cannot skip a page", async () => {

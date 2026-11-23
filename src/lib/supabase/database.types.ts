@@ -11565,6 +11565,19 @@ export type Database = {
         }
         Returns: Json
       }
+      commit_linear_automation_span_page: {
+        Args: {
+          p_expected_generation: number
+          p_observations: Json
+          p_session_ids: string[]
+          p_workspace_id?: string
+        }
+        Returns: {
+          after_session_id: string
+          generation: number
+          occurrence_count: number
+        }[]
+      }
       commit_run_export_page: {
         Args: {
           p_entries: Json
@@ -15362,6 +15375,13 @@ export type Database = {
           graph_revision_id: string
           stage_id: string
           workflow_digest: string
+        }[]
+      }
+      read_linear_automation_span_cursor: {
+        Args: { p_workspace_id?: string }
+        Returns: {
+          after_session_id: string
+          generation: number
         }[]
       }
       read_run_export_page: {

@@ -15,9 +15,11 @@ const pageSchema = z.object({
   pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
 });
 const issueSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().uuid().toLowerCase(),
   updatedAt: z.string().datetime({ offset: true }),
   state: z.object({ id: z.string().min(1), name: z.string().min(1) }),
+  team: z.object({ id: z.string().min(1) }).nullable(),
+  project: z.object({ id: z.string().min(1) }).nullable(),
   stateHistory: pageSchema,
 });
 const responseSchema = z.object({
@@ -31,18 +33,21 @@ const responseSchema = z.object({
     )
     .optional(),
 });
-const fields = `id updatedAt state { id name }
+const fields = `id updatedAt state { id name } team { id } project { id }
   stateHistory(first: 50, after: $after) {
     nodes { id stateId startedAt endedAt }
     pageInfo { hasNextPage endCursor }
   }`;
 
 export type LinearStateObservation = {
+  issueId: string;
   issueUpdatedAt: string;
   spanId: string;
   startedAt: string;
   stateId: string;
   statusName: string;
+  teamId: string | null;
+  projectId: string | null;
 };
 
 export class LinearRateLimitedError extends Error {
@@ -125,11 +130,14 @@ export async function fetchLinearStateObservations(
           throw new Error(`Linear state history is inconsistent for ${issueId}`);
         }
         result.set(issueId, {
+          issueId: initial.id,
           issueUpdatedAt: initial.updatedAt,
           spanId: span.id,
           startedAt: span.startedAt,
           stateId: span.stateId,
           statusName: initial.state.name,
+          teamId: initial.team?.id ?? null,
+          projectId: initial.project?.id ?? null,
         });
         break;
       }
@@ -149,7 +157,9 @@ export async function fetchLinearStateObservations(
         next.id !== initial.id ||
         next.updatedAt !== initial.updatedAt ||
         next.state.id !== initial.state.id ||
-        next.state.name !== initial.state.name
+        next.state.name !== initial.state.name ||
+        next.team?.id !== initial.team?.id ||
+        next.project?.id !== initial.project?.id
       ) {
         throw new Error(`Linear issue changed while reading state history for ${issueId}`);
       }
