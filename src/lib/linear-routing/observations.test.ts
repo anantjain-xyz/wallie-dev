@@ -131,6 +131,15 @@ describe("fetchLinearStateObservations", () => {
     fetchMock.mockResolvedValue(response({ issue0: null }));
     expect((await fetchLinearStateObservations("key", ["ENG-123"], sleep)).size).toBe(0);
   });
+  it("returns the first rate limit without retrying when no sleep is configured", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("", { status: 429, headers: { "Retry-After": "30" } }),
+    );
+    await expect(fetchLinearStateObservations("key", ["ENG-123"])).rejects.toBeInstanceOf(
+      LinearRateLimitedError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it("retries HTTP throttling once and caps the wait", async () => {
     fetchMock
       .mockResolvedValueOnce(

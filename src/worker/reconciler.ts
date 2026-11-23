@@ -24,6 +24,7 @@ type LinkedSession = Pick<
 >;
 type Cursor = { after_session_id: string | null; generation: number };
 type IssueObservations = Map<string, LinearStateObservation | null>;
+type LinearRoutingSnapshot = Awaited<ReturnType<typeof loadLinearRoutingSnapshot>>;
 
 const PAGE_SIZE = 50;
 const CONCURRENT_LIFECYCLE_WORKSPACES = 5;
@@ -35,7 +36,6 @@ export interface ReconcileResult {
   rateLimited: boolean;
 }
 export interface ReconcileOptions {
-  sleep?: (ms: number) => Promise<void>;
   workspaceId?: string;
 }
 
@@ -115,9 +115,9 @@ async function routeLinkedSessions(
   workspaceId: string,
   sessions: LinkedSession[],
   observations: IssueObservations,
+  routing: LinearRoutingSnapshot,
   result: ReconcileResult,
 ) {
-  const routing = await loadLinearRoutingSnapshot(admin, workspaceId);
   for (const session of sessions) {
     result.checked++;
     const observation = session.linear_issue_id
@@ -236,15 +236,15 @@ async function observeWorkspace(
   sessions: LinkedSession[],
   apiKey: string | undefined,
   throttled: Set<string>,
-  sleep: (ms: number) => Promise<void>,
   observed: IssueObservations = new Map(),
 ): Promise<IssueObservations | null> {
+  if (throttled.has(workspaceId)) return null;
   if (!apiKey) return new Map();
   const issueIds = [...new Set(sessions.flatMap((session) => session.linear_issue_id ?? []))];
   const missing = issueIds.filter((id) => !observed.has(id));
   try {
     const fetched = missing.length
-      ? await fetchLinearStateObservations(apiKey, missing, sleep)
+      ? await fetchLinearStateObservations(apiKey, missing)
       : new Map<string, LinearStateObservation>();
     return new Map(issueIds.map((id) => [id, observed.get(id) ?? fetched.get(id) ?? null]));
   } catch (error) {
@@ -266,19 +266,11 @@ async function advanceWorkspaceAutomation(
   progress: Cursor,
   apiKey: string | undefined,
   throttled: Set<string>,
-  sleep: (ms: number) => Promise<void>,
   observed?: IssueObservations,
 ): Promise<Cursor | null> {
   const sessions = await loadLinkedSessionPage(admin, progress.after_session_id, workspaceId);
   if (!sessions || (!sessions.length && !progress.after_session_id)) return null;
-  const observations = await observeWorkspace(
-    workspaceId,
-    sessions,
-    apiKey,
-    throttled,
-    sleep,
-    observed,
-  );
+  const observations = await observeWorkspace(workspaceId, sessions, apiKey, throttled, observed);
   if (!observations || throttled.has(workspaceId)) return null;
   const next = await commitAutomationPage(admin, progress, sessions, observations, workspaceId);
   return next?.after_session_id ? next : null;
@@ -290,8 +282,6 @@ export async function reconcileLinearState(
   options: ReconcileOptions = {},
 ): Promise<ReconcileResult> {
   const { workspaceId } = options;
-  const sleep =
-    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const result: ReconcileResult = { checked: 0, canceled: 0, rateLimited: false };
   const throttled = new Set<string>();
   const scheduledAutomation = new Set<string>();
@@ -316,7 +306,6 @@ export async function reconcileLinearState(
         progress,
         apiKey,
         throttled,
-        sleep,
         recent?.observations ?? undefined,
       );
       if (next) queuedAutomation.set(scope, next);
@@ -363,16 +352,18 @@ export async function reconcileLinearState(
         await forEachWorkspace(workspaces, async (scope, linked) => {
           const apiKey = apiKeys.get(scope);
           if (apiKey === null || throttled.has(scope)) return;
-          const fresh = await observeWorkspace(scope, linked, apiKey, throttled, sleep);
-          if (fresh?.size) {
-            try {
-              await routeLinkedSessions(admin, scope, linked, fresh, result);
-            } catch (error) {
-              console.error("[reconciler] failed to route Linear workspace", {
-                error: error instanceof Error ? error.message : String(error),
-                workspaceId: scope,
-              });
-            }
+          const routing = apiKey
+            ? await loadLinearRoutingSnapshot(admin, scope).catch((error: unknown) => {
+                console.error("[reconciler] failed to load Linear routing", {
+                  error: error instanceof Error ? error.message : String(error),
+                  workspaceId: scope,
+                });
+                return null;
+              })
+            : null;
+          const fresh = routing ? await observeWorkspace(scope, linked, apiKey, throttled) : null;
+          if (routing && fresh?.size) {
+            await routeLinkedSessions(admin, scope, linked, fresh, routing, result);
           }
           scheduleAutomation(scope, { apiKey, observations: fresh });
         });

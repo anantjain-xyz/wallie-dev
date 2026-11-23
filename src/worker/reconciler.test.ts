@@ -46,6 +46,7 @@ function adminFor(
     workspace_id,
     encrypted_value: workspace_id,
   })),
+  waitBeforeRead?: (table: string, filters: Record<string, unknown>) => Promise<void> | undefined,
 ) {
   const reads: Array<{ table: string; filters: Record<string, unknown> }> = [];
   const rpc = vi.fn().mockResolvedValue({
@@ -124,7 +125,7 @@ function adminFor(
         },
         then(resolve: (value: unknown) => unknown) {
           reads.push({ table, filters });
-          return Promise.resolve(
+          const finish = () =>
             resolve({
               error: null,
               data:
@@ -139,8 +140,9 @@ function adminFor(
                           (!filters["gt.id"] || row.id > String(filters["gt.id"])),
                       )
                       .slice(0, 50),
-            }),
-          );
+            });
+          const pending = waitBeforeRead?.(table, filters);
+          return pending ? pending.then(finish) : Promise.resolve(finish());
         },
       };
       return builder;
@@ -271,6 +273,31 @@ describe("reconcileLinearState", () => {
     expect(rpc).not.toHaveBeenCalled();
     expect(commitPage).toHaveBeenCalledOnce();
   });
+  it("loads the routing snapshot before observing a terminal lifecycle state", async () => {
+    const routing = Promise.withResolvers<{
+      config: typeof DEFAULT_LINEAR_ROUTING_CONFIG;
+      updatedAt: string;
+    }>();
+    mocks.routing.mockReturnValueOnce(routing.promise);
+    mocks.observations.mockResolvedValue(
+      new Map([["ISSUE-session-1", { ...observation, statusName: "Canceled" }]]),
+    );
+    const { admin, terminalRpc } = adminFor();
+
+    const work = reconcileLinearState(admin as never);
+    try {
+      await vi.waitFor(() =>
+        expect(mocks.routing).toHaveBeenCalledExactlyOnceWith(admin, "workspace-1"),
+      );
+      expect(mocks.observations).not.toHaveBeenCalled();
+    } finally {
+      routing.resolve({ config: DEFAULT_LINEAR_ROUTING_CONFIG, updatedAt });
+    }
+
+    expect((await work).canceled).toBe(1);
+    expect(terminalRpc).toHaveBeenCalledOnce();
+  });
+
   it("fails closed on incomplete source history", async () => {
     mocks.observations.mockRejectedValue(new Error("missing open span"));
     const { admin, rpc, commitPage } = adminFor();
@@ -292,11 +319,10 @@ describe("reconcileLinearState", () => {
     ]);
     await reconcileLinearState(admin as never);
     expect(mocks.observations).toHaveBeenCalledTimes(2);
-    expect(mocks.observations).toHaveBeenCalledWith(
-      "decoded:workspace-1",
-      ["ISSUE-session-1", "ISSUE-session-2"],
-      expect.any(Function),
-    );
+    expect(mocks.observations).toHaveBeenCalledWith("decoded:workspace-1", [
+      "ISSUE-session-1",
+      "ISSUE-session-2",
+    ]);
   });
   it("honors manual workspace scope", async () => {
     const { admin, rpc } = adminFor([session(), session("session-2", "workspace-2")]);
@@ -601,11 +627,9 @@ describe("reconcileLinearState", () => {
 
     await reconcileLinearState(admin as never);
 
-    expect(mocks.observations).toHaveBeenCalledExactlyOnceWith(
-      "decoded:valid-fixture",
-      ["ISSUE-session-2"],
-      expect.any(Function),
-    );
+    expect(mocks.observations).toHaveBeenCalledExactlyOnceWith("decoded:valid-fixture", [
+      "ISSUE-session-2",
+    ]);
     expect(commitPage.mock.calls.map(([page]) => page.p_workspace_id).sort()).toEqual([
       "workspace-2",
       "workspace-3",
@@ -640,11 +664,7 @@ describe("reconcileLinearState", () => {
     const work = reconcileLinearState(admin as never);
     try {
       await vi.waitFor(() => {
-        expect(mocks.observations).toHaveBeenCalledWith(
-          "decoded:workspace-2",
-          ["ISSUE-session-2"],
-          expect.any(Function),
-        );
+        expect(mocks.observations).toHaveBeenCalledWith("decoded:workspace-2", ["ISSUE-session-2"]);
         expect(commitPage.mock.calls.map(([page]) => page.p_workspace_id).sort()).toEqual([
           "workspace-1",
           "workspace-3",
@@ -688,11 +708,9 @@ describe("reconcileLinearState", () => {
     const work = reconcileLinearState(admin as never);
     try {
       await vi.waitFor(() => {
-        expect(mocks.observations).toHaveBeenCalledWith(
-          "decoded:workspace-1",
-          ["ISSUE-session-050"],
-          expect.any(Function),
-        );
+        expect(mocks.observations).toHaveBeenCalledWith("decoded:workspace-1", [
+          "ISSUE-session-050",
+        ]);
         expect(rpc).toHaveBeenCalledWith(
           "apply_linear_session_transition",
           expect.objectContaining({ p_session_id: "session-051" }),
@@ -707,6 +725,109 @@ describe("reconcileLinearState", () => {
 
     expect((await work).rateLimited).toBe(true);
     expect(commitPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the offset provider request when lifecycle throttles the workspace during its page read", async () => {
+    const rows = Array.from({ length: 51 }, (_, index) =>
+      session(`session-${String(index).padStart(3, "0")}`),
+    );
+    const offsetRead = Promise.withResolvers<void>();
+    const offsetStarted = Promise.withResolvers<void>();
+    const { admin, readCursor, commitPage } = adminFor(rows, undefined, (table, filters) => {
+      if (table === "sessions" && filters.workspace_id && filters["gt.id"] === "session-049") {
+        offsetStarted.resolve();
+        return offsetRead.promise;
+      }
+    });
+    readCursor.mockResolvedValue({
+      data: [{ after_session_id: "session-049", generation: 7 }],
+      error: null,
+    });
+    mocks.observations.mockImplementation(async (_key: string, ids: string[]) => {
+      if (ids.includes("ISSUE-session-050")) {
+        await offsetStarted.promise;
+        throw new LinearRateLimitedError();
+      }
+      return new Map(ids.map((id) => [id, observation]));
+    });
+
+    const work = reconcileLinearState(admin as never);
+    try {
+      await vi.waitFor(() =>
+        expect(mocks.observations).toHaveBeenCalledWith("decoded:workspace-1", [
+          "ISSUE-session-050",
+        ]),
+      );
+    } finally {
+      offsetRead.resolve();
+    }
+
+    expect((await work).rateLimited).toBe(true);
+    expect(
+      mocks.observations.mock.calls.filter(([, ids]) => ids.includes("ISSUE-session-050")),
+    ).toHaveLength(1);
+    expect(commitPage).not.toHaveBeenCalled();
+  });
+
+  it("defers a first HTTP 429 across the workspace while the next lifecycle page keeps moving", async () => {
+    const rows = [
+      ...Array.from({ length: 51 }, (_, index) =>
+        session(`session-${String(index).padStart(3, "0")}`),
+      ),
+      session("session-051", "workspace-2"),
+    ];
+    const laterLifecyclePage = Promise.withResolvers<void>();
+    const { admin, readCursor, rpc, commitPage } = adminFor(rows, undefined, (table, filters) => {
+      if (table === "sessions" && !filters.workspace_id && filters["gt.id"] === "session-049") {
+        return laterLifecyclePage.promise;
+      }
+    });
+    readCursor.mockImplementation(async (_, input) => ({
+      data: [
+        input.p_workspace_id === "workspace-1"
+          ? { after_session_id: "session-049", generation: 7 }
+          : { after_session_id: null, generation: 3 },
+      ],
+      error: null,
+    }));
+    const actual = await vi.importActual<typeof import("@/lib/linear-routing/observations")>(
+      "@/lib/linear-routing/observations",
+    );
+    const provider = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () => new Response("", { status: 429, headers: { "Retry-After": "30" } }),
+      );
+    const retry = Promise.withResolvers<void>();
+    mocks.observations.mockImplementation(
+      (key: string, ids: string[], sleep?: () => Promise<void>) =>
+        ids.includes("ISSUE-session-050")
+          ? actual.fetchLinearStateObservations(key, ids, sleep ? () => retry.promise : undefined)
+          : Promise.resolve(new Map(ids.map((id) => [id, observation]))),
+    );
+
+    const work = reconcileLinearState(admin as never);
+    try {
+      await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(1));
+      laterLifecyclePage.resolve();
+      await vi.waitFor(() => {
+        expect(rpc).toHaveBeenCalledWith(
+          "apply_linear_session_transition",
+          expect.objectContaining({ p_session_id: "session-051" }),
+        );
+        expect(commitPage).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ p_workspace_id: "workspace-2", p_expected_generation: 3 }),
+        );
+      });
+      expect(provider).toHaveBeenCalledTimes(1);
+    } finally {
+      laterLifecyclePage.resolve();
+      retry.resolve();
+      await work;
+      provider.mockRestore();
+    }
+
+    expect((await work).rateLimited).toBe(true);
   });
 
   it("uses a unique ID cursor so equal creation timestamps cannot skip a page", async () => {

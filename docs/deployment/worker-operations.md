@@ -433,10 +433,8 @@ receipt.
   the current issue watermark. A failed or stale write keeps the link available
   for another sweep.
 
-Linear rate limits are retried once with a bounded delay. Persistent throttling
-ends polling for that workspace in the current sweep. The worker only reads
-existing links and only considers
-the current open span. Historical closed spans, issue discovery, and provider
+A Linear rate limit defers that workspace until the next sweep. The worker only
+reads existing links and only considers the current open span. Historical closed spans, issue discovery, and provider
 subscriptions are outside this polling path.
 
 ### Sandbox reaper

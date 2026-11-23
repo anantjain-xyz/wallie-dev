@@ -52,7 +52,7 @@ export type LinearStateObservation = {
 
 export class LinearRateLimitedError extends Error {
   constructor() {
-    super("Linear rate limit persisted after retry");
+    super("Linear observation request was rate limited.");
     this.name = "LinearRateLimitedError";
   }
 }
@@ -61,7 +61,7 @@ async function request(
   apiKey: string,
   query: string,
   variables: Record<string, unknown>,
-  sleep: (ms: number) => Promise<void>,
+  sleep?: (ms: number) => Promise<void>,
 ) {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(endpoint, {
@@ -74,7 +74,7 @@ async function request(
       response.status === 429 ||
       payload?.errors?.some((error) => error.extensions?.code === "RATELIMITED")
     ) {
-      if (attempt >= 1) throw new LinearRateLimitedError();
+      if (!sleep || attempt >= 1) throw new LinearRateLimitedError();
       const seconds = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
       await sleep(
         Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, 30_000) : 1_000,
@@ -97,7 +97,7 @@ async function request(
 export async function fetchLinearStateObservations(
   apiKey: string,
   issueIds: string[],
-  sleep: (ms: number) => Promise<void>,
+  sleep?: (ms: number) => Promise<void>,
 ): Promise<Map<string, LinearStateObservation>> {
   const result = new Map<string, LinearStateObservation>();
   if (issueIds.length === 0) return result;
