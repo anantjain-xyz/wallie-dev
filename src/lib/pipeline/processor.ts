@@ -46,6 +46,13 @@ import {
   type PinnedFactoryExecution,
 } from "@/lib/factory-definitions/runtime-definition";
 import { runBenchmarkTrial } from "@/lib/factory-benchmarks/qualified-trial";
+import { loadDelegatedAcceptedScope } from "@/lib/factory-workflows/delegated-scope";
+import {
+  InvalidTriageOutcomeError,
+  isConfiguredTriageStage,
+  renderTriageOutcome,
+  triageOutputPrompt,
+} from "@/lib/factory-workflows/triage-stage";
 import {
   loadRoutedFactoryExecution,
   resolveRoutedFactoryExecutionProfile,
@@ -387,6 +394,7 @@ async function runStage(input: {
       repository,
       priorGitInput,
       specification,
+      configuredTriage,
     ] = await Promise.all([
       pinned?.agent ?? loadWorkspaceAgentConfig(admin, session.workspace_id),
       loadAttemptPredecessors(admin, session.id),
@@ -410,6 +418,7 @@ async function runStage(input: {
       }),
       gitInputPromise,
       specificationStage ? loadSpecificationPromptContext(admin, session, stage.id) : undefined,
+      specificationStage ? isConfiguredTriageStage(admin, session, stage.id, signal) : false,
     ]);
     throwIfAborted(signal);
     if (pinned && predecessorInputs.predecessors.some(({ status }) => status !== "approved")) {
@@ -718,20 +727,38 @@ async function runStage(input: {
       signal,
       workspaceId: session.workspace_id,
     });
+    const acceptedScope = pinned
+      ? await loadDelegatedAcceptedScope(admin, runContextScope, signal)
+      : null;
     const context = pinned
       ? await prepareRunContext(runContextScope, {
           origin: contextOrigin,
           references: pinned.contextDocuments ?? [],
-          requiredInputs: requiredRunContextInputs({
-            sessionPrompt,
-            feedback: feedbackInput,
-            predecessors: predecessorInputs.predecessors,
-            predecessorText: predecessorInputs.promptArtifacts,
-            repositoryContexts: readContext,
-            specification,
-          }),
+          requiredInputs: [
+            ...requiredRunContextInputs({
+              sessionPrompt,
+              feedback: feedbackInput,
+              predecessors: predecessorInputs.predecessors,
+              predecessorText: predecessorInputs.promptArtifacts,
+              repositoryContexts: readContext,
+              specification,
+            }),
+            ...(acceptedScope ? [acceptedScope.requiredInput] : []),
+          ],
         })
       : undefined;
+    const triage =
+      configuredTriage && context && specification
+        ? {
+            manifest: context.manifest,
+            canAskClarification: specification.canAskClarification,
+          }
+        : null;
+    if (configuredTriage && !triage) {
+      throw new FrozenRunContextUnavailableError(
+        "The configured triage stage requires exact frozen context.",
+      );
+    }
     if (context?.memoryProposalsEnabled) {
       runEvents.protectPrivatePath(factoryMemoryProposalPath(runId));
     }
@@ -782,6 +809,7 @@ async function runStage(input: {
           "repo.defaultBranch",
           pinned ? gitInput.base_branch : (github.repo.default_branch ?? "main"),
         ),
+        acceptedScope: acceptedScope?.promptValue,
         externalContextDocuments: context?.documents,
         frozenConversation: context?.conversation,
         factoryMemories: context?.memories,
@@ -806,7 +834,15 @@ async function runStage(input: {
             )
           : undefined,
         ...(specificationStage
-          ? { specification }
+          ? {
+              specification:
+                triage && specification
+                  ? {
+                      ...specification,
+                      triageOutput: triageOutputPrompt(triage.manifest, triage.canAskClarification),
+                    }
+                  : specification,
+            }
           : {
               validationPlanInstructions: trustedPromptValue(
                 "run.validationPlanInstructions",
@@ -1090,19 +1126,23 @@ async function runStage(input: {
       throw new Error("Agent ended without a successful completion event.");
     }
 
-    const artifactMarkdown = finalOutput;
-    if (!artifactMarkdown) {
-      const message =
-        `${stage.name} supplied no final deliverable, so no artifact was created.` +
-        (captureOrderedEvents
-          ? " Progress and any partial output remain available in Run history."
-          : "");
-
-      await runEvents.record({ type: "error", message });
+    const artifactMarkdown =
+      finalOutput && triage ? renderTriageOutcome({ ...triage, finalOutput }) : finalOutput;
+    if (!artifactMarkdown || artifactMarkdown instanceof InvalidTriageOutcomeError) {
+      const outcomeError =
+        artifactMarkdown instanceof InvalidTriageOutcomeError
+          ? artifactMarkdown
+          : new MissingReviewableOutputError(
+              `${stage.name} supplied no final deliverable, so no artifact was created.` +
+                (captureOrderedEvents
+                  ? " Progress and any partial output remain available in Run history."
+                  : ""),
+            );
+      await runEvents.record({ type: "error", message: outcomeError.message });
       runFailureEventRecorded = captureOrderedEvents;
       await runEvents.finish("complete");
       captureOpen = false;
-      throw new MissingReviewableOutputError(message);
+      throw outcomeError;
     }
     await runEvents.finish("complete");
     captureOpen = false;
@@ -1261,6 +1301,7 @@ async function runStage(input: {
       retry:
         !retainSource &&
         !(error instanceof MissingReviewableOutputError) &&
+        !(error instanceof InvalidTriageOutcomeError) &&
         !(error instanceof SourcePreservationError) &&
         !(error instanceof ExecutionBudgetExhaustedError) &&
         !(error instanceof FactoryExecutionProfileUnavailableError) &&

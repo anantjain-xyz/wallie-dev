@@ -24,6 +24,7 @@ import { reapOrphanSandboxes } from "@/worker/sandbox-reaper";
 import { reconcileLinearState } from "@/worker/reconciler";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
+import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
 import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
@@ -309,6 +310,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
         },
       ],
       ["checkpoint publication", () => drainCheckpointPublications(admin)],
+      ["accepted triage route", () => drainAcceptedTriageRoute(admin)],
       ["canonical PR", () => drainCanonicalPullRequests(admin)],
       ["GitHub PR verification", () => reconcileGitHubPrVerification(admin)],
       [

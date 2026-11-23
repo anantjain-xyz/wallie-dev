@@ -469,7 +469,11 @@ export async function admitFactoryWorkflowDelegatedSession(
 }
 
 /** The worker supplies the captured ownership token. Scope and proof targets come from the ledger. */
-export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: WorkflowOccurrencePin) {
+export async function executeFactoryWorkflowOccurrence(
+  admin: Admin,
+  pin: WorkflowOccurrencePin,
+  options?: { signal?: AbortSignal },
+) {
   const observed = await readOccurrenceContext(admin, pin);
   if (observed.status !== "current") return observed;
   const { scope, execution, occurrence, node, results, graph } = observed;
@@ -487,6 +491,7 @@ export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: Workfl
 
     if (policy.foremanProfile) {
       const foreman = await executeFactoryWorkflowForeman(admin, pin, {
+        signal: options?.signal,
         freshIssueBlocker: decision
           ? "route_already_decided"
           : (execution.graph_route_blocker ??
