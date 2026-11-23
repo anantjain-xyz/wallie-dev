@@ -226,6 +226,105 @@ select ok((select (pg_temp.op655_publish('scoped-review',959,(result->>'draftId'
   ->>'created')::boolean from corrected_authoring_draft),
   'enrollment rejection preserves an editable draft that publishes after the runtime prerequisites are corrected');
 
+select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(907),
+  'Human approval policy workflow') from op655_scope;
+insert into op655_graphs(label,body,digest)
+select variant.label,payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
+from (values ('matching-gate',21,false),('other-gate-approver',921,false),('open-gate-policy',21,true))
+  variant(label,approver_slot,anyone_can_approve)
+cross join lateral (
+  select jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId','checkpoint','grants','[]'::jsonb,
+    'nodes',jsonb_build_array(jsonb_build_object('id','checkpoint','kind','deterministic','operation','checkpoint'),
+      jsonb_build_object('id','approved','kind','human-gate','anyoneCanApprove',variant.anyone_can_approve,
+        'approverMemberIds',jsonb_build_array(pg_temp.op651_id(variant.approver_slot)))),
+    'edges',jsonb_build_array(jsonb_build_object('id','approve','kind','next','from','checkpoint','to','approved')))::text body
+) payload;
+create temp table other_gate_draft as
+select pg_temp.op655_save('other-gate-approver',966,p_workflow=>pg_temp.op651_id(907)) as result;
+select throws_ok($$select pg_temp.op655_publish('other-gate-approver',967,(result->>'draftId')::uuid,
+  p_workflow=>pg_temp.op651_id(907)) from other_gate_draft$$,
+  'PT422','Approval settings for workflow gate "approved" must match its source stage.',
+  'an active approver outside the authoritative final stage can be saved in a draft but cannot be published');
+create temp table open_gate_draft as
+select pg_temp.op655_save('open-gate-policy',968,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(907)) as result
+from other_gate_draft;
+select throws_ok($$select pg_temp.op655_publish('open-gate-policy',969,(result->>'draftId')::uuid,
+  p_workflow=>pg_temp.op651_id(907)) from open_gate_draft$$,
+  'PT422','Approval settings for workflow gate "approved" must match its source stage.',
+  'changing only the anyone-can-approve setting cannot publish over the exact named source policy');
+create temp table matching_gate_draft as
+select pg_temp.op655_save('matching-gate',970,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(907)) as result
+from open_gate_draft;
+select ok((select (pg_temp.op655_publish('matching-gate',971,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(907))
+  ->>'created')::boolean from matching_gate_draft),
+  'the corrected human gate publishes against its exact final preparation stage');
+
+insert into op655_graphs(label,body,digest)
+select 'broader-primary-profile',payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
+from op655_graphs graph join public.factory_definition_revisions profile on profile.id=pg_temp.op651_id(45)
+cross join lateral (
+  select jsonb_set(graph.body::jsonb,'{delegationPolicy,targets,agent.required}',
+    jsonb_build_object('definitionRevisionId',profile.id,'definitionDigest',profile.canonical_digest))::text body
+) payload where graph.label='initial';
+select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(908),
+  'Inherited profile authority workflow') from op655_scope;
+select throws_ok($$select pg_temp.op655_save('broader-primary-profile',972,p_workflow=>pg_temp.op651_id(908))$$,
+  'PT422','Workflow execution profile exceeds the base authority.',
+  'a same-repository child may not read context missing from the pinned parent definition');
+
+savepoint joined_gate_source_policy;
+insert into public.factory_definition_revisions(id,workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+select pg_temp.op651_id(974),child.workspace_id,child.factory_id,1,profile.body,
+  encode(sha256(convert_to(profile.body,'UTF8')),'hex'),pg_temp.op651_id(21)
+from scoped_revisions child
+cross join lateral (select jsonb_set(child.body::jsonb,'{stages,0,approverMemberIds}',
+  jsonb_build_array(pg_temp.op651_id(921)))::text body) profile
+where child.scenario='narrow';
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,pg_temp.op651_id(974),6,pg_temp.op651_id(21) from op655_scope
+union all
+select workspace_id,factory_id,revision_id,7,pg_temp.op651_id(21) from op655_scope;
+select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(975),
+  'Joined child approval policy') from op655_scope;
+insert into op655_graphs(label,body,digest)
+select variant.label,payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
+from op655_graphs graph join public.factory_definition_revisions profile on profile.id=pg_temp.op651_id(974)
+cross join (values ('gate-after-child-join',false),('gate-before-child-join',true)) variant(label,before_join)
+cross join lateral (
+  select (graph.body::jsonb || jsonb_build_object('entryNodeId','select.parent',
+    'nodes',graph.body::jsonb->'nodes' || jsonb_build_array(
+      jsonb_build_object('id','select.parent','kind','route','agentPromptRevisionId',pg_temp.op651_id(91)),
+      jsonb_build_object('id','agent.parent','kind','agent','agentPromptRevisionId',pg_temp.op651_id(91)),
+      jsonb_build_object('id','approve.child','kind','human-gate','anyoneCanApprove',false,
+        'approverMemberIds',jsonb_build_array(pg_temp.op651_id(921)))),
+    'edges',graph.body::jsonb->'edges' || jsonb_build_array(
+      jsonb_build_object('id','choose.parent','kind','route','from','select.parent','to','agent.parent'),
+      jsonb_build_object('id','parent.next','kind','next','from','agent.parent','to',
+        case when variant.before_join then 'approve.child' else 'branch.split' end),
+      jsonb_build_object('id','approval.next','kind','next','from',
+        case when variant.before_join then 'approve.child' else 'join.finish' end,'to',
+        case when variant.before_join then 'branch.split' else 'approve.child' end)),
+    'routePolicy',jsonb_build_object('maxNodeVisits',16,'maxLoopTraversals',0,'nodes',jsonb_build_object('select.parent',
+      jsonb_build_object('minimumConfidence',0.8,'allowedDestinationIds',jsonb_build_array('agent.parent'),
+        'fallback',jsonb_build_object('kind','clarification')))),
+    'delegationPolicy',jsonb_set(jsonb_set(graph.body::jsonb->'delegationPolicy','{maxChildren}','3'::jsonb),
+      '{targets,agent.parent}',jsonb_build_object('definitionRevisionId',profile.id,'definitionDigest',profile.canonical_digest))
+  ))::text body
+) payload where graph.label='initial';
+create temp table before_join_gate_draft as
+select pg_temp.op655_save('gate-before-child-join',976,p_reload=>true,p_workflow=>pg_temp.op651_id(975)) as result;
+select throws_ok($$select pg_temp.op655_publish('gate-before-child-join',977,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(975)) from before_join_gate_draft$$,
+  'PT422','Approval settings for workflow gate "approve.child" must match its source stage.',
+  'a routed child does not replace the root approval source before its join');
+create temp table after_join_gate_draft as
+select pg_temp.op655_save('gate-after-child-join',978,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(975)) as result from before_join_gate_draft;
+select ok((select (pg_temp.op655_publish('gate-after-child-join',979,(result->>'draftId')::uuid,
+  p_reload=>true,p_workflow=>pg_temp.op651_id(975))->>'created')::boolean from after_join_gate_draft),
+  'a gate can publish with the exact policy of a routed child that owns its authoritative join');
+rollback to joined_gate_source_policy;
+
 -- Compose the published activation with real browser and machine create commands.
 create function pg_temp.workflow_request_selection(p_version text)
 returns jsonb language sql stable as $$

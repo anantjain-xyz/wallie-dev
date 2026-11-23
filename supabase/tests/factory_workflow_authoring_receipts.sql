@@ -12,6 +12,17 @@ insert into public.workspace_members(id,workspace_id,user_id,kind,role)
 select pg_temp.op651_id(920),workspace_id,pg_temp.op651_id(910),'human','member'
 from branch_owner where scenario='parallel';
 
+insert into public.factory_definition_revisions(id,workspace_id,factory_id,schema_version,definition_json,canonical_digest,created_by)
+select pg_temp.op651_id(950),root.workspace_id,root.factory_id,1,revision.body,
+  encode(sha256(convert_to(revision.body,'UTF8')),'hex'),pg_temp.op651_id(21)
+from scoped_revisions root
+cross join lateral (select jsonb_set(root.body::jsonb,'{stages,0,approverMemberIds}',
+  jsonb_build_array(pg_temp.op651_id(920)))::text body) revision
+where root.scenario='root';
+insert into public.factory_definition_activations(workspace_id,factory_id,revision_id,activation_number,created_by)
+select workspace_id,factory_id,pg_temp.op651_id(950),6,pg_temp.op651_id(21)
+from scoped_revisions where scenario='root';
+
 create temp table op655_receipt_scope as
 select owner.workspace_id,owner.factory_id,base.id as base_activation_id,
   base.revision_id,base.digest as base_digest,pg_temp.op651_id(900) as workflow_id,

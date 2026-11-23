@@ -211,15 +211,8 @@ begin
     profile_grant:=internal.resolve_definition_execution_grant(p_workspace_id,p_factory_id,profile,
       (profile->>'repositoryId')::uuid,(profile->>'executionPolicyRevisionId')::uuid);
     repository_envelope:=base_grant;
-    repository_envelope.github_repository_id:=profile_grant.github_repository_id;
-    if profile_grant.id is null or base_grant.id is null
-      or (profile_grant.service_principal_id,profile_grant.budget_payer_member_id,profile_grant.execution_policy_revision_id,
-        profile_grant.workspace_id) is distinct from (base_grant.service_principal_id,base_grant.budget_payer_member_id,
-        base_grant.execution_policy_revision_id,base_grant.workspace_id)
-      or (profile_grant.github_repository_id <> base_grant.github_repository_id and (
-        profile_ref.kind <> 'agent'
-        or internal.factory_workflow_delegated_scope_is_subset(profile_grant,repository_envelope,profile,p_base) is not true
-        or not exists (
+    if profile_grant.github_repository_id <> base_grant.github_repository_id then
+      if profile_ref.kind <> 'agent' or not exists (
           select 1 from jsonb_each(coalesce(p_plan->'repositorySets','{}'::jsonb)) groups
           cross join lateral jsonb_array_elements(groups.value) entry
           cross join lateral jsonb_array_elements(p_plan->'edges') branch
@@ -229,13 +222,81 @@ begin
               where (output->>'kind',output->>'from',output->>'to')=('branch-result',profile_ref.node_id,groups.key))
             and (entry->>'repositoryId',entry#>>'{writerGrant,id}',entry#>>'{writerGrant,version}') =
               (profile_grant.github_repository_id::text,profile_grant.id::text,profile_grant.version::text)
-        )
-      )) then raise exception 'Workflow execution profile exceeds the base authority.' using errcode='PT422'; end if;
+      ) then raise exception 'Workflow execution profile exceeds the base authority.' using errcode='PT422'; end if;
+      repository_envelope.github_repository_id:=profile_grant.github_repository_id;
+    end if;
+    if internal.factory_workflow_delegated_scope_is_subset(profile_grant,repository_envelope,profile,p_base) is not true then
+      raise exception 'Workflow execution profile exceeds the base authority.' using errcode='PT422';
+    end if;
   end loop;
 exception when lock_not_available then
   raise exception 'Workflow reference access is changing. Retry shortly.' using errcode='PT409';
 end;
 $$;
+
+create function internal.assert_factory_workflow_authoring_gate_policies(
+  p_workspace_id uuid,p_factory_id uuid,p_base jsonb,p_plan jsonb
+) returns void language plpgsql stable set search_path='' as $$
+declare incompatible_gate text;
+begin
+  if not exists (select 1 from jsonb_array_elements(p_plan->'nodes') node where node->>'kind'='human-gate') then
+    return;
+  end if;
+
+  -- A gate observes the final preparation checkpoint until an adopted join
+  -- changes its source. A routed delegate can supply the parent of a later
+  -- join. Fan-out agents only contribute outputs to their existing parent.
+  with recursive nodes as (
+    select node->>'id' as id,node->>'kind' as kind,node
+    from jsonb_array_elements(p_plan->'nodes') node
+  ), graph_edges as (
+    select edge->>'from' as source,edge->>'to' as target,edge->>'kind' as kind
+    from jsonb_array_elements(p_plan->'edges') edge
+  ), causal_edges as (
+    select edge.source,edge.target from graph_edges edge
+    where edge.kind='next'
+      or (edge.kind in ('route','loop') and (
+        (p_plan#>array['routePolicy','nodes',edge.source,'allowedDestinationIds']) ? edge.target
+        or (edge.kind='route' and
+          (p_plan#>>array['routePolicy','nodes',edge.source,'fallback','destinationId'])=edge.target)))
+    union
+    select branch.source,output.target from graph_edges branch
+    join graph_edges output on output.source=branch.target and output.kind='branch-result'
+    where branch.kind='branch'
+  ), reachable(node_id,checkpoint_profile,unjoined_delegate) as (
+    select p_plan->>'entryNodeId',null::text,null::text
+    union
+    select target.id,
+      case when target.kind='join' then coalesce(reached.unjoined_delegate,reached.checkpoint_profile)
+        else reached.checkpoint_profile end,
+      case when target.kind='agent' then target.id
+        when target.kind in ('join','review') then null else reached.unjoined_delegate end
+    from reachable reached join causal_edges edge on edge.source=reached.node_id
+    join nodes target on target.id=edge.target
+  ), source_stages as (
+    select null::text as profile_id,p_base->'stages'->-1 as stage
+    union all
+    select profile.key,revision.definition_json::jsonb->'stages'->-1
+    from jsonb_each(coalesce(p_plan#>'{delegationPolicy,targets}','{}'::jsonb)) profile
+    join public.factory_definition_revisions revision
+      on (revision.workspace_id,revision.factory_id,revision.id::text,revision.canonical_digest)=
+        (p_workspace_id,p_factory_id,profile.value->>'definitionRevisionId',profile.value->>'definitionDigest')
+  )
+  select gate.id into incompatible_gate
+  from reachable reached join nodes gate on gate.id=reached.node_id and gate.kind='human-gate'
+  left join source_stages source on source.profile_id is not distinct from reached.checkpoint_profile
+  where source.stage is null
+    or source.stage->'anyoneCanApprove' is distinct from gate.node->'anyoneCanApprove'
+    or array(select distinct id from jsonb_array_elements_text(source.stage->'approverMemberIds') member(id) order by id) <>
+       array(select distinct id from jsonb_array_elements_text(gate.node->'approverMemberIds') member(id) order by id)
+  order by gate.id limit 1;
+  if found then
+    raise exception 'Approval settings for workflow gate "%" must match its source stage.',incompatible_gate using errcode='PT422';
+  end if;
+end;
+$$;
+revoke all on function internal.assert_factory_workflow_authoring_gate_policies(uuid,uuid,jsonb,jsonb)
+from public,anon,authenticated,service_role;
 
 create function internal.validate_factory_workflow_authoring_payload(p_json text,p_digest text)
 returns jsonb language plpgsql set search_path='' as $$
@@ -453,6 +514,7 @@ begin
   elsif not internal.is_bounded_factory_workflow_next_path(plan) then
     raise exception 'The graph requires workflow capabilities that are unavailable.' using errcode='PT422';
   end if;
+  perform internal.assert_factory_workflow_authoring_gate_policies(p_workspace_id,p_factory_id,base.definition,plan);
   select * into strict graph from public.register_factory_workflow_graph_revision(p_workspace_id,p_factory_id,
     base.revision_id,base.digest,draft.workflow_json,draft.workflow_digest);
   insert into internal.factory_workflow_authoring_activations(workspace_id,factory_id,workflow_id,activation_number,
