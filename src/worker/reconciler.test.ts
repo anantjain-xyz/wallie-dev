@@ -835,6 +835,55 @@ describe("reconcileLinearState", () => {
     expect((await work).rateLimited).toBe(true);
   });
 
+  it("commits the independent automation page while a terminal session's cleanup waits", async () => {
+    const { admin, readCursor, commitPage, terminalRpc } = adminFor(
+      Array.from({ length: 51 }, (_, index) =>
+        session(`session-${String(index).padStart(3, "0")}`),
+      ),
+    );
+    readCursor.mockResolvedValue({
+      data: [{ after_session_id: "session-049", generation: 7 }],
+      error: null,
+    });
+    mocks.observations.mockImplementation(
+      async (_key: string, ids: string[]) =>
+        new Map(
+          ids.map((id) => [
+            id,
+            id === "ISSUE-session-000"
+              ? { ...observation, spanId: "closed", statusName: "Canceled" }
+              : { ...observation, spanId: "open", statusName: "In Review" },
+          ]),
+        ),
+    );
+    const cleanup = Promise.withResolvers<void>();
+    mocks.cleanup.mockImplementation(async (_, input) => {
+      if (input.receipt.outcome === "archived") await cleanup.promise;
+    });
+
+    const work = reconcileLinearState(admin as never);
+    try {
+      await vi.waitFor(() => {
+        expect(terminalRpc).toHaveBeenCalledTimes(1);
+        expect(mocks.cleanup).toHaveBeenCalledWith(
+          admin,
+          expect.objectContaining({ receipt: expect.objectContaining({ outcome: "archived" }) }),
+        );
+        expect(commitPage).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            p_workspace_id: "workspace-1",
+            p_expected_generation: 7,
+            p_session_links: [linked("session-050")],
+            p_observations: [expect.objectContaining({ sessionId: "session-050", spanId: "open" })],
+          }),
+        );
+      });
+    } finally {
+      cleanup.resolve();
+      await work;
+    }
+  });
+
   it("excludes empty legacy links from provider reads and the exact cursor page", async () => {
     const { admin, commitPage, rpc } = adminFor([
       { ...session("session-0"), linear_issue_id: "" },

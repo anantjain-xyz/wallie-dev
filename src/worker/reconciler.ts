@@ -362,10 +362,10 @@ export async function reconcileLinearState(
               })
             : null;
           const fresh = routing ? await observeWorkspace(scope, linked, apiKey, throttled) : null;
+          scheduleAutomation(scope, { apiKey, observations: fresh });
           if (routing && fresh?.size) {
             await routeLinkedSessions(admin, scope, linked, fresh, routing, result);
           }
-          scheduleAutomation(scope, { apiKey, observations: fresh });
         });
       }
       if (sessions.length < PAGE_SIZE) break;
