@@ -12488,6 +12488,16 @@ export type Database = {
         Args: never
         Returns: boolean
       }
+      dry_run_factory_automation: {
+        Args: {
+          p_automation_id: string
+          p_event: Json
+          p_factory_id: string
+          p_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       enable_factory_benchmark_live_inference: {
         Args: {
           p_attempt_count: number

@@ -43,3 +43,17 @@ Use `/api/workspaces/{workspaceId}/factories/{factoryId}/automations` with a fac
 | `POST`                 | `automationId` and `definition`.                                                                                                                      |
 | `GET /{automationId}`  | Optional `revisionId`. The response includes the requested revision and the current pointers.                                                         |
 | `POST /{automationId}` | `action` and `expectedRevisionId`. `save` also takes `definition`. `archive` also takes `expectedPublication` with a `revisionId` that can be `null`. |
+
+## Preview a rule
+
+In workspace **Settings → Integrations**, choose **Preview automations**. Select a factory, rule, and revision. Enter a sample event and run the preview. The result shows each filter decision alongside the current target and budget prerequisites.
+
+| Event        | Match checks                                                             |
+| ------------ | ------------------------------------------------------------------------ |
+| Schedule     | Trigger kind. A schedule sample represents a tick for the selected rule. |
+| Pull request | Trigger kind, repository, action, and base branch.                       |
+| Issue state  | Trigger kind, state, team, and project.                                  |
+
+An empty filter list accepts every value for that field. The same revision and normalized event return the same filter decisions. The assignment check reads current factory authority and can change after a grant or credential is revoked. A preview returns both results without creating work or contacting an event provider.
+
+Send `POST /{automationId}/dry-run` with `revisionId` and `event` to preview through the API. The revision ID in the response identifies the exact stored rule that the request evaluated.
