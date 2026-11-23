@@ -146,8 +146,10 @@ select ok(exists (select 1 from workflow_automation_admission admitted
 
 select pg_temp.adopt_source_checkpoint(job.session_id, job.id) from workflow_automation_admission admitted
 join public.agent_jobs job on job.session_id = (admitted.value->>'sessionId')::uuid;
-select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(210))->>'rootSessionId',
-  (select value->>'sessionId' from workflow_automation_admission), 'the adopted session starts the native authored graph');
+create temp table workflow_automation_dispatch as
+select public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(210)) as claim;
+select is(claim->>'rootSessionId', (select value->>'sessionId' from workflow_automation_admission),
+  'the adopted session starts the native authored graph') from workflow_automation_dispatch;
 with exact_session as materialized (
   select session.* from workflow_automation_admission admitted
   join public.sessions session on session.id = (admitted.value->>'sessionId')::uuid
@@ -161,6 +163,26 @@ select ok((select session.phase_status = 'approved' and session.archived_at is n
 select pg_temp.record_workflow_occurrence('authored-graph-second');
 select is(public.admit_next_factory_automation_occurrence()->>'reason', 'capacity',
   'an archived serial surface still occupies one rule slot while its exact graph has pending work');
+create temp table workflow_automation_graph_result as
+select result.* from workflow_automation_dispatch dispatched
+cross join lateral public.record_factory_workflow_command_result(
+  (claim->>'rootSessionId')::uuid, (claim->>'workspaceId')::uuid, (claim->>'factoryId')::uuid,
+  (claim->>'generation')::bigint, (claim->>'ownershipToken')::uuid, (claim->>'occurrenceId')::uuid,
+  'checkpoint:' || (claim->>'inputRunId')) result;
+select ok(result.created and not exists (
+    select 1 from internal.factory_workflow_node_occurrences node
+    where node.root_session_id = (dispatched.claim->>'rootSessionId')::uuid and not exists (
+      select 1 from internal.factory_workflow_node_results recorded
+      where (recorded.root_session_id, recorded.occurrence_id) = (node.root_session_id, node.occurrence_id)
+    )
+  ) and exists (
+    select 1 from internal.factory_workflow_authoring_dispatches dispatch
+    where dispatch.session_id = (dispatched.claim->>'rootSessionId')::uuid and dispatch.completed_at is null
+  ), 'the current node result is committed to the graph before a successor is admitted')
+from workflow_automation_graph_result result cross join workflow_automation_dispatch dispatched;
+select pg_temp.record_workflow_occurrence('authored-graph-between-result-and-successor');
+select is(public.admit_next_factory_automation_occurrence()->>'reason', 'capacity',
+  'an unfinished authored dispatch still occupies one rule slot between persisting the result and admitting its successor');
 
 create function pg_temp.test_revoked_binding_admission() returns jsonb language plpgsql as $$
 declare outcome jsonb;

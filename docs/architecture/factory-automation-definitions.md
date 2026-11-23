@@ -79,4 +79,6 @@ stateDiagram-v2
 | Recursion         | Reject causal work that would start another automatic chain from an automation-owned session.                             |
 | Transient failure | Preserve the occurrence key across up to five attempts. Retry delays start at five seconds and double after each failure. |
 
+An approved root still occupies a slot while its workflow has pending nodes, dispatches, or repository delivery.
+
 Factory managers can read `GET /{automationId}/admission-control` and send `POST` to the same path with `expectedGeneration`, `paused`, and `maxConcurrentSessions`. A stale generation returns a conflict. The occurrence worker and control change use the same rule lock.

@@ -328,6 +328,12 @@ returns boolean language sql stable set search_path = '' as $$
         (p_session.id, p_session.workspace_id, p_session.factory_id) and execution.lifecycle_status in ('running', 'paused')
         and (
           exists (
+            select 1 from internal.factory_workflow_authoring_dispatches dispatch
+            where (dispatch.session_id, dispatch.workspace_id, dispatch.factory_id, dispatch.input_run_id) =
+              (execution.root_session_id, execution.workspace_id, execution.factory_id, execution.graph_input_run_id)
+              and dispatch.completed_at is null
+          )
+          or exists (
             select 1 from internal.factory_workflow_node_occurrences node
             where node.root_session_id = execution.root_session_id and not exists (
               select 1 from internal.factory_workflow_node_results result
