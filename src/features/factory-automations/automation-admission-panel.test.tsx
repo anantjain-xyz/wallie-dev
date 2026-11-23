@@ -5,18 +5,20 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { automationAdmissionControlSchema } from "@/lib/factory-automations/admission-control-contracts";
+
 import { AutomationAdmissionPanel } from "./automation-admission-panel";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-const enabled = {
+const enabled = automationAdmissionControlSchema.parse({
   automationId: "66410000-0000-4000-8000-000000000406",
   generation: 1,
   maxConcurrentSessions: 1,
   paused: false,
-};
+});
 const paused = { ...enabled, generation: 2, paused: true };
 
 function panel(initial: typeof enabled | null) {
