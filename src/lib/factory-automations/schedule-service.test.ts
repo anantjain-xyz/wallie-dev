@@ -133,3 +133,31 @@ it("lets other due rules commit when a schedule handoff fails", async () => {
       .sort(),
   ).toEqual([id(3), id(5)]);
 });
+
+it("leaves an unresolved schedule cursor intact and commits the next due rule", async () => {
+  const unresolved = { ...snapshot, automationId: id(5), timeZone: "Unknown/Zone" };
+  const { client, fetch } = fixture(
+    Response.json([unresolved, snapshot]),
+    Response.json(true),
+    Response.json(true),
+  );
+
+  await expect(reconcileFactoryAutomationSchedules(client)).rejects.toMatchObject({
+    message: "Could not reconcile a factory automation schedule.",
+    cause: {
+      message: `The schedule for automation ${unresolved.automationId} could not be resolved.`,
+    },
+  });
+
+  expect(fetch.mock.calls.map(([url]) => String(url).split("/").at(-1))).toEqual([
+    "list_due_factory_automation_schedules",
+    "commit_factory_automation_schedule",
+  ]);
+  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toMatchObject({
+    p_automation_id: snapshot.automationId,
+    p_plan: {
+      occurrenceAt: "2026-11-01T05:30:00.000Z",
+      nextDueAt: "2026-11-02T06:30:00.000Z",
+    },
+  });
+});

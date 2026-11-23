@@ -50,10 +50,12 @@ export async function reconcileFactoryAutomationSchedules(admin: Client) {
   const results = await Promise.allSettled(
     due.map(async (row) => {
       const schedule = createFactoryAutomationSchedule(row);
+      if (!schedule) {
+        throw new Error(`The schedule for automation ${row.automationId} could not be resolved.`);
+      }
       const through = Date.parse(row.through);
-      const occurrenceAt =
-        schedule?.latestDueOccurrence(Date.parse(row.scannedThrough), through) ?? null;
-      const nextDueAt = schedule?.nextOccurrences(through, 1)[0] ?? null;
+      const occurrenceAt = schedule.latestDueOccurrence(Date.parse(row.scannedThrough), through);
+      const nextDueAt = schedule.nextOccurrences(through, 1)[0] ?? null;
       const settled = await admin
         .rpc("commit_factory_automation_schedule", {
           p_workspace_id: row.workspaceId,
