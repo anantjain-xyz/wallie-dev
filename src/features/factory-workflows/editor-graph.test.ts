@@ -7,6 +7,7 @@ import {
   initialGraph,
   makeEdge,
   makeNode,
+  removeObsoleteEditorGrants,
   setEditorNode,
   setEditorRepositoryWriters,
   setNodeRoute,
@@ -189,5 +190,39 @@ describe("workflow editing", () => {
     expect(removed.repositorySets).toBeUndefined();
     expect(removed.nodes[1]).not.toMatchObject({ grantId: secondary.id });
     expect(removed.grants).toEqual([primary]);
+  });
+
+  it("removes a retired primary revision without clearing a referenced secondary grant", () => {
+    const primary = { id: "655d0000-0000-4000-8000-000000000011", version: 1 };
+    const secondary = { id: "655d0000-0000-4000-8000-000000000012", version: 2 };
+    const repositoryId = "655d0000-0000-4000-8000-000000000013";
+    const graph: WorkflowGraphDraft = {
+      ...initialGraph,
+      grants: [primary, secondary],
+      nodes: [
+        {
+          id: "primary",
+          kind: "agent",
+          agentPromptRevisionId: promptRevisionId,
+          grantId: primary.id,
+        },
+        {
+          id: "secondary",
+          kind: "agent",
+          agentPromptRevisionId: promptRevisionId,
+          grantId: secondary.id,
+        },
+      ],
+      repositorySets: {
+        join: [{ repositoryId, writerGrant: secondary, branchEdgeIds: ["supporting"] }],
+      },
+    };
+    for (const active of [null, { ...primary, version: 2 }]) {
+      const cleaned = removeObsoleteEditorGrants(graph, active);
+      expect(cleaned.grants).toEqual([secondary]);
+      expect(cleaned.repositorySets).toBe(graph.repositorySets);
+      expect(cleaned.nodes).toEqual([{ ...graph.nodes[0], grantId: undefined }, graph.nodes[1]]);
+      expect(removeObsoleteEditorGrants(cleaned, active)).toBe(cleaned);
+    }
   });
 });

@@ -496,6 +496,11 @@ begin
 
   plan:=internal.validate_factory_workflow_authoring_payload(draft.workflow_json,draft.workflow_digest);
   perform internal.assert_factory_workflow_authoring_references(p_workspace_id,p_factory_id,base.definition,plan);
+  if exists (select 1 from jsonb_array_elements(plan->'nodes') node
+    where node->>'kind'='route'
+      and jsonb_typeof(plan#>array['routePolicy','nodes',node->>'id','foremanProfile']) is distinct from 'object') then
+    raise exception 'Published workflow routes require a Foreman profile.' using errcode='PT422';
+  end if;
   if not internal.is_enrollable_factory_workflow_delegation(p_workspace_id,p_factory_id,plan) then
     raise exception 'The graph requires bounded delegation and exact scoped child profiles.' using errcode='PT422';
   end if;

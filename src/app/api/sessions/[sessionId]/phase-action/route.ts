@@ -196,12 +196,20 @@ export async function POST(request: Request, { params }: Params) {
             409,
           );
         }
-        if (result.errorCode === "PT409")
+        if (result.errorCode === "PT409") {
+          if (result.error === "The selected workflow is waiting for checkpoint enrollment.") {
+            return errorResponse(
+              "invalid_state",
+              "The workflow is still starting. Refresh this review after it starts, then approve.",
+              409,
+            );
+          }
           return errorResponse(
             "blocking_review",
             "Resolve or supersede open blocking requests before approving.",
             409,
           );
+        }
         if (result.errorCode === "PT428")
           return errorResponse(
             "pr_readiness",
@@ -238,6 +246,17 @@ export async function POST(request: Request, { params }: Params) {
         }),
       );
       if (!result.success) {
+        if (
+          result.errorCode === "PT409" &&
+          result.error ===
+            "The preparation artifact cannot be rejected after its workflow has started."
+        ) {
+          return errorResponse(
+            "mutation_conflict",
+            "This preparation is already part of the workflow. An approver can continue it. To revise the preparation, start a new session.",
+            409,
+          );
+        }
         const scopeError = feedbackScopeError(result.errorCode);
         if (scopeError) return scopeError;
         if (body.feedbackSubmission) return feedbackSubmissionError(result.errorCode, result.error);

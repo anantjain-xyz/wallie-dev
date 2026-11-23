@@ -15,6 +15,7 @@ import {
   makeNode,
   nextEditorId,
   nodeLabels,
+  removeObsoleteEditorGrants,
   setEditorNode,
   setEditorRepositoryWriters,
   setNodeRoute,
@@ -886,6 +887,7 @@ export function PolicyFields({
   const policy = graph.routePolicy;
   const delegation = graph.delegationPolicy;
   const grant = choices.grant;
+  const withoutObsoleteGrants = removeObsoleteEditorGrants(graph, grant);
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {grant ? (
@@ -911,6 +913,21 @@ export function PolicyFields({
             });
           }}
         />
+      ) : null}
+      {withoutObsoleteGrants !== graph ? (
+        <div className="grid content-start gap-1.5">
+          <button
+            type="button"
+            className="ui-button w-fit"
+            aria-describedby="workflow-obsolete-grant-removal"
+            onClick={() => edit(withoutObsoleteGrants)}
+          >
+            Remove obsolete factory grants
+          </button>
+          <p id="workflow-obsolete-grant-removal" className="text-sm text-muted">
+            Steps using those grants will use the workflow default.
+          </p>
+        </div>
       ) : null}
       {policy ? (
         <>

@@ -225,12 +225,30 @@ from no_delegation_draft;
 select throws_ok($$select pg_temp.op655_publish('mismatched-foreman',948,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906))
   from mismatched_foreman_draft$$,'PT422','The graph requires a scoped foreman profile and bounded delegation.',
   'a reviewable draft with a foreman profile bound to a different prompt cannot publish');
-create temp table corrected_authoring_draft as
-select pg_temp.op655_save('scoped-review',949,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906)) as result
+
+insert into op655_graphs(label,body,digest)
+select variant.label,compiled.body,encode(sha256(convert_to(compiled.body,'UTF8')),'hex')
+from op655_graphs graph cross join (values ('no-foreman',false),('configured-foreman',true)) variant(label,configured)
+cross join lateral (
+  select jsonb_set(graph.body::jsonb,'{nodes,0,agentPromptRevisionId}',to_jsonb(pg_temp.op651_id(91))) body
+) matching_prompt
+cross join lateral (select case when variant.configured then matching_prompt.body::text
+  else (matching_prompt.body #- '{routePolicy,nodes,route,foremanProfile}')::text end body) compiled
+where graph.label='mismatched-foreman';
+create temp table no_foreman_draft as
+select pg_temp.op655_save('no-foreman',949,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906)) as result
 from mismatched_foreman_draft;
-select ok((select (pg_temp.op655_publish('scoped-review',959,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906))
+select is((select (result->>'created')::boolean from no_foreman_draft),true,
+  'an incomplete route with a scoped prompt and no Foreman remains editable');
+select throws_ok($$select pg_temp.op655_publish('no-foreman',959,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906))
+  from no_foreman_draft$$,'PT422','Published workflow routes require a Foreman profile.',
+  'native publication rejects a route with no executable decision producer');
+create temp table corrected_authoring_draft as
+select pg_temp.op655_save('configured-foreman',1000,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906)) as result
+from no_foreman_draft;
+select ok((select (pg_temp.op655_publish('configured-foreman',1001,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906))
   ->>'created')::boolean from corrected_authoring_draft),
-  'enrollment rejection preserves an editable draft that publishes after the runtime prerequisites are corrected');
+  'the exact same route publishes after configuring a valid Foreman decision profile');
 
 select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(907),
   'Human approval policy workflow') from op655_scope;
@@ -294,7 +312,9 @@ select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.
   'Joined child approval policy') from op655_scope;
 insert into op655_graphs(label,body,digest)
 select variant.label,payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
-from op655_graphs graph join public.factory_definition_revisions profile on profile.id=pg_temp.op651_id(974)
+from op655_graphs graph
+join public.factory_definition_revisions profile on profile.id=pg_temp.op651_id(974)
+join public.factory_definition_revisions foreman on foreman.id=pg_temp.op651_id(43)
 cross join (values ('gate-after-child-join',false),('gate-before-child-join',true)) variant(label,before_join)
 cross join lateral (
   select (graph.body::jsonb || jsonb_build_object('entryNodeId','select.parent',
@@ -312,7 +332,8 @@ cross join lateral (
         case when variant.before_join then 'branch.split' else 'approve.child' end)),
     'routePolicy',jsonb_build_object('maxNodeVisits',16,'maxLoopTraversals',0,'nodes',jsonb_build_object('select.parent',
       jsonb_build_object('minimumConfidence',0.8,'allowedDestinationIds',jsonb_build_array('agent.parent'),
-        'fallback',jsonb_build_object('kind','clarification')))),
+        'fallback',jsonb_build_object('kind','clarification'),
+        'foremanProfile',jsonb_build_object('definitionRevisionId',foreman.id,'definitionDigest',foreman.canonical_digest)))),
     'delegationPolicy',jsonb_set(jsonb_set(graph.body::jsonb->'delegationPolicy','{maxChildren}','3'::jsonb),
       '{targets,agent.parent}',jsonb_build_object('definitionRevisionId',profile.id,'definitionDigest',profile.canonical_digest))
   ))::text body

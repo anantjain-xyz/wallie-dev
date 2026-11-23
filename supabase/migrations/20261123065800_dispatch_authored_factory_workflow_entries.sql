@@ -118,11 +118,24 @@ create trigger enqueue_factory_workflow_authoring_successor
   for each row execute function internal.enqueue_factory_workflow_authoring_successor();
 
 -- Approval and rejection both take the session lock before changing its
--- reviewable artifact. Rejection retires its pending enrollment before retrying.
+-- reviewable artifact. Rejection can retire pending enrollment before retrying.
 create function internal.guard_factory_workflow_authoring_pending_review()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare pending_dispatch_id uuid;
 begin
+  if new.phase_status = 'rejected' and exists (
+    select 1 from internal.factory_workflow_authoring_session_pins pin
+    join internal.factory_workflow_executions execution
+      on (execution.root_session_id,execution.workspace_id,execution.factory_id,execution.graph_revision_id,execution.workflow_digest) =
+        (pin.session_id,pin.workspace_id,pin.factory_id,pin.graph_revision_id,pin.workflow_digest)
+    join public.session_checkpoint_publications publication
+      on (publication.session_id,publication.workspace_id,publication.run_id) =
+        (execution.root_session_id,execution.workspace_id,execution.graph_input_run_id)
+    where (pin.session_id,pin.workspace_id,pin.factory_id) = (old.id,old.workspace_id,old.factory_id)
+      and publication.status = 'adopted' and publication.artifact_id = old.current_artifact_id
+  ) then
+    raise exception 'The preparation artifact cannot be rejected after its workflow has started.' using errcode = 'PT409';
+  end if;
   select dispatch.dispatch_id into pending_dispatch_id from internal.factory_workflow_authoring_dispatches dispatch
   where (dispatch.session_id,dispatch.workspace_id,dispatch.factory_id,dispatch.artifact_id) =
     (old.id,old.workspace_id,old.factory_id,old.current_artifact_id)

@@ -633,6 +633,50 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
     expect(payload.code).toBe(code);
     if (errorCode === "22001") expect(payload.error).toContain("100 comments");
   });
+
+  it.each([
+    { mode: "a whole-stage note", feedbackSubmission: undefined },
+    { mode: "an inline feedback batch", feedbackSubmission: submission },
+  ])("explains the enrolled preparation conflict for $mode", async ({ feedbackSubmission }) => {
+    mocked.handleRejection.mockResolvedValue({
+      errorCode: "PT409",
+      error: "The preparation artifact cannot be rejected after its workflow has started.",
+      success: false,
+    });
+    const response = await POST(
+      makeRequest({
+        action: "reject",
+        version: 1,
+        feedbackText: "Needs work.",
+        feedbackSubmission,
+      }),
+      routeContext(),
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      code: "mutation_conflict",
+      error:
+        "This preparation is already part of the workflow. An approver can continue it. To revise the preparation, start a new session.",
+    });
+  });
+
+  it("keeps the access-change response for other PT409 feedback errors", async () => {
+    mocked.handleRejection.mockResolvedValue({
+      errorCode: "PT409",
+      error: "Factory scope changed.",
+      success: false,
+    });
+    const response = await POST(
+      makeRequest({ action: "reject", version: 1, feedbackSubmission: submission }),
+      routeContext(),
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      code: "mutation_conflict",
+      error: "Factory access is changing. Retry feedback submission.",
+    });
+  });
+
   it("rejects approval without an inspected review token", async () => {
     const response = await POST(
       makeRequest({ action: "approve", version: 1, expectedReviewRevision: undefined }),
@@ -640,6 +684,20 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
     );
     expect(response.status).toBe(400);
     expect(mocked.handleApproval).not.toHaveBeenCalled();
+  });
+
+  it("explains why approval waits for the authored workflow to start", async () => {
+    mocked.handleApproval.mockResolvedValue({
+      success: false,
+      errorCode: "PT409",
+      error: "The selected workflow is waiting for checkpoint enrollment.",
+    });
+    const response = await POST(makeRequest({ action: "approve", version: 1 }), routeContext());
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      code: "invalid_state",
+      error: "The workflow is still starting. Refresh this review after it starts, then approve.",
+    });
   });
 
   it.each([

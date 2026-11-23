@@ -259,6 +259,35 @@ export function getAgentRepositoryWriter(graph: WorkflowGraphDraft, agentId: str
   return assignment;
 }
 
+export function removeObsoleteEditorGrants(
+  graph: WorkflowGraphDraft,
+  primaryGrant: WorkflowEditorChoices["grant"],
+): WorkflowGraphDraft {
+  const key = ({ id, version }: WorkflowGraphDraft["grants"][number]) => `${id}:${version}`;
+  const available = new Set(
+    Object.values(graph.repositorySets ?? {}).flatMap((entries) =>
+      entries.map(({ writerGrant }) => key(writerGrant)),
+    ),
+  );
+  if (primaryGrant) available.add(key(primaryGrant));
+  const grants = graph.grants.filter((grant) => available.has(key(grant)));
+  if (grants.length === graph.grants.length) return graph;
+
+  const retainedIds = new Set(grants.map(({ id }) => id));
+  const removedIds = new Set(
+    graph.grants.filter(({ id }) => !retainedIds.has(id)).map(({ id }) => id),
+  );
+  return {
+    ...graph,
+    grants,
+    nodes: graph.nodes.map((node) =>
+      "grantId" in node && node.grantId && removedIds.has(node.grantId)
+        ? { ...node, grantId: undefined }
+        : node,
+    ),
+  };
+}
+
 function syncRepositoryWriters(
   previous: WorkflowGraphDraft,
   updated: WorkflowGraphDraft,

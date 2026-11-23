@@ -227,6 +227,25 @@ select is((select public.finish_factory_workflow_authoring_dispatch(session_id,r
   (claim->>'generation')::bigint) from preparation cross join human_lease),'retry',
   'a human gate stays pending before approval');
 
+select throws_ok($$
+  with exact_preparation as materialized (
+    select root.* from preparation checkpoint join public.sessions root on root.id=checkpoint.session_id
+  )
+  select rejected.* from exact_preparation root
+  cross join lateral public.reject_session_stage(root.id,root.workspace_id,root.current_artifact_version,
+    'Regenerate the enrolled preparation.','codex','gpt-5.5',root.current_stage_id,root.current_artifact_id,
+    'code',pg_temp.op651_id(21)) rejected
+$$,'PT409','The preparation artifact cannot be rejected after its workflow has started.',
+  'rejection cannot displace the exact preparation input of an enrolled workflow before human approval');
+select ok((select root.phase_status='awaiting_review' and root.current_artifact_id=publication.artifact_id
+    and execution.graph_input_run_id=checkpoint.run_id
+    and not exists (select 1 from public.session_artifact_feedback where session_id=root.id)
+    and not exists (select 1 from public.agent_jobs where session_id=root.id and status in ('queued','started','running'))
+  from preparation checkpoint join public.sessions root on root.id=checkpoint.session_id
+  join public.session_checkpoint_publications publication on publication.run_id=checkpoint.run_id
+  join internal.factory_workflow_executions execution on execution.root_session_id=root.id),
+  'the enrolled preparation stays reviewable without saving rejection feedback or queuing replacement work');
+
 with exact_preparation as materialized (
   select root.* from preparation checkpoint join public.sessions root on root.id=checkpoint.session_id
 )
@@ -275,6 +294,14 @@ select is((select count(*) from unpinned_started started
   where admitted.created),1::bigint,'an unpinned workflow can use its normal native transition');
 select is((select count(*) from internal.factory_workflow_authoring_dispatches dispatch join unpinned_started workflow
   on workflow.session_id=dispatch.session_id),0::bigint,'an unpinned graph cannot enter authored dispatch');
+with target as materialized (
+  select parent.* from unpinned_started source join public.sessions parent on parent.id=source.session_id
+)
+select ok((select rejected.phase_status='rejected' and rejected.job_id is not null from target parent
+  cross join lateral public.reject_session_stage(parent.id,parent.workspace_id,parent.current_artifact_version,
+    'Revise this ordinary artifact.','codex','gpt-5.5',parent.current_stage_id,parent.current_artifact_id,
+    'code',pg_temp.op651_id(21)) rejected),
+  'the exact preparation of an unpinned workflow retains ordinary rejection');
 
 create temp table authored_blocked_version as
 select later.* from authored_version_b version
@@ -425,6 +452,35 @@ select is((select count(*) from foreman_preparation source
 select is((select public.finish_factory_workflow_authoring_dispatch(session_id,run_id,pg_temp.op651_id(234),
   (claim->>'generation')::bigint) from foreman_preparation cross join resumed_foreman_route_lease),'complete',
   'the route settles once the durable Foreman plan commands are recorded');
+
+-- Adopt a later publication on the same stage without replacing the graph input.
+create temp table later_artifact_job as
+with queued as (
+  insert into public.agent_jobs(workspace_id,session_id,stage_id,stage_slug,trigger_type)
+  select root.workspace_id,root.id,root.current_stage_id,artifact.stage_slug,'manual_run'
+  from foreman_preparation source join public.sessions root on root.id=source.session_id
+  join public.session_artifacts artifact on artifact.id=root.current_artifact_id
+  returning id,session_id
+)
+select id,session_id from queued;
+create temp table later_artifact_preparation as
+select job.session_id,pg_temp.adopt_source_checkpoint(job.session_id,job.id,root.current_artifact_version) run_id
+from later_artifact_job job join public.sessions root on root.id=job.session_id;
+select ok((select root.current_artifact_id=publication.artifact_id and execution.graph_input_run_id=source.run_id
+    and later.run_id<>source.run_id
+  from later_artifact_preparation later join foreman_preparation source using (session_id)
+  join public.sessions root on root.id=later.session_id
+  join public.session_checkpoint_publications publication on publication.run_id=later.run_id
+  join internal.factory_workflow_executions execution on execution.root_session_id=root.id),
+  'the later review displays its own adopted artifact while the authored execution retains its original input');
+with target as materialized (
+  select parent.* from foreman_preparation source join public.sessions parent on parent.id=source.session_id
+)
+select ok((select rejected.phase_status='rejected' and rejected.job_id is not null from target parent
+  cross join lateral public.reject_session_stage(parent.id,parent.workspace_id,parent.current_artifact_version,
+    'Revise this later artifact.','codex','gpt-5.5',parent.current_stage_id,parent.current_artifact_id,
+    'code',pg_temp.op651_id(21)) rejected),
+  'a later artifact can still be rejected on a root with an authored execution');
 
 select ok(not has_function_privilege('authenticated','public.claim_factory_workflow_authoring_dispatch(uuid)','execute')
   and not has_function_privilege('authenticated','public.finish_factory_workflow_authoring_dispatch(uuid,uuid,uuid,bigint)','execute'),

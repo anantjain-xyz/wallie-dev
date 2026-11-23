@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { compileWorkflowGraph } from "@/lib/factory-definitions/workflow-compiler";
 import { workflowGraphSchema } from "@/lib/factory-definitions/workflow-schema";
 import type {
   WorkflowAuthoringSnapshot,
@@ -11,6 +12,7 @@ import type {
 } from "@/lib/factory-workflows/authoring-contracts";
 
 import { WorkflowEditor } from "./workflow-editor";
+import { defaultDelegationPolicy } from "./editor-graph";
 
 function id(value: number) {
   return `65520000-0000-4000-8000-${String(value).padStart(12, "0")}`;
@@ -55,11 +57,11 @@ const choices: WorkflowEditorCatalog = {
   nextCursors: { writers: null, prompts: promptCursor, approvers: null, profiles: null },
 };
 
-function openEditor() {
+function openEditor(snapshot = initial, editorChoices = choices) {
   return render(
     <WorkflowEditor
-      initial={initial}
-      choices={choices}
+      initial={snapshot}
+      choices={editorChoices}
       workspaceSlug="acme"
       factoryId={id(6)}
       endpoint={endpoint}
@@ -120,6 +122,147 @@ it("uses the new exact grant after loading a draft with a switched base activati
   expect(fetch).toHaveBeenCalledWith(`${endpoint}?includeChoices=true`, { cache: "no-store" });
   expect(screen.queryByLabelText("Use approved factory grant · Version 1")).toBeNull();
   expect(screen.getByLabelText("Use approved factory grant · Version 2")).toBeInTheDocument();
+});
+
+it("rebases and publishes after removing the previous primary grant and retaining the secondary writer", async () => {
+  const former = { id: id(13), version: 1 };
+  const current = { id: id(14), version: 2 };
+  const secondary = { id: id(15), version: 3 };
+  const secondaryRepositoryId = id(16);
+  const nextBase = { activationId: id(17), revisionId: id(18), digest: "b".repeat(64) };
+  const nextDraft = id(19);
+  const nextActivation = id(20);
+  const profile = { definitionRevisionId: id(21), definitionDigest: digest };
+  const graph = workflowGraphSchema.parse({
+    schemaVersion: 1,
+    kind: "graph",
+    entryNodeId: "split",
+    nodes: [
+      { id: "split", kind: "branch" },
+      { id: "primary", kind: "agent", agentPromptRevisionId: missingPrompt, grantId: former.id },
+      { id: "docs", kind: "agent", agentPromptRevisionId: missingPrompt, grantId: secondary.id },
+      { id: "join", kind: "join" },
+      { id: "approve", kind: "human-gate", anyoneCanApprove: true, approverMemberIds: [] },
+    ],
+    edges: [
+      { id: "main-work", from: "split", to: "primary", kind: "branch", required: true },
+      { id: "docs-work", from: "split", to: "docs", kind: "branch", required: true },
+      { id: "main-result", from: "primary", to: "join", kind: "branch-result" },
+      { id: "docs-result", from: "docs", to: "join", kind: "branch-result" },
+      { id: "approval", from: "join", to: "approve", kind: "next" },
+    ],
+    grants: [former, secondary],
+    delegationPolicy: { ...defaultDelegationPolicy, targets: { primary: profile, docs: profile } },
+    repositorySets: {
+      join: [
+        {
+          repositoryId: secondaryRepositoryId,
+          writerGrant: secondary,
+          branchEdgeIds: ["docs-work"],
+        },
+      ],
+    },
+  });
+  const original = { ...initial, graph };
+  const switched = { ...original, baseDefinition: nextBase };
+  const workspaceId = id(22);
+  const compile = (value: unknown) =>
+    compileWorkflowGraph(
+      { kind: "structured", value },
+      {
+        workspaceId,
+        agentPromptRevisions: [{ id: missingPrompt, workspaceId }],
+        approvers: [],
+        approvedGrants: [current, secondary].map((grant) => ({ ...grant, workspaceId })),
+      },
+    );
+  expect(compile(graph)).toMatchObject({
+    ok: false,
+    diagnostics: [expect.objectContaining({ code: "invalid_grant", path: ["grants", 0] })],
+  });
+
+  let saved: WorkflowAuthoringSnapshot | undefined;
+  const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("?includeChoices=true"))
+      return Response.json({ snapshot: switched, choices: { ...choices, grant: current } });
+    if (options?.method === "POST") {
+      const command = JSON.parse(String(options.body));
+      if (command.action === "save") {
+        const repaired = {
+          ...graph,
+          grants: [current, secondary],
+          nodes: graph.nodes.map((node) =>
+            node.id === "primary" ? { ...node, grantId: undefined } : node,
+          ),
+        };
+        expect(command).toMatchObject({
+          rebase: true,
+          expected: { draftId: original.draftId, baseDefinition: nextBase },
+        });
+        expect(command.graph).toEqual(JSON.parse(JSON.stringify(repaired)));
+        const result = compile(command.graph);
+        if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
+        saved = {
+          ...switched,
+          graph: result.bundle,
+          draftId: nextDraft,
+          draftDigest: result.canonicalDigest,
+          draftBaseDefinition: nextBase,
+          selectedDraftId: nextDraft,
+          selectedDraftGraph: result.bundle,
+          selectedDraftDigest: result.canonicalDigest,
+          selectedDraftBaseDefinition: nextBase,
+        };
+        return Response.json({
+          action: "save",
+          receipt: { draftId: nextDraft, digest: result.canonicalDigest, created: true },
+        });
+      }
+      if (command.action === "publish" && saved) {
+        expect(command.expected).toEqual({
+          draftId: nextDraft,
+          activationId: null,
+          baseDefinition: nextBase,
+        });
+        const graphRevisionId = id(23);
+        saved = {
+          ...saved,
+          activationId: nextActivation,
+          publishedDraftId: nextDraft,
+          publishedGraphRevisionId: graphRevisionId,
+        };
+        return Response.json({
+          action: "publish",
+          receipt: {
+            draftId: nextDraft,
+            digest: saved.draftDigest,
+            created: true,
+            activationId: nextActivation,
+            graphRevisionId,
+          },
+        });
+      }
+    }
+    if (saved && url === `${endpoint}?draftId=${nextDraft}`) return Response.json(saved);
+    throw new Error(`Unexpected editor request for ${url}.`);
+  });
+  vi.stubGlobal("fetch", fetch);
+  openEditor(original, { ...choices, grant: former });
+  fireEvent.click(screen.getByText("Workflow policies"));
+  const removeObsolete = "Remove obsolete factory grants";
+  expect(screen.queryByRole("button", { name: removeObsolete })).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "Load current draft" }));
+  await screen.findByText("Current draft loaded.");
+  fireEvent.click(screen.getByRole("button", { name: removeObsolete }));
+  expect(screen.queryByRole("button", { name: removeObsolete })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Use approved factory grant · Version 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Rebase and save draft" }));
+  await screen.findByText("Draft saved.");
+
+  fireEvent.click(screen.getByRole("button", { name: "Publish draft" }));
+  await screen.findByText("Workflow published.");
+  expect(fetch).toHaveBeenCalledTimes(5);
 });
 
 it("focuses the same diagnostic again after selecting another step", async () => {
