@@ -6,6 +6,7 @@ import { SelectField } from "@/components/ui/select";
 import type { WorkflowEditorCatalog } from "@/lib/factory-workflows/authoring-contracts";
 import {
   materializeWorkflowTemplate,
+  workflowCodeTemplateDefaultAttempts,
   type WorkflowTemplateRevision,
   type WorkflowTemplateRole,
 } from "@/lib/factory-workflows/workflow-templates";
@@ -73,7 +74,13 @@ export function TemplateSetup({
       budget:
         id === "incident-analysis"
           ? { ...defaultDelegationPolicy, maxChildren: 1, maxConcurrentChildren: 1 }
-          : defaultDelegationPolicy,
+          : {
+              ...defaultDelegationPolicy,
+              maxAttempts: Math.max(
+                defaultDelegationPolicy.maxAttempts,
+                workflowCodeTemplateDefaultAttempts[id],
+              ),
+            },
       finalApprovers: {
         anyoneCanApprove: templateSource.anyoneCanApprove,
         memberIds: templateSource.approverMemberIds,

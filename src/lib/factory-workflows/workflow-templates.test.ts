@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 import { compileWorkflowGraph } from "@/lib/factory-definitions/workflow-compiler";
-import { materializeWorkflowTemplate, type WorkflowTemplateRequest } from "./workflow-templates";
+import {
+  materializeWorkflowTemplate,
+  type WorkflowTemplateRequest,
+  workflowCodeTemplateDefaultAttempts,
+} from "./workflow-templates";
 
 const id = (suffix: number) => `65600000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 const role = (slot: number) => ({
@@ -170,6 +174,46 @@ it("stores a configured bounded repair without adding a graph edge", () => {
     }),
   );
   expect(compiled.bundle.edges.map(({ id: edge }) => edge)).not.toContain("review.repair");
+  expect(compiled.bundle.routePolicy).toMatchObject({ maxNodeVisits: 16, maxLoopTraversals: 0 });
+  expect(compiled.bundle.delegationPolicy?.maxAttempts).toBe(base.budget.maxAttempts);
+});
+
+it("keeps a later maximum repair edit within the product template visit and attempt bounds", () => {
+  const graph = materializeWorkflowTemplate({
+    ...product,
+    budget: {
+      ...base.budget,
+      maxAttempts: workflowCodeTemplateDefaultAttempts["product-delivery"],
+    },
+  });
+  const maxRepairs = 8;
+  const edited = compile({
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      node.kind === "review"
+        ? { ...node, repair: { edgeId: "review.repair", maxRepairs, eligibleRuleIds: ["scope"] } }
+        : node,
+    ),
+  });
+  if (!edited.ok) throw new Error(JSON.stringify(edited.diagnostics));
+
+  const { nodes, routePolicy, delegationPolicy, edges } = edited.bundle;
+  // Each repair adds one review visit. The final gate still needs its own visit.
+  expect(routePolicy?.maxNodeVisits).toBe(nodes.length + maxRepairs);
+  expect(routePolicy?.maxLoopTraversals).toBe(0);
+  expect(edges).toHaveLength(graph.edges.length);
+  expect(edges).toContainEqual({
+    id: "review.approve",
+    kind: "next",
+    from: "work.review",
+    to: "final.approval",
+  });
+  expect(delegationPolicy).toMatchObject({ ...base.budget, maxAttempts: 6 + 2 * maxRepairs });
+  expect(workflowCodeTemplateDefaultAttempts["scoped-fix"]).toBe(5 + 2 * maxRepairs);
+  expect(
+    materializeWorkflowTemplate({ ...product, budget: { ...base.budget, maxAttempts: 24 } })
+      .delegationPolicy.maxAttempts,
+  ).toBe(24);
 });
 
 it("routes an incident to an independent verdict or a clarification without any implementation destination", () => {

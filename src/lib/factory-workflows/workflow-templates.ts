@@ -60,6 +60,15 @@ export const workflowTemplateRevisionSchema = z.strictObject({
 
 export type WorkflowTemplateRevision = z.output<typeof workflowTemplateRevisionSchema>;
 
+const reviewRepairHeadroom = 8;
+
+// Preparation, two branch agents, the join, and the first exact review.
+// Product delivery also uses a Foreman. Each repair adds its job and a re-review.
+export const workflowCodeTemplateDefaultAttempts = {
+  "product-delivery": 6 + 2 * reviewRepairHeadroom,
+  "scoped-fix": 5 + 2 * reviewRepairHeadroom,
+};
+
 const next = (id: string, from: string, to: string): Edge => ({
   id,
   from,
@@ -210,7 +219,14 @@ export function materializeWorkflowTemplate(request: WorkflowTemplateRequest) {
 
   if (templateId === "product-delivery") {
     const scopeGate = gate("scope.approval", request.finalApprovers);
-    const foreman = route(request.foreman, grant.id, "work.split", graph.nodes.length + 2);
+    // A repair job adds one re-review occurrence and two charged attempts.
+    // Keep capacity for authors who enable repairs after applying the template.
+    const foreman = route(
+      request.foreman,
+      grant.id,
+      "work.split",
+      graph.nodes.length + 2 + reviewRepairHeadroom,
+    );
     graph.nodes.unshift(scopeGate, foreman.node);
     graph.edges.unshift(next("scope.route", scopeGate.id, foreman.node.id), foreman.edge);
     graph.routePolicy = foreman.policy;
