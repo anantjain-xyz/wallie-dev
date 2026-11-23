@@ -101,6 +101,8 @@ select ok(pg_temp.delivery_settle(253, (packet->>'leaseId')::uuid, 'accepted'),
   'the exact worker lease can record provider acceptance') from second_delivery_lease;
 select is(pg_temp.delivery_state(253)->>'outcome', 'pending', 'provider acceptance is still awaiting deployment outcome');
 
+\ir fixtures/factory_actions_delivery.psql
+
 select pg_temp.delivery_prepare(254, 'stale');
 select ok(pg_temp.delivery_observe_merge(repeat('d', 40)), 'a newer canonical fact supersedes the original merge');
 select is(pg_temp.delivery_claim(254), null::jsonb, 'claim checks merge identity again after preparation');
@@ -206,6 +208,8 @@ select count(*) from extensions.dblink_get_result('op665_worker') result(settled
 select is(pg_temp.delivery_state(259)->>'dispatchState', 'dispatching', 'expired settlement leaves the dispatch for the reaper');
 select ok(public.expire_factory_delivery_dispatches() > 0, 'the reaper expires the abandoned lease');
 select is(pg_temp.delivery_state(259)->>'dispatchState', 'unknown', 'the reaper records an unknown provider response');
+
+\ir fixtures/factory_actions_delivery_concurrency.psql
 
 select extensions.dblink_disconnect(connection) from unnest(array['op665_manager', 'op665_worker']) connection;
 delete from public.workspaces where id = pg_temp.op651_id(11);

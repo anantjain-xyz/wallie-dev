@@ -11267,6 +11267,14 @@ export type Database = {
           storage_path: string
         }[]
       }
+      claim_factory_actions_dispatch: {
+        Args: {
+          p_command_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       claim_factory_context_source_sync: {
         Args: {
           p_actor_user_id: string
@@ -12512,6 +12520,14 @@ export type Database = {
           redirect_uri: string
           state: string
         }[]
+      }
+      defer_factory_actions_dispatch: {
+        Args: {
+          p_command_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       defer_factory_automation_schedule: {
         Args: {
@@ -13923,6 +13939,7 @@ export type Database = {
         }
       }
       list_due_factory_automation_schedules: { Args: never; Returns: Json }
+      list_factory_actions_dispatches: { Args: never; Returns: Json }
       list_factory_automations: {
         Args: {
           p_after_id?: string
@@ -14714,6 +14731,25 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      prepare_factory_actions_delivery_command: {
+        Args: {
+          p_actor_user_id: string
+          p_approval_id: string
+          p_checkpoint_run_id: string
+          p_command_id: string
+          p_deployment_source_id: string
+          p_factory_id: string
+          p_inputs: Json
+          p_merge_observation_id: string
+          p_policy_revision_id: string
+          p_session_id: string
+          p_tag: string
+          p_workflow_id: number
+          p_workflow_path: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       prepare_factory_delivery_command: {
         Args: {
@@ -16189,6 +16225,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      reserve_factory_actions_observations: { Args: never; Returns: Json }
       reserve_factory_benchmark_evaluation_attempt: {
         Args: { p_attempt_id: string; p_trial_id: string }
         Returns: boolean
@@ -17381,6 +17418,31 @@ export type Database = {
           revision: number
           updated_at: string
         }[]
+      }
+      settle_factory_actions_dispatch: {
+        Args: {
+          p_command_id: string
+          p_dispatch_state: string
+          p_factory_id: string
+          p_lease_id: string
+          p_reason: string
+          p_run_id?: number
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      settle_factory_actions_observation: {
+        Args: {
+          p_command_id: string
+          p_factory_id: string
+          p_observation_id: string
+          p_reason: string
+          p_run_conclusion?: string
+          p_run_id?: number
+          p_run_status?: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       settle_factory_context_source_sync: {
         Args: {

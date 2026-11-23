@@ -25,6 +25,7 @@ import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/admission-service";
 import { reconcileFactoryAutomationSchedules } from "@/lib/factory-automations/schedule-service";
+import { reconcileFactoryActionsDelivery } from "@/lib/factory-delivery-commands/actions-maintenance";
 import { expireFactoryDeliveryDispatches } from "@/lib/factory-delivery-commands/maintenance";
 import { drainFactoryMonitoringIncidents } from "@/lib/factory-monitoring/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
@@ -244,6 +245,7 @@ async function main() {
     let admittingFactoryAutomationOccurrences = false;
     let admittingFactoryMonitoringIncidents = false;
     let reconcilingFactoryAutomationSchedules = false;
+    let reconcilingFactoryActionsDelivery = false;
     let expiringFactoryDeliveryDispatches = false;
     maintenanceTimers.push(
       setInterval(() => {
@@ -364,6 +366,17 @@ async function main() {
               await expireFactoryDeliveryDispatches(admin);
             } finally {
               expiringFactoryDeliveryDispatches = false;
+            }
+          });
+        }
+        if (!reconcilingFactoryActionsDelivery) {
+          reconcilingFactoryActionsDelivery = true;
+          timerTasks.run("GitHub Actions delivery", async () => {
+            try {
+              const result = await reconcileFactoryActionsDelivery(admin);
+              if (result.failed > 0) console.warn("[worker] GitHub Actions delivery", result);
+            } finally {
+              reconcilingFactoryActionsDelivery = false;
             }
           });
         }
