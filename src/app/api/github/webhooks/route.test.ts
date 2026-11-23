@@ -1,3 +1,6 @@
+import { createHmac } from "node:crypto";
+
+import { verify } from "@octokit/webhooks-methods";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
@@ -7,6 +10,8 @@ const mocked = vi.hoisted(() => ({
   repositories: vi.fn(),
   pullRequest: vi.fn(),
   verification: vi.fn(),
+  automationRpc: vi.fn(),
+  automationResult: vi.fn(),
 }));
 vi.mock("@/features/github/config", () => ({ getGitHubConfigStatus: mocked.config }));
 vi.mock("@/features/github/webhooks", () => ({
@@ -15,6 +20,9 @@ vi.mock("@/features/github/webhooks", () => ({
   handleGitHubInstallationRepositoriesEvent: mocked.repositories,
   handleGitHubPullRequestEvent: mocked.pullRequest,
   handleGitHubVerificationEvent: mocked.verification,
+}));
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdminClient: () => ({ rpc: mocked.automationRpc }),
 }));
 import { POST } from "./route";
 const payload = {
@@ -36,12 +44,13 @@ function request(
   body: unknown = payload,
   event = "pull_request",
   delivery: string | null = deliveryId,
+  signature = "signed",
 ) {
   return new Request("https://wallie.test/api/github/webhooks", {
     method: "POST",
     headers: {
       "x-github-event": event,
-      "x-hub-signature-256": "signed",
+      "x-hub-signature-256": signature,
       ...(delivery === null ? {} : { "x-github-delivery": delivery }),
     },
     body: typeof body === "string" ? body : JSON.stringify(body),
@@ -51,7 +60,11 @@ describe("GitHub webhook boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.config.mockReturnValue({ missingWebhookKeys: [] });
-    mocked.verify.mockResolvedValue(true);
+    mocked.verify.mockReset().mockResolvedValue(true);
+    mocked.verification.mockReset().mockResolvedValue(undefined);
+    mocked.pullRequest.mockReset().mockResolvedValue(undefined);
+    mocked.automationRpc.mockReturnValue({ abortSignal: mocked.automationResult });
+    mocked.automationResult.mockReset().mockResolvedValue({ data: null, error: null });
   });
   it("validates consumed fields and passes the source timestamp to reconciliation", async () => {
     const response = await POST(request({ ...payload, ignored: "extra" }));
@@ -62,6 +75,94 @@ describe("GitHub webhook boundary", () => {
       deliveryId,
     );
   });
+  const automationPayload = {
+    ...payload,
+    pull_request: {
+      ...payload.pull_request,
+      id: 157,
+      base: { ref: "main", repo: { id: 456 } },
+      head: { ...payload.pull_request.head, sha: "a".repeat(40) },
+      title: "Untrusted event title",
+      body: "Untrusted pull request description",
+    },
+  };
+
+  it("records only a scoped automation event from correctly signed GitHub bytes", async () => {
+    const secret = "synthetic-github-signing-key";
+    mocked.verify.mockImplementation((body: string, signature: string) =>
+      verify(secret, body, signature),
+    );
+    const event = {
+      ...automationPayload,
+      action: "closed",
+      pull_request: {
+        ...automationPayload.pull_request,
+        state: "closed",
+        merged: true,
+        merge_commit_sha: "b".repeat(40),
+      },
+    };
+    const bytes = JSON.stringify(event);
+    const signature = "sha256=" + createHmac("sha256", secret).update(bytes).digest("hex");
+
+    expect((await POST(request(bytes, "pull_request", deliveryId, signature))).status).toBe(200);
+    expect(mocked.automationRpc).toHaveBeenCalledWith("ingest_factory_github_automation_pr", {
+      p_installation_id: 123,
+      p_github_repository_id: 456,
+      p_delivery_id: deliveryId,
+      p_pull_request_id: 157,
+      p_pull_request_number: 42,
+      p_action: "merged",
+      p_state: "merged",
+      p_draft: false,
+      p_provider_updated_at: automationPayload.pull_request.updated_at,
+      p_base_branch: "main",
+      p_head_branch: "wallie/build-1",
+      p_head_sha: "a".repeat(40),
+      p_head_repository_id: 456,
+      p_merge_commit_sha: "b".repeat(40),
+    });
+    expect(mocked.verification).toHaveBeenCalledOnce();
+    expect(mocked.pullRequest).toHaveBeenCalledOnce();
+
+    expect((await POST(request(bytes + " ", "pull_request", deliveryId, signature))).status).toBe(
+      401,
+    );
+    expect(mocked.automationRpc).toHaveBeenCalledOnce();
+  });
+
+  it("keeps both PR reconciliation paths independent of automation recording", async () => {
+    mocked.automationResult.mockResolvedValueOnce({ error: { code: "PT409" } });
+    await expect(POST(request(automationPayload))).rejects.toThrow(
+      "Could not capture the GitHub pull request automation event.",
+    );
+    expect(mocked.verification).toHaveBeenCalledOnce();
+    expect(mocked.pullRequest).toHaveBeenCalledOnce();
+
+    mocked.pullRequest.mockRejectedValueOnce(new Error("CANONICAL_REFRESH_FAILED"));
+    await expect(POST(request(automationPayload))).rejects.toThrow("CANONICAL_REFRESH_FAILED");
+    expect(mocked.automationRpc).toHaveBeenCalledTimes(2);
+    expect(mocked.verification).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { ...automationPayload, action: "edited" },
+    {
+      ...automationPayload,
+      pull_request: { ...automationPayload.pull_request, base: { ref: "main", repo: { id: 789 } } },
+    },
+    {
+      ...automationPayload,
+      action: "closed",
+      pull_request: { ...automationPayload.pull_request, state: "closed", merged: true },
+    },
+  ])("preserves verification for payloads ineligible for automation", async (event) => {
+    expect((await POST(request(event))).status).toBe(200);
+    expect(mocked.verification).toHaveBeenCalledOnce();
+    expect(mocked.pullRequest).toHaveBeenCalledOnce();
+    expect(mocked.automationRpc).not.toHaveBeenCalled();
+  });
+
   it.each([
     "{bad json",
     null,
