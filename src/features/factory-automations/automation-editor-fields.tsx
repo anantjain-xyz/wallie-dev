@@ -51,6 +51,8 @@ function ScheduleFields({
   const defaults = scheduleDefaults(initial?.cron);
   const timezones = useId();
   const [cadence, setCadence] = useState(defaults.cadence);
+  const [localTime, setLocalTime] = useState(defaults.time);
+  const [customCron, setCustomCron] = useState(initial?.cron ?? "");
 
   return (
     <>
@@ -75,7 +77,8 @@ function ScheduleFields({
             required
             maxLength={120}
             placeholder="0 9 * * 1-5"
-            defaultValue={initial?.cron ?? ""}
+            value={customCron}
+            onChange={(event) => setCustomCron(event.currentTarget.value)}
           />
           <span className="block text-xs text-muted">
             Five fields: minute, hour, day, month, weekday.
@@ -89,7 +92,8 @@ function ScheduleFields({
             name="localTime"
             type="time"
             required
-            defaultValue={defaults.time}
+            value={localTime}
+            onChange={(event) => setLocalTime(event.currentTarget.value)}
           />
         </label>
       ) : null}

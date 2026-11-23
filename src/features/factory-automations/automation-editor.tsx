@@ -7,18 +7,23 @@ import { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { PageSection } from "@/components/ui/page-shell";
-import { factoryAutomationSnapshotSchema } from "@/lib/factory-automations/contracts";
+import {
+  factoryAutomationSnapshotSchema,
+  type FactoryAutomationDefinition,
+} from "@/lib/factory-automations/contracts";
 import type { AutomationSetupOptions } from "@/lib/factory-automations/operator-contracts";
 import { factoryAutomationApiPath, workspaceAutomationPreviewPath } from "@/lib/routes";
 
 import { AutomationEditorFields, readAutomationDraft } from "./automation-editor-fields";
+import { rebaseAutomationDraft } from "./automation-editor-rebase";
 
 const snapshotResponse = z.object({ automation: factoryAutomationSnapshotSchema });
 type Snapshot = z.infer<typeof factoryAutomationSnapshotSchema>;
 type Feedback =
   | { kind: "success" | "error"; message: string }
-  | { kind: "conflict"; message: string; createdDraftId?: string }
+  | { kind: "conflict"; message: string }
   | null;
+type RebaseOptions = ReturnType<typeof rebaseAutomationDraft> & { latest: Snapshot };
 
 class RuleRequestError extends Error {
   constructor(readonly status: number) {
@@ -70,17 +75,22 @@ export function AutomationEditor({
 }) {
   const router = useRouter();
   const [snapshot, setSnapshot] = useState(initial);
-  const [formInitial] = useState(initial?.revision.definition);
+  const [fields, setFields] = useState({ initial: initial?.revision.definition, reset: 0 });
   const [dirty, setDirty] = useState(false);
   const [action, setAction] = useState<"saving" | "publishing" | "loading" | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
-  const createId = useRef<string | null>(null);
+  const [rebaseOptions, setRebaseOptions] = useState<RebaseOptions | null>(null);
+  const form = useRef<HTMLFormElement>(null);
+  const createAttempt = useRef<{ id: string; definition: FactoryAutomationDefinition } | null>(
+    null,
+  );
   const inFlight = useRef(false);
   const endpoint = factoryAutomationApiPath(workspaceId, factoryId, snapshot?.automationId);
   const canSave = snapshot || setup?.assignment;
   const canPublish =
     snapshot && !dirty && snapshot.draftRevisionId !== snapshot.publishedRevisionId;
   const archived = Boolean(snapshot?.archivedAt);
+  const comparedRule = rebaseOptions?.latest ?? snapshot;
 
   function changed() {
     setDirty(true);
@@ -113,7 +123,6 @@ export function AutomationEditor({
           kind: "conflict",
           message:
             "This rule changed before your request finished. Your field values are still here.",
-          createdDraftId: snapshot ? undefined : (createId.current ?? undefined),
         });
       } else {
         const status = error instanceof RuleRequestError ? error.status : 0;
@@ -136,8 +145,7 @@ export function AutomationEditor({
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSave || archived || feedback?.kind === "conflict") return;
-    const form = event.currentTarget;
-    const definition = readAutomationDraft(form, setup, formInitial);
+    const definition = readAutomationDraft(event.currentTarget, setup, fields.initial);
     if (!definition.success) {
       setFeedback({ kind: "error", message: draftError(definition.error.issues[0]?.path[0]) });
       return;
@@ -156,26 +164,27 @@ export function AutomationEditor({
           kind: "success",
           message: `Draft revision ${saved.revision.revision} saved.`,
         });
-        if (revisionSelected) router.replace(rulePath(saved.automationId));
+        if (!initial || revisionSelected) router.replace(rulePath(saved.automationId));
         else router.refresh();
         return;
       }
-      const automationId = createId.current ?? crypto.randomUUID();
-      createId.current = automationId;
+      const attempt = createAttempt.current ?? {
+        id: crypto.randomUUID(),
+        definition: definition.data,
+      };
+      createAttempt.current = attempt;
+      const automationId = attempt.id;
       let created: Snapshot;
       try {
         created = await requestRule(endpoint, { automationId, definition: definition.data });
       } catch (error) {
         if (!(error instanceof RuleRequestError) || error.status !== 409) throw error;
-        try {
-          created = await requestRule(
-            factoryAutomationApiPath(workspaceId, factoryId, automationId),
-          );
-        } catch {
-          throw error;
+        created = await requestRule(factoryAutomationApiPath(workspaceId, factoryId, automationId));
+        if (created.automationId !== automationId) throw new Error("Unexpected automation");
+        if (JSON.stringify(created.revision.definition) !== JSON.stringify(definition.data)) {
+          prepareRebase(created, attempt.definition, definition.data);
+          return;
         }
-        if (JSON.stringify(created.revision.definition) !== JSON.stringify(definition.data))
-          throw error;
       }
       if (created.automationId !== automationId) throw new Error("Unexpected automation");
       router.replace(rulePath(created.automationId));
@@ -196,28 +205,64 @@ export function AutomationEditor({
         kind: "success",
         message: `Revision ${published.revision.revision} published.`,
       });
-      router.refresh();
+      if (!initial) router.replace(rulePath(published.automationId));
+      else router.refresh();
+    });
+  }
+
+  function applyRebase(latest: Snapshot, definition: FactoryAutomationDefinition) {
+    const hasChanges = JSON.stringify(definition) !== JSON.stringify(latest.revision.definition);
+    setSnapshot(latest);
+    setFields(({ reset }) => ({ initial: definition, reset: reset + 1 }));
+    setDirty(hasChanges);
+    setRebaseOptions(null);
+    setFeedback({
+      kind: "success",
+      message: hasChanges
+        ? `Revision ${latest.revision.revision} is current. Review the merged draft before saving.`
+        : `Revision ${latest.revision.revision} is current.`,
+    });
+  }
+
+  function prepareRebase(
+    latest: Snapshot,
+    base: FactoryAutomationDefinition,
+    edits: FactoryAutomationDefinition,
+  ) {
+    if (latest.archivedAt) {
+      setSnapshot(latest);
+      setFeedback({
+        kind: "error",
+        message: "This automation has been archived. Your field values are still here.",
+      });
+      return;
+    }
+    const options = rebaseAutomationDraft(base, edits, latest.revision.definition);
+    if (!options.conflicts.length) {
+      applyRebase(latest, options.keepEdits);
+      return;
+    }
+    setRebaseOptions({ latest, ...options });
+    setFeedback({
+      kind: "conflict",
+      message: `Both drafts changed the same sections (${options.conflicts.join(", ")}). Choose which values to keep.`,
     });
   }
 
   function useLatestRevision() {
-    if (!snapshot) return;
+    if (!snapshot || !form.current) return;
+    const edits = readAutomationDraft(form.current, setup, fields.initial);
+    if (!edits.success) {
+      setFeedback({
+        kind: "conflict",
+        message: "Complete the rule fields before merging with the current draft.",
+      });
+      return;
+    }
     void perform("loading", async () => {
       const latest = await requestRule(endpoint);
       if (latest.automationId !== snapshot.automationId) throw new Error("Unexpected automation");
-      if (latest.archivedAt) {
-        setFeedback({
-          kind: "conflict",
-          message: "This automation has been archived. Your field values are still here.",
-        });
-        return;
-      }
-      setSnapshot(latest);
-      setDirty(true);
-      setFeedback({
-        kind: "success",
-        message: `Revision ${latest.revision.revision} is current. Review your retained field values before saving.`,
-      });
+      prepareRebase(latest, snapshot.revision.definition, edits.data);
     });
   }
 
@@ -231,6 +276,7 @@ export function AutomationEditor({
       }
     >
       <form
+        ref={form}
         onSubmit={save}
         onChange={changed}
         aria-busy={action !== null}
@@ -247,10 +293,11 @@ export function AutomationEditor({
           </p>
         ) : null}
         <AutomationEditorFields
-          initial={formInitial}
+          key={fields.reset}
+          initial={fields.initial}
           setup={setup}
           changed={changed}
-          disabled={action !== null || archived}
+          disabled={action !== null || archived || rebaseOptions !== null}
         />
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -291,35 +338,44 @@ export function AutomationEditor({
         ) : feedback ? (
           <div className="space-y-2" role="alert">
             <p className="text-sm text-danger">{feedback.message}</p>
-            {feedback.kind === "conflict" && snapshot ? (
+            {feedback.kind === "conflict" && comparedRule ? (
               <div className="flex flex-wrap gap-2">
                 <Link
                   className="ui-button"
-                  href={rulePath(snapshot.automationId)}
+                  href={rulePath(comparedRule.automationId)}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
                   Compare current draft (new tab)
                 </Link>
-                <button
-                  className="ui-button"
-                  type="button"
-                  onClick={useLatestRevision}
-                  disabled={action !== null}
-                >
-                  Use latest revision and keep edits
-                </button>
+                {rebaseOptions ? (
+                  <>
+                    <button
+                      className="ui-button"
+                      type="button"
+                      onClick={() => applyRebase(rebaseOptions.latest, rebaseOptions.keepEdits)}
+                    >
+                      Keep my conflicting edits
+                    </button>
+                    <button
+                      className="ui-button"
+                      type="button"
+                      onClick={() => applyRebase(rebaseOptions.latest, rebaseOptions.keepSaved)}
+                    >
+                      Use saved values for conflicts
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="ui-button"
+                    type="button"
+                    onClick={useLatestRevision}
+                    disabled={action !== null}
+                  >
+                    Use latest revision and keep edits
+                  </button>
+                )}
               </div>
-            ) : null}
-            {feedback.kind === "conflict" && feedback.createdDraftId ? (
-              <Link
-                className="ui-button"
-                href={rulePath(feedback.createdDraftId)}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Check saved draft (new tab)
-              </Link>
             ) : null}
           </div>
         ) : null}
