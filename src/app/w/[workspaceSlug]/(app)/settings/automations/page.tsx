@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { z } from "zod";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
@@ -8,6 +9,7 @@ import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-option
 import { resolveGovernanceFactorySelection } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { AutomationDryRunPanel } from "@/features/factory-automations/automation-dry-run-panel";
+import { AutomationSchedulePreview } from "@/features/factory-automations/automation-schedule-preview";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import {
   factoryAutomationListQuerySchema,
@@ -183,6 +185,25 @@ export default async function AutomationPreviewPage({
                 </div>
               </div>
             </PageSection>
+            {automation.revision.definition.trigger.kind === "schedule" ? (
+              <Suspense
+                fallback={
+                  <p className="text-sm text-muted" role="status">
+                    Loading schedule…
+                  </p>
+                }
+              >
+                <AutomationSchedulePreview
+                  client={supabase}
+                  input={{
+                    ...scope,
+                    automationId: automation.automationId,
+                    revisionId: automation.revision.id,
+                    ...automation.revision.definition.trigger,
+                  }}
+                />
+              </Suspense>
+            ) : null}
             <AutomationDryRunPanel
               key={automation.revision.id}
               automationId={automation.automationId}

@@ -45,6 +45,7 @@ import { drainFactoryDiagnoses } from "@/lib/factory-diagnosis/worker";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/admission-service";
+import { reconcileFactoryAutomationSchedules } from "@/lib/factory-automations/schedule-service";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
@@ -359,6 +360,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["analytics export cleanup", () => pruneFactoryAnalyticsExports(admin)],
       ["run exports", () => drainRunExports(admin)],
       ["run export cleanup", () => cleanupRunExports(admin)],
+      ["factory automation schedules", () => reconcileFactoryAutomationSchedules(admin)],
       ["factory automation occurrences", () => drainFactoryAutomationOccurrences(admin)],
     ] as const;
     for (const [name, task] of tasks) {

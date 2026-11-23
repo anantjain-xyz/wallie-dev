@@ -82,7 +82,7 @@ vi.mock("@/lib/run-exports/worker", () => ({
 beforeEach(() => vi.resetAllMocks());
 
 it.each([
-  { scenario: "all tasks succeed" },
+  { scenario: "all tasks succeed", automationScheduleDue: true },
   { scenario: "accepted triage routing fails", triageFailure: true },
   { scenario: "exact workflow review fails", exactReviewFailure: true },
   { scenario: "GitHub verification fails", githubFailure: true },
@@ -103,6 +103,7 @@ it.each([
   { scenario: "a judge dispatch fails", judgeFailure: true },
   { scenario: "a workflow sandbox stop fails", sandboxStopFailure: true },
   { scenario: "automation occurrence admission fails", automationFailure: true },
+  { scenario: "automation schedule reconciliation fails", automationScheduleFailure: true },
 ])(
   "runs independent maintenance when $scenario",
   async ({
@@ -121,6 +122,8 @@ it.each([
     judgeFailure,
     sandboxStopFailure,
     automationFailure,
+    automationScheduleFailure,
+    automationScheduleDue,
   }) => {
     const bindings = env as unknown as Env;
     const id = `maintenance-${crypto.randomUUID()}`;
@@ -156,6 +159,18 @@ it.each([
             error: null,
           },
     );
+    const dueSchedule = {
+      workspaceId: "66110000-0000-4000-8000-000000000001",
+      factoryId: "66110000-0000-4000-8000-000000000002",
+      automationId: "66110000-0000-4000-8000-000000000003",
+      revisionId: "66110000-0000-4000-8000-000000000004",
+      cursorVersion: 1,
+      admissionGeneration: 2,
+      scannedThrough: "2026-10-31T06:00:00Z",
+      through: "2026-11-01T06:35:00.000123+00:00",
+      cron: "30 1 * * *",
+      timeZone: "America/New_York",
+    };
     const rpc = vi.fn((name: string) => {
       if (name === "reconcile_factory_benchmark_schedules") {
         return {
@@ -195,6 +210,19 @@ it.each([
                 : { data: { evaluated: 2, created: 1 }, error: null },
             ),
         };
+      }
+      if (name === "list_due_factory_automation_schedules") {
+        return {
+          abortSignal: () =>
+            Promise.resolve(
+              automationScheduleFailure
+                ? { data: null, error: { message: "Automation schedule selection unavailable" } }
+                : { data: automationScheduleDue ? [dueSchedule] : [], error: null },
+            ),
+        };
+      }
+      if (name === "commit_factory_automation_schedule") {
+        return { abortSignal: () => Promise.resolve({ data: true, error: null }) };
       }
       if (name === "admit_next_factory_automation_occurrence") {
         return {
@@ -320,7 +348,26 @@ it.each([
         p_limit: 8,
       });
       expect(rpc).toHaveBeenNthCalledWith(8, "prune_factory_analytics_exports", { p_limit: 100 });
-      expect(rpc).toHaveBeenNthCalledWith(9, "admit_next_factory_automation_occurrence");
+      expect(rpc).toHaveBeenNthCalledWith(9, "list_due_factory_automation_schedules");
+      if (automationScheduleDue) {
+        expect(rpc).toHaveBeenNthCalledWith(10, "commit_factory_automation_schedule", {
+          p_workspace_id: dueSchedule.workspaceId,
+          p_factory_id: dueSchedule.factoryId,
+          p_automation_id: dueSchedule.automationId,
+          p_revision_id: dueSchedule.revisionId,
+          p_expected_cursor_version: 1,
+          p_expected_admission_generation: 2,
+          p_plan: {
+            through: dueSchedule.through,
+            occurrenceAt: "2026-11-01T05:30:00.000Z",
+            nextDueAt: "2026-11-02T06:30:00.000Z",
+          },
+        });
+      }
+      expect(rpc).toHaveBeenNthCalledWith(
+        automationScheduleDue ? 11 : 10,
+        "admit_next_factory_automation_occurrence",
+      );
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );

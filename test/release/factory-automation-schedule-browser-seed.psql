@@ -1,0 +1,52 @@
+-- Use a disposable local project and a unique numeric op651_fixture_namespace.
+\o /dev/null
+begin;
+\ir ../../supabase/tests/fixtures/factory_automation_dry_run.psql
+
+update public.workspaces set name = 'Automation schedule qualification' where id = pg_temp.op651_id(11);
+update auth.users set instance_id = '00000000-0000-0000-0000-000000000000', aud = 'authenticated', role = 'authenticated',
+  email_confirmed_at = now(), created_at = now(), updated_at = now(), confirmation_token = '', recovery_token = '',
+  email_change_token_new = '', email_change = '', raw_app_meta_data = '{"provider":"email","providers":["email"]}',
+  raw_user_meta_data = '{}'
+where id = pg_temp.op651_id(1);
+insert into public.workspace_onboarding(workspace_id, status, completed_at, selected_github_repository_id)
+values (pg_temp.op651_id(11), 'completed', now(), pg_temp.op651_id(34))
+on conflict (workspace_id) do update set status = excluded.status, completed_at = excluded.completed_at,
+  selected_github_repository_id = excluded.selected_github_repository_id;
+
+create temp table scheduled_automation as
+select scope.*, (draft.value->>'automationId')::uuid as automation_id,
+  (draft.value->>'draftRevisionId')::uuid as revision_id
+from op651_scope scope
+cross join lateral (select pg_temp.create_dry_run_automation(101, jsonb_set(pg_temp.dry_run_definition('schedule'),
+  '{trigger}', '{"kind":"schedule","cron":"0 9 * * *","timeZone":"America/New_York"}')) as value) draft;
+select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, revision_id)
+from scheduled_automation;
+update internal.factory_automation_schedule_cursors cursor_row
+set activated_at = statement_timestamp() - interval '25 hours',
+  scanned_through = statement_timestamp() - interval '25 hours',
+  recheck_at = statement_timestamp() - interval '25 hours'
+from scheduled_automation rule
+where (cursor_row.automation_id, cursor_row.revision_id) = (rule.automation_id, rule.revision_id);
+select public.configure_factory_automation_admission(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, 0, true, 1)
+from scheduled_automation;
+
+\o
+select jsonb_build_object(
+  'workspaceId', rule.workspace_id,
+  'workspaceSlug', workspace.slug,
+  'factoryId', rule.factory_id,
+  'automationId', rule.automation_id,
+  'revisionId', rule.revision_id,
+  'ownerEmail', owner_user.email,
+  'ownerId', owner_user.id,
+  'generation', 1,
+  'expectedScheduledFor', to_char((
+    date_trunc('day', (statement_timestamp() at time zone 'America/New_York') - interval '9 hours')
+      + interval '9 hours'
+  ) at time zone 'America/New_York' at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+)::text
+from scheduled_automation rule
+join public.workspaces workspace on workspace.id = rule.workspace_id
+join auth.users owner_user on owner_user.id = pg_temp.op651_id(1);
+commit;

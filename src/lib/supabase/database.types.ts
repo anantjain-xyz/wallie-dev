@@ -11565,6 +11565,18 @@ export type Database = {
         }
         Returns: Json
       }
+      commit_factory_automation_schedule: {
+        Args: {
+          p_automation_id: string
+          p_expected_admission_generation: number
+          p_expected_cursor_version: number
+          p_factory_id: string
+          p_plan: Json
+          p_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       commit_run_export_page: {
         Args: {
           p_entries: Json
@@ -13805,6 +13817,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      list_due_factory_automation_schedules: { Args: never; Returns: Json }
       list_factory_automations: {
         Args: {
           p_after_id?: string
@@ -14938,6 +14951,15 @@ export type Database = {
         Args: {
           p_automation_id: string
           p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_automation_schedule_preview: {
+        Args: {
+          p_automation_id: string
+          p_factory_id: string
+          p_revision_id: string
           p_workspace_id: string
         }
         Returns: Json
