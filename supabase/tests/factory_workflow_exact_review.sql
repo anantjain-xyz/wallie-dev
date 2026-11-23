@@ -290,14 +290,24 @@ select ok((select (claim->>'checkpointRunId',claim->>'commitSha',claim->>'treeSh
   'the reviewer claim uses the exact adopted join run, commit and validation tree');
 select is(pg_temp.claim_exact_review(null,pg_temp.op651_id(406)),null::jsonb,
   'a distinct worker permit cannot issue another exact review');
+create function pg_temp.read_fixture_review_provider(p_claim jsonb, p_permit uuid)
+returns jsonb language sql as $$
+  select public.read_factory_workflow_exact_review_provider(
+    context."sessionId", context.workspace_id, context.factory_id, context.execution_generation, context.ownership_token,
+    (p_claim->>'reviewId')::uuid, (p_claim->>'reviewRunId')::uuid, p_permit)
+  from exact_review_context context
+$$;
 select ok((select profile.provider->>'model' = 'gpt-5.5'
     and profile.provider->>'promptSha256' = encode(sha256(convert_to('Choose a configured destination.', 'UTF8')), 'hex')
     and profile.provider->>'inputSha' = repeat('a',40)
-  from captured_review captured cross join exact_review_context context
-  cross join lateral (select public.read_factory_workflow_exact_review_provider(
-    context."sessionId", context.workspace_id, context.factory_id, context.execution_generation, context.ownership_token,
-    (captured.claim->>'reviewId')::uuid, (captured.claim->>'reviewRunId')::uuid, pg_temp.op651_id(405))) profile(provider)),
+  from captured_review captured
+  cross join lateral (select pg_temp.read_fixture_review_provider(captured.claim, pg_temp.op651_id(405))) profile(provider)),
   'the provider reads the exact frozen reviewer prompt with the inherited parent inference authority');
+select ok((select profile.provider->>'comparisonBaseSha' = repeat('a',40)
+    and profile.provider->'priorReview' = 'null'::jsonb
+  from captured_review captured
+  cross join lateral (select pg_temp.read_fixture_review_provider(captured.claim, pg_temp.op651_id(405))) profile(provider)),
+  'the initial review compares from the exact sealed join base without prior findings');
 
 
 create function pg_temp.record_exact_review(p_report jsonb, p_tree_sha text default repeat('f',40),
@@ -362,8 +372,9 @@ select context.*, admitted.target_occurrence_id as gate_occurrence_id
 from exact_review_context context
 join internal.factory_workflow_node_results result on (result.root_session_id,result.occurrence_id) =
   (context."sessionId",context.review_occurrence_id)
-cross join lateral public.admit_factory_workflow_next(context."sessionId",context.workspace_id,context.factory_id,
-  context.execution_generation,context.ownership_token,context.review_occurrence_id,'human.review',result.result_id) admitted;
+join internal.factory_workflow_transition_receipts admitted on
+  (admitted.root_session_id,admitted.source_occurrence_id,admitted.source_result_id,admitted.edge_id) =
+  (context."sessionId",context.review_occurrence_id,result.result_id,'human.review');
 select ok((select (source.session_id,source.run_id) = (gate."sessionId",gate.current_join_run_id)
   from exact_human_gate gate
   cross join lateral public.read_factory_workflow_command_source(
@@ -423,6 +434,10 @@ create temp table repair_result as select pg_temp.repair_review() as repair;
 select is((select repair->>'status' from repair_result),'repair_recorded','one exact eligible report queues a repair');
 select ok((select jsonb_typeof(repair->'jobId') = 'string' and repair->'created' = 'true' from repair_result),
   'the native receipt identifies a fresh durable repair job');
+select is((select public.read_factory_workflow_exact_review_progress(
+  context."sessionId",context.workspace_id,context.factory_id,context.review_occurrence_id)
+  from exact_review_context context),'{"status":"pending","code":"repair_pending"}'::jsonb,
+  'a reserved but unadopted repair exposes no successor occurrence');
 select is(pg_temp.repair_review()->>'created','false','an exact repair retry returns the same reservation');
 select is(pg_temp.repair_review()->>'jobId',(select repair->>'jobId' from repair_result),
   'exact retries keep the original job identity');
@@ -460,6 +475,37 @@ select ok((select scoped.input->>'status' = 'required' and scoped.input->>'artif
 
 select public.pin_session_job_git_input(exact.job_id,1,exact.run_id,pg_temp.op651_id(34),'main',repeat('e',40))
 from exact_repair_run exact;
+
+savepoint no_op_repair;
+select pg_temp.record_join_validation(exact.run_id,repeat('e',40),repeat('f',40),true) from exact_repair_run exact;
+select ok((select public.prepare_session_source_and_checkpoint_publication(exact.run_id, pg_temp.op651_id(34),
+  'main',repeat('e',40),repeat('e',40),'No-op repair','Source byte-identical to prior join', '', '', '',
+  parent.current_artifact_version,'Fresh validated no-op repair.')
+  from exact_repair_run exact join public.agent_jobs job on job.id=exact.job_id
+  join public.sessions parent on parent.id=job.session_id),
+  'a no-op repair can prepare after validating its own run');
+create temp table no_op_repair_claim as
+select run_id, public.claim_session_checkpoint_publication(run_id) as lease from exact_repair_run;
+select ok((select public.adopt_session_checkpoint_publication(run_id, lease, null, null) from no_op_repair_claim),
+  'the no-op repair adopts a new exact checkpoint identity at the previous commit and tree');
+create temp table no_op_review as select public.dispatch_next_factory_workflow_exact_review(pg_temp.op651_id(412)) as claim;
+select ok((select (claim->>'checkpointRunId', claim->>'commitSha', claim->>'treeSha') =
+    (exact.run_id::text, repeat('e',40), repeat('f',40))
+    and (profile.provider->>'inputSha', profile.provider->>'comparisonBaseSha') = (repeat('e',40), repeat('a',40))
+    and profile.provider#>>'{priorReview,checkpointRunId}' = context.current_join_run_id::text
+    and profile.provider#>'{priorReview,findings}' = finding.body->'findings'
+  from no_op_review reviewed cross join exact_repair_run exact cross join exact_review_context context
+  cross join finding_report finding
+  cross join lateral (select pg_temp.read_fixture_review_provider(reviewed.claim, pg_temp.op651_id(412))) profile(provider)),
+  'the no-op re-review retains the original comparison and the finding from its exact prior checkpoint');
+create temp table no_op_repeat as
+select pg_temp.record_exact_review(finding.body, repeat('f',40), null, pg_temp.op651_id(412), reviewed.claim) as receipt_id
+from no_op_review reviewed cross join finding_report finding;
+select is((select pg_temp.repair_review(repeated.receipt_id, exact.run_id, reviewed.claim)->>'code'
+  from no_op_repeat repeated cross join no_op_review reviewed cross join exact_repair_run exact),
+  'finding_repeated','an unchanged prior finding at the same commit cannot enqueue another repair');
+rollback to no_op_repair;
+
 select public.pin_session_validation_plan(exact.run_id,repeat('1',40),repeat('2',40),
   '{"version":1,"commands":[{"key":"tests","command":"pnpm test","timeoutSeconds":30,"reports":[]}]}')
 from exact_repair_run exact;
@@ -500,6 +546,20 @@ create temp table rereview as select public.dispatch_next_factory_workflow_exact
 select ok((select (claim->>'checkpointRunId',claim->>'commitSha',claim->>'treeSha') =
   (exact.run_id::text,repeat('1',40),repeat('2',40)) from rereview cross join exact_repair_run exact),
   'the next exact reviewer observes the independently adopted repaired output');
+select is((select public.read_factory_workflow_exact_review_progress(
+  context."sessionId",context.workspace_id,context.factory_id,context.review_occurrence_id)
+  from exact_review_context context),
+  (select jsonb_build_object('status','pending','code','repair_advanced','nextReviewOccurrenceId',bound.review_occurrence_id)
+    from rereview review join internal.factory_workflow_exact_reviews bound on (bound.root_session_id,bound.review_id) =
+      ((review.claim->>'rootSessionId')::uuid,(review.claim->>'reviewId')::uuid)),
+  'the original occurrence links to the exact admitted re-review');
+select ok((select (profile.provider->>'inputSha', profile.provider->>'comparisonBaseSha') = (repeat('e',40), repeat('a',40))
+    and (profile.provider#>>'{priorReview,checkpointRunId}', profile.provider#>>'{priorReview,commitSha}',
+      profile.provider#>>'{priorReview,treeSha}') = (context.current_join_run_id::text, repeat('e',40), repeat('f',40))
+    and profile.provider#>'{priorReview,findings}' = finding.body->'findings'
+  from rereview reviewed cross join exact_review_context context cross join finding_report finding
+  cross join lateral (select pg_temp.read_fixture_review_provider(reviewed.claim, pg_temp.op651_id(410))) profile(provider)),
+  'a changed repair compares from the original join base and sees the latest saved findings');
 savepoint repeat_report;
 create temp table repeated_finding as
 select pg_temp.record_exact_review('{"version":1,"verdict":"findings","findings":[

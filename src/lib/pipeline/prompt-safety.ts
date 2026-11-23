@@ -45,6 +45,7 @@ export type UntrustedPromptSource =
   | "foreman.context"
   | "review.sourceDiff"
   | "review.validationEvidence"
+  | "review.priorFindings"
   | "workflow.repairFindings"
   | "session.prompt"
   | "session.attachments"

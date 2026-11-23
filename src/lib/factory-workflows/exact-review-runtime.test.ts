@@ -56,13 +56,33 @@ function githubSource(treeSha = exact.treeSha, retainedSha = exact.commitSha) {
   });
 }
 
-function fixture(created = true, active = true) {
+function fixture({
+  created = true,
+  active = true,
+  recordAccepted = true,
+  checkpointInputSha = inputSha,
+  comparisonBaseSha = checkpointInputSha,
+  priorReview = null,
+}: {
+  created?: boolean;
+  active?: boolean;
+  recordAccepted?: boolean;
+  checkpointInputSha?: string;
+  comparisonBaseSha?: string;
+  priorReview?: {
+    checkpointRunId: string;
+    commitSha: string;
+    treeSha: string;
+    findings: { ruleId: string; path: string; message: string }[];
+  } | null;
+} = {}) {
   const commands: { name: string; args: unknown }[] = [];
   const admin = createClient<Database>("https://supabase.invalid", "test-only", {
     auth: { persistSession: false, autoRefreshToken: false },
     global: {
       fetch: async (request, init) => {
-        const [, service, version, entry, rpc] = new URL(String(request)).pathname.split("/");
+        const url = new URL(String(request));
+        const [, service, version, entry, rpc] = url.pathname.split("/");
         if (service !== "rest" || version !== "v1") throw new Error("Unexpected service.");
         if (rpc) commands.push({ name: rpc, args: JSON.parse(String(init?.body)) });
         switch (rpc ?? entry) {
@@ -77,10 +97,17 @@ function fixture(created = true, active = true) {
               model: "gpt-5.5",
               promptMd,
               promptSha256: createHash("sha256").update(promptMd).digest("hex"),
-              inputSha,
+              inputSha: checkpointInputSha,
+              comparisonBaseSha,
+              priorReview,
               encryptedCredential: "synthetic-ciphertext",
             });
           case "session_git_checkpoints":
+            if (url.searchParams.get("input_sha") !== `eq.${checkpointInputSha}`)
+              return Response.json(
+                { code: "PGRST116", message: "No matching repair input." },
+                { status: 406 },
+              );
             return Response.json({
               workspace_id: exact.workspaceId,
               session_id: exact.parentSessionId,
@@ -89,7 +116,7 @@ function fixture(created = true, active = true) {
               attempt_count: 1,
               repository_id: exact.repositoryId,
               output_sha: exact.commitSha,
-              input_sha: inputSha,
+              input_sha: checkpointInputSha,
             });
           case "github_repositories":
             return Response.json({
@@ -102,7 +129,7 @@ function fixture(created = true, active = true) {
           case "is_factory_workflow_exact_review_active":
             return Response.json(active);
           case "record_factory_workflow_exact_review":
-            return Response.json(id(12));
+            return Response.json(recordAccepted ? id(12) : null);
           case "fail_factory_workflow_exact_review":
             return Response.json(true);
           default:
@@ -169,6 +196,64 @@ it("records one bounded report for the retained checkpoint, with evidence and so
   });
 });
 
+it.each([
+  { change: "unrelated repair", checkpointInputSha: "e".repeat(40), delta: "+ unrelated change" },
+  { change: "no-op repair", checkpointInputSha: exact.commitSha, delta: "" },
+])("rechecks an unchanged finding after a $change", async ({ checkpointInputSha, delta }) => {
+  const comparisonBaseSha = "d".repeat(40);
+  const finding = {
+    ruleId: "scope",
+    path: "src/scope.ts",
+    message: "Original defect is still present.",
+  };
+  const unchangedSource = "+ accessGranted = true";
+  const { admin, commands } = fixture({
+    checkpointInputSha,
+    comparisonBaseSha,
+    priorReview: {
+      checkpointRunId: id(13),
+      commitSha: checkpointInputSha,
+      treeSha: "f".repeat(40),
+      findings: [finding],
+    },
+  });
+  vi.mocked(readFactoryJudgeCodeDiff).mockImplementation(async ({ inputSha: base }) => ({
+    status: "available",
+    text: base === comparisonBaseSha ? `${unchangedSource}\n${delta}` : delta,
+  }));
+  provider.mockImplementation(async ({ messages }) => {
+    const source = messages[1]?.content ?? "";
+    const defectSupplied =
+      source.includes(unchangedSource) &&
+      source.includes("Source: review.priorFindings") &&
+      source.includes(finding.message);
+    return {
+      status: "completed",
+      output: JSON.stringify(
+        defectSupplied
+          ? { version: 1, verdict: "findings", findings: [finding] }
+          : { version: 1, verdict: "pass" },
+      ),
+      usage: { inputTokens: 302, outputTokens: 19, costUsd: 0.01 },
+    };
+  });
+
+  await drainExactFactoryWorkflowReview(admin);
+
+  expect(readFactoryJudgeCodeDiff).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ inputSha: comparisonBaseSha, outputSha: exact.commitSha }),
+    expect.any(AbortSignal),
+  );
+  expect(provider.mock.lastCall?.[0].messages[0]?.content).not.toContain(finding.message);
+  expect(commands.at(-1)).toEqual({
+    name: "record_factory_workflow_exact_review",
+    args: expect.objectContaining({
+      p_checkpoint_run_id: exact.checkpointRunId,
+      p_report: { version: 1, verdict: "findings", findings: [finding] },
+    }),
+  });
+});
+
 it.each(["ref", "tree", "evidence", "permit"])(
   "stops before inference when the exact %s is unavailable",
   async (changed) => {
@@ -182,7 +267,7 @@ it.each(["ref", "tree", "evidence", "permit"])(
       vi.mocked(evaluateExactRunValidationEvidence).mockResolvedValue([
         { key: "tests", status: "stale" },
       ]);
-    const { admin, commands } = fixture(true, changed !== "permit");
+    const { admin, commands } = fixture({ active: changed !== "permit" });
     await drainExactFactoryWorkflowReview(admin);
     expect(provider).not.toHaveBeenCalled();
     expect(commands.at(-1)).toEqual({
@@ -195,8 +280,35 @@ it.each(["ref", "tree", "evidence", "permit"])(
   },
 );
 
+it("settles source drift discovered during report recording against the same permit", async () => {
+  const { admin, commands } = fixture({ recordAccepted: false });
+
+  await drainExactFactoryWorkflowReview(admin);
+
+  expect(provider).toHaveBeenCalledOnce();
+  expect(commands.slice(-2)).toEqual([
+    {
+      name: "record_factory_workflow_exact_review",
+      args: expect.objectContaining({
+        p_review_run_id: exact.reviewRunId,
+        p_checkpoint_run_id: exact.checkpointRunId,
+      }),
+    },
+    {
+      name: "fail_factory_workflow_exact_review",
+      args: expect.objectContaining({
+        p_reason: "source_unavailable",
+        p_review_run_id: exact.reviewRunId,
+      }),
+    },
+  ]);
+  expect(commands.at(-1)?.args).toEqual(expect.objectContaining({ p_permit: expect.any(String) }));
+  expect(commands.at(-2)?.args).toEqual(expect.objectContaining(commands[0]?.args));
+  expect(commands.at(-1)?.args).toEqual(expect.objectContaining(commands[0]?.args));
+});
+
 it("does not spend a replayed permit", async () => {
-  const { admin, commands } = fixture(false);
+  const { admin, commands } = fixture({ created: false });
   await drainExactFactoryWorkflowReview(admin);
   expect(commands.map(({ name }) => name)).toEqual(["dispatch_next_factory_workflow_exact_review"]);
   expect(provider).not.toHaveBeenCalled();

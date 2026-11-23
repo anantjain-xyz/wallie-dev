@@ -938,7 +938,10 @@ begin
     select attempt.*, workflow.workspace_id, workflow.factory_id
     from internal.factory_workflow_review_attempts attempt
     join internal.factory_workflow_executions workflow using (root_session_id)
+    join public.workspaces workspace on workspace.id = workflow.workspace_id
+    join public.factories factory on (factory.workspace_id, factory.id) = (workflow.workspace_id, workflow.factory_id)
     where workflow.lifecycle_status = 'running'
+      and workspace.deletion_requested_at is null and factory.status = 'active'
       and (attempt.deadline_at <= clock_timestamp() or attempt.generation <> workflow.generation)
       and not exists (select 1 from internal.factory_workflow_exact_review_reports report
         where (report.root_session_id, report.review_id) = (attempt.root_session_id, attempt.review_id))
@@ -991,7 +994,9 @@ declare
   definition jsonb;
   prompt public.factory_agent_prompt_revisions;
   binding public.factory_secret_bindings;
-  input_sha text;
+  checkpoint record;
+  repair internal.factory_workflow_review_repairs;
+  prior_review jsonb;
   encrypted_credential text;
 begin
   if not public.is_factory_workflow_exact_review_active(p_root_session_id, p_workspace_id, p_factory_id,
@@ -1017,11 +1022,45 @@ begin
     pinned.execution_grant_id, pinned.credential_owner_service_principal_id);
   select secret.encrypted_value into strict encrypted_credential from public.workspace_secrets secret
   where (secret.workspace_id, secret.id) = (p_workspace_id, binding.workspace_secret_id);
-  select checkpoint.input_sha into strict input_sha from public.session_git_checkpoints checkpoint
-  where (checkpoint.run_id, checkpoint.workspace_id, checkpoint.session_id, checkpoint.repository_id) =
+  -- The immutable join pins the comparison base for the entire repair chain.
+  -- The current checkpoint still pins its own immediate producing input.
+  select accepted.input_sha, accepted.job_id, manifest.base_sha as comparison_base_sha into strict checkpoint
+  from public.session_git_checkpoints accepted
+  join internal.factory_workflow_joins manifest on
+    (manifest.root_session_id, manifest.join_id, manifest.workspace_id, manifest.factory_id,
+      manifest.parent_session_id, manifest.repository_id, manifest.workflow_digest) =
+    (review.root_session_id, review.join_id, review.workspace_id, review.factory_id,
+      review.parent_session_id, review.repository_id, review.workflow_digest)
+  where (accepted.run_id, accepted.workspace_id, accepted.session_id, accepted.repository_id) =
     (review.checkpoint_run_id, p_workspace_id, review.parent_session_id, review.repository_id);
+
+  select marker.* into repair from internal.factory_workflow_review_repairs marker
+  where (marker.root_session_id, marker.next_review_occurrence_id) =
+    (p_root_session_id, review.review_occurrence_id);
+  if found then
+    select jsonb_build_object('checkpointRunId', previous.checkpoint_run_id, 'commitSha', previous.commit_sha,
+      'treeSha', previous.tree_sha, 'findings', report.report->'findings')
+    into prior_review
+    from internal.factory_workflow_exact_reviews previous
+    join internal.factory_workflow_exact_review_reports report on
+      (report.root_session_id, report.review_id, report.receipt_id) =
+      (previous.root_session_id, previous.review_id, repair.review_receipt_id)
+    join public.session_job_git_inputs input on
+      (input.job_id, input.workspace_id, input.session_id, input.repository_id, input.source_checkpoint_run_id,
+        input.input_sha, input.pinned_run_id) =
+      (repair.job_id, p_workspace_id, review.parent_session_id, review.repository_id, previous.checkpoint_run_id,
+        previous.commit_sha, review.checkpoint_run_id)
+    where (previous.root_session_id, previous.review_id, previous.join_id, previous.parent_session_id,
+      previous.repository_id, previous.commit_sha) =
+      (p_root_session_id, repair.review_id, review.join_id, review.parent_session_id,
+        review.repository_id, checkpoint.input_sha)
+      and repair.job_id = checkpoint.job_id and report.report->>'verdict' = 'findings';
+    if not found then return null; end if;
+  end if;
+
   return jsonb_build_object('model', definition#>>'{agent,model}', 'promptMd', prompt.prompt_md,
-    'promptSha256', prompt.prompt_sha256, 'encryptedCredential', encrypted_credential, 'inputSha', input_sha);
+    'promptSha256', prompt.prompt_sha256, 'encryptedCredential', encrypted_credential,
+    'inputSha', checkpoint.input_sha, 'comparisonBaseSha', checkpoint.comparison_base_sha, 'priorReview', prior_review);
 end;
 $$;
 revoke all on function public.read_factory_workflow_exact_review_provider(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid)
@@ -1949,6 +1988,8 @@ create function public.read_factory_workflow_exact_review_progress(
     when repair.job_id is not null and job.status in ('error', 'canceled') and execution.lifecycle_status = 'running'
       and not internal.factory_workflow_branch_resume_waits_for_claim(execution.root_session_id, job)
       then jsonb_build_object('status', 'blocked', 'code', 'repair_unsuccessful')
+    when successor.review_occurrence_id is not null then jsonb_build_object(
+      'status', 'pending', 'code', 'repair_advanced', 'nextReviewOccurrenceId', successor.review_occurrence_id)
     when repair.job_id is not null then jsonb_build_object('status', 'pending', 'code', 'repair_pending')
     else jsonb_build_object('status', 'pending', 'code', 'exact_review_pending')
   end
@@ -1962,6 +2003,9 @@ create function public.read_factory_workflow_exact_review_progress(
     (progress.root_session_id, progress.review_id) = (review.root_session_id, review.review_id)
   left join internal.factory_workflow_review_repairs repair on
     (repair.root_session_id, repair.review_id) = (review.root_session_id, review.review_id)
+  left join internal.factory_workflow_exact_reviews successor
+    on (successor.root_session_id, successor.review_occurrence_id) =
+      (repair.root_session_id, repair.next_review_occurrence_id)
   left join public.agent_jobs job on job.id = repair.job_id
   where (execution.root_session_id, execution.workspace_id, execution.factory_id, occurrence.occurrence_id, occurrence.node_kind) =
     (p_root_session_id, p_workspace_id, p_factory_id, p_occurrence_id, 'review');

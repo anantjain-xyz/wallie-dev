@@ -579,25 +579,32 @@ export async function executeFactoryWorkflowOccurrence(
       .abortSignal(options?.signal ?? AbortSignal.timeout(5_000));
     if (error) throw error;
     return z
-      .object({
-        status: z.enum(["pending", "blocked"]),
-        code: z.enum([
-          "exact_review_pending",
-          "repair_pending",
-          "repair_unsuccessful",
-          "source_unavailable",
-          "provider_unavailable",
-          "invalid_report",
-          "deadline",
-          "generation_retired",
-          "budget_exhausted",
-          "stale_review",
-          "finding_ineligible",
-          "finding_repeated",
-          "repair_budget_exhausted",
-          "repair_stage_unavailable",
-        ]),
-      })
+      .discriminatedUnion("code", [
+        z.object({
+          status: z.literal("pending"),
+          code: z.literal("repair_advanced"),
+          nextReviewOccurrenceId: z.string().uuid(),
+        }),
+        z.object({
+          status: z.enum(["pending", "blocked"]),
+          code: z.enum([
+            "exact_review_pending",
+            "repair_pending",
+            "repair_unsuccessful",
+            "source_unavailable",
+            "provider_unavailable",
+            "invalid_report",
+            "deadline",
+            "generation_retired",
+            "budget_exhausted",
+            "stale_review",
+            "finding_ineligible",
+            "finding_repeated",
+            "repair_budget_exhausted",
+            "repair_stage_unavailable",
+          ]),
+        }),
+      ])
       .parse(data);
   }
   const rootInput = execution.graph_input_run_id
