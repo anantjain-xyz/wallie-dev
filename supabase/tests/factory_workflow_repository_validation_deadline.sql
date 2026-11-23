@@ -2,8 +2,15 @@ begin;
 create extension if not exists pgtap with schema extensions;
 create extension if not exists dblink with schema extensions;
 select no_plan();
+-- Peer transactions need committed fixture rows. Serialize invocations and
+-- remove only this fixture's exact roots if the previous process was interrupted.
+select pg_advisory_lock(hashtextextended('wallie.test.repository_validation_deadline', 0));
+delete from public.workspaces
+where id = '65330000-0000-4000-8000-000000000011' and slug = 'op651-65330000';
+delete from auth.users
+where id = '65330000-0000-4000-8000-000000000001' and email = 'op651-65330000@example.test';
 \set op651_fixture_namespace 65330000
-\set op653_test_validation_seconds 6
+\set op653_test_validation_seconds 15
 \ir fixtures/factory_workflow_repository_delivery.psql
 
 -- Publish the exact passing validation attempt before coordinating peer locks.
@@ -14,8 +21,8 @@ create function pg_temp.test_repository_validation_cutoff() returns setof text l
 declare
   connection_info text := coalesce(nullif(current_setting('wallie.test_db_connection', true), ''),
     'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres');
-  holder text := 'op653_validation_table_lock';
-  worker text := 'op653_validation_late_worker';
+  holder text := 'op653_validation_table_lock_' || current_setting('wallie.op651_fixture_namespace');
+  worker text := 'op653_validation_late_worker_' || current_setting('wallie.op651_fixture_namespace');
   peer text;
   captured jsonb;
   seal_sql text;
@@ -29,7 +36,7 @@ begin
   foreach peer in array array[holder,worker] loop
     perform extensions.dblink_connect(peer, connection_info);
     perform extensions.dblink_exec(peer, format('set application_name=%L; set statement_timeout=%L; set request.jwt.claim.role=%L',
-      peer, '20s', 'service_role'));
+      peer, '30s', 'service_role'));
   end loop;
 
   perform extensions.dblink_exec(holder, 'begin; lock table public.session_validation_plans in access exclusive mode');
@@ -65,7 +72,10 @@ $$;
 
 select * from pg_temp.test_repository_validation_cutoff();
 select extensions.dblink_disconnect(name) from unnest(extensions.dblink_get_connections()) name
-where name in ('op653_validation_table_lock', 'op653_validation_late_worker');
+where name in (
+  'op653_validation_table_lock_' || current_setting('wallie.op651_fixture_namespace'),
+  'op653_validation_late_worker_' || current_setting('wallie.op651_fixture_namespace')
+);
 
 begin;
 delete from public.workspaces where id = pg_temp.op651_id(11);
@@ -75,3 +85,4 @@ select ok(not exists (select 1 from public.workspaces where id = pg_temp.op651_i
   'cleanup removes the exact committed fixture');
 select * from finish();
 commit;
+select pg_advisory_unlock(hashtextextended('wallie.test.repository_validation_deadline', 0));

@@ -23,7 +23,10 @@ returns text language sql as $$
 $$;
 
 create temp table first_secondary_lease as select pg_temp.claim_secondary_delivery() as claim;
-select is(pg_temp.claim_secondary_delivery(), null::jsonb, 'an exact live publication lease cannot be concurrently replaced');
+select is((select public.claim_factory_workflow_repository_delivery(
+    owner."sessionId",owner.workspace_id,owner.factory_id,owner.execution_generation,owner.ownership_token,
+    (receipt->>'joinId')::uuid,pg_temp.op651_id(62)) from multi_owner owner cross join multi_join), null::jsonb,
+  'an exact live publication lease cannot be concurrently replaced');
 select is((select pg_temp.settle_secondary_delivery(claim,'adopt',repeat('9',40)) from first_secondary_lease),
   'proof_mismatch', 'an incompatible remote SHA cannot be adopted');
 create function pg_temp.probe_rejected_repository_delivery(p_case text)

@@ -378,6 +378,7 @@ begin
   select * into intent from internal.factory_workflow_repository_delivery_intents
   where (root_session_id,join_id,repository_id) = (p_root_session_id,p_join_id,p_repository_id);
   blocked_by := internal.factory_workflow_repository_delivery_fence(execution,manifest,target,intent);
+  if progress.claim_until<=clock_timestamp() or target.deadline_at<=clock_timestamp() then return 'stale_lease'; end if;
   if blocked_by is not null then
     update internal.factory_workflow_repository_delivery_state
     set status='blocked',blocker=blocked_by,claim_id=null,claim_generation=null,claim_until=null
@@ -576,7 +577,12 @@ begin
         select revision.definition_json::jsonb into child_definition
         from public.factory_definition_revisions revision
         where (revision.workspace_id, revision.factory_id, revision.id::text, revision.canonical_digest) =
-          (new.workspace_id, new.factory_id, child_profile->>'definitionRevisionId', child_profile->>'definitionDigest');
+          (new.workspace_id, new.factory_id, child_profile->>'definitionRevisionId', child_profile->>'definitionDigest')
+          and exists (
+            select 1 from public.factory_definition_activations activation
+            where (activation.workspace_id, activation.factory_id, activation.revision_id) =
+              (revision.workspace_id, revision.factory_id, revision.id)
+          );
         if not found or child_definition->>'repositoryId' is distinct from repository::text
           or (internal.resolve_definition_execution_grant(new.workspace_id, new.factory_id, child_definition,
             repository, writer.execution_policy_revision_id)).id is distinct from writer_id then
@@ -666,9 +672,14 @@ returns table(root_session_id uuid, workspace_id uuid, factory_id uuid, group_id
   repository_id uuid, repository_full_name text, repository_numeric_id bigint, installation_id uuid,
   installation_numeric_id bigint, base_branch text, requires_observation boolean)
 language plpgsql security definer set search_path = '' as $$
-declare candidate record;
+declare
+  candidate record;
+  observations integer := 0;
+  checked_at timestamptz := clock_timestamp();
 begin
   perform internal.assert_checkpoint_publication_service();
+  -- Skip unavailable writers before locking. Only observations that survive
+  -- the authoritative recheck count against the returned batch.
   for candidate in
     select workflow as execution, manifest as branch_group, writer.repository_id as repo_id
     from internal.factory_workflow_branch_groups manifest
@@ -678,13 +689,31 @@ begin
     join internal.factory_workflow_branch_dispatches dispatch
       on (dispatch.root_session_id, dispatch.branch_occurrence_id) = (manifest.root_session_id, manifest.branch_occurrence_id)
     join public.workspaces workspace on workspace.id = workflow.workspace_id
-    where workflow.lifecycle_status = 'running' and workspace.deletion_requested_at is null
+    join public.factories factory on (factory.workspace_id, factory.id) = (workflow.workspace_id, workflow.factory_id)
+    join public.session_factory_admission_inputs parent
+      on (parent.session_id, parent.workspace_id, parent.factory_id) =
+        (manifest.parent_session_id, manifest.workspace_id, manifest.factory_id)
+    join public.factory_execution_grants available
+      on (available.workspace_id, available.factory_id, available.id, available.version, available.github_repository_id) =
+        (manifest.workspace_id, manifest.factory_id, writer.grant_id, writer.grant_version, writer.repository_id)
+      and (available.service_principal_id, available.budget_payer_member_id, available.execution_policy_revision_id) =
+        (parent.credential_owner_service_principal_id, parent.budget_payer_member_id, parent.execution_policy_revision_id)
+    join public.workspace_members payer
+      on (payer.workspace_id, payer.id) = (available.workspace_id, available.budget_payer_member_id)
+    join public.github_repositories repository
+      on (repository.workspace_id, repository.factory_id, repository.id) =
+        (manifest.workspace_id, manifest.factory_id, writer.repository_id)
+    join public.github_installations installation
+      on (installation.workspace_id, installation.id) = (repository.workspace_id, repository.github_installation_id)
+    where workflow.lifecycle_status = 'running' and workspace.deletion_requested_at is null and factory.status = 'active'
+      and available.revoked_at is null and available.expires_at > checked_at
+      and payer.kind = 'human' and payer.is_active and not repository.is_archived and not installation.suspended
+      and installation.permissions->>'contents' in ('write', 'admin')
       and dispatch.completed_at is null
       and not exists (select 1 from internal.factory_workflow_branch_repository_bases prior
         where (prior.root_session_id, prior.group_id, prior.repository_id) =
           (manifest.root_session_id, manifest.group_id, writer.repository_id))
     order by dispatch.due_at, manifest.root_session_id, writer.repository_id
-    limit 16
   loop
     begin
       if (internal.lock_factory_workflow_branch_repository_writer(candidate.execution, candidate.branch_group,
@@ -700,7 +729,11 @@ begin
         on (head.root_session_id, head.parent_session_id, head.repository_id) =
           ((candidate.branch_group).root_session_id, (candidate.branch_group).parent_session_id, candidate.repo_id)
       where coalesce(head.base_branch, repo.default_branch) is not null;
-    exception when lock_not_available then
+      if found then
+        observations := observations + 1;
+        exit when observations = 16;
+      end if;
+    exception when lock_not_available or sqlstate 'PT409' then
       continue;
     end;
   end loop;
