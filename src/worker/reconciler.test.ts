@@ -81,12 +81,15 @@ function adminFor(
         error: null,
       }),
   );
-  const retainSpan = vi.fn().mockResolvedValue({ data: true, error: null });
+  const terminalRpc = vi.fn().mockResolvedValue({
+    data: [{ outcome: "archived", job_ids: [], run_ids: [] }],
+    error: null,
+  });
   const admin = {
     rpc(name: string, input: never) {
       if (name === "read_linear_automation_span_cursor") return readCursor(name, input);
       if (name === "commit_linear_automation_span_page") return commitPage(input);
-      if (name === "retain_terminal_linear_automation_span") return retainSpan(name, input);
+      if (name === "apply_terminal_linear_session_transition") return terminalRpc(name, input);
       return rpc(name, input);
     },
     from(table: string) {
@@ -141,7 +144,7 @@ function adminFor(
       return builder;
     },
   };
-  return { admin, rpc, reads, readCursor, commitPage, retainSpan };
+  return { admin, rpc, reads, readCursor, commitPage, terminalRpc };
 }
 
 beforeEach(() => {
@@ -394,16 +397,16 @@ describe("reconcileLinearState", () => {
   });
 
   it.each(["Canceled", "Done"])(
-    "keeps the sole link on span write failure before %s and routes it after durable retention",
+    "retains and routes %s in one transaction without losing the link on failure",
     async (statusName) => {
-      const { admin, commitPage, retainSpan, rpc } = adminFor([session(), session("session-2")]);
+      const { admin, commitPage, terminalRpc, rpc } = adminFor([session(), session("session-2")]);
       commitPage.mockResolvedValue({
         data: [],
         error: { code: "XX000", message: "write unavailable" },
       });
-      retainSpan.mockResolvedValueOnce({
+      terminalRpc.mockResolvedValueOnce({
         data: null,
-        error: { message: "single span write unavailable" },
+        error: { message: "terminal span write unavailable" },
       });
       mocks.observations.mockImplementation(
         async (_key: string, ids: string[]) =>
@@ -415,35 +418,135 @@ describe("reconcileLinearState", () => {
           ),
       );
 
-      await reconcileLinearState(admin as never);
+      expect((await reconcileLinearState(admin as never)).canceled).toBe(0);
       expect(rpc).toHaveBeenCalledExactlyOnceWith(
         "apply_linear_session_transition",
         expect.objectContaining({ p_session_id: "session-2" }),
       );
-      expect(retainSpan).toHaveBeenCalledWith("retain_terminal_linear_automation_span", {
-        p_workspace_id: "workspace-1",
-        p_observation: {
-          sessionId: "session-1",
-          linkedIssueId: "ISSUE-session-1",
-          issueId: observation.issueId,
-          spanId: observation.spanId,
-          startedAt: updatedAt,
-          issueUpdatedAt: updatedAt,
-          stateId: observation.stateId,
-          teamId: observation.teamId,
-          projectId: null,
-        },
-      });
+      expect(terminalRpc).toHaveBeenCalledExactlyOnceWith(
+        "apply_terminal_linear_session_transition",
+        expect.objectContaining({
+          p_workspace_id: "workspace-1",
+          p_expected_session_updated_at: updatedAt,
+          p_expected_routing_updated_at: updatedAt,
+          p_status_name: statusName,
+          p_observation: {
+            sessionId: "session-1",
+            linkedIssueId: "ISSUE-session-1",
+            issueId: observation.issueId,
+            spanId: observation.spanId,
+            startedAt: updatedAt,
+            issueUpdatedAt: updatedAt,
+            stateId: observation.stateId,
+            teamId: observation.teamId,
+            projectId: null,
+          },
+        }),
+      );
 
       rpc.mockClear();
-      await reconcileLinearState(admin as never);
-      expect(rpc).toHaveBeenCalledWith(
+      expect((await reconcileLinearState(admin as never)).canceled).toBe(1);
+      expect(terminalRpc).toHaveBeenCalledTimes(2);
+      expect(rpc).toHaveBeenCalledExactlyOnceWith(
         "apply_linear_session_transition",
-        expect.objectContaining({ p_session_id: "session-1", p_status_name: statusName }),
+        expect.objectContaining({ p_session_id: "session-2" }),
       );
-      expect(retainSpan.mock.invocationCallOrder[1]).toBeLessThan(rpc.mock.invocationCallOrder[0]!);
     },
   );
+
+  it("does not archive or clean up when the canonical terminal span is stale", async () => {
+    const { admin, rpc, terminalRpc } = adminFor();
+    terminalRpc.mockResolvedValue({
+      data: [{ outcome: "stale", job_ids: [], run_ids: [] }],
+      error: null,
+    });
+    mocks.observations.mockResolvedValue(
+      new Map([["ISSUE-session-1", { ...observation, statusName: "Canceled" }]]),
+    );
+
+    expect((await reconcileLinearState(admin as never)).canceled).toBe(0);
+    expect(terminalRpc).toHaveBeenCalledOnce();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(mocks.cleanup).not.toHaveBeenCalled();
+  });
+
+  it.each(["reopened", "rate-limited"])(
+    "refreshes a cached terminal observation and skips archival when the issue is %s",
+    async (outcome) => {
+      const { admin, readCursor, commitPage, terminalRpc, rpc } = adminFor(
+        Array.from({ length: 51 }, (_, index) =>
+          session(`session-${String(index).padStart(3, "0")}`),
+        ),
+      );
+      readCursor.mockResolvedValue({
+        data: [{ after_session_id: "session-049", generation: 7 }],
+        error: null,
+      });
+      const lastIssue = "ISSUE-session-050";
+      let terminalReads = 0;
+      mocks.observations.mockImplementation(async (_key: string, ids: string[]) => {
+        if (!ids.includes(lastIssue)) return new Map(ids.map((id) => [id, observation]));
+        if (++terminalReads === 1) {
+          return new Map([
+            [lastIssue, { ...observation, spanId: "closed", statusName: "Canceled" }],
+          ]);
+        }
+        if (outcome === "rate-limited") throw new LinearRateLimitedError();
+        return new Map([[lastIssue, { ...observation, spanId: "reopened", statusName: "Todo" }]]);
+      });
+
+      const result = await reconcileLinearState(admin as never);
+
+      expect(terminalReads).toBe(2);
+      expect(result.rateLimited).toBe(outcome === "rate-limited");
+      expect(terminalRpc).not.toHaveBeenCalled();
+      expect(commitPage).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          p_session_ids: ["session-050"],
+          p_observations: [expect.objectContaining({ spanId: "closed" })],
+        }),
+      );
+      const routed = rpc.mock.calls.filter(([, input]) => input.p_session_id === "session-050");
+      if (outcome === "reopened") {
+        expect(routed).toEqual([
+          [
+            "apply_linear_session_transition",
+            expect.objectContaining({
+              p_source_span_id: "reopened",
+              p_status_name: "Todo",
+            }),
+          ],
+        ]);
+      } else {
+        expect(routed).toHaveLength(0);
+      }
+    },
+  );
+
+  it("advances a healthy later automation page after a lifecycle-only observation failure", async () => {
+    const { admin, readCursor, commitPage, rpc } = adminFor([session(), session("session-2")]);
+    readCursor.mockResolvedValue({
+      data: [{ after_session_id: "session-1", generation: 6 }],
+      error: null,
+    });
+    mocks.observations.mockImplementation(async (_key: string, ids: string[]) => {
+      if (ids.includes("ISSUE-session-1")) throw new Error("incomplete lifecycle issue history");
+      return new Map(ids.map((id) => [id, observation]));
+    });
+
+    await reconcileLinearState(admin as never);
+
+    expect(rpc).not.toHaveBeenCalled();
+    expect(commitPage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        p_workspace_id: "workspace-1",
+        p_expected_generation: 6,
+        p_session_ids: ["session-2"],
+        p_observations: [expect.objectContaining({ sessionId: "session-2" })],
+      }),
+    );
+  });
+
   it("resumes each workspace independently when another workspace keeps failing", async () => {
     const { admin, commitPage, readCursor, rpc } = adminFor([
       session(),
@@ -461,7 +564,7 @@ describe("reconcileLinearState", () => {
     await reconcileLinearState(admin as never);
     await reconcileLinearState(admin as never);
 
-    expect(mocks.observations).toHaveBeenCalledTimes(4);
+    expect(mocks.observations).toHaveBeenCalledTimes(6);
     expect(commitPage).toHaveBeenCalledTimes(2);
     for (const [page] of commitPage.mock.calls) {
       expect(page).toMatchObject({
@@ -471,9 +574,12 @@ describe("reconcileLinearState", () => {
         p_observations: [expect.objectContaining({ sessionId: "session-2" })],
       });
     }
-    for (const [, input] of readCursor.mock.calls) {
-      expect(input).toEqual({ p_workspace_id: "workspace-2" });
-    }
+    expect(readCursor.mock.calls.map(([, input]) => input.p_workspace_id)).toEqual([
+      "workspace-1",
+      "workspace-2",
+      "workspace-1",
+      "workspace-2",
+    ]);
     expect(rpc.mock.calls.map(([, input]) => input.p_session_id)).toEqual([
       "session-2",
       "session-2",

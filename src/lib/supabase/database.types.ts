@@ -10596,6 +10596,25 @@ export type Database = {
           run_ids: string[]
         }[]
       }
+      apply_terminal_linear_session_transition: {
+        Args: {
+          p_agent_model_name?: string
+          p_agent_model_provider?: string
+          p_expected_routing_updated_at: string
+          p_expected_session_updated_at: string
+          p_observation: Json
+          p_run_type?: string
+          p_status_name: string
+          p_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          job_ids: string[]
+          outcome: string
+          run_id: string
+          run_ids: string[]
+        }[]
+      }
       approve_factory_deployment_source: {
         Args: {
           p_actor_user_id: string
@@ -13625,6 +13644,25 @@ export type Database = {
         }
         Returns: boolean
       }
+      ingest_factory_github_automation_pr: {
+        Args: {
+          p_action: string
+          p_base_branch: string
+          p_delivery_id: string
+          p_draft: boolean
+          p_github_repository_id: number
+          p_head_branch: string
+          p_head_repository_id?: number
+          p_head_sha: string
+          p_installation_id: number
+          p_merge_commit_sha?: string
+          p_provider_updated_at: string
+          p_pull_request_id: number
+          p_pull_request_number: number
+          p_state: string
+        }
+        Returns: Json
+      }
       inspect_factory_mcp_identity: {
         Args: {
           p_credential_digest: string
@@ -16140,10 +16178,6 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
-      }
-      retain_terminal_linear_automation_span: {
-        Args: { p_observation: Json; p_workspace_id: string }
-        Returns: boolean
       }
       retry_factory_event_delivery: {
         Args: {

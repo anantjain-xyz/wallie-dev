@@ -27,6 +27,7 @@ type WorkspaceObservations = {
   workspaceId: string;
   sessions: LinkedSession[];
   observations: Map<string, LinearStateObservation>;
+  cachedIssueIds: Set<string>;
 };
 
 const PAGE_SIZE = 50;
@@ -37,6 +38,7 @@ type ProviderPage = {
 type ProviderReads = {
   observations: Map<string, LinearStateObservation | null>;
   throttledWorkspaces: Set<string>;
+  unreadableWorkspaces: Set<string>;
 };
 export interface ReconcileResult {
   checked: number;
@@ -115,13 +117,46 @@ async function commitAutomationPage(
   return data[0];
 }
 
+function canArchiveLinearSession(route: ReturnType<typeof classifyLinearStatus>["route"]) {
+  return route === "canceled" || route === "done";
+}
+
 async function routeLinkedSessions(
   admin: AdminClient,
   workspace: WorkspaceObservations,
+  reads: ProviderReads,
+  sleep: (ms: number) => Promise<void>,
   result: ReconcileResult,
 ) {
-  const { workspaceId, sessions, observations } = workspace;
+  const { workspaceId, sessions, observations, cachedIssueIds } = workspace;
   const routing = await loadLinearRoutingSnapshot(admin, workspaceId);
+  // A cached terminal state may have been reopened before lifecycle reaches it.
+  const terminalIssueIds = new Set(
+    [...cachedIssueIds].filter((issueId) => {
+      const observation = observations.get(issueId);
+      return (
+        observation &&
+        canArchiveLinearSession(classifyLinearStatus(observation.statusName, routing.config).route)
+      );
+    }),
+  );
+  if (terminalIssueIds.size) {
+    for (const issueId of terminalIssueIds) {
+      observations.delete(issueId);
+      reads.observations.delete(`${workspaceId}:${issueId}`);
+    }
+    const refreshed = await observeLinkedSessionPage(
+      admin,
+      sessions.filter(
+        (session) => session.linear_issue_id && terminalIssueIds.has(session.linear_issue_id),
+      ),
+      reads,
+      sleep,
+    );
+    for (const [issueId, observation] of refreshed.workspaces[0]?.observations ?? []) {
+      observations.set(issueId, observation);
+    }
+  }
   for (const session of sessions) {
     result.checked++;
     const observation = session.linear_issue_id
@@ -136,38 +171,36 @@ async function routeLinkedSessions(
           ["in_progress", "rejected"].includes(session.phase_status));
       // Exhausted repair work is already terminal. Other state changes still reconcile.
       if (session.execution_exhausted_at && repairRequired) continue;
-      // A Done route can also archive when its configured stage does not resolve.
-      if (classification.route === "canceled" || classification.route === "done") {
-        const { data: retained, error } = await admin.rpc(
-          "retain_terminal_linear_automation_span",
-          {
-            p_workspace_id: workspaceId,
-            p_observation: linearSpanPayload(session.id, session.linear_issue_id, observation),
-          },
-        );
-        if (error) throw error;
-        if (!retained) continue;
-      }
       const needsRun = repairRequired || classification.action === "land";
       const run = needsRun ? await resolveQueuedRunConfig(admin, session) : null;
-      const { data, error } = await admin.rpc("apply_linear_session_transition", {
-        p_session_id: session.id,
+      const route = {
         p_workspace_id: workspaceId,
-        p_linear_issue_id: session.linear_issue_id,
         p_expected_session_updated_at: session.updated_at,
         p_expected_routing_updated_at: routing.updatedAt,
-        p_source_span_id: observation.spanId,
-        p_source_started_at: observation.startedAt,
-        p_source_state_id: observation.stateId,
-        p_source_issue_updated_at: observation.issueUpdatedAt,
         p_status_name: observation.statusName,
         p_agent_model_provider: run?.modelProvider,
         p_agent_model_name: run?.modelName,
         p_run_type: run?.runType,
-      });
+      };
+      // A Done route can also archive when its configured stage does not resolve.
+      const { data, error } = canArchiveLinearSession(classification.route)
+        ? await admin.rpc("apply_terminal_linear_session_transition", {
+            ...route,
+            p_observation: linearSpanPayload(session.id, session.linear_issue_id, observation),
+          })
+        : await admin.rpc("apply_linear_session_transition", {
+            ...route,
+            p_session_id: session.id,
+            p_linear_issue_id: session.linear_issue_id,
+            p_source_span_id: observation.spanId,
+            p_source_started_at: observation.startedAt,
+            p_source_state_id: observation.stateId,
+            p_source_issue_updated_at: observation.issueUpdatedAt,
+          });
       if (error) throw error;
       const receipt = data?.[0];
       if (!receipt) throw new Error("Linear transition returned no receipt.");
+      if (receipt.outcome === "stale") continue;
       if (receipt.outcome === "archived") result.canceled++;
       await cleanupSessionWorkReceipt(admin, {
         receipt,
@@ -222,6 +255,7 @@ async function observeLinkedSessionPage(
     else groups.set(session.workspace_id, [session]);
     if (
       !reads.throttledWorkspaces.has(session.workspace_id) &&
+      !reads.unreadableWorkspaces.has(session.workspace_id) &&
       !cache.has(`${session.workspace_id}:${session.linear_issue_id}`)
     ) {
       missingWorkspaces.add(session.workspace_id);
@@ -232,7 +266,7 @@ async function observeLinkedSessionPage(
     : new Map<string, string | null>();
   const page: ProviderPage = { workspaces: [], failedWorkspaces: new Set() };
   for (const [workspaceId, workspaceSessions] of groups) {
-    if (reads.throttledWorkspaces.has(workspaceId)) {
+    if (reads.throttledWorkspaces.has(workspaceId) || reads.unreadableWorkspaces.has(workspaceId)) {
       page.failedWorkspaces.add(workspaceId);
       continue;
     }
@@ -242,6 +276,7 @@ async function observeLinkedSessionPage(
     const missing = issueIds.filter((issueId) => !cache.has(`${workspaceId}:${issueId}`));
     const apiKey = apiKeys?.get(workspaceId);
     if (missing.length && (apiKeys === null || apiKey === null)) {
+      if (apiKey === null) reads.unreadableWorkspaces.add(workspaceId);
       page.failedWorkspaces.add(workspaceId);
       continue;
     }
@@ -252,14 +287,21 @@ async function observeLinkedSessionPage(
           ? await fetchLinearStateObservations(apiKey, missing, sleep)
           : new Map<string, LinearStateObservation>();
       const observations = new Map<string, LinearStateObservation>();
+      const cachedIssueIds = new Set<string>();
       for (const issueId of issueIds) {
         const key = `${workspaceId}:${issueId}`;
+        if (cache.has(key)) cachedIssueIds.add(issueId);
         const observation = cache.get(key) ?? fetched.get(issueId) ?? null;
         cache.delete(key);
         cache.set(key, observation);
         if (observation) observations.set(issueId, observation);
       }
-      page.workspaces.push({ workspaceId, sessions: workspaceSessions, observations });
+      page.workspaces.push({
+        workspaceId,
+        sessions: workspaceSessions,
+        observations,
+        cachedIssueIds,
+      });
     } catch (error) {
       page.failedWorkspaces.add(workspaceId);
       if (error instanceof LinearRateLimitedError) {
@@ -284,6 +326,7 @@ async function advanceWorkspaceAutomation(
   reads: ProviderReads,
   sleep: (ms: number) => Promise<void>,
 ): Promise<Cursor | null> {
+  if (reads.throttledWorkspaces.has(workspaceId)) return null;
   const progress = knownProgress ?? (await readAutomationCursor(admin, workspaceId));
   if (!progress) return null;
   const sessions = await loadLinkedSessionPage(admin, progress.after_session_id, workspaceId);
@@ -303,7 +346,11 @@ export async function reconcileLinearState(
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const result: ReconcileResult = { checked: 0, canceled: 0, rateLimited: false };
-  const reads: ProviderReads = { observations: new Map(), throttledWorkspaces: new Set() };
+  const reads: ProviderReads = {
+    observations: new Map(),
+    throttledWorkspaces: new Set(),
+    unreadableWorkspaces: new Set(),
+  };
   const cursors = new Map<string, Cursor | null>();
 
   let lifecycleAfter: string | null = null;
@@ -314,14 +361,11 @@ export async function reconcileLinearState(
     for (const scope of new Set(sessions.map((session) => session.workspace_id))) {
       const progress = cursors.get(scope);
       if (progress === null) continue;
-      const next = page.failedWorkspaces.has(scope)
-        ? null
-        : await advanceWorkspaceAutomation(admin, scope, progress, reads, sleep);
-      cursors.set(scope, next);
+      cursors.set(scope, await advanceWorkspaceAutomation(admin, scope, progress, reads, sleep));
     }
     for (const workspace of page.workspaces) {
       try {
-        await routeLinkedSessions(admin, workspace, result);
+        await routeLinkedSessions(admin, workspace, reads, sleep, result);
       } catch (error) {
         console.error("[reconciler] failed to route Linear workspace", {
           error: error instanceof Error ? error.message : String(error),

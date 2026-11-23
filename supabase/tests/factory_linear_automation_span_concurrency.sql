@@ -8,6 +8,11 @@ create function pg_temp.linear_page_id(slot integer) returns uuid language sql i
   select ('66320000-0000-4000-8000-' || lpad(slot::text, 12, '0'))::uuid
 $$;
 
+-- A stopped run can leave its committed fixtures before the final cleanup.
+drop function if exists public.test_commit_linear_span_race(uuid, uuid, uuid, text);
+delete from public.workspaces where id = pg_temp.linear_page_id(1);
+delete from auth.users where id = pg_temp.linear_page_id(6);
+
 insert into auth.users(id, email)
 values (pg_temp.linear_page_id(6), 'linear-automation-page-owner@example.test');
 insert into public.workspaces(id, slug, name)

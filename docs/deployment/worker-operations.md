@@ -424,11 +424,12 @@ status-name mappings and its exact per-session transition receipt.
   committed page. Other workspaces continue. A short final page resets its
   cursor to the beginning. Normal and workspace-scoped sweeps share the same
   workspace cursor.
-- Lifecycle routing starts at the first linked session each sweep, even when
-  the automation continuation is held by an unsuccessful page. Before a
-  terminal Linear route can archive a session, the worker retains the exact
-  observation against its current link. A failed retention keeps the link
-  available for another sweep.
+- Lifecycle routing starts at the first linked session each sweep. A failed
+  lifecycle read leaves the workspace's later automation pages eligible.
+  Before a terminal route, the worker refreshes any cached observation.
+  Postgres retains the exact span and applies terminal routing together under
+  the current issue watermark. A failed or stale write keeps the link available
+  for another sweep.
 
 Linear rate limits are retried once with a bounded delay. Persistent throttling
 ends polling for that workspace in the current sweep. The worker only reads

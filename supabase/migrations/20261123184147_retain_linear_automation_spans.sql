@@ -137,13 +137,18 @@ returns boolean language sql stable set search_path = '' as $$
   ) is true else false end
 $$;
 
--- A lifecycle route can remove the only active link before the batch cursor
--- reaches it. Retain that exact source observation without advancing the cursor.
-create function public.retain_terminal_linear_automation_span(p_workspace_id uuid, p_observation jsonb)
-returns boolean language plpgsql security definer set search_path = '' as $$
+-- Keep the canonical issue watermark locked until the terminal route commits.
+-- Another link to the same issue cannot authorize a newer span between writes.
+create function public.apply_terminal_linear_session_transition(
+  p_workspace_id uuid, p_observation jsonb, p_expected_session_updated_at timestamptz,
+  p_expected_routing_updated_at timestamptz, p_status_name text, p_agent_model_provider text default null,
+  p_agent_model_name text default null, p_run_type text default 'project'
+) returns table(outcome text, job_ids uuid[], run_ids uuid[], job_id uuid, run_id uuid)
+language plpgsql security definer set search_path = '' as $$
 declare
   linked_session_id uuid;
   linked_factory_id uuid;
+  linked_pipeline_id uuid;
   canonical_issue_id text;
   observed_span_id text;
   observed_started_at timestamptz;
@@ -167,30 +172,50 @@ begin
     'teamId', p_observation->'teamId', 'projectId', p_observation->'projectId'
   ));
 
-  select session.factory_id into linked_factory_id from public.sessions session
-  where (session.workspace_id, session.id) = (p_workspace_id, linked_session_id);
-  if not found then return false; end if;
-  perform 1 from public.workspaces workspace
-  where workspace.id = p_workspace_id and workspace.deletion_requested_at is null for share;
-  if not found then return false; end if;
-  perform 1 from public.factories factory
-  where (factory.workspace_id, factory.id) = (p_workspace_id, linked_factory_id) for no key update;
-  if not found then return false; end if;
-  perform 1 from public.sessions session
-  where (session.workspace_id, session.factory_id, session.id) = (p_workspace_id, linked_factory_id, linked_session_id)
-    and session.linear_issue_id = p_observation->>'linkedIssueId' and session.archived_at is null
-    and session.phase_status in ('in_progress', 'awaiting_review', 'approved', 'rejected')
-  for share;
-  if not found then return false; end if;
+  <<apply_if_current>>
+  begin
+    select session.factory_id, session.pipeline_id into linked_factory_id, linked_pipeline_id
+    from public.sessions session where (session.workspace_id, session.id) = (p_workspace_id, linked_session_id);
+    if not found then exit apply_if_current; end if;
+    perform 1 from public.workspaces workspace
+    where workspace.id = p_workspace_id and workspace.deletion_requested_at is null for share;
+    if not found then exit apply_if_current; end if;
+    perform 1 from public.factories factory
+    where (factory.workspace_id, factory.id) = (p_workspace_id, linked_factory_id) for no key update;
+    if not found then exit apply_if_current; end if;
 
-  perform internal.record_issue_automation_state_span(p_workspace_id, linked_factory_id, 'linear.issue-state',
-    canonical_issue_id, observed_span_id, observed_started_at, observed_updated_at, event, true);
-  return exists (
-    select 1 from internal.issue_automation_span_watermarks watermark
-    where (watermark.workspace_id, watermark.factory_id, watermark.source_namespace, watermark.source_issue_id,
-      watermark.source_span_id, watermark.source_updated_at) = (p_workspace_id, linked_factory_id, 'linear.issue-state',
-      canonical_issue_id, observed_span_id, observed_updated_at)
-  );
+    -- The existing lifecycle transition takes these locks before the session.
+    perform 1 from public.pipelines pipeline
+    where (pipeline.workspace_id, pipeline.id) = (p_workspace_id, linked_pipeline_id) for share;
+    if not found then exit apply_if_current; end if;
+    perform 1 from public.workspace_linear_routing routing
+    where (routing.workspace_id, routing.updated_at) = (p_workspace_id, p_expected_routing_updated_at) for share;
+    if not found then exit apply_if_current; end if;
+    perform 1 from public.sessions session
+    where (session.workspace_id, session.factory_id, session.id, session.pipeline_id, session.updated_at) =
+      (p_workspace_id, linked_factory_id, linked_session_id, linked_pipeline_id, p_expected_session_updated_at)
+      and session.linear_issue_id = p_observation->>'linkedIssueId' and session.archived_at is null
+      and session.phase_status in ('in_progress', 'awaiting_review', 'approved', 'rejected')
+    for no key update;
+    if not found then exit apply_if_current; end if;
+
+    perform internal.record_issue_automation_state_span(p_workspace_id, linked_factory_id, 'linear.issue-state',
+      canonical_issue_id, observed_span_id, observed_started_at, observed_updated_at, event, true);
+    if not exists (
+      select 1 from internal.issue_automation_span_watermarks watermark
+      where (watermark.workspace_id, watermark.factory_id, watermark.source_namespace, watermark.source_issue_id,
+        watermark.source_span_id, watermark.source_updated_at) = (p_workspace_id, linked_factory_id, 'linear.issue-state',
+        canonical_issue_id, observed_span_id, observed_updated_at)
+    ) then exit apply_if_current; end if;
+
+    return query select * from public.apply_linear_session_transition(linked_session_id, p_workspace_id,
+      p_observation->>'linkedIssueId', p_expected_session_updated_at, p_expected_routing_updated_at, observed_span_id,
+      observed_started_at, p_observation->>'stateId', observed_updated_at, p_status_name, p_agent_model_provider,
+      p_agent_model_name, p_run_type);
+    return;
+  end apply_if_current;
+
+  return query select 'stale'::text, '{}'::uuid[], '{}'::uuid[], null::uuid, null::uuid;
 end;
 $$;
 
@@ -324,9 +349,11 @@ $$;
 
 revoke all on function
   internal.record_issue_automation_state_span(uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb, boolean),
-  internal.valid_linked_linear_automation_observation(jsonb), public.retain_terminal_linear_automation_span(uuid, jsonb),
+  internal.valid_linked_linear_automation_observation(jsonb), public.apply_terminal_linear_session_transition(uuid, jsonb,
+    timestamptz, timestamptz, text, text, text, text),
   public.read_linear_automation_span_cursor(uuid), public.commit_linear_automation_span_page(bigint, uuid[], jsonb, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function public.retain_terminal_linear_automation_span(uuid, jsonb),
+grant execute on function public.apply_terminal_linear_session_transition(uuid, jsonb,
+    timestamptz, timestamptz, text, text, text, text),
   public.read_linear_automation_span_cursor(uuid),
   public.commit_linear_automation_span_page(bigint, uuid[], jsonb, uuid) to service_role;

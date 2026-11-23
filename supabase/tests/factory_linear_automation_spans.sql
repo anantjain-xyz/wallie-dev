@@ -116,26 +116,44 @@ with draft as materialized (
 select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1),
   (rule->>'automationId')::uuid, (rule->>'draftRevisionId')::uuid)
 from draft;
-select ok(has_function_privilege('service_role', 'public.retain_terminal_linear_automation_span(uuid,jsonb)', 'execute')
-  and not has_function_privilege('authenticated', 'public.retain_terminal_linear_automation_span(uuid,jsonb)', 'execute')
-  and not has_function_privilege('anon', 'public.retain_terminal_linear_automation_span(uuid,jsonb)', 'execute'),
-  'only the worker can retain an exact observation before routing the terminal link');
-select is(public.retain_terminal_linear_automation_span(pg_temp.op651_id(600), pg_temp.issue_span(
-  3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
-  false, 'the terminal path cannot retain a span against another workspace');
-select ok(public.retain_terminal_linear_automation_span(pg_temp.op651_id(11), pg_temp.issue_span(
-  3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
-  'the terminal path retains the exact span without consuming the batch cursor');
-select is(public.retain_terminal_linear_automation_span(pg_temp.op651_id(11), pg_temp.issue_span(
-  3, 502, 'late-b', 'canceled', '2026-11-22T13:00:00Z', '2026-11-22T13:00:00Z')),
-  false, 'a superseded terminal span cannot authorize routing');
-select is((select transition.outcome from public.sessions session
+select ok(has_function_privilege('service_role',
+    'public.apply_terminal_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,text,text,text)', 'execute')
+  and not has_function_privilege('authenticated',
+    'public.apply_terminal_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,text,text,text)', 'execute')
+  and not has_function_privilege('anon',
+    'public.apply_terminal_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,text,text,text)', 'execute'),
+  'only the worker can retain and route a terminal observation atomically');
+
+create function pg_temp.route_terminal_issue(p_workspace_id uuid, p_observation jsonb) returns text
+language sql as $$
+  select transition.outcome from public.sessions session
   join public.workspace_linear_routing config on config.workspace_id = session.workspace_id
-  cross join lateral public.apply_linear_session_transition(session.id, session.workspace_id, session.linear_issue_id,
-    session.updated_at, config.updated_at, 'closed-b', '2026-11-22T14:00:00Z', 'canceled',
-    '2026-11-22T14:00:00Z', 'Canceled') transition
-  where session.id = pg_temp.op651_id(1003)),
-  'archived', 'legacy routing can archive the sole link after the observation commits');
+  cross join lateral public.apply_terminal_linear_session_transition(p_workspace_id, p_observation,
+    session.updated_at, config.updated_at, 'Canceled') transition
+  where session.id = (p_observation->>'sessionId')::uuid
+$$;
+
+select is(pg_temp.route_terminal_issue(pg_temp.op651_id(600), pg_temp.issue_span(
+  3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
+  'stale', 'the terminal path cannot retain or route a span against another workspace');
+
+select ok(generation = 6 and occurrence_count = 0, 'a different link records the terminal span for its canonical issue')
+from public.commit_linear_automation_span_page(5, pg_temp.issue_page(51, 52), jsonb_build_array(
+  pg_temp.issue_span(51, 501, 'closed-a', 'wont-fix', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')
+), pg_temp.op651_id(11));
+select ok(generation = 7 and occurrence_count = 1, 'the UUID alias retains a newer open span for the same issue')
+from public.commit_linear_automation_span_page(6, pg_temp.issue_page(1, 50), jsonb_build_array(
+  pg_temp.issue_span(2, 501, 'reopened-a', 'in-progress', '2026-11-22T15:00:00Z', '2026-11-22T15:00:00Z')
+), pg_temp.op651_id(11));
+select is(pg_temp.route_terminal_issue(pg_temp.op651_id(11), pg_temp.issue_span(
+  1, 501, 'closed-a', 'wont-fix', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
+  'stale', 'the newer canonical issue watermark blocks the old terminal route on another alias');
+select ok((select archived_at is null from public.sessions where id = pg_temp.op651_id(1001)),
+  'the stale terminal route preserves the active session link');
+
+select is(pg_temp.route_terminal_issue(pg_temp.op651_id(11), pg_temp.issue_span(
+  3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
+  'archived', 'the atomic terminal path retains the current span and archives the sole link');
 select ok((select archived_at is not null from public.sessions where id = pg_temp.op651_id(1003))
   and exists (
     select 1 from internal.issue_automation_state_spans span
@@ -145,7 +163,7 @@ select ok((select archived_at is not null from public.sessions where id = pg_tem
 select is((select count(*) from internal.factory_automation_occurrences
   where workspace_id = pg_temp.op651_id(11) and event->>'stateId' = 'canceled' and status = 'pending'),
   1::bigint, 'the terminal event leaves exactly one pending occurrence after archival');
-select ok(generation = 5 and after_session_id = pg_temp.op651_id(1050),
+select ok(generation = 7 and after_session_id = pg_temp.op651_id(1050),
   'retaining and routing the terminal link does not move the automation cursor')
 from public.read_linear_automation_span_cursor(pg_temp.op651_id(11));
 
