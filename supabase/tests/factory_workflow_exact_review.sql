@@ -188,9 +188,65 @@ select ok((select pg_temp.prepare_join(receipt,repeat('e',40)) from triage_start
 create temp table triage_join_publication as
 select (receipt->>'runId')::uuid as run_id, public.claim_session_checkpoint_publication((receipt->>'runId')::uuid) as lease
 from triage_started_join;
-select ok((select public.adopt_session_checkpoint_publication(joined.run_id,joined.lease,publication.retained_ref,repeat('e',40))
-  from triage_join_publication joined join public.session_checkpoint_publications publication using(run_id)),
+create function pg_temp.adopt_fixture_join() returns boolean language sql as $$
+  select public.adopt_session_checkpoint_publication(joined.run_id, joined.lease, publication.retained_ref, repeat('e',40))
+  from triage_join_publication joined join public.session_checkpoint_publications publication using (run_id)
+$$;
+
+savepoint immediate_join_result;
+select ok(pg_temp.adopt_fixture_join(), 'an immediately complete join adopts its primary checkpoint');
+select is((select count(*) from internal.factory_workflow_transition_receipts transition
+  join triage_join source on (source.root_session_id, (source.receipt->>'occurrenceId')::uuid) =
+    (transition.root_session_id, transition.source_occurrence_id)
+  where transition.edge_id = 'inspect.join'), 1::bigint,
+  'an immediate join result admits the exact review in the same transaction');
+rollback to immediate_join_result;
+
+-- Simulate a pending secondary repository suppressing the join result.
+create function pg_temp.delay_fixture_join_result()
+returns trigger language plpgsql as $$
+begin
+  if new.evidence_ref like 'join-checkpoint:%' and current_setting('wallie.op654_delay_join_result') = 'on'
+    then return null; end if;
+  return new;
+end;
+$$;
+create trigger delay_fixture_join_result before insert on internal.factory_workflow_node_results
+  for each row execute function pg_temp.delay_fixture_join_result();
+set local wallie.op654_delay_join_result = 'on';
+select ok(pg_temp.adopt_fixture_join(),
   'the triage root adopts a new exact head through native retained publication');
+select ok((select head.checkpoint_run_id = terminal.checkpoint_run_id
+    and not exists (select 1 from internal.factory_workflow_node_results result
+      where (result.root_session_id, result.occurrence_id) = (manifest.root_session_id, manifest.join_occurrence_id))
+    and not exists (select 1 from internal.factory_workflow_node_occurrences occurrence
+      where occurrence.root_session_id = manifest.root_session_id and occurrence.node_kind = 'review')
+  from triage_join source
+  join internal.factory_workflow_joins manifest on manifest.join_id = (source.receipt->>'joinId')::uuid
+  join internal.factory_workflow_join_outcomes terminal on
+    (terminal.root_session_id, terminal.join_id) = (manifest.root_session_id, manifest.join_id)
+  join public.session_git_heads head on (head.session_id, head.workspace_id) =
+    (manifest.parent_session_id, manifest.workspace_id)),
+  'primary adoption commits while the delayed join result keeps review pending');
+
+set local wallie.op654_delay_join_result = 'off';
+create function pg_temp.record_delayed_fixture_join_result() returns table(result_id uuid, created boolean)
+language sql as $$
+  select recorded.*
+  from triage_join source
+  join internal.factory_workflow_joins manifest on manifest.join_id = (source.receipt->>'joinId')::uuid
+  join internal.factory_workflow_join_outcomes terminal on
+    (terminal.root_session_id, terminal.join_id) = (manifest.root_session_id, manifest.join_id)
+  join internal.factory_workflow_executions execution on execution.root_session_id = manifest.root_session_id
+  cross join lateral internal.insert_factory_workflow_node_result(execution, manifest.join_occurrence_id,
+    'succeeded', 'join-checkpoint:' || terminal.checkpoint_run_id) recorded
+  where terminal.outcome = 'adopted'
+$$;
+select ok((select created and result_id is not null from pg_temp.record_delayed_fixture_join_result()),
+  'the later whole-join result is durably recorded');
+select is((select created from pg_temp.record_delayed_fixture_join_result()), false,
+  'replaying whole-join settlement reuses the durable result');
+
 select ok((select internal.read_factory_workflow_current_scope_artifact(binding,saved) like '%Exclude contractors.%'
   from triage_branch_run root join internal.factory_workflow_triage_bindings binding on binding.session_id=root.session_id
   join internal.factory_workflow_accepted_scopes saved on saved.session_id=root.session_id
@@ -209,7 +265,7 @@ join internal.factory_workflow_transition_receipts transition on
   (root.session_id, manifest.join_occurrence_id, 'inspect.join')
 cross join triage_join_publication adopted;
 select is((select count(*) from exact_review_context), 1::bigint,
-  'adopted join automatically admits the configured exact review occurrence');
+  'the once-inserted whole-join result admits exactly one configured review occurrence');
 
 create function pg_temp.claim_exact_review(p_occurrence_id uuid default null,p_permit uuid default pg_temp.op651_id(405))
 returns jsonb language sql as $$

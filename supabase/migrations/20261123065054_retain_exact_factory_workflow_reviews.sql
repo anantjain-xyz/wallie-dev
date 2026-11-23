@@ -1177,8 +1177,7 @@ $$;
 revoke all on function internal.factory_workflow_occurrence_review_checkpoint(uuid, uuid)
   from public, anon, authenticated, service_role;
 
--- Admission still goes through the guarded next-edge command. Only a declared
--- direct review successor gets scheduled by the join adopter itself.
+-- Admission still goes through the guarded next-edge command.
 create function internal.admit_factory_workflow_exact_review_successor(
   p_execution internal.factory_workflow_executions, p_occurrence_id uuid, p_result_id uuid,
   p_review_target_only boolean
@@ -1211,6 +1210,34 @@ $$;
 revoke all on function internal.admit_factory_workflow_exact_review_successor(
   internal.factory_workflow_executions, uuid, uuid, boolean)
   from public, anon, authenticated, service_role;
+
+-- Primary adoption and delayed repository settlement can both produce this
+-- result. Only the durable successful result can admit a direct review.
+create function internal.admit_factory_workflow_review_after_join_result()
+returns trigger language plpgsql set search_path = '' as $$
+declare
+  execution internal.factory_workflow_executions;
+begin
+  select workflow.* into execution
+  from internal.factory_workflow_executions workflow
+  join internal.factory_workflow_joins manifest on manifest.root_session_id = workflow.root_session_id
+  join internal.factory_workflow_join_outcomes terminal
+    on (terminal.root_session_id, terminal.join_id) = (manifest.root_session_id, manifest.join_id)
+  where (manifest.root_session_id, manifest.join_occurrence_id, terminal.outcome) =
+    (new.root_session_id, new.occurrence_id, 'adopted')
+    and new.evidence_ref = 'join-checkpoint:' || terminal.checkpoint_run_id
+    and workflow.lifecycle_status = 'running';
+  if found then
+    perform internal.admit_factory_workflow_exact_review_successor(execution, new.occurrence_id, new.result_id, true);
+  end if;
+  return new;
+end;
+$$;
+revoke all on function internal.admit_factory_workflow_review_after_join_result()
+  from public, anon, authenticated, service_role;
+create trigger admit_factory_workflow_review_after_join_result after insert on internal.factory_workflow_node_results
+  for each row when (new.outcome = 'succeeded' and new.evidence_ref like 'join-checkpoint:%')
+  execute function internal.admit_factory_workflow_review_after_join_result();
 
 create or replace function public.start_factory_workflow_graph_execution(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_graph_revision_id uuid,
@@ -1564,7 +1591,6 @@ declare p public.session_checkpoint_publications%rowtype; d public.session_sourc
   join_execution internal.factory_workflow_executions;
   join_candidate internal.factory_workflow_join_candidates;
   prior_review internal.factory_workflow_exact_reviews;
-  join_result_id uuid;
 begin
   perform internal.assert_checkpoint_publication_service();
   select recorded.* into join_manifest from internal.factory_workflow_joins recorded
@@ -1655,10 +1681,8 @@ begin
     insert into internal.factory_workflow_join_outcomes(root_session_id, join_id, outcome, detail, checkpoint_run_id, artifact_id)
     values (join_manifest.root_session_id, join_manifest.join_id, 'adopted',
       jsonb_build_object('commitSha', join_candidate.commit_sha, 'treeSha', join_candidate.tree_sha), p_run_id, accepted);
-    select recorded.result_id into strict join_result_id from internal.insert_factory_workflow_node_result(
-      join_execution, join_manifest.join_occurrence_id, 'succeeded', 'join-checkpoint:' || p_run_id) recorded;
-    perform internal.admit_factory_workflow_exact_review_successor(
-      join_execution, join_manifest.join_occurrence_id, join_result_id, true);
+    perform internal.insert_factory_workflow_node_result(join_execution, join_manifest.join_occurrence_id,
+      'succeeded', 'join-checkpoint:' || p_run_id);
   end if;
   if join_manifest.join_id is not null or prior_review.review_id is not null then
     delete from internal.factory_workflow_join_adoption_fences where run_id = p_run_id;
