@@ -363,6 +363,8 @@ select is(pg_temp.delivery_state(259)->>'dispatchState', 'dispatching', 'expired
 select ok(public.expire_factory_delivery_dispatches() > 0, 'the reaper expires the abandoned lease');
 select is(pg_temp.delivery_state(259)->>'dispatchState', 'unknown', 'the reaper records an unknown provider response');
 
+\ir fixtures/factory_actions_delivery_concurrency.psql
+
 select extensions.dblink_disconnect(connection) from unnest(array['op665_manager', 'op665_worker']) connection;
 delete from public.workspaces where id = pg_temp.op651_id(11);
 delete from auth.users where id in (pg_temp.op651_id(1), pg_temp.op651_id(2));

@@ -3,7 +3,7 @@ select target.environment, (public.approve_factory_deployment_source(
   grant_row.workspace_id, grant_row.factory_id, pg_temp.op651_id(1), grant_row.id, grant_row.version,
   'github-actions', '701', target.environment, true
 )->>'sourceId')::uuid
-from delivery_grant grant_row cross join (values ('actions-ci'), ('actions-revoked')) target(environment);
+from delivery_grant grant_row cross join (values ('actions-ci'), ('actions-revoked'), ('actions-lease')) target(environment);
 
 create function pg_temp.actions_prepare(p_slot integer, p_environment text, p_workflow bigint default 701,
   p_tag text default 'releases/approved', p_inputs jsonb default '{"lane":"fixture"}'::jsonb)

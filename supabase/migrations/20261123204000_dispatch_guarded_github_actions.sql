@@ -38,7 +38,7 @@ create index factory_actions_delivery_due_idx on internal.factory_actions_delive
   (next_check_at, command_id) where next_check_at < 'infinity'::timestamptz;
 
 create function internal.enforce_factory_actions_delivery_configuration() returns trigger
-language plpgsql set search_path = '' as $$
+language plpgsql security definer set search_path = '' as $$
 begin
   if not exists (
     select 1 from internal.factory_actions_delivery_requests configured
@@ -298,7 +298,9 @@ create function public.settle_factory_actions_observation(
   p_workspace_id uuid, p_factory_id uuid, p_command_id uuid, p_observation_id uuid,
   p_reason text, p_run_id bigint default null, p_run_status text default null, p_run_conclusion text default null
 ) returns boolean language plpgsql security definer set search_path = '' as $$
-declare command internal.factory_delivery_commands;
+declare
+  command internal.factory_delivery_commands;
+  reservation internal.factory_actions_delivery_requests;
 begin
   if (p_reason = 'run_verified') is distinct from (p_run_id is not null and p_run_status is not null)
     or (p_run_id is null) <> (p_run_status is null) then
@@ -308,14 +310,20 @@ begin
     where (workspace_id, factory_id, id) = (p_workspace_id, p_factory_id, p_command_id)
     for update;
   if not found then return false; end if;
-  update internal.factory_actions_delivery_requests configured
+  select * into reservation from internal.factory_actions_delivery_requests
+    where (workspace_id, factory_id, command_id, observation_id) =
+      (p_workspace_id, p_factory_id, p_command_id, p_observation_id)
+    for update;
+  if not found or reservation.next_check_at <= clock_timestamp() then return false; end if;
+  if p_run_id is not null and (
+    (reservation.run_id is not null and p_run_id <> reservation.run_id)
+    or not internal.factory_actions_delivery_installation_is_current(command, reservation)
+  ) then return false; end if;
+  update internal.factory_actions_delivery_requests
     set reason = p_reason, run_id = coalesce(p_run_id, run_id), run_status = coalesce(p_run_status, run_status),
       run_conclusion = coalesce(p_run_conclusion, run_conclusion), observation_id = null,
       next_check_at = case when p_run_status = 'completed' then 'infinity'::timestamptz else next_check_at end
-    where (workspace_id, factory_id, command_id, observation_id) = (p_workspace_id, p_factory_id, p_command_id, p_observation_id)
-      and next_check_at > clock_timestamp() and (p_run_id is null or run_id is null or p_run_id = run_id)
-      and (p_run_id is null or internal.factory_actions_delivery_installation_is_current(command, configured));
-  if not found then return false; end if;
+    where (workspace_id, factory_id, command_id) = (p_workspace_id, p_factory_id, p_command_id);
   if p_run_id is not null and command.dispatch_state = 'unknown' and command.deployment_observation_id is null then
     update internal.factory_delivery_commands set dispatch_state = 'accepted', outcome = 'pending'
       where (workspace_id, factory_id, id) = (p_workspace_id, p_factory_id, p_command_id);
