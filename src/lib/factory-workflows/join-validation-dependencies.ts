@@ -21,7 +21,7 @@ const fallbackVersions = {
 } as const;
 
 const packageManager =
-  /^(npm|pnpm|yarn|bun)@(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)(?:\+sha(?:224|256|384|512)\.[a-fA-F0-9]+)?$/;
+  /^(npm|pnpm|yarn|bun)@(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)(\+sha(?:224|256|384|512)\.[a-fA-F0-9]+)?$/;
 
 const quietCommand = 'exec "$@" >/dev/null 2>&1';
 const withTools = 'export PATH="$1:$PATH"; shift; exec "$@"';
@@ -36,7 +36,7 @@ async function required(
   command: string,
   args: string[],
   signal: AbortSignal,
-  options: SandboxExecOptions = {},
+  { failureMessage, ...options }: SandboxExecOptions & { failureMessage?: string } = {},
 ) {
   signal.throwIfAborted();
   const process = await sandbox.exec(command, args, {
@@ -46,7 +46,7 @@ async function required(
   });
   const [output, code] = await Promise.all([process.output(), process.exitCode]);
   signal.throwIfAborted();
-  if (code !== 0) throw new Error("Could not prepare dependencies for joined validation.");
+  if (code !== 0) throw new Error(failureMessage ?? "Could not inspect the joined package files.");
   return output.stdout;
 }
 
@@ -105,6 +105,17 @@ export async function prepareJoinValidationDependencies(
     throw new Error("The joined repository has conflicting package manager lockfiles.");
   if (!manager) return sandbox;
 
+  const verifyDigest = Boolean(pinned?.[3]);
+  if (verifyDigest && manager === "bun")
+    throw new Error("The join worker cannot verify hash-qualified Bun pins.");
+  const toolEnvironment: Record<string, string> = {};
+  if (pinned && manager === "yarn") toolEnvironment.YARN_IGNORE_PATH = "1";
+  if (verifyDigest) {
+    toolEnvironment.COREPACK_HOME = toolingDirectory + "/cache";
+    toolEnvironment.COREPACK_ENV_FILE = "0";
+    toolEnvironment.COREPACK_ENABLE_DOWNLOAD_PROMPT = "0";
+  }
+
   const preparedSandbox: ValidationSandbox = version
     ? {
         repoPath: sandbox.repoPath,
@@ -121,7 +132,7 @@ export async function prepareJoinValidationDependencies(
               command,
               ...args,
             ],
-            options,
+            { ...options, env: { ...options?.env, ...toolEnvironment } },
           ),
       }
     : sandbox;
@@ -145,10 +156,49 @@ export async function prepareJoinValidationDependencies(
         "--userconfig=/dev/null",
         "--no-audit",
         "--no-fund",
-        tool + "@" + version,
+        verifyDigest ? "corepack@0.34.5" : tool + "@" + version,
       ],
       signal,
-      { cwd: "/tmp", env: installEnvironment },
+      {
+        cwd: "/tmp",
+        env: installEnvironment,
+        failureMessage: `Could not provision ${manager} for joined validation.`,
+      },
+    );
+  }
+
+  if (verifyDigest) {
+    // Corepack reads the exact packageManager pin and verifies its artifact digest.
+    await required(
+      preparedSandbox,
+      "bash",
+      ["--noprofile", "--norc", "-c", quietCommand, "--", "corepack", "install"],
+      signal,
+      {
+        env: installEnvironment,
+        failureMessage: `Could not verify the repository’s ${manager} pin for joined validation.`,
+      },
+    );
+    await required(
+      preparedSandbox,
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        quietCommand,
+        "--",
+        "corepack",
+        "enable",
+        "--install-directory",
+        toolingDirectory + "/bin",
+        manager,
+      ],
+      signal,
+      {
+        env: installEnvironment,
+        failureMessage: `Could not activate ${manager} for joined validation.`,
+      },
     );
   }
 
@@ -166,7 +216,10 @@ export async function prepareJoinValidationDependencies(
         ...installArguments(manager, version),
       ],
       signal,
-      { env: installEnvironment },
+      {
+        env: installEnvironment,
+        failureMessage: `Could not install the joined repository’s locked dependencies with ${manager}.`,
+      },
     );
   }
   return preparedSandbox;

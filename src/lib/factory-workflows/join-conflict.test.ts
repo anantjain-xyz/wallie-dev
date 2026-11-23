@@ -38,7 +38,8 @@ it("uses one canonical storage path and exact scope while bounding the settlemen
   };
   const restored = await readJoinConflict({ download }, uppercase, canonical.reportSha256, signal);
   expect(restored.scope).toEqual(scope);
-  expect(restored.paths).toEqual(paths.slice(0, canonical.paths.length));
+  expect(restored.paths).toEqual(paths.slice(0, 8));
+  expect(Buffer.byteLength(JSON.stringify(restored.paths))).toBeLessThanOrEqual(4 * 1024);
   expect(restored.paths).toEqual(canonical.paths);
   expect(restored.pathsTruncated).toBe(true);
   expect(Buffer.byteLength(JSON.stringify(canonical))).toBeLessThan(8_192);

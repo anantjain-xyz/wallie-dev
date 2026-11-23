@@ -22,7 +22,7 @@ function sandboxWithExec(repoPath: string, exec: SandboxHandle["exec"]): Sandbox
   };
 }
 
-function localSandbox(repoPath: string, cachePath: string) {
+function localSandbox(repoPath: string, fixtureRoot: string) {
   return sandboxWithExec(repoPath, async (command, args, options) => {
     const process = execFile(command, args, {
       cwd: options?.cwd ?? repoPath,
@@ -31,7 +31,9 @@ function localSandbox(repoPath: string, cachePath: string) {
         PATH: globalThis.process.env.PATH,
         GIT_CONFIG_NOSYSTEM: "1",
         GIT_CONFIG_GLOBAL: "/dev/null",
-        npm_config_cache: cachePath,
+        npm_config_cache: join(fixtureRoot, "npm-cache"),
+        npm_config_userconfig: join(fixtureRoot, "user.npmrc"),
+        npm_config_globalconfig: join(fixtureRoot, "global.npmrc"),
         npm_config_offline: "true",
         npm_config_update_notifier: "false",
         ...options?.env,
@@ -74,6 +76,28 @@ async function requiredOutput(sandbox: SandboxHandle, command: string, args: str
   return stdout.trim();
 }
 
+function mockedPackageSandbox(packageManager: string, lockfile: string) {
+  const exec = vi.fn<SandboxHandle["exec"]>(async (command) => {
+    const stdout =
+      command === "git"
+        ? ["package.json", lockfile, ""].join("\n")
+        : command === "node"
+          ? JSON.stringify({ packageManager })
+          : "";
+    return {
+      exitCode: Promise.resolve(0),
+      async output() {
+        return { stdout, stderr: "" };
+      },
+      async *logs() {
+        yield* [];
+      },
+      async kill() {},
+    };
+  });
+  return { sandbox: sandboxWithExec("/tmp/validation-repository", exec), exec };
+}
+
 describe("prepareJoinValidationDependencies", () => {
   it("installs a locked local dependency before running a frozen test-only plan in a fresh checkout", async () => {
     const root = await mkdtemp(join(tmpdir(), "wallie-join-dependencies-"));
@@ -81,9 +105,10 @@ describe("prepareJoinValidationDependencies", () => {
       const source = join(root, "source");
       const checkout = join(root, "checkout");
       const dependency = join(source, "fixture-dependency");
-      const cache = join(root, "npm-cache");
       await mkdir(dependency, { recursive: true });
       await Promise.all([
+        writeFile(join(root, "user.npmrc"), ""),
+        writeFile(join(root, "global.npmrc"), ""),
         writeFile(
           join(source, "package.json"),
           JSON.stringify({
@@ -105,7 +130,7 @@ describe("prepareJoinValidationDependencies", () => {
         ),
         writeFile(join(source, ".gitignore"), "node_modules/\n"),
       ]);
-      const authored = localSandbox(source, cache);
+      const authored = localSandbox(source, root);
       await requiredOutput(authored, "npm", [
         "install",
         "--package-lock-only",
@@ -133,7 +158,7 @@ describe("prepareJoinValidationDependencies", () => {
         checkout,
       ]);
 
-      const fresh = localSandbox(checkout, cache);
+      const fresh = localSandbox(checkout, root);
       const commitSha = await requiredOutput(fresh, "git", ["rev-parse", "HEAD"]);
       const before = await fresh.exec("npm", ["test"]);
       expect(await before.exitCode).not.toBe(0);
@@ -160,25 +185,7 @@ describe("prepareJoinValidationDependencies", () => {
   }, 20_000);
 
   it("uses the pinned pnpm version for both frozen installation and validation", async () => {
-    const exec = vi.fn<SandboxHandle["exec"]>(async (command) => {
-      const stdout =
-        command === "git"
-          ? "package.json\npnpm-lock.yaml\n"
-          : command === "node"
-            ? JSON.stringify({ packageManager: "pnpm@10.21.0" })
-            : "";
-      return {
-        exitCode: Promise.resolve(0),
-        async output() {
-          return { stdout, stderr: "" };
-        },
-        async *logs() {
-          yield* [];
-        },
-        async kill() {},
-      };
-    });
-    const sandbox = sandboxWithExec("/tmp/validation-repository", exec);
+    const { sandbox, exec } = mockedPackageSandbox("pnpm@10.21.0", "pnpm-lock.yaml");
     const signal = AbortSignal.timeout(15_000);
     const prepared = await prepareJoinValidationDependencies(sandbox, signal);
     await prepared.exec("pnpm", ["test"], { signal });
@@ -207,7 +214,89 @@ describe("prepareJoinValidationDependencies", () => {
         "pnpm",
         "test",
       ]),
-      { signal },
+      expect.objectContaining({ signal }),
+    );
+  });
+
+  it("verifies a hash-qualified pnpm pin in the checkout before enabling its shim", async () => {
+    const pin = `pnpm@10.21.0+sha256.${"a".repeat(64)}`;
+    const { sandbox, exec } = mockedPackageSandbox(pin, "pnpm-lock.yaml");
+    const signal = AbortSignal.timeout(15_000);
+    const prepared = await prepareJoinValidationDependencies(sandbox, signal);
+    await prepared.exec("pnpm", ["test"], { signal });
+
+    // The final shell separator introduces the command executed inside the sandbox.
+    const commands = exec.mock.calls.map(([, args]) => args.slice(args.lastIndexOf("--") + 1));
+    const bootstrap = commands.findIndex(
+      ([program, action, ...args]) =>
+        program === "npm" &&
+        action === "install" &&
+        args.includes("--global") &&
+        args.includes("corepack@0.34.5"),
+    );
+    const verify = commands.findIndex(
+      ([program, action]) => program === "corepack" && action === "install",
+    );
+    const enable = commands.findIndex(
+      ([program, action]) => program === "corepack" && action === "enable",
+    );
+    const install = commands.findIndex(
+      ([program, action, ...args]) =>
+        program === "pnpm" && action === "install" && args.includes("--frozen-lockfile"),
+    );
+    expect(bootstrap).toBeGreaterThanOrEqual(0);
+    expect(verify).toBeGreaterThan(bootstrap);
+    expect(enable).toBeGreaterThan(verify);
+    expect(install).toBeGreaterThan(enable);
+    expect(commands[verify]).toEqual(["corepack", "install"]);
+    expect(exec.mock.calls[verify]?.[2]?.cwd).toBe(sandbox.repoPath);
+    expect(commands[enable]).toEqual([
+      "corepack",
+      "enable",
+      "--install-directory",
+      "/tmp/wallie-join-package-tools/bin",
+      "pnpm",
+    ]);
+    expect(
+      commands.some((args) => args.includes("--global") && args.includes("pnpm@10.21.0")),
+    ).toBe(false);
+  });
+
+  it("keeps pinned Yarn in control during immutable install and subsequent checks", async () => {
+    const { sandbox, exec } = mockedPackageSandbox("yarn@4.9.2", "yarn.lock");
+    const signal = AbortSignal.timeout(15_000);
+    const prepared = await prepareJoinValidationDependencies(sandbox, signal);
+    await prepared.exec("bash", ["-c", "yarn test"], {
+      signal,
+      env: { YARN_IGNORE_PATH: "0", WALLIE_EVIDENCE_DIR: "/tmp/fixture-evidence" },
+    });
+
+    expect(exec).toHaveBeenCalledWith(
+      "bash",
+      expect.arrayContaining(["npm", "install", "--global", "@yarnpkg/cli-dist@4.9.2"]),
+      expect.objectContaining({ cwd: "/tmp", signal }),
+    );
+    expect(exec).toHaveBeenCalledWith(
+      "bash",
+      expect.arrayContaining([
+        "/tmp/wallie-join-package-tools/bin",
+        "yarn",
+        "install",
+        "--immutable",
+      ]),
+      expect.objectContaining({
+        cwd: sandbox.repoPath,
+        signal,
+        env: expect.objectContaining({ YARN_IGNORE_PATH: "1" }),
+      }),
+    );
+    expect(exec).toHaveBeenLastCalledWith(
+      "bash",
+      expect.arrayContaining(["/tmp/wallie-join-package-tools/bin", "bash", "-c", "yarn test"]),
+      {
+        signal,
+        env: { YARN_IGNORE_PATH: "1", WALLIE_EVIDENCE_DIR: "/tmp/fixture-evidence" },
+      },
     );
   });
 });
