@@ -39,6 +39,7 @@ export function AppShell({
     canManageFactoryDefinition,
     canManageGovernance,
     canManageWorkflows: Boolean(workflowFactoryIds?.length),
+    canManageAutomations: Boolean(workflowFactoryIds?.length),
   });
 
   return (

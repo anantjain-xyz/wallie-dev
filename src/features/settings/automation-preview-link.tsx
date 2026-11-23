@@ -9,9 +9,9 @@ export async function AutomationPreviewLink({ workspaceSlug }: { workspaceSlug: 
   if (!factories.some(({ canManage, status }) => canManage && status === "active")) return null;
 
   return (
-    <PageSection title="Automations" tagline="Check how a saved rule would respond to an event.">
+    <PageSection title="Automations" tagline="Manage rules and inspect the work they start.">
       <Link href={workspaceAutomationPreviewPath(workspaceSlug)} className="ui-button">
-        Preview automations
+        Manage automations
       </Link>
     </PageSection>
   );

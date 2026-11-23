@@ -5,7 +5,6 @@ import { useState, type FormEvent } from "react";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { MetadataItem, MetadataList, PageSection } from "@/components/ui/page-shell";
 import { SelectField } from "@/components/ui/select";
-import { automationPullRequestActionSchema } from "@/lib/factory-automations/contracts";
 import {
   automationDryRunRequestSchema,
   automationDryRunResponseSchema,
@@ -13,27 +12,13 @@ import {
   type AutomationDryRunResponse,
 } from "@/lib/factory-automations/dry-run-contracts";
 
+import { automationPullRequestActionOptions } from "./automation-labels";
+
 type Feedback =
   | { kind: "idle" }
   | { kind: "pending" }
   | { kind: "error"; message: string }
   | { kind: "result"; decision: AutomationDryRunResponse };
-
-const actionLabels: Record<
-  Extract<AutomationDryRunEvent, { kind: "pull-request" }>["action"],
-  string
-> = {
-  opened: "Opened",
-  reopened: "Reopened",
-  synchronize: "New commits",
-  ready_for_review: "Ready for review",
-  closed: "Closed",
-  merged: "Merged",
-};
-const actionOptions = automationPullRequestActionSchema.options.map((value) => ({
-  value,
-  label: actionLabels[value],
-}));
 
 const checkLabels: Record<AutomationDryRunResponse["checks"][number]["field"], string> = {
   kind: "Trigger",
@@ -165,7 +150,7 @@ function EventFields({
           <SelectField
             label="Pull request action"
             name="action"
-            options={actionOptions}
+            options={automationPullRequestActionOptions}
             defaultValue={defaults.action}
             disabled={pending}
             onValueChange={clearFeedback}

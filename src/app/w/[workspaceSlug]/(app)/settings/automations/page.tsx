@@ -5,11 +5,15 @@ import { z } from "zod";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { SelectField } from "@/components/ui/select";
+import { AutomationAdmissionPanel } from "@/features/factory-automations/automation-admission-panel";
+import { AutomationDryRunPanel } from "@/features/factory-automations/automation-dry-run-panel";
+import { AutomationEditor } from "@/features/factory-automations/automation-editor";
+import { automationTriggerLabels } from "@/features/factory-automations/automation-labels";
+import { AutomationOccurrenceHistory } from "@/features/factory-automations/automation-occurrence-history";
+import { AutomationSchedulePreview } from "@/features/factory-automations/automation-schedule-preview";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { resolveGovernanceFactorySelection } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
-import { AutomationDryRunPanel } from "@/features/factory-automations/automation-dry-run-panel";
-import { AutomationSchedulePreview } from "@/features/factory-automations/automation-schedule-preview";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import {
   factoryAutomationListQuerySchema,
@@ -18,9 +22,19 @@ import {
   type FactoryAutomationDefinition,
 } from "@/lib/factory-automations/contracts";
 import type { AutomationDryRunEvent } from "@/lib/factory-automations/dry-run-contracts";
-import { listFactoryAutomations, readFactoryAutomation } from "@/lib/factory-automations/service";
+import { automationHistoryCursorSchema } from "@/lib/factory-automations/operator-contracts";
+import {
+  listFactoryAutomationOccurrenceHistory,
+  loadFactoryAutomationSetup,
+} from "@/lib/factory-automations/operator-data";
+import {
+  listFactoryAutomations,
+  readAutomationAdmissionControl,
+  readFactoryAutomation,
+} from "@/lib/factory-automations/service";
 import {
   automationDryRunApiPath,
+  factoryAutomationApiPath,
   workspaceAutomationPreviewPath,
   workspaceSettingsPath,
 } from "@/lib/routes";
@@ -31,8 +45,16 @@ const selectionSchema = z
     automation: factoryAutomationPathSchema.shape.automationId.optional(),
     revision: factoryAutomationReadQuerySchema.shape.revisionId,
     afterId: factoryAutomationListQuerySchema.shape.afterId,
+    mode: z.literal("new").optional(),
+    historyBefore: automationHistoryCursorSchema.shape.recordedAt.optional(),
+    historyBeforeId: automationHistoryCursorSchema.shape.id.optional(),
   })
-  .refine(({ automation, revision }) => !revision || !!automation);
+  .refine(
+    ({ automation, revision, mode, historyBefore, historyBeforeId }) =>
+      (!revision || !!automation) &&
+      (!mode || !automation) &&
+      (historyBefore && historyBeforeId ? !!automation : !historyBefore && !historyBeforeId),
+  );
 
 function defaultEvent(definition: FactoryAutomationDefinition): AutomationDryRunEvent {
   const { trigger, filters } = definition;
@@ -56,7 +78,7 @@ function defaultEvent(definition: FactoryAutomationDefinition): AutomationDryRun
   }
 }
 
-export default async function AutomationPreviewPage({
+export default async function AutomationSettingsPage({
   params,
   searchParams,
 }: {
@@ -64,40 +86,73 @@ export default async function AutomationPreviewPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const query = selectionSchema.safeParse(search);
-  if (!query.success) notFound();
+  const parsed = selectionSchema.safeParse(search);
+  if (!parsed.success) notFound();
+  const query = parsed.data;
   const [{ workspace, supabase }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const manageable = factories.filter(({ canManage, status }) => canManage && status === "active");
-  const selection = resolveGovernanceFactorySelection(manageable, query.data.factory);
+  const selection = resolveGovernanceFactorySelection(manageable, query.factory);
   if (selection.kind !== "factory") notFound();
   const factoryId = selection.factory.id;
   const scope = { workspaceId: workspace.id, factoryId };
-  const list = await listFactoryAutomations(supabase, scope, query.data.afterId);
+  const list = await listFactoryAutomations(supabase, scope, query.afterId);
   if (!list) notFound();
 
-  const automationId = query.data.automation ?? list.automations[0]?.automationId;
+  const automationId =
+    query.mode === "new" ? undefined : (query.automation ?? list.automations[0]?.automationId);
   const listed = list.automations.find((entry) => entry.automationId === automationId);
-  const revisionId = query.data.revision;
   const automation =
-    listed && (!revisionId || listed.revision.id === revisionId)
+    listed && (!query.revision || listed.revision.id === query.revision)
       ? listed
       : automationId
-        ? await readFactoryAutomation(supabase, { ...scope, automationId }, { revisionId })
+        ? await readFactoryAutomation(
+            supabase,
+            { ...scope, automationId },
+            { revisionId: query.revision },
+          )
         : null;
   if (automationId && !automation) notFound();
 
-  const currentRevisionId = automation?.revision.id;
-  const available = automation && !listed ? [automation, ...list.automations] : list.automations;
   const pagePath = workspaceAutomationPreviewPath(workspaceSlug);
-  const pageSelection = { factory: factoryId, afterId: query.data.afterId };
+  const pageSelection = { factory: factoryId, afterId: query.afterId };
+  const ruleScope = automation ? { ...scope, automationId: automation.automationId } : null;
+  const editMode =
+    query.mode === "new" ||
+    Boolean(
+      automation && !automation.archivedAt && automation.revision.id === automation.draftRevisionId,
+    );
+  const activeRevision = Boolean(automation?.publishedRevisionId && !automation.archivedAt);
+  const cursor =
+    query.historyBefore && query.historyBeforeId
+      ? { recordedAt: query.historyBefore, id: query.historyBeforeId }
+      : undefined;
+  const [setup, history, control] = await Promise.all([
+    editMode
+      ? loadFactoryAutomationSetup(supabase, scope)
+          .then((options) => ({ options, failed: false }))
+          .catch(() => ({ options: null, failed: true }))
+      : null,
+    ruleScope
+      ? listFactoryAutomationOccurrenceHistory(supabase, ruleScope, cursor).catch(() => null)
+      : null,
+    ruleScope ? readAutomationAdmissionControl(supabase, ruleScope).catch(() => null) : null,
+  ]);
+  const available = automation && !listed ? [automation, ...list.automations] : list.automations;
+  const next = history?.nextCursor;
+  const historySelection = {
+    ...pageSelection,
+    automation: automation?.automationId,
+    revision: query.revision,
+  };
+  const newHref = workspaceAutomationPreviewPath(workspaceSlug, { ...pageSelection, mode: "new" });
 
   return (
-    <PageContainer className="max-w-4xl">
+    <PageContainer className="max-w-5xl">
       <PageHeader
-        title="Automation preview"
+        title="Automations"
         eyebrowAsPlain
         eyebrow={
           <Link
@@ -109,56 +164,78 @@ export default async function AutomationPreviewPage({
         }
         actionsRightOnDesktop
         actions={
-          <FactorySelector
-            factories={manageable}
-            selectedValue={factoryId}
-            resetParams={["automation", "revision", "afterId"]}
-          />
+          <div className="flex flex-wrap items-end gap-2">
+            <FactorySelector
+              factories={manageable}
+              selectedValue={factoryId}
+              resetParams={[
+                "automation",
+                "revision",
+                "afterId",
+                "mode",
+                "historyBefore",
+                "historyBeforeId",
+              ]}
+            />
+            {query.mode !== "new" ? (
+              <Link href={newHref} className="ui-button ui-button-primary shrink-0">
+                New rule
+              </Link>
+            ) : null}
+          </div>
         }
       />
-      <div className="space-y-9">
-        {automation ? (
-          <>
-            <PageSection title="Automation revision">
-              <div className="ui-sheet min-w-0 space-y-4 p-4 sm:p-6">
-                <form
-                  action={pagePath}
-                  method="get"
-                  className="grid min-w-0 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
-                >
-                  <input type="hidden" name="factory" value={factoryId} />
-                  {query.data.afterId ? (
-                    <input type="hidden" name="afterId" value={query.data.afterId} />
-                  ) : null}
-                  <SelectField
-                    label="Automation"
-                    name="automation"
-                    defaultValue={automation.automationId}
-                    key={automation.automationId}
-                    required
-                    options={available.map(({ automationId, revision }) => ({
-                      value: automationId,
-                      label: revision.definition.name,
-                    }))}
-                    wrap
-                  />
-                  <button className="ui-button w-fit" type="submit">
-                    Open automation
-                  </button>
-                </form>
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-medium text-foreground">
-                    Revision {automation.revision.revision}
-                  </span>
+      <div className="space-y-8">
+        <PageSection title="Rules">
+          <div className="ui-sheet min-w-0 space-y-4 p-4 sm:p-6">
+            {available.length ? (
+              <form
+                action={pagePath}
+                method="get"
+                className="grid min-w-0 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+              >
+                <input type="hidden" name="factory" value={factoryId} />
+                {query.afterId ? (
+                  <input type="hidden" name="afterId" value={query.afterId} />
+                ) : null}
+                <SelectField
+                  label="Automation"
+                  name="automation"
+                  defaultValue={automation?.automationId}
+                  key={automation?.automationId}
+                  required
+                  wrap
+                  options={available.map(({ automationId, revision, archivedAt }) => ({
+                    value: automationId,
+                    label: `${revision.definition.name}${archivedAt ? " (archived)" : ""}`,
+                  }))}
+                />
+                <button className="ui-button w-fit" type="submit">
+                  Open automation
+                </button>
+              </form>
+            ) : (
+              <p className="text-sm text-muted">No saved automations on this page.</p>
+            )}
+            {automation ? (
+              <>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+                  <h3 className="text-base font-semibold break-words">
+                    {automation.revision.definition.name}
+                  </h3>
                   <span className="text-muted">
-                    {currentRevisionId === automation.publishedRevisionId
+                    {automationTriggerLabels[automation.revision.definition.trigger.kind]}
+                  </span>
+                  <span className="font-medium">Revision {automation.revision.revision}</span>
+                  <span className="text-muted">
+                    {automation.revision.id === automation.publishedRevisionId
                       ? "Published"
-                      : currentRevisionId === automation.draftRevisionId
+                      : automation.revision.id === automation.draftRevisionId
                         ? "Draft"
                         : "Historical"}
                   </span>
                   {automation.archivedAt ? <span className="text-muted">Archived</span> : null}
-                  {currentRevisionId !== automation.draftRevisionId ? (
+                  {automation.revision.id !== automation.draftRevisionId ? (
                     <Link
                       className="ui-button"
                       href={workspaceAutomationPreviewPath(workspaceSlug, {
@@ -170,7 +247,7 @@ export default async function AutomationPreviewPage({
                     </Link>
                   ) : null}
                   {automation.publishedRevisionId &&
-                  currentRevisionId !== automation.publishedRevisionId ? (
+                  automation.revision.id !== automation.publishedRevisionId ? (
                     <Link
                       className="ui-button"
                       href={workspaceAutomationPreviewPath(workspaceSlug, {
@@ -183,8 +260,54 @@ export default async function AutomationPreviewPage({
                     </Link>
                   ) : null}
                 </div>
-              </div>
-            </PageSection>
+                <AutomationAdmissionPanel
+                  key={automation.automationId}
+                  activeRevision={activeRevision}
+                  initial={control}
+                  endpoint={`${factoryAutomationApiPath(workspace.id, factoryId, automation.automationId)}/admission-control`}
+                />
+              </>
+            ) : null}
+            {query.afterId || list.nextCursor ? (
+              <nav aria-label="Automation pages" className="flex flex-wrap gap-2">
+                {query.afterId ? (
+                  <Link
+                    className="ui-button"
+                    href={workspaceAutomationPreviewPath(workspaceSlug, { factory: factoryId })}
+                  >
+                    First page
+                  </Link>
+                ) : null}
+                {list.nextCursor ? (
+                  <Link
+                    className="ui-button"
+                    href={workspaceAutomationPreviewPath(workspaceSlug, {
+                      factory: factoryId,
+                      afterId: list.nextCursor,
+                    })}
+                  >
+                    Next page
+                  </Link>
+                ) : null}
+              </nav>
+            ) : null}
+          </div>
+        </PageSection>
+        {editMode ? (
+          <AutomationEditor
+            key={automation?.automationId ?? factoryId}
+            workspaceId={workspace.id}
+            workspaceSlug={workspaceSlug}
+            factoryId={factoryId}
+            afterId={query.afterId}
+            revisionSelected={query.revision !== undefined}
+            initial={automation ?? undefined}
+            setup={setup?.options ?? null}
+            setupFailed={setup?.failed ?? false}
+          />
+        ) : null}
+        {automation ? (
+          <>
             {automation.revision.definition.trigger.kind === "schedule" ? (
               <Suspense
                 fallback={
@@ -211,32 +334,23 @@ export default async function AutomationPreviewPage({
               endpoint={automationDryRunApiPath(workspace.id, factoryId, automation.automationId)}
               revisionId={automation.revision.id}
             />
+            <AutomationOccurrenceHistory
+              history={history}
+              workspaceSlug={workspaceSlug}
+              firstHref={
+                cursor ? workspaceAutomationPreviewPath(workspaceSlug, historySelection) : undefined
+              }
+              nextHref={
+                next
+                  ? workspaceAutomationPreviewPath(workspaceSlug, {
+                      ...historySelection,
+                      historyBefore: next.recordedAt,
+                      historyBeforeId: next.id,
+                    })
+                  : undefined
+              }
+            />
           </>
-        ) : (
-          <p className="ui-sheet p-5 text-sm text-muted">No saved automations on this page.</p>
-        )}
-        {query.data.afterId || list.nextCursor ? (
-          <nav aria-label="Automation pages" className="flex flex-wrap gap-2">
-            {query.data.afterId ? (
-              <Link
-                className="ui-button"
-                href={workspaceAutomationPreviewPath(workspaceSlug, { factory: factoryId })}
-              >
-                First page
-              </Link>
-            ) : null}
-            {list.nextCursor ? (
-              <Link
-                className="ui-button"
-                href={workspaceAutomationPreviewPath(workspaceSlug, {
-                  factory: factoryId,
-                  afterId: list.nextCursor,
-                })}
-              >
-                Next page
-              </Link>
-            ) : null}
-          </nav>
         ) : null}
       </div>
     </PageContainer>

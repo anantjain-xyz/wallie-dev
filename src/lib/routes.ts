@@ -22,6 +22,7 @@ export type WorkspaceNavItem = {
     | "governance"
     | "factory-definition"
     | "workflows"
+    | "automations"
     | "settings";
   label: string;
   section: (typeof workspaceNavSections)[number];
@@ -232,9 +233,26 @@ export function workspaceSettingsPath(workspaceSlug: string, query?: Record<stri
 
 export function workspaceAutomationPreviewPath(
   workspaceSlug: string,
-  query?: { factory?: string; automation?: string; revision?: string; afterId?: string },
+  query?: {
+    factory?: string;
+    automation?: string;
+    revision?: string;
+    afterId?: string;
+    mode?: "new";
+    historyBefore?: string;
+    historyBeforeId?: string;
+  },
 ) {
   return withSearchParams(`${workspaceSettingsPath(workspaceSlug)}/automations`, query);
+}
+
+export function factoryAutomationApiPath(
+  workspaceId: string,
+  factoryId: string,
+  automationId?: string,
+) {
+  const base = `/api/workspaces/${encodeURIComponent(workspaceId)}/factories/${encodeURIComponent(factoryId)}/automations`;
+  return automationId ? `${base}/${encodeURIComponent(automationId)}` : base;
 }
 
 export function automationDryRunApiPath(
@@ -242,7 +260,7 @@ export function automationDryRunApiPath(
   factoryId: string,
   automationId: string,
 ) {
-  return `/api/workspaces/${encodeURIComponent(workspaceId)}/factories/${encodeURIComponent(factoryId)}/automations/${encodeURIComponent(automationId)}/dry-run`;
+  return `${factoryAutomationApiPath(workspaceId, factoryId, automationId)}/dry-run`;
 }
 
 export function workspaceWorkflowsPath(
@@ -301,6 +319,7 @@ export function workspaceFactoryDefinitionPath(
 export function getWorkspaceNavItems(
   workspaceSlug: string,
   {
+    canManageAutomations = false,
     canManageFactoryDefinition = false,
     canManageGovernance = false,
     canManageWorkflows = false,
@@ -370,6 +389,14 @@ export function getWorkspaceNavItems(
       id: "workflows",
       href: workspaceWorkflowsPath(workspaceSlug),
       label: "Workflows",
+      section: "Configure",
+    });
+  }
+  if (canManageAutomations) {
+    items.push({
+      id: "automations",
+      href: workspaceAutomationPreviewPath(workspaceSlug),
+      label: "Automations",
       section: "Configure",
     });
   }
