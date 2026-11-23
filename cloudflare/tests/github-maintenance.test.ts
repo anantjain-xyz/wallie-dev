@@ -7,6 +7,7 @@ import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatc
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { sweepStalledRuns } from "@/worker/stall-detector";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
+import { drainFactoryWorkflowRepositoryDeliveries } from "@/lib/factory-workflows/repository-delivery";
 import { drainFactoryWorkflowBranches } from "@/lib/factory-workflows/branch-dispatch";
 import {
   drainExactFactoryWorkflowReview,
@@ -56,6 +57,9 @@ vi.mock("@/lib/factory-event-subscriptions/maintenance", () => ({
 }));
 vi.mock("@/lib/factory-event-subscriptions/relay", () => ({
   requestFactoryEventDispatch: vi.fn(),
+}));
+vi.mock("@/lib/factory-workflows/repository-delivery", () => ({
+  drainFactoryWorkflowRepositoryDeliveries: vi.fn(),
 }));
 vi.mock("@/lib/factory-workflows/branch-dispatch", () => ({
   drainFactoryWorkflowBranches: vi.fn(),
@@ -266,6 +270,7 @@ it.each([
         vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0],
       );
       expect(drainFactoryWorkflowBranches).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(drainFactoryWorkflowRepositoryDeliveries).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainExactFactoryWorkflowReview).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainExactFactoryWorkflowReviewRepair).toHaveBeenCalledExactlyOnceWith(admin);
       expect(expireExactFactoryWorkflowReview).toHaveBeenCalledExactlyOnceWith(admin);

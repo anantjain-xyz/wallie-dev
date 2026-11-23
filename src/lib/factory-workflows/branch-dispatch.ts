@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { Database } from "@/lib/supabase/database.types";
 
+import { pinPendingFactoryWorkflowRepositoryBases } from "./branch-repository-bases";
 import type { WorkflowOccurrencePin } from "./deterministic-command";
 
 type Admin = SupabaseClient<Database>;
@@ -58,4 +59,5 @@ export async function drainFactoryWorkflowBranches(admin: Admin) {
     if (error) throw error;
     if (!data) break;
   }
+  await pinPendingFactoryWorkflowRepositoryBases(admin);
 }

@@ -105,6 +105,8 @@ export async function withSourceGitSandbox<T>(
           } catch {
             await settleWorkspaceResource(context.admin, operationId, false).catch(() => undefined);
             throw new Error("Source delivery sandbox cleanup will retry.");
+          } finally {
+            await handle[Symbol.asyncDispose]?.().catch(() => undefined);
           }
         };
         try {
@@ -129,5 +131,46 @@ export async function withSourceGitSandbox<T>(
         throw new Error("Could not provision source delivery sandbox.");
       }
     },
+  });
+}
+
+/** Read one retained ref through Git transport, including refs outside heads and tags. */
+export async function readRetainedSourceRefInSandbox(
+  input: Pick<SourceRestoreInput, "remoteUrl" | "token"> & { ref: string; signal: AbortSignal },
+  context: { admin: SupabaseClient<Database>; workspaceId: string; runId: string },
+): Promise<string | null> {
+  return withSourceGitSandbox(input.signal, context, async (dependencies) => {
+    const workspace = await dependencies.createWorkspace();
+    try {
+      const { stdout } = await dependencies.execGit(
+        ["-c", "http.followRedirects=false", "ls-remote", "--refs", input.remoteUrl, input.ref],
+        {
+          cwd: workspace.path,
+          env: {
+            NODE_ENV: "production",
+            GIT_CONFIG_NOSYSTEM: "1",
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_TERMINAL_PROMPT: "0",
+            GIT_CONFIG_COUNT: "1",
+            GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+            GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${input.token}`).toString("base64")}`,
+          },
+          signal: input.signal,
+          maxBuffer: 4_096,
+          timeout: 30_000,
+        },
+      );
+      const exactRows = stdout
+        .split("\n")
+        .map((line) => line.replace(/\r$/, "").split("\t"))
+        .filter(([, ref]) => ref === input.ref);
+      if (!exactRows.length) return null;
+      const [sha, , extra] = exactRows[0];
+      if (exactRows.length !== 1 || extra !== undefined || !/^[a-f0-9]{40}$/.test(sha))
+        throw new Error("Retained checkpoint ref could not be verified.");
+      return sha;
+    } finally {
+      await workspace.close();
+    }
   });
 }

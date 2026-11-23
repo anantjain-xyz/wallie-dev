@@ -48,7 +48,7 @@ import { exportValidationSource, materializeValidationSource } from "./join-vali
 type AdminClient = SupabaseClient<Database>;
 type Started = Extract<
   Awaited<ReturnType<typeof startFactoryWorkflowJoinClaim>>,
-  { kind: "started" }
+  { kind: "started" | "repository" }
 >;
 type Candidate = Extract<IntegrationOutcome, { kind: "candidate" }>;
 type Job = Pick<Tables<"agent_jobs">, "id" | "workspace_id" | "session_id" | "attempt_count">;
@@ -59,6 +59,18 @@ export type Context = {
   deadlineAt: string;
   signal: AbortSignal;
 };
+export function repositoryAttemptScope(claim: Extract<Started, { kind: "repository" }>) {
+  return {
+    ...joinRpcScope(claim),
+    p_generation: claim.generation,
+    p_owner: claim.ownershipToken,
+    p_repository_id: claim.repositoryId,
+    p_job_id: claim.jobId,
+    p_run_id: claim.runId,
+    p_attempt_count: claim.attemptCount,
+  };
+}
+
 export type ManagedResources = {
   // Provisioning, deadline propagation, and positive remote cleanup belong here.
   integrate<T>(context: Context, work: (sandbox: SandboxHandle) => Promise<T>): Promise<T>;
@@ -90,8 +102,8 @@ const sealedJoin = z.object({
     job_id: uuid,
     attempt_count: z.number().int().positive(),
   }),
-  candidate: z.null(),
-  outcome: z.null(),
+  candidate: z.unknown(),
+  outcome: z.unknown(),
   inputs: z
     .array(
       z.discriminatedUnion("selected", [
@@ -99,6 +111,7 @@ const sealedJoin = z.object({
           ...scope,
           selected: z.literal(true),
           branch_edge_id: branchEdge,
+          repository_id: uuid,
           outcome_id: uuid,
           branchOutput: z.object({
             root_session_id: uuid,
@@ -131,6 +144,47 @@ function joinRpcScope(claim: Started) {
   };
 }
 
+function selectedRepositoryBranches(
+  inputs: z.infer<typeof sealedJoin>["inputs"],
+  repositoryId: string,
+) {
+  return inputs.flatMap((input) =>
+    input.selected && input.repository_id === repositoryId ? [input] : [],
+  );
+}
+
+async function readFrozenBranchPlans(
+  context: Context,
+  repositoryId: string,
+  selected: ReturnType<typeof selectedRepositoryBranches>,
+) {
+  const { admin, claim, signal } = context;
+  const sources = await admin
+    .from("session_validation_plans")
+    .select("run_id,session_id,job_id,attempt_count,commit_sha,plan")
+    .eq("workspace_id", claim.workspaceId)
+    .eq("repository_id", repositoryId)
+    .in(
+      "run_id",
+      selected.map(({ branchOutput }) => branchOutput.run_id),
+    )
+    .abortSignal(signal);
+  if (sources.error) throw new Error("The frozen branch validation plans are unavailable.");
+  signal.throwIfAborted();
+  return selected.flatMap(({ branchOutput: receipt }) => {
+    const source = sources.data.find((row) => row.run_id === receipt.run_id);
+    if (!source) return [];
+    if (
+      source.session_id !== receipt.child_session_id ||
+      source.job_id !== receipt.job_id ||
+      source.attempt_count !== receipt.attempt_count ||
+      source.commit_sha !== receipt.output_sha
+    )
+      throw new Error("A branch validation plan belongs to another checkpoint.");
+    return [validationPlanSchema.parse(source.plan)];
+  });
+}
+
 async function loadJoinInput({ admin, claim, signal }: Context) {
   const [snapshot, input, session] = await Promise.all([
     admin.rpc("read_factory_workflow_join", joinRpcScope(claim)).abortSignal(signal),
@@ -159,26 +213,21 @@ async function loadJoinInput({ admin, claim, signal }: Context) {
   if (
     manifest.workspace_id !== claim.workspaceId ||
     manifest.factory_id !== claim.factoryId ||
-    manifest.parent_session_id !== claim.parentSessionId ||
-    manifest.expected_generation !== claim.generation ||
-    manifest.base_sha !== claim.baseSha ||
     input.input_sha !== claim.baseSha ||
-    input.input_ref !== claim.baseRef ||
-    input.repository_id !== manifest.repository_id ||
-    input.source_checkpoint_run_id !== manifest.expected_head_run_id ||
     input.pinned_run_id !== claim.runId ||
     input.pinned_attempt_count !== claim.attemptCount ||
-    attempt.job_id !== claim.jobId ||
-    attempt.run_id !== claim.runId ||
-    attempt.attempt_count !== claim.attemptCount ||
     [manifest, attempt, ...inputs].some(
       (row) => row.root_session_id !== claim.rootSessionId || row.join_id !== claim.joinId,
     )
   )
     throw new Error("The sealed join inputs diverged from the exact typed claim.");
 
+  const repositoryId = claim.kind === "repository" ? claim.repositoryId : manifest.repository_id;
+  if (input.repository_id !== repositoryId)
+    throw new Error("The sealed join inputs have a different repository.");
+
   const branches: JoinPlan["branches"] = [];
-  const selected = inputs.filter((input) => input.selected);
+  const selected = selectedRepositoryBranches(inputs, repositoryId);
   for (const branch of selected) {
     const receipt = branch.branchOutput;
     if (
@@ -195,6 +244,54 @@ async function loadJoinInput({ admin, claim, signal }: Context) {
       retainedRef: receipt.retained_ref,
     });
   }
+  if (!branches.length) throw new Error("The repository has no selected branch outputs.");
+
+  if (claim.kind === "repository") {
+    const definition = await loadPinnedFactoryExecution(admin, session.data, signal);
+    if (!definition || repositoryId === manifest.repository_id)
+      throw new Error("The exact repository validation profile is unavailable.");
+    return {
+      plan: {
+        joinId: claim.joinId,
+        admittedAt: manifest.admitted_at,
+        parent: {
+          checkpointRunId: claim.baseReceiptId,
+          inputSha: claim.baseSha,
+          outputSha: claim.baseSha,
+          retainedRef: claim.baseRef,
+        },
+        branches,
+      } satisfies JoinPlan,
+      loadValidation: async () =>
+        selectJoinValidationPlan(
+          await readFrozenBranchPlans(
+            { admin, claim, signal, deadlineAt: claim.deadlineAt },
+            repositoryId,
+            selected,
+          ),
+          manifest.required_evidence,
+        ),
+      requiredKeys: manifest.required_evidence,
+      repositoryId,
+      repositoryName: repoName.parse(input.repository_full_name),
+      baseBranch: input.base_branch,
+      approvedToolIds: definition.toolIds,
+    };
+  }
+
+  if (
+    parsed.data.candidate !== null ||
+    parsed.data.outcome !== null ||
+    manifest.parent_session_id !== claim.parentSessionId ||
+    manifest.expected_generation !== claim.generation ||
+    manifest.base_sha !== claim.baseSha ||
+    input.input_ref !== claim.baseRef ||
+    input.source_checkpoint_run_id !== manifest.expected_head_run_id ||
+    attempt.job_id !== claim.jobId ||
+    attempt.run_id !== claim.runId ||
+    attempt.attempt_count !== claim.attemptCount
+  )
+    throw new Error("The sealed primary join inputs diverged from the exact claim.");
 
   const [prior, priorPlan, definition] = await Promise.all([
     admin
@@ -242,30 +339,11 @@ async function loadJoinInput({ admin, claim, signal }: Context) {
     } else if (specificationParent) {
       // The specification run intentionally has no runnable plan. Its selected,
       // immutable branch receipts pin the only admissible fallback plan sources.
-      const sources = await admin
-        .from("session_validation_plans")
-        .select("run_id,session_id,job_id,attempt_count,commit_sha,plan")
-        .eq("workspace_id", claim.workspaceId)
-        .eq("repository_id", manifest.repository_id)
-        .in(
-          "run_id",
-          selected.map(({ branchOutput }) => branchOutput.run_id),
-        )
-        .abortSignal(signal);
-      if (sources.error) throw new Error("The frozen branch validation plans are unavailable.");
-      signal.throwIfAborted();
-      const plans = selected.flatMap(({ branchOutput: receipt }) => {
-        const source = sources.data.find((row) => row.run_id === receipt.run_id);
-        if (!source) return [];
-        if (
-          source.session_id !== receipt.child_session_id ||
-          source.job_id !== receipt.job_id ||
-          source.attempt_count !== receipt.attempt_count ||
-          source.commit_sha !== receipt.output_sha
-        )
-          throw new Error("A branch validation plan belongs to another checkpoint.");
-        return [validationPlanSchema.parse(source.plan)];
-      });
+      const plans = await readFrozenBranchPlans(
+        { admin, claim, signal, deadlineAt: claim.deadlineAt },
+        repositoryId,
+        selected,
+      );
       return selectJoinValidationPlan(plans, manifest.required_evidence);
     } else {
       throw new Error("The exact parent checkpoint has no frozen validation plan.");
@@ -542,6 +620,10 @@ async function runStartedJoin(
   });
 
   if (integration.kind === "conflict") {
+    if (claim.kind === "repository") {
+      await finishRepositoryValidation(context, claim, "merge_conflict");
+      return;
+    }
     const detail = await retainJoinConflict(
       resources.conflicts(context),
       {
@@ -557,25 +639,27 @@ async function runStartedJoin(
     return;
   }
   const validation = await frozen.loadValidation();
-  const recorded = await admin
-    .rpc("record_active_factory_workflow_join_candidate", {
-      ...joinRpcScope(claim),
-      p_expected_generation: claim.generation,
-      p_ownership_token: claim.ownershipToken,
-      p_run_id: claim.runId,
-      p_job_id: claim.jobId,
-      p_attempt_count: claim.attemptCount,
-      p_commit_sha: integration.commitSha,
-      p_tree_sha: integration.treeSha,
-      ...(integration.checkpoint.kind === "bundle"
-        ? {
-            p_bundle_sha256: integration.checkpoint.sha256,
-          }
-        : {}),
-    })
-    .abortSignal(signal);
-  if (recorded.error || recorded.data !== true)
-    throw new Error("The exact join candidate was not recorded.");
+  if (claim.kind === "started") {
+    const recorded = await admin
+      .rpc("record_active_factory_workflow_join_candidate", {
+        ...joinRpcScope(claim),
+        p_expected_generation: claim.generation,
+        p_ownership_token: claim.ownershipToken,
+        p_run_id: claim.runId,
+        p_job_id: claim.jobId,
+        p_attempt_count: claim.attemptCount,
+        p_commit_sha: integration.commitSha,
+        p_tree_sha: integration.treeSha,
+        ...(integration.checkpoint.kind === "bundle"
+          ? {
+              p_bundle_sha256: integration.checkpoint.sha256,
+            }
+          : {}),
+      })
+      .abortSignal(signal);
+    if (recorded.error || recorded.data !== true)
+      throw new Error("The exact join candidate was not recorded.");
+  }
   const unchanged = await resources.validate(context, async (sandbox) => {
     await materializeValidationSource(sandbox, integration, integration.source, signal);
     if (!matchesCandidate(await readValidationIdentity(sandbox, signal), integration))
@@ -637,12 +721,21 @@ async function runStartedJoin(
   });
   signal.throwIfAborted();
   if (requirements.some(({ status }) => status === "failed" || status === "stale")) {
-    await saveBlocker(context, { outcome: "validation_failed", detail: {} });
+    if (claim.kind === "repository") {
+      await finishRepositoryValidation(context, claim, "validation_failed");
+    } else {
+      await saveBlocker(context, { outcome: "validation_failed", detail: {} });
+    }
     return;
   }
   if (!unchanged) throw new Error("Validation changed the joined source.");
   if (requirements.some(({ status }) => status !== "passed"))
     throw new Error("Required joined validation evidence is unavailable.");
+
+  if (claim.kind === "repository") {
+    await finishRepositoryValidation(context, claim, "passed", integration);
+    return;
+  }
 
   const artifact = [
     "# Workflow join",
@@ -681,4 +774,30 @@ async function runStartedJoin(
     deadlineAt,
     signal,
   });
+}
+
+async function finishRepositoryValidation(
+  { admin, signal }: Context,
+  claim: Extract<Started, { kind: "repository" }>,
+  result: "passed" | "validation_failed" | "merge_conflict",
+  candidate?: Candidate & {
+    checkpoint: Awaited<ReturnType<typeof captureCommittedSourceCheckpoint>>;
+  },
+) {
+  const checkpoint = candidate?.checkpoint;
+  const saved = await admin
+    .rpc("finish_factory_workflow_repository_validation", {
+      ...repositoryAttemptScope(claim),
+      p_result: result,
+      ...(candidate ? { p_candidate_sha: candidate.commitSha, p_tree_sha: candidate.treeSha } : {}),
+      ...(checkpoint?.kind === "bundle"
+        ? {
+            p_bundle_sha256: checkpoint.sha256,
+            p_bundle_base64: checkpoint.bytes.toString("base64"),
+          }
+        : {}),
+    })
+    .abortSignal(signal);
+  if (saved.error || saved.data !== true)
+    throw new Error("The repository validation lost its exact attempt.");
 }

@@ -43,6 +43,51 @@ function parallelGraph() {
   };
 }
 
+const platformGrant = { id: "c5410000-0000-4000-8000-000000000021", version: 1 };
+const docsRepository = "c5410000-0000-4000-8000-000000000042";
+const platformRepository = "c5410000-0000-4000-8000-000000000041";
+
+function multiRepositoryGraph() {
+  const graph = parallelGraph();
+  const profile = {
+    definitionRevisionId: "c5410000-0000-4000-8000-000000000019",
+    definitionDigest: "a".repeat(64),
+  };
+  return {
+    ...graph,
+    grants: [grant, platformGrant],
+    nodes: [
+      ...graph.nodes.map((node) => (node.id === "docs" ? { ...node, grantId: grant.id } : node)),
+      { id: "platform", kind: "agent", agentPromptRevisionId, grantId: platformGrant.id },
+    ],
+    edges: [
+      ...graph.edges.map((edge) => (edge.id === "run-docs" ? { ...edge, required: true } : edge)),
+      { id: "run-platform", from: "split", to: "platform", kind: "branch", required: true },
+      { id: "platform-result", from: "platform", to: "integrate", kind: "branch-result" },
+    ],
+    delegationPolicy: {
+      maxChildren: 3,
+      maxConcurrentChildren: 3,
+      maxAttempts: 8,
+      maxTotalTokens: 100_000,
+      maxCostUsd: 10,
+      maxTokensPerAttempt: 5_000,
+      maxCostUsdPerAttempt: 1,
+      targets: { services: profile, docs: profile, platform: profile },
+    },
+    repositorySets: {
+      integrate: [
+        { repositoryId: docsRepository, writerGrant: grant, branchEdgeIds: ["run-docs"] },
+        {
+          repositoryId: platformRepository,
+          writerGrant: platformGrant,
+          branchEdgeIds: ["run-platform"],
+        },
+      ],
+    },
+  };
+}
+
 const exactReview = {
   id: "review",
   kind: "review",
@@ -145,6 +190,99 @@ describe("workflow graph compiler", () => {
     });
   });
 
+  it("pins every named secondary branch and writer revision in the same canonical graph", () => {
+    const graph = multiRepositoryGraph();
+    const approved = [grant, platformGrant];
+    const compiled = compile(graph, approved);
+    expect(compiled).toMatchObject({
+      ok: true,
+      bundle: { repositorySets: { integrate: [...graph.repositorySets.integrate].reverse() } },
+    });
+    expect(
+      compile(
+        {
+          ...graph,
+          repositorySets: { integrate: [...graph.repositorySets.integrate].reverse() },
+        },
+        approved,
+      ),
+    ).toEqual(compiled);
+  });
+
+  it("rejects a repository set attached to a non-join node or lacking a delegation budget", () => {
+    const graph = multiRepositoryGraph();
+    const approved = [grant, platformGrant];
+    expect(
+      compile({ ...graph, repositorySets: { verify: graph.repositorySets.integrate } }, approved),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [
+        expect.objectContaining({
+          code: "invalid_repository_set",
+          path: ["repositorySets", "verify"],
+        }),
+      ],
+    });
+    expect(compile({ ...graph, delegationPolicy: undefined }, approved)).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid_repository_set",
+          message: expect.stringContaining("bounded delegation policy"),
+        }),
+      ]),
+    });
+  });
+
+  it("rejects stale writer revisions, duplicate assignments, and a branch using another writer", () => {
+    const graph = multiRepositoryGraph();
+    const [docs, platform] = graph.repositorySets.integrate;
+    const result = compile(
+      {
+        ...graph,
+        repositorySets: {
+          integrate: [
+            { ...docs, writerGrant: { ...docs.writerGrant, version: 2 } },
+            {
+              ...platform,
+              repositoryId: docs.repositoryId,
+              branchEdgeIds: ["run-docs", "run-platform"],
+            },
+          ],
+        },
+      },
+      [grant, platformGrant],
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ path: ["repositorySets", "integrate", 0, "writerGrant"] }),
+        expect.objectContaining({ path: ["repositorySets", "integrate", 1, "repositoryId"] }),
+        expect.objectContaining({ message: "A branch can publish to only one repository." }),
+        expect.objectContaining({
+          message: "The branch agent must use the repository’s declared writer grant.",
+        }),
+      ]),
+    });
+  });
+
+  it("requires a distinct required branch for each secondary and the original primary", () => {
+    const graph = multiRepositoryGraph();
+    const approved = [grant, platformGrant];
+    const edges = graph.edges.map((edge) =>
+      ["run-services", "run-docs"].includes(edge.id) ? { ...edge, required: false } : edge,
+    );
+    expect(compile({ ...graph, edges }, approved)).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ message: "Select a required branch for this repository." }),
+        expect.objectContaining({
+          message: "Leave at least one required branch for the primary repository.",
+        }),
+      ]),
+    });
+  });
+
   it("pins the reviewer and compiles one canonical rule set without adding a public loop edge", () => {
     const graph = exactReviewGraph();
     const compiled = compile(graph);
@@ -244,6 +382,29 @@ describe("workflow graph compiler", () => {
           path: ["nodes", 6, "reviewerPromptRevisionId"],
         }),
       ]),
+    });
+  });
+
+  it("canonically compiles repository-specific delivery before an exact review", () => {
+    const graph = multiRepositoryGraph();
+    const reviewed = {
+      ...graph,
+      nodes: [...graph.nodes, exactReview],
+      edges: [
+        ...graph.edges.map((edge) =>
+          edge.id === "check-output" ? { ...edge, from: "review" } : edge,
+        ),
+        { id: "review-output", from: "integrate", to: "review", kind: "next" },
+      ],
+    };
+    expect(compile(reviewed, [grant, platformGrant])).toMatchObject({
+      ok: true,
+      bundle: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ id: "review", reviewerPromptRevisionId }),
+        ]),
+        repositorySets: { integrate: [...graph.repositorySets.integrate].reverse() },
+      },
     });
   });
 

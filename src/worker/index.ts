@@ -5,6 +5,7 @@ import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
+import { drainFactoryWorkflowRepositoryDeliveries } from "@/lib/factory-workflows/repository-delivery";
 import { drainFactoryWorkflowBranches } from "@/lib/factory-workflows/branch-dispatch";
 import {
   drainExactFactoryWorkflowReview,
@@ -182,6 +183,9 @@ async function main() {
       setInterval(() => {
         timerTasks.run("accepted triage route", () => drainAcceptedTriageRoute(admin));
         timerTasks.run("workflow branches", () => drainFactoryWorkflowBranches(admin));
+        timerTasks.run("workflow repository delivery", () =>
+          drainFactoryWorkflowRepositoryDeliveries(admin),
+        );
         timerTasks.run("exact workflow review", () => drainExactFactoryWorkflowReview(admin));
         timerTasks.run("exact workflow review repair", () =>
           drainExactFactoryWorkflowReviewRepair(admin),

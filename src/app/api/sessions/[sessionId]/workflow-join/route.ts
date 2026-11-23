@@ -34,6 +34,32 @@ const receipt = z.object({
   created: z.boolean(),
 });
 const conflictQuery = z.object({ joinId: uuid, runId: uuid });
+const sourceSha = z.string().regex(/^[a-f0-9]{40}$/);
+const repositoryDelivery = z.object({
+  status: z.enum(["pending", "partial", "blocked", "adopted"]),
+  primaryRepositoryId: uuid,
+  primaryOutcome: z.enum(["adopted", "conflict", "validation_failed"]).nullable(),
+  lifecycleStatus: z.enum(["running", "paused", "canceled"]),
+  repositories: z
+    .array(
+      z.object({
+        repositoryId: uuid,
+        repositoryName: z.string(),
+        status: z.enum(["awaiting_validation", "pending", "claimed", "blocked", "adopted"]),
+        blocker: z.string().nullable(),
+        attempts: z.number().int().nonnegative(),
+        baseSha: sourceSha,
+        outputSha: sourceSha.nullable(),
+        validationTreeSha: sourceSha.nullable(),
+        validationRunId: uuid.nullable(),
+        expectedHeadReceiptId: uuid,
+        acceptedHeadReceiptId: uuid.nullable(),
+        remoteReconciliationRequired: z.boolean(),
+      }),
+    )
+    .min(1)
+    .max(8),
+});
 const selection = z.object({
   manifest: z.object({ group_id: uuid, source_checkpoint_run_id: uuid }),
   joinStatus: z.enum([
@@ -183,6 +209,26 @@ async function readJoinSelection(
   );
 }
 
+async function readRepositoryDelivery(
+  root: { id: string; workspace_id: string; factory_id: string },
+  joinId: string,
+  signal: AbortSignal,
+) {
+  const { data, error } = await createSupabaseAdminClient()
+    .rpc("read_factory_workflow_repository_delivery", {
+      p_root_session_id: root.id,
+      p_workspace_id: root.workspace_id,
+      p_factory_id: root.factory_id,
+      p_join_id: joinId,
+    })
+    .abortSignal(signal);
+  if (error) return respond({ error: "Could not read repository delivery." }, 500);
+  if (!data) return respond({ error: "Repository delivery not found." }, 404);
+  const verified = repositoryDelivery.safeParse(data);
+  if (!verified.success) return respond({ error: "Could not verify repository delivery." }, 500);
+  return respond({ joinId, ...verified.data }, 200);
+}
+
 export async function GET(request: Request, params: Params) {
   const visible = await loadVisibleJoinRoot(params);
   if (visible.response) return visible.response;
@@ -194,6 +240,11 @@ export async function GET(request: Request, params: Params) {
       return respond({ error: "Provide one exact workflow branch group." }, 400);
     }
     return readJoinSelection(visible.root, branchGroupId.data, signal);
+  }
+  if (search.has("joinId") && !search.has("runId")) {
+    const joinId = uuid.safeParse(search.get("joinId"));
+    if (!joinId.success) return respond({ error: "Repository delivery not found." }, 404);
+    return readRepositoryDelivery(visible.root, joinId.data, signal);
   }
   const parsed = conflictQuery.safeParse({
     joinId: search.get("joinId"),

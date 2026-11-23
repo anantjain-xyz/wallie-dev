@@ -132,7 +132,12 @@ async function assertClaim(admin: AdminClient, delivery: SourceDelivery, signal:
 
 export async function resolveSourceDeliveryRepository<
   T extends Pick<SourceDelivery, "repository_id" | "workspace_id" | "repository_full_name">,
->(admin: AdminClient, delivery: T, signal: AbortSignal) {
+>(
+  admin: AdminClient,
+  delivery: T,
+  signal: AbortSignal,
+  purpose: "checkout" | "execution" = "execution",
+) {
   if (!delivery.repository_id) throw new Error("Source repository connection is unavailable.");
   const { data: repository, error: repositoryError } = await admin
     .from("github_repositories")
@@ -165,7 +170,8 @@ export async function resolveSourceDeliveryRepository<
     installationId: installation.installation_id,
     repositoryFullName: repository.full_name,
     repositoryId: repository.repo_id,
-    purpose: "execution",
+    purpose,
+    signal,
   });
   signal.throwIfAborted();
   const response = await fetch(`https://api.github.com/repos/${repository.full_name}`, {

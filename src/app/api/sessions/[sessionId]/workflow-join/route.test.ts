@@ -228,3 +228,49 @@ it("rejects invisible roots and unsigned-in users before opening the conflict re
   expect(authorizedConflict).not.toHaveBeenCalled();
   expect(admin).not.toHaveBeenCalled();
 });
+
+it("returns visible partial delivery without disclosing a repository lease or bundle", async () => {
+  const delivery = {
+    status: "partial",
+    primaryRepositoryId: id(15),
+    primaryOutcome: "adopted",
+    lifecycleStatus: "running",
+    repositories: [
+      {
+        repositoryId: id(16),
+        repositoryName: "fixture/component",
+        status: "pending",
+        blocker: "publication_unavailable",
+        attempts: 1,
+        baseSha: "a".repeat(40),
+        outputSha: "b".repeat(40),
+        validationTreeSha: "c".repeat(40),
+        validationRunId: id(17),
+        expectedHeadReceiptId: id(18),
+        acceptedHeadReceiptId: null,
+        remoteReconciliationRequired: true,
+      },
+    ],
+  };
+  rpc.mockReturnValue({
+    abortSignal: async () => ({
+      data: {
+        ...delivery,
+        ownershipToken: "private",
+        repositories: [{ ...delivery.repositories[0], lease: "private", bundleBytes: "private" }],
+      },
+      error: null,
+    }),
+  });
+  const response = await GET(new Request(`${endpoint}?joinId=${receipt.joinId}`), params);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(await response.json()).toEqual({ joinId: receipt.joinId, ...delivery });
+  expect(rpc).toHaveBeenCalledExactlyOnceWith("read_factory_workflow_repository_delivery", {
+    p_root_session_id: scope.id,
+    p_workspace_id: scope.workspace_id,
+    p_factory_id: scope.factory_id,
+    p_join_id: receipt.joinId,
+  });
+  expect(authorizedConflict).not.toHaveBeenCalled();
+});

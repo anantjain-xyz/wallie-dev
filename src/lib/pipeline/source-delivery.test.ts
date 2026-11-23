@@ -544,6 +544,7 @@ it("reloads renamed repository and replacement installation identity on every re
     repositoryFullName: "new-owner/renamed",
     repositoryId: 777,
     purpose: "execution",
+    signal: expect.any(AbortSignal),
   });
   expect(mocked.push).toHaveBeenLastCalledWith(
     expect.objectContaining({ remoteUrl: "https://github.com/new-owner/renamed.git" }),

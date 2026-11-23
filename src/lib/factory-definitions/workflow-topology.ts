@@ -196,6 +196,87 @@ function validateDelegationTargets(
   return diagnostics;
 }
 
+function validateRepositorySets(
+  graph: WorkflowGraphDefinition,
+  nodes: ReadonlyMap<NodeId, WorkflowNode>,
+  incoming: EdgesByNode,
+): WorkflowDiagnostic[] {
+  const diagnostics: WorkflowDiagnostic[] = [];
+  const declaredGrants = new Map(graph.grants.map(({ id, version }) => [id, version]));
+
+  for (const [joinId, repositories] of Object.entries(graph.repositorySets ?? {})) {
+    const path = ["repositorySets", joinId];
+    const fail = (suffix: (string | number)[], message: string) =>
+      diagnostics.push({ code: "invalid_repository_set", path: [...path, ...suffix], message });
+    const join = graph.nodes.find(({ id }) => id === joinId);
+    if (join?.kind !== "join") {
+      fail([], "Declare repository targets on an existing join node.");
+      continue;
+    }
+    if (!graph.delegationPolicy)
+      fail([], "Repository targets require a bounded delegation policy.");
+
+    const branches = new Map<
+      WorkflowEdge["id"],
+      { required: boolean; agent: WorkflowNode | undefined }
+    >();
+    for (const { edge: result } of incoming.get(join.id) ?? []) {
+      if (result.kind !== "branch-result") continue;
+      for (const { edge } of incoming.get(result.from) ?? []) {
+        if (edge.kind === "branch")
+          branches.set(edge.id, { required: edge.required, agent: nodes.get(edge.to) });
+      }
+    }
+
+    const seenRepositories = new Set<string>();
+    const seenGrants = new Set<string>();
+    const assignedEdges = new Set<WorkflowEdge["id"]>();
+    repositories.forEach(({ repositoryId, writerGrant, branchEdgeIds }, index) => {
+      if (seenRepositories.has(repositoryId))
+        fail([index, "repositoryId"], "A secondary repository can appear only once per join.");
+      seenRepositories.add(repositoryId);
+
+      if (
+        seenGrants.has(writerGrant.id) ||
+        declaredGrants.get(writerGrant.id) !== writerGrant.version
+      )
+        fail(
+          [index, "writerGrant"],
+          "Use one distinct, declared writer grant revision for each repository.",
+        );
+      seenGrants.add(writerGrant.id);
+
+      let required = false;
+      branchEdgeIds.forEach((edgeId, edgeIndex) => {
+        const branch = branches.get(edgeId);
+        const edgePath = [index, "branchEdgeIds", edgeIndex];
+        if (!branch) {
+          fail(edgePath, "Use a branch edge that contributes to this join.");
+          return;
+        }
+        if (assignedEdges.has(edgeId))
+          fail(edgePath, "A branch can publish to only one repository.");
+        assignedEdges.add(edgeId);
+        if (branch.agent?.kind !== "agent" || branch.agent.grantId !== writerGrant.id)
+          fail(edgePath, "The branch agent must use the repository’s declared writer grant.");
+        required ||= branch.required;
+      });
+      if (!required)
+        fail([index, "branchEdgeIds"], "Select a required branch for this repository.");
+    });
+
+    const primary = [...branches].filter(([edge]) => !assignedEdges.has(edge));
+    if (!primary.some(([, branch]) => branch.required)) {
+      fail([], "Leave at least one required branch for the primary repository.");
+    }
+    for (const [edge, { agent }] of primary) {
+      if (agent?.kind === "agent" && agent.grantId && seenGrants.has(agent.grantId))
+        fail([], `Assign branch "${edge}" to the repository of its secondary writer grant.`);
+    }
+  }
+  return diagnostics;
+}
+
 export function validateWorkflowTopology(graph: WorkflowGraphDefinition): WorkflowDiagnostic[] {
   const diagnostics: WorkflowDiagnostic[] = [];
   const nodesById = new Map<NodeId, WorkflowNode>();
@@ -258,6 +339,7 @@ export function validateWorkflowTopology(graph: WorkflowGraphDefinition): Workfl
     });
   }
   if (!entry || diagnostics.length) return diagnostics;
+  if (graph.repositorySets) diagnostics.push(...validateRepositorySets(graph, nodesById, incoming));
   if (graph.routePolicy) {
     diagnostics.push(...validateRoutePolicy(graph.routePolicy, graph.nodes, outgoing));
     if (!graph.delegationPolicy) {

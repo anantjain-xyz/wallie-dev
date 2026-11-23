@@ -66,6 +66,7 @@ function fixture(
     if (name === "dispatch_next_factory_workflow_branch") {
       return Response.json(replies.shift() ?? false);
     }
+    if (name === "list_factory_workflow_branch_repository_bases") return Response.json([]);
     throw new Error(`Unexpected command ${name}`);
   });
   const fetcher: typeof fetch = async (input, init) => {
@@ -150,11 +151,18 @@ it("reports a changed parent checkpoint without treating the branch as runnable"
 it("attempts at most four due groups from a shared maintenance pass", async () => {
   const { admin, call } = fixture(Array<boolean>(6).fill(true));
   await drainFactoryWorkflowBranches(admin);
-  expect(call).toHaveBeenCalledTimes(4);
+  expect(call.mock.calls.map(([name]) => name)).toEqual([
+    ...Array<string>(4).fill("dispatch_next_factory_workflow_branch"),
+    "list_factory_workflow_branch_repository_bases",
+  ]);
 });
 
 it("ends the maintenance pass once no group is due", async () => {
   const { admin, call } = fixture([true, false, true]);
   await drainFactoryWorkflowBranches(admin);
-  expect(call).toHaveBeenCalledTimes(2);
+  expect(call.mock.calls.map(([name]) => name)).toEqual([
+    "dispatch_next_factory_workflow_branch",
+    "dispatch_next_factory_workflow_branch",
+    "list_factory_workflow_branch_repository_bases",
+  ]);
 });

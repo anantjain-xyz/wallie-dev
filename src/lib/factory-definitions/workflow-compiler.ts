@@ -64,16 +64,33 @@ export function compileWorkflowGraph(
   ];
   if (diagnostics.length) return { ok: false, diagnostics };
 
-  const { routePolicy, delegationPolicy, ...graphWithoutPolicies } = graph;
+  const { routePolicy, delegationPolicy, repositorySets, ...graphWithoutPolicies } = graph;
   const bundle = {
     ...graphWithoutPolicies,
     ...(routePolicy ? { routePolicy: canonicalRoutePolicy(routePolicy) } : {}),
     ...(delegationPolicy ? { delegationPolicy } : {}),
+    ...(repositorySets && Object.keys(repositorySets).length
+      ? { repositorySets: canonicalRepositorySets(repositorySets) }
+      : {}),
     nodes: graph.nodes.map(canonicalWorkflowNode).sort(compareIds),
     edges: [...graph.edges].sort(compareIds),
     grants: [...graph.grants].sort(compareIds),
   };
   return { ok: true, bundle, ...serializeFactoryDefinition(bundle) };
+}
+
+function canonicalRepositorySets(sets: NonNullable<WorkflowGraphDefinition["repositorySets"]>) {
+  return Object.fromEntries(
+    Object.entries(sets).map(([join, repositories]) => [
+      join,
+      repositories
+        .map((repository) => ({
+          ...repository,
+          branchEdgeIds: [...repository.branchEdgeIds].sort(),
+        }))
+        .sort((left, right) => (left.repositoryId < right.repositoryId ? -1 : 1)),
+    ]),
+  );
 }
 
 function canonicalRoutePolicy(policy: WorkflowRoutePolicy): WorkflowRoutePolicy {
