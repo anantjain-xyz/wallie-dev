@@ -72,6 +72,6 @@ export function renderTriageOutcome(input: {
     case "unsupported":
       return `## Scope needs revision\n\n${outcome.reason}`;
     case "blocked":
-      throw new InvalidTriageOutcomeError(outcome.code);
+      return new InvalidTriageOutcomeError(outcome.code);
   }
 }

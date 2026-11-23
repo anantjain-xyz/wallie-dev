@@ -1128,18 +1128,21 @@ async function runStage(input: {
 
     const artifactMarkdown =
       finalOutput && triage ? renderTriageOutcome({ ...triage, finalOutput }) : finalOutput;
-    if (!artifactMarkdown) {
-      const message =
-        `${stage.name} supplied no final deliverable, so no artifact was created.` +
-        (captureOrderedEvents
-          ? " Progress and any partial output remain available in Run history."
-          : "");
-
-      await runEvents.record({ type: "error", message });
+    if (!artifactMarkdown || artifactMarkdown instanceof InvalidTriageOutcomeError) {
+      const outcomeError =
+        artifactMarkdown instanceof InvalidTriageOutcomeError
+          ? artifactMarkdown
+          : new MissingReviewableOutputError(
+              `${stage.name} supplied no final deliverable, so no artifact was created.` +
+                (captureOrderedEvents
+                  ? " Progress and any partial output remain available in Run history."
+                  : ""),
+            );
+      await runEvents.record({ type: "error", message: outcomeError.message });
       runFailureEventRecorded = captureOrderedEvents;
       await runEvents.finish("complete");
       captureOpen = false;
-      throw new MissingReviewableOutputError(message);
+      throw outcomeError;
     }
     await runEvents.finish("complete");
     captureOpen = false;

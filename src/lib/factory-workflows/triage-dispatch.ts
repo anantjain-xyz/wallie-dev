@@ -10,6 +10,8 @@ import type { Database } from "@/lib/supabase/database.types";
 
 import { executeFactoryWorkflowOccurrence } from "./execute";
 
+const TRIAGE_ROUTE_RPC_TIMEOUT_MS = 5_000;
+
 const claimSchema = z
   .object({
     root_session_id: z.string().uuid(),
@@ -29,6 +31,7 @@ export async function drainAcceptedTriageRoute(admin: SupabaseClient<Database>) 
   const acquire = async () => {
     const { data, error } = await admin
       .rpc("claim_factory_workflow_accepted_triage_route", { p_candidate_token: candidate })
+      .abortSignal(AbortSignal.timeout(TRIAGE_ROUTE_RPC_TIMEOUT_MS))
       .maybeSingle();
     if (error) throw error;
     return data;
@@ -73,11 +76,13 @@ export async function drainAcceptedTriageRoute(admin: SupabaseClient<Database>) 
       completed = result.status === "route_decided";
     }
   } finally {
-    const { error } = await admin.rpc("finish_factory_workflow_accepted_triage_route", {
-      ...scope,
-      p_occurrence_id: claim.occurrence_id,
-      p_completed: completed,
-    });
+    const { error } = await admin
+      .rpc("finish_factory_workflow_accepted_triage_route", {
+        ...scope,
+        p_occurrence_id: claim.occurrence_id,
+        p_completed: completed,
+      })
+      .abortSignal(AbortSignal.timeout(TRIAGE_ROUTE_RPC_TIMEOUT_MS));
     if (error) throw error;
   }
 }

@@ -80,7 +80,7 @@ export function eligibleTriageEvidence(manifest: RunContextManifest): Set<string
 }
 
 function markdownText(value: string) {
-  return value.replace(/[\\<>`*_\[\]{}!#|~]/g, "\\$&");
+  return value.replace(/[\\<>`*_\[\]{}!#|~&]/g, "\\$&");
 }
 
 function renderScope(scope: Scope) {

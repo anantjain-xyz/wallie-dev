@@ -1957,7 +1957,11 @@ describe("processPipelineJob (generic stage runner)", () => {
     },
   );
 
-  it.each([false, true])("publishes pinned source (triage=%s)", async (configuredTriage) => {
+  it.each([
+    { scenario: "ordinary specification", configuredTriage: false },
+    { scenario: "valid triage scope", configuredTriage: true },
+    { scenario: "invalid triage scope", configuredTriage: true, invalidTriage: true },
+  ])("handles the completed stream for $scenario", async ({ configuredTriage, invalidTriage }) => {
     const stageId = "77900000-0000-4000-8000-000000000001";
     const pipelineId = "77900000-0000-4000-8000-000000000002";
     const repositoryId = "77900000-0000-4000-8000-000000000003";
@@ -2022,7 +2026,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       ],
     });
     const feedback = "Question: Which account?\nAnswer: Use Workspace ID.";
-    const { admin, updatedRuns } = buildAdminMock({
+    const { admin, capturedEvents, rpc, updatedRuns } = buildAdminMock({
       session: baseSession({
         execute_pinned_definition: true,
         factory_definition_provenance: "pinned",
@@ -2106,7 +2110,7 @@ describe("processPipelineJob (generic stage runner)", () => {
           type: "completion",
           taskComplete: true,
           summary: "Done",
-          finalOutput,
+          finalOutput: invalidTriage ? "Not a triage decision." : finalOutput,
         };
       }),
     };
@@ -2131,7 +2135,26 @@ describe("processPipelineJob (generic stage runner)", () => {
       vi.useRealTimers();
     }
 
-    expect((await processing).result).toBe("success");
+    expect((await processing).result).toBe(invalidTriage ? "error" : "success");
+    if (invalidTriage) {
+      expect(capturedEvents).toContainEqual(
+        expect.objectContaining({
+          p_kind: "terminal",
+          p_payload: { status: "failed", message: expect.stringContaining("invalid_proposal") },
+        }),
+      );
+      expect(capturedEvents.at(-1)).toMatchObject({
+        p_kind: "capture_end",
+        p_payload: { status: "complete" },
+      });
+      expect(capturedEvents.some((event) => event.p_kind === "capture_gap")).toBe(false);
+      expect(rpc).toHaveBeenCalledWith(
+        "fail_session_job_attempt",
+        expect.objectContaining({ p_retry: false }),
+      );
+      expect(mocked.prepareSourceDelivery).not.toHaveBeenCalled();
+      return;
+    }
     expect(mocked.loadRunAgentPrompt).toHaveBeenCalledWith(
       admin,
       expect.objectContaining({ expected: implementationAgent }),

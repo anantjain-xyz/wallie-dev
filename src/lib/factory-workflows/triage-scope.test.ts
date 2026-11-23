@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
+
 import { verifyPromptBoundary } from "@/lib/pipeline/prompt-safety";
 import { packRunContext, fingerprintRunContextInput } from "@/lib/run-context/packing";
 
@@ -84,6 +86,14 @@ function acceptedFixture() {
 }
 
 describe("triage outcomes", () => {
+  it("keeps literal entities visible in the review criteria", () => {
+    const outcome = prepare({ ...scope, acceptanceCriteria: ["Write &copy; into the fixture."] });
+    if (outcome.status !== "scope") throw new Error("Expected a valid scope.");
+    expect(renderMarkdownToHtml(outcome.artifactMarkdown)).toMatch(
+      /Write (?:&amp;|&#x26;|&#38;)copy; into the fixture\./,
+    );
+  });
+
   it("uses the existing clarification directive for an ambiguous request without offering accepted scope", () => {
     const question = "Is Friday --> the deadline?";
     const prepared = prepare({ kind: "clarification", question });

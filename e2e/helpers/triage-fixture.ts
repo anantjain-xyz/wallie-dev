@@ -11,6 +11,7 @@ import type { Database } from "@/lib/supabase/database.types";
 type Admin = SupabaseClient<Database>;
 type Scope = { workspaceId: string; factoryId: string };
 export const acceptanceCriterion = "Invite only workspace administrators in the first wave.";
+export const literalAcceptanceCriterion = "Use the literal &copy; marker in the report.";
 export const childTask = "Implement the approved rollout.";
 export const childTitle = "Implement the scoped invite rollout";
 const evidenceRef = "required:session/prompt";
@@ -216,7 +217,7 @@ export function acceptedScopeArtifact(scope: string) {
   const { definitionJson } = serializeFactoryDefinition({
     version: 1,
     scope,
-    acceptanceCriteria: [acceptanceCriterion],
+    acceptanceCriteria: [acceptanceCriterion, literalAcceptanceCriterion],
     evidenceReferences: [evidenceRef],
   });
   return [
@@ -226,6 +227,7 @@ export function acceptedScopeArtifact(scope: string) {
     "",
     "## Acceptance criteria",
     `- ${acceptanceCriterion}`,
+    `- ${literalAcceptanceCriterion.replace("&", "\\&")}`,
     "",
     "## Evidence",
     `- \`${evidenceRef}\``,

@@ -148,7 +148,16 @@ $$;
 
 create function internal.escape_triage_scope_markdown(p_text text)
 returns text language sql immutable strict set search_path = '' as $$
-  select regexp_replace(p_text, '([\\<>`*_\[\]{}!#|~])', '\\\1', 'g')
+  select regexp_replace(p_text, '([\\<>`*_\[\]{}!#|~&])', '\\\1', 'g')
+$$;
+
+create function internal.is_canonical_factory_triage_text(p_text text, p_max_utf16_units integer)
+returns boolean language sql immutable strict set search_path = '' as $$
+  -- Match the worker's ECMAScript trim, ASCII control rule, and UTF-16 length.
+  select p_text <> ''
+    and p_text = btrim(p_text, U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF')
+    and p_text collate "C" !~ '[[:cntrl:]]'
+    and length(p_text) + length(regexp_replace(p_text collate "C", U&'[^\+010000-\+10FFFF]', '', 'g')) <= p_max_utf16_units
 $$;
 
 -- The type of the payload, its visible Markdown, and citations must agree.
@@ -178,13 +187,11 @@ begin
     or jsonb_typeof(payload->'acceptanceCriteria') is distinct from 'array'
     or jsonb_typeof(payload->'evidenceReferences') is distinct from 'array' then return null; end if;
 
-  if length(payload->>'scope') not between 1 and 2000 or payload->>'scope' ~ '[[:cntrl:]]'
-    or length(btrim(payload->>'scope')) = 0
+  if not internal.is_canonical_factory_triage_text(payload->>'scope', 2000)
     or jsonb_array_length(payload->'acceptanceCriteria') not between 1 and 8
     or jsonb_array_length(payload->'evidenceReferences') not between 1 and 8
     or exists (select 1 from jsonb_array_elements(payload->'acceptanceCriteria') criterion
-      where jsonb_typeof(criterion) <> 'string' or length(criterion #>> '{}') not between 1 and 400
-        or length(btrim(criterion #>> '{}')) = 0 or criterion #>> '{}' ~ '[[:cntrl:]]')
+      where jsonb_typeof(criterion) <> 'string' or not internal.is_canonical_factory_triage_text(criterion #>> '{}', 400))
     or exists (select 1 from jsonb_array_elements(payload->'evidenceReferences') reference
       where jsonb_typeof(reference) <> 'string' or length(reference #>> '{}') > 300
         or reference #>> '{}' collate "C" !~ '^[a-zA-Z0-9./:_@-]+$')
@@ -382,6 +389,7 @@ end;
 $$;
 
 revoke all on function internal.escape_triage_scope_markdown(text),
+  internal.is_canonical_factory_triage_text(text,integer),
   internal.decode_factory_workflow_triage_scope(text,jsonb),
   internal.observe_factory_workflow_accepted_scope(internal.factory_workflow_triage_bindings,uuid,uuid),
   internal.assert_factory_workflow_accepted_scope_enrollment(internal.factory_workflow_triage_bindings,uuid,text,uuid),
@@ -392,6 +400,19 @@ grant execute on function public.bind_factory_workflow_triage(uuid,uuid,uuid,uui
   public.record_factory_workflow_accepted_scope(uuid,uuid,uuid,uuid,text,uuid,uuid) to service_role;
 
 -- Check exact scope at graph enrollment
+create function internal.factory_workflow_has_validation_evidence(p_requirements jsonb)
+returns boolean language sql immutable strict set search_path = '' as $$
+  select case when jsonb_typeof(p_requirements->'requiredEvidence') = 'array' then
+    jsonb_array_length(p_requirements->'requiredEvidence') > 0 and not exists (
+      select 1 from jsonb_array_elements(p_requirements->'requiredEvidence') evidence(key)
+      where jsonb_typeof(evidence.key) <> 'string'
+        or evidence.key #>> '{}' collate "C" !~
+          '^([A-Za-z0-9][A-Za-z0-9._/-]{0,199}|browser:(screenshot|video):[A-Za-z0-9][A-Za-z0-9._-]{0,99})$'
+    ) else false end
+$$;
+revoke all on function internal.factory_workflow_has_validation_evidence(jsonb)
+  from public, anon, authenticated, service_role;
+
 create or replace function public.start_factory_workflow_graph_execution(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_graph_revision_id uuid,
   p_input_run_id uuid default null
@@ -487,12 +508,7 @@ begin
       join public.delivery_policy_revisions policy
         on (policy.id, policy.workspace_id, policy.pipeline_id) =
           (session.pinned_delivery_policy_revision_id, session.workspace_id, session.pipeline_id)
-      where session.id = p_root_session_id and jsonb_array_length(policy.requirements->'requiredEvidence') > 0
-        and not exists (
-          select 1 from jsonb_array_elements_text(policy.requirements->'requiredEvidence') evidence(key)
-          where evidence.key collate "C" !~
-            '^([A-Za-z0-9][A-Za-z0-9._/-]{0,199}|browser:(screenshot|video):[A-Za-z0-9][A-Za-z0-9._-]{0,99})$'
-        )
+      where session.id = p_root_session_id and internal.factory_workflow_has_validation_evidence(policy.requirements)
     ) then
     raise exception 'The graph requires a pinned delivery policy with valid required evidence.' using errcode = 'PT422';
   end if;
@@ -701,6 +717,15 @@ begin
   if array(select distinct id from jsonb_array_elements_text(gate->'approverMemberIds') member(id) order by id)
     is distinct from array(select distinct id from jsonb_array_elements_text(stage->'approverMemberIds') member(id) order by id) then
     raise exception 'The configured triage stage requires a named agent and matching graph entry gate.' using errcode = 'PT422';
+  end if;
+  if exists (select 1 from jsonb_array_elements(plan->'nodes') node where node->>'operation' = 'validation')
+    and not exists (
+      select 1 from public.delivery_policy_revisions policy
+      where (policy.id::text, policy.workspace_id, policy.pipeline_id::text) =
+        (definition->>'deliveryPolicyRevisionId', p_workspace_id, definition->>'pipelineId')
+        and internal.factory_workflow_has_validation_evidence(policy.requirements)
+    ) then
+    raise exception 'The graph requires a pinned delivery policy with valid required evidence.' using errcode = 'PT422';
   end if;
 
   insert into internal.factory_workflow_triage_configurations (

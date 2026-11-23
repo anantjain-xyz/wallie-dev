@@ -18,6 +18,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { signInViaMagicLink } from "./helpers/auth";
 import {
   acceptanceCriterion,
+  literalAcceptanceCriterion,
   acceptedScopeArtifact,
   childTask,
   childTitle,
@@ -714,6 +715,7 @@ ${revision}`,
     if (fixture.triageGraph) {
       const brief = specification.getByRole("tabpanel", { name: "Review brief", exact: true });
       await expect(brief.getByText(acceptanceCriterion)).toBeVisible();
+      await expect(brief.getByText(literalAcceptanceCriterion, { exact: true })).toBeVisible();
       await expect(brief.getByText(/wallie-accepted-scope/)).toHaveCount(0);
       await page.screenshot({
         path: testInfo.outputPath("04-approved-scope-review-brief.png"),
@@ -912,6 +914,7 @@ ${scope.body}`;
       await page.goto(workspaceSessionDetailPath(slug, childSession.number));
       await expect(page.getByRole("heading", { name: childTitle, exact: true })).toBeVisible();
       await expect(page.getByText(acceptanceCriterion, { exact: true })).toBeVisible();
+      await expect(page.getByText(literalAcceptanceCriterion, { exact: true })).toBeVisible();
       await page.screenshot({
         path: testInfo.outputPath("10-delegated-approved-scope-desktop.png"),
         fullPage: true,

@@ -9,6 +9,29 @@ select is(internal.decode_factory_workflow_triage_scope(
     'UTF8'), 'base64'), E'+/\n', '-_'), '=') || E' -->\n## Scope\nScope\n\n## Acceptance criteria\n- Criterion\n\n## Evidence\n- `required:session/prompt`',
   '{"required":[{"key":"session/prompt"}]}'), null::jsonb,
   'an artifact with noncanonical metadata cannot produce an unusable accepted-scope receipt');
+
+create function pg_temp.op649_scope_artifact(p_scope text, p_criterion text, p_criterion_md text default null)
+returns text language sql immutable as $$
+  select '<!-- wallie-accepted-scope: ' || rtrim(translate(encode(convert_to(format(
+    '{"acceptanceCriteria":[%s],"evidenceReferences":["required:session/prompt"],"scope":%s,"version":1}',
+    to_json(p_criterion)::text, to_json(p_scope)::text),
+    'UTF8'), 'base64'), E'+/\n', '-_'), '=') || E' -->\n## Scope\n' || p_scope
+    || E'\n\n## Acceptance criteria\n- ' || coalesce(p_criterion_md, p_criterion)
+    || E'\n\n## Evidence\n- `required:session/prompt`'
+$$;
+
+select is(internal.decode_factory_workflow_triage_scope(
+  pg_temp.op649_scope_artifact('Scope', 'Write &copy; into the fixture.', 'Write \&copy; into the fixture.'),
+  '{"required":[{"key":"session/prompt"}]}')->'acceptanceCriteria',
+  '["Write &copy; into the fixture."]'::jsonb,
+  'literal entities remain unchanged in accepted data and escaped in the visible artifact');
+select is(internal.decode_factory_workflow_triage_scope(
+  pg_temp.op649_scope_artifact('Scope', U&'Criterion\00A0'),
+  '{"required":[{"key":"session/prompt"}]}'), null::jsonb,
+  'the native decoder rejects whitespace that the worker removes from an acceptance criterion');
+select ok(internal.is_canonical_factory_triage_text(repeat(U&'\+01F600',200),400)
+  and not internal.is_canonical_factory_triage_text(repeat(U&'\+01F600',201),400),
+  'native scope validation counts supplemental characters as two worker text units');
 set local request.jwt.claim.role = 'service_role';
 
 create function pg_temp.spec_id(slot integer) returns uuid language sql immutable as $$
@@ -97,13 +120,15 @@ create temp table delivery_spec as select * from pg_temp.spec_create(100);
 select is((select specification_stage_id from public.sessions where id=(select session_id from delivery_spec)), pg_temp.spec_id(11),
   'the first admitted stage is pinned for a delivery-capable definition');
 select pg_temp.spec_activate(4, true, pg_temp.spec_id(30), single_stage=>true);
-create function pg_temp.configure_op649_graph(p_edge_id text, p_expected_version bigint)
+create function pg_temp.configure_op649_graph(p_edge_id text, p_expected_version bigint,
+  p_operation text default 'policy', p_activation bigint default null)
 returns table(graph_revision_id uuid, workflow_digest text, configuration_version bigint, created boolean) language sql as $$
   with active as (
     select pin.workspace_id, pin.factory_id, revision.id, revision.canonical_digest,
       revision.definition_json::jsonb#>>'{implementationAgent,promptRevisionId}' as prompt_revision_id
     from public.factory_definition_activations pin join public.factory_definition_revisions revision on revision.id = pin.revision_id
     where (pin.workspace_id, pin.factory_id) = (pg_temp.spec_id(2), pg_temp.spec_factory())
+      and (p_activation is null or pin.activation_number = p_activation)
     order by pin.activation_number desc limit 1
   ), graph as (
     select active.*, jsonb_build_object(
@@ -111,7 +136,7 @@ returns table(graph_revision_id uuid, workflow_digest text, configuration_versio
       'nodes',jsonb_build_array(
         jsonb_build_object('id','scope.approved','kind','human-gate','anyoneCanApprove',true,'approverMemberIds','[]'::jsonb),
         jsonb_build_object('id','route.choose','kind','route','agentPromptRevisionId',active.prompt_revision_id),
-        jsonb_build_object('id','policy.check','kind','deterministic','operation','policy')),
+        jsonb_build_object('id','policy.check','kind','deterministic','operation',p_operation)),
       'edges',jsonb_build_array(
         jsonb_build_object('id',p_edge_id,'kind','next','from','scope.approved','to','route.choose'),
         jsonb_build_object('id','route.policy','kind','route','from','route.choose','to','policy.check')),
@@ -127,6 +152,13 @@ returns table(graph_revision_id uuid, workflow_digest text, configuration_versio
   cross join lateral public.configure_factory_workflow_triage(graph.workspace_id,graph.factory_id,pg_temp.spec_id(1),
     graph.id,registered.graph_revision_id,bytes.digest,pg_temp.spec_id(11),p_expected_version) configured;
 $$;
+
+select throws_ok($q$select * from pg_temp.configure_op649_graph('scope.validate', 0, 'validation')$q$,
+  'PT422', 'The graph requires a pinned delivery policy with valid required evidence.',
+  'configuration rejects a validation graph with no pinned delivery policy before intake');
+select throws_ok($q$select * from pg_temp.configure_op649_graph('scope.validate', 0, 'validation', 3)$q$,
+  'PT422', 'The graph requires a pinned delivery policy with valid required evidence.',
+  'configuration also rejects a pinned policy without required evidence');
 
 create temp table op649_configured_first as select * from pg_temp.configure_op649_graph('scope.continue', 0);
 select ok((select created and configuration_version = 1 from op649_configured_first),
@@ -391,6 +423,22 @@ select ok((select phase_status = 'awaiting_review' and archived_at is null from 
   'invalid final scope remains available for the normal review revision flow');
 select is((select count(*) from internal.factory_workflow_accepted_scopes scope join op649_unsupported direct using (session_id)),
   0::bigint, 'an ineligible final scope leaves no partial workflow receipt');
+
+create temp table op649_padded as select * from pg_temp.spec_create(704,true,array[pg_temp.spec_id(11)]);
+insert into spec_targets select 'padded-scope',session_id from op649_padded;
+create temp table op649_padded_run as select pg_temp.spec_start('padded-scope') as id;
+select pg_temp.freeze_op649_context(id) from op649_padded_run;
+select ok(pg_temp.spec_publish(id, pg_temp.op649_scope_artifact(' Produce the CSV.', 'Include dates.')),
+  'the publisher can retain a padded draft for review') from op649_padded_run;
+select throws_ok($q$select approved.id from op649_padded direct join public.sessions owner on owner.id = direct.session_id
+  cross join lateral public.approve_session_stage(owner.id,owner.workspace_id,owner.current_stage_id,
+    owner.current_artifact_id,owner.current_artifact_version,
+    pg_temp.spec_id(3),'codex','gpt-5.5','code',owner.artifact_review_revision) approved$q$,
+  'PT422', 'Triage scope requires reviewed criteria and exact retained evidence.',
+  'approval cannot freeze a padded scope the delegated reader would reject');
+select is((select count(*) from internal.factory_workflow_accepted_scopes scope join op649_padded direct using (session_id)),
+  0::bigint, 'the rejected padded approval leaves no accepted scope');
+
 create temp table op649_principal as select * from public.create_service_principal(
   pg_temp.spec_id(2), pg_temp.spec_factory(), pg_temp.spec_id(1), 'Configured triage intake', 'configured-triage-intake');
 create temp table op649_machine_grant as
@@ -585,6 +633,9 @@ select ok((select assigned.result->>'status' = 'accepted' and marker.accepted_sc
   'the native assignment freezes the approved scope separately from its short task prompt');
 select ok(public.finish_factory_workflow_accepted_triage_route(root_session_id,workspace_id,factory_id,occurrence_id,
   execution_generation,ownership_token,true), 'the exact current maintenance lease settles after assignment') from op649_assignment_lease;
+select ok((select finished_at is not null and lease_token is null from internal.factory_workflow_triage_route_dispatches),
+  'successful assignment marks its dispatch finished and releases the lease');
+update internal.factory_workflow_triage_route_dispatches set due_at = clock_timestamp() - interval '1 second';
 select is((select count(*) from public.claim_factory_workflow_accepted_triage_route(pg_temp.spec_id(903))),0::bigint,
   'the next maintenance pass does not replay a completed dispatch');
 

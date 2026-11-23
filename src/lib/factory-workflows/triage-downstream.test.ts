@@ -24,12 +24,14 @@ const occurrence = {
   occurrence_id: id(4),
 };
 
-function stubAdmin(handle: (rpc: string, args: Record<string, unknown>) => unknown) {
+function stubAdmin(
+  handle: (rpc: string, args: Record<string, unknown>, signal?: AbortSignal) => unknown,
+) {
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const name = url.pathname.split("/").at(-1) ?? "";
     const args: Record<string, unknown> = JSON.parse(String(init?.body ?? "{}"));
-    return Response.json(handle(name, args));
+    return Response.json(handle(name, args, init?.signal ?? undefined));
   });
   return createClient<Database>("https://factory.example.test", "fixture-service-key", {
     global: { fetch },
@@ -44,7 +46,9 @@ describe("accepted triage route maintenance", () => {
     });
     const tokens: unknown[] = [];
     const finished: Record<string, unknown>[] = [];
-    const admin = stubAdmin((name, args) => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const admin = stubAdmin((name, args, signal) => {
+      signals.push(signal);
       if (name === "claim_factory_workflow_accepted_triage_route") {
         tokens.push(args.p_candidate_token);
         if (tokens.length === 1) throw new Error("Response lost after lease");
@@ -56,6 +60,12 @@ describe("accepted triage route maintenance", () => {
 
     await drainAcceptedTriageRoute(admin);
     expect(tokens).toEqual([tokens[0], tokens[0]]);
+    expect(signals).toEqual([
+      expect.any(AbortSignal),
+      expect.any(AbortSignal),
+      expect.any(AbortSignal),
+    ]);
+    expect(new Set(signals).size).toBe(3);
     const pin = {
       p_root_session_id: occurrence.root_session_id,
       p_workspace_id: occurrence.workspace_id,
