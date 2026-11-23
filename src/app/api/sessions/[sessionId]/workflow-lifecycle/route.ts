@@ -67,10 +67,13 @@ export async function GET(_request: Request, params: Params) {
   if (!parsed.success)
     return NextResponse.json({ error: "Workflow graph not found." }, { status: 404 });
 
-  return NextResponse.json({
-    generation: parsed.data.execution.generation,
-    status: parsed.data.execution.lifecycle_status,
-  });
+  return NextResponse.json(
+    {
+      generation: parsed.data.execution.generation,
+      status: parsed.data.execution.lifecycle_status,
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }
 
 export async function POST(request: Request, params: Params) {
@@ -102,7 +105,10 @@ export async function POST(request: Request, params: Params) {
     case undefined:
       return NextResponse.json(data);
     case "42501":
-      return NextResponse.json({ error: "Factory manager access is required." }, { status: 403 });
+      return NextResponse.json(
+        { error: "Workflow access or execution authority is unavailable." },
+        { status: 403 },
+      );
     case "P0002":
     case "PT404":
       return NextResponse.json({ error: "Workflow graph not found." }, { status: 404 });

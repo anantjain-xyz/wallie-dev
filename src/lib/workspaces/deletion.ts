@@ -3,7 +3,6 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { findSandboxAcquisition, stopSandboxById } from "@/lib/sandbox";
-import { recordSandboxCleanupReceipt } from "@/lib/sandbox-connections/cleanup-receipts";
 import { loadWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import type { SandboxProvider } from "@/lib/sandbox/types";
 import type { Database } from "@/lib/supabase/database.types";
@@ -94,12 +93,12 @@ async function cleanupResourceReservations(
             throwOnError: true,
           });
           if (connection && operation.connection_revision) {
-            await recordSandboxCleanupReceipt(admin, {
-              workspaceId,
-              provider: connection.connection.provider,
-              connectionRevision: operation.connection_revision,
-              sandboxId,
+            const { data, error } = await admin.rpc("record_workspace_sandbox_acquisition_stop", {
+              p_operation_id: operation.id,
+              p_sandbox_id: sandboxId,
             });
+            if (error) throw error;
+            if (!data) throw new Error("Could not record cleanup receipt.");
           }
         }
         if (connection && operation.connection_revision) {

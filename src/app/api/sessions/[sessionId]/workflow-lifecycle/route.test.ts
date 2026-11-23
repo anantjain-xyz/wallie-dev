@@ -50,6 +50,7 @@ it("returns the current generation and state through the session's RLS scope", a
   });
   const response = await GET(new Request(endpoint), params);
   expect(response.status).toBe(200);
+  expect(response.headers.get("Cache-Control")).toBe("private, no-store");
   expect(await response.json()).toEqual({ generation: 3, status: "paused" });
   expect(rpc).toHaveBeenCalledWith("read_factory_workflow_execution", scope);
 });
@@ -88,4 +89,16 @@ it.each([
 ])("reports a native %s denial", async (code, status) => {
   rpc.mockResolvedValue({ data: null, error: { code } });
   expect((await POST(action(), params)).status).toBe(status);
+});
+
+it("reports unavailable execution authority without exposing database details", async () => {
+  rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Revoked grant 42" } });
+  const response = await POST(
+    action({ requestId, expectedGeneration: 3, action: "resume" }),
+    params,
+  );
+  expect(response.status).toBe(403);
+  expect(await response.json()).toEqual({
+    error: "Workflow access or execution authority is unavailable.",
+  });
 });

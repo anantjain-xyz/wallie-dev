@@ -485,6 +485,11 @@ begin
         where waiting.workspace_id = candidate.workspace_id and waiting.status = 'queued'
           and (waiting.scheduled_at is null or waiting.scheduled_at <= now())
           and owner.execution_purpose = 'production'
+          and not exists (
+            select 1 from internal.factory_workflow_executions parked
+            where parked.root_session_id = internal.find_factory_workflow_lifecycle_root(owner.id)
+              and parked.lifecycle_status <> 'running'
+          )
           and (owner.pipeline_id is null or (release_state.enabled
             and exists (select 1 from public.session_git_continuity_enrollments enrolled
               where (enrolled.workspace_id, enrolled.session_id) = (owner.workspace_id, owner.id))))
@@ -616,10 +621,10 @@ create table internal.factory_workflow_sandbox_acquisitions (
   sandbox_connection_revision uuid not null,
   recovery_after timestamptz not null,
   lookup_completed_at timestamptz,
-  stopped_sandbox_ids text[],
+  stopped_sandbox_ids text[] not null default '{}',
   foreign key (root_session_id, workspace_id, factory_id)
     references public.sessions(id, workspace_id, factory_id) on delete cascade,
-  check ((lookup_completed_at is null) = (stopped_sandbox_ids is null))
+  check (cardinality(stopped_sandbox_ids) <= 100)
 );
 alter table internal.factory_workflow_sandbox_acquisitions enable row level security;
 revoke all on table internal.factory_workflow_sandbox_acquisitions from public, anon, authenticated, service_role;
@@ -763,6 +768,54 @@ revoke all on function internal.enqueue_factory_workflow_sandbox_stops()
 create trigger enqueue_factory_workflow_sandbox_stops after insert on internal.factory_workflow_lifecycle_commands
   for each row execute function internal.enqueue_factory_workflow_sandbox_stops();
 
+-- Commit the exact acquisition proof alongside the reusable cleanup receipt.
+-- The provider may omit a sandbox from subsequent listings after it stops.
+create function public.record_workspace_sandbox_acquisition_stop(
+  p_operation_id uuid, p_sandbox_id text
+) returns boolean language plpgsql security definer set search_path = '' as $$
+declare
+  operation public.workspace_resource_operations;
+  acquisition internal.factory_workflow_sandbox_acquisitions;
+  target_workspace_id uuid;
+begin
+  perform internal.assert_checkpoint_publication_service();
+  if p_operation_id is null or p_sandbox_id is null
+    or char_length(p_sandbox_id) not between 1 and 256 or p_sandbox_id like 'provisioning:%'
+    then return false; end if;
+
+  select reservation.workspace_id into target_workspace_id from public.workspace_resource_operations reservation
+  where reservation.id = p_operation_id;
+  if found then
+    perform 1 from public.workspaces workspace where workspace.id = target_workspace_id for share;
+    select reservation.* into operation from public.workspace_resource_operations reservation
+    where (reservation.id, reservation.workspace_id) = (p_operation_id, target_workspace_id) for update;
+  end if;
+  select linked.* into acquisition from internal.factory_workflow_sandbox_acquisitions linked
+  where linked.operation_id = p_operation_id for update;
+  if operation.id is null then
+    return acquisition.operation_id is null or p_sandbox_id = any(acquisition.stopped_sandbox_ids);
+  end if;
+  if operation.kind <> 'sandbox' or operation.provider not in ('vercel', 'e2b', 'daytona')
+    or operation.connection_revision is null or (operation.resource_id is not null and operation.resource_id <> p_sandbox_id)
+    then return false; end if;
+  if acquisition.operation_id is not null and
+    (operation.workspace_id, operation.provider, operation.connection_revision) is distinct from
+    (acquisition.workspace_id, acquisition.sandbox_provider, acquisition.sandbox_connection_revision)
+    then return false; end if;
+
+  if acquisition.operation_id is not null and p_sandbox_id <> all(acquisition.stopped_sandbox_ids) then
+    if cardinality(acquisition.stopped_sandbox_ids) >= 100 then return false; end if;
+    update internal.factory_workflow_sandbox_acquisitions
+    set stopped_sandbox_ids = array_append(stopped_sandbox_ids, p_sandbox_id), lookup_completed_at = null
+    where operation_id = p_operation_id;
+  end if;
+  insert into public.workspace_sandbox_cleanup_receipts(workspace_id, provider, connection_revision, sandbox_id)
+  values (operation.workspace_id, operation.provider, operation.connection_revision, p_sandbox_id)
+  on conflict on constraint workspace_sandbox_cleanup_receipts_pkey do nothing;
+  return true;
+end;
+$$;
+
 create function public.settle_factory_workflow_sandbox_acquisition(
   p_operation_id uuid, p_stopped_sandbox_ids text[]
 ) returns boolean language plpgsql security definer set search_path = '' as $$
@@ -791,7 +844,7 @@ begin
   where linked.operation_id = p_operation_id for update;
   if not found then return true; end if;
   if operation.id is null then
-    return coalesce(p_stopped_sandbox_ids <@ acquisition.stopped_sandbox_ids, false);
+    return acquisition.lookup_completed_at is not null and p_stopped_sandbox_ids <@ acquisition.stopped_sandbox_ids;
   end if;
   if (operation.workspace_id, operation.kind, operation.provider, operation.connection_revision)
     is distinct from (acquisition.workspace_id, 'sandbox', acquisition.sandbox_provider, acquisition.sandbox_connection_revision)
@@ -937,11 +990,13 @@ end;
 $$;
 revoke all on function public.record_late_factory_workflow_sandbox(uuid, integer, text, text, uuid, text, text),
   public.register_factory_workflow_sandbox_acquisition(uuid, integer, uuid),
+  public.record_workspace_sandbox_acquisition_stop(uuid, text),
   public.settle_factory_workflow_sandbox_acquisition(uuid, text[]),
   public.claim_factory_workflow_sandbox_stops(integer), public.settle_factory_workflow_sandbox_stop(uuid, uuid, boolean)
   from public, anon, authenticated, service_role;
 grant execute on function public.record_late_factory_workflow_sandbox(uuid, integer, text, text, uuid, text, text),
   public.register_factory_workflow_sandbox_acquisition(uuid, integer, uuid),
+  public.record_workspace_sandbox_acquisition_stop(uuid, text),
   public.settle_factory_workflow_sandbox_acquisition(uuid, text[]),
   public.claim_factory_workflow_sandbox_stops(integer), public.settle_factory_workflow_sandbox_stop(uuid, uuid, boolean)
   to service_role;

@@ -28,6 +28,10 @@ create function pg_temp.settle_acquisition(p_scenario text, p_sandbox_ids text[]
   select public.settle_factory_workflow_sandbox_acquisition(operation_id,p_sandbox_ids)
   from acquisition_runs where scenario = p_scenario
 $$;
+create function pg_temp.acknowledge_acquisition_stop(p_scenario text, p_sandbox_id text) returns boolean language sql as $$
+  select public.record_workspace_sandbox_acquisition_stop(operation_id, p_sandbox_id)
+  from acquisition_runs where scenario = p_scenario
+$$;
 create function pg_temp.cancel_acquisition_workflow(p_scenario text) returns jsonb language sql as $$
   select public.control_factory_workflow_lifecycle(root_session_id,workspace_id,factory_id,1,gen_random_uuid(),'cancel')
   from acquisition_runs where scenario = p_scenario
@@ -77,14 +81,25 @@ insert into public.workspace_sandbox_cleanup_receipts(workspace_id,provider,conn
 select workspace_id,'e2b',connection_revision,'unrelated-sandbox' from acquisition_runs where scenario = 'running-child';
 select is(pg_temp.settle_acquisition('running-child',array['recovered-sandbox']), false,
   'a receipt under the same credential cannot confirm a different handle');
-insert into public.workspace_sandbox_cleanup_receipts(workspace_id,provider,connection_revision,sandbox_id)
-select workspace_id,'e2b',connection_revision,'recovered-sandbox' from acquisition_runs where scenario = 'running-child';
-select is(pg_temp.settle_acquisition('running-child',array['recovered-sandbox']), true,
-  'restart can settle the unknown acquisition after strictly stopping the discovered handle');
+select is(pg_temp.acknowledge_acquisition_stop('running-child','recovered-sandbox'), true,
+  'one provider stop commits before the cleaner can lose its operation reply');
+select ok((select acquisition.stopped_sandbox_ids = array['recovered-sandbox']
+  and acquisition.lookup_completed_at is null and receipt.sandbox_id = 'recovered-sandbox'
+  from acquisition_runs candidate
+  join internal.factory_workflow_sandbox_acquisitions acquisition on acquisition.operation_id = candidate.operation_id
+  join public.workspace_sandbox_cleanup_receipts receipt on
+    (receipt.workspace_id, receipt.provider, receipt.connection_revision, receipt.sandbox_id) =
+    (candidate.workspace_id, 'e2b', candidate.connection_revision, 'recovered-sandbox')
+  where candidate.scenario = 'running-child'),
+  'partial cleanup atomically retains its provider receipt and exact acquisition link');
+select is(pg_temp.acknowledge_acquisition_stop('running-child','another-sandbox'), true,
+  'a second discovered handle has an independent provider acknowledgement');
+select is(pg_temp.settle_acquisition('running-child','{}'::text[]), true,
+  'restart settles the exact known stops even when the provider listing omits them');
 delete from public.workspace_resource_operations where id = (
   select operation_id from acquisition_runs where scenario = 'running-child'
 );
-select ok((select acquisition.stopped_sandbox_ids = array['recovered-sandbox']
+select ok((select acquisition.stopped_sandbox_ids = array['another-sandbox','recovered-sandbox']
   and acquisition.lookup_completed_at is not null
   and stop.confirmed_at is not null and stop.lookup_expired_at is null
   and run.status = 'canceled' and run.sandbox_id is null
@@ -102,8 +117,10 @@ select is((select public.record_workspace_resource_operation(operation_id,'known
   'the workspace reservation retains a published handle after the original worker disappears');
 select is(pg_temp.settle_acquisition('queued-child','{}'::text[]), false,
   'an empty lookup cannot settle an already known provider handle');
-insert into public.workspace_sandbox_cleanup_receipts(workspace_id,provider,connection_revision,sandbox_id)
-select workspace_id,'e2b',connection_revision,'known-before-retirement' from acquisition_runs where scenario = 'queued-child';
+select is(pg_temp.acknowledge_acquisition_stop('queued-child','other-handle'), false,
+  'a published handle cannot authorize a receipt for a different sandbox');
+select is(pg_temp.acknowledge_acquisition_stop('queued-child','known-before-retirement'), true,
+  'the exact published handle gets its own positive receipt');
 select is(pg_temp.settle_acquisition('queued-child',array['known-before-retirement']), true,
   'the exact known handle can be confirmed before the workflow retires the attempt');
 delete from public.workspace_resource_operations where id = (
@@ -160,11 +177,13 @@ select ok((select stop.lookup_expired_at is not null and stop.confirmed_at is nu
   where candidate.scenario = 'budget-root'),
   'expiry reports completion without inventing a handle or a provider stop confirmation');
 select is((select count(*) from public.workspace_sandbox_cleanup_receipts
-  where workspace_id = pg_temp.workflow_fixture_id(11)),3::bigint,
+  where workspace_id = pg_temp.workflow_fixture_id(11)),4::bigint,
   'empty expiry never inserts a reusable cleanup receipt');
 
 select ok(not has_function_privilege('authenticated',
   'public.register_factory_workflow_sandbox_acquisition(uuid,integer,uuid)', 'execute')
+  and not has_function_privilege('authenticated',
+  'public.record_workspace_sandbox_acquisition_stop(uuid,text)', 'execute')
   and not has_function_privilege('authenticated',
   'public.settle_factory_workflow_sandbox_acquisition(uuid,text[])', 'execute')
   and not has_table_privilege('service_role', 'internal.factory_workflow_sandbox_acquisitions', 'select'),

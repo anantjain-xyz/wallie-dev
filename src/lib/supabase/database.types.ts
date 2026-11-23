@@ -15159,6 +15159,10 @@ export type Database = {
         Args: { p_operation_id: string; p_resource_id: string }
         Returns: boolean
       }
+      record_workspace_sandbox_acquisition_stop: {
+        Args: { p_operation_id: string; p_sandbox_id: string }
+        Returns: boolean
+      }
       register_factory_context_source: {
         Args: {
           p_actor_user_id: string

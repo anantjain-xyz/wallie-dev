@@ -192,18 +192,39 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
     };
     return query;
   };
-  const rpc = vi.fn(async (name: string) => {
-    if (name === "settle_factory_workflow_sandbox_acquisition")
-      return { data: !state.acquisitionSettlementFailure, error: null };
-    if (name !== "finish_workspace_deletion") throw new Error(`Unexpected RPC ${name}`);
-    const blocked =
-      state.operations.length > 0 ||
-      [...state.objects.values()].some((paths) =>
-        [...paths].some((path) => path.startsWith(`${workspaceId}/`)),
-      );
-    if (!blocked) state.exists = false;
-    return { data: !blocked, error: null };
-  });
+  const rpc = vi.fn(
+    async (name: string, args?: { p_operation_id?: string; p_sandbox_id?: string }) => {
+      if (name === "record_workspace_sandbox_acquisition_stop") {
+        if (state.cleanupReceiptFailure)
+          return { data: null, error: new Error("Could not record cleanup receipt") };
+        const operation = state.operations.find(
+          (candidate) => candidate.id === args?.p_operation_id,
+        );
+        if (!operation?.provider || !operation.connection_revision || !args?.p_sandbox_id)
+          return { data: false, error: null };
+        if (!state.cleanupReceipts.some((receipt) => receipt.sandbox_id === args.p_sandbox_id)) {
+          state.cleanupReceipts.push({
+            workspace_id: operation.workspace_id,
+            provider: operation.provider,
+            connection_revision: operation.connection_revision,
+            sandbox_id: args.p_sandbox_id,
+            confirmed_at: "2026-10-10T00:00:00Z",
+          });
+        }
+        return { data: true, error: null };
+      }
+      if (name === "settle_factory_workflow_sandbox_acquisition")
+        return { data: !state.acquisitionSettlementFailure, error: null };
+      if (name !== "finish_workspace_deletion") throw new Error(`Unexpected RPC ${name}`);
+      const blocked =
+        state.operations.length > 0 ||
+        [...state.objects.values()].some((paths) =>
+          [...paths].some((path) => path.startsWith(`${workspaceId}/`)),
+        );
+      if (!blocked) state.exists = false;
+      return { data: !blocked, error: null };
+    },
+  );
   return { admin: { from, rpc, storage } as never, lists, removals, rpc, state };
 }
 
@@ -305,6 +326,10 @@ describe("durable workspace deletion", () => {
         confirmed_at: "2026-10-10T00:00:00Z",
       },
     ]);
+    expect(f.rpc).toHaveBeenCalledWith("record_workspace_sandbox_acquisition_stop", {
+      p_operation_id: "operation-1",
+      p_sandbox_id: "recovered-sandbox",
+    });
     expect(f.rpc).toHaveBeenCalledWith("settle_factory_workflow_sandbox_acquisition", {
       p_operation_id: "operation-1",
       p_stopped_sandbox_ids: ["recovered-sandbox"],
