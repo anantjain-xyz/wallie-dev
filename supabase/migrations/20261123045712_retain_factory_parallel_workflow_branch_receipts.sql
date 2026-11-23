@@ -705,10 +705,10 @@ begin
     ) then
     raise exception 'The graph requires a pinned delivery policy with valid required evidence.' using errcode = 'PT422';
   end if;
-  if p_input_run_id is null and exists (
+  if p_input_run_id is null and (has_branches or exists (
     select 1 from jsonb_array_elements(plan->'nodes') node
     where node->>'kind' = 'human-gate' or node->>'operation' in ('validation', 'checkpoint')
-  ) then
+  )) then
     raise exception 'The graph requires a scoped checkpoint input run.' using errcode = 'PT422';
   end if;
   select node into strict entry from jsonb_array_elements(plan->'nodes') node where node->>'id' = plan->>'entryNodeId';
@@ -914,6 +914,7 @@ begin
     where (binding.session_id, binding.workspace_id, binding.factory_id) =
       (p_root_session_id, p_workspace_id, p_factory_id)
   ) then
+    title := 'Branch ' || slot.target_node_id;
     select saved.scope->>'scope' into prompt from internal.factory_workflow_accepted_scopes saved
     where (saved.session_id, saved.workspace_id, saved.factory_id, saved.graph_revision_id, saved.workflow_digest, saved.run_id) =
       (p_root_session_id, p_workspace_id, p_factory_id, execution.graph_revision_id, execution.workflow_digest,

@@ -32,7 +32,7 @@ select graph.*, created.session_id, created.job_id
 from triage_branch_graph graph
 join public.factory_definition_revisions revision on revision.id = graph.definition_revision_id
 cross join lateral public.create_session_command_once(graph.workspace_id, pg_temp.op651_id(21),
-  pg_temp.op651_id(901), repeat('c', 64), revision.canonical_digest, 'Prepare the launch',
+  pg_temp.op651_id(901), repeat('c', 64), revision.canonical_digest, 'Invite contractors',
   'Invite contractors in the first wave.', 'codex', 'gpt-5.5', '{}',
   selected_stage_ids => array[pg_temp.op651_id(32)], target_factory_id => graph.factory_id,
   draft_specification => true) created;
@@ -92,9 +92,13 @@ join triage_branch_run root on root.session_id = marker.root_session_id;
 select is((select count(*) from triage_branch_children), 2::bigint, 'both configured siblings are admitted');
 select ok((select bool_and(child.prompt_md = 'Invite administrators only.'
     and child_pin.original_prompt_md = 'Invite administrators only.'
+    and child.title = 'Branch ' || occurrence.node_id and child_pin.original_title = child.title
+    and parent_pin.original_title = 'Invite contractors'
     and parent_pin.original_prompt_md = 'Invite contractors in the first wave.')
   from triage_branch_children marker
   join public.sessions child on child.id = marker.child_session_id
+  join internal.factory_workflow_node_occurrences occurrence on
+    (occurrence.root_session_id, occurrence.occurrence_id) = (marker.root_session_id, marker.target_occurrence_id)
   join public.session_factory_admission_inputs child_pin on child_pin.session_id = marker.child_session_id
   join public.session_factory_admission_inputs parent_pin on parent_pin.session_id = marker.root_session_id),
   'each branch task uses the approved scope and leaves its contradictory intake intact on the root');

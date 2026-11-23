@@ -121,6 +121,20 @@ select is((select count(*) from internal.factory_workflow_branch_groups manifest
   join branch_owner root on root."sessionId" = manifest.root_session_id where root.scenario = 'paused'),0::bigint,
   'the superseding run creates no manifest or branch child');
 
+create temp table unpinned_branch_root as
+select root.workspace_id, root.factory_id, root.graph_revision_id,
+  (pg_temp.op651_create_service_root(106, 'Branch without checkpoint')->>'sessionId')::uuid as session_id
+from branch_owner root where root.scenario = 'parallel';
+select throws_ok($$
+  select * from unpinned_branch_root root cross join lateral public.start_factory_workflow_graph_execution(
+    root.session_id, root.workspace_id, root.factory_id, root.graph_revision_id
+  )
+$$, 'PT422', 'The graph requires a scoped checkpoint input run.',
+  'entry branch enrollment requires a named checkpoint input');
+select ok(not exists (select 1 from internal.factory_workflow_branch_dispatches dispatch
+  join unpinned_branch_root root on root.session_id = dispatch.root_session_id),
+  'missing source enrollment leaves no indefinitely pending branch dispatch');
+
 select ok(not has_function_privilege('authenticated','public.dispatch_next_factory_workflow_branch()','EXECUTE')
   and not has_function_privilege('authenticated',
     'public.advance_factory_workflow_branch_occurrence(uuid,uuid,uuid,bigint,uuid,uuid)','EXECUTE'),
