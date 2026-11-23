@@ -1053,6 +1053,8 @@ declare
   route_decision uuid;
   target_occurrence uuid;
   prior_route_dest text;
+  target_is_agent boolean;
+  current_parent_checkpoint uuid;
   planned_child jsonb;
   child_id uuid;
   child_job uuid;
@@ -1129,8 +1131,8 @@ begin
     effect := jsonb_build_object('decisionId', route_decision, 'resolution', route_resolution.resolution,
       'transitionId', route_resolution.transition_id, 'targetOccurrenceId', target_occurrence);
   elsif kind = 'delegate' then
-    select prior.decision_id, prior.selected_destination_id, admission.target_occurrence_id
-      into route_decision, prior_route_dest, target_occurrence
+    select prior.decision_id, prior.selected_destination_id, admission.target_occurrence_id, target.node_kind = 'agent'
+      into route_decision, prior_route_dest, target_occurrence, target_is_agent
     from internal.factory_workflow_route_decisions prior
     join internal.factory_workflow_foreman_commands routed
       on (routed.root_session_id, routed.route_occurrence_id, routed.route_decision_id) =
@@ -1138,15 +1140,39 @@ begin
     join internal.factory_workflow_transition_receipts admission
       on (admission.root_session_id, admission.source_occurrence_id, admission.edge_id, admission.edge_kind) =
         (prior.root_session_id, prior.route_occurrence_id, prior.selected_edge_id, prior.selected_edge_kind)
+    join internal.factory_workflow_node_occurrences target
+      on (target.root_session_id, target.occurrence_id) = (admission.root_session_id, admission.target_occurrence_id)
     where (prior.root_session_id, prior.route_occurrence_id) = (p_root_session_id, p_route_occurrence_id)
       and (routed.foreman_run_id, routed.ordinal, routed.target_occurrence_id) =
         (p_foreman_run_id, p_ordinal - 1, admission.target_occurrence_id)
       and routed.command_json->>'kind' = 'route' and routed.receipt_json->>'status' = 'accepted';
-    if not found or prior_route_dest is distinct from command.command_json->>'targetNodeId' then
+    if not found or not target_is_agent or prior_route_dest is distinct from command.command_json->>'targetNodeId' then
       blocked_code := 'no_authorized_target';
     elsif invocation.source_checkpoint_run_id is null then
       blocked_code := 'checkpoint_required';
     else
+      -- The root and parent lineage locks fence fresh child admission. Let the
+      -- existing admission command validate exact replays before applying new
+      -- checkpoint and total-child checks.
+      if not exists (
+        select 1 from internal.factory_workflow_delegations marker
+        where (marker.root_session_id, marker.target_occurrence_id) = (p_root_session_id, target_occurrence)
+      ) then
+        select head.checkpoint_run_id into current_parent_checkpoint
+        from public.session_git_heads head
+        where (head.session_id, head.workspace_id) = (invocation.parent_session_id, p_workspace_id)
+        for share;
+        if found and current_parent_checkpoint <> invocation.source_checkpoint_run_id then
+          blocked_code := 'checkpoint_stale';
+        elsif (select count(*) from internal.factory_workflow_delegations marker
+          where marker.root_session_id = p_root_session_id) >=
+            (execution.workflow_json::jsonb#>>'{delegationPolicy,maxChildren}')::integer then
+          blocked_code := 'child_limit_reached';
+        end if;
+      end if;
+    end if;
+
+    if blocked_code is null then
       begin
         select * into strict child_receipt from public.admit_factory_workflow_delegated_session(
           p_root_session_id, p_workspace_id, p_factory_id, p_expected_generation, p_ownership_token,

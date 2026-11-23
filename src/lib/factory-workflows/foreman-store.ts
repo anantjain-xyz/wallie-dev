@@ -87,6 +87,8 @@ const receiptSchema = z.union([
         "child_unavailable",
         "budget_exhausted",
         "child_admission_denied",
+        "checkpoint_stale",
+        "child_limit_reached",
       ]),
     })
     .strict(),

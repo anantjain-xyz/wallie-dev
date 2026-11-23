@@ -536,91 +536,116 @@ it("blocks definitive issuance and dispatch denials without requesting inference
   expect(bindProvider).not.toHaveBeenCalled();
 });
 
-it("recovers measured usage after a restart when neither settlement write committed", async () => {
-  const { pin, identity, issued, accepted } = fixture();
-  const pending = {
-    ...identity,
-    status: "issued",
-    issuedAt: accepted.issuedAt,
-    issuedGeneration: 7,
-    currentGeneration: 7,
-    usage: { inputTokens: null, outputTokens: null, costUsd: null },
-    commands: [],
-  };
-  const unavailable = {
-    name: settle,
-    data: { code: "XX000", message: "Settlement storage unavailable." },
-    status: 503,
-  };
-  let saved = "";
-  let restarted = false;
-  const objects: typeof fetch = async (_url, init) => {
-    if (init?.method === "POST") {
-      saved = String(init.body);
-      return Response.json({ Key: "encrypted-usage" });
-    }
-    if (init?.method === "DELETE") {
-      saved = "";
-      return Response.json([]);
-    }
-    return restarted && saved
-      ? new Response(saved)
-      : Response.json({ statusCode: "404", message: "Object unavailable." }, { status: 404 });
-  };
-  const invoke = vi.fn().mockResolvedValue({ status: "completed", output: planJson, usage });
-  const bindProvider = vi.fn<typeof createOpenAiForemanProvider>().mockReturnValue(invoke);
-  vi.stubEnv("WALLIE_ENCRYPTION_KEY", environment.WALLIE_ENCRYPTION_KEY);
-  try {
-    const first = adminFixture(
-      [
-        { name: read, data: null },
-        { name: begin, data: issued },
-        unavailable,
-        unavailable,
-        { name: read, data: pending },
-      ],
-      objects,
-    );
-    const firstResult = await executeFactoryWorkflowForeman(first.admin, pin, { bindProvider });
-    expect(firstResult).toMatchObject({ status: "waiting", code: "inference_pending" });
-    expect(saved).not.toBe("");
-    expect(saved).not.toContain(pin.p_ownership_token);
-    expect(saved).not.toContain(planJson);
-    expect(first.replies).toHaveLength(0);
+it.each(["completed", "stalled"])(
+  "recovers measured usage after restarting with %s cleanup",
+  async (cleanup) => {
+    const { pin, identity, issued, accepted } = fixture();
+    const pending = {
+      ...identity,
+      status: "issued",
+      issuedAt: accepted.issuedAt,
+      issuedGeneration: 7,
+      currentGeneration: 7,
+      usage: { inputTokens: null, outputTokens: null, costUsd: null },
+      commands: [],
+    };
+    const unavailable = {
+      name: settle,
+      data: { code: "XX000", message: "Settlement storage unavailable." },
+      status: 503,
+    };
+    let saved = "";
+    let restarted = false;
+    let markCleanupStarted = () => {};
+    const cleanupStarted = new Promise<void>((resolve) => {
+      markCleanupStarted = resolve;
+    });
+    let restoreTimeout = () => {};
+    const objects: typeof fetch = async (_url, init) => {
+      if (init?.method === "POST") {
+        saved = String(init.body);
+        return Response.json({ Key: "encrypted-usage" });
+      }
+      if (init?.method === "DELETE") {
+        markCleanupStarted();
+        if (cleanup === "stalled") return new Promise<Response>(() => {});
+        saved = "";
+        return Response.json([]);
+      }
+      return restarted && saved
+        ? new Response(saved)
+        : Response.json({ statusCode: "404", message: "Object unavailable." }, { status: 404 });
+    };
+    const invoke = vi.fn().mockResolvedValue({ status: "completed", output: planJson, usage });
+    const bindProvider = vi.fn<typeof createOpenAiForemanProvider>().mockReturnValue(invoke);
+    vi.stubEnv("WALLIE_ENCRYPTION_KEY", environment.WALLIE_ENCRYPTION_KEY);
+    try {
+      const first = adminFixture(
+        [
+          { name: read, data: null },
+          { name: begin, data: issued },
+          unavailable,
+          unavailable,
+          { name: read, data: pending },
+        ],
+        objects,
+      );
+      const firstResult = await executeFactoryWorkflowForeman(first.admin, pin, { bindProvider });
+      expect(firstResult).toMatchObject({ status: "waiting", code: "inference_pending" });
+      expect(saved).not.toBe("");
+      expect(saved).not.toContain(pin.p_ownership_token);
+      expect(saved).not.toContain(planJson);
+      expect(first.replies).toHaveLength(0);
 
-    restarted = true;
-    const handedOff = { ...pending, currentGeneration: 8 };
-    const replay = adminFixture(
-      [
-        { name: read, data: handedOff },
-        { name: settle, data: { ...handedOff, usage } },
-      ],
-      objects,
-    );
-    expect(
-      await executeFactoryWorkflowForeman(
+      restarted = true;
+      const handedOff = { ...pending, currentGeneration: 8 };
+      const replay = adminFixture(
+        [
+          { name: read, data: handedOff },
+          { name: settle, data: { ...handedOff, usage } },
+        ],
+        objects,
+      );
+      const deadlines: AbortController[] = [];
+      if (cleanup === "stalled") {
+        const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+          const deadline = new AbortController();
+          deadlines.push(deadline);
+          return deadline.signal;
+        });
+        restoreTimeout = () => timeout.mockRestore();
+      }
+      const recovered = executeFactoryWorkflowForeman(
         replay.admin,
         { ...pin, p_expected_generation: 8, p_ownership_token: id(99) },
         { bindProvider },
-      ),
-    ).toMatchObject({ status: "waiting", usage });
-    expect(replay.calls[1]).toEqual({
-      name: settle,
-      body: {
-        ...readScope,
-        p_expected_generation: 7,
-        p_ownership_token: pin.p_ownership_token,
-        p_issue_id: issued.issueId,
-        p_outcome: { status: "accounting", usage },
-      },
-    });
-    expect(replay.replies).toHaveLength(0);
-    expect(saved).toBe("");
-    expect(invoke).toHaveBeenCalledOnce();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+      );
+      await cleanupStarted;
+      if (cleanup === "stalled") {
+        expect(deadlines).toHaveLength(3);
+        deadlines[2].abort();
+      }
+      expect(await recovered).toMatchObject({ status: "waiting", usage });
+      expect(replay.calls[1]).toEqual({
+        name: settle,
+        body: {
+          ...readScope,
+          p_expected_generation: 7,
+          p_ownership_token: pin.p_ownership_token,
+          p_issue_id: issued.issueId,
+          p_outcome: { status: "accounting", usage },
+        },
+      });
+      expect(replay.replies).toHaveLength(0);
+      if (cleanup === "stalled") expect(saved).not.toBe("");
+      else expect(saved).toBe("");
+      expect(invoke).toHaveBeenCalledOnce();
+    } finally {
+      restoreTimeout();
+      vi.unstubAllEnvs();
+    }
+  },
+);
 
 it("accepts an existing native issuance only as a retained run with receipts", async () => {
   const { pin, accepted } = fixture();

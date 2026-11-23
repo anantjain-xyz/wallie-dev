@@ -234,7 +234,10 @@ function hasMeasuredUsage({ inputTokens, outputTokens, costUsd }: ForemanUsage) 
   return inputTokens !== null || outputTokens !== null || costUsd !== null;
 }
 
-async function observeUntilAbort<T>(work: Promise<T>, signal: AbortSignal) {
+export async function observeUntilAbort<T>(
+  work: Promise<T>,
+  signal: AbortSignal,
+): Promise<T | undefined> {
   let onAbort = () => {};
   const canceled = new Promise<undefined>((resolve) => {
     onAbort = () => resolve(undefined);
@@ -253,6 +256,7 @@ async function settleExactInference(
   pin: WorkflowOccurrencePin,
   permit: ForemanInferencePermit,
   outcome: ForemanInferenceOutcome,
+  callerSignal?: AbortSignal,
 ) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const signal = AbortSignal.timeout(settlementAttemptMs);
@@ -270,12 +274,18 @@ async function settleExactInference(
   }
 
   const fields = accountingFields(outcome);
-  if (!hasMeasuredUsage(fields.usage)) return;
+  if (!store.retainUsage || !hasMeasuredUsage(fields.usage)) return;
+  const deadline = AbortSignal.timeout(settlementAttemptMs);
+  const waitSignal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline;
   try {
-    await store.retainUsage?.(pin, permit.identity.foremanRunId, permit.issueId, {
-      status: "accounting",
-      ...fields,
-    });
+    // Start one best-effort write even when the caller has already interrupted.
+    await observeUntilAbort(
+      store.retainUsage(pin, permit.identity.foremanRunId, permit.issueId, {
+        status: "accounting",
+        ...fields,
+      }),
+      waitSignal,
+    );
   } catch {
     // The original issue retains its conservative hold if the fallback write is unavailable.
   }
@@ -449,17 +459,23 @@ export async function runFactoryWorkflowForeman({
       const { outcome, lateAccounting } = await performInference(permit, invoke, signal);
       if (outcome.status === "accepted" && signal?.aborted) {
         const { usage, providerReceiptId } = outcome;
-        await settleExactInference(store, pin, permit, {
-          status: "blocked",
-          code: "timeout",
-          usage,
-          ...(providerReceiptId ? { providerReceiptId } : {}),
-        });
+        await settleExactInference(
+          store,
+          pin,
+          permit,
+          {
+            status: "blocked",
+            code: "timeout",
+            usage,
+            ...(providerReceiptId ? { providerReceiptId } : {}),
+          },
+          signal,
+        );
       } else {
-        await settleExactInference(store, pin, permit, outcome);
+        await settleExactInference(store, pin, permit, outcome, signal);
       }
       const late = await lateAccounting?.();
-      if (late) await settleExactInference(store, pin, permit, late);
+      if (late) await settleExactInference(store, pin, permit, late, signal);
     }
     run = await store.readRun(pin);
     const updated = readState(pin, run, expectedRunId);

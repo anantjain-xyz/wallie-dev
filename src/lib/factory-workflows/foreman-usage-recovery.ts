@@ -7,12 +7,13 @@ import { decryptSecretValue, encryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database } from "@/lib/supabase/database.types";
 
 import type { WorkflowOccurrencePin } from "./deterministic-command";
-import type { ForemanAccountingOutcome } from "./foreman-runtime";
+import { observeUntilAbort, type ForemanAccountingOutcome } from "./foreman-runtime";
 
 type Admin = SupabaseClient<Database>;
 
 const bucket = "factory-workflow-usage-recovery";
 const recordLimit = 8192;
+const recoveryOperationMs = 2_000;
 const uuid = z.string().uuid();
 const tokens = z.number().int().nonnegative().safe();
 const journal = z.strictObject({
@@ -81,7 +82,11 @@ export async function recoverForemanUsage(
 ) {
   const objects = admin.storage.from(bucket);
   const path = recordPath(pin, runId);
-  const { data, error } = await objects.download(path, {}, { signal: AbortSignal.timeout(2_000) });
+  const { data, error } = await objects.download(
+    path,
+    {},
+    { signal: AbortSignal.timeout(recoveryOperationMs) },
+  );
   if (error || !data || data.size > recordLimit) return null;
 
   const record = journal.safeParse(JSON.parse(decryptSecretValue(await data.text())));
@@ -110,11 +115,14 @@ export async function recoverForemanUsage(
       p_issue_id: issueId,
       p_outcome: outcome,
     })
-    .abortSignal(AbortSignal.timeout(2_000));
+    .abortSignal(AbortSignal.timeout(recoveryOperationMs));
   if (settled.error || !settled.data) return null;
 
   // The database now owns the measured usage. Replaying the journal is safe
   // if deleting the encrypted object fails or the process stops here.
-  await objects.remove([path]).catch(() => undefined);
+  await observeUntilAbort(
+    objects.remove([path]).catch(() => undefined),
+    AbortSignal.timeout(recoveryOperationMs),
+  );
   return settled.data;
 }

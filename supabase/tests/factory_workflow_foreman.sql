@@ -135,7 +135,8 @@ from op648_scope scope
 cross join (values ('narrow', 101), ('outside-parent-definition', 102), ('outside-parent-grant', 103),
   ('unknown-usage', 104), ('over-budget', 105), ('revoked-authority', 106),
   ('reordered-usage', 108), ('late-cost', 109), ('read-after-route', 110), ('stale-owner', 111),
-  ('foreman-only', 112), ('deadline-during-lineage', 113))
+  ('foreman-only', 112), ('deadline-during-lineage', 113), ('moved-checkpoint', 114),
+  ('child-limit', 115))
   fixture(scenario, request_slot)
 cross join lateral jsonb_to_record(pg_temp.op648_create_service_root(fixture.request_slot,
   'Grant narrowing root ' || fixture.scenario)) fields(
@@ -149,16 +150,18 @@ returns uuid language plpgsql as $$
 declare
   started uuid;
   lease uuid;
+  artifact_version integer;
 begin
+  select current_artifact_version into strict artifact_version from public.sessions where id = p_session_id;
   update public.agent_jobs set status = 'running', attempt_count = 1,
     git_continuity_release_revision = (select revision from public.get_git_continuity_release_state())
   where id = p_job_id;
-  started := public.start_session_job_attempt(p_job_id, 1, pg_temp.op648_id(32), 0,
+  started := public.start_session_job_attempt(p_job_id, 1, pg_temp.op648_id(32), artifact_version,
     'codex', 'gpt-5.5', 'code', 'wallie/op648-smoke-' || p_job_id);
   if started is null then raise exception 'Root attempt failed to start.'; end if;
   perform public.pin_session_job_git_input(p_job_id, 1, started, pg_temp.op648_id(34), 'main', repeat('a', 40));
   if not found or not public.prepare_session_source_and_checkpoint_publication(started, pg_temp.op648_id(34), 'main',
-    repeat('a', 40), repeat('a', 40), 'Root source', 'Delegation source proof', '', '', '', 0, 'Private root checkpoint.') then
+    repeat('a', 40), repeat('a', 40), 'Root source', 'Delegation source proof', '', '', '', artifact_version, 'Private root checkpoint.') then
     raise exception 'Root checkpoint preparation failed.';
   end if;
   lease := public.claim_session_checkpoint_publication(started);
@@ -222,7 +225,7 @@ join public.factory_definition_revisions foreman on foreman.id = pg_temp.op648_i
 insert into route_graph(scenario, body)
 select extra.scenario, graph.body from route_graph graph
 cross join (values ('unknown-usage'), ('over-budget'), ('revoked-authority'), ('reordered-usage'),
-  ('late-cost'), ('read-after-route'), ('stale-owner'), ('deadline-during-lineage')) extra(scenario)
+  ('late-cost'), ('read-after-route'), ('stale-owner'), ('deadline-during-lineage'), ('moved-checkpoint'), ('child-limit')) extra(scenario)
 where graph.scenario = 'narrow';
 insert into route_graph(scenario, body)
 select 'foreman-only', jsonb_set(jsonb_set(jsonb_set(jsonb_set(
@@ -243,7 +246,7 @@ cross join lateral public.register_factory_workflow_graph_revision(
   graph.body, encode(sha256(convert_to(graph.body, 'UTF8')), 'hex')) registered
 cross join lateral public.start_factory_workflow_graph_execution(root."sessionId", root.workspace_id, root.factory_id,
   registered.graph_revision_id, root.checkpoint_run_id) started;
-select is((select count(*) from root_owner where created and ownership_token is not null), 12::bigint,
+select is((select count(*) from root_owner where created and ownership_token is not null), 14::bigint,
   'all roots enroll their graph and exact historical target profile');
 select ok((select created and ownership_token is not null from root_owner where scenario = 'foreman-only'),
   'a foreman-only route enrolls with a bounded policy and empty child targets');
@@ -272,7 +275,7 @@ cross join lateral internal.factory_workflow_attempt_budget(root."sessionId", ex
 
 create temp table foreman_tickets as
 select scenario, pg_temp.begin_foreman(scenario) as ticket from root_owner;
-select is((select count(*) from foreman_tickets where ticket->>'status' = 'issued'), 11::bigint,
+select is((select count(*) from foreman_tickets where ticket->>'status' = 'issued'), 13::bigint,
   'fresh scoped routes issue one provider ticket under root accounting');
 select ok((select ticket->>'status' = 'issued' and ticket->'allowedDestinationIds' = '["policy.check"]'::jsonb
   from foreman_tickets where scenario = 'foreman-only'),
@@ -367,16 +370,22 @@ begin
   execute replace(definition, '  return true;', $test$
   if p_root_session_id::text = current_setting('wallie.foreman_deadline_fixture_root', true) then
     perform set_config('wallie.foreman_deadline_fixture_waited', 'yes', true);
-    perform pg_sleep(0.6);
+    perform pg_sleep_until((select invocation.deadline_at from internal.factory_workflow_foreman_runs invocation
+      where invocation.root_session_id = p_root_session_id));
   end if;
   return true;$test$);
 end;
 $$;
 select set_config('wallie.foreman_deadline_fixture_root', root."sessionId"::text, true)
 from root_owner root where root.scenario = 'deadline-during-lineage';
-update internal.factory_workflow_foreman_runs invocation set deadline_at = clock_timestamp() + interval '0.5 seconds'
-from root_owner root where root.scenario = 'deadline-during-lineage' and root."sessionId" = invocation.root_session_id;
-create temp table expired_foreman as select pg_temp.settle_foreman('deadline-during-lineage', outcome) as result from planned;
+create temp table expired_foreman (result jsonb);
+do $$
+begin
+  update internal.factory_workflow_foreman_runs invocation set deadline_at = clock_timestamp() + interval '3 seconds'
+  from root_owner root where root.scenario = 'deadline-during-lineage' and root."sessionId" = invocation.root_session_id;
+  insert into expired_foreman select pg_temp.settle_foreman('deadline-during-lineage', outcome) from planned;
+end;
+$$;
 select ok((select current_setting('wallie.foreman_deadline_fixture_waited', true) = 'yes'
   and result->>'status' = 'stale' and result->>'code' = 'inference_deadline_elapsed'
   and result#>>'{usage,inputTokens}' = '12' and result->'commands' = '[]'::jsonb and not result ? 'planJson'
@@ -455,6 +464,83 @@ select is(pg_temp.dispatch_foreman(2, 'outside-parent-definition'), (select rece
   'a definitively denied command replays the same blocked receipt');
 select is(pg_temp.dispatch_foreman(1, 'outside-parent-definition'), (select receipt from denied_child_route),
   'a denied child does not roll back the committed route');
+select is(pg_temp.settle_foreman('foreman-only', outcome || jsonb_build_object(
+    'planJson', deterministic.plan, 'planDigest', encode(sha256(convert_to(deterministic.plan, 'UTF8')), 'hex')))
+    ->>'status', 'accepted', 'the foreman plan can contain a delegate command naming its deterministic route target')
+from planned cross join lateral (select replace(plan, 'agent.child', 'policy.check') as plan) deterministic;
+create temp table deterministic_route as select pg_temp.dispatch_foreman(1, 'foreman-only') as receipt;
+select ok((select receipt->>'status' = 'accepted' and occurrence.node_kind = 'deterministic'
+  from deterministic_route join internal.factory_workflow_node_occurrences occurrence
+    on occurrence.occurrence_id::text = receipt->>'targetOccurrenceId'),
+  'the first ordinal admits the exact deterministic target');
+select is(pg_temp.dispatch_foreman(2, 'foreman-only'),
+  '{"ordinal":2,"kind":"delegate","status":"blocked","code":"no_authorized_target"}'::jsonb,
+  'a deterministic target writes a terminal delegate blocker');
+select is(pg_temp.dispatch_foreman(1, 'foreman-only'), (select receipt from deterministic_route),
+  'the delegate blocker preserves the deterministic route receipt');
+
+select is(pg_temp.settle_foreman('moved-checkpoint', outcome)->>'status', 'accepted',
+  'the plan pins the original exact parent checkpoint') from planned;
+create temp table superseded_route as select pg_temp.dispatch_foreman(1, 'moved-checkpoint') as receipt;
+update public.sessions session set archived_at = null, phase_status = 'in_progress'
+from root_owner root where root.scenario = 'moved-checkpoint' and session.id = root."sessionId";
+create temp table next_parent_source as
+select root."sessionId", pg_temp.adopt_source_checkpoint(root."sessionId", enqueued.job_id) as checkpoint_run_id
+from root_owner root
+cross join lateral public.enqueue_session_job_with_run(root."sessionId", root.workspace_id,
+  pg_temp.op648_id(32), p_run_type => 'code') enqueued
+where root.scenario = 'moved-checkpoint';
+update public.sessions session set archived_at = clock_timestamp(), phase_status = 'approved'
+from next_parent_source next where session.id = next."sessionId";
+select ok((select current.run_id <> original.run_id and current.output_sha = original.output_sha
+  from next_parent_source next join root_owner root using ("sessionId")
+  join public.session_git_checkpoints current on current.run_id = next.checkpoint_run_id
+  join public.session_git_checkpoints original on original.run_id = root.checkpoint_run_id),
+  'the accepted parent head advances to a new exact checkpoint at the same Git commit');
+create temp table stale_source_child as select pg_temp.dispatch_foreman(2, 'moved-checkpoint') as receipt;
+select is((select receipt->>'code' from stale_source_child), 'checkpoint_stale',
+  'a superseded parent checkpoint terminates the old delegate command');
+select is(pg_temp.dispatch_foreman(2, 'moved-checkpoint'), (select receipt from stale_source_child),
+  'the exact stale checkpoint denial is retained across retries');
+select is(pg_temp.dispatch_foreman(1, 'moved-checkpoint'), (select receipt from superseded_route),
+  'moving the checkpoint preserves the first route receipt');
+
+select is(pg_temp.settle_foreman('child-limit', outcome)->>'status', 'accepted',
+  'the first child-limit plan settles') from planned;
+create temp table first_capped_route as select pg_temp.dispatch_foreman(1, 'child-limit') as receipt;
+create temp table first_capped_child as
+select child.* from root_owner root cross join first_capped_route route
+cross join lateral public.admit_factory_workflow_delegated_session(root."sessionId", root.workspace_id, root.factory_id,
+  root.execution_generation, root.ownership_token, root."sessionId", (route.receipt->>'targetOccurrenceId')::uuid,
+  root.checkpoint_run_id, 'Child', 'Inspect the checkpoint.') child
+where root.scenario = 'child-limit';
+select is(pg_temp.dispatch_foreman(2, 'child-limit')->>'childSessionId',
+  (select child_session_id::text from first_capped_child),
+  'a matching prior native child admission can be read already at the root child limit');
+
+-- A second occurrence of the same route exercises a fresh admission at the
+-- aggregate limit, with its own real route, invocation and ordinal receipts.
+with later as (
+  insert into internal.factory_workflow_node_occurrences(root_session_id, node_id, node_kind, admitted_generation)
+  select root."sessionId", 'route.choose', 'route', root.execution_generation
+  from root_owner root where root.scenario = 'child-limit'
+  returning root_session_id, occurrence_id
+)
+update root_owner root set entry_occurrence_id = later.occurrence_id
+from later where root."sessionId" = later.root_session_id;
+update foreman_tickets set ticket = pg_temp.begin_foreman('child-limit') where scenario = 'child-limit';
+select is(pg_temp.settle_foreman('child-limit', outcome)->>'status', 'accepted',
+  'a later route can plan without granting another child') from planned;
+create temp table second_capped_route as select pg_temp.dispatch_foreman(1, 'child-limit') as receipt;
+create temp table second_capped_child as select pg_temp.dispatch_foreman(2, 'child-limit') as receipt;
+select ok((select route.receipt->>'status' = 'accepted' and denied.receipt->>'code' = 'child_limit_reached'
+  and (select count(*) from internal.factory_workflow_delegations marker where marker.root_session_id = root."sessionId") = 1
+  from second_capped_route route cross join second_capped_child denied cross join root_owner root
+  where root.scenario = 'child-limit'),
+  'the total child limit durably blocks only the new delegate ordinal');
+select is(pg_temp.dispatch_foreman(2, 'child-limit'), (select receipt from second_capped_child),
+  'a total-child denial replays its terminal receipt');
+
 create temp table read_plans as
 select scenario, jsonb_build_object('status', 'accepted', 'planJson', raw.plan,
   'planDigest', encode(sha256(convert_to(raw.plan, 'UTF8')), 'hex'),

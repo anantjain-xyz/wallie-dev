@@ -481,6 +481,7 @@ it.each(["native settlement", "durable retention"])(
       const { invoke, store } = fixture();
       const retainUsage = vi.fn<NonNullable<ForemanRunStore["retainUsage"]>>();
       if (accounting === "durable retention") {
+        retainUsage.mockImplementationOnce(() => new Promise(() => {}));
         const settle = store.settleInference.getMockImplementation();
         if (!settle) throw new Error("The fixture requires its normal timeout settlement.");
         store.settleInference
@@ -675,3 +676,46 @@ it("surfaces a definitive authority denial while keeping the earlier route recei
     [pin, identity.foremanRunId, 2],
   ]);
 });
+
+it.each(["deadline", "caller cancellation"])(
+  "stops waiting for a stalled usage write at the %s",
+  async (stop) => {
+    const restore = useControlledDeadlines();
+    try {
+      const { invoke, store } = fixture();
+      const caller = new AbortController();
+      const finished = vi.fn();
+      const retention = Promise.withResolvers<void>();
+      const retainUsage = vi.fn<NonNullable<ForemanRunStore["retainUsage"]>>(
+        () => retention.promise,
+      );
+      store.settleInference
+        .mockRejectedValueOnce(new TypeError("First settlement unavailable."))
+        .mockRejectedValueOnce(new TypeError("Settlement remains unavailable."));
+      const running = runFactoryWorkflowForeman({
+        pin,
+        invoke,
+        store: { ...store, retainUsage },
+        signal: caller.signal,
+      }).then((result) => {
+        finished();
+        return result;
+      });
+
+      await vi.advanceTimersByTimeAsync(stop === "deadline" ? 1_999 : 100);
+      expect(store.settleInference).toHaveBeenCalledTimes(2);
+      expect(retainUsage).toHaveBeenCalledOnce();
+      expect(finished).not.toHaveBeenCalled();
+      if (stop === "deadline") await vi.advanceTimersByTimeAsync(1);
+      else caller.abort();
+
+      await expect(running).resolves.toEqual({ status: "waiting", code: "inference_pending" });
+      expect(store.dispatchCommand).not.toHaveBeenCalled();
+      retention.reject(new TypeError("The background write failed later."));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(retainUsage).toHaveBeenCalledOnce();
+    } finally {
+      restore();
+    }
+  },
+);
