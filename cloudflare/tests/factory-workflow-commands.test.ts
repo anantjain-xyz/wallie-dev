@@ -71,11 +71,13 @@ function policyFixture({
   resultCanBeRecorded = true,
   persisted,
   loseHandoffResponse = false,
+  visitLimitReached = false,
 }: {
   observedPolicy?: string | null;
   resultCanBeRecorded?: boolean;
   persisted?: "result" | "transition" | "terminal";
   loseHandoffResponse?: boolean;
+  visitLimitReached?: boolean;
 } = {}) {
   const requests: Array<{ name: string; args: unknown }> = [];
   const origin = "https://workflow-fixture.supabase.test";
@@ -171,8 +173,19 @@ function policyFixture({
       case "check_factory_workflow_execution_policy":
         return Response.json({ policy_revision_id: observedPolicy, exhaustion_code: null });
       case "record_factory_workflow_command_result":
+        if (resultCanBeRecorded) persisted = "result";
         return Response.json(resultCanBeRecorded ? [{ result_id: resultId, created: true }] : []);
       case "admit_factory_workflow_next":
+        if (visitLimitReached && persisted === "result")
+          return Response.json(
+            {
+              code: "PT409",
+              details: "workflow_visit_limit_exhausted",
+              message: "The workflow visit limit is exhausted.",
+              hint: null,
+            },
+            { status: 409 },
+          );
         return Response.json([
           {
             transition_id: transitionId,
@@ -259,6 +272,26 @@ it("resumes from the persisted result through guarded successor admission", asyn
         p_expected_result_id: resultId,
       },
     },
+  ]);
+});
+
+it("reports the retained result and blocked successor before and after a restart at the visit limit", async () => {
+  const { admin, requests } = policyFixture({ visitLimitReached: true });
+  const blocked = {
+    status: "terminal",
+    resultId,
+    outcome: "succeeded",
+    successorBlocked: "workflow_visit_limit_exhausted",
+  };
+  await expect(executeFactoryWorkflowOccurrence(admin, pin)).resolves.toEqual(blocked);
+  await expect(executeFactoryWorkflowOccurrence(admin, pin)).resolves.toEqual(blocked);
+  expect(requests.map(({ name }) => name)).toEqual([
+    "read_factory_workflow_execution",
+    "check_factory_workflow_execution_policy",
+    "record_factory_workflow_command_result",
+    "admit_factory_workflow_next",
+    "read_factory_workflow_execution",
+    "admit_factory_workflow_next",
   ]);
 });
 

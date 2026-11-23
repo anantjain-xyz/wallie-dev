@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
@@ -16,6 +16,7 @@ import {
   type DeterministicWorkflowOccurrence,
   type WorkflowOccurrenceMetadata,
   type WorkflowOccurrencePin,
+  workflowVisitLimitBlocker,
 } from "./deterministic-command";
 import { observeWorkflowCheckpoint, observeWorkflowHumanApproval } from "./observe-evidence";
 import { parseWorkflowRouteProposal } from "./route-decision";
@@ -43,6 +44,10 @@ const routeDecisionReceiptSchema = z.union([
   }),
 ]);
 
+function isWorkflowVisitLimitError(error: PostgrestError) {
+  return error.code === "PT409" && error.details === workflowVisitLimitBlocker.code;
+}
+
 function routeDecisionProgress(value: unknown) {
   const receipt = routeDecisionReceiptSchema.parse(value);
   const decision = { status: "route_decided" as const, decisionId: receipt.decision_id };
@@ -63,6 +68,7 @@ const snapshotSchema = z.object({
     factory_id: z.string().uuid(),
     graph_revision_id: z.string().uuid(),
     graph_input_run_id: z.string().uuid().nullish(),
+    graph_visit_limit_exhausted: z.boolean().optional(),
     graph_route_blocker: z
       .enum(["root_unavailable", "execution_policy_required", "execution_budget_exhausted"])
       .optional(),
@@ -393,7 +399,10 @@ export async function submitFactoryWorkflowRouteProposal(
         : {}),
     })
     .maybeSingle();
-  if (error) throw error;
+  if (error) {
+    if (isWorkflowVisitLimitError(error)) return workflowVisitLimitBlocker;
+    throw error;
+  }
   return data === null
     ? ({
         status: "blocked",
@@ -418,12 +427,20 @@ export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: Workfl
     if (data !== null) return routeDecisionProgress(data);
     if (execution.graph_route_blocker)
       return { status: "blocked", code: execution.graph_route_blocker } as const;
+    if (
+      execution.graph_visit_limit_exhausted &&
+      graph.routePolicy.nodes[node.id].fallback.kind === "route"
+    )
+      return workflowVisitLimitBlocker;
     return { status: "pending", code: "route_proposal_required" } as const;
   }
   const nextEdge = graph.edges.find((edge) => edge.kind === "next" && edge.from === pin.nodeId);
   const admitNext: DeterministicWorkflowCommands["admitNext"] = async (args) => {
     const result = await admin.rpc("admit_factory_workflow_next", args).maybeSingle();
-    if (result.error) throw result.error;
+    if (result.error) {
+      if (isWorkflowVisitLimitError(result.error)) return workflowVisitLimitBlocker;
+      throw result.error;
+    }
     return result.data ?? { status: "blocked", code: "evidence_stale" };
   };
   const stored = results.find((row) => row.occurrence_id === pin.occurrenceId);

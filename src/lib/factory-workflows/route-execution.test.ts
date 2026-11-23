@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { expect, it, vi } from "vitest";
 
 import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
@@ -82,15 +82,43 @@ function fixture({
   persisted = null,
   admitted = selectedReceipt,
   blocker,
+  visitsExhausted = false,
+  forwardFallback = false,
+  admissionError = null,
 }: {
   hasPolicy?: boolean;
   generation?: number;
   persisted?: typeof selectedReceipt | typeof clarificationReceipt | null;
   admitted?: typeof selectedReceipt | typeof clarificationReceipt | null;
   blocker?: "root_unavailable" | "execution_policy_required" | "execution_budget_exhausted";
+  visitsExhausted?: boolean;
+  forwardFallback?: boolean;
+  admissionError?: PostgrestError | null;
 } = {}) {
+  const graph = forwardFallback
+    ? {
+        ...governedRouteGraph,
+        nodes: [
+          ...governedRouteGraph.nodes,
+          { id: "fallback", kind: "deterministic", operation: "policy" },
+        ],
+        edges: [
+          ...governedRouteGraph.edges,
+          { id: "fallback", from: "route", to: "fallback", kind: "route" },
+        ],
+        routePolicy: {
+          ...governedRouteGraph.routePolicy,
+          nodes: {
+            route: {
+              ...governedRouteGraph.routePolicy.nodes.route,
+              fallback: { kind: "route", destinationId: "fallback" },
+            },
+          },
+        },
+      }
+    : governedRouteGraph;
   const { definitionJson, canonicalDigest } = serializeFactoryDefinition(
-    hasPolicy ? governedRouteGraph : structuralRouteGraph,
+    hasPolicy ? graph : structuralRouteGraph,
   );
   const pin = {
     ...scope,
@@ -120,6 +148,7 @@ function fixture({
               workflow_digest: canonicalDigest,
               generation,
               graph_route_blocker: blocker,
+              graph_visit_limit_exhausted: visitsExhausted,
             },
             occurrences: [{ occurrence_id: routeOccurrenceId, node_id: "route", is_entry: true }],
             results: [],
@@ -138,7 +167,7 @@ function fixture({
           }),
         };
       case "admit_factory_workflow_route_decision":
-        return { maybeSingle: () => ({ error: null, data: admitted }) };
+        return { maybeSingle: () => ({ error: admissionError, data: admitted }) };
       case "read_factory_workflow_route_decision":
         expect(args).toEqual({ ...scope, p_route_occurrence_id: routeOccurrenceId });
         return { error: null, data: persisted };
@@ -273,6 +302,54 @@ it("resumes a decided route after the root budget is exhausted", async () => {
     blocker: "execution_budget_exhausted",
   });
   expect(await executeFactoryWorkflowOccurrence(admin, pin)).toEqual(selectedProgress);
+});
+
+it("reports an exhausted visit limit without requesting an unusable forward route", async () => {
+  const { admin, pin, rpc } = fixture({ visitsExhausted: true, forwardFallback: true });
+  expect(await executeFactoryWorkflowOccurrence(admin, pin)).toEqual({
+    status: "blocked",
+    code: "workflow_visit_limit_exhausted",
+  });
+  expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+    "read_factory_workflow_execution",
+    "read_factory_workflow_route_decision",
+  ]);
+});
+
+it("still offers clarification or returns an accepted route at the visit limit", async () => {
+  const pending = fixture({ visitsExhausted: true });
+  expect(await executeFactoryWorkflowOccurrence(pending.admin, pending.pin)).toEqual({
+    status: "pending",
+    code: "route_proposal_required",
+  });
+  const decided = fixture({
+    visitsExhausted: true,
+    forwardFallback: true,
+    persisted: selectedReceipt,
+  });
+  expect(await executeFactoryWorkflowOccurrence(decided.admin, decided.pin)).toEqual(
+    selectedProgress,
+  );
+});
+
+it("exposes a visit-limit race without swallowing other admission conflicts", async () => {
+  const conflict = {
+    name: "PostgrestError",
+    code: "PT409",
+    message: "The workflow visit limit is exhausted.",
+    details: "workflow_visit_limit_exhausted",
+    hint: "",
+  };
+  const atLimit = fixture({ admissionError: conflict });
+  expect(await submitFactoryWorkflowRouteProposal(atLimit.admin, atLimit.pin, choice)).toEqual({
+    status: "blocked",
+    code: "workflow_visit_limit_exhausted",
+  });
+  const staleError = { ...conflict, details: "", message: "Workflow generation is stale." };
+  const stale = fixture({ admissionError: staleError });
+  await expect(submitFactoryWorkflowRouteProposal(stale.admin, stale.pin, choice)).rejects.toBe(
+    staleError,
+  );
 });
 
 it("resumes a route graph from its persisted decision without consulting the live catalog", async () => {

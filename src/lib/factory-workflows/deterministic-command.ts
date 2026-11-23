@@ -72,6 +72,11 @@ type NonAdvancingObservation =
 
 type CommandObservation = NonAdvancingObservation | { status: "passed"; receiptRef: string };
 
+export const workflowVisitLimitBlocker = {
+  status: "blocked",
+  code: "workflow_visit_limit_exhausted",
+} as const;
+
 type CapturedCommandResult =
   | {
       resultId: string;
@@ -111,7 +116,9 @@ export type DeterministicWorkflowCommands = {
   ): Promise<RecordResult["Returns"][number] | NonAdvancingObservation>;
   admitNext(
     args: AdmitNext["Args"],
-  ): Promise<AdmitNext["Returns"][number] | NonAdvancingObservation>;
+  ): Promise<
+    AdmitNext["Returns"][number] | NonAdvancingObservation | typeof workflowVisitLimitBlocker
+  >;
 };
 
 type CommandProgress =
@@ -122,6 +129,7 @@ type CommandProgress =
       status: "terminal";
       outcome: CapturedCommandResult["outcome"];
       resultId: string;
+      successorBlocked?: typeof workflowVisitLimitBlocker.code;
     }
   | {
       status: "admitted";
@@ -222,7 +230,16 @@ export async function runDeterministicWorkflowCommand(
     p_expected_result_id: resultId,
     p_edge_id: nextEdgeId,
   });
-  if ("status" in transition) return transition;
+  if ("status" in transition) {
+    if (transition.code === workflowVisitLimitBlocker.code)
+      return {
+        status: "terminal",
+        outcome: "succeeded",
+        resultId,
+        successorBlocked: transition.code,
+      };
+    return transition;
+  }
   return {
     status: "admitted",
     resultId,

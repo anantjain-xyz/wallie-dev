@@ -185,7 +185,8 @@ begin
   end if;
   if p_check_node_visits and (select count(*) from internal.factory_workflow_node_occurrences occurrence
     where occurrence.root_session_id = p_execution.root_session_id) >= (policy->>'maxNodeVisits')::integer then
-    raise exception 'The workflow visit limit is exhausted.' using errcode = 'PT409';
+    raise exception 'The workflow visit limit is exhausted.'
+      using errcode = 'PT409', detail = 'workflow_visit_limit_exhausted';
   end if;
   if p_edge->>'kind' = 'loop' then
     if coalesce(p_edge->>'maxTraversals', '') !~ '^([1-9]|1[0-6])$' then
@@ -632,6 +633,7 @@ create or replace function public.read_factory_workflow_execution(
       'created_at', execution.created_at
     ) || case when execution.graph_revision_id is null then '{}'::jsonb
       else jsonb_strip_nulls(jsonb_build_object(
+        'graph_visit_limit_exhausted', visits.exhausted,
         'graph_route_blocker', case
           when root.archived_at is not null and root.phase_status <> 'approved' then 'root_unavailable'
           when root.execution_policy_revision_id is null then 'execution_policy_required'
@@ -663,11 +665,7 @@ create or replace function public.read_factory_workflow_execution(
          and (execution.graph_revision_id is null or (
            root.execution_exhaustion_code is null and (root.archived_at is null or root.phase_status = 'approved')
          ))
-         and case when exists (select 1 from jsonb_array_elements(execution.workflow_json::jsonb->'nodes') node
-           where node->>'kind' = 'route') then
-           (select count(*) from internal.factory_workflow_node_occurrences visit where visit.root_session_id = execution.root_session_id)
-             < (execution.workflow_json::jsonb#>>'{routePolicy,maxNodeVisits}')::integer
-         else true end
+         and visits.exhausted is not true
          and edge->>'kind' = 'next' and edge->>'from' = occurrence.node_id
          and not exists (
            select 1 from internal.factory_workflow_transition_receipts transition
@@ -681,6 +679,14 @@ create or replace function public.read_factory_workflow_execution(
     (execution.root_session_id, execution.workspace_id, execution.factory_id)
   join public.workspaces workspace on workspace.id = execution.workspace_id
   join public.factories factory on (factory.workspace_id, factory.id) = (execution.workspace_id, execution.factory_id)
+  cross join lateral (
+    select case when execution.graph_revision_id is not null and execution.workflow_json::jsonb ? 'routePolicy'
+      and exists (select 1 from jsonb_array_elements(execution.workflow_json::jsonb->'nodes') node
+        where node->>'kind' = 'route') then
+      (select count(*) from internal.factory_workflow_node_occurrences visit where visit.root_session_id = execution.root_session_id)
+        >= (execution.workflow_json::jsonb#>>'{routePolicy,maxNodeVisits}')::integer
+    end as exhausted
+  ) visits
   where (execution.root_session_id, execution.workspace_id, execution.factory_id) =
     (p_root_session_id, p_workspace_id, p_factory_id);
 $$;

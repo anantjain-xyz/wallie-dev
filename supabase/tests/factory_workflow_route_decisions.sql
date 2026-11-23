@@ -119,13 +119,15 @@ with source(name, plan) as (values
     "route.privileged":{"minimumConfidence":0.7,"allowedDestinationIds":["policy.finish"],"fallback":{"kind":"clarification"}}}}}'::jsonb)
 ), compiled as (
   select scenario, (case scenario
-    when 'clarification' then jsonb_set(jsonb_set(plan, '{routePolicy,nodes,route.choose,fallback}', '{"kind":"clarification"}'),
-      '{routePolicy,nodes,route.choose,allowedDestinationIds}', '[]')
+    when 'clarification' then jsonb_set(jsonb_set(jsonb_set(plan, '{routePolicy,nodes,route.choose,fallback}', '{"kind":"clarification"}'),
+      '{routePolicy,nodes,route.choose,allowedDestinationIds}', '[]'), '{routePolicy,maxNodeVisits}', '1')
+    when 'entry-forward-cap' then jsonb_set(plan, '{routePolicy,maxNodeVisits}', '1')
     when 'per-edge' then jsonb_set(plan, '{edges,2,maxTraversals}', '1')
     when 'global-loop' then jsonb_set(plan, '{routePolicy,maxLoopTraversals}', '1')
     when 'visit-cap' then jsonb_set(plan, '{routePolicy,maxNodeVisits}', '3')
     else plan end)::text as body
-  from (values ('choice', 'forward'), ('fallback', 'forward'), ('clarification', 'forward'), ('missing-budget', 'forward'),
+  from (values ('choice', 'forward'), ('fallback', 'forward'), ('clarification', 'forward'), ('entry-forward-cap', 'forward'),
+    ('missing-budget', 'forward'),
     ('approved-root', 'forward'), ('archived-root', 'forward'),
     ('exhausted', 'forward'), ('per-edge', 'loop'), ('global-loop', 'loop'), ('visit-cap', 'loop'),
     ('grant-expansion', 'grant-expansion')) fixture(scenario, name) join source using (name)
@@ -180,7 +182,7 @@ create temp table op646_started as
 select fixture.*, started.* from op646_registered fixture
 cross join lateral public.start_factory_workflow_graph_execution(fixture.session_id, fixture.workspace_id,
   fixture.factory_id, fixture.graph_revision_id) started;
-select is((select count(*) from op646_started where created and ownership_token is not null), 11::bigint,
+select is((select count(*) from op646_started where created and ownership_token is not null), 12::bigint,
   'each scenario starts from a real pinned graph root');
 
 -- Complete the deterministic predecessor through its guarded policy API.
@@ -215,6 +217,20 @@ create function pg_temp.op646_read_decision(p_scenario text) returns jsonb langu
   select public.read_factory_workflow_route_decision(session_id, workspace_id, factory_id, route_occurrence_id)
   from op646_route_owners where scenario = p_scenario;
 $$;
+create function pg_temp.op646_conflict_diagnostic(p_statement text) returns text[] language plpgsql as $$
+declare exception_detail text;
+begin
+  execute p_statement;
+  return null;
+exception when sqlstate 'PT409' then
+  get stacked diagnostics exception_detail = pg_exception_detail;
+  return array[sqlstate, sqlerrm, exception_detail];
+end;
+$$;
+
+select is(public.read_factory_workflow_execution(session_id, workspace_id, factory_id)#>'{execution,graph_visit_limit_exhausted}',
+  to_jsonb(scenario <> 'choice'), 'the route snapshot reflects whether the entry exhausts its visit limit: ' || scenario)
+from op646_route_owners where scenario in ('choice', 'entry-forward-cap', 'clarification');
 
 create temp table op646_choice_handoff as
 select advanced.* from op646_route_owners owner cross join lateral public.advance_factory_workflow_generation(
@@ -297,7 +313,13 @@ select ok((select not replay.created and replay.decision_id = admitted.decision_
   'clarification replay preserves the durable decision without creating work');
 select is((select count(*) from internal.factory_workflow_node_occurrences occurrence join op646_route_owners owner
   on occurrence.root_session_id = owner.session_id where owner.scenario = 'clarification'), 1::bigint,
-  'clarification leaves the route entry as the only occurrence');
+  'clarification records a decision at the visit limit without a new occurrence');
+select is(pg_temp.op646_conflict_diagnostic(format($$select pg_temp.op646_propose(
+    'entry-forward-cap', 'policy.finish', 'Try the capped route.', %L::numeric)$$, confidence)),
+  array['PT409', 'The workflow visit limit is exhausted.', 'workflow_visit_limit_exhausted'],
+  'the route entry already exhausts visits for the ' || selected_edge)
+from (values (0.9, 'forward edge'), (0.3, 'fallback edge')) fixture(confidence, selected_edge);
+select is(pg_temp.op646_read_decision('entry-forward-cap'), null::jsonb, 'edge capacity rejection leaves no route receipt');
 
 create temp table op646_loop_first as
 select owner.scenario, owner.route_occurrence_id as source_occurrence_id, admitted.*
@@ -317,10 +339,28 @@ select throws_ok($$select pg_temp.op646_propose('global-loop', 'policy.prepare',
 select is((select count(*) from internal.factory_workflow_route_decisions decision join op646_route_owners owner
   on decision.root_session_id = owner.session_id where owner.scenario in ('per-edge', 'global-loop')), 2::bigint,
   'a loop exhausted by either limit writes no second decision');
-select throws_ok($$select pg_temp.op646_next_from_policy(owner.session_id, owner.workspace_id, owner.factory_id,
-  owner.execution_generation, owner.ownership_token, admitted.target_occurrence_id, owner.execution_policy_revision_id)
-  from op646_route_owners owner join op646_loop_first admitted using (scenario) where owner.scenario = 'visit-cap'$$,
-  'PT409', 'The workflow visit limit is exhausted.', 'a subsequent next edge also respects the root-wide visit cap');
+create temp table op646_visit_cap_result as
+select owner.*, admitted.target_occurrence_id as capped_occurrence_id, receipt.result_id
+from op646_route_owners owner join op646_loop_first admitted using (scenario)
+cross join lateral public.record_factory_workflow_command_result(owner.session_id, owner.workspace_id, owner.factory_id,
+  owner.execution_generation, owner.ownership_token, admitted.target_occurrence_id, 'policy:' || owner.execution_policy_revision_id) receipt
+where owner.scenario = 'visit-cap';
+select is(pg_temp.op646_conflict_diagnostic($$select public.admit_factory_workflow_next(session_id, workspace_id, factory_id,
+  execution_generation, ownership_token, capped_occurrence_id, 'next.prepare', result_id) from op646_visit_cap_result$$),
+  array['PT409', 'The workflow visit limit is exhausted.', 'workflow_visit_limit_exhausted'],
+  'a subsequent next edge respects the root-wide visit cap');
+select ok(snapshot->'results' @> jsonb_build_array(jsonb_build_object('result_id', fixture.result_id, 'outcome', 'succeeded'))
+  and snapshot->'runnableTransitions' = '[]'::jsonb
+  and snapshot#>'{execution,graph_visit_limit_exhausted}' = 'true'::jsonb,
+  'the separately recorded result survives refused admission and the exhausted next edge is absent')
+from op646_visit_cap_result fixture cross join lateral (
+  select public.read_factory_workflow_execution(fixture.session_id, fixture.workspace_id, fixture.factory_id) as snapshot
+) execution;
+select ok((select not replay.created and (replay.decision_id, replay.transition_id, replay.target_occurrence_id) =
+  (admitted.decision_id, admitted.transition_id, admitted.target_occurrence_id)
+  from op646_loop_first admitted
+  cross join pg_temp.op646_propose('visit-cap', 'policy.prepare', 'One bounded retry', 0.9) replay
+  where admitted.scenario = 'visit-cap'), 'the exhausted root still replays its retained route receipt');
 
 select is((select count(*) from pg_temp.op646_propose('missing-budget', 'policy.finish', 'Budget is required', 0.9)),
   0::bigint, 'a root without a pinned budget admits no decision');

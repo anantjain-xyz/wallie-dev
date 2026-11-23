@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pipelineApproversSchema } from "@/lib/pipeline/stage-schema";
 
 export const MAX_WORKFLOW_NODE_VISITS = 1_024;
+const MAX_WORKFLOW_NODES = 128;
 
 const workflowNodeIdTextSchema = z
   .string()
@@ -57,20 +58,35 @@ const workflowRouteFallbackSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("route"), destinationId: workflowNodeIdSchema }).strict(),
   z.object({ kind: z.literal("clarification") }).strict(),
 ]);
-const workflowRoutePolicySchema = z
-  .object({
-    maxNodeVisits: z.number().int().min(1).max(MAX_WORKFLOW_NODE_VISITS),
-    maxLoopTraversals: z.number().int().min(0).max(MAX_WORKFLOW_NODE_VISITS),
-    nodes: z.record(
+const workflowRoutePoliciesByNodeSchema = z
+  .unknown()
+  .refine((value) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return true;
+    // Match the record parser's enumerable keys without reading entry values.
+    const keys = new Set<string>();
+    for (const key in value) {
+      keys.add(key);
+      if (keys.size > MAX_WORKFLOW_NODES) return false;
+    }
+    return true;
+  }, `Declare at most ${MAX_WORKFLOW_NODES} route policy entries.`)
+  .pipe(
+    z.record(
       workflowNodeIdTextSchema,
       z
         .object({
           minimumConfidence: z.number().finite().min(0).max(1),
-          allowedDestinationIds: z.array(workflowNodeIdSchema).max(128),
+          allowedDestinationIds: z.array(workflowNodeIdSchema).max(MAX_WORKFLOW_NODES),
           fallback: workflowRouteFallbackSchema,
         })
         .strict(),
     ),
+  );
+const workflowRoutePolicySchema = z
+  .object({
+    maxNodeVisits: z.number().int().min(1).max(MAX_WORKFLOW_NODE_VISITS),
+    maxLoopTraversals: z.number().int().min(0).max(MAX_WORKFLOW_NODE_VISITS),
+    nodes: workflowRoutePoliciesByNodeSchema,
   })
   .strict();
 
@@ -79,7 +95,7 @@ export const workflowGraphSchema = z
     schemaVersion: z.literal(1),
     kind: z.literal("graph"),
     entryNodeId: workflowNodeIdSchema,
-    nodes: z.array(workflowNodeSchema).min(1).max(128),
+    nodes: z.array(workflowNodeSchema).min(1).max(MAX_WORKFLOW_NODES),
     edges: z.array(workflowEdgeSchema).max(512),
     grants: z
       .array(z.object({ id: uuid, version: z.number().int().positive().safe() }).strict())

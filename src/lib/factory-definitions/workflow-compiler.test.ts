@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { compileWorkflowGraph } from "./workflow-compiler";
 
@@ -399,6 +399,29 @@ describe("workflow route policies", () => {
           path: ["routePolicy", "nodes", "decide"],
         }),
       ]),
+    });
+  });
+
+  it("rejects an oversized route policy before reading malformed entries", () => {
+    const graph = governedRouteGraph();
+    const nodes = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [`route.${index}`, null]),
+    );
+    const readEntry = vi.fn(() => null);
+    Object.defineProperty(nodes, "route.0", { enumerable: true, get: readEntry });
+
+    const result = compile({ ...graph, routePolicy: { ...graph.routePolicy, nodes } });
+
+    expect(readEntry).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: [
+        {
+          code: "invalid_schema",
+          path: ["routePolicy", "nodes"],
+          message: "Declare at most 128 route policy entries.",
+        },
+      ],
     });
   });
 
