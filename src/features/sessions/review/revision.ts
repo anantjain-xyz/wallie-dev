@@ -1,3 +1,5 @@
+import { LEADING_ACCEPTED_SCOPE_DIRECTIVE } from "@/lib/sessions/specification-contracts";
+
 import type { ArtifactSourceAnchor } from "./source-anchor";
 
 export type AnchorMapping =
@@ -58,6 +60,8 @@ export function summarizeRevisionChanges(rows: readonly RevisionDiff[]) {
   let count = 0;
   let added = "";
   let removed = "";
+  let beforeSource = true;
+  let afterSource = true;
 
   function finishChange() {
     if (!added && !removed) return;
@@ -74,10 +78,20 @@ export function summarizeRevisionChanges(rows: readonly RevisionDiff[]) {
     removed = "";
   }
 
+  // Review Brief presents the human-facing Markdown. Source comparisons and
+  // selection anchors retain the complete artifact, including the receipt line.
   for (const row of rows) {
-    if (row.kind === "added") added += row.text;
-    else if (row.kind === "removed") removed += row.text;
-    else finishChange();
+    if (row.kind === "added") {
+      added += afterSource ? row.text.replace(LEADING_ACCEPTED_SCOPE_DIRECTIVE, "") : row.text;
+      afterSource = false;
+    } else if (row.kind === "removed") {
+      removed += beforeSource ? row.text.replace(LEADING_ACCEPTED_SCOPE_DIRECTIVE, "") : row.text;
+      beforeSource = false;
+    } else {
+      beforeSource = false;
+      afterSource = false;
+      finishChange();
+    }
   }
   finishChange();
 

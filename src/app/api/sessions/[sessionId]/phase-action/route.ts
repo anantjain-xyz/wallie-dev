@@ -182,6 +182,13 @@ export async function POST(request: Request, { params }: Params) {
         if (result.errorCode === "42501") {
           return errorResponse("forbidden", "You do not have access to approve this stage.", 403);
         }
+        if (result.errorCode === "PT422") {
+          return errorResponse(
+            "invalid_state",
+            "Request a scope revision with acceptance criteria supported by the retained evidence.",
+            422,
+          );
+        }
         if (result.errorCode === "PT423") {
           return errorResponse(
             "invalid_state",

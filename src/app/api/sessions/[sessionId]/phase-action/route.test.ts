@@ -645,6 +645,7 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
   it.each([
     ["42501", 403, "forbidden", "You do not have access"],
     ["PT409", 409, "blocking_review", "Resolve or supersede"],
+    ["PT422", 422, "invalid_state", "Request a scope revision"],
     ["PT423", 409, "invalid_state", "Answer the current clarification"],
     ["PT412", 409, "stale_version", "This review changed"],
   ])(

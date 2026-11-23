@@ -45,6 +45,7 @@ export type UntrustedPromptSource =
   | "session.attachments"
   | `skill.repositoryRevision.${string}`
   | "session.title"
+  | "specification.evidenceReferences"
   | "specification.clarificationHistory"
   | "specification.priorDraft";
 

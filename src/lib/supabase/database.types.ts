@@ -11240,6 +11240,19 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      claim_factory_workflow_accepted_triage_route: {
+        Args: { p_candidate_token: string }
+        Returns: {
+          execution_generation: number
+          factory_id: string
+          node_id: string
+          occurrence_id: string
+          ownership_token: string
+          root_session_id: string
+          workflow_digest: string
+          workspace_id: string
+        }[]
+      }
       claim_github_pr_refresh: {
         Args: { p_workspace_id?: string }
         Returns: Json
@@ -11605,6 +11618,22 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      configure_factory_workflow_triage: {
+        Args: {
+          p_actor_user_id: string
+          p_definition_revision_id: string
+          p_expected_version: number
+          p_factory_id: string
+          p_graph_revision_id: string
+          p_stage_id: string
+          p_workflow_digest: string
+          p_workspace_id: string
+        }
+        Returns: {
+          configuration_version: number
+          created: boolean
+        }[]
       }
       confirm_factory_event_subscription: {
         Args: {
@@ -12674,6 +12703,18 @@ export type Database = {
           p_provider_request_id?: string
           p_status: string
           p_token_provenance?: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      finish_factory_workflow_accepted_triage_route: {
+        Args: {
+          p_completed: boolean
+          p_expected_generation: number
+          p_factory_id: string
+          p_occurrence_id: string
+          p_ownership_token: string
+          p_root_session_id: string
           p_workspace_id: string
         }
         Returns: boolean
@@ -14739,6 +14780,15 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_workflow_delegated_scope: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_workflow_execution: {
         Args: {
           p_factory_id: string
@@ -14764,6 +14814,18 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      read_factory_workflow_triage_binding: {
+        Args: {
+          p_factory_id: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          graph_revision_id: string
+          stage_id: string
+          workflow_digest: string
+        }[]
       }
       read_run_export_page: {
         Args: { p_export_id: string; p_lease_token: string; p_limit?: number }
@@ -14844,6 +14906,21 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      record_factory_workflow_accepted_scope: {
+        Args: {
+          p_approval_id: string
+          p_factory_id: string
+          p_graph_revision_id: string
+          p_input_run_id: string
+          p_session_id: string
+          p_workflow_digest: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          receipt_id: string
+        }[]
       }
       record_factory_workflow_command_result: {
         Args: {
