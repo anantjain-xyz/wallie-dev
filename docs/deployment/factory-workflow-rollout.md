@@ -63,9 +63,11 @@ pending remote reconciliation with its exact blocker and receipt. [Repository de
   `node scripts/worker-control.mjs drain --timeout-seconds 2700`. Verify the
   same worker reports `drained` before sending the normal stop signal. Start the
   replacement to resume claims and maintenance. [Node drain](worker-container.md#drain-before-a-planned-stop)
-- Before rolling back Workerd, arrange compatible recovery. Setting
-  `WALLIE_WORKER_DISPATCH_ENABLED=false` stops new claims and scheduled
-  maintenance on that Worker. Preserve the dispatcher namespace,
+- Before rolling back Workerd, arrange compatible recovery. Set
+  `WALLIE_WORKER_DISPATCH_ENABLED=false` for subsequent dispatcher batches.
+  A batch already running can still claim up to `WORKER_MAX_CONCURRENT_JOBS`
+  jobs and schedule maintenance. Wait for it to return before switching
+  revisions and account for the claims it made. Preserve the dispatcher namespace,
   `SESSION_ATTEMPT` and `MAINTENANCE` bindings, in-flight Workflow versions,
   and forward schema. Verify the effective revision and dispatch receipts
   after the switch. [Workerd rollback](cloudflare-worker.md#rollback)

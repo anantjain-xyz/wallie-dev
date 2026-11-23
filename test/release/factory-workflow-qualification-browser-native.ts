@@ -62,6 +62,7 @@ export function createBrowserNativeFixture(admin: Admin, database: string | unde
     "Browser fixture writes require a disposable loopback Postgres database.",
   );
   const namespace = String(randomInt(65_700_000, 65_790_000));
+  const releaseReason = `Disposable M11 browser fixture ${randomUUID()}`;
   let releaseToRestore: number | undefined;
 
   function runSql(phase: "seed" | "advance", variables: Record<string, string> = {}) {
@@ -118,15 +119,16 @@ export function createBrowserNativeFixture(admin: Admin, database: string | unde
 
   async function prepare() {
     const initialRelease = await row(admin.rpc("get_git_continuity_release_state").single());
-    const fixture = seedSchema.parse(runSql("seed"));
-    const release = await row(admin.rpc("get_git_continuity_release_state").single());
-    if (
-      !initialRelease.enabled &&
-      release.enabled &&
-      release.revision === initialRelease.revision + 1
-    ) {
-      releaseToRestore = release.revision;
-    }
+    // Know the only revision we can own before the seed can commit, even if
+    // its response is lost or cannot be parsed.
+    if (!initialRelease.enabled) releaseToRestore = initialRelease.revision + 1;
+    const fixture = seedSchema.parse(
+      runSql("seed", {
+        release_expected_revision: String(initialRelease.revision),
+        release_was_enabled: String(initialRelease.enabled),
+        release_reason: releaseReason,
+      }),
+    );
     const graph = materializeWorkflowTemplate({
       templateId: "scoped-fix",
       grant: fixture.grant,
@@ -225,17 +227,20 @@ export function createBrowserNativeFixture(admin: Admin, database: string | unde
   async function restoreRelease() {
     if (releaseToRestore === undefined) return;
     const release = await row(admin.rpc("get_git_continuity_release_state").single());
-    assert.equal(
-      release.revision,
-      releaseToRestore,
-      "The disposable continuity release changed during the browser fixture.",
-    );
+    if (
+      !release.enabled ||
+      release.revision !== releaseToRestore ||
+      release.reason !== releaseReason
+    )
+      return;
     await row(
-      admin.rpc("set_git_continuity_release", {
-        p_enabled: false,
-        p_expected_revision: releaseToRestore,
-        p_reason: "Finish the disposable M11 browser fixture",
-      }),
+      admin
+        .rpc("set_git_continuity_release", {
+          p_enabled: false,
+          p_expected_revision: releaseToRestore,
+          p_reason: "Finish the disposable M11 browser fixture",
+        })
+        .single(),
     );
   }
 

@@ -35,9 +35,16 @@ select scope.workspace_id,pg_temp.op651_id(34),'e2b',connection.connection_revis
     array['git','node','packageManager','agentCli','playwrightPackage','chromium','screenshotSmoke','codexExternalSandbox']) probe)
 from op651_scope scope join public.workspace_e2b_sandbox_connections connection using(workspace_id)
 cross join lateral internal.factory_workflow_authoring_base(scope.workspace_id,scope.factory_id) active;
-select changed.* from public.get_git_continuity_release_state() release
-cross join lateral public.set_git_continuity_release(true,release.revision,'Disposable M11 browser fixture') changed
-where not release.enabled;
+\if :release_was_enabled
+select enabled as m11_release_ready from public.get_git_continuity_release_state()
+where enabled and revision=:'release_expected_revision'::bigint
+\gset
+\else
+select enabled as m11_release_ready
+from public.set_git_continuity_release(true,:'release_expected_revision'::bigint,:'release_reason')
+where enabled and revision=:'release_expected_revision'::bigint+1 and reason=:'release_reason'
+\gset
+\endif
 \o
 select jsonb_build_object(
   'workspaceId',scope.workspace_id,'factoryId',scope.factory_id,'workspaceSlug',('op651-'||:'op651_fixture_namespace'),

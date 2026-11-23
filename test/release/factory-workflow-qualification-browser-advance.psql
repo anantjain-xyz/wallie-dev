@@ -165,7 +165,7 @@ select jsonb_build_object('serial',target.serial,'graph',jsonb_build_object('roo
   'review',jsonb_build_object('receiptId',report.receipt_id,'runId',gate.checkpoint_run_id,
     'commitSha',review.commit_sha,'treeSha',review.tree_sha),
   'validation',jsonb_build_object('sessionId',gate.session_id,'runId',gate.checkpoint_run_id,
-    'commitSha',review.commit_sha,'treeSha',review.tree_sha,'requiredEvidenceKey','tests'),
+    'repositoryId',manifest.repository_id,'commitSha',review.commit_sha,'treeSha',review.tree_sha,'requiredEvidenceKey','tests'),
   'otherApprovalArtifactId',child_approval.artifact_id))::text
 from final_human_gate gate join internal.factory_workflow_exact_reviews review
   on (review.root_session_id,review.checkpoint_run_id)=(gate.session_id,gate.checkpoint_run_id)
@@ -183,5 +183,5 @@ cross join lateral (
   from browser_admitted browser join public.sessions owner on owner.id=browser.session_id
   join public.session_artifacts artifact on artifact.id=owner.current_artifact_id
 ) target;
-select * from finish();
+select * from finish(true);
 commit;

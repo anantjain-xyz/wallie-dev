@@ -74,7 +74,7 @@ const validationReceipt = z.object({
     z.object({
       run_id: uuid,
       session_id: uuid,
-      repository_id: uuid.nullish(),
+      repository_id: uuid,
       commit_sha: sha,
       validation_tree_sha: sha,
       records: z.array(z.object({ key: z.string(), status: z.string() })),
@@ -202,7 +202,7 @@ async function readProjection(page: Page, sessionId: string, runId?: string) {
   const events: Projection["events"] = [];
   const cursors = new Set<string>();
   let root: Projection["root"] | undefined;
-  for (let next = true; next; ) {
+  for (;;) {
     const response = await page.request.get(
       `/api/sessions/${sessionId}/workflow-inspection?${query}`,
     );
@@ -214,15 +214,14 @@ async function readProjection(page: Page, sessionId: string, runId?: string) {
     root = projection.root;
     events.push(...projection.events);
     const cursor = projection.nextCursor;
-    next = cursor !== null;
-    if (cursor) {
-      assert(
-        !cursors.has(cursor) && cursors.size < 60,
-        "History exceeded its bounded receipt window.",
-      );
-      cursors.add(cursor);
-      query.set("cursor", cursor);
-    }
+    if (cursor === null) break;
+    assert(cursor.length > 0, "The history returned an empty cursor.");
+    assert(
+      !cursors.has(cursor) && cursors.size < 60,
+      "History exceeded its bounded receipt window.",
+    );
+    cursors.add(cursor);
+    query.set("cursor", cursor);
   }
   assert(root);
   return { root, events };
@@ -378,6 +377,8 @@ async function reviewWorkflow({
       (evidence) =>
         evidence.session_id === graph.validation.sessionId &&
         evidence.run_id === graph.validation.runId &&
+        (!graph.validation.repositoryId ||
+          evidence.repository_id === graph.validation.repositoryId) &&
         evidence.commit_sha === graph.validation.commitSha &&
         evidence.validation_tree_sha === graph.validation.treeSha &&
         evidence.records.some(
@@ -385,17 +386,21 @@ async function reviewWorkflow({
             record.key === graph.validation.requiredEvidenceKey && record.status === "passed",
         ),
     ),
-    "Expected the validation receipt for the precise run, commit and tree.",
+    "Expected the validation receipt for the exact run, repository, commit and tree.",
   );
   if (graph.validation.repositoryId) {
     assert(
       before.events.some(
         (event) =>
-          event.kind === "repository" &&
+          (event.kind === "join" || event.kind === "repository") &&
+          event.detail.joinId === graph.join.id &&
           event.detail.repositoryId === graph.validation.repositoryId &&
-          event.detail.validationRunId === graph.validation.runId &&
-          event.detail.validationTreeSha === graph.validation.treeSha,
+          (event.kind === "join"
+            ? event.detail.runId === graph.validation.runId
+            : event.detail.validationRunId === graph.validation.runId &&
+              event.detail.validationTreeSha === graph.validation.treeSha),
       ),
+      "Expected the inspection to identify the validated repository for the exact join.",
     );
   }
 
@@ -547,8 +552,11 @@ async function main() {
     const proof = await reviewWorkflow({ owner, outsider, admin, fixture, review, proofDir });
     await writeFile(join(proofDir, "browser-proof.json"), JSON.stringify(proof), { mode: 0o600 });
   } finally {
-    await browser.close();
-    await native?.restoreRelease();
+    try {
+      await browser.close();
+    } finally {
+      await native?.restoreRelease();
+    }
   }
 }
 
