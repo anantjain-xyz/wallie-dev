@@ -83,15 +83,22 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
     const fixture = fixtureSchema.parse(
       JSON.parse(z.string().parse(bindings.WALLIE_NATIVE_HISTORY_FIXTURE)),
     );
+    let recoveryCalls = 0;
     const admin = createClient<Database>(fixture.url, fixture.serviceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
+      global: {
+        fetch: (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          if (url.pathname === "/rest/v1/rpc/fail_stalled_session_job_attempt") recoveryCalls += 1;
+          return globalThis.fetch(input, init);
+        },
+      },
     });
     const reviewer = createClient<Database>(fixture.url, fixture.serviceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: `Bearer ${fixture.reviewerToken}` } },
     });
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin);
-    const rpc = vi.spyOn(admin, "rpc");
     vi.mocked(processPipelineJob).mockImplementationOnce(
       async ({ admin: worker, job, deadlineAt, captureOrderedEvents, workerRuntime }) => {
         assert.equal(worker, admin);
@@ -265,11 +272,9 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
       );
       expect(interrupted?.status).toBe("pending");
 
-      const recoveryCalls = () =>
-        rpc.mock.calls.filter(([name]) => name === "fail_stalled_session_job_attempt").length;
-      const before = recoveryCalls();
+      const before = recoveryCalls;
       await instance.restart();
-      await vi.waitFor(() => expect(recoveryCalls()).toBeGreaterThan(before), { timeout: 10_000 });
+      await vi.waitFor(() => expect(recoveryCalls).toBeGreaterThan(before), { timeout: 10_000 });
       await attempt.waitForStatus("complete");
       expect(processPipelineJob).toHaveBeenCalledOnce();
 
@@ -314,7 +319,6 @@ it.skipIf(!bindings.WALLIE_NATIVE_HISTORY_FIXTURE)(
       ).toEqual([{ id: output.artifact_id }]);
     } finally {
       await attempt.dispose();
-      rpc.mockRestore();
     }
   },
   40_000,
