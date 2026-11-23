@@ -133,8 +133,13 @@ select is(pg_temp.deliver_github_pr(121, 'merged', 'merged', '2026-11-23T08:09Z'
 select is(pg_temp.deliver_github_pr(122, 'merged', 'merged', '2026-11-23T08:09Z',
   p_pr_number=>45, p_head_branch=>'wallie/improvements/reserved', p_head_repository_id=>80662)->>'status',
   'accepted', 'a fork branch name cannot impersonate an internal publication');
-select is((select count(*) from internal.factory_automation_occurrences where workspace_id = pg_temp.op651_id(11)), 2::bigint,
-  'only the two matching external merges can fan out to automation');
+create temp table deleted_fork_delivery as
+select pg_temp.deliver_github_pr(127, 'merged', 'merged', '2026-11-23T08:09Z',
+  p_pr_number=>48, p_head_branch=>'wallie/improvements/reserved', p_head_repository_id=>null) as receipt;
+select ok(receipt->>'status' = 'accepted' and receipt->>'occurrenceCount' = '1',
+  'a missing head repository and a reserved branch name alone still allow a matching event') from deleted_fork_delivery;
+select is((select count(*) from internal.factory_automation_occurrences where workspace_id = pg_temp.op651_id(11)), 3::bigint,
+  'only the three matching external merges can fan out to automation');
 
 select is(pg_temp.deliver_github_pr(124, 'opened', 'open', '2026-11-23T08:10Z', p_pr_number=>47)->>'status',
   'accepted', 'the PR watermark records the open snapshot before a same-second merge');

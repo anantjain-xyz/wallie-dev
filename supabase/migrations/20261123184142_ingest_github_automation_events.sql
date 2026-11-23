@@ -171,7 +171,8 @@ begin
       ) then
         disposition := 'causal_suppressed';
       end if;
-    elsif cardinality(causal_sessions) > 1 or starts_with(p_head_branch, 'wallie/') then
+    elsif cardinality(causal_sessions) > 1
+      or (p_head_repository_id = p_github_repository_id and starts_with(p_head_branch, 'wallie/')) then
       -- A reserved same-repo head can arrive before the canonical PR receipt.
       -- Setup and improvement PRs also use this namespace without a session.
       disposition := 'causal_suppressed';

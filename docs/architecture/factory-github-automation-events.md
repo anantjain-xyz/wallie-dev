@@ -16,4 +16,8 @@ Wallie resolves causal sessions from exact, repository-scoped canonical and lega
 
 The occurrence worker still checks the pinned rule, pause state, execution authority, and remaining capacity before admitting a session. The session prompt carries the trusted repository name, PR number, and source head SHA.
 
-PR verification and canonical reconciliation keep their existing receipts and follow the same verified webhook regardless of automation eligibility. If automation capture fails, retry the original GitHub delivery.
+PR verification and canonical reconciliation keep their existing receipts and follow the same verified webhook regardless of automation eligibility. Verification may succeed even when automation capture fails.
+
+GitHub leaves failed webhook deliveries for manual recovery. Within three days, a GitHub App owner or manager can open **Settings → Developer settings → GitHub Apps**, edit the app, and select **Recent Deliveries** on the **Advanced** tab. Open the original delivery by its GUID and select **Redeliver**. Use the delivery GUID to coordinate recovery and keep webhook payloads and signatures in the GitHub App delivery view. [GitHub App webhook redelivery](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks#redelivering-github-app-webhooks)
+
+A replay returns the original automation receipt when capture already succeeded. If the original failed and a newer event has advanced the automation's PR watermark, Wallie records the replay as stale without creating an occurrence. PR verification can already be current in either case.
