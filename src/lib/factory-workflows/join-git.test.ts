@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { test } from "vitest";
 
-import { integrateJoin, type JoinPlan } from "./join-git";
+import type { SandboxHandle } from "@/lib/sandbox/types";
+import { integrateJoin, runBoundedJoinMerge, type JoinPlan } from "./join-git";
 
 const runFile = promisify(execFile);
 const env = {
@@ -30,14 +31,19 @@ const fixtureJoin = "00000000-0000-4000-8000-000000000254";
 async function result(
   cwd: string,
   args: string[],
-  options?: { signal?: AbortSignal; environment?: Record<string, string> },
+  options?: {
+    signal?: AbortSignal;
+    environment?: Record<string, string>;
+    program?: string;
+    maxBuffer?: number;
+  },
 ) {
   try {
-    const output = await runFile("git", args, {
+    const output = await runFile(options?.program ?? "git", args, {
       cwd,
       env: { ...env, ...options?.environment },
       signal: options?.signal,
-      maxBuffer: 1024 * 1024,
+      maxBuffer: options?.maxBuffer ?? 1024 * 1024,
     });
     return { stdout: output.stdout, code: 0 };
   } catch (error) {
@@ -60,6 +66,27 @@ async function git(cwd: string, args: string[]) {
   return output.stdout.trim();
 }
 
+function localSandbox(cwd: string): Pick<SandboxHandle, "exec"> {
+  return {
+    async exec(program, args, options) {
+      const pending = result(cwd, args, {
+        environment: options?.env,
+        signal: options?.signal,
+        program: program === "node" ? process.execPath : program,
+      });
+      return {
+        exitCode: pending.then(({ code }) => code),
+        output: async () => ({ stdout: (await pending).stdout, stderr: "" }),
+        async *logs() {},
+        async kill() {},
+      };
+    },
+  };
+}
+
+type EditCheckout = (checkout: string) => Promise<void>;
+type FixtureEdits = { base: EditCheckout; left: EditCheckout; right: EditCheckout };
+
 async function fixture(
   run: (ctx: {
     root: string;
@@ -71,6 +98,7 @@ async function fixture(
     conflictingSha: string;
     integrate: (plan: JoinPlan, tag: string) => ReturnType<typeof integrateJoin>;
   }) => Promise<void>,
+  edits?: FixtureEdits,
 ) {
   const root = await mkdtemp(join(tmpdir(), "wallie-join-git-"));
   try {
@@ -82,25 +110,37 @@ async function fixture(
     await git(checkout, ["init", "--initial-branch=main", "--template=", "--quiet"]);
     await writeFile(join(checkout, "a file.txt"), "base\n");
     await writeFile(join(checkout, "b file.txt"), "base\n");
+    await edits?.base(checkout);
     await git(checkout, ["add", "."]);
     await git(checkout, ["commit", "-qm", "base"]);
     const baseSha = await git(checkout, ["rev-parse", "HEAD"]);
     const retained = (runId: string, sha: string) =>
       "refs/heads/wallie/checkpoints/" + runId + "/" + sha;
     const parentRef = retained(parentRun, baseSha);
-    async function branch(file: string, text: string, runId: string) {
+    async function branch(runId: string, message: string, edit: EditCheckout) {
       await git(checkout, ["checkout", "--detach", baseSha]);
-      await writeFile(join(checkout, file), text + "\n");
-      await git(checkout, ["commit", "-qam", text]);
+      await edit(checkout);
+      await git(checkout, ["add", "."]);
+      await git(checkout, ["commit", "-qm", message]);
       const sha = await git(checkout, ["rev-parse", "HEAD"]);
       const ref = retained(runId, sha);
       await git(checkout, ["push", origin, "HEAD:" + ref]);
       return { sha, ref };
     }
     await git(checkout, ["push", origin, baseSha + ":refs/heads/main", baseSha + ":" + parentRef]);
-    const left = await branch("a file.txt", "left", leftRun);
-    const right = await branch("b file.txt", "right", rightRun);
-    const conflict = await branch("a file.txt", "conflict", rightRun);
+    const left = await branch(
+      leftRun,
+      "left",
+      edits?.left ?? ((dir) => writeFile(join(dir, "a file.txt"), "left\n")),
+    );
+    const right = await branch(
+      rightRun,
+      "right",
+      edits?.right ?? ((dir) => writeFile(join(dir, "b file.txt"), "right\n")),
+    );
+    const conflict = await branch(rightRun, "conflict", (dir) =>
+      writeFile(join(dir, "a file.txt"), "conflict\n"),
+    );
     const plan: JoinPlan = {
       joinId: fixtureJoin,
       admittedAt: "2026-11-22T20:05:00.123+00:00",
@@ -141,6 +181,7 @@ async function fixture(
           input,
           {
             git: (args, opts) => result(cwd, args, { signal: opts.signal, environment: opts.env }),
+            merge: (args, options) => runBoundedJoinMerge(localSandbox(cwd), args, options),
             async fetch(selector, signal) {
               const fetched = await result(
                 cwd,
@@ -240,4 +281,91 @@ test("a selected text-only branch with unchanged source produces the exact paren
       candidate.treeSha,
       await git(join(root, "no-code"), ["rev-parse", baseSha + "^{tree}"]),
     );
+  }));
+
+test("a directory rename split returns a truncated conflict with no file paths", async () =>
+  fixture(
+    async ({ origin, plan, integrate, leftSha, rightSha }) => {
+      const mergeArgs = ["merge-tree", "--write-tree", "--name-only", "-z", leftSha, rightSha];
+      const direct = await result(origin, mergeArgs);
+      assert.equal(direct.code, 1);
+      assert.equal(direct.stdout.split("\0")[1], "");
+      assert.match(direct.stdout, /directory rename split/);
+
+      const outcome = await integrate(plan, "directory-rename");
+      assert.equal(outcome.kind, "conflict");
+      assert.equal(outcome.edgeId, "branch.right");
+      assert.deepEqual(outcome.paths, []);
+      assert.equal(outcome.pathsTruncated, true);
+    },
+    {
+      async base(checkout) {
+        await mkdir(join(checkout, "previous"));
+        await writeFile(join(checkout, "previous/b"), "first file\n");
+        await writeFile(join(checkout, "previous/c"), "second file\n");
+      },
+      async left(checkout) {
+        await mkdir(join(checkout, "one"));
+        await mkdir(join(checkout, "two"));
+        await git(checkout, ["mv", "previous/b", "one/b"]);
+        await git(checkout, ["mv", "previous/c", "two/c"]);
+      },
+      async right(checkout) {
+        await writeFile(join(checkout, "previous/d"), "new file with an ambiguous destination\n");
+      },
+    },
+  ));
+
+test("large real merge output retains only a bounded prefix and still produces a conflict", async () => {
+  const directory = ["a".repeat(160), "b".repeat(160)].join("/");
+  const paths = Array.from(
+    { length: 1_000 },
+    (_, index) => `${directory}/${String(index).padStart(4, "0")}-${"c".repeat(142)}.txt`,
+  );
+  const writeFixtures =
+    (body: string): EditCheckout =>
+    async (checkout) => {
+      await mkdir(join(checkout, directory), { recursive: true });
+      for (const path of paths) await writeFile(join(checkout, path), body);
+    };
+  await fixture(
+    async ({ origin, plan, integrate, leftSha, rightSha }) => {
+      const mergeArgs = ["merge-tree", "--write-tree", "--name-only", "-z", leftSha, rightSha];
+      const direct = await result(origin, mergeArgs, { maxBuffer: 4 * 1024 * 1024 });
+      assert.equal(direct.code, 1);
+      assert.ok(Buffer.byteLength(direct.stdout) > 1024 * 1024);
+      const bounded = await runBoundedJoinMerge(localSandbox(origin), mergeArgs, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      assert.equal(bounded.code, 1);
+      assert.equal(bounded.truncated, true);
+      assert.ok(Buffer.byteLength(bounded.stdout) <= 64 * 1024);
+      assert.ok(bounded.stdout.endsWith("\0"));
+      assert.ok(direct.stdout.startsWith(bounded.stdout));
+
+      const outcome = await integrate(plan, "large-conflict");
+      assert.equal(outcome.kind, "conflict");
+      assert.equal(outcome.pathsTruncated, true);
+      assert.ok(outcome.paths.length > 0);
+      assert.deepEqual(outcome.paths, paths.slice(0, outcome.paths.length));
+    },
+    {
+      base: writeFixtures("base\n"),
+      left: writeFixtures("left\n"),
+      right: writeFixtures("right\n"),
+    },
+  );
+}, 20_000);
+
+test("the bounded merge adapter preserves real Git errors", async () =>
+  fixture(async ({ origin, rightSha }) => {
+    for (const invalid of ["not-a-commit", "--wallie-nonexistent-option"]) {
+      const args = ["merge-tree", "--write-tree", "--name-only", "-z", invalid, rightSha];
+      const direct = await result(origin, args);
+      assert.notEqual(direct.code, 0);
+      const bounded = await runBoundedJoinMerge(localSandbox(origin), args, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      assert.deepEqual(bounded, { stdout: "", code: direct.code, truncated: false });
+    }
   }));

@@ -95,6 +95,13 @@ select throws_ok($$select pg_temp.request_join('parallel',221,pg_temp.op651_id(9
 select ok(not has_function_privilege('authenticated',
   'public.enqueue_factory_workflow_join_for_user(uuid,uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid[])','execute'),
   'an authenticated caller cannot impersonate an actor through the trusted RPC');
+select ok((select bool_and(not has_function_privilege('service_role', signature, 'execute'))
+  from (values
+    ('internal.open_factory_workflow_join(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid,uuid[])'),
+    ('internal.enqueue_factory_workflow_join(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid,uuid[])'),
+    ('internal.bind_factory_workflow_join_attempt(uuid,uuid,uuid,bigint,uuid,uuid,uuid,integer,uuid,timestamptz)'),
+    ('internal.record_factory_workflow_join_candidate(uuid,uuid,uuid,bigint,uuid,uuid,uuid,text,text,text)')
+  ) helpers(signature)), 'only guarded join commands can invoke the private admission and attempt helpers');
 select throws_ok($$select pg_temp.request_join('partial',222)$$,'PT409',
   'The join requires the terminal branch set and every required successful output.',
   'a still-pending optional slot cannot be silently omitted');
@@ -117,6 +124,8 @@ select ok((select not input.selected and input.outcome_id is null and input.admi
 create temp table joined_attempt as select pg_temp.claim_join(receipt) as claim from join_enqueued;
 select is((select claim->>'runId' from joined_attempt),(select receipt->>'runId' from join_enqueued),
   'the shared worker starts precisely the run returned to the manager');
+select is((select claim->>'deadlineReason' from joined_attempt), 'elapsed_execution',
+  'the typed attempt identifies the earlier elapsed execution budget for exact recovery');
 select ok((select pg_temp.candidate(claim,repeat('d',40),repeat('e',40)) from joined_attempt),
   'the active typed attempt pins an exact candidate and tree');
 select throws_ok($$select pg_temp.prepare_join(claim,repeat('d',40)) from joined_attempt$$,
@@ -226,7 +235,8 @@ create temp table running_deadline as
 select public.start_factory_workflow_join_attempt(job.id,job.workspace_id,job.session_id,job.attempt_count,
   clock_timestamp()+interval '2 minutes') as claim
 from deadline_dispatch dispatch join public.agent_jobs job on job.id=dispatch.job_id;
-select ok((select claim->>'kind'='started' and (claim->>'deadlineAt')::timestamptz=dispatch.deadline_at
+select ok((select claim->>'kind'='started' and claim->>'deadlineReason'='worker'
+    and (claim->>'deadlineAt')::timestamptz=dispatch.deadline_at
   from running_deadline typed join deadline_dispatch dispatch on dispatch.job_id=(claim->>'jobId')::uuid),
   'the immutable typed attempt is capped by the exact hosted dispatch deadline');
 select ok((select pg_temp.reserve_join_report(claim,repeat('f',64)) is not null from running_deadline),

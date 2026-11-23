@@ -24,6 +24,7 @@ const result = z.discriminatedUnion("kind", [
     baseSha: z.string().regex(/^[a-f0-9]{40}$/),
     baseRef: z.string().nullable(),
     deadlineAt: z.string().datetime({ offset: true }),
+    deadlineReason: z.enum(["worker", "elapsed_execution"]),
   }),
 ]);
 

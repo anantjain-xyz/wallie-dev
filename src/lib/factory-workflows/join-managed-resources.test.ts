@@ -71,6 +71,7 @@ function context(storageFetch?: typeof fetch): Context {
       baseSha: "a".repeat(40),
       baseRef: null,
       deadlineAt,
+      deadlineReason: "worker",
     },
     deadlineAt,
     signal: AbortSignal.timeout(15_000),

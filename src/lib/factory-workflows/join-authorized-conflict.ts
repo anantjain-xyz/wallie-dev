@@ -3,25 +3,18 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
-import { conflictBucket, readJoinConflict } from "./join-conflict";
+import { conflictBucket, joinConflictScopeSchema, readJoinConflict } from "./join-conflict";
 
 type AdminClient = SupabaseClient<Database>;
-const uuid = z.string().uuid();
-const scopeSchema = z.strictObject({
-  workspaceId: uuid,
-  rootSessionId: uuid,
-  joinId: uuid,
-  runId: uuid,
-});
 const digest = z.string().regex(/^[0-9a-f]{64}$/);
 
 export async function readAuthorizedJoinConflict(input: {
   user: Pick<AdminClient, "rpc">;
   storage: Pick<AdminClient, "storage">;
-  scope: z.input<typeof scopeSchema>;
+  scope: z.input<typeof joinConflictScopeSchema>;
   signal: AbortSignal;
 }) {
-  const scope = scopeSchema.parse(input.scope);
+  const scope = joinConflictScopeSchema.parse(input.scope);
   const { signal } = input;
   signal.throwIfAborted();
   // Use the signed-in user's client. The only datum from this RPC is the

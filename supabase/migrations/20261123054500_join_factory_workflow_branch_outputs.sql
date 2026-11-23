@@ -60,6 +60,7 @@ create table internal.factory_workflow_join_attempts (
   attempt_count integer not null check (attempt_count > 0),
   bound_at timestamptz not null default clock_timestamp(),
   deadline_at timestamptz not null check (isfinite(deadline_at) and deadline_at > bound_at),
+  deadline_reason text not null check (deadline_reason in ('worker', 'elapsed_execution')),
   primary key (root_session_id, join_id),
   foreign key (root_session_id, join_id)
     references internal.factory_workflow_joins(root_session_id, join_id) on delete cascade
@@ -136,7 +137,7 @@ $$;
 revoke all on function internal.factory_workflow_join_head_is_current(internal.factory_workflow_joins)
   from public, anon, authenticated, service_role;
 
-create function public.open_factory_workflow_join(
+create function internal.open_factory_workflow_join(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
   p_ownership_token uuid, p_request_id uuid, p_branch_group_id uuid, p_expected_head_run_id uuid,
   p_selected_outcome_ids uuid[]
@@ -181,9 +182,13 @@ begin
     or not internal.recheck_factory_workflow_delegation_lineage(p_root_session_id, p_workspace_id, p_factory_id, manifest.parent_session_id) then
     raise exception 'The join no longer owns its exact parent checkpoint.' using errcode = 'PT409';
   end if;
+  -- Lock the parent before its head, matching checkpoint adoption.
+  select session.* into strict parent from public.sessions session
+  where (session.id, session.workspace_id, session.factory_id) = (manifest.parent_session_id, p_workspace_id, p_factory_id)
+  for no key update of session;
   perform 1 from public.session_git_heads head
   where (head.session_id, head.workspace_id, head.checkpoint_run_id) =
-    (manifest.parent_session_id, p_workspace_id, p_expected_head_run_id) for share;
+    (parent.id, p_workspace_id, p_expected_head_run_id) for share;
   if not found then raise exception 'The join no longer owns its exact parent checkpoint.' using errcode = 'PT409'; end if;
 
   if exists (
@@ -220,8 +225,6 @@ begin
     raise exception 'The join requires the terminal branch set and every required successful output.' using errcode = 'PT409';
   end if;
 
-  select session.* into strict parent from public.sessions session
-  where (session.id, session.workspace_id, session.factory_id) = (manifest.parent_session_id, p_workspace_id, p_factory_id);
   select policy.requirements->'requiredEvidence' into required_keys from public.delivery_policy_revisions policy
   where (policy.id, policy.workspace_id, policy.pipeline_id) = (parent.pinned_delivery_policy_revision_id, p_workspace_id, parent.pipeline_id);
   if jsonb_typeof(required_keys) is distinct from 'array' or jsonb_array_length(required_keys) = 0 then
@@ -257,11 +260,10 @@ begin
   return query select receipt.join_id, receipt.join_occurrence_id, true;
 end;
 $$;
-revoke all on function public.open_factory_workflow_join(uuid, uuid, uuid, bigint, uuid, uuid, uuid, uuid, uuid[])
+revoke all on function internal.open_factory_workflow_join(uuid, uuid, uuid, bigint, uuid, uuid, uuid, uuid, uuid[])
   from public, anon, authenticated, service_role;
-grant execute on function public.open_factory_workflow_join(uuid, uuid, uuid, bigint, uuid, uuid, uuid, uuid, uuid[])
-  to service_role;
-create function public.bind_factory_workflow_join_attempt(
+
+create function internal.bind_factory_workflow_join_attempt(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
   p_ownership_token uuid, p_join_id uuid, p_job_id uuid, p_attempt_count integer, p_run_id uuid,
   p_deadline_at timestamptz default null
@@ -273,6 +275,7 @@ declare
   run_started_at timestamptz;
   checked_at timestamptz;
   effective_deadline timestamptz;
+  budget_deadline timestamptz;
   budget record;
 begin
   if p_deadline_at is not null and not isfinite(p_deadline_at) then return false; end if;
@@ -320,22 +323,25 @@ begin
   checked_at := clock_timestamp();
   select * into budget from public.get_session_execution_budget(manifest.parent_session_id);
   if not found or budget.exhaustion_code is not null then return false; end if;
+  budget_deadline := checked_at + budget.remaining_execution_ms * interval '1 millisecond';
   effective_deadline := least(
     p_deadline_at,
     coalesce(claimed_at, run_started_at) + interval '30 minutes',
     (select dispatch.deadline_at from public.worker_dispatches dispatch
       where (dispatch.job_id, dispatch.attempt_count, dispatch.workspace_id) = (p_job_id, p_attempt_count, p_workspace_id)),
-    checked_at + budget.remaining_execution_ms * interval '1 millisecond'
+    budget_deadline
   );
   checked_at := clock_timestamp();
   if effective_deadline <= checked_at then return false; end if;
-  insert into internal.factory_workflow_join_attempts(root_session_id, join_id, job_id, run_id, attempt_count, bound_at, deadline_at)
-  values (p_root_session_id, p_join_id, p_job_id, p_run_id, p_attempt_count, checked_at, effective_deadline);
+  insert into internal.factory_workflow_join_attempts(root_session_id, join_id, job_id, run_id, attempt_count, bound_at,
+    deadline_at, deadline_reason)
+  values (p_root_session_id, p_join_id, p_job_id, p_run_id, p_attempt_count, checked_at, effective_deadline,
+    case when effective_deadline=budget_deadline then 'elapsed_execution' else 'worker' end);
   return true;
 end;
 $$;
 
-create function public.record_factory_workflow_join_candidate(
+create function internal.record_factory_workflow_join_candidate(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
   p_ownership_token uuid, p_join_id uuid, p_run_id uuid, p_commit_sha text, p_tree_sha text, p_bundle_sha256 text default null
 ) returns boolean language plpgsql security definer set search_path = '' as $$
@@ -398,72 +404,6 @@ $$;
 revoke all on function internal.factory_workflow_join_validation_passes(internal.factory_workflow_joins,
   internal.factory_workflow_join_attempts, internal.factory_workflow_join_candidates) from public, anon, authenticated, service_role;
 
-create function public.record_factory_workflow_join_blocker(
-  p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
-  p_ownership_token uuid, p_join_id uuid, p_run_id uuid, p_outcome text, p_detail jsonb
-) returns boolean language plpgsql security definer set search_path = '' as $$
-declare
-  manifest internal.factory_workflow_joins;
-  attempt internal.factory_workflow_join_attempts;
-  candidate internal.factory_workflow_join_candidates;
-  prior internal.factory_workflow_join_outcomes;
-begin
-  perform internal.lock_factory_workflow_owner(p_root_session_id, p_workspace_id, p_factory_id,
-    p_expected_generation, p_ownership_token);
-  if p_outcome is null or p_outcome not in ('conflict', 'validation_failed')
-    or jsonb_typeof(p_detail) is distinct from 'object' or octet_length(p_detail::text) > 8192 then
-    raise exception 'An exact bounded join blocker is required.' using errcode = '22023';
-  end if;
-  select recorded.* into manifest from internal.factory_workflow_joins recorded
-  where (recorded.root_session_id, recorded.workspace_id, recorded.factory_id, recorded.join_id) =
-    (p_root_session_id, p_workspace_id, p_factory_id, p_join_id);
-  if not found then return false; end if;
-  select owned.* into attempt from internal.factory_workflow_join_attempts owned
-  where (owned.root_session_id, owned.join_id, owned.run_id) = (p_root_session_id, p_join_id, p_run_id);
-  if not found then return false; end if;
-  select terminal.* into prior from internal.factory_workflow_join_outcomes terminal
-  where (terminal.root_session_id, terminal.join_id) = (p_root_session_id, p_join_id);
-  if found then
-    if (prior.outcome, prior.detail) is distinct from (p_outcome, p_detail) then
-      raise exception 'The join already has a different terminal result.' using errcode = 'PT409';
-    end if;
-    return true;
-  end if;
-  if not internal.recheck_factory_workflow_delegation_lineage(p_root_session_id, p_workspace_id, p_factory_id, manifest.parent_session_id)
-    or not internal.factory_workflow_join_head_is_current(manifest) then return false; end if;
-  select sealed.* into candidate from internal.factory_workflow_join_candidates sealed
-  where (sealed.root_session_id, sealed.join_id) = (p_root_session_id, p_join_id);
-
-  if p_outcome = 'conflict' then
-    if candidate.join_id is not null or p_detail - array['reportSha256', 'paths'] <> '{}'::jsonb
-      or jsonb_typeof(p_detail->'reportSha256') is distinct from 'string'
-      or p_detail->>'reportSha256' collate "C" !~ '^[0-9a-f]{64}$'
-      or jsonb_typeof(p_detail->'paths') is distinct from 'array'
-      or jsonb_array_length(p_detail->'paths') not between 1 and 128
-      or exists (select 1 from jsonb_array_elements(p_detail->'paths') path
-        where jsonb_typeof(path) is distinct from 'string'
-          or length(path#>>'{}') not between 1 and 512
-          or path#>>'{}' collate "C" !~ '^[^/[:cntrl:]][^[:cntrl:]]*$'
-          or path#>>'{}' collate "C" ~ '(^|/)\.\.(/|$)') then
-      raise exception 'A conflict requires the retained integration report.' using errcode = '22023';
-    end if;
-  elsif p_detail <> '{}'::jsonb or candidate.join_id is null
-    or not exists (
-      select 1 from public.session_validation_evidence evidence
-      where (evidence.run_id, evidence.workspace_id, evidence.session_id, evidence.job_id, evidence.attempt_count,
-        evidence.repository_id, evidence.commit_sha, evidence.validation_tree_sha) =
-        (attempt.run_id, manifest.workspace_id, manifest.parent_session_id, attempt.job_id, attempt.attempt_count,
-          manifest.repository_id, candidate.commit_sha, candidate.tree_sha)
-    ) or internal.factory_workflow_join_validation_passes(manifest, attempt, candidate) then
-    return false;
-  end if;
-
-  insert into internal.factory_workflow_join_outcomes(root_session_id, join_id, outcome, detail)
-  values (p_root_session_id, p_join_id, p_outcome, p_detail);
-  return true;
-end;
-$$;
-
 create function public.read_factory_workflow_join(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_join_id uuid
 ) returns jsonb language sql stable security definer set search_path = '' as $$
@@ -482,14 +422,11 @@ create function public.read_factory_workflow_join(
     (p_root_session_id, p_workspace_id, p_factory_id, p_join_id)
 $$;
 
-revoke all on function public.bind_factory_workflow_join_attempt(uuid, uuid, uuid, bigint, uuid, uuid, uuid, integer, uuid, timestamptz),
-  public.record_factory_workflow_join_candidate(uuid, uuid, uuid, bigint, uuid, uuid, uuid, text, text, text),
-  public.record_factory_workflow_join_blocker(uuid, uuid, uuid, bigint, uuid, uuid, uuid, text, jsonb),
+revoke all on function internal.bind_factory_workflow_join_attempt(uuid, uuid, uuid, bigint, uuid, uuid, uuid, integer, uuid, timestamptz),
+  internal.record_factory_workflow_join_candidate(uuid, uuid, uuid, bigint, uuid, uuid, uuid, text, text, text),
   public.read_factory_workflow_join(uuid, uuid, uuid, uuid) from public, anon, authenticated, service_role;
-grant execute on function public.bind_factory_workflow_join_attempt(uuid, uuid, uuid, bigint, uuid, uuid, uuid, integer, uuid, timestamptz),
-  public.record_factory_workflow_join_candidate(uuid, uuid, uuid, bigint, uuid, uuid, uuid, text, text, text),
-  public.record_factory_workflow_join_blocker(uuid, uuid, uuid, bigint, uuid, uuid, uuid, text, jsonb),
-  public.read_factory_workflow_join(uuid, uuid, uuid, uuid) to service_role;
+grant execute on function public.read_factory_workflow_join(uuid, uuid, uuid, uuid) to service_role;
+
 -- The native adopter opens this fence inside its transaction. The artifact
 -- primitive cannot be used directly to finish a join, even for no-code output.
 create table internal.factory_workflow_join_adoption_fences (
@@ -787,7 +724,7 @@ $$;
 revoke all on function internal.is_factory_workflow_join_job(uuid) from public,anon,authenticated,service_role;
 grant execute on function internal.is_factory_workflow_join_job(uuid) to service_role;
 
-create function public.enqueue_factory_workflow_join(
+create function internal.enqueue_factory_workflow_join(
   p_root_session_id uuid,p_workspace_id uuid,p_factory_id uuid,p_expected_generation bigint,p_ownership_token uuid,
   p_request_id uuid,p_branch_group_id uuid,p_expected_head_run_id uuid,p_selected_outcome_ids uuid[]
 ) returns jsonb language plpgsql security definer set search_path='' as $$
@@ -802,7 +739,7 @@ declare
 begin
   perform internal.assert_checkpoint_publication_service();
   execution:=internal.lock_factory_workflow_owner(p_root_session_id,p_workspace_id,p_factory_id,p_expected_generation,p_ownership_token);
-  select * into strict opened from public.open_factory_workflow_join(p_root_session_id,p_workspace_id,p_factory_id,p_expected_generation,
+  select * into strict opened from internal.open_factory_workflow_join(p_root_session_id,p_workspace_id,p_factory_id,p_expected_generation,
     p_ownership_token,p_request_id,p_branch_group_id,p_expected_head_run_id,p_selected_outcome_ids);
   select * into strict manifest from internal.factory_workflow_joins
   where (root_session_id,join_id)=(p_root_session_id,opened.join_id);
@@ -879,6 +816,7 @@ declare
   model text;
   started uuid;
   deadline_at timestamptz;
+  deadline_reason text;
 begin
   perform internal.assert_checkpoint_publication_service();
   select * into marker from internal.factory_workflow_join_jobs where job_id=p_job_id;
@@ -928,17 +866,19 @@ begin
     raise exception 'The workflow join did not start the admitted run.' using errcode='PT409';
   end if;
   perform public.pin_session_job_git_input(p_job_id,p_attempt_count,started,manifest.repository_id,validation_input.base_branch,manifest.base_sha);
-  if not found or not public.bind_factory_workflow_join_attempt(marker.root_session_id,p_workspace_id,marker.factory_id,
+  if not found or not internal.bind_factory_workflow_join_attempt(marker.root_session_id,p_workspace_id,marker.factory_id,
     execution.generation,execution.ownership_token,marker.join_id,p_job_id,p_attempt_count,started,p_deadline_at)
     then raise exception 'The workflow join attempt could not bind its exact input and deadline.' using errcode='PT409'; end if;
-  select bound.deadline_at into strict deadline_at from internal.factory_workflow_join_attempts bound where bound.run_id=started;
+  select bound.deadline_at,bound.deadline_reason into strict deadline_at,deadline_reason
+  from internal.factory_workflow_join_attempts bound where bound.run_id=started;
   if clock_timestamp() >= deadline_at then
     raise exception 'Workflow join attempt deadline elapsed before start.' using errcode='57014';
   end if;
   return jsonb_build_object('kind','started','rootSessionId',marker.root_session_id,'workspaceId',p_workspace_id,
     'factoryId',marker.factory_id,'parentSessionId',p_session_id,'joinId',marker.join_id,'jobId',p_job_id,'runId',started,
     'attemptCount',p_attempt_count,'generation',execution.generation,'ownershipToken',execution.ownership_token,
-    'artifactVersion',marker.artifact_version,'baseSha',manifest.base_sha,'baseRef',validation_input.input_ref,'deadlineAt',deadline_at);
+    'artifactVersion',marker.artifact_version,'baseSha',manifest.base_sha,'baseRef',validation_input.input_ref,
+    'deadlineAt',deadline_at,'deadlineReason',deadline_reason);
 end;
 $$;
 
@@ -989,11 +929,10 @@ from public,anon,authenticated,service_role;
 grant execute on function public.fail_session_job_attempt(uuid,integer,text,boolean,integer,uuid)
 to service_role;
 
-revoke all on function public.enqueue_factory_workflow_join(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid,uuid[]),
+revoke all on function internal.enqueue_factory_workflow_join(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid,uuid[]),
   public.start_factory_workflow_join_attempt(uuid,uuid,uuid,integer,timestamptz)
 from public,anon,authenticated,service_role;
-grant execute on function public.enqueue_factory_workflow_join(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid,uuid[]),
-  public.start_factory_workflow_join_attempt(uuid,uuid,uuid,integer,timestamptz)
+grant execute on function public.start_factory_workflow_join_attempt(uuid,uuid,uuid,integer,timestamptz)
 to service_role;
 
 create or replace function public.control_factory_workflow_lifecycle(
@@ -1481,7 +1420,7 @@ begin
   if not internal.lock_active_factory_workflow_join_attempt(p_root_session_id,p_workspace_id,p_factory_id,
     p_expected_generation,p_ownership_token,p_join_id,p_job_id,p_run_id,p_attempt_count)
     then return false; end if;
-  recorded:=public.record_factory_workflow_join_candidate(p_root_session_id,p_workspace_id,p_factory_id,
+  recorded:=internal.record_factory_workflow_join_candidate(p_root_session_id,p_workspace_id,p_factory_id,
     p_expected_generation,p_ownership_token,p_join_id,p_run_id,p_commit_sha,p_tree_sha,p_bundle_sha256);
   if not internal.factory_workflow_join_attempt_is_unexpired(p_run_id) then
     raise exception 'Workflow join deadline elapsed before recording the candidate.' using errcode='57014';
@@ -1635,11 +1574,6 @@ grant execute on function public.is_factory_workflow_join_attempt_active(uuid,uu
 to service_role;
 grant execute on function public.read_factory_workflow_join_conflict_digest(uuid,uuid,uuid,uuid)
 to authenticated;
-revoke execute on function public.record_factory_workflow_join_candidate(uuid,uuid,uuid,bigint,uuid,uuid,uuid,text,text,text),
-  public.record_factory_workflow_join_blocker(uuid,uuid,uuid,bigint,uuid,uuid,uuid,text,jsonb),
-  public.bind_factory_workflow_join_attempt(uuid,uuid,uuid,bigint,uuid,uuid,uuid,integer,uuid,timestamptz),
-  public.open_factory_workflow_join(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid,uuid[])
-from service_role;
 
 -- Add the scoped bucket before the settlement RPC refers to its receipt.
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
@@ -1829,7 +1763,7 @@ begin
   perform 1 from internal.git_continuity_release_control where singleton for share;
   perform internal.assert_factory_manager(p_workspace_id,p_factory_id,p_actor_user_id);
   execution:=internal.lock_factory_workflow_generation(p_root_session_id,p_workspace_id,p_factory_id,p_expected_generation);
-  return public.enqueue_factory_workflow_join(p_root_session_id,p_workspace_id,p_factory_id,
+  return internal.enqueue_factory_workflow_join(p_root_session_id,p_workspace_id,p_factory_id,
     p_expected_generation,execution.ownership_token,p_request_id,p_branch_group_id,p_expected_head_run_id,p_selected_outcome_ids);
 end;
 $$;

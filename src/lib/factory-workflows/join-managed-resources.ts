@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 import { createUtilitySandbox, stopSandboxById } from "@/lib/sandbox";
+import { prepareUtilitySandboxNode } from "@/lib/sandbox/setup";
 import type { SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import {
@@ -155,6 +156,7 @@ async function withReservedUtility<T>(
     if ((await prepared.exitCode) !== 0)
       throw new Error("The workflow join workspace could not be prepared.");
     await assertActive(context);
+    await prepareUtilitySandboxNode(handle, connection.provider, signal);
     return await work(handle);
   } finally {
     try {

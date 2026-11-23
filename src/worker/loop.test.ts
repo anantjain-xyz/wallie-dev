@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ExecutionBudgetExhaustedError } from "@/lib/pipeline/execution-budget";
 import { createWorkerAttemptDeadline } from "@/lib/pipeline/worker-attempt-deadline";
 
 import type { WorkerConfig } from "./config";
@@ -246,6 +247,29 @@ describe("runClaimedJob", () => {
       p_error: "join failed",
       p_retry: false,
       p_max_retries: 0,
+    });
+  });
+
+  it("retains the exact join's elapsed budget reason without scheduling a retry", async () => {
+    const admin = recoveryAdmin();
+    const exhausted = new ExecutionBudgetExhaustedError("elapsed_execution");
+    mocked.processFactoryWorkflowJoinJob.mockRejectedValueOnce(exhausted);
+
+    await runClaimedJob(admin as never, baseJob as never);
+
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_stalled_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: exhausted.message,
+      p_retry: false,
+      p_max_retries: 0,
+    });
+    expect(admin.query.insert).toHaveBeenCalledWith({
+      agent_run_id: "run-attempt-1",
+      workspace_id: "workspace-1",
+      kind: "worker_error",
+      message_md: exhausted.message,
     });
   });
 

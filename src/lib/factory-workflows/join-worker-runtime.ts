@@ -15,6 +15,8 @@ import {
 } from "@/lib/pipeline/git-continuity-release";
 import { captureCommittedSourceCheckpoint } from "@/lib/pipeline/source-checkpoint";
 import { prepareSourceDelivery } from "@/lib/pipeline/source-delivery";
+import { WorkerAttemptDeadlineError } from "@/lib/pipeline/worker-attempt-deadline";
+import { observeUntilAbort } from "@/lib/sandbox/lifecycle";
 import type { SandboxHandle } from "@/lib/sandbox/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type {
@@ -32,9 +34,15 @@ import { evaluateExactRunValidationEvidence } from "@/lib/validation-evidence/re
 import { persistValidationEvidence } from "@/lib/validation-evidence/service";
 import { loadPinnedSessionJobGitInput } from "@/lib/wallie/service";
 import { retainJoinConflict, type PrivateConflictObjects } from "./join-conflict";
-import { integrateJoin, type IntegrationOutcome, type JoinPlan } from "./join-git";
+import {
+  integrateJoin,
+  runBoundedJoinMerge,
+  type IntegrationOutcome,
+  type JoinPlan,
+} from "./join-git";
 import { startFactoryWorkflowJoinClaim } from "./join-worker-claim";
 import { selectJoinValidationPlan } from "./join-validation-plan";
+import { prepareJoinValidationDependencies } from "./join-validation-dependencies";
 import { exportValidationSource, materializeValidationSource } from "./join-validation-source";
 
 type AdminClient = SupabaseClient<Database>;
@@ -443,25 +451,42 @@ export async function processFactoryWorkflowJoinJob(input: {
   if (claim.kind === "started_elsewhere") return "handled";
   if (claim.kind === "retired")
     throw new Error("This workflow join claim no longer owns an attempt.");
-  const { admin, resources } = input;
-  const budget = await loadSessionExecutionBudget(admin, claim.parentSessionId);
-  input.signal.throwIfAborted();
-  if (budget?.exhaustionCode) throw new ExecutionBudgetExhaustedError(budget.exhaustionCode);
-  const now = Date.now();
-  const elapsedDeadline =
-    budget?.remainingExecutionMs == null ? Infinity : now + budget.remainingExecutionMs;
-  const stopAt = Math.min(
-    Date.parse(input.deadlineAt),
-    Date.parse(claim.deadlineAt),
-    elapsedDeadline,
-  );
-  if (stopAt <= now) throw new ExecutionBudgetExhaustedError("elapsed_execution");
-  const deadlineAt = new Date(stopAt).toISOString();
-  const signal =
-    stopAt < Date.parse(input.deadlineAt)
-      ? AbortSignal.any([input.signal, AbortSignal.timeout(stopAt - now)])
-      : input.signal;
-  const context = { admin, claim, deadlineAt, signal };
+  const deadlineMs = Math.min(Date.parse(input.deadlineAt), Date.parse(claim.deadlineAt));
+  const deadlineAt = new Date(deadlineMs).toISOString();
+  const reason =
+    claim.deadlineReason === "elapsed_execution"
+      ? new ExecutionBudgetExhaustedError("elapsed_execution")
+      : new WorkerAttemptDeadlineError("The workflow join attempt exceeded its deadline.");
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= 0) throw reason;
+
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(reason), remainingMs);
+  const signal = AbortSignal.any([input.signal, deadline.signal]);
+  const context = { admin: input.admin, claim, deadlineAt, signal };
+  try {
+    return await observeUntilAbort(signal, async () => {
+      const budget = await loadSessionExecutionBudget(context.admin, context.claim.parentSessionId);
+      signal.throwIfAborted();
+      if (budget?.exhaustionCode) throw new ExecutionBudgetExhaustedError(budget.exhaustionCode);
+      await runStartedJoin(context, input);
+      return "handled" as const;
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runStartedJoin(
+  context: Context,
+  input: {
+    resources: ManagedResources;
+    browserRuntime?: BrowserScreenshotRuntime;
+    browserVideoRuntime?: BrowserVideoRuntime;
+  },
+) {
+  const { admin, claim, deadlineAt, signal } = context;
+  const { resources } = input;
   const frozen = await loadJoinInput(context);
   const integration = await resources.integrate(context, async (sandbox) => {
     const repository = await resolveCheckout(context, frozen);
@@ -469,6 +494,8 @@ export async function processFactoryWorkflowJoinJob(input: {
       frozen.plan,
       {
         git: (args, options) => isolatedGit(sandbox, args, options),
+        merge: (args, { signal }) =>
+          runBoundedJoinMerge(sandbox, args, { signal, env: gitEnvironment }),
         fetch: async (selector, fetchSignal) => {
           const encoded = Buffer.from("x-access-token:" + repository.token).toString("base64");
           const result = await isolatedGit(
@@ -527,7 +554,7 @@ export async function processFactoryWorkflowJoinJob(input: {
       signal,
     );
     await saveBlocker(context, { outcome: "conflict", detail });
-    return "handled";
+    return;
   }
   const validation = await frozen.loadValidation();
   const recorded = await admin
@@ -564,8 +591,9 @@ export async function processFactoryWorkflowJoinJob(input: {
       secrets: [],
       signal,
     });
+    const preparedSandbox = await prepareJoinValidationDependencies(sandbox, signal);
     const evidence = await captureValidationEvidence({
-      sandbox,
+      sandbox: preparedSandbox,
       commitSha: integration.commitSha,
       plan: pinned.plan,
       signal,
@@ -610,7 +638,7 @@ export async function processFactoryWorkflowJoinJob(input: {
   signal.throwIfAborted();
   if (requirements.some(({ status }) => status === "failed" || status === "stale")) {
     await saveBlocker(context, { outcome: "validation_failed", detail: {} });
-    return "handled";
+    return;
   }
   if (!unchanged) throw new Error("Validation changed the joined source.");
   if (requirements.some(({ status }) => status !== "passed"))
@@ -653,5 +681,4 @@ export async function processFactoryWorkflowJoinJob(input: {
     deadlineAt,
     signal,
   });
-  return "handled";
 }

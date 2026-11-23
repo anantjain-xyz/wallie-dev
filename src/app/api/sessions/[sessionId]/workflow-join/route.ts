@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { readAuthorizedJoinConflict } from "@/lib/factory-workflows/join-authorized-conflict";
+import { maxJoinValidationSourceBytes } from "@/lib/factory-workflows/join-validation-source";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
@@ -10,7 +11,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export const preferredRegion = "home";
 
 type Params = { params: Promise<{ sessionId: string }> };
-const uuid = z.string().uuid();
+const uuid = z
+  .string()
+  .uuid()
+  .transform((value) => value.toLowerCase());
 const intent = z.strictObject({
   requestId: uuid,
   expectedGeneration: z.number().int().safe().positive(),
@@ -165,6 +169,7 @@ async function readJoinSelection(
       expectedGeneration: owner.data.execution.generation,
       expectedHeadRunId: parsed.data.manifest.source_checkpoint_run_id,
       joinStatus: parsed.data.joinStatus,
+      maxValidationPackBytes: maxJoinValidationSourceBytes,
       slots: parsed.data.slots.map(({ slot, outcome, admissionBlocker }) => ({
         branchEdgeId: slot.branch_edge_id,
         required: slot.required,

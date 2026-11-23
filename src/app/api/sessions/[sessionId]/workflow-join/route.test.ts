@@ -25,7 +25,7 @@ vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: admin }));
 vi.mock("@/lib/supabase/auth", () => ({ getSupabaseUserOrNull: user }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: () => userClient }));
 
-const id = (slot: number) => `65200000-0000-4000-8000-${String(slot).padStart(12, "0")}`;
+const id = (slot: number) => `6520abcd-0000-4000-8000-${String(slot).padStart(12, "0")}`;
 const scope = { id: id(1), workspace_id: id(2), factory_id: id(3) };
 const actor = id(4);
 const params = { params: Promise.resolve({ sessionId: scope.id }) };
@@ -114,75 +114,83 @@ it.each([
   expect(await response.text()).not.toContain("Private details");
 });
 
-it("lists exact join inputs without returning the private workflow projection", async () => {
-  rpc.mockImplementation((name: string) => ({
-    abortSignal: async () => ({
-      data:
-        name === "read_factory_workflow_execution"
-          ? { execution: { generation: intent.expectedGeneration, ownership_token: "private" } }
-          : {
-              manifest: {
-                group_id: intent.branchGroupId,
-                source_checkpoint_run_id: intent.expectedHeadRunId,
-              },
-              joinStatus: "optional_failure",
-              slots: [
-                {
-                  slot: { branch_edge_id: "run.required", required: true },
-                  admissionBlocker: null,
-                  outcome: {
-                    outcome_id: id(8),
-                    outcome: "succeeded",
-                    checkpoint_run_id: id(14),
-                    retained_ref: "private",
+it.each(["canonical", "uppercase"] as const)(
+  "lists exact join inputs for the %s branch group ID without exposing the private workflow projection",
+  async (spelling) => {
+    rpc.mockImplementation((name: string) => ({
+      abortSignal: async () => ({
+        data:
+          name === "read_factory_workflow_execution"
+            ? { execution: { generation: intent.expectedGeneration, ownership_token: "private" } }
+            : {
+                manifest: {
+                  group_id: intent.branchGroupId,
+                  source_checkpoint_run_id: intent.expectedHeadRunId,
+                },
+                joinStatus: "optional_failure",
+                slots: [
+                  {
+                    slot: { branch_edge_id: "run.required", required: true },
+                    admissionBlocker: null,
+                    outcome: {
+                      outcome_id: id(8),
+                      outcome: "succeeded",
+                      checkpoint_run_id: id(14),
+                      retained_ref: "private",
+                    },
                   },
-                },
-                {
-                  slot: { branch_edge_id: "run.optional", required: false },
-                  admissionBlocker: "workflow_child_limit",
-                  outcome: null,
-                },
-              ],
-            },
-      error: null,
-    }),
-  }));
-  const response = await GET(
-    new Request(`${endpoint}?branchGroupId=${intent.branchGroupId}`),
-    params,
-  );
-  expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({
-    branchGroupId: intent.branchGroupId,
-    expectedGeneration: intent.expectedGeneration,
-    expectedHeadRunId: intent.expectedHeadRunId,
-    joinStatus: "optional_failure",
-    slots: [
-      {
-        branchEdgeId: "run.required",
-        required: true,
-        status: "succeeded",
-        outcomeId: id(8),
-        checkpointRunId: id(14),
-        admissionBlocker: null,
-      },
-      {
-        branchEdgeId: "run.optional",
-        required: false,
-        status: "blocked",
-        outcomeId: null,
-        checkpointRunId: null,
-        admissionBlocker: "workflow_child_limit",
-      },
-    ],
-  });
-  expect(rpc).toHaveBeenCalledWith("read_factory_workflow_branch_group", {
-    p_root_session_id: scope.id,
-    p_workspace_id: scope.workspace_id,
-    p_factory_id: scope.factory_id,
-    p_group_id: intent.branchGroupId,
-  });
-});
+                  {
+                    slot: { branch_edge_id: "run.optional", required: false },
+                    admissionBlocker: "workflow_child_limit",
+                    outcome: null,
+                  },
+                ],
+              },
+        error: null,
+      }),
+    }));
+    const response = await GET(
+      new Request(
+        `${endpoint}?branchGroupId=${
+          spelling === "uppercase" ? intent.branchGroupId.toUpperCase() : intent.branchGroupId
+        }`,
+      ),
+      params,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      branchGroupId: intent.branchGroupId,
+      expectedGeneration: intent.expectedGeneration,
+      expectedHeadRunId: intent.expectedHeadRunId,
+      joinStatus: "optional_failure",
+      maxValidationPackBytes: 48 * 1024 * 1024,
+      slots: [
+        {
+          branchEdgeId: "run.required",
+          required: true,
+          status: "succeeded",
+          outcomeId: id(8),
+          checkpointRunId: id(14),
+          admissionBlocker: null,
+        },
+        {
+          branchEdgeId: "run.optional",
+          required: false,
+          status: "blocked",
+          outcomeId: null,
+          checkpointRunId: null,
+          admissionBlocker: "workflow_child_limit",
+        },
+      ],
+    });
+    expect(rpc).toHaveBeenCalledWith("read_factory_workflow_branch_group", {
+      p_root_session_id: scope.id,
+      p_workspace_id: scope.workspace_id,
+      p_factory_id: scope.factory_id,
+      p_group_id: intent.branchGroupId,
+    });
+  },
+);
 
 it("uses the signed-in client and exact visible scope to read a private conflict", async () => {
   const report = { paths: ["src/app.ts"], reportSha256: "a".repeat(64) };

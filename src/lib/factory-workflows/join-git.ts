@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isWallieCheckpointRef } from "@/lib/checkpoint-ref";
+import type { SandboxHandle } from "@/lib/sandbox/types";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const runId = z.string().uuid();
@@ -23,12 +24,14 @@ const planSchema = z.strictObject({
 });
 
 type ProcessResult = { stdout: string; code: number };
+type MergeResult = ProcessResult & { truncated: boolean };
 type GitOperations = {
-  // Both operations run in one fresh, write-restricted sandbox repository.
+  // These operations run in one fresh, write-restricted sandbox repository.
   git: (
     args: string[],
     options: { signal: AbortSignal; env?: Record<string, string> },
   ) => Promise<ProcessResult>;
+  merge: (args: string[], options: { signal: AbortSignal }) => Promise<MergeResult>;
   // The adapter authenticates only this Git network request and fetches the exact selector.
   fetch: (selector: string, signal: AbortSignal) => Promise<void>;
 };
@@ -46,20 +49,69 @@ export type IntegrationOutcome =
       pathsTruncated: boolean;
     };
 
-const conflictOutputLimit = 1024 * 1024;
+const mergeOutputLimit = 64 * 1024;
+const gitConfig = ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false"];
+const mergeOutputSchema = z.strictObject({
+  prefix: z.string().max(Math.ceil(mergeOutputLimit / 3) * 4),
+  truncated: z.boolean(),
+});
+
+// Drain the entire child stream to preserve Git's real exit status. Only complete
+// records in the retained prefix can cross the sandbox transport.
+const boundedMerge = String.raw`
+const { spawn } = require("node:child_process");
+const git = spawn("git", process.argv.slice(1), { stdio: ["ignore", "pipe", "ignore"] });
+const prefix = Buffer.alloc(${mergeOutputLimit});
+let length = 0;
+let truncated = false;
+git.stdout.on("data", (chunk) => {
+  const copied = chunk.copy(prefix, length);
+  length += copied;
+  truncated ||= copied !== chunk.length;
+});
+git.on("error", () => { process.exitCode = 127; });
+git.on("close", (code) => {
+  process.exitCode ??= code ?? 2;
+  const retained = prefix.subarray(0, length);
+  const boundary = retained.lastIndexOf(0) + 1;
+  process.stdout.write(JSON.stringify({
+    prefix: retained.subarray(0, boundary).toString("base64"),
+    truncated: truncated || boundary !== retained.length,
+  }));
+});
+`;
+
+export async function runBoundedJoinMerge(
+  sandbox: Pick<SandboxHandle, "exec">,
+  args: string[],
+  options: { signal: AbortSignal; env?: Record<string, string> },
+): Promise<MergeResult> {
+  const { signal } = options;
+  signal.throwIfAborted();
+  const command = await sandbox.exec("node", ["-e", boundedMerge, "--", ...args], options);
+  const [{ stdout }, code] = await Promise.all([command.output(), command.exitCode]);
+  signal.throwIfAborted();
+  if (code !== 0 && code !== 1) return { stdout: "", code, truncated: false };
+  const envelope = mergeOutputSchema.parse(JSON.parse(stdout));
+  return {
+    stdout: Buffer.from(envelope.prefix, "base64").toString("utf8"),
+    code,
+    truncated: envelope.truncated,
+  };
+}
+
 const persistedPathCount = 32;
 const pathByteLimit = 512;
 const controlCharacter = /[\x00-\x1f\x7f]/;
 const replacement = "\uFFFD";
 
-function conflictPaths(output: string) {
-  if (Buffer.byteLength(output) > conflictOutputLimit)
-    throw new Error("Join conflict output exceeded its limit.");
-  const fields = output.split("\0");
+function conflictPaths({ stdout, truncated }: MergeResult) {
+  const fields = stdout.split("\0");
   // merge-tree prints a synthetic tree even on conflict. It is never a candidate.
-  sha.parse(fields[0]);
+  if (!sha.safeParse(fields[0]).success) throw new Error("Join merge operation failed.");
   const end = fields.indexOf("", 1);
-  if (end < 1) throw new Error("Join conflict path list was not terminated.");
+  if (end < 1 || (!truncated && end === fields.length - 1))
+    throw new Error("Join conflict path list was not terminated.");
   const paths = fields.slice(1, end);
   const usable = [...new Set(paths)].filter(
     (path) =>
@@ -77,7 +129,10 @@ function conflictPaths(output: string) {
     if (persistedBytes > 4 * 1024 || retained.length === persistedPathCount) break;
     retained.push(path);
   }
-  return { paths: retained, pathsTruncated: retained.length !== paths.length };
+  return {
+    paths: retained,
+    pathsTruncated: truncated || retained.length === 0 || retained.length !== paths.length,
+  };
 }
 
 export async function integrateJoin(
@@ -106,10 +161,7 @@ export async function integrateJoin(
   }
   const git = (args: string[], env?: Record<string, string>) => {
     signal.throwIfAborted();
-    return operations.git(
-      ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
-      { signal, env },
-    );
+    return operations.git([...gitConfig, ...args], { signal, env });
   };
   async function required(args: string[], env?: Record<string, string>) {
     const result = await git(args, env);
@@ -154,14 +206,11 @@ export async function integrateJoin(
   }
   for (const branch of branches) {
     if (await ancestor(branch.outputSha, head)) continue;
-    const merged = await git([
-      "merge-tree",
-      "--write-tree",
-      "--name-only",
-      "-z",
-      head,
-      branch.outputSha,
-    ]);
+    signal.throwIfAborted();
+    const merged = await operations.merge(
+      [...gitConfig, "merge-tree", "--write-tree", "--name-only", "-z", head, branch.outputSha],
+      { signal },
+    );
     signal.throwIfAborted();
     if (merged.code === 1) {
       return {
@@ -169,7 +218,7 @@ export async function integrateJoin(
         edgeId: branch.edgeId,
         incomingSha: branch.outputSha,
         integratedThroughSha: head,
-        ...conflictPaths(merged.stdout),
+        ...conflictPaths(merged),
       };
     }
     if (merged.code !== 0) throw new Error("Join merge operation failed.");

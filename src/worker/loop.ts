@@ -7,6 +7,7 @@ import type {
 import { workerRunCaptureEnvSchema } from "@/env/worker";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AttemptWorkerRuntime } from "@/lib/pipeline/attempt-manifest";
+import { ExecutionBudgetExhaustedError } from "@/lib/pipeline/execution-budget";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 import { joinManagedResources } from "@/lib/factory-workflows/join-managed-resources";
 import { processFactoryWorkflowJoinJob } from "@/lib/factory-workflows/join-worker-runtime";
@@ -126,6 +127,10 @@ export async function runClaimedJob(
     controller.abort(error);
     const deadlineElapsed = error instanceof WorkerAttemptDeadlineError;
     const message = error instanceof Error ? error.message : "Worker job processing failed";
+    const historyMessage =
+      deadlineElapsed || error instanceof ExecutionBudgetExhaustedError
+        ? message
+        : "Worker job processing failed.";
     console.error("[worker] job processing error", { error: message, jobId: job.id });
     const recovery = new AbortController();
     let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -146,7 +151,7 @@ export async function runClaimedJob(
           message,
           workspaceId: job.workspace_id,
           deadlineElapsed,
-          historyMessage: deadlineElapsed ? message : "Worker job processing failed.",
+          historyMessage,
           signal: recovery.signal,
         }),
         recoveryDeadline,

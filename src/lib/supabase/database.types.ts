@@ -10992,21 +10992,6 @@ export type Database = {
           status: string
         }[]
       }
-      bind_factory_workflow_join_attempt: {
-        Args: {
-          p_attempt_count: number
-          p_deadline_at?: string
-          p_expected_generation: number
-          p_factory_id: string
-          p_job_id: string
-          p_join_id: string
-          p_ownership_token: string
-          p_root_session_id: string
-          p_run_id: string
-          p_workspace_id: string
-        }
-        Returns: boolean
-      }
       bind_session_conversation_source_once: {
         Args: {
           p_actor_member_id: string
@@ -12438,20 +12423,6 @@ export type Database = {
           p_after_session_id?: string
           p_factory_id: string
           p_limit?: number
-          p_workspace_id: string
-        }
-        Returns: Json
-      }
-      enqueue_factory_workflow_join: {
-        Args: {
-          p_branch_group_id: string
-          p_expected_generation: number
-          p_expected_head_run_id: string
-          p_factory_id: string
-          p_ownership_token: string
-          p_request_id: string
-          p_root_session_id: string
-          p_selected_outcome_ids: string[]
           p_workspace_id: string
         }
         Returns: Json
@@ -14235,24 +14206,6 @@ export type Database = {
           group_id: string
         }[]
       }
-      open_factory_workflow_join: {
-        Args: {
-          p_branch_group_id: string
-          p_expected_generation: number
-          p_expected_head_run_id: string
-          p_factory_id: string
-          p_ownership_token: string
-          p_request_id: string
-          p_root_session_id: string
-          p_selected_outcome_ids: string[]
-          p_workspace_id: string
-        }
-        Returns: {
-          created: boolean
-          join_id: string
-          join_occurrence_id: string
-        }[]
-      }
       persist_codex_auth_json: {
         Args: {
           new_account_email: string
@@ -15186,35 +15139,6 @@ export type Database = {
           created: boolean
           result_id: string
         }[]
-      }
-      record_factory_workflow_join_blocker: {
-        Args: {
-          p_detail: Json
-          p_expected_generation: number
-          p_factory_id: string
-          p_join_id: string
-          p_outcome: string
-          p_ownership_token: string
-          p_root_session_id: string
-          p_run_id: string
-          p_workspace_id: string
-        }
-        Returns: boolean
-      }
-      record_factory_workflow_join_candidate: {
-        Args: {
-          p_bundle_sha256?: string
-          p_commit_sha: string
-          p_expected_generation: number
-          p_factory_id: string
-          p_join_id: string
-          p_ownership_token: string
-          p_root_session_id: string
-          p_run_id: string
-          p_tree_sha: string
-          p_workspace_id: string
-        }
-        Returns: boolean
       }
       record_factory_workflow_node_result: {
         Args: {

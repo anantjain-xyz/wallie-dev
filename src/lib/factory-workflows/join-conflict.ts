@@ -4,19 +4,22 @@ import type { IntegrationOutcome } from "./join-git";
 
 export const conflictBucket = "factory-workflow-join-conflicts";
 const maxReportBytes = 16 * 1024;
-const uuid = z.string().uuid();
+const uuid = z
+  .string()
+  .uuid()
+  .transform((value) => value.toLowerCase());
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
-const scopeSchema = z.strictObject({
+export const joinConflictScopeSchema = z.strictObject({
   workspaceId: uuid,
   rootSessionId: uuid,
   joinId: uuid,
   runId: uuid,
 });
-type Scope = z.infer<typeof scopeSchema>;
+type Scope = z.infer<typeof joinConflictScopeSchema>;
 const reportSchema = z.strictObject({
   version: z.literal(1),
-  scope: scopeSchema,
+  scope: joinConflictScopeSchema,
   edgeId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
   incomingSha: sha,
   integratedThroughSha: sha,
@@ -32,12 +35,11 @@ export type PrivateConflictObjects = {
 };
 
 function pathFor(scope: Scope, digest: Digest) {
-  const pin = scopeSchema.parse(scope);
   return [
-    pin.workspaceId,
-    pin.rootSessionId,
-    pin.joinId,
-    pin.runId,
+    scope.workspaceId,
+    scope.rootSessionId,
+    scope.joinId,
+    scope.runId,
     sha256.parse(digest) + ".json",
   ].join("/");
 }
@@ -53,7 +55,8 @@ export async function readJoinConflict(
   signal: AbortSignal,
 ) {
   signal.throwIfAborted();
-  const stored = await objects.download(pathFor(scope, digest), signal);
+  const expectedScope = joinConflictScopeSchema.parse(scope);
+  const stored = await objects.download(pathFor(expectedScope, digest), signal);
   signal.throwIfAborted();
   if (!stored || stored.size > maxReportBytes)
     throw new Error("The private join conflict report is unavailable.");
@@ -61,7 +64,8 @@ export async function readJoinConflict(
   if (hash(bytes) !== digest) throw new Error("Private join conflict integrity check failed.");
   const report = reportSchema.parse(JSON.parse(bytes.toString("utf8")));
   for (const key of ["workspaceId", "rootSessionId", "joinId", "runId"] as const) {
-    if (report.scope[key] !== scope[key]) throw new Error("Private join conflict scope changed.");
+    if (report.scope[key] !== expectedScope[key])
+      throw new Error("Private join conflict scope changed.");
   }
   return report;
 }
@@ -72,20 +76,24 @@ export async function retainJoinConflict(
   conflict: Conflict,
   signal: AbortSignal,
 ) {
+  // PostgreSQL stores the paths again with the digest in an 8 KiB JSONB receipt.
+  const paths = conflict.paths.slice(0, 32);
+  while (Buffer.byteLength(JSON.stringify(paths)) > 4 * 1024) paths.pop();
   const report = reportSchema.parse({
     version: 1,
     scope,
     edgeId: conflict.edgeId,
     incomingSha: conflict.incomingSha,
     integratedThroughSha: conflict.integratedThroughSha,
-    paths: conflict.paths,
-    pathsTruncated: conflict.pathsTruncated,
+    paths,
+    pathsTruncated:
+      conflict.pathsTruncated || paths.length === 0 || paths.length < conflict.paths.length,
   });
   const bytes = Buffer.from(JSON.stringify(report));
   if (bytes.length > maxReportBytes)
     throw new Error("The join conflict report exceeded its limit.");
   const reportSha256 = hash(bytes);
-  const path = pathFor(scope, reportSha256);
+  const path = pathFor(report.scope, reportSha256);
   signal.throwIfAborted();
   try {
     await objects.upload(path, bytes, signal);

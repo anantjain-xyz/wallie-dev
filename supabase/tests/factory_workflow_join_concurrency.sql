@@ -149,7 +149,8 @@ select ok((select head.checkpoint_run_id = replay.run_id
 select is((select count(*) from join_replay replay cross join branch_owner root
   join internal.factory_workflow_node_results result
     on (result.root_session_id, result.occurrence_id, result.evidence_ref) =
-    (root."sessionId", replay.occurrence_id, 'join-checkpoint:' || replay.run_id)),
+    (root."sessionId", replay.occurrence_id, 'join-checkpoint:' || replay.run_id)
+    and result.outcome = 'succeeded'),
   1::bigint, 'the race leaves one successful graph occurrence result');
 select ok((select case when pub.status = 'adopted' then
     not public.adopt_session_checkpoint_publication(run_id, gen_random_uuid(), null, null)
