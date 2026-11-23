@@ -91,11 +91,10 @@ export async function rpc<T>(
   name: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {
-  const call = admin.rpc.bind(admin) as unknown as (
-    name: string,
-    args: Record<string, unknown>,
-  ) => PromiseLike<{ data: T; error: unknown }>;
-  return checked(call(name, args));
+  const fixture = admin as unknown as {
+    rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: T; error: unknown }>;
+  };
+  return checked(fixture.rpc(name, args));
 }
 
 export async function releaseState(admin: Admin): Promise<ReleaseState> {

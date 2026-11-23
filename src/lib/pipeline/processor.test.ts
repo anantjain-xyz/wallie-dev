@@ -445,13 +445,15 @@ function createTestAdminClient(input: {
   from: (name: string) => unknown;
   rpc?: (fn: string, args?: unknown) => unknown;
 }): TestAdminClient {
-  return {
-    from: input.from as AdminClient["from"],
-    rpc: (input.rpc ??
-      vi.fn(() => {
+  const mock = {
+    from: input.from,
+    rpc:
+      input.rpc ??
+      (() => {
         throw new Error("Unexpected admin.rpc call in processor test admin mock");
-      })) as AdminClient["rpc"],
+      }),
   };
+  return mock as unknown as TestAdminClient;
 }
 
 function createProcessorTestAdminClient(
