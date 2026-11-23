@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 create extension if not exists dblink with schema extensions;
-select plan(8);
+select plan(13);
 set local request.jwt.claim.role = 'service_role';
 
 create function pg_temp.linear_page_id(slot integer) returns uuid language sql immutable as $$
@@ -10,6 +10,7 @@ $$;
 
 -- A stopped run can leave its committed fixtures before the final cleanup.
 drop function if exists public.test_commit_linear_span_race(uuid, uuid, uuid, text);
+drop function if exists public.test_commit_linear_span_race(uuid, uuid, uuid, text, boolean);
 delete from public.workspaces where id = pg_temp.linear_page_id(1);
 delete from auth.users where id = pg_temp.linear_page_id(6);
 
@@ -30,14 +31,16 @@ values (pg_temp.linear_page_id(4), pg_temp.linear_page_id(1), pg_temp.linear_pag
 
 -- Both backends must be able to see the test link and this observation command.
 create function public.test_commit_linear_span_race(
-  p_workspace_id uuid, p_session_id uuid, p_issue_id uuid, p_span_id text
+  p_workspace_id uuid, p_session_id uuid, p_issue_id uuid, p_span_id text, p_observed boolean
 ) returns text language plpgsql set search_path = '' as $$
 begin
-  perform public.commit_linear_automation_span_page(0, array[p_session_id], jsonb_build_array(
-    jsonb_build_object('sessionId', p_session_id, 'linkedIssueId', 'RACE-1',
-      'issueId', p_issue_id, 'spanId', p_span_id, 'stateId', 'todo', 'teamId', null,
-      'projectId', null, 'startedAt', '2026-11-22T10:00:00Z', 'issueUpdatedAt', '2026-11-22T10:00:00Z')
-  ), p_workspace_id);
+  perform public.commit_linear_automation_span_page(0,
+    jsonb_build_array(jsonb_build_object('sessionId', p_session_id, 'linkedIssueId', 'RACE-1')),
+    case when p_observed then jsonb_build_array(
+      jsonb_build_object('sessionId', p_session_id, 'linkedIssueId', 'RACE-1',
+        'issueId', p_issue_id, 'spanId', p_span_id, 'stateId', 'todo', 'teamId', null,
+        'projectId', null, 'startedAt', '2026-11-22T10:00:00Z', 'issueUpdatedAt', '2026-11-22T10:00:00Z')
+    ) else '[]'::jsonb end, p_workspace_id);
   return 'committed';
 exception when sqlstate 'PT409' then
   return SQLSTATE;
@@ -47,11 +50,12 @@ commit;
 
 set request.jwt.claim.role = 'service_role';
 
-create function pg_temp.test_linear_span_race(p_change text, p_operation text) returns setof text
+create function pg_temp.test_linear_span_race(p_change text, p_operation text, p_observed boolean default true) returns setof text
 language plpgsql as $$
 declare
   connection_string text := coalesce(nullif(current_setting('wallie.test_db_connection', true), ''),
-    'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres');
+    format('host=%L port=%L dbname=%L user=supabase_admin password=postgres',
+      inet_server_addr(), inet_server_port(), current_database()));
   deadline timestamptz;
   waiting boolean := false;
   disposition text;
@@ -65,8 +69,8 @@ begin
   perform extensions.dblink_exec('op663_link_writer', format(
     'update public.sessions set %s where id = %L', p_change, pg_temp.linear_page_id(4)));
   perform extensions.dblink_send_query('op663_span_worker', format(
-    'select public.test_commit_linear_span_race(%L, %L, %L, %L)',
-    pg_temp.linear_page_id(1), pg_temp.linear_page_id(4), pg_temp.linear_page_id(5), p_operation));
+    'select public.test_commit_linear_span_race(%L, %L, %L, %L, %L)',
+    pg_temp.linear_page_id(1), pg_temp.linear_page_id(4), pg_temp.linear_page_id(5), p_operation, p_observed));
 
   deadline := clock_timestamp() + interval '3 seconds';
   while extensions.dblink_is_busy('op663_span_worker') = 1 and clock_timestamp() < deadline loop
@@ -95,11 +99,20 @@ select extensions.dblink_disconnect('op663_link_writer');
 select extensions.dblink_disconnect('op663_span_worker');
 update public.sessions set linear_issue_id = 'RACE-1' where id = pg_temp.linear_page_id(4);
 
+select * from pg_temp.test_linear_span_race($$linear_issue_id = 'RACE-3'$$, 'relink without observation', false);
+select extensions.dblink_disconnect('op663_link_writer');
+select extensions.dblink_disconnect('op663_span_worker');
+update public.sessions set linear_issue_id = 'RACE-1' where id = pg_temp.linear_page_id(4);
+
 select * from pg_temp.test_linear_span_race('archived_at = clock_timestamp()', 'archive');
 select extensions.dblink_disconnect('op663_link_writer');
 select extensions.dblink_disconnect('op663_span_worker');
 
-drop function public.test_commit_linear_span_race(uuid, uuid, uuid, text);
+update public.sessions set archived_at = null where id = pg_temp.linear_page_id(4);
+select is(public.test_commit_linear_span_race(pg_temp.linear_page_id(1), pg_temp.linear_page_id(4),
+  pg_temp.linear_page_id(5), 'unobserved', false), 'committed', 'an unchanged link with no observation still advances');
+
+drop function public.test_commit_linear_span_race(uuid, uuid, uuid, text, boolean);
 delete from public.workspaces where id = pg_temp.linear_page_id(1);
 delete from auth.users where id = pg_temp.linear_page_id(6);
 select * from finish();

@@ -21,8 +21,10 @@ select pg_temp.op651_id(1000 + linked.position), pg_temp.op651_id(11), pg_temp.o
     else 'OTHER-' || linked.position end, 'in_progress'
 from generate_series(1, 52) linked(position);
 
-create function pg_temp.issue_page(p_first integer, p_last integer) returns uuid[] language sql as $$
-  select array_agg(pg_temp.op651_id(1000 + item) order by item) from generate_series(p_first, p_last) item
+create function pg_temp.issue_page(p_first integer, p_last integer) returns jsonb language sql as $$
+  select jsonb_agg(jsonb_build_object('sessionId', session.id, 'linkedIssueId', session.linear_issue_id) order by item)
+  from generate_series(p_first, p_last) item
+  join public.sessions session on session.id = pg_temp.op651_id(1000 + item)
 $$;
 create function pg_temp.issue_span(
   p_link integer, p_issue integer, p_span text, p_state text, p_started_at text, p_updated_at text, p_project text default null
@@ -33,8 +35,8 @@ create function pg_temp.issue_span(
   from public.sessions session where session.id = pg_temp.op651_id(1000 + p_link)
 $$;
 
-select ok(has_function_privilege('service_role', 'public.commit_linear_automation_span_page(bigint,uuid[],jsonb,uuid)', 'execute')
-  and not has_function_privilege('authenticated', 'public.commit_linear_automation_span_page(bigint,uuid[],jsonb,uuid)', 'execute')
+select ok(has_function_privilege('service_role', 'public.commit_linear_automation_span_page(bigint,jsonb,jsonb,uuid)', 'execute')
+  and not has_function_privilege('authenticated', 'public.commit_linear_automation_span_page(bigint,jsonb,jsonb,uuid)', 'execute')
   and not has_function_privilege('anon', 'public.read_linear_automation_span_cursor(uuid)', 'execute'),
   'only the worker can read or commit Linear automation scans');
 select ok(generation = 0 and after_session_id is null, 'a new scoped scan begins at the first linked session')

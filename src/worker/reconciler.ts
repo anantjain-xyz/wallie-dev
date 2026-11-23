@@ -23,23 +23,11 @@ type LinkedSession = Pick<
   | "execution_exhausted_at"
 >;
 type Cursor = { after_session_id: string | null; generation: number };
-type WorkspaceObservations = {
-  workspaceId: string;
-  sessions: LinkedSession[];
-  observations: Map<string, LinearStateObservation>;
-  cachedIssueIds: Set<string>;
-};
+type IssueObservations = Map<string, LinearStateObservation | null>;
 
 const PAGE_SIZE = 50;
-type ProviderPage = {
-  workspaces: WorkspaceObservations[];
-  failedWorkspaces: Set<string>;
-};
-type ProviderReads = {
-  observations: Map<string, LinearStateObservation | null>;
-  throttledWorkspaces: Set<string>;
-  unreadableWorkspaces: Set<string>;
-};
+const CONCURRENT_WORKSPACES = 10;
+
 export interface ReconcileResult {
   checked: number;
   canceled: number;
@@ -88,22 +76,22 @@ async function commitAutomationPage(
   admin: AdminClient,
   progress: Cursor,
   sessions: LinkedSession[],
-  page: WorkspaceObservations[],
+  observations: IssueObservations,
   workspaceId: string,
 ): Promise<Cursor | null> {
-  const observations = page.flatMap((workspace) =>
-    workspace.sessions.flatMap((session) => {
-      const linkedIssueId = session.linear_issue_id;
-      const observation = linkedIssueId ? workspace.observations.get(linkedIssueId) : undefined;
-      return linkedIssueId && observation
-        ? [linearSpanPayload(session.id, linkedIssueId, observation)]
-        : [];
-    }),
+  const links = sessions.flatMap((session) =>
+    session.linear_issue_id
+      ? [{ sessionId: session.id, linkedIssueId: session.linear_issue_id }]
+      : [],
   );
+  const spans = links.flatMap(({ sessionId, linkedIssueId }) => {
+    const observation = observations.get(linkedIssueId);
+    return observation ? [linearSpanPayload(sessionId, linkedIssueId, observation)] : [];
+  });
   const { data, error } = await admin.rpc("commit_linear_automation_span_page", {
     p_expected_generation: progress.generation,
-    p_session_ids: sessions.map((session) => session.id),
-    p_observations: observations,
+    p_session_links: links,
+    p_observations: spans,
     p_workspace_id: workspaceId,
   });
   if (error || !data?.[0]) {
@@ -123,40 +111,12 @@ function canArchiveLinearSession(route: ReturnType<typeof classifyLinearStatus>[
 
 async function routeLinkedSessions(
   admin: AdminClient,
-  workspace: WorkspaceObservations,
-  reads: ProviderReads,
-  sleep: (ms: number) => Promise<void>,
+  workspaceId: string,
+  sessions: LinkedSession[],
+  observations: IssueObservations,
   result: ReconcileResult,
 ) {
-  const { workspaceId, sessions, observations, cachedIssueIds } = workspace;
   const routing = await loadLinearRoutingSnapshot(admin, workspaceId);
-  // A cached terminal state may have been reopened before lifecycle reaches it.
-  const terminalIssueIds = new Set(
-    [...cachedIssueIds].filter((issueId) => {
-      const observation = observations.get(issueId);
-      return (
-        observation &&
-        canArchiveLinearSession(classifyLinearStatus(observation.statusName, routing.config).route)
-      );
-    }),
-  );
-  if (terminalIssueIds.size) {
-    for (const issueId of terminalIssueIds) {
-      observations.delete(issueId);
-      reads.observations.delete(`${workspaceId}:${issueId}`);
-    }
-    const refreshed = await observeLinkedSessionPage(
-      admin,
-      sessions.filter(
-        (session) => session.linear_issue_id && terminalIssueIds.has(session.linear_issue_id),
-      ),
-      reads,
-      sleep,
-    );
-    for (const [issueId, observation] of refreshed.workspaces[0]?.observations ?? []) {
-      observations.set(issueId, observation);
-    }
-  }
   for (const session of sessions) {
     result.checked++;
     const observation = session.linear_issue_id
@@ -239,101 +199,87 @@ async function loadLinkedSessionPage(
   return data ?? [];
 }
 
-async function observeLinkedSessionPage(
-  admin: AdminClient,
-  sessions: LinkedSession[],
-  reads: ProviderReads,
-  sleep: (ms: number) => Promise<void>,
-): Promise<ProviderPage> {
-  const cache = reads.observations;
+function groupLinkedSessions(sessions: LinkedSession[]) {
   const groups = new Map<string, LinkedSession[]>();
-  const missingWorkspaces = new Set<string>();
   for (const session of sessions) {
-    if (!session.linear_issue_id) continue;
     const group = groups.get(session.workspace_id);
     if (group) group.push(session);
     else groups.set(session.workspace_id, [session]);
-    if (
-      !reads.throttledWorkspaces.has(session.workspace_id) &&
-      !reads.unreadableWorkspaces.has(session.workspace_id) &&
-      !cache.has(`${session.workspace_id}:${session.linear_issue_id}`)
-    ) {
-      missingWorkspaces.add(session.workspace_id);
-    }
   }
-  const apiKeys = missingWorkspaces.size
-    ? await loadLinearApiKeys(admin, [...missingWorkspaces])
-    : new Map<string, string | null>();
-  const page: ProviderPage = { workspaces: [], failedWorkspaces: new Set() };
-  for (const [workspaceId, workspaceSessions] of groups) {
-    if (reads.throttledWorkspaces.has(workspaceId) || reads.unreadableWorkspaces.has(workspaceId)) {
-      page.failedWorkspaces.add(workspaceId);
-      continue;
-    }
-    const issueIds = [
-      ...new Set(workspaceSessions.flatMap((session) => session.linear_issue_id ?? [])),
-    ];
-    const missing = issueIds.filter((issueId) => !cache.has(`${workspaceId}:${issueId}`));
-    const apiKey = apiKeys?.get(workspaceId);
-    if (missing.length && (apiKeys === null || apiKey === null)) {
-      if (apiKey === null) reads.unreadableWorkspaces.add(workspaceId);
-      page.failedWorkspaces.add(workspaceId);
-      continue;
-    }
-    if (missing.length && apiKey === undefined) continue;
-    try {
-      const fetched =
-        apiKey && missing.length
-          ? await fetchLinearStateObservations(apiKey, missing, sleep)
-          : new Map<string, LinearStateObservation>();
-      const observations = new Map<string, LinearStateObservation>();
-      const cachedIssueIds = new Set<string>();
-      for (const issueId of issueIds) {
-        const key = `${workspaceId}:${issueId}`;
-        if (cache.has(key)) cachedIssueIds.add(issueId);
-        const observation = cache.get(key) ?? fetched.get(issueId) ?? null;
-        cache.delete(key);
-        cache.set(key, observation);
-        if (observation) observations.set(issueId, observation);
+  return groups;
+}
+
+async function forEachWorkspace<T>(
+  workspaces: ReadonlyMap<string, T>,
+  work: (workspaceId: string, item: T) => Promise<void>,
+) {
+  const pending = workspaces.entries();
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENT_WORKSPACES, workspaces.size) }, async () => {
+      for (const [workspaceId, item] of pending) {
+        try {
+          await work(workspaceId, item);
+        } catch (error) {
+          console.error("[reconciler] failed to reconcile Linear workspace", {
+            error: error instanceof Error ? error.message : String(error),
+            workspaceId,
+          });
+        }
       }
-      page.workspaces.push({
+    }),
+  );
+}
+
+async function observeWorkspace(
+  workspaceId: string,
+  sessions: LinkedSession[],
+  apiKey: string | undefined,
+  throttled: Set<string>,
+  sleep: (ms: number) => Promise<void>,
+  observed: IssueObservations = new Map(),
+): Promise<IssueObservations | null> {
+  if (!apiKey) return new Map();
+  const issueIds = [...new Set(sessions.flatMap((session) => session.linear_issue_id ?? []))];
+  const missing = issueIds.filter((id) => !observed.has(id));
+  try {
+    const fetched = missing.length
+      ? await fetchLinearStateObservations(apiKey, missing, sleep)
+      : new Map<string, LinearStateObservation>();
+    return new Map(issueIds.map((id) => [id, observed.get(id) ?? fetched.get(id) ?? null]));
+  } catch (error) {
+    if (error instanceof LinearRateLimitedError) {
+      throttled.add(workspaceId);
+    } else {
+      console.error("[reconciler] failed to observe Linear workspace", {
+        error: error instanceof Error ? error.message : String(error),
         workspaceId,
-        sessions: workspaceSessions,
-        observations,
-        cachedIssueIds,
       });
-    } catch (error) {
-      page.failedWorkspaces.add(workspaceId);
-      if (error instanceof LinearRateLimitedError) {
-        reads.throttledWorkspaces.add(workspaceId);
-      } else {
-        console.error("[reconciler] failed to observe Linear workspace", {
-          error: error instanceof Error ? error.message : String(error),
-          workspaceId,
-        });
-      }
     }
+    return null;
   }
-  // Offset lifecycle and automation pages share a bounded provider cache.
-  while (cache.size > 2 * PAGE_SIZE) cache.delete(cache.keys().next().value!);
-  return page;
 }
 
 async function advanceWorkspaceAutomation(
   admin: AdminClient,
   workspaceId: string,
-  knownProgress: Cursor | undefined,
-  reads: ProviderReads,
+  progress: Cursor,
+  apiKey: string | undefined,
+  throttled: Set<string>,
   sleep: (ms: number) => Promise<void>,
+  observed?: IssueObservations,
 ): Promise<Cursor | null> {
-  if (reads.throttledWorkspaces.has(workspaceId)) return null;
-  const progress = knownProgress ?? (await readAutomationCursor(admin, workspaceId));
-  if (!progress) return null;
   const sessions = await loadLinkedSessionPage(admin, progress.after_session_id, workspaceId);
   if (!sessions || (!sessions.length && !progress.after_session_id)) return null;
-  const page = await observeLinkedSessionPage(admin, sessions, reads, sleep);
-  if (page.failedWorkspaces.has(workspaceId)) return null;
-  const next = await commitAutomationPage(admin, progress, sessions, page.workspaces, workspaceId);
+  const observations = await observeWorkspace(
+    workspaceId,
+    sessions,
+    apiKey,
+    throttled,
+    sleep,
+    observed,
+  );
+  if (!observations) return null;
+  const next = await commitAutomationPage(admin, progress, sessions, observations, workspaceId);
   return next?.after_session_id ? next : null;
 }
 
@@ -346,32 +292,52 @@ export async function reconcileLinearState(
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const result: ReconcileResult = { checked: 0, canceled: 0, rateLimited: false };
-  const reads: ProviderReads = {
-    observations: new Map(),
-    throttledWorkspaces: new Set(),
-    unreadableWorkspaces: new Set(),
-  };
+  const throttled = new Set<string>();
   const cursors = new Map<string, Cursor | null>();
 
   let lifecycleAfter: string | null = null;
   for (;;) {
     const sessions = await loadLinkedSessionPage(admin, lifecycleAfter, workspaceId);
     if (!sessions?.length) break;
-    const page = await observeLinkedSessionPage(admin, sessions, reads, sleep);
-    for (const scope of new Set(sessions.map((session) => session.workspace_id))) {
-      const progress = cursors.get(scope);
-      if (progress === null) continue;
-      cursors.set(scope, await advanceWorkspaceAutomation(admin, scope, progress, reads, sleep));
-    }
-    for (const workspace of page.workspaces) {
-      try {
-        await routeLinkedSessions(admin, workspace, reads, sleep, result);
-      } catch (error) {
-        console.error("[reconciler] failed to route Linear workspace", {
-          error: error instanceof Error ? error.message : String(error),
-          workspaceId: workspace.workspaceId,
-        });
-      }
+    const workspaces = groupLinkedSessions(sessions);
+    const apiKeys = await loadLinearApiKeys(admin, [...workspaces.keys()]);
+    if (apiKeys) {
+      await forEachWorkspace(workspaces, async (scope, linked) => {
+        const apiKey = apiKeys.get(scope);
+        if (apiKey === null || throttled.has(scope)) return;
+        const fresh = await observeWorkspace(scope, linked, apiKey, throttled, sleep);
+        if (fresh?.size) {
+          try {
+            await routeLinkedSessions(admin, scope, linked, fresh, result);
+          } catch (error) {
+            console.error("[reconciler] failed to route Linear workspace", {
+              error: error instanceof Error ? error.message : String(error),
+              workspaceId: scope,
+            });
+          }
+        }
+
+        if (throttled.has(scope)) return;
+        const progress = cursors.has(scope)
+          ? cursors.get(scope)
+          : await readAutomationCursor(admin, scope);
+        if (progress) {
+          cursors.set(
+            scope,
+            await advanceWorkspaceAutomation(
+              admin,
+              scope,
+              progress,
+              apiKey,
+              throttled,
+              sleep,
+              fresh ?? undefined,
+            ),
+          );
+        } else {
+          cursors.set(scope, null);
+        }
+      });
     }
     if (sessions.length < PAGE_SIZE) break;
     lifecycleAfter = sessions.at(-1)!.id;
@@ -379,20 +345,34 @@ export async function reconcileLinearState(
 
   // A scoped maintenance sweep can reset an exhausted cursor after its final
   // link was archived. The normal sweep discovers workspace IDs from live links.
-  if (workspaceId && !cursors.has(workspaceId)) {
-    cursors.set(
-      workspaceId,
-      await advanceWorkspaceAutomation(admin, workspaceId, undefined, reads, sleep),
-    );
+  if (workspaceId && !cursors.has(workspaceId) && !throttled.has(workspaceId)) {
+    cursors.set(workspaceId, await readAutomationCursor(admin, workspaceId));
   }
-  for (const [scope, savedProgress] of cursors) {
-    let progress = savedProgress;
-    while (progress) {
-      progress = await advanceWorkspaceAutomation(admin, scope, progress, reads, sleep);
+  const remaining = new Map(
+    [...cursors].filter(([scope, progress]) => progress && !throttled.has(scope)),
+  );
+  if (remaining.size) {
+    const apiKeys = await loadLinearApiKeys(admin, [...remaining.keys()]);
+    if (apiKeys) {
+      await forEachWorkspace(remaining, async (scope, savedProgress) => {
+        const apiKey = apiKeys.get(scope);
+        if (apiKey === null) return;
+        let progress = savedProgress;
+        while (progress) {
+          progress = await advanceWorkspaceAutomation(
+            admin,
+            scope,
+            progress,
+            apiKey,
+            throttled,
+            sleep,
+          );
+        }
+      });
     }
   }
 
-  result.rateLimited = reads.throttledWorkspaces.size > 0;
+  result.rateLimited = throttled.size > 0;
   return result;
 }
 

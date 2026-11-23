@@ -418,18 +418,18 @@ status-name mappings and its exact per-session transition receipt.
 - Unrelated edits and repeat reads of the same span do not rematch rules.
   The first accepted filter payload is retained. Older snapshots cannot move
   the issue watermark backward.
-- Each workspace has its own automation cursor. Its exact linked page, issue
-  watermarks, and matching occurrences commit together. A failed or throttled
+- Each workspace has its own automation cursor. Postgres verifies every link on
+  the page, including links with no returned observation, before committing the
+  cursor, watermarks, and matching occurrences together. A failed or throttled
   read, or an unreadable configured key, leaves that workspace at its last
-  committed page. Other workspaces continue. A short final page resets its
-  cursor to the beginning. Normal and workspace-scoped sweeps share the same
-  workspace cursor.
-- Lifecycle routing starts at the first linked session each sweep. A failed
-  lifecycle read leaves the workspace's later automation pages eligible.
-  Before a terminal route, the worker refreshes any cached observation.
-  Postgres retains the exact span and applies terminal routing together under
-  the current issue watermark. A failed or stale write keeps the link available
-  for another sweep.
+  committed page. A short final page resets its cursor to the beginning. Normal
+  and workspace-scoped sweeps share the same workspace cursor.
+- Bounded workspace batches can route sessions and commit pages as soon as
+  their own observations are available. Lifecycle routing starts at the first
+  linked session each sweep and uses fresh page reads. A failed lifecycle read
+  leaves later automation pages eligible. Postgres retains the exact span and
+  applies terminal routing together under the current issue watermark. A failed
+  or stale write keeps the link available for another sweep.
 
 Linear rate limits are retried once with a bounded delay. Persistent throttling
 ends polling for that workspace in the current sweep. The worker only reads

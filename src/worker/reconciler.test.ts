@@ -39,6 +39,7 @@ const session = (id = "session-1", workspace = "workspace-1", phase = "awaiting_
   updated_at: updatedAt,
   phase_status: phase,
 });
+const linked = (id: string) => ({ sessionId: id, linkedIssueId: `ISSUE-${id}` });
 function adminFor(
   rows = [session()],
   credentials = [...new Set(rows.map((row) => row.workspace_id))].map((workspace_id) => ({
@@ -65,7 +66,7 @@ function adminFor(
   });
   const commitPage = vi.fn(
     (input: {
-      p_session_ids: string[];
+      p_session_links: Array<ReturnType<typeof linked>>;
       p_expected_generation: number;
       p_workspace_id: string;
       p_observations: unknown[];
@@ -73,7 +74,8 @@ function adminFor(
       Promise.resolve({
         data: [
           {
-            after_session_id: input.p_session_ids.length === 50 ? input.p_session_ids.at(-1) : null,
+            after_session_id:
+              input.p_session_links.length === 50 ? input.p_session_links.at(-1)?.sessionId : null,
             generation: input.p_expected_generation + 1,
             occurrence_count: 0,
           },
@@ -331,7 +333,7 @@ describe("reconcileLinearState", () => {
     );
     expect(commitPage).toHaveBeenCalledExactlyOnceWith({
       p_expected_generation: 7,
-      p_session_ids: ["session-2"],
+      p_session_links: [linked("session-2")],
       p_workspace_id: "workspace-1",
       p_observations: [
         {
@@ -366,33 +368,25 @@ describe("reconcileLinearState", () => {
       data: [],
       error: { code: "XX000", message: "write unavailable" },
     });
-    mocks.observations
-      .mockImplementationOnce(
-        async (_key: string, ids: string[]) =>
-          new Map(ids.map((id) => [id, { ...observation, statusName: "Todo" }])),
-      )
-      .mockImplementationOnce(
-        async (_key: string, ids: string[]) => new Map(ids.map((id) => [id, observation])),
-      )
-      .mockImplementationOnce(
-        async (_key: string, ids: string[]) =>
-          new Map(
-            ids.map((id) => [
-              id,
-              { ...observation, spanId: "prefix-new", statusName: "In Review" },
-            ]),
-          ),
-      );
+    let prefixStatus = "Todo";
+    mocks.observations.mockImplementation(
+      async (_key: string, ids: string[]) =>
+        new Map(ids.map((id) => [id, { ...observation, statusName: prefixStatus }])),
+    );
 
     await reconcileLinearState(admin as never);
+    prefixStatus = "In Review";
     await reconcileLinearState(admin as never);
 
     const prefix = rpc.mock.calls.filter(([, args]) => args.p_session_id === "session-000");
     expect(prefix.map(([, args]) => args.p_status_name)).toEqual(["Todo", "In Review"]);
-    expect(mocks.observations).toHaveBeenCalledTimes(4);
+    expect(mocks.observations).toHaveBeenCalledTimes(6);
     expect(commitPage).toHaveBeenCalledTimes(2);
     for (const [page] of commitPage.mock.calls) {
-      expect(page).toMatchObject({ p_expected_generation: 7, p_session_ids: ["session-050"] });
+      expect(page).toMatchObject({
+        p_expected_generation: 7,
+        p_session_links: [linked("session-050")],
+      });
     }
   });
 
@@ -470,9 +464,13 @@ describe("reconcileLinearState", () => {
     expect(mocks.cleanup).not.toHaveBeenCalled();
   });
 
-  it.each(["reopened", "rate-limited"])(
-    "refreshes a cached terminal observation and skips archival when the issue is %s",
-    async (outcome) => {
+  it.each([
+    { firstStatus: "Canceled", latestStatus: "Todo" },
+    { firstStatus: "Canceled", latestStatus: null },
+    { firstStatus: "Rework", latestStatus: "In Review" },
+  ])(
+    "routes only a fresh lifecycle read after automation observed $firstStatus and the latest is $latestStatus",
+    async ({ firstStatus, latestStatus }) => {
       const { admin, readCursor, commitPage, terminalRpc, rpc } = adminFor(
         Array.from({ length: 51 }, (_, index) =>
           session(`session-${String(index).padStart(3, "0")}`),
@@ -483,37 +481,39 @@ describe("reconcileLinearState", () => {
         error: null,
       });
       const lastIssue = "ISSUE-session-050";
-      let terminalReads = 0;
+      let lastIssueReads = 0;
       mocks.observations.mockImplementation(async (_key: string, ids: string[]) => {
         if (!ids.includes(lastIssue)) return new Map(ids.map((id) => [id, observation]));
-        if (++terminalReads === 1) {
+        if (++lastIssueReads === 1) {
           return new Map([
-            [lastIssue, { ...observation, spanId: "closed", statusName: "Canceled" }],
+            [lastIssue, { ...observation, spanId: "earlier", statusName: firstStatus }],
           ]);
         }
-        if (outcome === "rate-limited") throw new LinearRateLimitedError();
-        return new Map([[lastIssue, { ...observation, spanId: "reopened", statusName: "Todo" }]]);
+        if (latestStatus === null) throw new LinearRateLimitedError();
+        return new Map([
+          [lastIssue, { ...observation, spanId: "latest", statusName: latestStatus }],
+        ]);
       });
 
       const result = await reconcileLinearState(admin as never);
 
-      expect(terminalReads).toBe(2);
-      expect(result.rateLimited).toBe(outcome === "rate-limited");
+      expect(lastIssueReads).toBe(2);
+      expect(result.rateLimited).toBe(latestStatus === null);
       expect(terminalRpc).not.toHaveBeenCalled();
       expect(commitPage).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
-          p_session_ids: ["session-050"],
-          p_observations: [expect.objectContaining({ spanId: "closed" })],
+          p_session_links: [linked("session-050")],
+          p_observations: [expect.objectContaining({ spanId: "earlier" })],
         }),
       );
       const routed = rpc.mock.calls.filter(([, input]) => input.p_session_id === "session-050");
-      if (outcome === "reopened") {
+      if (latestStatus !== null) {
         expect(routed).toEqual([
           [
             "apply_linear_session_transition",
             expect.objectContaining({
-              p_source_span_id: "reopened",
-              p_status_name: "Todo",
+              p_source_span_id: "latest",
+              p_status_name: latestStatus,
             }),
           ],
         ]);
@@ -541,7 +541,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         p_workspace_id: "workspace-1",
         p_expected_generation: 6,
-        p_session_ids: ["session-2"],
+        p_session_links: [linked("session-2")],
         p_observations: [expect.objectContaining({ sessionId: "session-2" })],
       }),
     );
@@ -569,15 +569,15 @@ describe("reconcileLinearState", () => {
     for (const [page] of commitPage.mock.calls) {
       expect(page).toMatchObject({
         p_expected_generation: 7,
-        p_session_ids: ["session-2"],
+        p_session_links: [linked("session-2")],
         p_workspace_id: "workspace-2",
         p_observations: [expect.objectContaining({ sessionId: "session-2" })],
       });
     }
-    expect(readCursor.mock.calls.map(([, input]) => input.p_workspace_id)).toEqual([
+    expect(readCursor.mock.calls.map(([, input]) => input.p_workspace_id).sort()).toEqual([
+      "workspace-1",
       "workspace-1",
       "workspace-2",
-      "workspace-1",
       "workspace-2",
     ]);
     expect(rpc.mock.calls.map(([, input]) => input.p_session_id)).toEqual([
@@ -606,13 +606,15 @@ describe("reconcileLinearState", () => {
       ["ISSUE-session-2"],
       expect.any(Function),
     );
-    expect(commitPage.mock.calls.map(([page]) => page.p_workspace_id)).toEqual([
+    expect(commitPage.mock.calls.map(([page]) => page.p_workspace_id).sort()).toEqual([
       "workspace-2",
       "workspace-3",
     ]);
-    expect(commitPage.mock.calls[1]?.[0]).toMatchObject({
+    expect(
+      commitPage.mock.calls.find(([page]) => page.p_workspace_id === "workspace-3")?.[0],
+    ).toMatchObject({
       p_observations: [],
-      p_session_ids: ["session-3"],
+      p_session_links: [linked("session-3")],
     });
     expect(console.error).toHaveBeenCalledExactlyOnceWith(
       "[reconciler] failed to decrypt Linear API key",
@@ -620,9 +622,13 @@ describe("reconcileLinearState", () => {
     );
   });
 
-  it("holds only the throttled workspace and advances healthy scopes on both sides", async () => {
+  it("routes and commits healthy workspaces while another is still waiting on throttling", async () => {
+    const retry = Promise.withResolvers<void>();
     mocks.observations.mockImplementation(async (key: string, ids: string[]) => {
-      if (key === "decoded:workspace-2") throw new LinearRateLimitedError();
+      if (key === "decoded:workspace-2") {
+        await retry.promise;
+        throw new LinearRateLimitedError();
+      }
       return new Map(ids.map((id) => [id, observation]));
     });
     const { admin, rpc, commitPage } = adminFor([
@@ -631,16 +637,28 @@ describe("reconcileLinearState", () => {
       session("session-3", "workspace-3"),
     ]);
 
-    expect((await reconcileLinearState(admin as never)).rateLimited).toBe(true);
-
-    expect(commitPage.mock.calls.map(([page]) => page.p_workspace_id)).toEqual([
-      "workspace-1",
-      "workspace-3",
-    ]);
-    expect(rpc.mock.calls.map(([, input]) => input.p_session_id)).toEqual([
-      "session-1",
-      "session-3",
-    ]);
+    const work = reconcileLinearState(admin as never);
+    try {
+      await vi.waitFor(() => {
+        expect(mocks.observations).toHaveBeenCalledWith(
+          "decoded:workspace-2",
+          ["ISSUE-session-2"],
+          expect.any(Function),
+        );
+        expect(commitPage.mock.calls.map(([page]) => page.p_workspace_id).sort()).toEqual([
+          "workspace-1",
+          "workspace-3",
+        ]);
+        expect(rpc.mock.calls.map(([, input]) => input.p_session_id).sort()).toEqual([
+          "session-1",
+          "session-3",
+        ]);
+      });
+    } finally {
+      retry.resolve();
+    }
+    expect((await work).rateLimited).toBe(true);
+    expect(commitPage).toHaveBeenCalledTimes(2);
   });
   it("uses a unique ID cursor so equal creation timestamps cannot skip a page", async () => {
     const { admin, rpc, reads } = adminFor(

@@ -11588,7 +11588,7 @@ export type Database = {
         Args: {
           p_expected_generation: number
           p_observations: Json
-          p_session_ids: string[]
+          p_session_links: Json
           p_workspace_id?: string
         }
         Returns: {

@@ -231,23 +231,25 @@ end;
 $$;
 
 create function public.commit_linear_automation_span_page(
-  p_expected_generation bigint, p_session_ids uuid[], p_observations jsonb, p_workspace_id uuid default null
+  p_expected_generation bigint, p_session_links jsonb, p_observations jsonb, p_workspace_id uuid default null
 ) returns table(after_session_id uuid, generation bigint, occurrence_count integer)
 language plpgsql security definer set search_path = '' as $$
 declare
   progress internal.issue_automation_scan_cursors;
   expected_ids uuid[];
-  locked_ids uuid[];
+  locked_links jsonb;
   observed record;
   source_namespace constant text := 'linear.issue-state';
   inserted integer := 0;
 begin
   perform internal.assert_checkpoint_publication_service();
-  if p_expected_generation is null or p_expected_generation < 0 or p_session_ids is null
-    or cardinality(p_session_ids) > 50 or jsonb_typeof(p_observations) is distinct from 'array' then
+  if p_expected_generation is null or p_expected_generation < 0
+    or jsonb_typeof(p_session_links) is distinct from 'array' or jsonb_typeof(p_observations) is distinct from 'array' then
     raise exception 'An exact Linear automation scan page is required.' using errcode = '22023';
   end if;
-  if jsonb_array_length(p_observations) > cardinality(p_session_ids) or octet_length(p_observations::text) > 65536 then
+  if jsonb_array_length(p_session_links) > 50 or octet_length(p_session_links::text) > 65536
+    or jsonb_array_length(p_observations) > jsonb_array_length(p_session_links)
+    or octet_length(p_observations::text) > 65536 then
     raise exception 'The Linear automation scan page is too large.' using errcode = '22023';
   end if;
 
@@ -275,10 +277,6 @@ begin
       and (progress.after_session_id is null or session.id > progress.after_session_id)
     order by session.id limit 50
   ) page;
-  if expected_ids is distinct from p_session_ids then
-    raise exception 'The linked-session page changed. Reload it and retry.' using errcode = 'PT409';
-  end if;
-
   -- Take scope locks before session locks, as terminal retention does.
   -- Hold the chosen links through validation, span persistence, and cursor advance.
   perform 1 from public.workspaces workspace where workspace.id in (
@@ -287,15 +285,17 @@ begin
   perform 1 from public.factories factory where (factory.workspace_id, factory.id) in (
     select session.workspace_id, session.factory_id from public.sessions session where session.id = any(expected_ids)
   ) order by factory.workspace_id, factory.id for no key update;
-  select coalesce(array_agg(page.id order by page.id), '{}'::uuid[]) into locked_ids
+  select coalesce(jsonb_agg(jsonb_build_object('sessionId', page.id, 'linkedIssueId', page.linear_issue_id)
+    order by page.id), '[]'::jsonb) into locked_links
   from (
-    select session.id from public.sessions session where session.id = any(expected_ids)
+    select session.id, session.linear_issue_id from public.sessions session where session.id = any(expected_ids)
       and session.linear_issue_id is not null and session.archived_at is null
       and session.phase_status in ('in_progress', 'awaiting_review', 'approved', 'rejected')
       and (p_workspace_id is null or session.workspace_id = p_workspace_id)
     order by session.id for share
   ) page;
-  if locked_ids is distinct from expected_ids then
+  if jsonb_array_length(locked_links) <> cardinality(expected_ids)
+    or locked_links is distinct from p_session_links then
     raise exception 'The linked-session page changed. Reload it and retry.' using errcode = 'PT409';
   end if;
 
@@ -308,7 +308,7 @@ begin
   if exists (
     select 1 from jsonb_array_elements(p_observations) observation
     left join public.sessions session on session.id = (observation->>'sessionId')::uuid
-    where session.id is null or not (session.id = any(locked_ids))
+    where session.id is null or not (session.id = any(expected_ids))
       or session.linear_issue_id is distinct from observation->>'linkedIssueId'
       or (observation->>'startedAt')::timestamptz > (observation->>'issueUpdatedAt')::timestamptz
       or not isfinite((observation->>'startedAt')::timestamptz) or not isfinite((observation->>'issueUpdatedAt')::timestamptz)
@@ -351,9 +351,9 @@ revoke all on function
   internal.record_issue_automation_state_span(uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb, boolean),
   internal.valid_linked_linear_automation_observation(jsonb), public.apply_terminal_linear_session_transition(uuid, jsonb,
     timestamptz, timestamptz, text, text, text, text),
-  public.read_linear_automation_span_cursor(uuid), public.commit_linear_automation_span_page(bigint, uuid[], jsonb, uuid)
+  public.read_linear_automation_span_cursor(uuid), public.commit_linear_automation_span_page(bigint, jsonb, jsonb, uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.apply_terminal_linear_session_transition(uuid, jsonb,
     timestamptz, timestamptz, text, text, text, text),
   public.read_linear_automation_span_cursor(uuid),
-  public.commit_linear_automation_span_page(bigint, uuid[], jsonb, uuid) to service_role;
+  public.commit_linear_automation_span_page(bigint, jsonb, jsonb, uuid) to service_role;
