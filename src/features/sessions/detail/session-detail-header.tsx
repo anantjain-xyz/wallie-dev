@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { SessionReviewRepository, SessionReviewSession } from "./data";
 import { SessionInspector } from "./session-inspector";
 import { workspaceSessionsPath } from "@/lib/routes";
+import type { WorkflowInspectionHeader } from "@/lib/factory-workflows/inspection-contracts";
 
 export function SessionDetailHeader({
   actions,
@@ -13,6 +14,7 @@ export function SessionDetailHeader({
   session,
   title,
   workspaceSlug,
+  workflowInspection,
 }: {
   actions: ReactNode;
   creatorDisplayName: string | null;
@@ -21,6 +23,7 @@ export function SessionDetailHeader({
   session: SessionReviewSession;
   title: ReactNode;
   workspaceSlug: string;
+  workflowInspection?: WorkflowInspectionHeader;
 }) {
   return (
     <header className="mb-6 min-w-0 space-y-3">
@@ -40,6 +43,9 @@ export function SessionDetailHeader({
         initialNow={initialNow}
         repository={repository}
         session={session}
+        workflowInspection={
+          workflowInspection ? { header: workflowInspection, workspaceSlug } : undefined
+        }
       />
     </header>
   );

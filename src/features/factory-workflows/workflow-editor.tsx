@@ -14,6 +14,7 @@ import type {
   WorkflowReferenceKind,
   WorkflowReferencePage,
 } from "@/lib/factory-workflows/authoring-contracts";
+import { workflowTemplates } from "@/lib/factory-workflows/workflow-templates";
 import { workspaceWorkflowDetailPath, workspaceWorkflowsPath } from "@/lib/routes";
 
 import {
@@ -42,6 +43,8 @@ import {
   workflowLayers,
   type WorkflowGraphDraft,
 } from "./editor-graph";
+
+import { TemplateSetup } from "./template-setup";
 
 const panel = "min-w-0 rounded-lg border border-border bg-sheet p-4";
 const nodeButton =
@@ -273,6 +276,10 @@ export function WorkflowEditor({
   const readOnly = historical || !snapshot.baseDefinition;
   const editorProps = { graph, edit: setGraph, diagnostics };
   const currentDraftId = snapshot.draftId;
+  const template = workflowTemplates.find(
+    ({ id, version }) => id === snapshot.template?.id && version === snapshot.template.version,
+  );
+  const configuringTemplate = !!template && !snapshot.draftId && graph === initialGraph;
   const canPublish =
     !rebase && !dirty && !!currentDraftId && currentDraftId !== snapshot.publishedDraftId;
   const selectedNode = graph.nodes[nodeIndex];
@@ -485,6 +492,11 @@ export function WorkflowEditor({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="type-page-title wrap-anywhere">{initial.displayName}</h1>
+            {template ? (
+              <p className="mt-1 text-sm text-muted">
+                {template.label} · v{template.version}
+              </p>
+            ) : null}
             <p className="mt-1 text-sm text-muted">
               {historical
                 ? "Saved draft · Read only"
@@ -514,7 +526,12 @@ export function WorkflowEditor({
                 <button
                   type="button"
                   className="ui-button"
-                  disabled={!!action || hasConflict || (!!snapshot.draftId && !dirty && !rebase)}
+                  disabled={
+                    !!action ||
+                    hasConflict ||
+                    configuringTemplate ||
+                    (!!snapshot.draftId && !dirty && !rebase)
+                  }
                   onClick={() => void run("save")}
                 >
                   {action === "save" ? "Saving…" : rebase ? "Rebase and save draft" : "Save draft"}
@@ -567,166 +584,192 @@ export function WorkflowEditor({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div
-          className="flex w-fit flex-wrap gap-1 rounded-lg border border-border bg-sheet p-1"
-          role="group"
-          aria-label="Workflow editor view"
-        >
-          {(["Graph", "Ordered list"] as const).map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              aria-pressed={view === candidate}
-              className="ui-button min-h-8 border-transparent px-3 aria-pressed:bg-accent-soft aria-pressed:text-foreground"
-              onClick={() => setView(candidate)}
+      {configuringTemplate && snapshot.template ? (
+        <TemplateSetup
+          template={snapshot.template}
+          choices={choices}
+          disabled={readOnly || !!action}
+          loadMore={(catalog) => void loadMoreReferences(catalog)}
+          apply={(nextGraph) => {
+            setGraph(nextGraph);
+            setNodeIndex(0);
+            setEdgeIndex(0);
+            setNotice({
+              kind: "status",
+              message: "Template loaded. Save a draft to retain these roles.",
+            });
+            setFocusRequest({ fieldId: workflowFieldId(["nodes", 0, "id"]) });
+          }}
+        />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div
+              className="flex w-fit flex-wrap gap-1 rounded-lg border border-border bg-sheet p-1"
+              role="group"
+              aria-label="Workflow editor view"
             >
-              {candidate}
-            </button>
-          ))}
-        </div>
-        {snapshot.publishedDraftId && snapshot.publishedDraftId !== initial.selectedDraftId ? (
-          <Link
-            className="text-sm text-muted underline underline-offset-4"
-            href={pageFor(snapshot.publishedDraftId)}
-          >
-            Inspect published draft
-          </Link>
-        ) : null}
-      </div>
-
-      {view === "Graph" ? (
-        <GraphCanvas graph={graph} selected={nodeIndex} pick={setNodeIndex} />
-      ) : null}
-
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(15rem,0.65fr)_minmax(0,1.35fr)]">
-        <section className={panel} aria-label="Workflow steps">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-medium">Steps</h2>
-            {!readOnly ? (
-              <button
-                id="workflow-add-step"
-                type="button"
-                className="ui-button"
-                onClick={addStep}
-                disabled={!!action || graph.nodes.length >= 128}
+              {(["Graph", "Ordered list"] as const).map((candidate) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  aria-pressed={view === candidate}
+                  className="ui-button min-h-8 border-transparent px-3 aria-pressed:bg-accent-soft aria-pressed:text-foreground"
+                  onClick={() => setView(candidate)}
+                >
+                  {candidate}
+                </button>
+              ))}
+            </div>
+            {snapshot.publishedDraftId && snapshot.publishedDraftId !== initial.selectedDraftId ? (
+              <Link
+                className="text-sm text-muted underline underline-offset-4"
+                href={pageFor(snapshot.publishedDraftId)}
               >
-                Add step
-              </button>
+                Inspect published draft
+              </Link>
             ) : null}
           </div>
-          <fieldset className="mb-3" disabled={readOnly || !!action}>
-            <WorkflowOptions
-              label="Entry step"
-              path={["entryNodeId"]}
-              diagnostics={diagnostics}
-              options={nodeOptions(graph.nodes)}
-              value={graph.entryNodeId}
-              change={(entryNodeId) => setGraph({ ...graph, entryNodeId })}
-            />
-          </fieldset>
-          <OrderedSteps graph={graph} selected={nodeIndex} pick={setNodeIndex} />
-        </section>
 
-        <section className={panel} aria-label="Step properties">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-medium">Step properties</h2>
-            {!readOnly && graph.nodes[nodeIndex] ? (
-              <button type="button" className="ui-button" disabled={!!action} onClick={removeStep}>
-                Remove step
-              </button>
-            ) : null}
-          </div>
-          <fieldset disabled={readOnly || !!action}>
-            <NodeFields {...editorProps} index={nodeIndex} choices={choices} />
-          </fieldset>
-          {!readOnly ? (
-            <div className="mt-3 flex flex-wrap gap-2 empty:hidden">
-              {stepCatalogs
-                .filter((catalog) => choices.nextCursors[catalog] !== null)
-                .map((catalog) => (
+          {view === "Graph" ? (
+            <GraphCanvas graph={graph} selected={nodeIndex} pick={setNodeIndex} />
+          ) : null}
+
+          <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(15rem,0.65fr)_minmax(0,1.35fr)]">
+            <section className={panel} aria-label="Workflow steps">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-medium">Steps</h2>
+                {!readOnly ? (
                   <button
-                    key={catalog}
+                    id="workflow-add-step"
+                    type="button"
+                    className="ui-button"
+                    onClick={addStep}
+                    disabled={!!action || graph.nodes.length >= 128}
+                  >
+                    Add step
+                  </button>
+                ) : null}
+              </div>
+              <fieldset className="mb-3" disabled={readOnly || !!action}>
+                <WorkflowOptions
+                  label="Entry step"
+                  path={["entryNodeId"]}
+                  diagnostics={diagnostics}
+                  options={nodeOptions(graph.nodes)}
+                  value={graph.entryNodeId}
+                  change={(entryNodeId) => setGraph({ ...graph, entryNodeId })}
+                />
+              </fieldset>
+              <OrderedSteps graph={graph} selected={nodeIndex} pick={setNodeIndex} />
+            </section>
+
+            <section className={panel} aria-label="Step properties">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-medium">Step properties</h2>
+                {!readOnly && graph.nodes[nodeIndex] ? (
+                  <button
                     type="button"
                     className="ui-button"
                     disabled={!!action}
-                    onClick={() => void loadMoreReferences(catalog)}
+                    onClick={removeStep}
                   >
-                    {action === catalog
-                      ? `Loading ${catalogLabels[catalog]}…`
-                      : `Load more ${catalogLabels[catalog]}`}
+                    Remove step
                   </button>
-                ))}
-            </div>
-          ) : null}
-        </section>
-      </div>
-
-      <section className={panel} aria-label="Workflow transitions">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-medium">Transitions</h2>
-          {!readOnly ? (
-            <button
-              type="button"
-              className="ui-button"
-              onClick={addTransition}
-              disabled={!!action || graph.nodes.length < 2 || graph.edges.length >= 512}
-            >
-              Add transition
-            </button>
-          ) : null}
-        </div>
-        {graph.edges.length ? (
-          <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(15rem,0.65fr)_minmax(0,1.35fr)]">
-            <ol className="grid content-start gap-2">
-              {graph.edges.map((edge, index) => (
-                <li key={index}>
-                  <button
-                    type="button"
-                    className={`${nodeButton} grid w-full gap-1 px-3 py-2`}
-                    aria-pressed={edgeIndex === index}
-                    onClick={() => setEdgeIndex(index)}
-                  >
-                    <span className="wrap-anywhere text-sm font-medium">
-                      {edge.id || "Unnamed transition"}
-                    </span>
-                    <span className="wrap-anywhere text-xs text-muted">
-                      {edge.from} → {edge.to} · {edgeLabels[edge.kind]}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ol>
-            <div>
+                ) : null}
+              </div>
               <fieldset disabled={readOnly || !!action}>
-                <EdgeFields {...editorProps} index={edgeIndex} />
+                <NodeFields {...editorProps} index={nodeIndex} choices={choices} />
               </fieldset>
-              {!readOnly && graph.edges[edgeIndex] ? (
+              {!readOnly ? (
+                <div className="mt-3 flex flex-wrap gap-2 empty:hidden">
+                  {stepCatalogs
+                    .filter((catalog) => choices.nextCursors[catalog] !== null)
+                    .map((catalog) => (
+                      <button
+                        key={catalog}
+                        type="button"
+                        className="ui-button"
+                        disabled={!!action}
+                        onClick={() => void loadMoreReferences(catalog)}
+                      >
+                        {action === catalog
+                          ? `Loading ${catalogLabels[catalog]}…`
+                          : `Load more ${catalogLabels[catalog]}`}
+                      </button>
+                    ))}
+                </div>
+              ) : null}
+            </section>
+          </div>
+
+          <section className={panel} aria-label="Workflow transitions">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-medium">Transitions</h2>
+              {!readOnly ? (
                 <button
                   type="button"
-                  className="ui-button mt-3"
-                  disabled={!!action}
-                  onClick={() => {
-                    setGraph(updateEditorEdge(graph, edgeIndex));
-                    setEdgeIndex(Math.max(0, Math.min(edgeIndex, graph.edges.length - 2)));
-                  }}
+                  className="ui-button"
+                  onClick={addTransition}
+                  disabled={!!action || graph.nodes.length < 2 || graph.edges.length >= 512}
                 >
-                  Remove transition
+                  Add transition
                 </button>
               ) : null}
             </div>
-          </div>
-        ) : (
-          <p className="text-sm text-muted">No transitions.</p>
-        )}
-      </section>
+            {graph.edges.length ? (
+              <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(15rem,0.65fr)_minmax(0,1.35fr)]">
+                <ol className="grid content-start gap-2">
+                  {graph.edges.map((edge, index) => (
+                    <li key={index}>
+                      <button
+                        type="button"
+                        className={`${nodeButton} grid w-full gap-1 px-3 py-2`}
+                        aria-pressed={edgeIndex === index}
+                        onClick={() => setEdgeIndex(index)}
+                      >
+                        <span className="wrap-anywhere text-sm font-medium">
+                          {edge.id || "Unnamed transition"}
+                        </span>
+                        <span className="wrap-anywhere text-xs text-muted">
+                          {edge.from} → {edge.to} · {edgeLabels[edge.kind]}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+                <div>
+                  <fieldset disabled={readOnly || !!action}>
+                    <EdgeFields {...editorProps} index={edgeIndex} />
+                  </fieldset>
+                  {!readOnly && graph.edges[edgeIndex] ? (
+                    <button
+                      type="button"
+                      className="ui-button mt-3"
+                      disabled={!!action}
+                      onClick={() => {
+                        setGraph(updateEditorEdge(graph, edgeIndex));
+                        setEdgeIndex(Math.max(0, Math.min(edgeIndex, graph.edges.length - 2)));
+                      }}
+                    >
+                      Remove transition
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">No transitions.</p>
+            )}
+          </section>
 
-      <details className={panel}>
-        <summary className="cursor-pointer font-medium">Workflow policies</summary>
-        <fieldset className="mt-4" disabled={readOnly || !!action}>
-          <PolicyFields {...editorProps} choices={choices} />
-        </fieldset>
-      </details>
+          <details className={panel}>
+            <summary className="cursor-pointer font-medium">Workflow policies</summary>
+            <fieldset className="mt-4" disabled={readOnly || !!action}>
+              <PolicyFields {...editorProps} choices={choices} />
+            </fieldset>
+          </details>
+        </>
+      )}
       {snapshot.recentDrafts.length ? (
         <details className={panel}>
           <summary className="cursor-pointer text-sm font-medium">Recent drafts</summary>

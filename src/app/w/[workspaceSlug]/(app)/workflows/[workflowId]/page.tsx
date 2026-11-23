@@ -38,7 +38,11 @@ export default async function WorkflowEditorPage({
     draft.data,
   );
   if (!snapshot) notFound();
-  const choices = await loadWorkflowEditorChoices(pageScope, snapshot.baseDefinition);
+  const choices = await loadWorkflowEditorChoices(
+    pageScope,
+    snapshot.baseDefinition,
+    snapshot.template,
+  );
   return (
     <WorkflowEditor
       key={`${factoryId}:${workflow.data}:${draft.data ?? "current"}`}

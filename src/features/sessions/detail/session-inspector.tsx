@@ -6,8 +6,10 @@ import { useId, useState } from "react";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { GitHubIcon } from "@/components/shared/icons/github-icon";
 import { TimeDisplay } from "@/components/shared/time-display";
+import { WorkflowInspectionDisclosure } from "@/features/factory-workflows/workflow-inspection-disclosure";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionReviewSession } from "@/features/sessions/detail/data";
+import type { WorkflowInspectionHeader } from "@/lib/factory-workflows/inspection-contracts";
 import { cn } from "@/lib/utils";
 
 import { SessionConversationPanel, useSessionConversation } from "./session-conversation";
@@ -23,6 +25,7 @@ type SessionInspectorProps = {
   initialNow: string;
   repository: SessionInspectorRepository | null;
   session: SessionReviewSession;
+  workflowInspection?: { header: WorkflowInspectionHeader; workspaceSlug: string };
 };
 
 /** Session-wide context stays above the stage workspace, including its original input. */
@@ -31,6 +34,7 @@ export function SessionInspector({
   initialNow,
   repository,
   session,
+  workflowInspection,
 }: SessionInspectorProps) {
   const [inputOpen, setInputOpen] = useState(false);
   const inputId = useId();
@@ -174,6 +178,9 @@ export function SessionInspector({
           />
         ) : null}
       </div>
+      {workflowInspection ? (
+        <WorkflowInspectionDisclosure {...workflowInspection} initialNow={initialNow} />
+      ) : null}
     </section>
   );
 }

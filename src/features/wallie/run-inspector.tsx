@@ -11,6 +11,7 @@ import {
   PageSection,
 } from "@/components/ui/page-shell";
 import { Status, agentRunStatusValue } from "@/components/ui/status";
+import { WorkflowInspectionDisclosure } from "@/features/factory-workflows/workflow-inspection-disclosure";
 import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-inspector";
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import type {
@@ -25,6 +26,7 @@ import type {
 import { RunRoutingDecisionInspection } from "@/features/wallie/run-inspector-routing";
 import { RunContextInspection } from "@/features/wallie/run-context-inspection";
 import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs-list-state";
+import type { WorkflowInspectionHeader } from "@/lib/factory-workflows/inspection-contracts";
 import { workspaceActivityPath, workspaceAgentDetailPath, workspaceRunsPath } from "@/lib/routes";
 
 export function RunInspector({
@@ -45,6 +47,7 @@ export function RunInspector({
   benchmarkCapture,
   evaluations,
   transcript,
+  workflowInspection,
 }: {
   run: WorkspaceRunCatalogItem;
   artifact: RunInspectorArtifact;
@@ -63,6 +66,7 @@ export function RunInspector({
   benchmarkCapture?: ReactNode;
   evaluations?: ReactNode;
   transcript: ReactNode;
+  workflowInspection?: WorkflowInspectionHeader;
 }) {
   const active = run.status === "started" || run.status === "running";
   const recovery = recoveryAction(run);
@@ -100,6 +104,14 @@ export function RunInspector({
       />
 
       <div className="space-y-8">
+        {workflowInspection ? (
+          <WorkflowInspectionDisclosure
+            key={run.id}
+            header={workflowInspection}
+            initialNow={initialNow}
+            workspaceSlug={workspaceSlug}
+          />
+        ) : null}
         <section aria-label="Run details" className="ui-sheet px-4 py-5 sm:px-5">
           <MetadataList>
             <MetadataItem

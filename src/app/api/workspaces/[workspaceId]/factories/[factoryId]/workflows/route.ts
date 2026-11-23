@@ -53,6 +53,7 @@ export async function POST(request: Request, { params }: Context) {
         workflowId: command.data.workflowId,
       },
       command.data.displayName,
+      command.data.template,
     );
     return workflowAuthoringResponse({ workflow }, 201);
   } catch (error) {

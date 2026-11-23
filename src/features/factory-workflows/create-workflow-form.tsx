@@ -4,11 +4,13 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
 import { z } from "zod";
 
+import { SelectField } from "@/components/ui/select";
 import {
   factoryEditorPost,
   fetchFactoryEditor,
 } from "@/features/factory-definition/editor-requests";
 import { createWorkflowAuthoringSchema } from "@/lib/factory-workflows/authoring-contracts";
+import { workflowTemplates } from "@/lib/factory-workflows/workflow-templates";
 import { workspaceWorkflowDetailPath } from "@/lib/routes";
 
 const receipt = z.object({ workflow: createWorkflowAuthoringSchema });
@@ -24,18 +26,24 @@ export function CreateWorkflowForm({
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
+  const [templateId, setTemplateId] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const attempt = useRef<{ workflowId: string; displayName: string } | null>(null);
+  const attempt = useRef<z.input<typeof createWorkflowAuthoringSchema> | null>(null);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending || !name.trim()) return;
     const displayName = name.trim();
+    const template = workflowTemplates.find(({ id }) => id === templateId);
     const command =
-      attempt.current?.displayName === displayName
+      attempt.current?.displayName === displayName && attempt.current.template?.id === template?.id
         ? attempt.current
-        : { displayName, workflowId: crypto.randomUUID() };
+        : {
+            displayName,
+            workflowId: crypto.randomUUID(),
+            ...(template ? { template: { id: template.id, version: template.version } } : {}),
+          };
     attempt.current = command;
     setPending(true);
     setError("");
@@ -52,6 +60,17 @@ export function CreateWorkflowForm({
 
   return (
     <form onSubmit={create} className="grid max-w-lg gap-2">
+      <SelectField
+        label="Start from"
+        options={workflowTemplates.map(({ id, label, version }) => ({
+          label: `${label} · v${version}`,
+          value: id,
+        }))}
+        emptyOption={{ label: "Blank workflow", value: "" }}
+        value={templateId}
+        onValueChange={setTemplateId}
+        disabled={pending}
+      />
       <label htmlFor="workflow-name" className="type-label">
         Workflow name
       </label>

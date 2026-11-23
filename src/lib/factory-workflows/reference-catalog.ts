@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import { withCatalogSignal } from "@/lib/factory-definitions/catalog-query";
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import type { WorkflowGraphDefinition } from "@/lib/factory-definitions/workflow-schema";
@@ -15,6 +16,7 @@ import {
   type WorkflowReferencePage,
   type WorkflowReferenceQuery,
 } from "./authoring-contracts";
+import type { WorkflowTemplateRevision } from "./workflow-templates";
 
 type CatalogScope = {
   supabase: SupabaseClient<Database>;
@@ -86,10 +88,18 @@ async function loadApproverChoices({ supabase, workspaceId }: CatalogScope, afte
 async function loadProfileChoices(
   { supabase, workspaceId, factoryId }: CatalogScope,
   after?: WorkflowDatedReferenceCursor,
+  templateRepositoryId?: string,
 ) {
-  const query = supabase
-    .from("factory_definition_revisions")
-    .select("id, canonical_digest, created_at")
+  const revisions = supabase.from("factory_definition_revisions");
+  const query = (
+    templateRepositoryId
+      ? revisions
+          .select(
+            "id, canonical_digest, created_at, definition_json, factory_definition_activations(id)",
+          )
+          .limit(1, { referencedTable: "factory_definition_activations" })
+      : revisions.select("id, canonical_digest, created_at")
+  )
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factoryId)
     .order("created_at", { ascending: false })
@@ -99,11 +109,32 @@ async function loadProfileChoices(
   if (error) throw error;
   return referencePage(
     data,
-    ({ id, canonical_digest, created_at }) => ({
-      id,
-      digest: canonical_digest,
-      label: `${created_at.slice(0, 10)} · ${canonical_digest.slice(0, 10)}`,
-    }),
+    (item) => {
+      const { id, canonical_digest, created_at } = item;
+      const definition =
+        "definition_json" in item &&
+        typeof item.definition_json === "string" &&
+        "factory_definition_activations" in item &&
+        Array.isArray(item.factory_definition_activations) &&
+        item.factory_definition_activations.length
+          ? readVerifiedFactoryDefinition(item.definition_json, canonical_digest)
+          : null;
+      const promptRevisionId = definition?.implementationAgent?.promptRevisionId;
+      const templateRole =
+        definition?.repositoryId === templateRepositoryId &&
+        promptRevisionId &&
+        definition?.executionGrant &&
+        definition.credentialBindingId &&
+        !definition.modelRouting
+          ? { promptRevisionId, canRunForeman: definition.agent.provider === "codex" }
+          : undefined;
+      return {
+        id,
+        digest: canonical_digest,
+        label: `${created_at.slice(0, 10)} · ${canonical_digest.slice(0, 10)}`,
+        ...(templateRole ? { templateRole } : {}),
+      };
+    },
     ({ id, created_at }) => ({ id, createdAt: created_at }),
   );
 }
@@ -169,6 +200,7 @@ export async function loadWorkflowReferencePage(
   scope: CatalogScope,
   query: WorkflowReferenceQuery,
   base: WorkflowBaseDefinition | null,
+  template?: WorkflowTemplateRevision | null,
 ): Promise<WorkflowReferencePage> {
   const { afterId } = query;
   switch (query.catalog) {
@@ -182,7 +214,11 @@ export async function loadWorkflowReferencePage(
     case "profiles":
       return {
         catalog: query.catalog,
-        ...(await loadProfileChoices(scope, { id: afterId, createdAt: query.afterCreatedAt })),
+        ...(await loadProfileChoices(
+          scope,
+          { id: afterId, createdAt: query.afterCreatedAt },
+          template ? (await loadWorkflowBaseDefinition(scope, base))?.repositoryId : undefined,
+        )),
       };
     case "writers":
       return {
@@ -214,18 +250,68 @@ async function loadWorkflowBaseDefinition(
   return data ? readVerifiedFactoryDefinition(data.definition_json, base.digest) : null;
 }
 
+async function loadTemplateSource(
+  { supabase, workspaceId }: CatalogScope,
+  definition: ReturnType<typeof readVerifiedFactoryDefinition>,
+  template?: WorkflowTemplateRevision | null,
+) {
+  const stage = definition?.stages.at(-1);
+  if (
+    !template ||
+    !stage ||
+    !definition?.repositoryId ||
+    !definition.credentialBindingId ||
+    !definition.implementationAgent ||
+    !definition.executionGrant
+  )
+    return undefined;
+  const { data, error } =
+    definition.deliveryPolicyRevisionId && template.id !== "incident-analysis"
+      ? await supabase
+          .from("delivery_policy_revisions")
+          .select("requirements")
+          .eq("workspace_id", workspaceId)
+          .eq("pipeline_id", definition.pipelineId)
+          .eq("id", definition.deliveryPolicyRevisionId)
+          .maybeSingle()
+      : { data: null, error: null };
+  if (error) throw error;
+  const policy = deliveryRequirementsSchema.safeParse(data?.requirements);
+  const requiredEvidence = policy.success ? policy.data.requiredEvidence : [];
+  return {
+    label: stage.name,
+    anyoneCanApprove: stage.anyoneCanApprove,
+    approverMemberIds: stage.approverMemberIds,
+    hasRequiredEvidence: requiredEvidence.length > 0,
+    canDraftProductScope:
+      definition.stages.length === 1 &&
+      !(
+        policy.success &&
+        policy.data.deliveryMode === "code" &&
+        policy.data.requireArtifactApprovalForDelivery
+      ),
+  };
+}
+
 export async function loadWorkflowEditorChoices(
   scope: CatalogScope,
   base: WorkflowBaseDefinition | null,
+  template?: WorkflowTemplateRevision | null,
 ): Promise<WorkflowEditorCatalog> {
+  const definition = loadWorkflowBaseDefinition(scope, base);
   const [prompts, approvers, profiles, baseChoices] = await Promise.all([
     loadPromptChoices(scope),
     loadApproverChoices(scope),
-    loadProfileChoices(scope),
-    loadWorkflowBaseDefinition(scope, base).then(async (definition) => ({
-      grant: definition?.executionGrant ?? null,
-      writers: await loadWriterChoices(scope, base, definition),
-    })),
+    template
+      ? definition.then((active) => loadProfileChoices(scope, undefined, active?.repositoryId))
+      : loadProfileChoices(scope),
+    definition.then(async (active) => {
+      const [writers, templateSource] = await Promise.all([
+        loadWriterChoices(scope, base, active),
+        loadTemplateSource(scope, active, template),
+      ]);
+      return { grant: active?.executionGrant ?? null, writers, templateSource };
+    }),
   ]);
   return {
     prompts: prompts.items,
@@ -233,6 +319,7 @@ export async function loadWorkflowEditorChoices(
     profiles: profiles.items,
     grant: baseChoices.grant,
     writers: baseChoices.writers.items,
+    ...(baseChoices.templateSource ? { templateSource: baseChoices.templateSource } : {}),
     nextCursors: {
       prompts: prompts.nextCursor,
       approvers: approvers.nextCursor,

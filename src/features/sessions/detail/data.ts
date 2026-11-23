@@ -16,6 +16,8 @@ import type {
   SessionPhaseStatus,
 } from "@/features/sessions/types";
 import type { WallieSessionRepository } from "@/features/wallie/types";
+import { loadWorkflowInspectionHeader } from "@/lib/factory-workflows/inspection";
+import type { WorkflowInspectionHeader } from "@/lib/factory-workflows/inspection-contracts";
 import { loginPath, onboardingWorkspacePath, workspaceSessionDetailPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -108,6 +110,7 @@ export type SessionDetailPageData = {
   latestRun: StageExecution | null;
   repository: SessionReviewRepository | null;
   review: SessionReviewData;
+  workflowInspection: WorkflowInspectionHeader | null;
 };
 
 type SessionDetailRpcAccessMiss = {
@@ -207,7 +210,7 @@ async function loadSessionDetailPageDataWithTiming(
     (attachmentData ?? []) as SessionAttachmentRpcRow[],
   );
   const repository = serializeSessionReviewRepository(payload.activity.repository);
-  const [capabilities, erasure] = await Promise.all([
+  const [capabilities, erasure, workflowInspection] = await Promise.all([
     timing.segment("review.authorization", () =>
       loadSessionReviewCapabilities({
         memberUserId: user.id,
@@ -223,6 +226,9 @@ async function loadSessionDetailPageDataWithTiming(
           target_session_id: payload.session.id,
         })
       : null,
+    timing.segment("workflow-inspection-header", () =>
+      loadWorkflowInspectionHeader(supabase, payload.session.id),
+    ),
   ]);
   const erasedAt = erasure?.data?.erased_at ?? null;
   if (capabilities.canManageRetainedContent || erasedAt) {
@@ -247,6 +253,7 @@ async function loadSessionDetailPageDataWithTiming(
     latestRun: capabilities.latestRun,
     repository,
     review,
+    workflowInspection,
   };
 }
 

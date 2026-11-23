@@ -248,6 +248,16 @@ export function workspaceWorkflowDetailPath(
   );
 }
 
+export function workflowInspectionApiPath(
+  sessionId: string,
+  query?: { runId?: string; cursor?: string },
+) {
+  return withSearchParams(
+    `/api/sessions/${encodeURIComponent(sessionId)}/workflow-inspection`,
+    query,
+  );
+}
+
 export function workflowAuthoringApiPath(
   workspaceId: string,
   factoryId: string,
