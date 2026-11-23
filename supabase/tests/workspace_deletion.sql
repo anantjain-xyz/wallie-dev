@@ -15,7 +15,8 @@ insert into public.workspace_e2b_sandbox_connections(workspace_id, encrypted_api
 insert into public.workspace_vercel_sandbox_connections(workspace_id, encrypted_token, team_id, project_id)
   values('de100000-0000-4000-8000-000000000001', 'vercel-fixture', 'team-fixture', 'project-fixture');
 insert into storage.objects(bucket_id, name)
-  values ('workspace-avatars', 'de100000-0000-4000-8000-000000000001/retained.png');
+  values ('workspace-avatars', 'de100000-0000-4000-8000-000000000001/retained.png'),
+    ('factory-workflow-usage-recovery', 'de100000-0000-4000-8000-000000000001/retained.enc');
 set local role service_role;
 
 select is(public.finish_workspace_deletion('de100000-0000-4000-8000-000000000001'), false,
@@ -78,6 +79,9 @@ select throws_ok($$select public.begin_workspace_resource_operation('de100000-00
 select throws_ok($$insert into storage.objects(bucket_id,name) values
   ('session-attachments','de100000-0000-4000-8000-000000000001/late.png')$$,
   'P0010', 'Workspace deletion is in progress.', 'a delayed Storage request cannot publish after fencing');
+select throws_ok($$insert into storage.objects(bucket_id,name) values
+  ('factory-workflow-usage-recovery','de100000-0000-4000-8000-000000000001/late.enc')$$,
+  'P0010', 'Workspace deletion is in progress.', 'a late foreman usage journal cannot publish after fencing');
 select throws_ok($$delete from public.workspace_vercel_sandbox_connections
   where workspace_id='de100000-0000-4000-8000-000000000001'$$,
   'P0010', 'Workspace deletion is in progress.', 'provider credentials survive failed cleanup');
@@ -113,6 +117,9 @@ delete from public.workspace_resource_operations where id=(select id from deleti
 select is(public.finish_workspace_deletion('de100000-0000-4000-8000-000000000001'), false,
   'remaining Storage metadata prevents finalization after sandbox cleanup');
 delete from storage.objects where name='de100000-0000-4000-8000-000000000001/retained.png';
+select is(public.finish_workspace_deletion('de100000-0000-4000-8000-000000000001'), false,
+  'retained foreman usage prevents finalization until encrypted objects are removed');
+delete from storage.objects where name='de100000-0000-4000-8000-000000000001/retained.enc';
 select is(public.finish_workspace_deletion('de100000-0000-4000-8000-000000000001'), true,
   'hard deletion succeeds after all durable obligations are removed');
 select is((select count(*) from public.workspace_vercel_sandbox_connections

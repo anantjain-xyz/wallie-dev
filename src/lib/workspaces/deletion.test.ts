@@ -193,18 +193,19 @@ describe("durable workspace deletion", () => {
     expect(f.lists.filter((entry) => entry.prefix === workspaceId)).toHaveLength(4);
   });
 
-  it.each(["session-validation-evidence", "workspace-run-exports"])(
-    "cleans private %s objects without deleting another workspace",
-    async (bucket) => {
-      const f = fixture();
-      f.state.objects.set(
-        bucket,
-        new Set([`${workspaceId}/run/report`, "other-workspace/run/report"]),
-      );
-      expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
-      expect([...f.state.objects.get(bucket)!]).toEqual(["other-workspace/run/report"]);
-    },
-  );
+  it.each([
+    "session-validation-evidence",
+    "workspace-run-exports",
+    "factory-workflow-usage-recovery",
+  ])("cleans private %s objects without deleting another workspace", async (bucket) => {
+    const f = fixture();
+    f.state.objects.set(
+      bucket,
+      new Set([`${workspaceId}/run/report`, "other-workspace/run/report"]),
+    );
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
+    expect([...f.state.objects.get(bucket)!]).toEqual(["other-workspace/run/report"]);
+  });
 
   it("retains the workspace on Storage failure and finishes from durable records on retry", async () => {
     const f = fixture();
