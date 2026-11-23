@@ -485,6 +485,7 @@ export async function executeFactoryWorkflowOccurrence(
   ) {
     return advanceFactoryWorkflowBranchOccurrence(admin, pin, options?.signal);
   }
+  options?.signal?.throwIfAborted();
   if (node.kind === "route") {
     if (!graph.routePolicy || !Object.hasOwn(graph.routePolicy.nodes, node.id))
       return { status: "blocked", code: "invalid_route_policy" } as const;

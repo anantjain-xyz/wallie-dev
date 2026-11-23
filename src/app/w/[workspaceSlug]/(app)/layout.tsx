@@ -34,6 +34,9 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
       viewerAvatarUrl={viewerAvatarUrl}
       viewerEmail={user.email ?? null}
       viewerId={user.id}
+      workflowFactoryIds={factories
+        .filter(({ canManage, status }) => canManage && status === "active")
+        .map(({ id }) => id)}
       workspace={workspace}
       workspaceAvatarUrl={workspaceAvatarUrl}
     >

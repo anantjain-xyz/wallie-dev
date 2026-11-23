@@ -14,6 +14,7 @@ import {
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { executeFactoryWorkflowOccurrence, resumeEnrolledFactoryWorkflowGraph } from "./execute";
+import { loadWorkflowGraphReferences } from "./reference-catalog";
 
 type WorkflowScope = {
   rootSessionId: string;
@@ -112,33 +113,6 @@ async function loadApprovedWorkflowGrants({
   return [{ id: grant.data.id, version: grant.data.version, workspaceId: grant.data.workspace_id }];
 }
 
-async function loadWorkflowApprovers(
-  admin: SupabaseClient<Database>,
-  workspaceId: string,
-  approverIds: string[],
-  signal?: AbortSignal,
-) {
-  const approvers: { id: string; workspaceId: string }[] = [];
-  const batchSize = 128;
-  for (let from = 0; from < approverIds.length; from += batchSize) {
-    const { data, error } = await withCatalogSignal(
-      admin
-        .from("workspace_members")
-        .select("id, workspace_id")
-        .eq("workspace_id", workspaceId)
-        .eq("kind", "human")
-        .eq("is_active", true)
-        .in("id", approverIds.slice(from, from + batchSize)),
-      signal,
-    );
-    if (error) throw error;
-    approvers.push(
-      ...(data ?? []).map(({ id, workspace_id }) => ({ id, workspaceId: workspace_id })),
-    );
-  }
-  return approvers;
-}
-
 export async function enrollFactoryWorkflowGraph(
   admin: SupabaseClient<Database>,
   {
@@ -224,47 +198,13 @@ export async function enrollFactoryWorkflowGraph(
   if (pinError) throw pinError;
   if (!pin) throw new Error("The workflow root has no scoped session definition.");
 
-  const revisionIds = [
-    ...new Set(
-      graph.data.nodes.flatMap((node) =>
-        "agentPromptRevisionId" in node ? [node.agentPromptRevisionId] : [],
-      ),
-    ),
-  ];
-  const approverIds = [
-    ...new Set(
-      graph.data.nodes.flatMap((node) =>
-        node.kind === "human-gate" ? node.approverMemberIds : [],
-      ),
-    ),
-  ];
-  const [prompts, approvers, approvedGrants] = await Promise.all([
-    revisionIds.length
-      ? withCatalogSignal(
-          admin
-            .from("factory_agent_prompt_revisions")
-            .select("id, workspace_id")
-            .eq("workspace_id", workspaceId)
-            .eq("factory_id", factoryId)
-            .in("id", revisionIds),
-          signal,
-        )
-      : { data: [], error: null },
-    loadWorkflowApprovers(admin, workspaceId, approverIds, signal),
+  const [references, approvedGrants] = await Promise.all([
+    loadWorkflowGraphReferences(admin, { workspaceId, factoryId, graph: graph.data, signal }),
     loadApprovedWorkflowGrants({ admin, workspaceId, factoryId, graph: graph.data, pin, signal }),
   ]);
-  if (prompts.error) throw prompts.error;
   const compiled = compileWorkflowGraph(
     { kind: "structured", value: graph.data },
-    {
-      workspaceId,
-      agentPromptRevisions: (prompts.data ?? []).map(({ id, workspace_id }) => ({
-        id,
-        workspaceId: workspace_id,
-      })),
-      approvers,
-      approvedGrants,
-    },
+    { workspaceId, ...references, approvedGrants },
   );
   if (!compiled.ok) return compiled;
 

@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
+import { drainAuthoredFactoryWorkflowBatch } from "@/lib/factory-workflows/authoring-dispatch";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { sweepStalledRuns } from "@/worker/stall-detector";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
@@ -32,6 +33,9 @@ vi.mock("@/features/github/pr-verification-service", () => ({
 }));
 vi.mock("@/lib/pipeline/pr-readiness", () => ({ reconcilePrReadiness: vi.fn() }));
 vi.mock("@/lib/factory-workflows/triage-dispatch", () => ({ drainAcceptedTriageRoute: vi.fn() }));
+vi.mock("@/lib/factory-workflows/authoring-dispatch", () => ({
+  drainAuthoredFactoryWorkflowBatch: vi.fn(),
+}));
 vi.mock("@/lib/pipeline/canonical-pr-publisher", () => ({ drainCanonicalPullRequests: vi.fn() }));
 vi.mock("@/lib/pipeline/checkpoint-publication", () => ({ drainCheckpointPublications: vi.fn() }));
 vi.mock("@/lib/pipeline/source-delivery", () => ({ drainSourceDeliveries: vi.fn() }));
@@ -252,6 +256,7 @@ it.each([
       await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
       await inspection.waitForStatus("complete");
       expect(drainAcceptedTriageRoute).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(drainAuthoredFactoryWorkflowBatch).toHaveBeenCalledExactlyOnceWith(admin);
       expect(reconcileGitHubPrVerification).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainCanonicalPullRequests).toHaveBeenCalledExactlyOnceWith(admin);
       expect(vi.mocked(drainAcceptedTriageRoute).mock.invocationCallOrder[0]).toBeLessThan(

@@ -81,3 +81,11 @@ flowchart LR
 - **Inference budget.** Node and Workerd share the one-use review permit. The OpenAI adapter uses the inherited parent credential, disables tools, and checks tokens and spend before generation. The bounded charge remains reserved if the provider response is lost.
 - **Repair.** The declaration records a unique `edgeId`, a `maxRepairs` value from 1 through 8, and the `eligibleRuleIds` subset. Admission reserves one job and its root budget together. Replays return the same job. A repeated rule and path escalates even when the finding moves to another line.
 - **Validation and approval.** The repair starts from the reviewed checkpoint and receives the saved findings as untrusted input. Adoption requires fresh evidence on the repaired commit and tree. The repaired artifact keeps the original human blocking requests and requires its own independent approval. Existing PR readiness observes the current delivery state.
+
+## Drafts and published workflows
+
+Open **Workflows** under **Configure** to edit the graph. The graph and ordered list use the same steps, transitions, and policies. **Pipeline** opens the operational board, and **Serial pipeline settings** opens the stage editor.
+
+- **Save draft** compiles the graph and checks the displayed draft, published activation, and factory definition. A conflict keeps the editor’s local changes.
+- **Publish draft** activates the exact saved revision. When the factory definition changes, **Rebase and save draft** compiles the graph against the new definition.
+- Choose a published workflow in **New session**. Session creation pins that activation with its admission receipt. The final preparation checkpoint schedules the first workflow occurrence. Later publications affect future selections.

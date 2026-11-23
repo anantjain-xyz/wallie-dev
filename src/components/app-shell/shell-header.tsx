@@ -71,6 +71,7 @@ type ShellHeaderProps = {
   viewerAvatarUrl: string | null;
   viewerEmail: string | null;
   viewerId: string;
+  workflowFactoryIds?: readonly string[];
   workspace: WorkspaceSummary;
   workspaceAvatarUrl: string | null;
 };
@@ -265,6 +266,7 @@ export function ShellHeader({
   viewerAvatarUrl,
   viewerEmail,
   viewerId,
+  workflowFactoryIds,
   workspace,
   workspaceAvatarUrl,
 }: ShellHeaderProps) {
@@ -429,21 +431,29 @@ export function ShellHeader({
     };
   }
 
+  const scopedFactory = factory?.length === 1 && factory[0] === "all" ? undefined : factory;
+  const workflowFactory =
+    scopedFactory?.length === 1 && workflowFactoryIds?.includes(scopedFactory[0])
+      ? scopedFactory[0]
+      : undefined;
+
   function navLinkProps(item: WorkspaceNavItem, mobile = false) {
-    const scopedFactory = factory?.length === 1 && factory[0] === "all" ? undefined : factory;
-    const href = isFactoryAggregatePath(item.href, workspace.slug)
-      ? withFactoryQuery(item.href, factory)
-      : item.id === "agents" ||
-          item.id === "scorers" ||
-          item.id === "analytics" ||
-          item.id === "benchmarks" ||
-          item.id === "failure-groups" ||
-          item.id === "improvements" ||
-          item.id === "overview" ||
-          item.id === "factory-definition" ||
-          isManagedFactoryPath(item.href, workspace.slug)
-        ? withFactoryQuery(item.href, scopedFactory)
-        : item.href;
+    const href =
+      item.id === "workflows"
+        ? withFactoryQuery(item.href, workflowFactory)
+        : isFactoryAggregatePath(item.href, workspace.slug)
+          ? withFactoryQuery(item.href, factory)
+          : item.id === "agents" ||
+              item.id === "scorers" ||
+              item.id === "analytics" ||
+              item.id === "benchmarks" ||
+              item.id === "failure-groups" ||
+              item.id === "improvements" ||
+              item.id === "overview" ||
+              item.id === "factory-definition" ||
+              isManagedFactoryPath(item.href, workspace.slug)
+            ? withFactoryQuery(item.href, scopedFactory)
+            : item.href;
     const skipPrefetch = item.id === "inbox" || item.id === "analytics" || item.id === "overview";
     return {
       href,
@@ -635,6 +645,7 @@ export function ShellHeader({
         >
           <CreateSessionDialog
             key={createScope}
+            creationFactoryId={creationFactory.id}
             creationFactoryName={creationFactory.name}
             open={createOpen}
             onClose={handleCreateClose}

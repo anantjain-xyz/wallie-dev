@@ -1,4 +1,6 @@
 import "server-only";
+import type { WorkflowIntakeSelection } from "@/lib/factory-workflows/intake-selection";
+
 import { wakeWorker } from "@/lib/worker/wake";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -331,6 +333,7 @@ export async function createSessionWithFirstJob(input: {
   routingOverride?: RoutingOverride;
   selectedStageIds?: string[];
   title: string;
+  workflowSelection?: WorkflowIntakeSelection;
   workspaceId: string;
 }): Promise<CreateSessionWithFirstJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
@@ -384,6 +387,16 @@ export async function createSessionWithFirstJob(input: {
         }
       : null;
   if (
+    input.workflowSelection &&
+    (!commandArgs ||
+      !input.factoryDefinitionDigest ||
+      input.routingOverride ||
+      input.draftSpecification ||
+      input.restartOfSessionId)
+  ) {
+    throw new Error("A confirmed new factory session is required to select a published workflow.");
+  }
+  if (
     input.routingOverride &&
     (!commandArgs ||
       !input.factoryDefinitionDigest ||
@@ -398,7 +411,10 @@ export async function createSessionWithFirstJob(input: {
           ...commandArgs,
           p_routing_override: input.routingOverride,
         })
-      : admin.rpc("create_session_command_once", commandArgs)
+      : admin.rpc("create_session_command_once", {
+          ...commandArgs,
+          ...(input.workflowSelection ? { p_workflow_selection: input.workflowSelection } : {}),
+        })
     : confirmationArgs
       ? admin.rpc("create_confirmed_factory_session_once_with_first_job", confirmationArgs)
       : requestArgs
@@ -434,6 +450,7 @@ export async function findSessionCreationRequest(input: {
   creatorMemberId: string;
   draftSpecification?: boolean;
   restartOfSessionId?: string;
+  workflowSelection?: WorkflowIntakeSelection;
   workspaceId: string;
 }): Promise<CreateSessionWithFirstJobResult | null> {
   const args = {
@@ -448,6 +465,7 @@ export async function findSessionCreationRequest(input: {
       : input.admin.rpc("find_session_creation_command", {
           ...args,
           draft_specification: input.draftSpecification || undefined,
+          ...(input.workflowSelection ? { p_workflow_selection: input.workflowSelection } : {}),
           source_session_id: input.restartOfSessionId,
           target_factory_id: input.commandFactoryId ?? undefined,
         });

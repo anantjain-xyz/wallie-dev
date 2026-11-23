@@ -16,6 +16,7 @@ type AppShellProps = {
   viewerAvatarUrl: string | null;
   viewerEmail: string | null;
   viewerId: string;
+  workflowFactoryIds?: readonly string[];
   workspace: WorkspaceSummary;
   workspaceAvatarUrl: string | null;
 };
@@ -30,12 +31,14 @@ export function AppShell({
   viewerAvatarUrl,
   viewerEmail,
   viewerId,
+  workflowFactoryIds,
   workspace,
   workspaceAvatarUrl,
 }: AppShellProps) {
   const navItems = getWorkspaceNavItems(workspace.slug, {
     canManageFactoryDefinition,
     canManageGovernance,
+    canManageWorkflows: Boolean(workflowFactoryIds?.length),
   });
 
   return (
@@ -48,6 +51,7 @@ export function AppShell({
         viewerAvatarUrl={viewerAvatarUrl}
         viewerEmail={viewerEmail}
         viewerId={viewerId}
+        workflowFactoryIds={workflowFactoryIds}
         workspace={workspace}
         workspaceAvatarUrl={workspaceAvatarUrl}
       >

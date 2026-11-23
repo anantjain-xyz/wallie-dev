@@ -293,6 +293,9 @@ export async function createSessionCommand({
         creationRequest,
         creatorMemberId: actor.memberId,
         ...(normalized.draftSpecification ? { draftSpecification: true } : {}),
+        ...(normalized.workflowSelection
+          ? { workflowSelection: normalized.workflowSelection }
+          : {}),
         ...(normalized.restartOfSessionId
           ? { restartOfSessionId: normalized.restartOfSessionId }
           : {}),
@@ -541,6 +544,7 @@ export async function createSessionCommand({
         ? { restartOfSessionId: normalized.restartOfSessionId }
         : {}),
       ...(normalized.routingOverride ? { routingOverride: normalized.routingOverride } : {}),
+      ...(normalized.workflowSelection ? { workflowSelection: normalized.workflowSelection } : {}),
       selectedStageIds: normalized.selectedStageIds,
       title,
       workspaceId: actor.workspaceId,
@@ -572,7 +576,9 @@ export async function createSessionCommand({
           getErrorMessage(error, "The pinned factory is not ready to start."),
         );
       case "PT409":
-        if (normalized.routingOverride) return sessionOptionsChanged();
+        if (normalized.routingOverride || normalized.workflowSelection) {
+          return sessionOptionsChanged();
+        }
         if (pinned?.executionGrant) {
           return creationFailure(
             "conflict",

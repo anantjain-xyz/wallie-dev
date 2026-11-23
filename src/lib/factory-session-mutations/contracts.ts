@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 
 import { factoryReadRoutes } from "@/lib/factory-read-api/contracts";
+import { workflowIntakeSelectionSchema } from "@/lib/factory-workflows/intake-selection";
 import { Constants, type Enums } from "@/lib/supabase/database.types";
 
 const uuid = z.uuid();
@@ -29,13 +30,22 @@ export const factoryMutationRoutes = {
   create: {
     path: factoryReadRoutes.sessions.path,
     params: factoryReadRoutes.sessions.params,
-    body: z.strictObject({
-      title: boundedMutationText(200),
-      prompt: boundedMutationText(20_000),
-      agentId: uuid,
-      repositoryId: uuid,
-      draftSpecification: z.boolean().default(false),
-    }),
+    body: z
+      .strictObject({
+        title: boundedMutationText(200),
+        prompt: boundedMutationText(20_000),
+        agentId: uuid,
+        repositoryId: uuid,
+        draftSpecification: z.boolean().default(false),
+        workflowSelection: workflowIntakeSelectionSchema.optional(),
+      })
+      .refine(
+        ({ draftSpecification, workflowSelection }) => !(draftSpecification && workflowSelection),
+        {
+          path: ["workflowSelection"],
+          message: "Select a published workflow or draft a specification.",
+        },
+      ),
     scope: "sessions:create",
   },
   follow_up: {

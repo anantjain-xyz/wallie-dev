@@ -342,6 +342,25 @@ describe("ShellHeader", () => {
     expect(html.match(/<main[^>]*>/u)?.[0]).not.toContain("overflow-y-auto");
   });
 
+  it.each([true, false])(
+    "preserves Workflows scope only for a manageable factory (%s)",
+    (manageable) => {
+      const managedFactory = "00000000-0000-4000-8000-000000000010";
+      const selectedFactory = manageable ? managedFactory : "00000000-0000-4000-8000-000000000011";
+      mocked.searchParams = new URLSearchParams({ factory: selectedFactory });
+      mountShell({
+        navItems: getWorkspaceNavItems(workspace.slug, { canManageWorkflows: true }),
+        workflowFactoryIds: [managedFactory],
+      });
+
+      const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
+      expect(within(nav).getByRole("link", { name: "Workflows" })).toHaveAttribute(
+        "href",
+        manageable ? `/w/acme-corp/workflows?factory=${managedFactory}` : "/w/acme-corp/workflows",
+      );
+    },
+  );
+
   it("shows the definition route under Configure only when authorized", () => {
     mocked.pathname = "/w/acme-corp/settings/factory-definition";
     mountShell({

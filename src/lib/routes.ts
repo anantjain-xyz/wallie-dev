@@ -21,6 +21,7 @@ export type WorkspaceNavItem = {
     | "scorers"
     | "governance"
     | "factory-definition"
+    | "workflows"
     | "settings";
   label: string;
   section: (typeof workspaceNavSections)[number];
@@ -229,6 +230,33 @@ export function workspaceSettingsPath(workspaceSlug: string, query?: Record<stri
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
+export function workspaceWorkflowsPath(
+  workspaceSlug: string,
+  query?: { factory?: string; after?: string },
+) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/workflows`, query);
+}
+
+export function workspaceWorkflowDetailPath(
+  workspaceSlug: string,
+  workflowId: string,
+  query: { factory: string; draft?: string },
+) {
+  return withSearchParams(
+    `${workspaceWorkflowsPath(workspaceSlug)}/${encodeURIComponent(workflowId)}`,
+    query,
+  );
+}
+
+export function workflowAuthoringApiPath(
+  workspaceId: string,
+  factoryId: string,
+  workflowId?: string,
+) {
+  const list = `/api/workspaces/${encodeURIComponent(workspaceId)}/factories/${encodeURIComponent(factoryId)}/workflows`;
+  return workflowId ? `${list}/${encodeURIComponent(workflowId)}` : list;
+}
+
 export function workspaceFactoryDefinitionPath(
   workspaceSlug: string,
   query?: {
@@ -247,7 +275,11 @@ export function workspaceFactoryDefinitionPath(
 
 export function getWorkspaceNavItems(
   workspaceSlug: string,
-  { canManageFactoryDefinition = false, canManageGovernance = false } = {},
+  {
+    canManageFactoryDefinition = false,
+    canManageGovernance = false,
+    canManageWorkflows = false,
+  } = {},
 ): WorkspaceNavItem[] {
   const items: WorkspaceNavItem[] = [
     {
@@ -308,6 +340,14 @@ export function getWorkspaceNavItems(
       section: "Configure",
     },
   ];
+  if (canManageWorkflows) {
+    items.push({
+      id: "workflows",
+      href: workspaceWorkflowsPath(workspaceSlug),
+      label: "Workflows",
+      section: "Configure",
+    });
+  }
   if (canManageFactoryDefinition) {
     items.push({
       id: "factory-definition",

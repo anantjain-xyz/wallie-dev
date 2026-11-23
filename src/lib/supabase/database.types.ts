@@ -11295,6 +11295,10 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      claim_factory_workflow_authoring_dispatch: {
+        Args: { p_lease_id: string }
+        Returns: Json
+      }
       claim_factory_workflow_exact_review: {
         Args: {
           p_expected_generation: number
@@ -12190,6 +12194,16 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_factory_workflow_authoring: {
+        Args: {
+          p_actor_user_id: string
+          p_display_name: string
+          p_factory_id: string
+          p_workflow_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       create_service_principal: {
         Args: {
           p_actor_user_id: string
@@ -12221,6 +12235,7 @@ export type Database = {
           creator_member_id: string
           draft_specification?: boolean
           expected_factory_definition_digest: string
+          p_workflow_selection?: Json
           selected_pipeline_id?: string
           selected_stage_ids?: string[]
           session_attachment_ids: string[]
@@ -12749,10 +12764,23 @@ export type Database = {
         }
         Returns: Json
       }
+      find_factory_workflow_authoring_receipt: {
+        Args: {
+          p_action: string
+          p_actor_user_id: string
+          p_factory_id: string
+          p_request_fingerprint: string
+          p_request_id: string
+          p_workflow_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       find_session_creation_command: {
         Args: {
           creator_member_id: string
           draft_specification?: boolean
+          p_workflow_selection?: Json
           source_session_id?: string
           target_factory_id?: string
           target_request_hash: string
@@ -12870,6 +12898,15 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: boolean
+      }
+      finish_factory_workflow_authoring_dispatch: {
+        Args: {
+          p_expected_generation: number
+          p_input_run_id: string
+          p_lease_id: string
+          p_session_id: string
+        }
+        Returns: string
       }
       finish_factory_workflow_repository_validation: {
         Args: {
@@ -14041,6 +14078,14 @@ export type Database = {
         }
         Returns: Json
       }
+      list_factory_workflow_authoring: {
+        Args: {
+          p_after_id?: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_workflow_branch_repository_bases: {
         Args: never
         Returns: {
@@ -14056,6 +14101,15 @@ export type Database = {
           requires_observation: boolean
           root_session_id: string
           workspace_id: string
+        }[]
+      }
+      list_factory_workflow_intake_options: {
+        Args: { p_factory_id: string; p_workspace_id: string }
+        Returns: {
+          activation_id: string
+          definition_digest: string
+          display_name: string
+          workflow_id: string
         }[]
       }
       list_factory_workflow_repository_deliveries: {
@@ -14725,6 +14779,23 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      publish_factory_workflow_authoring_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_activation_id?: string
+          p_expected_base_activation_id: string
+          p_expected_base_digest: string
+          p_expected_base_revision_id: string
+          p_expected_draft_id: string
+          p_factory_id: string
+          p_request_fingerprint?: string
+          p_request_id: string
+          p_verified_draft_digest: string
+          p_workflow_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       publish_session_job_attempt: {
         Args: {
           p_artifact_json: string
@@ -15050,6 +15121,15 @@ export type Database = {
           p_run_id?: string
           p_session_id?: string
           p_surface: Database["public"]["Enums"]["factory_command_surface"]
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_workflow_authoring: {
+        Args: {
+          p_factory_id: string
+          p_selected_draft_id?: string
+          p_workflow_id: string
           p_workspace_id: string
         }
         Returns: Json
@@ -16805,6 +16885,25 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      save_factory_workflow_authoring_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_activation_id?: string
+          p_expected_base_activation_id: string
+          p_expected_base_digest: string
+          p_expected_base_revision_id: string
+          p_expected_draft_id?: string
+          p_factory_id: string
+          p_rebase?: boolean
+          p_request_fingerprint?: string
+          p_request_id: string
+          p_workflow_digest: string
+          p_workflow_id: string
+          p_workflow_json: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       save_linear_routing_config: {
         Args: {

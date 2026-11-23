@@ -10,6 +10,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { CreateSessionDialogLoading } from "@/components/app-shell/shell-header";
 import {
+  getSessionRepositorySnapshot,
   invalidateSessionRepositoryCache,
   loadSessionRepositories,
   resetSessionRepositoryCacheForTests,
@@ -958,6 +959,263 @@ describe("CreateSessionDialog accessibility", () => {
     expect(clientMocks.createSessionFromClient.mock.calls[0][0]).not.toHaveProperty(
       "draftSpecification",
     );
+  });
+
+  it("waits for current published workflows after reopening the same factory", async () => {
+    const user = userEvent.setup();
+    const opts = draftOptions();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...opts,
+      factoryDefinitionDigest: "d".repeat(64),
+    });
+    const workflow = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Previous publication",
+    };
+    const nextWorkflow = {
+      ...workflow,
+      activationId: "00000000-0000-4000-8000-000000000013",
+      label: "Current publication",
+    };
+    const pending = Promise.withResolvers<Response>();
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json({ definitionDigest: "d".repeat(64), options: [workflow] }),
+      )
+      .mockReturnValueOnce(pending.promise);
+    function dialog(open: boolean) {
+      return (
+        <OverlayProvider>
+          <CreateSessionDialog
+            creationFactoryId="factory-1"
+            onClose={vi.fn()}
+            open={open}
+            userId="user-1"
+            workspaceId="workspace-1"
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>
+      );
+    }
+
+    try {
+      const view = render(dialog(true));
+      const selector = await screen.findByRole("combobox", { name: "Workflow" });
+      await user.click(selector);
+      expect(await screen.findByRole("option", { name: workflow.label })).toBeVisible();
+      await user.keyboard("{Escape}");
+
+      view.rerender(dialog(false));
+      view.rerender(dialog(true));
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole("combobox", { name: "Workflow" })).not.toBeInTheDocument();
+      await act(async () =>
+        pending.resolve(
+          Response.json({ definitionDigest: "d".repeat(64), options: [nextWorkflow] }),
+        ),
+      );
+      await user.click(await screen.findByRole("combobox", { name: "Workflow" }));
+      expect(await screen.findByRole("option", { name: nextWorkflow.label })).toBeVisible();
+      expect(screen.queryByRole("option", { name: workflow.label })).toBeNull();
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("offers a published workflow only on its factory’s default repository", async () => {
+    const user = userEvent.setup();
+    const definitionDigest = "d".repeat(64);
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...draftOptions(),
+      factoryDefinitionDigest: definitionDigest,
+      repositoryOptions: [
+        { id: "repo-1", fullName: "acme/app" },
+        { id: "repo-2", fullName: "acme/other" },
+      ],
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    const published = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Published workflow",
+    };
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ definitionDigest, options: [published] }));
+    try {
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            creationFactoryId="factory-1"
+            onClose={vi.fn()}
+            open
+            userId="user-1"
+            workspaceId="workspace-1"
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+      await user.type(screen.getByLabelText("Prompt"), "Build with the selected source");
+      const workflow = await screen.findByRole("combobox", { name: "Workflow" });
+      const repository = screen.getByRole("combobox", { name: "Repository" });
+      await user.click(repository);
+      await user.click(await screen.findByRole("option", { name: "acme/other" }));
+      expect(workflow).toBeDisabled();
+
+      await user.click(repository);
+      await user.click(await screen.findByRole("option", { name: "acme/app" }));
+      await user.click(workflow);
+      await user.click(await screen.findByRole("option", { name: published.label }));
+      await user.click(repository);
+      await user.click(await screen.findByRole("option", { name: "acme/other" }));
+      expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+      await user.click(workflow);
+      expect(screen.queryByRole("option", { name: published.label })).toBeNull();
+      await user.click(await screen.findByRole("option", { name: "Default pipeline" }));
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce());
+      const [request] = clientMocks.createSessionFromClient.mock.calls[0];
+      expect(request).toMatchObject({ githubRepositoryId: "repo-2" });
+      expect(request).not.toHaveProperty("workflowSelection");
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("keeps the workflow catalog hidden until it matches the refreshed definition", async () => {
+    const user = userEvent.setup();
+    const oldDefinition = "d".repeat(64);
+    const newDefinition = "e".repeat(64);
+    const options = draftOptions();
+    const nextRepository = Promise.withResolvers<
+      typeof options & { factoryDefinitionDigest: string }
+    >();
+    clientMocks.loadSessionRepositoryOptionsFromClient
+      .mockResolvedValueOnce({ ...options, factoryDefinitionDigest: oldDefinition })
+      .mockReturnValueOnce(nextRepository.promise);
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    const published = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Workflow for the new definition",
+    };
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        Response.json({ definitionDigest: newDefinition, options: [published] }),
+      );
+    try {
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            creationFactoryId="factory-1"
+            onClose={vi.fn()}
+            open
+            userId="user-1"
+            workspaceId="workspace-1"
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+      await user.type(screen.getByLabelText("Prompt"), "Build from the current definition");
+      await waitFor(() =>
+        expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenCalledTimes(2),
+      );
+      expect(screen.queryByRole("combobox", { name: "Workflow" })).toBeNull();
+
+      await act(async () =>
+        nextRepository.resolve({ ...options, factoryDefinitionDigest: newDefinition }),
+      );
+      await user.click(await screen.findByRole("combobox", { name: "Workflow" }));
+      await user.click(await screen.findByRole("option", { name: published.label }));
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+
+      await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce());
+      expect(clientMocks.createSessionFromClient.mock.calls[0][0]).toMatchObject({
+        factoryDefinitionDigest: newDefinition,
+        workflowSelection: {
+          workflowId: published.workflowId,
+          activationId: published.activationId,
+        },
+      });
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("can clear a selected workflow when refreshed options lose the active definition", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "00000000-0000-4000-8000-000000000009";
+    const creationFactoryId = "00000000-0000-4000-8000-000000000010";
+    const published = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Published workflow",
+    };
+    const options = draftOptions();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...options,
+      factoryDefinitionDigest: "d".repeat(64),
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        Response.json({ definitionDigest: "d".repeat(64), options: [published] }),
+      );
+
+    try {
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            creationFactoryId={creationFactoryId}
+            onClose={vi.fn()}
+            open
+            userId="user-1"
+            workspaceId={workspaceId}
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+      await user.type(screen.getByLabelText("Prompt"), "Keep this draft");
+      const selector = await screen.findByRole("combobox", { name: "Workflow" });
+      await user.click(selector);
+      await user.click(await screen.findByRole("option", { name: published.label }));
+      expect(selector).toHaveTextContent(published.label);
+
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(options);
+      act(() => invalidateSessionRepositoryCache(workspaceId));
+      expect(await screen.findByText(/The selected workflow changed/)).toBeVisible();
+      await waitFor(() =>
+        expect(getSessionRepositorySnapshot({ userId: "user-1", workspaceId })).toMatchObject({
+          data: options,
+          isStale: false,
+        }),
+      );
+      await user.click(selector);
+      expect(screen.queryByRole("option", { name: published.label })).toBeNull();
+      await user.click(await screen.findByRole("option", { name: "Default pipeline" }));
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+
+      await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce());
+      const [input] = clientMocks.createSessionFromClient.mock.calls[0];
+      expect(input).toMatchObject({ promptMd: "Keep this draft" });
+      expect(input).not.toHaveProperty("workflowSelection");
+      expect(input).not.toHaveProperty("factoryDefinitionDigest");
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   it("blocks keyboard submission while cached repository options are stale", async () => {
