@@ -68,6 +68,7 @@ it("retains a stale edit and uses the current revision only after explicit rebas
   const fetch = vi
     .fn<typeof globalThis.fetch>()
     .mockResolvedValueOnce(Response.json({}, { status: 409 }))
+    .mockResolvedValueOnce(Response.json({}, { status: 503 }))
     .mockResolvedValueOnce(Response.json({ automation: snapshot(2, "Other manager edit") }))
     .mockResolvedValueOnce(Response.json({ automation: snapshot(3, "My retained edit") }));
   vi.stubGlobal("fetch", fetch);
@@ -102,13 +103,18 @@ it("retains a stale edit and uses the current revision only after explicit rebas
   });
 
   await user.click(screen.getByRole("button", { name: "Use latest revision and keep edits" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not load the current revision");
+  expect(name).toHaveValue("My retained edit");
+  expect(save).toBeDisabled();
+
+  await user.click(screen.getByRole("button", { name: "Use latest revision and keep edits" }));
   expect(await screen.findByRole("status")).toHaveTextContent("Revision 2 is current");
   expect(name).toHaveValue("My retained edit");
-  expect(fetch.mock.calls[1][1]?.method).toBeUndefined();
+  expect(fetch.mock.calls[2][1]?.method).toBeUndefined();
 
   await user.click(save);
   expect(await screen.findByRole("status")).toHaveTextContent("Draft revision 3 saved");
-  expect(JSON.parse(String(fetch.mock.calls[2][1]?.body))).toMatchObject({
+  expect(JSON.parse(String(fetch.mock.calls[3][1]?.body))).toMatchObject({
     action: "save",
     expectedRevisionId: fixtureId("012"),
     definition: { name: "My retained edit" },

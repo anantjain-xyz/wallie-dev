@@ -20,10 +20,12 @@ export function AutomationAdmissionPanel({
   activeRevision: boolean;
 }) {
   const router = useRouter();
-  const [control, setControl] = useState(initial);
+  const [confirmed, setConfirmed] = useState<Control | null>(null);
   const [feedback, setFeedback] = useState("");
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
+  const control =
+    confirmed && (!initial || confirmed.generation > initial.generation) ? confirmed : initial;
 
   async function update() {
     if (!control || !activeRevision || busy.current) return;
@@ -49,7 +51,7 @@ export function AutomationAdmissionPanel({
         if (!latest.ok) throw new Error("Control unavailable");
         const parsed = responseSchema.parse(await latest.json()).control;
         if (parsed.automationId !== control.automationId) throw new Error("Unexpected automation");
-        setControl(parsed);
+        setConfirmed(parsed);
         setFeedback("The automation changed. Review its current status and try again.");
         router.refresh();
         return;
@@ -57,7 +59,7 @@ export function AutomationAdmissionPanel({
       if (!response.ok) throw new Error("Control unavailable");
       const parsed = responseSchema.parse(await response.json()).control;
       if (parsed.automationId !== control.automationId) throw new Error("Unexpected automation");
-      setControl(parsed);
+      setConfirmed(parsed);
       router.refresh();
     } catch {
       setFeedback("Could not change automation status. Refresh this page and try again.");

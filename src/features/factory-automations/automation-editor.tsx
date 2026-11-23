@@ -103,7 +103,12 @@ export function AutomationEditor({
     try {
       await work();
     } catch (error) {
-      if (error instanceof RuleRequestError && error.status === 409) {
+      if (kind === "loading") {
+        setFeedback({
+          kind: "conflict",
+          message: "Could not load the current revision. Your field values are still here.",
+        });
+      } else if (error instanceof RuleRequestError && error.status === 409) {
         setFeedback({
           kind: "conflict",
           message:

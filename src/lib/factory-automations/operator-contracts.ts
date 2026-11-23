@@ -21,7 +21,11 @@ export const automationSetupSchema = z.strictObject({
     .nullable(),
 });
 
-export const automationHistoryCursorSchema = z.strictObject({ recordedAt: timestamp, id });
+const cursorTimestamp = timestamp
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-](?:0\d|1[0-5]):[0-5]\d)$/)
+  .refine((value) => !value.startsWith("0000-"));
+
+export const automationHistoryCursorSchema = z.strictObject({ recordedAt: cursorTimestamp, id });
 const occurrenceIdentity = z.strictObject({
   id,
   revisionNumber: positiveInteger,
