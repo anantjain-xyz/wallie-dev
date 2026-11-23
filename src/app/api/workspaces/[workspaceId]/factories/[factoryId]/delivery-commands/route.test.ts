@@ -144,3 +144,51 @@ describe("guarded delivery command route", () => {
     ]);
   });
 });
+
+it("pins the manager's exact Actions target in the guarded prepare transaction", async () => {
+  vi.resetAllMocks();
+  mocks.context.mockResolvedValue({
+    ...scope,
+    ok: true,
+    access: { user: { id: actor.p_actor_user_id } },
+  });
+  const actions = {
+    workflowId: 701,
+    workflowPath: ".github/workflows/ship.yml",
+    tag: "release/exact",
+    inputs: { lane: "staging" },
+  };
+  const receipt = {
+    ...command,
+    actions: {
+      workflowId: actions.workflowId,
+      workflowPath: actions.workflowPath,
+      tag: actions.tag,
+      reason: "awaiting_dispatch",
+      runId: null,
+      runStatus: null,
+      runConclusion: null,
+    },
+  };
+  mocks.rpc.mockResolvedValue({ data: receipt, error: null });
+  const response = await post({ ...prepare, actions });
+  expect(await response.json()).toEqual({ command: receipt });
+  expect(mocks.rpc).toHaveBeenCalledExactlyOnceWith(
+    "prepare_factory_actions_delivery_command",
+    expect.objectContaining({
+      p_workspace_id: scope.workspaceId,
+      p_factory_id: scope.factoryId,
+      p_merge_observation_id: mergeObservationId,
+      p_deployment_source_id: deploymentSourceId,
+      p_workflow_id: actions.workflowId,
+      p_workflow_path: actions.workflowPath,
+      p_tag: actions.tag,
+      p_inputs: actions.inputs,
+    }),
+  );
+  expect(
+    (await post({ ...prepare, actions: { ...actions, inputs: { wallie_source_sha: "x" } } }))
+      .status,
+  ).toBe(400);
+  expect(mocks.rpc).toHaveBeenCalledTimes(1);
+});

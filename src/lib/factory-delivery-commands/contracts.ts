@@ -1,5 +1,7 @@
 import { z } from "zod/v4";
 
+import { actionsDeliveryRead, actionsDeliveryTarget } from "./actions-contract";
+
 const uuid = z.uuid();
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const timestamp = z.iso.datetime({ offset: true });
@@ -16,6 +18,7 @@ export const factoryDeliveryCommandRequestSchema = z.discriminatedUnion("action"
     policyRevisionId: uuid,
     mergeObservationId: uuid,
     deploymentSourceId: uuid,
+    actions: actionsDeliveryTarget.optional(),
   }),
   z.strictObject({ action: z.literal("cancel"), commandId: uuid }),
 ]);
@@ -48,4 +51,5 @@ export const factoryDeliveryCommandSchema = factoryDeliveryCandidateSchema.exten
   outcome: z.enum(["pending", "succeeded", "failed", "unknown"]).nullable(),
   dispatchStartedAt: timestamp.nullable(),
   deploymentObservationId: uuid.nullable(),
+  actions: actionsDeliveryRead.optional(),
 });

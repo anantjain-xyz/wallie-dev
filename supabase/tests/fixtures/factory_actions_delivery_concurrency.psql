@@ -1,0 +1,55 @@
+commit;
+begin;
+set local request.jwt.claim.role = 'service_role';
+
+select extensions.dblink_exec('op665_worker', 'begin');
+select extensions.dblink_exec('op665_worker', 'set role service_role');
+select is(result.state, 'queued', 'the application role prepares an exact Actions command')
+from delivery_checkpoint checkpoint cross join op651_scope scope cross join delivery_policy policy
+join delivery_sources source on source.name = 'actions-lease'
+join public.session_stage_approval_receipts approval on approval.session_id = checkpoint.session_id
+join internal.current_factory_canonical_pull_request_merges merged on merged.session_id = checkpoint.session_id
+cross join lateral extensions.dblink('op665_worker', format(
+  'select public.prepare_factory_actions_delivery_command(%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,701,
+    ''.github/workflows/delivery.yml'',''releases/approved'',''{}'')->>''dispatchState''',
+  scope.workspace_id, scope.factory_id, pg_temp.op651_id(1), pg_temp.op651_id(274),
+  checkpoint.session_id, checkpoint.run_id, approval.id, policy.id, merged.observation_id, source.source_id
+)) result(state text);
+select is(extensions.dblink_exec('op665_worker', 'commit', false), 'COMMIT',
+  'the deferred target check commits under the private-table-denied application role');
+select is(pg_temp.delivery_state(274)->>'dispatchState', 'queued',
+  'the configured command is visible to another connection after commit');
+
+create temp table actions_race_dispatch as select pg_temp.actions_claim(274) as packet;
+select public.settle_factory_actions_dispatch(workspace_id, factory_id, pg_temp.op651_id(274),
+  (packet->>'leaseId')::uuid, 'unknown', 'dispatch_unknown')
+from actions_race_dispatch cross join op651_scope;
+create temp table actions_race_observation as
+select reservation.value as packet from jsonb_array_elements(public.reserve_factory_actions_observations()) reservation(value);
+commit;
+begin;
+set local request.jwt.claim.role = 'service_role';
+
+select extensions.dblink_exec('op665_manager', format(
+  'update internal.factory_actions_delivery_requests set next_check_at = clock_timestamp() + interval ''2 seconds''
+   where command_id = %L', pg_temp.op651_id(274)));
+create temp table actions_observation_deadline as
+select next_check_at from internal.factory_actions_delivery_requests where command_id = pg_temp.op651_id(274);
+select extensions.dblink_exec('op665_manager', 'begin');
+select locked from extensions.dblink('op665_manager', format(
+  'select command_id from internal.factory_actions_delivery_requests where command_id = %L for update',
+  pg_temp.op651_id(274))) result(locked uuid);
+select extensions.dblink_send_query('op665_worker', format(
+  'select public.settle_factory_actions_observation(%L,%L,%L,%L,''run_verified'',802,''completed'',''success'')',
+  workspace_id, factory_id, pg_temp.op651_id(274), packet->>'observationId'))
+from actions_race_observation cross join op651_scope;
+select ok(pg_temp.delivery_wait_for_lock(pid), 'run settlement waits on the still-current reservation row')
+from delivery_worker_backend;
+select pg_sleep_until(next_check_at) from actions_observation_deadline;
+select extensions.dblink_exec('op665_manager', 'rollback');
+select ok(not settled, 'a reader whose lease elapsed behind the sidecar row lock cannot record a run')
+from extensions.dblink_get_result('op665_worker') result(settled boolean);
+select count(*) from extensions.dblink_get_result('op665_worker') result(settled boolean);
+select is(pg_temp.delivery_state(274)->>'outcome', 'unknown', 'expired run settlement preserves the unknown dispatch');
+select is(jsonb_array_length(public.reserve_factory_actions_observations()), 1,
+  'a fresh probe can reconcile a command after the earlier reservation expired');
