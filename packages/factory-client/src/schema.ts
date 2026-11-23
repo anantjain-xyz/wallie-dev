@@ -822,6 +822,12 @@ export interface operations {
           /** Format: uuid */
           repositoryId: string;
           title: string;
+          workflowSelection?: {
+            /** Format: uuid */
+            activationId: string;
+            /** Format: uuid */
+            workflowId: string;
+          };
         };
       };
     };

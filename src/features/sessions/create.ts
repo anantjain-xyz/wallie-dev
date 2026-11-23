@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { extractLinearIssueId } from "@/features/sessions/linear-issue-url";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
+import { workflowIntakeSelectionSchema } from "@/lib/factory-workflows/intake-selection";
 import { routingOverrideSchema } from "@/lib/model-routing/operation-contracts";
 import { maxSessionAttachments } from "@/lib/storage/contracts";
 
@@ -14,6 +15,13 @@ const attachmentIdsSchema = z
   .array(z.string().uuid("Attachment id is invalid."))
   .max(maxSessionAttachments, "A session may include at most five images.")
   .refine((ids) => new Set(ids).size === ids.length, "Session images must be unique.");
+
+const browserWorkflowSelectionSchema = z.unknown().transform((value, context) => {
+  const parsed = workflowIntakeSelectionSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  context.addIssue({ code: "custom", message: "Select an exact published workflow activation." });
+  return z.NEVER;
+});
 
 export const createSessionPayloadSchema = z
   .object({
@@ -31,6 +39,7 @@ export const createSessionPayloadSchema = z
     routingOverride: routingOverrideSchema.optional(),
     selectedStageIds: selectedStageIdsSchema.optional(),
     title: z.string().nullable().optional(),
+    workflowSelection: browserWorkflowSelectionSchema.optional(),
     workspaceId: z.string().uuid("Workspace id is invalid."),
   })
   .superRefine((payload, context) => {
@@ -63,6 +72,21 @@ export const createSessionPayloadSchema = z
           ? "A creation request id is required to restart a session."
           : "A creation request id is required to confirm a factory definition.",
         path: ["requestId"],
+      });
+    }
+
+    if (
+      payload.workflowSelection &&
+      (!payload.requestId ||
+        !payload.factoryDefinitionDigest ||
+        payload.restartOfSessionId ||
+        payload.routingOverride ||
+        payload.draftSpecification)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Confirm a new factory session to select a published workflow.",
+        path: ["workflowSelection"],
       });
     }
 
@@ -111,6 +135,9 @@ export function normalizeCreateSessionPayload(payload: CreateSessionPayload) {
       : {}),
     selectedStageIds: payload.selectedStageIds,
     title,
+    ...(payload.workflowSelection
+      ? { workflowSelection: workflowIntakeSelectionSchema.parse(payload.workflowSelection) }
+      : {}),
     workspaceId: payload.workspaceId,
   };
 }

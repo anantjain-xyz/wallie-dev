@@ -45,3 +45,11 @@ flowchart LR
 - **Validation.** The pinned parent delivery policy defines which evidence must pass. The worker preserves the parent’s frozen validation order. For a specification checkpoint, compatible plans from the selected branches supply the required checks in their original relative order. Validation runs against the joined commit and tree in a separate sandbox without GitHub or model credentials. The worker prepares Node tooling and installs dependencies from supported repository lockfiles before replaying the plan. Other toolchains can include their setup in the frozen plan. The branch selection response exposes the 48 MiB packed-source limit before submission.
 - **Publication.** The existing checkpoint publisher records the exact integrated commit and tree, advances the parent checkpoint, and creates the parent review artifact in one transaction. Downstream nodes can read that accepted checkpoint after adoption.
 - **Blocked joins.** Conflicts retain a private, immutable report for the exact join attempt. Missing inputs, stale ownership, and failed validation keep the current parent checkpoint. Each child approval applies to its own artifact. The joined artifact requires its own parent approval.
+
+## Drafts and published workflows
+
+Open **Workflows** under **Configure** to edit the graph. The graph and ordered list use the same steps, transitions, and policies. **Pipeline** opens the operational board, and **Serial pipeline settings** opens the stage editor.
+
+- **Save draft** compiles the graph and checks the displayed draft, published activation, and factory definition. A conflict keeps the editor’s local changes.
+- **Publish draft** activates the exact saved revision. When the factory definition changes, **Rebase and save draft** compiles the graph against the new definition.
+- Choose a published workflow in **New session**. Session creation pins that activation with its admission receipt. The final preparation checkpoint schedules the first workflow occurrence. Later publications affect future selections.

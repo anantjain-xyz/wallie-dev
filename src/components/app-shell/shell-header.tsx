@@ -441,6 +441,7 @@ export function ShellHeader({
           item.id === "improvements" ||
           item.id === "overview" ||
           item.id === "factory-definition" ||
+          item.id === "workflows" ||
           isManagedFactoryPath(item.href, workspace.slug)
         ? withFactoryQuery(item.href, scopedFactory)
         : item.href;
@@ -635,6 +636,7 @@ export function ShellHeader({
         >
           <CreateSessionDialog
             key={createScope}
+            creationFactoryId={creationFactory.id}
             creationFactoryName={creationFactory.name}
             open={createOpen}
             onClose={handleCreateClose}

@@ -5,6 +5,7 @@ import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
+import { drainAuthoredFactoryWorkflowEntry } from "@/lib/factory-workflows/authoring-dispatch";
 import { drainFactoryWorkflowBranches } from "@/lib/factory-workflows/branch-dispatch";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbox-stop-drain";
@@ -176,6 +177,7 @@ async function main() {
     maintenanceTimers.push(
       setInterval(() => {
         timerTasks.run("accepted triage route", () => drainAcceptedTriageRoute(admin));
+        timerTasks.run("authored workflow entry", () => drainAuthoredFactoryWorkflowEntry(admin));
         timerTasks.run("workflow branches", () => drainFactoryWorkflowBranches(admin));
         timerTasks.run("reconciliation", async () => {
           await drainCheckpointPublications(admin);

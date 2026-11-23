@@ -8,6 +8,7 @@ import type {
   SessionCreationStageOption,
   SessionRepositoryOption,
 } from "@/features/sessions/types";
+import type { WorkflowIntakeSelection } from "@/lib/factory-workflows/intake-selection";
 import {
   routingOverrideOptionsSchema,
   type RoutingOverride,
@@ -26,6 +27,7 @@ export type CreateSessionInput = {
   routingOverride?: RoutingOverride;
   selectedStageIds?: string[];
   title?: string | null;
+  workflowSelection?: WorkflowIntakeSelection;
   workspaceId: string;
 };
 
@@ -248,6 +250,7 @@ export async function createSessionFromClient(
     ...(input.routingOverride ? { routingOverride: input.routingOverride } : {}),
     ...(input.selectedStageIds ? { selectedStageIds: input.selectedStageIds } : {}),
     title: input.title?.trim() || null,
+    ...(input.workflowSelection ? { workflowSelection: input.workflowSelection } : {}),
     workspaceId: input.workspaceId,
   };
 

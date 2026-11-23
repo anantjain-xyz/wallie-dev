@@ -8,6 +8,7 @@ import { getWorkspaceNavItems } from "@/lib/routes";
 type AppShellProps = {
   canManageFactoryDefinition?: boolean;
   canManageGovernance?: boolean;
+  canManageWorkflows?: boolean;
   creationFactory: CreationFactory | null;
   children: ReactNode;
   onboarding: OnboardingResumeState | null;
@@ -23,6 +24,7 @@ type AppShellProps = {
 export function AppShell({
   canManageFactoryDefinition,
   canManageGovernance,
+  canManageWorkflows,
   creationFactory,
   children,
   onboarding,
@@ -36,6 +38,7 @@ export function AppShell({
   const navItems = getWorkspaceNavItems(workspace.slug, {
     canManageFactoryDefinition,
     canManageGovernance,
+    canManageWorkflows,
   });
 
   return (

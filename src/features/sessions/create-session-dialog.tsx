@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { z } from "zod/v4";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { AGENT_PROVIDER_LABELS } from "@/components/shared/agent-provider-options";
@@ -53,8 +54,16 @@ import {
   sessionAttachmentExpiryMs,
 } from "@/lib/storage/contracts";
 import { finishInteraction } from "@/lib/telemetry/interaction-rum";
+import { workflowIntakeSelectionSchema } from "@/lib/factory-workflows/intake-selection";
+import { workflowAuthoringApiPath } from "@/lib/routes";
+
+const intakeOptionsSchema = z.object({
+  options: workflowIntakeSelectionSchema.extend({ label: z.string() }).array(),
+});
+const defaultWorkflowOption = { label: "Default pipeline", value: "" };
 
 type CreateSessionDialogProps = {
+  creationFactoryId?: string;
   creationFactoryName?: string;
   onClose: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
@@ -133,6 +142,7 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 }
 
 function CreateSessionDialogBody({
+  creationFactoryId,
   creationFactoryName,
   onClose,
   onPreviewChange,
@@ -210,6 +220,12 @@ function CreateSessionDialogBody({
 
   const [prompt, setPrompt] = useState("");
   const [draftSpecification, setDraftSpecification] = useState(false);
+  const [workflowActivationId, setWorkflowActivationId] = useState("");
+  const [workflowOptions, setWorkflowOptions] = useState<
+    z.output<typeof intakeOptionsSchema>["options"]
+  >([]);
+  const [workflowOptionsError, setWorkflowOptionsError] = useState(false);
+  const [workflowOptionsRevision, setWorkflowOptionsRevision] = useState(0);
   const [imageDrafts, setImageDrafts] = useState<SessionImageDraft[]>([]);
   const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -227,6 +243,32 @@ function CreateSessionDialogBody({
   const repositorySnapshot = useSessionRepositories(repositoryCacheKey);
   const factoryDefinitionDigest = repositorySnapshot.data?.factoryDefinitionDigest;
   const canDraftSpecification = repositorySnapshot.data?.canDraftSpecification === true;
+  const workflow = workflowOptions.find((option) => option.activationId === workflowActivationId);
+  const workflowSelectionUnavailable = Boolean(workflowActivationId && !workflow);
+
+  useEffect(() => {
+    if (!open || !creationFactoryId || !factoryDefinitionDigest) return;
+    const controller = new AbortController();
+    void fetch(`${workflowAuthoringApiPath(workspaceId, creationFactoryId)}/intake-options`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Workflow options are unavailable.");
+        const result = intakeOptionsSchema.parse(await response.json());
+        if (!controller.signal.aborted) {
+          setWorkflowOptions(result.options);
+          setWorkflowOptionsError(false);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setWorkflowOptions([]);
+          setWorkflowOptionsError(true);
+        }
+      });
+    return () => controller.abort();
+  }, [open, creationFactoryId, factoryDefinitionDigest, workflowOptionsRevision, workspaceId]);
   const specificationUnavailable = draftSpecification && !canDraftSpecification;
   const specificationReadiness =
     "This factory needs an available named agent to draft a specification. Uncheck to start without one.";
@@ -486,6 +528,7 @@ function CreateSessionDialogBody({
   ]);
   const overrideTargets =
     !draftSpecification &&
+    !workflowActivationId &&
     factoryDefinitionDigest &&
     selectedGithubRepositoryId === defaultGithubRepositoryId &&
     overrideOptions
@@ -544,6 +587,10 @@ function CreateSessionDialogBody({
     }
 
     if (specificationUnavailable) return;
+    if (workflowSelectionUnavailable) {
+      setErrorMessage("Choose a current published workflow or the default pipeline.");
+      return;
+    }
     if (overrideBlocksSubmission) {
       setErrorMessage(
         overrideNeedsSelection
@@ -590,6 +637,14 @@ function CreateSessionDialogBody({
         promptMd: prompt.trim(),
         requestId: crypto.randomUUID(),
         ...(overrideRequest?.success ? { routingOverride: overrideRequest.data } : {}),
+        ...(workflow
+          ? {
+              workflowSelection: {
+                workflowId: workflow.workflowId,
+                activationId: workflow.activationId,
+              },
+            }
+          : {}),
         selectedStageIds,
         title: title.trim() || null,
         workspaceId,
@@ -701,6 +756,10 @@ function CreateSessionDialogBody({
       if (isSessionOptionsChangedError(error)) {
         invalidateSessionRepositoryCache(workspaceId);
         if (attempt.input.routingOverride) invalidateOverrideChoice();
+        if (attempt.input.workflowSelection) {
+          setWorkflowOptions([]);
+          setWorkflowOptionsRevision((revision) => revision + 1);
+        }
       }
       if (
         attempt.input.routingOverride &&
@@ -995,6 +1054,58 @@ function CreateSessionDialogBody({
               </div>
             ) : null}
 
+            {workflowOptions.length || workflowActivationId || workflowOptionsError ? (
+              <div className="min-w-0 space-y-2">
+                <SelectField
+                  disabled={
+                    isSubmitting ||
+                    unconfirmed ||
+                    draftSpecification ||
+                    overrideChoice !== null ||
+                    !factoryDefinitionDigest ||
+                    repositorySnapshot.isStale
+                  }
+                  emptyOption={defaultWorkflowOption}
+                  label="Workflow"
+                  labelClassName="text-sm font-medium"
+                  onValueChange={setWorkflowActivationId}
+                  options={[
+                    ...(workflowSelectionUnavailable
+                      ? [
+                          {
+                            disabled: true,
+                            label: "Choose a current workflow",
+                            value: workflowActivationId,
+                          },
+                        ]
+                      : []),
+                    ...workflowOptions.map(({ activationId, label }) => ({
+                      label,
+                      value: activationId,
+                    })),
+                  ]}
+                  value={workflowActivationId}
+                  wrap
+                />
+                {workflowOptionsError ? (
+                  <p className="type-secondary text-warning" role="status">
+                    Published workflows are unavailable.{" "}
+                    <button
+                      type="button"
+                      className="underline underline-offset-4"
+                      onClick={() => setWorkflowOptionsRevision((revision) => revision + 1)}
+                    >
+                      Reload workflows
+                    </button>
+                  </p>
+                ) : workflowSelectionUnavailable ? (
+                  <p className="type-secondary text-warning" role="status">
+                    The selected workflow changed. Choose a current workflow or the default
+                    pipeline.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             {canDraftSpecification || draftSpecification ? (
               <label className="flex min-h-11 cursor-pointer items-start gap-3 py-1 text-sm text-foreground">
                 <input
@@ -1006,6 +1117,7 @@ function CreateSessionDialogBody({
                     isSubmitting ||
                     unconfirmed ||
                     overrideChoice !== null ||
+                    !!workflowActivationId ||
                     (repositorySnapshot.isStale && !draftSpecification)
                   }
                   onChange={(event) => setDraftSpecification(event.target.checked)}
@@ -1116,6 +1228,7 @@ function CreateSessionDialogBody({
                 unconfirmed
                   ? isSubmitting
                   : specificationUnavailable ||
+                    workflowSelectionUnavailable ||
                     overrideBlocksSubmission ||
                     isCreateSessionSubmitDisabled({
                       hasRepositoryResult:

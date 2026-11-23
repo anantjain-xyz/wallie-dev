@@ -57,4 +57,31 @@ describe("session creation fingerprint", () => {
       }),
     ).not.toBe(fingerprint);
   });
+
+  it("fingerprints the selected exact workflow activation without changing unselected intent", () => {
+    const workflowSelection = {
+      workflowId: "deadbeef-5555-4555-8555-555555555555",
+      activationId: "deadbeef-5555-4555-8555-555555555556",
+    };
+    const selected = fingerprintSessionCreation({ ...input, workflowSelection });
+    expect(selected).not.toBe(fingerprintSessionCreation(input));
+    expect(fingerprintSessionCreation({ ...input, workflowSelection: undefined })).toBe(
+      fingerprintSessionCreation(input),
+    );
+    expect(
+      fingerprintSessionCreation({
+        ...input,
+        workflowSelection: {
+          workflowId: workflowSelection.workflowId.toUpperCase(),
+          activationId: workflowSelection.activationId.toUpperCase(),
+        },
+      }),
+    ).toBe(selected);
+    expect(
+      fingerprintSessionCreation({
+        ...input,
+        workflowSelection: { ...workflowSelection, activationId: workflowSelection.workflowId },
+      }),
+    ).not.toBe(selected);
+  });
 });
