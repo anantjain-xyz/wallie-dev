@@ -10407,6 +10407,19 @@ export type Database = {
           transition_id: string
         }[]
       }
+      admit_factory_workflow_review_repair: {
+        Args: {
+          p_expected_generation: number
+          p_expected_head_run_id: string
+          p_factory_id: string
+          p_ownership_token: string
+          p_review_id: string
+          p_review_receipt_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       admit_factory_workflow_route_decision: {
         Args: {
           p_confidence?: number
@@ -11284,6 +11297,18 @@ export type Database = {
       }
       claim_factory_workflow_authoring_dispatch: {
         Args: { p_lease_id: string }
+        Returns: Json
+      }
+      claim_factory_workflow_exact_review: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_permit: string
+          p_review_occurrence_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
         Returns: Json
       }
       claim_factory_workflow_join_conflict_cleanup: {
@@ -12416,6 +12441,14 @@ export type Database = {
         Returns: Json
       }
       dispatch_next_factory_workflow_branch: { Args: never; Returns: boolean }
+      dispatch_next_factory_workflow_exact_review: {
+        Args: { p_permit: string }
+        Returns: Json
+      }
+      dispatch_next_factory_workflow_review_repair: {
+        Args: never
+        Returns: boolean
+      }
       enable_factory_benchmark_live_inference: {
         Args: {
           p_attempt_count: number
@@ -12609,6 +12642,10 @@ export type Database = {
         }
         Returns: Json
       }
+      expire_next_factory_workflow_exact_review: {
+        Args: never
+        Returns: boolean
+      }
       fail_deadline_session_job_attempt: {
         Args: {
           p_attempt_count: number
@@ -12625,6 +12662,20 @@ export type Database = {
           p_job_id: string
           p_run_id: string
           p_trial_id: string
+        }
+        Returns: boolean
+      }
+      fail_factory_workflow_exact_review: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_permit: string
+          p_reason: string
+          p_review_id: string
+          p_review_run_id: string
+          p_root_session_id: string
+          p_workspace_id: string
         }
         Returns: boolean
       }
@@ -13491,6 +13542,19 @@ export type Database = {
           p_diagnosis_id: string
           p_factory_id: string
           p_lease_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      is_factory_workflow_exact_review_active: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_permit: string
+          p_review_id: string
+          p_review_run_id: string
+          p_root_session_id: string
           p_workspace_id: string
         }
         Returns: boolean
@@ -14990,6 +15054,28 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_workflow_exact_review_progress: {
+        Args: {
+          p_factory_id: string
+          p_occurrence_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_workflow_exact_review_provider: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_permit: string
+          p_review_id: string
+          p_review_run_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_workflow_execution: {
         Args: {
           p_factory_id: string
@@ -15024,6 +15110,16 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: string
+      }
+      read_factory_workflow_review_repair_input: {
+        Args: {
+          p_attempt_count: number
+          p_job_id: string
+          p_run_id: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       read_factory_workflow_route_decision: {
         Args: {
@@ -15205,6 +15301,23 @@ export type Database = {
           created: boolean
           result_id: string
         }[]
+      }
+      record_factory_workflow_exact_review: {
+        Args: {
+          p_checkpoint_run_id: string
+          p_commit_sha: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_permit: string
+          p_report: Json
+          p_review_id: string
+          p_review_run_id: string
+          p_root_session_id: string
+          p_tree_sha: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       record_factory_workflow_node_result: {
         Args: {

@@ -7,6 +7,11 @@ import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
 import { drainAuthoredFactoryWorkflowEntry } from "@/lib/factory-workflows/authoring-dispatch";
 import { drainFactoryWorkflowBranches } from "@/lib/factory-workflows/branch-dispatch";
+import {
+  drainExactFactoryWorkflowReview,
+  drainExactFactoryWorkflowReviewRepair,
+  expireExactFactoryWorkflowReview,
+} from "@/lib/factory-workflows/exact-review-runtime";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
 import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbox-stop-drain";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
@@ -179,6 +184,11 @@ async function main() {
         timerTasks.run("accepted triage route", () => drainAcceptedTriageRoute(admin));
         timerTasks.run("authored workflow entry", () => drainAuthoredFactoryWorkflowEntry(admin));
         timerTasks.run("workflow branches", () => drainFactoryWorkflowBranches(admin));
+        timerTasks.run("exact workflow review", () => drainExactFactoryWorkflowReview(admin));
+        timerTasks.run("exact workflow review repair", () =>
+          drainExactFactoryWorkflowReviewRepair(admin),
+        );
+        timerTasks.run("expired workflow review", () => expireExactFactoryWorkflowReview(admin));
         timerTasks.run("reconciliation", async () => {
           await drainCheckpointPublications(admin);
           await drainCanonicalPullRequests(admin);

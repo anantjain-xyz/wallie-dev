@@ -26,6 +26,18 @@ const uuid = z
 
 const node = z.object({ id: workflowNodeIdSchema }).strict();
 const agentBinding = { agentPromptRevisionId: uuid, grantId: uuid.optional() };
+
+const reviewRules = z
+  .array(
+    z
+      .string()
+      .max(96)
+      .regex(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/, "Use a stable lowercase review rule ID."),
+  )
+  .min(1)
+  .max(32)
+  .refine((rules) => new Set(rules).size === rules.length, "Declare unique review rules.");
+
 const workflowNodeSchema = z.discriminatedUnion("kind", [
   node.extend({ kind: z.literal("agent"), ...agentBinding }),
   node.extend({
@@ -42,6 +54,19 @@ const workflowNodeSchema = z.discriminatedUnion("kind", [
   node.extend({ kind: z.literal("route"), ...agentBinding }),
   node.extend({ kind: z.literal("branch") }),
   node.extend({ kind: z.literal("join") }),
+  node.extend({
+    kind: z.literal("review"),
+    reviewerPromptRevisionId: uuid,
+    ruleIds: reviewRules,
+    repair: z
+      .object({
+        edgeId: workflowEdgeIdSchema,
+        maxRepairs: z.number().int().min(1).max(8),
+        eligibleRuleIds: reviewRules,
+      })
+      .strict()
+      .optional(),
+  }),
 ]);
 
 const edge = z
@@ -176,6 +201,7 @@ export type WorkflowDiagnostic = {
     | "invalid_edge"
     | "unreachable_node"
     | "invalid_join"
+    | "invalid_review"
     | "unbounded_cycle"
     | "invalid_loop"
     | "invalid_route_policy"

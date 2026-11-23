@@ -276,11 +276,10 @@ export function createOpenAiForemanProvider({
     ),
   ].join("\n\n");
 
-  let used = false;
+  const infer = createOpenAiReadOnlyInference({ permit: ticket, fetcher, decrypt });
   return async (request) => {
     const [system, user] = request.messages;
     if (
-      used ||
       request.profile.providerRoute !== "openai" ||
       request.profile.modelId !== ticket.model ||
       request.profile.encryptedCredential !== ticket.encryptedCredential ||
@@ -297,7 +296,48 @@ export function createOpenAiForemanProvider({
     ) {
       return blocked();
     }
-    const remainingMs = Date.parse(ticket.deadlineAt) - Date.now();
+    return infer(request);
+  };
+}
+
+/** Send one tool-free inference bounded by the captured token, spend, and deadline permit. */
+export function createOpenAiReadOnlyInference({
+  permit,
+  fetcher = fetch,
+  decrypt = decryptSecretValue,
+}: {
+  permit: Pick<
+    z.output<typeof openAiForemanIssuanceSchema>,
+    | "model"
+    | "encryptedCredential"
+    | "reservedTokens"
+    | "reservedCostUsd"
+    | "maxInputBytes"
+    | "maxOutputTokens"
+    | "deadlineAt"
+  >;
+  fetcher?: typeof fetch;
+  decrypt?: (ciphertext: string) => string;
+}): (
+  request: Pick<Parameters<ForemanInferenceProvider>[0], "messages" | "maxOutputTokens" | "signal">,
+) => Promise<ProviderOutcome> {
+  const rate = modelRates.get(permit.model);
+  let used = false;
+  return async (request) => {
+    const [system, user] = request.messages;
+    if (
+      !rate ||
+      used ||
+      request.messages.length !== 2 ||
+      system?.role !== "system" ||
+      user?.role !== "user" ||
+      !Number.isSafeInteger(request.maxOutputTokens) ||
+      request.maxOutputTokens <= 0 ||
+      request.maxOutputTokens > permit.maxOutputTokens ||
+      request.maxOutputTokens > permit.reservedTokens
+    )
+      return blocked();
+    const remainingMs = Date.parse(permit.deadlineAt) - Date.now();
     if (remainingMs <= 0 || request.signal.aborted) return blocked("timeout");
 
     const input = {
@@ -313,7 +353,7 @@ export function createOpenAiForemanProvider({
       truncation: "disabled",
     };
     const countBody = JSON.stringify(input);
-    if (encoder.encode(countBody).byteLength > ticket.maxInputBytes) return blocked();
+    if (encoder.encode(countBody).byteLength > permit.maxInputBytes) return blocked();
 
     used = true;
     const signal = AbortSignal.timeout(Math.min(remainingMs, inferenceMaxMs));
@@ -330,9 +370,9 @@ export function createOpenAiForemanProvider({
     try {
       const send = async () => {
         if (preflightSignal.aborted) return blocked("timeout");
-        const apiKey = decrypt(ticket.encryptedCredential);
+        const apiKey = decrypt(permit.encryptedCredential);
         if (apiKey.length > 4096 || !platformApiKey.test(apiKey)) return blocked();
-        const secrets = new AgentOutputSafety([apiKey, ticket.encryptedCredential]);
+        const secrets = new AgentOutputSafety([apiKey, permit.encryptedCredential]);
         if (secrets.redact(countBody) !== countBody) return blocked();
 
         const post = async (url: string, body: string, signal: AbortSignal) =>
@@ -358,10 +398,10 @@ export function createOpenAiForemanProvider({
         if (!count.success) return blocked();
         const inputTokens = count.data.input_tokens;
         const spendRemaining =
-          Math.floor(ticket.reservedCostUsd * nanoDollarsPerDollar) - inputTokens * rate.input;
+          Math.floor(permit.reservedCostUsd * nanoDollarsPerDollar) - inputTokens * rate.input;
         const outputTokens = Math.min(
           request.maxOutputTokens,
-          ticket.reservedTokens - inputTokens,
+          permit.reservedTokens - inputTokens,
           Math.floor(spendRemaining / rate.output),
         );
         if (inputTokens > maxStandardInputTokens || outputTokens < minOutputTokens)
@@ -374,7 +414,7 @@ export function createOpenAiForemanProvider({
           store: false,
           service_tier: "default",
         });
-        if (encoder.encode(body).byteLength > ticket.maxInputBytes) return blocked();
+        if (encoder.encode(body).byteLength > permit.maxInputBytes) return blocked();
         startedInference = true;
         const outcome = await post(responsesUrl, body, signal);
         return signal.aborted
