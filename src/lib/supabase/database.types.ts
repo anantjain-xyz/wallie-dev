@@ -10707,6 +10707,17 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      archive_factory_automation: {
+        Args: {
+          p_actor_user_id: string
+          p_automation_id: string
+          p_expected_publication: Json
+          p_expected_revision_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       archive_session_job_attempts: {
         Args: {
           p_completed?: boolean
@@ -11975,6 +11986,16 @@ export type Database = {
           p_from: string
           p_request_id: string
           p_to: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      create_factory_automation: {
+        Args: {
+          p_actor_user_id: string
+          p_automation_id: string
+          p_definition: Json
+          p_factory_id: string
           p_workspace_id: string
         }
         Returns: Json
@@ -13761,6 +13782,14 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      list_factory_automations: {
+        Args: {
+          p_after_id?: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_benchmark_axis_profiles: {
         Args: {
           p_factory_id: string
@@ -14712,6 +14741,16 @@ export type Database = {
           token_pairs_deleted: number
         }[]
       }
+      publish_factory_automation: {
+        Args: {
+          p_actor_user_id: string
+          p_automation_id: string
+          p_expected_revision_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       publish_factory_benchmark_replay_fixture: {
         Args: {
           p_actor_user_id: string
@@ -14862,6 +14901,15 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: string
+      }
+      read_factory_automation: {
+        Args: {
+          p_automation_id: string
+          p_factory_id: string
+          p_selected_revision_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       read_factory_benchmark_comparison: {
         Args: {
@@ -16575,6 +16623,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      save_factory_automation_draft: {
+        Args: {
+          p_actor_user_id: string
+          p_automation_id: string
+          p_definition: Json
+          p_expected_revision_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       save_factory_benchmark_suite_revision: {
         Args: {
