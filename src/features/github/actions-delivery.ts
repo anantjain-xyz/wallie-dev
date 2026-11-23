@@ -305,6 +305,7 @@ export async function observeActionsDelivery(
     candidate.head_sha === target.sourceRevision &&
     [target.tag, `refs/tags/${target.tag}`].includes(candidate.head_branch) &&
     [
+      target.workflowPath,
       `${target.workflowPath}@${target.tag}`,
       `${target.workflowPath}@refs/tags/${target.tag}`,
     ].includes(candidate.path) &&

@@ -270,6 +270,27 @@ describe("GitHub Actions guarded delivery", () => {
     expect(url.searchParams.get("head_sha")).toBe(target.sourceRevision);
   });
 
+  it("correlates GitHub's bare workflow path when its tag and every other run coordinate match", async () => {
+    const barePath = { ...run, path: target.workflowPath };
+    const transport = provider({ [workflowRuns]: { total_count: 1, workflow_runs: [barePath] } });
+    await expect(
+      observeActionsDelivery({ ...transport, target: observed, signal }),
+    ).resolves.toEqual({
+      kind: "observed",
+      runId: 801,
+      status: "completed",
+      conclusion: "success",
+    });
+    const wrongTag = { ...barePath, head_branch: "main" };
+    const changed = provider({ [workflowRuns]: { total_count: 1, workflow_runs: [wrongTag] } });
+    await expect(observeActionsDelivery({ ...changed, target: observed, signal })).resolves.toEqual(
+      {
+        kind: "unverified",
+        reason: "run_mismatch",
+      },
+    );
+  });
+
   it.each([
     ["no match", [run], 0, "run_mismatch"],
     ["truncated list", [run], 26, "run_mismatch"],

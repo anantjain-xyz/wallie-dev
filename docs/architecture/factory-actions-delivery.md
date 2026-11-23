@@ -5,7 +5,7 @@ Factory managers can submit a guarded delivery command for one GitHub Actions wo
 ## Configure a workflow
 
 - Install the Wallie GitHub App on the repository. Grant **Actions write** and **Contents read**. Dispatch mints a fresh credential scoped to that numeric repository. Observation uses Actions read.
-- Put the workflow file on the default branch with a `workflow_dispatch` trigger. The exact immutable release commit must contain the same workflow path and the contract below.
+- Put the workflow file on the default branch. The exact immutable release commit must contain the same workflow path and declare the `workflow_dispatch` contract below.
 - Publish an [immutable release](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) whose tag resolves to the session's canonical merged SHA. Wallie verifies GitHub's immutable release record and tag before dispatch.
 - Declare the Wallie inputs as required strings. Its first run title must be unique to the command. Pass the inputs to steps through environment variables and check the source SHA before deployment.
 
