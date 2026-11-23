@@ -511,12 +511,12 @@ begin
     end case;
   end loop;
 
-  return (jsonb_array_length(commands) = 1 and commands#>>'{0,kind}' in ('route', 'read_child')) or (
-    jsonb_array_length(commands) = 2 and
-    commands#>>'{0,kind}' = 'route' and commands#>>'{0,decision,kind}' = 'choose'
-    and commands#>>'{1,kind}' = 'delegate'
-    and commands#>>'{0,decision,destinationNodeId}' = commands#>>'{1,targetNodeId}'
-  ) is true;
+  return (commands#>>'{0,kind}' = 'route' and (
+    jsonb_array_length(commands) = 1 or commands#>>'{1,kind}' = 'read_child' or (
+      commands#>>'{0,decision,kind}' = 'choose' and commands#>>'{1,kind}' = 'delegate'
+      and commands#>>'{0,decision,destinationNodeId}' = commands#>>'{1,targetNodeId}'
+    )
+  )) is true;
 end;
 $$;
 

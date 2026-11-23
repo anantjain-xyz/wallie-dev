@@ -71,6 +71,8 @@ it.each([
   [route, { ...delegate, definitionRevisionId: "new-profile" }],
   [route, delegate, delegate],
   [delegate],
+  [{ kind: "read_child", childRef: "child-1" }],
+  [{ kind: "read_child", childRef: "child-1" }, route],
   [delegate, delegate],
   [{ kind: "approve", stage: "human-gate" }],
   [{ kind: "shell", command: "request from the work item" }],
@@ -137,9 +139,9 @@ it("rejects a target even if it appears in a receipt when it is outside the comp
 it("reads only the children offered under the actual parent and root", () => {
   const child = { childSessionId: "actual-child", targetOccurrenceId: stored.targetOccurrenceId };
   const offered = new Map([["child-1", child]]);
-  expect(parseForemanPlan(envelope({ kind: "read_child", childRef: "child-1" }))).toMatchObject({
-    status: "parsed",
-  });
+  expect(
+    parseForemanPlan(envelope(route, { kind: "read_child", childRef: "child-1" })),
+  ).toMatchObject({ status: "parsed" });
   expect(bindForemanChildRead({ kind: "read_child", childRef: "child-1" }, offered)).toEqual({
     status: "bound",
     child,

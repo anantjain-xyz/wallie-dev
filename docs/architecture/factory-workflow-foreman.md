@@ -11,12 +11,12 @@ A route node can pin a foreman profile in `routePolicy.nodes[routeId].foremanPro
 
 ## Commands
 
-| Command      | Required scope                                                               | Durable result                                                                        |
-| ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `route`      | Current route occurrence and declared destinations                           | The existing selected, fallback, or clarification decision                            |
-| `delegate`   | The preceding recorded route decision and its selected declared child target | Child session, job, run, and source checkpoint pinned by the normal admission command |
-| `read_child` | A child reference offered by this scoped inference attempt                   | Child phase and exact occurrence identity                                             |
+| Command      | Required scope                                                                      | Durable result                                                                        |
+| ------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `route`      | Current route occurrence and declared destinations                                  | The existing selected, fallback, or clarification decision                            |
+| `delegate`   | The preceding recorded route decision and its selected declared child target        | Child session, job, run, and source checkpoint pinned by the normal admission command |
+| `read_child` | The preceding route receipt and a child reference offered by this inference attempt | Child phase and exact occurrence identity                                             |
 
-A plan contains one command or one route choice followed by delegation to its selected destination. Fresh commands recheck ownership, lineage, grants, budget, and exact inputs. Foreman runs and command receipts retain the plan, decisions, measured usage, and child provenance. A duplicate request reuses its receipt. Once inference is issued, recovery waits for exact settlement or expiry so it cannot silently issue another provider request.
+Every plan starts with a route decision. It may also delegate work to the selected destination or inspect one offered child. Fresh commands recheck ownership, lineage, grants, budget, and exact inputs. Foreman runs and command receipts retain the plan, decisions, measured usage, and child provenance. A duplicate request reuses its receipt. Once inference is issued, recovery waits for exact settlement or expiry so it cannot silently issue another provider request.
 
 The foreman has no checkout or publisher authority. Child jobs use the ordinary pipeline and review path, and the parent source remains bound to human-approved checkpoints.

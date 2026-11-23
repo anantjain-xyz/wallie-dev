@@ -24,7 +24,13 @@ const pin: WorkflowOccurrencePin = {
 const environment = { WALLIE_ENCRYPTION_KEY: "fixture-only-local-encryption-key" };
 const apiKey = "sk-proj-foreman_minted_key_fixture_only";
 const providerReceiptId = "resp_native_foreman";
-const plan = '{"version":1,"commands":[{"kind":"read_child","childRef":"child-existing"}]}';
+const plan = JSON.stringify({
+  version: 1,
+  commands: [
+    { kind: "route", decision: { kind: "unresolved", reason: "Confirm the next task." } },
+    { kind: "read_child", childRef: "child-existing" },
+  ],
+});
 
 function setup() {
   const promptMd = "Inspect and route the scoped Factory work.";

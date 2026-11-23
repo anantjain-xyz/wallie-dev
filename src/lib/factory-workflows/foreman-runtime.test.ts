@@ -111,6 +111,7 @@ function fixture({
   loseSettle = false,
   loseDispatch = false,
   stopAtFallback = false,
+  childReadReceipt,
   initial = null,
   modelOutput = plan,
 }: {
@@ -118,6 +119,7 @@ function fixture({
   loseSettle?: boolean;
   loseDispatch?: boolean;
   stopAtFallback?: boolean;
+  childReadReceipt?: ForemanCommandReceipt & { kind: "read_child" };
   initial?: ForemanRunSnapshot | null;
   modelOutput?: string;
 } = {}) {
@@ -149,15 +151,16 @@ function fixture({
         ? stopAtFallback
           ? { ...recordedRoute, resolution: "fallback" }
           : recordedRoute
-        : stopAtFallback
-          ? {
-              foremanRunId: runId,
-              ordinal: 2,
-              kind: "delegate",
-              status: "blocked",
-              code: "no_authorized_target",
-            }
-          : recordedChild;
+        : (childReadReceipt ??
+          (stopAtFallback
+            ? {
+                foremanRunId: runId,
+                ordinal: 2,
+                kind: "delegate",
+                status: "blocked",
+                code: "no_authorized_target",
+              }
+            : recordedChild));
     run = { ...run, receipts: [...run.receipts, receipt] };
     if (loseDispatch && ordinal === 1)
       throw new TypeError("Lost the committed route acknowledgement.");
@@ -278,6 +281,7 @@ it("retains a guarded delegation blocker after a persisted fallback", async () =
 it.each([
   plan.replaceAll("child.first", "child.unapproved"),
   JSON.stringify({ version: 1, commands: [{ kind: "shell", command: "request" }] }),
+  JSON.stringify({ version: 1, commands: [{ kind: "read_child", childRef: "child-previous" }] }),
 ])("records invalid provider output without issuing domain commands", async (modelOutput) => {
   const { invoke, store } = fixture({ modelOutput });
   expect(await runFactoryWorkflowForeman({ pin, invoke, store })).toEqual({
@@ -327,29 +331,68 @@ it("blocks a stored plan with a different digest without reissuing inference", a
   expect(store.dispatchCommand).not.toHaveBeenCalled();
 });
 
-it("dispatches a standalone child read from the stored plan using only its ordinal", async () => {
-  const { invoke, store } = fixture({
-    modelOutput: JSON.stringify({
-      version: 1,
-      commands: [{ kind: "read_child", childRef: "child-previous" }],
-    }),
-  });
+const routeWithChildRead = JSON.stringify({
+  version: 1,
+  commands: [
+    {
+      kind: "route",
+      decision: {
+        kind: "choose",
+        destinationNodeId: "child.first",
+        confidence: 0.9,
+        reason: "Ready",
+      },
+    },
+    { kind: "read_child", childRef: "child-previous" },
+  ],
+});
+
+it("dispatches an offered child read only after the route receipt", async () => {
   const read = {
     kind: "read_child",
     foremanRunId: identity.foremanRunId,
-    ordinal: 1,
+    ordinal: 2,
     status: "accepted",
     childSessionId: "scoped-child",
     targetOccurrenceId: "child-occurrence",
     phaseStatus: "in_progress",
   } as const;
-  store.dispatchCommand.mockResolvedValueOnce({ status: "recorded", receipt: read });
+  const { invoke, store } = fixture({ modelOutput: routeWithChildRead, childReadReceipt: read });
 
   expect(await runFactoryWorkflowForeman({ pin, invoke, store })).toEqual({
     status: "completed",
-    receipts: [read],
+    receipts: [recordedRoute, read],
   });
-  expect(store.dispatchCommand.mock.calls).toEqual([[pin, identity.foremanRunId, 1]]);
+  expect(store.dispatchCommand.mock.calls).toEqual([
+    [pin, identity.foremanRunId, 1],
+    [pin, identity.foremanRunId, 2],
+  ]);
+});
+
+it("retains the committed route across replay when its later child read is blocked", async () => {
+  const blockedRead = {
+    kind: "read_child",
+    foremanRunId: identity.foremanRunId,
+    ordinal: 2,
+    status: "blocked",
+    code: "child_unavailable",
+  } as const;
+  const { invoke, store } = fixture({
+    modelOutput: routeWithChildRead,
+    childReadReceipt: blockedRead,
+  });
+  const blocked = {
+    status: "blocked",
+    code: "child_unavailable",
+    receipts: [recordedRoute, blockedRead],
+  };
+  expect(await runFactoryWorkflowForeman({ pin, invoke, store })).toEqual(blocked);
+  expect(await runFactoryWorkflowForeman({ pin, invoke, store })).toEqual(blocked);
+  expect(invoke).toHaveBeenCalledOnce();
+  expect(store.dispatchCommand.mock.calls).toEqual([
+    [pin, identity.foremanRunId, 1],
+    [pin, identity.foremanRunId, 2],
+  ]);
 });
 
 it("settles an expired issuance without calling the provider", async () => {

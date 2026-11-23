@@ -24,8 +24,11 @@ const readChildCommandSchema = z.strictObject({
 const foremanPlanSchema = z.strictObject({
   version: z.literal(1),
   commands: z.union([
-    z.tuple([z.discriminatedUnion("kind", [routeCommandSchema, readChildCommandSchema])]),
-    z.tuple([routeCommandSchema, delegateCommandSchema]),
+    z.tuple([routeCommandSchema]),
+    z.tuple([
+      routeCommandSchema,
+      z.discriminatedUnion("kind", [delegateCommandSchema, readChildCommandSchema]),
+    ]),
   ]),
 });
 
@@ -43,11 +46,10 @@ export function parseForemanPlan(source: string) {
   const decoded = parseFactoryDefinitionJson(source);
   const parsed = foremanPlanSchema.safeParse(decoded.ok ? decoded.value : null);
   if (!parsed.success) return { status: "blocked", code: "invalid_plan" } as const;
-  const commands = parsed.data.commands;
+  const [route, next] = parsed.data.commands;
   if (
-    commands.length === 2 &&
-    (commands[0].decision.kind !== "choose" ||
-      commands[0].decision.destinationNodeId !== commands[1].targetNodeId)
+    next?.kind === "delegate" &&
+    (route.decision.kind !== "choose" || route.decision.destinationNodeId !== next.targetNodeId)
   ) {
     return { status: "blocked", code: "inconsistent_target" } as const;
   }

@@ -134,7 +134,7 @@ select fixture.scenario, scope.*, fields.*
 from op648_scope scope
 cross join (values ('narrow', 101), ('outside-parent-definition', 102), ('outside-parent-grant', 103),
   ('unknown-usage', 104), ('over-budget', 105), ('revoked-authority', 106),
-  ('reordered-usage', 108), ('late-cost', 109))
+  ('reordered-usage', 108), ('late-cost', 109), ('read-after-route', 110))
   fixture(scenario, request_slot)
 cross join lateral jsonb_to_record(pg_temp.op648_create_service_root(fixture.request_slot,
   'Grant narrowing root ' || fixture.scenario)) fields(
@@ -220,7 +220,8 @@ join public.factory_definition_revisions definition on definition.id = profile.r
 join public.factory_definition_revisions foreman on foreman.id = pg_temp.op648_id(43);
 insert into route_graph(scenario, body)
 select extra.scenario, graph.body from route_graph graph
-cross join (values ('unknown-usage'), ('over-budget'), ('revoked-authority'), ('reordered-usage'), ('late-cost')) extra(scenario)
+cross join (values ('unknown-usage'), ('over-budget'), ('revoked-authority'), ('reordered-usage'),
+  ('late-cost'), ('read-after-route')) extra(scenario)
 where graph.scenario = 'narrow';
 
 create temp table root_owner as
@@ -233,7 +234,7 @@ cross join lateral public.register_factory_workflow_graph_revision(
   graph.body, encode(sha256(convert_to(graph.body, 'UTF8')), 'hex')) registered
 cross join lateral public.start_factory_workflow_graph_execution(root."sessionId", root.workspace_id, root.factory_id,
   registered.graph_revision_id, root.checkpoint_run_id) started;
-select is((select count(*) from root_owner where created and ownership_token is not null), 8::bigint,
+select is((select count(*) from root_owner where created and ownership_token is not null), 9::bigint,
   'all roots enroll their graph and exact historical target profile');
 update public.sessions session set archived_at = clock_timestamp(), phase_status = 'approved'
 from root_owner root where session.id = root."sessionId";
@@ -256,7 +257,7 @@ cross join lateral internal.factory_workflow_attempt_budget(root."sessionId", ex
 
 create temp table foreman_tickets as
 select scenario, pg_temp.begin_foreman(scenario) as ticket from root_owner;
-select is((select count(*) from foreman_tickets where ticket->>'status' = 'issued'), 7::bigint,
+select is((select count(*) from foreman_tickets where ticket->>'status' = 'issued'), 8::bigint,
   'fresh scoped routes issue one provider ticket under root accounting');
 select ok((select invocation.deadline_at - invocation.issued_at = interval '15 seconds'
   from root_owner root join internal.factory_workflow_foreman_runs invocation on invocation.root_session_id = root."sessionId"
@@ -394,6 +395,26 @@ select ok((select route.receipt->>'status' = 'accepted' and delegate.receipt->>'
   'the persisted plan dispatches an exact native route and separately granted child in order');
 select is(pg_temp.dispatch_foreman(2), (select receipt from dispatched_delegate),
   'replayed dispatch retains the original child receipt');
+create temp table read_plans as
+select scenario, jsonb_build_object('status', 'accepted', 'planJson', raw.plan,
+  'planDigest', encode(sha256(convert_to(raw.plan, 'UTF8')), 'hex'),
+  'usage', '{"inputTokens":12,"outputTokens":3,"costUsd":0.05}'::jsonb) as outcome
+from (values
+  ('read-only', '{"version":1,"commands":[{"kind":"read_child","childRef":"unknown-child"}]}'),
+  ('route-and-read', '{"version":1,"commands":[{"kind":"route","decision":{"kind":"choose","destinationNodeId":"agent.child","confidence":0.9,"reason":"Continue."}},{"kind":"read_child","childRef":"unknown-child"}]}')
+) raw(scenario, plan);
+select throws_ok($$select pg_temp.settle_foreman('read-after-route', outcome) from read_plans
+  where scenario = 'read-only'$$, '22023', 'Invalid foreman plan.',
+  'a plan that only reads a child cannot consume the route');
+select is(pg_temp.settle_foreman('read-after-route', outcome)->>'status', 'accepted',
+  'a route-first plan can also inspect an offered child') from read_plans where scenario = 'route-and-read';
+create temp table read_first_route as select pg_temp.dispatch_foreman(1, 'read-after-route') as receipt;
+select ok((select receipt->>'status' = 'accepted' and receipt->>'targetOccurrenceId' is not null
+  from read_first_route), 'the route is committed before child inspection');
+select is(pg_temp.dispatch_foreman(2, 'read-after-route')->>'code', 'child_unavailable',
+  'a child that was not offered is not disclosed');
+select is(pg_temp.dispatch_foreman(1, 'read-after-route'), (select receipt from read_first_route),
+  'a blocked child read leaves the committed route available for continuation');
 select is(pg_temp.settle_foreman('late-cost', outcome)->>'status', 'accepted',
   'a plan may settle before its final spend receipt') from planned;
 create temp table late_cost_route as select pg_temp.dispatch_foreman(1, 'late-cost') as receipt;
