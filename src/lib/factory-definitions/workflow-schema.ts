@@ -59,6 +59,13 @@ const workflowRouteFallbackSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("route"), destinationId: workflowNodeIdSchema }).strict(),
   z.object({ kind: z.literal("clarification") }).strict(),
 ]);
+const workflowProfileRevisionSchema = z
+  .object({
+    definitionRevisionId: uuid,
+    definitionDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  })
+  .strict();
+
 function hasBoundedNodeMapSize(value: unknown) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return true;
   // Match the record parser's enumerable keys without reading entry values.
@@ -81,6 +88,7 @@ const workflowRoutePoliciesByNodeSchema = z
           minimumConfidence: z.number().finite().min(0).max(1),
           allowedDestinationIds: z.array(workflowNodeIdSchema).max(MAX_WORKFLOW_NODES),
           fallback: workflowRouteFallbackSchema,
+          foremanProfile: workflowProfileRevisionSchema.optional(),
         })
         .strict(),
     ),
@@ -108,17 +116,7 @@ const workflowDelegationPolicySchema = z
     targets: z
       .unknown()
       .refine(hasBoundedNodeMapSize, `Declare at most ${MAX_WORKFLOW_NODES} delegation targets.`)
-      .pipe(
-        z.record(
-          workflowNodeIdTextSchema,
-          z
-            .object({
-              definitionRevisionId: uuid,
-              definitionDigest: z.string().regex(/^[0-9a-f]{64}$/),
-            })
-            .strict(),
-        ),
-      ),
+      .pipe(z.record(workflowNodeIdTextSchema, workflowProfileRevisionSchema)),
   })
   .strict()
   .superRefine((policy, context) => {

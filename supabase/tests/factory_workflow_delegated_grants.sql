@@ -197,30 +197,36 @@ select ok(not (child.read_context_repository_ids <@ root_grant.read_context_repo
 from scoped_child_grants child cross join op647_grant root_grant where child.scenario = 'outside-parent-grant';
 
 create temp table route_graph as
-select profile.scenario, jsonb_build_object(
+select profile.scenario, jsonb_set(jsonb_build_object(
   'schemaVersion', 1, 'kind', 'graph', 'entryNodeId', 'route.choose',
   'nodes', jsonb_build_array(
     jsonb_build_object('id', 'route.choose', 'kind', 'route', 'agentPromptRevisionId', pg_temp.op647_id(91), 'grantId', approved.id),
     jsonb_build_object('id', 'agent.child', 'kind', 'agent', 'agentPromptRevisionId', pg_temp.op647_id(91), 'grantId', approved.id),
     jsonb_build_object('id', 'route.nested', 'kind', 'route', 'agentPromptRevisionId', pg_temp.op647_id(91), 'grantId', approved.id),
-    jsonb_build_object('id', 'agent.nested', 'kind', 'agent', 'agentPromptRevisionId', pg_temp.op647_id(91), 'grantId', approved.id)
+    jsonb_build_object('id', 'agent.nested', 'kind', 'agent', 'agentPromptRevisionId', pg_temp.op647_id(91), 'grantId', approved.id),
+    jsonb_build_object('id', 'route.foreman', 'kind', 'route', 'agentPromptRevisionId', pg_temp.op647_id(91), 'grantId', approved.id),
+    jsonb_build_object('id', 'policy.complete', 'kind', 'deterministic', 'operation', 'policy')
   ),
   'edges', '[
     {"id":"route.child","kind":"route","from":"route.choose","to":"agent.child"},
     {"id":"child.continue","kind":"next","from":"agent.child","to":"route.nested"},
-    {"id":"route.grandchild","kind":"route","from":"route.nested","to":"agent.nested"}
+    {"id":"route.grandchild","kind":"route","from":"route.nested","to":"agent.nested"},
+    {"id":"grandchild.continue","kind":"next","from":"agent.nested","to":"route.foreman"},
+    {"id":"foreman.complete","kind":"route","from":"route.foreman","to":"policy.complete"}
   ]'::jsonb,
   'grants', jsonb_build_array(jsonb_build_object('id', approved.id, 'version', approved.version)),
   'routePolicy', '{"maxNodeVisits":16,"maxLoopTraversals":0,"nodes":{
     "route.choose":{"minimumConfidence":0.7,"allowedDestinationIds":["agent.child"],"fallback":{"kind":"clarification"}},
-    "route.nested":{"minimumConfidence":0.7,"allowedDestinationIds":["agent.nested"],"fallback":{"kind":"clarification"}}
+    "route.nested":{"minimumConfidence":0.7,"allowedDestinationIds":["agent.nested"],"fallback":{"kind":"clarification"}},
+    "route.foreman":{"minimumConfidence":0.7,"allowedDestinationIds":["policy.complete"],"fallback":{"kind":"clarification"}}
   }}'::jsonb,
   'delegationPolicy', jsonb_build_object('maxChildren', 2, 'maxConcurrentChildren', 2, 'maxAttempts', 4,
     'maxTotalTokens', 1000, 'maxTokensPerAttempt', 50, 'maxCostUsd', 2, 'maxCostUsdPerAttempt', 0.2,
     'targets', jsonb_build_object(
       'agent.child', jsonb_build_object('definitionRevisionId', definition.id, 'definitionDigest', definition.canonical_digest),
       'agent.nested', jsonb_build_object('definitionRevisionId', nested.id, 'definitionDigest', nested.canonical_digest)))
-)::text as body
+), '{routePolicy,nodes,route.foreman,foremanProfile}', jsonb_build_object(
+  'definitionRevisionId', nested.id, 'definitionDigest', nested.canonical_digest))::text as body
 from op647_grant approved
 cross join scoped_child_revisions profile
 join public.factory_definition_revisions definition on definition.id = profile.revision_id
@@ -354,17 +360,90 @@ update public.agent_jobs job set created_at = '1900-01-01T00:00:00Z', scheduled_
 from nested_child child where job.id = child.job_id;
 select is((select job.id from public.claim_next_agent_job(false, 1, 'node') job where job.attempt_count = 1),
   (select job_id from nested_child), 'the worker claims the nested child while all three grants are live');
-select ok((public.revoke_factory_execution_grant(workspace_id, factory_id, pg_temp.op647_id(1), id, version,
-  'Withdraw the intermediate execution grant')).revoked_at is not null,
-  'the manager revokes only the intermediate parent grant') from approved_grants where scenario = 'narrow';
 
-select throws_ok($$select public.start_session_job_attempt(child.job_id, 1, pg_temp.op647_id(32), 0,
-  'codex', 'gpt-5.5', 'code', 'wallie/op647-nested-' || child.job_id) from nested_child child$$,
-  '42501', null, 'an exact claimed grandchild cannot start after its intermediate parent grant is revoked');
+-- The failing start rolls back the grant change made by this probe so the
+-- same exact child can finish its checkpoint for the foreman case below.
+create function pg_temp.start_with_revoked_intermediate(p_job_id uuid)
+returns uuid language plpgsql as $$
+begin
+  perform public.revoke_factory_execution_grant(workspace_id, factory_id, pg_temp.op647_id(1), id, version,
+    'Withdraw the intermediate execution grant before start')
+  from approved_grants where scenario = 'narrow';
+  return public.start_session_job_attempt(p_job_id, 1, pg_temp.op647_id(32), 0,
+    'codex', 'gpt-5.5', 'code', 'wallie/op647-nested-' || p_job_id);
+end;
+$$;
+select throws_ok($$select pg_temp.start_with_revoked_intermediate(child.job_id) from nested_child child$$,
+  '42501', 'Execution grant is unavailable or does not authorize these resources.',
+  'an exact claimed grandchild cannot start after its intermediate parent grant is revoked');
 select ok((select run.started_at is null and reservation.run_id is null
   from nested_child child join public.agent_runs run on run.id = child.run_id
   join internal.factory_workflow_attempt_reservations reservation
     on (reservation.root_session_id, reservation.job_id, reservation.attempt_count) =
       (child.root_session_id, child.job_id, 1)), 'the blocked grandchild consumes no started root-budget attempt');
+
+create temp table nested_checkpoint as
+select child.child_session_id, pg_temp.adopt_source_checkpoint(child.child_session_id, child.job_id) as checkpoint_run_id
+from nested_child child;
+select is((select approved.id from public.approve_session_stage(owner.id, owner.workspace_id, owner.current_stage_id,
+    owner.current_artifact_id, owner.current_artifact_version,
+    pg_temp.op647_id(21), 'codex', 'gpt-5.5', 'code', owner.artifact_review_revision) approved),
+  child.child_session_id, 'the reviewer accepts the grandchild checkpoint')
+from nested_checkpoint child join public.sessions owner on owner.id = child.child_session_id;
+
+create temp table nested_foreman as
+select root."sessionId" as root_session_id, root.workspace_id, root.factory_id,
+  root.execution_generation, root.ownership_token, successor.target_occurrence_id, child.child_session_id,
+  checkpoint.checkpoint_run_id
+from root_owner root join nested_child child on child.root_session_id = root."sessionId"
+join nested_checkpoint checkpoint on checkpoint.child_session_id = child.child_session_id
+join internal.factory_workflow_delegations marker on marker.child_session_id = child.child_session_id
+cross join lateral public.record_factory_workflow_delegated_result(root."sessionId", root.workspace_id, root.factory_id,
+  root.execution_generation, root.ownership_token, marker.target_occurrence_id) result
+cross join lateral public.admit_factory_workflow_next(root."sessionId", root.workspace_id, root.factory_id,
+  root.execution_generation, root.ownership_token, marker.target_occurrence_id, 'grandchild.continue', result.result_id) successor;
+create function pg_temp.begin_nested_foreman() returns jsonb language sql as $$
+  select public.begin_factory_workflow_foreman_inference(
+    route.root_session_id, route.workspace_id, route.factory_id, route.execution_generation,
+    route.ownership_token, route.target_occurrence_id) from nested_foreman route
+$$;
+create temp table nested_ticket as select pg_temp.begin_nested_foreman() as ticket;
+select ok((select ticket->>'status' = 'issued' and ticket->>'parentSessionId' = route.child_session_id::text
+    and ticket->>'sourceCheckpointRunId' = route.checkpoint_run_id::text
+  from nested_ticket cross join nested_foreman route),
+  'a fresh foreman resolves the independently granted grandchild and its exact accepted checkpoint');
+create temp table nested_outcome as
+select jsonb_build_object('status', 'accepted', 'planJson', raw.plan,
+  'planDigest', encode(sha256(convert_to(raw.plan, 'UTF8')), 'hex'),
+  'usage', '{"inputTokens":12,"outputTokens":3,"costUsd":0.05}'::jsonb) as outcome
+from (values ('{"version":1,"commands":[{"kind":"route","decision":{"kind":"choose","destinationNodeId":"policy.complete","confidence":0.9,"reason":"Finish."}}]}'))
+  raw(plan);
+select is((select public.settle_factory_workflow_foreman_inference(
+    route.root_session_id, route.workspace_id, route.factory_id, route.execution_generation,
+    route.ownership_token, route.target_occurrence_id, (ticket->>'issueId')::uuid, outcome)->>'status'
+  from nested_foreman route cross join nested_ticket cross join nested_outcome),
+  'accepted', 'the scoped foreman stores its plan before the intermediate grant is withdrawn');
+select ok((public.revoke_factory_execution_grant(workspace_id, factory_id, pg_temp.op647_id(1), id, version,
+  'Withdraw only the intermediate execution grant')).revoked_at is not null,
+  'the manager withdraws only the intermediate grant')
+from approved_grants where scenario = 'narrow';
+select ok((select count(*) = 2 from public.factory_execution_grants current
+  join approved_grants original on original.id = current.id
+  where original.scenario in ('root', 'nested') and current.revoked_at is null),
+  'the root and immediate foreman parent still have live grants');
+select throws_ok($$select public.dispatch_factory_workflow_foreman_command(
+  route.root_session_id, route.workspace_id, route.factory_id, route.execution_generation,
+  route.ownership_token, route.target_occurrence_id, (ticket->>'foremanRunId')::uuid, 1)
+  from nested_foreman route cross join nested_ticket$$,
+  '42501', 'Execution grant is unavailable or does not authorize these resources.',
+  'an intermediate revocation prevents the fresh foreman route command');
+select ok((select public.read_factory_workflow_route_decision(
+    route.root_session_id, route.workspace_id, route.factory_id, route.target_occurrence_id) is null
+  from nested_foreman route), 'the fenced foreman does not produce a route decision');
+select ok((select replay->>'status' = 'existing' and replay#>>'{run,status}' = 'accepted'
+    and not (replay->'run' ?| array['issueId', 'encryptedCredential', 'ownershipToken'])
+  from (select pg_temp.begin_nested_foreman() as replay) resumed),
+  'the stored foreman run remains readable without a new permit after the intermediate fence');
+
 select * from finish();
 rollback;

@@ -10877,6 +10877,17 @@ export type Database = {
           workspace_name: string
         }[]
       }
+      begin_factory_workflow_foreman_inference: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_route_occurrence_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       begin_github_pull_request_observation: {
         Args: {
           source_is_draft: boolean
@@ -12276,6 +12287,19 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      dispatch_factory_workflow_foreman_command: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_foreman_run_id: string
+          p_ordinal: number
+          p_ownership_token: string
+          p_root_session_id: string
+          p_route_occurrence_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       enable_factory_benchmark_live_inference: {
         Args: {
@@ -14723,6 +14747,15 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_workflow_foreman_run: {
+        Args: {
+          p_factory_id: string
+          p_root_session_id: string
+          p_route_occurrence_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_workflow_route_decision: {
         Args: {
           p_factory_id: string
@@ -16466,6 +16499,19 @@ export type Database = {
           p_retry_after_seconds?: number
         }
         Returns: boolean
+      }
+      settle_factory_workflow_foreman_inference: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_issue_id: string
+          p_outcome: Json
+          p_ownership_token: string
+          p_root_session_id: string
+          p_route_occurrence_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       settle_workspace_resource_operation: {
         Args: { p_operation_id: string; p_transferred: boolean }

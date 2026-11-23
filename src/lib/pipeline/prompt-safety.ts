@@ -13,6 +13,7 @@ export type TrustedPromptSource =
   | "wallie.titleInstructions"
   | "wallie.evaluationJudgeInstructions"
   | "wallie.failureDiagnosisInstructions"
+  | "wallie.foremanInstructions"
   | "wallie.artifactEvidencePolicy"
   | "wallie.buildGitPublicationPolicy"
   | "wallie.readContextInstructions"
@@ -39,6 +40,7 @@ export type UntrustedPromptSource =
   | `evaluation.evidence.${string}`
   | "diagnosis.instructions"
   | "diagnosis.evidence"
+  | "foreman.context"
   | "session.prompt"
   | "session.attachments"
   | `skill.repositoryRevision.${string}`
