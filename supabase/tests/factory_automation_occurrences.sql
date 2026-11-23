@@ -144,8 +144,25 @@ select ok(exists (select 1 from workflow_automation_admission admitted
   cross join workflow_automation_rule rule where (pin.workflow_id, pin.activation_id, pin.graph_revision_id) =
     (rule.workflow_id, rule.activation_id, rule.graph_revision_id)), 'the common create command pins the exact selected workflow');
 
-select pg_temp.adopt_source_checkpoint(job.session_id, job.id) from workflow_automation_admission admitted
+create temp table workflow_automation_preparation as
+select job.session_id, pg_temp.adopt_source_checkpoint(job.session_id, job.id) as run_id from workflow_automation_admission admitted
 join public.agent_jobs job on job.session_id = (admitted.value->>'sessionId')::uuid;
+select ok(exists (select 1 from workflow_automation_preparation prepared
+  join public.sessions session on session.id = prepared.session_id
+  join internal.factory_workflow_authoring_dispatches dispatch
+    on (dispatch.session_id, dispatch.input_run_id) = (prepared.session_id, prepared.run_id)
+  where session.phase_status = 'awaiting_review' and dispatch.completed_at is null
+    and not exists (select 1 from internal.factory_workflow_executions execution where execution.root_session_id = prepared.session_id)),
+  'checkpoint adoption records a pending authored entry before the graph starts');
+select throws_ok($$
+  with exact_session as materialized (
+    select session.* from workflow_automation_preparation prepared join public.sessions session on session.id = prepared.session_id
+  )
+  select approved.id from exact_session session cross join lateral public.approve_session_stage(
+    session.id, session.workspace_id, session.current_stage_id, session.current_artifact_id, session.current_artifact_version,
+    pg_temp.op651_id(21), 'codex', 'gpt-5.5', 'code', session.artifact_review_revision) approved
+$$, 'PT409', 'The selected workflow is waiting for checkpoint enrollment.',
+  'serial approval cannot archive the root before its pending authored entry enrolls');
 create temp table workflow_automation_dispatch as
 select public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(210)) as claim;
 select is(claim->>'rootSessionId', (select value->>'sessionId' from workflow_automation_admission),
@@ -160,9 +177,13 @@ select approved.id from exact_session session cross join lateral public.approve_
 select ok((select session.phase_status = 'approved' and session.archived_at is not null
   from workflow_automation_admission admitted join public.sessions session on session.id = (admitted.value->>'sessionId')::uuid),
   'preparation is approved and the serial surface is archived while graph work continues');
-select pg_temp.record_workflow_occurrence('authored-graph-second');
-select is(public.admit_next_factory_automation_occurrence()->>'reason', 'capacity',
-  'an archived serial surface still occupies one rule slot while its exact graph has pending work');
+create temp table workflow_automation_waiting as
+select pg_temp.record_workflow_occurrence('authored-graph-second') as value;
+with outcome as (select public.admit_next_factory_automation_occurrence() as value)
+select ok(outcome.value->>'occurrenceId' = waiting.value->>'occurrenceId'
+  and outcome.value->>'status' = 'pending' and outcome.value->>'reason' = 'capacity',
+  'an archived serial surface keeps the exact waiting occurrence pending while its graph has work')
+from outcome cross join workflow_automation_waiting waiting;
 create temp table workflow_automation_graph_result as
 select result.* from workflow_automation_dispatch dispatched
 cross join lateral public.record_factory_workflow_command_result(
@@ -178,11 +199,17 @@ select ok(result.created and not exists (
   ) and exists (
     select 1 from internal.factory_workflow_authoring_dispatches dispatch
     where dispatch.session_id = (dispatched.claim->>'rootSessionId')::uuid and dispatch.completed_at is null
-  ), 'the current node result is committed to the graph before a successor is admitted')
+  ), 'the current node result is stored before a successor is admitted')
 from workflow_automation_graph_result result cross join workflow_automation_dispatch dispatched;
-select pg_temp.record_workflow_occurrence('authored-graph-between-result-and-successor');
-select is(public.admit_next_factory_automation_occurrence()->>'reason', 'capacity',
-  'an unfinished authored dispatch still occupies one rule slot between persisting the result and admitting its successor');
+update internal.factory_automation_occurrences set next_attempt_at = clock_timestamp() - interval '1 second'
+where id = (select (value->>'occurrenceId')::uuid from workflow_automation_waiting) and status = 'pending';
+with outcome as (select public.admit_next_factory_automation_occurrence() as value)
+select ok(outcome.value->>'occurrenceId' = waiting.value->>'occurrenceId'
+  and outcome.value->>'status' = 'pending' and outcome.value->>'reason' = 'capacity',
+  'the same occurrence stays pending between storing the result and admitting its successor')
+from outcome cross join workflow_automation_waiting waiting;
+update internal.factory_automation_occurrences set next_attempt_at = clock_timestamp() + interval '1 day'
+where id = (select (value->>'occurrenceId')::uuid from workflow_automation_waiting) and status = 'pending';
 
 create function pg_temp.test_revoked_binding_admission() returns jsonb language plpgsql as $$
 declare outcome jsonb;

@@ -123,8 +123,10 @@ select extensions.dblink_disconnect(peer.name)
 from (values ('op660_pause_manager'), ('op660_pause_claim')) peer(name)
 where peer.name = any(coalesce(extensions.dblink_get_connections(), '{}'::text[]));
 select pg_temp.configure_test_automation(1, false, 4);
-select is(public.admit_next_factory_automation_occurrence()->>'occurrenceId',
-  (select value->>'occurrenceId' from pause_race), 'resume eventually admits the occurrence preserved by the pause race');
+create temp table resumed_pause_occurrence as select public.admit_next_factory_automation_occurrence() as value;
+select ok(resumed.value->>'occurrenceId' = paused.value->>'occurrenceId' and resumed.value->>'status' = 'admitted'
+  and resumed.value->>'sessionId' is not null, 'resume admits and links the exact occurrence preserved by the pause race')
+from resumed_pause_occurrence resumed cross join pause_race paused;
 
 create temp table retry_occurrence as
 select pg_temp.record_test_occurrence('authority-lock-retry', revision_id) as value from race_published_revision;
