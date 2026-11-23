@@ -197,7 +197,11 @@ export async function loadWorkflowGraphReferences(
   const revisionIds = [
     ...new Set(
       graph.nodes.flatMap((node) =>
-        "agentPromptRevisionId" in node ? [node.agentPromptRevisionId] : [],
+        node.kind === "review"
+          ? [node.reviewerPromptRevisionId]
+          : "agentPromptRevisionId" in node
+            ? [node.agentPromptRevisionId]
+            : [],
       ),
     ),
   ];

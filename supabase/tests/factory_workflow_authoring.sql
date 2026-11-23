@@ -42,9 +42,9 @@ select throws_ok($$select public.create_factory_workflow_authoring(workspace_id,
 select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(1),concurrent_workflow_id,'Concurrent draft') from op655_scope;
 
 create function pg_temp.op655_save(p_label text,p_request integer,p_draft uuid default null,p_activation uuid default null,
-  p_actor integer default 910,p_reload boolean default false,p_rebase boolean default false)
+  p_actor integer default 910,p_reload boolean default false,p_rebase boolean default false,p_workflow uuid default null)
 returns jsonb language sql as $$
-  select public.save_factory_workflow_authoring_draft(p_workspace_id => scope.workspace_id,p_factory_id => scope.factory_id,p_actor_user_id => pg_temp.op651_id(p_actor),p_workflow_id => scope.workflow_id,
+  select public.save_factory_workflow_authoring_draft(p_workspace_id => scope.workspace_id,p_factory_id => scope.factory_id,p_actor_user_id => pg_temp.op651_id(p_actor),p_workflow_id => coalesce(p_workflow,scope.workflow_id),
     p_request_id => pg_temp.op651_id(p_request),p_expected_draft_id => p_draft,p_expected_activation_id => p_activation,
     p_expected_base_activation_id => case when p_reload then base.id else scope.base_activation_id end,
     p_expected_base_revision_id => case when p_reload then base.revision_id else scope.revision_id end,
@@ -54,10 +54,10 @@ returns jsonb language sql as $$
   where graph.label=p_label
 $$;
 create function pg_temp.op655_publish(p_label text,p_request integer,p_draft uuid,p_activation uuid default null,
-  p_actor integer default 910,p_reload boolean default false)
+  p_actor integer default 910,p_reload boolean default false,p_workflow uuid default null)
 returns jsonb language sql as $$
   select public.publish_factory_workflow_authoring_draft(p_workspace_id => scope.workspace_id,p_factory_id => scope.factory_id,p_actor_user_id => pg_temp.op651_id(p_actor),
-    p_workflow_id => scope.workflow_id,p_request_id => pg_temp.op651_id(p_request),p_expected_draft_id => p_draft,p_expected_activation_id => p_activation,
+    p_workflow_id => coalesce(p_workflow,scope.workflow_id),p_request_id => pg_temp.op651_id(p_request),p_expected_draft_id => p_draft,p_expected_activation_id => p_activation,
     p_expected_base_activation_id => case when p_reload then base.id else scope.base_activation_id end,
     p_expected_base_revision_id => case when p_reload then base.revision_id else scope.revision_id end,
     p_expected_base_digest => case when p_reload then base.digest else scope.base_digest end,p_verified_draft_digest => graph.digest)
@@ -130,6 +130,51 @@ select is((select pg_temp.op655_publish('second',933,(result->>'draftId')::uuid)
   'false','a lost publication response replays the immutable activation');
 select throws_ok($$select pg_temp.op655_publish('second',934,(result->>'draftId')::uuid) from op655_draft_second$$,
   'PT409','The workflow draft or published activation changed.','a second publisher with a different request cannot republish the same emitted draft');
+
+select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(904),
+  'Exact review workflow') from op655_scope;
+create temp table op655_foreign_factory as
+select factory.* from op655_scope scope
+cross join lateral public.create_factory(scope.workspace_id,pg_temp.op651_id(1),'Other review factory','other-review') factory;
+insert into public.factory_agent_prompt_revisions(id,workspace_id,factory_id,agent_id,revision_number,
+  prompt_md,prompt_sha256,created_by)
+select pg_temp.op651_id(905),agent.workspace_id,agent.factory_id,agent.id,2,
+  'Other factory reviewer.',encode(sha256(convert_to('Other factory reviewer.','UTF8')),'hex'),pg_temp.op651_id(21)
+from op655_foreign_factory factory join public.factory_agents agent on agent.factory_id=factory.id and agent.is_default;
+
+insert into op655_graphs(label,body,digest)
+select variant.label,added.body,encode(sha256(convert_to(added.body,'UTF8')),'hex')
+from op655_graphs graph
+cross join (values
+  ('scoped-review',91,'review.repair'),
+  ('foreign-review',905,'review.repair'),
+  ('colliding-repair',91,'review.joined')
+) variant(label,prompt_slot,repair_edge)
+cross join lateral (
+  select (graph.body::jsonb || jsonb_build_object(
+    'nodes',graph.body::jsonb->'nodes' || jsonb_build_object('id','review.commit','kind','review',
+      'reviewerPromptRevisionId',pg_temp.op651_id(variant.prompt_slot),'ruleIds',jsonb_build_array('security'),
+      'repair',jsonb_build_object('edgeId',variant.repair_edge,'maxRepairs',2,'eligibleRuleIds',jsonb_build_array('security'))),
+    'edges',graph.body::jsonb->'edges' || jsonb_build_object('id','review.joined','kind','next','from','join.finish','to','review.commit')
+  ))::text as body
+) added where graph.label='initial';
+select throws_ok($$select pg_temp.op655_save('foreign-review',941,p_workflow=>pg_temp.op651_id(904))$$,
+  'PT422','Workflow agent prompts are unavailable.','the editor cannot save a reviewer prompt from another factory');
+create temp table invalid_review_draft as
+select pg_temp.op655_save('colliding-repair',941,p_workflow=>pg_temp.op651_id(904)) as result;
+select throws_ok($$select pg_temp.op655_publish('colliding-repair',942,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(904))
+  from invalid_review_draft$$,'PT422','The review requires its scoped prompt, declared rules, and exact joined input.',
+  'native publication rejects a repair edge ID that aliases a real transition');
+create temp table exact_review_draft as
+select pg_temp.op655_save('scoped-review',943,p_draft=>(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(904)) as result
+from invalid_review_draft;
+create temp table exact_review_activation as
+select pg_temp.op655_publish('scoped-review',944,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(904)) as result
+from exact_review_draft;
+select is((select graph.workflow_json from exact_review_activation receipt
+  join internal.factory_workflow_graph_revisions graph on graph.id=(receipt.result->>'graphRevisionId')::uuid),
+  (select body from op655_graphs where label='scoped-review'),
+  'published runtime retains the exact reviewer prompt, rules, and bounded repair draft');
 
 -- Compose the published activation with real browser and machine create commands.
 create function pg_temp.workflow_request_selection(p_version text)

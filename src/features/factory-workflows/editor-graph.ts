@@ -36,6 +36,7 @@ export const nodeLabels = {
   route: "Route",
   branch: "Branch",
   join: "Join",
+  review: "Review",
 } satisfies Record<WorkflowNodeDraft["kind"], string>;
 
 export const edgeLabels = {
@@ -75,6 +76,8 @@ export function makeNode(id: string, kind: WorkflowNodeDraft["kind"]): WorkflowN
       return { id, kind, operation: "checkpoint" };
     case "human-gate":
       return { id, kind, anyoneCanApprove: true, approverMemberIds: [] };
+    case "review":
+      return { id, kind, reviewerPromptRevisionId: "", ruleIds: ["review-1"] };
     case "branch":
     case "join":
       return { id, kind };

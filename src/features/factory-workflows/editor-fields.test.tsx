@@ -115,3 +115,40 @@ it("preserves a selected execution profile when its catalog page is unavailable"
   choose(label, revisionId);
   expect(screen.getByRole("combobox", { name: label })).toHaveTextContent(revisionId);
 });
+
+it("keeps repair eligibility on the intended review rule when another rule is renamed", () => {
+  const reviewerPromptRevisionId = "655d0000-0000-4000-8000-000000000004";
+  render(
+    <Inspector
+      node={1}
+      initial={{
+        ...initialGraph,
+        nodes: [
+          ...initialGraph.nodes,
+          {
+            id: "review",
+            kind: "review",
+            reviewerPromptRevisionId,
+            ruleIds: ["security", "behavior"],
+            repair: { edgeId: "repair", maxRepairs: 2, eligibleRuleIds: ["security"] },
+          },
+        ],
+      }}
+    />,
+  );
+  choose("Step kind", "Review");
+  expect(screen.getByRole("combobox", { name: "Reviewer prompt revision" })).toHaveAttribute(
+    "data-value",
+    reviewerPromptRevisionId,
+  );
+  const rule = screen.getByRole("textbox", { name: "Rule 2 ID" });
+  const eligible = screen.getByRole("listbox", { name: "Rules eligible for repair" });
+  fireEvent.change(rule, { target: { value: "security" } });
+  expect(rule).toHaveAccessibleDescription(
+    "Rule 2 ID “security” is already in use. Choose a unique ID.",
+  );
+  fireEvent.change(rule, { target: { value: "security-check" } });
+  expect(eligible).toHaveValue(["security"]);
+  expect(within(eligible).getByRole("option", { name: "security-check" })).toBeInTheDocument();
+  expect(screen.getByRole("spinbutton", { name: "Maximum repairs" })).toHaveValue(2);
+});

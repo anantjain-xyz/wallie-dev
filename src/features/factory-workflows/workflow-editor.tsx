@@ -277,6 +277,7 @@ export function WorkflowEditor({
   if (selectedNode?.kind === "agent" || selectedNode?.kind === "route") {
     stepCatalogs.push("prompts", "profiles");
   }
+  if (selectedNode?.kind === "review") stepCatalogs.push("prompts");
   if (selectedNode?.kind === "human-gate" && !selectedNode.anyoneCanApprove) {
     stepCatalogs.push("approvers");
   }

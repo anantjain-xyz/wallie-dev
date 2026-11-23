@@ -99,6 +99,10 @@ begin
   join public.session_checkpoint_publications publication
     on (publication.session_id,publication.workspace_id,publication.run_id,publication.status) =
       (execution.root_session_id,execution.workspace_id,execution.graph_input_run_id,'adopted')
+  -- Exact review maintenance already claims these occurrences from the ledger.
+  join internal.factory_workflow_node_occurrences target
+    on (target.root_session_id,target.occurrence_id) = (new.root_session_id,new.target_occurrence_id)
+      and target.node_kind <> 'review'
   where (execution.root_session_id,execution.generation,execution.lifecycle_status) =
     (new.root_session_id,new.recorded_generation,'running')
   on conflict (session_id,input_run_id,occurrence_id) do nothing;

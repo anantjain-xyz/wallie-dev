@@ -423,8 +423,11 @@ select is((select count(*) from internal.factory_workflow_review_repairs),0::big
   'budget rejection leaves no queued review repair receipt');
 rollback to exhausted_repair;
 create temp table carried_blocker as
-select thread.* from exact_review_context context
-join public.sessions parent on parent.id = context."sessionId"
+with target as materialized (
+  select parent.* from exact_review_context context
+  join public.sessions parent on parent.id = context."sessionId"
+)
+select thread.* from target parent
 cross join lateral public.create_artifact_review_thread_once(gen_random_uuid(), parent.workspace_id, parent.id,
   parent.current_stage_id, parent.current_artifact_id, parent.current_artifact_version,
   '{"coordinateSystem":"unicode_code_points","start":0,"end":6,"quote":"Joined","prefix":"","suffix":" output with exact validation."}',

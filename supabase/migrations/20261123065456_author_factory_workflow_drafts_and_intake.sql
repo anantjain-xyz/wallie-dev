@@ -120,8 +120,10 @@ declare
   profile_ref jsonb;
   profile jsonb;
 begin
-  select array_agg(distinct node->>'agentPromptRevisionId') into refs
-  from jsonb_array_elements(p_plan->'nodes') node where node ? 'agentPromptRevisionId';
+  select array_agg(distinct case when node->>'kind' = 'review' then node->>'reviewerPromptRevisionId'
+    else node->>'agentPromptRevisionId' end) into refs
+  from jsonb_array_elements(p_plan->'nodes') node
+  where node->>'kind' = 'review' or node ? 'agentPromptRevisionId';
   if refs is not null then
     select count(*) into matched from (
       select prompt.id from public.factory_agent_prompt_revisions prompt
@@ -344,6 +346,9 @@ begin
 
   plan:=internal.validate_factory_workflow_authoring_payload(draft.workflow_json,draft.workflow_digest);
   perform internal.assert_factory_workflow_authoring_references(p_workspace_id,p_factory_id,base.definition,plan);
+  if not internal.is_enrollable_factory_workflow_review(p_workspace_id,p_factory_id,plan) then
+    raise exception 'The review requires its scoped prompt, declared rules, and exact joined input.' using errcode='PT422';
+  end if;
   if exists (select 1 from jsonb_array_elements(plan->'nodes') node where node->>'kind'='branch') then
     if not internal.is_bounded_factory_workflow_branch_graph(plan) then
       raise exception 'The graph requires workflow capabilities that are unavailable.' using errcode='PT422'; end if;

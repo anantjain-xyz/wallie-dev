@@ -10,6 +10,7 @@ import {
   edgeLabels,
   makeEdge,
   makeNode,
+  nextEditorId,
   nodeLabels,
   setEditorNode,
   setNodeRoute,
@@ -27,7 +28,15 @@ type Fields = {
   diagnostics: readonly EditorDiagnostic[];
 };
 
-const nodeKinds = ["deterministic", "agent", "human-gate", "route", "branch", "join"] as const;
+const nodeKinds = [
+  "deterministic",
+  "agent",
+  "human-gate",
+  "route",
+  "branch",
+  "join",
+  "review",
+] as const;
 const edgeKinds = ["next", "route", "loop", "branch", "branch-result"] as const;
 const operations = [
   { id: "checkpoint", label: "Checkpoint" },
@@ -145,6 +154,37 @@ function TextField({
         />
       )}
     </Field>
+  );
+}
+
+function UniqueIdField({
+  value,
+  change,
+  ...field
+}: FieldProps & {
+  value: string;
+  change: (value: string) => boolean;
+}) {
+  const [rejected, setRejected] = useState<{ previous: string; attempted: string } | null>(null);
+  const attempted = rejected?.previous === value ? rejected.attempted : undefined;
+  const diagnostics =
+    attempted === undefined
+      ? field.diagnostics
+      : [
+          {
+            path: [...field.path],
+            message: `${field.label} “${attempted}” is already in use. Choose a unique ID.`,
+          },
+          ...field.diagnostics,
+        ];
+  return (
+    <TextField
+      {...field}
+      diagnostics={diagnostics}
+      value={attempted ?? value}
+      onBlur={() => setRejected(null)}
+      change={(id) => setRejected(change(id) ? null : { previous: value, attempted: id })}
+    />
   );
 }
 
@@ -360,6 +400,148 @@ function RouteFields({
   );
 }
 
+function ReviewFields({
+  graph,
+  node,
+  index,
+  diagnostics,
+  prompts,
+  update,
+}: {
+  graph: WorkflowGraphDraft;
+  node: Extract<WorkflowNodeDraft, { kind: "review" }>;
+  index: number;
+  diagnostics: readonly EditorDiagnostic[];
+  prompts: WorkflowEditorChoices["prompts"];
+  update: (node: WorkflowNodeDraft) => void;
+}) {
+  const path = ["nodes", index];
+  const repair = node.repair;
+  const ruleOptions = node.ruleIds.map((id) => ({ id, label: id }));
+  const editRule = (position: number, id?: string) => {
+    const previous = node.ruleIds[position];
+    if (id !== undefined && node.ruleIds.some((rule, index) => index !== position && rule === id)) {
+      return false;
+    }
+    const ruleIds =
+      id === undefined
+        ? node.ruleIds.filter((_, current) => current !== position)
+        : node.ruleIds.map((rule, current) => (current === position ? id : rule));
+    const nextRepair = repair && {
+      ...repair,
+      eligibleRuleIds: repair.eligibleRuleIds.flatMap((rule) =>
+        rule === previous ? (id === undefined ? [] : [id]) : [rule],
+      ),
+    };
+    update({ ...node, ruleIds, repair: nextRepair });
+    return true;
+  };
+  return (
+    <>
+      <WorkflowOptions
+        label="Reviewer prompt revision"
+        path={[...path, "reviewerPromptRevisionId"]}
+        diagnostics={diagnostics}
+        empty="Select a prompt"
+        options={prompts}
+        value={node.reviewerPromptRevisionId}
+        change={(reviewerPromptRevisionId) => update({ ...node, reviewerPromptRevisionId })}
+      />
+      <div className="grid gap-2 sm:col-span-2">
+        <h3 className="type-label">Review rules</h3>
+        <ol className="grid gap-2">
+          {node.ruleIds.map((rule, position) => (
+            <li key={position} className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <UniqueIdField
+                label={`Rule ${position + 1} ID`}
+                path={[...path, "ruleIds", position]}
+                diagnostics={diagnostics}
+                value={rule}
+                change={(id) => editRule(position, id)}
+              />
+              <button
+                type="button"
+                className="ui-button w-fit"
+                disabled={node.ruleIds.length === 1}
+                onClick={() => editRule(position)}
+                aria-label={`Remove rule ${rule}`}
+              >
+                Remove rule
+              </button>
+            </li>
+          ))}
+        </ol>
+        <button
+          type="button"
+          className="ui-button w-fit"
+          disabled={node.ruleIds.length >= 32}
+          onClick={() =>
+            update({
+              ...node,
+              ruleIds: [...node.ruleIds, nextEditorId("review", ruleOptions)],
+            })
+          }
+        >
+          Add review rule
+        </button>
+      </div>
+      <ToggleField
+        label="Allow bounded repair"
+        path={[...path, "repair"]}
+        diagnostics={diagnostics}
+        value={!!repair}
+        change={(enabled) =>
+          update({
+            ...node,
+            repair: enabled
+              ? {
+                  edgeId: nextEditorId("repair", [
+                    ...graph.edges,
+                    ...graph.nodes.flatMap((item) =>
+                      item.kind === "review" && item.repair ? [{ id: item.repair.edgeId }] : [],
+                    ),
+                  ]),
+                  maxRepairs: 1,
+                  eligibleRuleIds: node.ruleIds.slice(0, 1),
+                }
+              : undefined,
+          })
+        }
+      />
+      {repair ? (
+        <>
+          <TextField
+            label="Repair edge ID"
+            path={[...path, "repair", "edgeId"]}
+            diagnostics={diagnostics}
+            value={repair.edgeId}
+            change={(edgeId) => update({ ...node, repair: { ...repair, edgeId } })}
+          />
+          <NumberField
+            label="Maximum repairs"
+            path={[...path, "repair", "maxRepairs"]}
+            diagnostics={diagnostics}
+            value={repair.maxRepairs}
+            min={1}
+            max={8}
+            change={(maxRepairs) => update({ ...node, repair: { ...repair, maxRepairs } })}
+          />
+          <MultipleOptions
+            label="Rules eligible for repair"
+            path={[...path, "repair", "eligibleRuleIds"]}
+            diagnostics={diagnostics}
+            options={ruleOptions}
+            value={repair.eligibleRuleIds}
+            change={(eligibleRuleIds) =>
+              update({ ...node, repair: { ...repair, eligibleRuleIds } })
+            }
+          />
+        </>
+      ) : null}
+    </>
+  );
+}
+
 export function NodeFields({
   graph,
   edit,
@@ -370,26 +552,9 @@ export function NodeFields({
   choices: WorkflowEditorChoices;
   index: number;
 }) {
-  const [rejectedRename, setRejectedRename] = useState<{
-    index: number;
-    id: string;
-    attempted: string;
-  } | null>(null);
   const node = graph.nodes[index];
   if (!node) return null;
   const path = ["nodes", index];
-  const idPath = [...path, "id"];
-  const rejectedId =
-    rejectedRename?.index === index && rejectedRename.id === node.id
-      ? rejectedRename.attempted
-      : undefined;
-  const renameIssue =
-    rejectedId === undefined
-      ? null
-      : {
-          path: idPath,
-          message: `Step ID “${rejectedId}” is already in use. Choose a unique ID.`,
-        };
   const update = (next: WorkflowNodeDraft) => edit(setEditorNode(graph, index, next));
   const setProfile = (profile?: { definitionRevisionId: string; definitionDigest: string }) => {
     const policy = graph.delegationPolicy ?? defaultDelegationPolicy;
@@ -400,20 +565,17 @@ export function NodeFields({
   };
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      <TextField
+      <UniqueIdField
+        key={index}
         label="Step ID"
-        path={idPath}
-        diagnostics={renameIssue ? [renameIssue, ...diagnostics] : diagnostics}
-        value={rejectedId ?? node.id}
-        onBlur={() => setRejectedRename(null)}
+        path={[...path, "id"]}
+        diagnostics={diagnostics}
+        value={node.id}
         change={(id) => {
           const next = setEditorNode(graph, index, { ...node, id });
-          if (next === graph) {
-            setRejectedRename({ index, id: node.id, attempted: id });
-            return;
-          }
-          setRejectedRename(null);
+          if (next === graph) return false;
           edit(next);
+          return true;
         }}
       />
       <WorkflowOptions
@@ -439,6 +601,9 @@ export function NodeFields({
             if (operation) update({ ...node, operation: operation.id });
           }}
         />
+      ) : null}
+      {node.kind === "review" ? (
+        <ReviewFields {...{ graph, node, index, diagnostics, update }} prompts={choices.prompts} />
       ) : null}
       {node.kind === "human-gate" ? (
         <>

@@ -17,7 +17,7 @@ select public.create_factory_workflow_authoring(
 
 create function pg_temp.publish_authored(
   first_node text, request_slot integer, expected_draft uuid default null, expected_activation uuid default null,
-  first_operation text default 'checkpoint'
+  unused_delegation boolean default false
 ) returns table(draft_id uuid,activation_id uuid,graph_revision_id uuid) language plpgsql as $$
 declare
   scope record;
@@ -27,14 +27,18 @@ declare
   published jsonb;
 begin
   select * into strict scope from authored_scope;
-  body:=jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId',first_node,'grants','[]'::jsonb,
-    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation',first_operation),
+  body:=(jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId',first_node,'grants','[]'::jsonb,
+    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation','checkpoint'),
       jsonb_build_object('id','check.policy','kind','deterministic','operation','policy'),
       jsonb_build_object('id','human.review','kind','human-gate','anyoneCanApprove',false,
         'approverMemberIds',jsonb_build_array(pg_temp.op651_id(21)))),
     'edges',jsonb_build_array(
       jsonb_build_object('id','next.policy','kind','next','from',first_node,'to','check.policy'),
-      jsonb_build_object('id','next.review','kind','next','from','check.policy','to','human.review')))::text;
+      jsonb_build_object('id','next.review','kind','next','from','check.policy','to','human.review')))
+    || case when unused_delegation then jsonb_build_object('delegationPolicy',
+      '{"targets":{},"maxChildren":1,"maxConcurrentChildren":1,"maxAttempts":1,"maxTotalTokens":100,
+        "maxTokensPerAttempt":100,"maxCostUsd":1,"maxCostUsdPerAttempt":1}'::jsonb)
+    else '{}'::jsonb end)::text;
   digest:=encode(sha256(convert_to(body,'UTF8')),'hex');
   saved:=public.save_factory_workflow_authoring_draft(
     p_workspace_id=>scope.workspace_id,p_factory_id=>scope.factory_id,p_actor_user_id=>pg_temp.op651_id(1),
@@ -197,7 +201,10 @@ select is((select public.finish_factory_workflow_authoring_dispatch(session_id,r
   (claim->>'generation')::bigint) from preparation cross join human_lease),'retry',
   'a human gate stays pending before approval');
 
-select is((select approved.id from preparation checkpoint join public.sessions root on root.id=checkpoint.session_id
+with exact_preparation as materialized (
+  select root.* from preparation checkpoint join public.sessions root on root.id=checkpoint.session_id
+)
+select is((select approved.id from exact_preparation root
   cross join lateral public.approve_session_stage(root.id,root.workspace_id,root.current_stage_id,root.current_artifact_id,
     root.current_artifact_version,pg_temp.op651_id(21),'codex','gpt-5.5','code',root.artifact_review_revision) approved),
   (select session_id from preparation),'a human approves the exact adopted preparation artifact');
@@ -205,8 +212,13 @@ update internal.factory_workflow_authoring_dispatches dispatch set next_attempt_
 from human_occurrence next where dispatch.occurrence_id=next.target_occurrence_id;
 create temp table approved_human_lease as
 select public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(216)) as claim;
-select is((select count(*) from approved_human_lease lease cross join preparation checkpoint
-  join public.session_stage_approval_receipts approval on approval.session_id=checkpoint.session_id
+with exact_approval as materialized (
+  select approval.id from preparation checkpoint
+  join public.session_checkpoint_publications publication on publication.run_id=checkpoint.run_id
+  join public.session_stage_approval_receipts approval
+    on (approval.session_id,approval.artifact_id)=(checkpoint.session_id,publication.artifact_id)
+)
+select is((select count(*) from approved_human_lease lease cross join exact_approval approval
   cross join lateral public.record_factory_workflow_command_result(
     (claim->>'rootSessionId')::uuid,(claim->>'workspaceId')::uuid,(claim->>'factoryId')::uuid,(claim->>'generation')::bigint,
     (claim->>'ownershipToken')::uuid,(claim->>'occurrenceId')::uuid,'human-gate:'||approval.id) result where result.created),
@@ -238,12 +250,12 @@ select is((select count(*) from unpinned_started started
 select is((select count(*) from internal.factory_workflow_authoring_dispatches dispatch join unpinned_started workflow
   on workflow.session_id=dispatch.session_id),0::bigint,'an unpinned graph cannot enter authored dispatch');
 
-create temp table authored_validation_version as
+create temp table authored_blocked_version as
 select later.* from authored_version_b version
-cross join lateral pg_temp.publish_authored('validation.missing',219,version.draft_id,version.activation_id,'validation') later;
+cross join lateral pg_temp.publish_authored('blocked.checkpoint',219,version.draft_id,version.activation_id,true) later;
 create temp table blocked_preparation as
 select admitted.session_id,pg_temp.adopt_source_checkpoint(admitted.session_id,admitted.job_id) as run_id
-from authored_scope scope cross join authored_validation_version activation
+from authored_scope scope cross join authored_blocked_version activation
 cross join lateral public.create_session_command_once(
   scope.workspace_id,pg_temp.op651_id(21),pg_temp.op651_id(221),repeat('b',64),scope.base_digest,
   'Authored workflow with a missing prerequisite','Run the selected workflow.','codex','gpt-5.5','{}',
@@ -251,7 +263,7 @@ cross join lateral public.create_session_command_once(
   p_workflow_selection=>jsonb_build_object('workflowId',scope.workflow_id,'activationId',activation.activation_id)
 ) admitted;
 select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(222)),null::jsonb,
-  'a missing pinned validation policy prevents enrollment');
+  'a graph with delegation configured and no eligible delegates cannot enroll');
 select ok((select dispatch.next_attempt_at > clock_timestamp() and dispatch.completed_at is null
   from blocked_preparation source join internal.factory_workflow_authoring_dispatches dispatch
     on (dispatch.session_id,dispatch.input_run_id)=(source.session_id,source.run_id)),
@@ -274,7 +286,7 @@ select ok((select phase_status='rejected' and job_id is not null from preparatio
   'an authorized reviewer can reject the exact source and queue replacement preparation');
 select ok((select dispatch.completed_at is not null and dispatch.lease_id is null
     and pin.activation_id=activation.activation_id
-  from blocked_preparation source cross join authored_validation_version activation
+  from blocked_preparation source cross join authored_blocked_version activation
   join internal.factory_workflow_authoring_session_pins pin on pin.activation_id=activation.activation_id
   join internal.factory_workflow_authoring_dispatches dispatch
     on (dispatch.session_id,dispatch.input_run_id)=(pin.session_id,source.run_id)
