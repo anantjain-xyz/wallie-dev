@@ -47,6 +47,7 @@ import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/mainte
 import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/admission-service";
 import { reconcileFactoryAutomationSchedules } from "@/lib/factory-automations/schedule-service";
 import { expireFactoryDeliveryDispatches } from "@/lib/factory-delivery-commands/maintenance";
+import { drainFactoryMonitoringIncidents } from "@/lib/factory-monitoring/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
@@ -370,6 +371,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["factory automation schedules", () => reconcileFactoryAutomationSchedules(admin)],
       ["factory automation occurrences", () => drainFactoryAutomationOccurrences(admin)],
       ["factory delivery dispatch expiry", () => expireFactoryDeliveryDispatches(admin)],
+      ["factory monitoring incidents", () => drainFactoryMonitoringIncidents(admin)],
     ] as const;
     for (const [name, task] of tasks) {
       try {

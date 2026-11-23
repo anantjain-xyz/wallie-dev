@@ -18,6 +18,7 @@ import type {
 import type { WallieSessionRepository } from "@/features/wallie/types";
 import { loadWorkflowInspectionHeader } from "@/lib/factory-workflows/inspection";
 import type { WorkflowInspectionHeader } from "@/lib/factory-workflows/inspection-contracts";
+import type { MonitoringIncidentEvidence } from "@/lib/factory-monitoring/contracts";
 import { loginPath, onboardingWorkspacePath, workspaceSessionDetailPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -68,6 +69,7 @@ export type SessionReviewSession = {
   id: string;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
+  monitoring?: MonitoringIncidentEvidence;
   number: number;
   phaseCompletions: SessionPhaseCompletion[];
   phaseStatus: SessionPhaseStatus;

@@ -10441,6 +10441,7 @@ export type Database = {
         }[]
       }
       admit_next_factory_automation_occurrence: { Args: never; Returns: Json }
+      admit_next_factory_monitoring_incident: { Args: never; Returns: Json }
       adopt_factory_improvement: {
         Args: {
           p_actor_user_id: string
@@ -10670,6 +10671,20 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      approve_factory_monitoring_binding: {
+        Args: {
+          p_actor_user_id: string
+          p_binding_id: string
+          p_deployment_source_id: string
+          p_encrypted_secret: string
+          p_factory_id: string
+          p_installation_id: string
+          p_project_id: string
+          p_suppression_seconds: number
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       approve_session_stage: {
         Args: {
@@ -12548,6 +12563,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      disable_factory_monitoring_binding: {
+        Args: {
+          p_actor_user_id: string
+          p_binding_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       dispatch_factory_workflow_foreman_command: {
         Args: {
           p_expected_generation: number
@@ -14140,6 +14164,14 @@ export type Database = {
         }
         Returns: Json
       }
+      list_factory_monitoring_bindings: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_revert_evidence: {
         Args: {
           p_cursor_at?: string
@@ -15237,6 +15269,10 @@ export type Database = {
           revision_id: string
         }[]
       }
+      read_factory_monitoring_secret: {
+        Args: { p_binding_id: string }
+        Returns: Json
+      }
       read_factory_run_context_origin: {
         Args: {
           p_attempt_count: number
@@ -15567,6 +15603,21 @@ export type Database = {
           p_operation: Database["public"]["Enums"]["benchmark_replay_operation"]
           p_operation_id: string
           p_workspace_id: string
+        }
+        Returns: Json
+      }
+      record_factory_monitoring_signal: {
+        Args: {
+          p_binding_id: string
+          p_body_digest: string
+          p_command_id: string
+          p_environment: string
+          p_event_at: string
+          p_event_id: string
+          p_installation_id: string
+          p_issue_id: string
+          p_project_id: string
+          p_source_sha: string
         }
         Returns: Json
       }
