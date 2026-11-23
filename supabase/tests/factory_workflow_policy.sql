@@ -135,7 +135,8 @@ select throws_ok($$select public.start_factory_workflow_graph_execution(root_ses
   'PT404', 'Workflow root session is unavailable.', 'graph enrollment respects the root factory scope');
 select throws_ok($$select public.start_factory_workflow_graph_execution(root_session_id, workspace_id, factory_id,
   graph_revision_id) from op645_root cross join op645_registered where scenario = 'unsupported'$$,
-  'PT422', 'The graph requires workflow capabilities that are unavailable.', 'graph enrollment rejects an unsupported agent node');
+  'PT422', 'The graph requires bounded delegation and exact scoped child profiles.',
+  'graph enrollment rejects an agent without a bounded delegation profile');
 select throws_ok($$select public.start_factory_workflow_graph_execution(root_session_id, workspace_id, factory_id,
   graph_revision_id) from op645_root cross join op645_registered where scenario = 'validation'$$,
   'PT422', 'The graph requires a pinned delivery policy with valid required evidence.', 'validation requires a pinned delivery policy');

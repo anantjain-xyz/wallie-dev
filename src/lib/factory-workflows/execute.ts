@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
 import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
+import { isFactoryDefinitionText } from "@/lib/factory-definitions/text";
 import { workflowGraphSchema } from "@/lib/factory-definitions/workflow-schema";
 import type { Database } from "@/lib/supabase/database.types";
 import { evaluateExactRunValidationEvidence } from "@/lib/validation-evidence/read-run-evidence";
@@ -409,6 +410,65 @@ export async function submitFactoryWorkflowRouteProposal(
         code: execution.graph_route_blocker ?? "execution_budget_exhausted",
       } as const)
     : routeDecisionProgress(data);
+}
+
+const workflowDelegationRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200).refine(isFactoryDefinitionText),
+    promptMd: z.string().trim().min(1).max(20_000).refine(isFactoryDefinitionText),
+  })
+  .strict();
+
+const workflowDelegationReceiptSchema = z.object({
+  child_session_id: z.string().uuid(),
+  job_id: z.string().uuid(),
+  run_id: z.string().uuid(),
+  created: z.boolean(),
+});
+
+type DelegationArgs =
+  Database["public"]["Functions"]["admit_factory_workflow_delegated_session"]["Args"];
+
+export type WorkflowDelegationPin = WorkflowOccurrencePin & {
+  readonly parentSessionId: DelegationArgs["p_parent_session_id"];
+  readonly sourceCheckpointRunId: DelegationArgs["p_source_checkpoint_run_id"];
+};
+
+export type WorkflowDelegationRequest = z.input<typeof workflowDelegationRequestSchema>;
+
+/** Admit explicitly requested work. The native ledger verifies the route, ancestry, source and budget. */
+export async function admitFactoryWorkflowDelegatedSession(
+  admin: Admin,
+  pin: WorkflowDelegationPin,
+  request: WorkflowDelegationRequest,
+) {
+  const parsed = workflowDelegationRequestSchema.safeParse(request);
+  if (!parsed.success) return { status: "blocked", code: "invalid_delegation_request" } as const;
+  const observed = await readOccurrenceContext(admin, pin);
+  if (observed.status !== "current") return observed;
+  const { scope, execution, occurrence, node, graph } = observed;
+  if (
+    node.kind !== "agent" ||
+    !graph.delegationPolicy ||
+    !Object.hasOwn(graph.delegationPolicy.targets, node.id)
+  ) {
+    return { status: "blocked", code: "invalid_delegation_target" } as const;
+  }
+
+  const { data, error } = await admin
+    .rpc("admit_factory_workflow_delegated_session", {
+      ...scope,
+      p_expected_generation: execution.generation,
+      p_ownership_token: pin.p_ownership_token,
+      p_parent_session_id: pin.parentSessionId,
+      p_target_occurrence_id: occurrence.occurrence_id,
+      p_source_checkpoint_run_id: pin.sourceCheckpointRunId,
+      p_title: parsed.data.title,
+      p_prompt_md: parsed.data.promptMd,
+    })
+    .single();
+  if (error) throw error;
+  return { status: "delegated", receipt: workflowDelegationReceiptSchema.parse(data) } as const;
 }
 
 /** The worker supplies the captured ownership token. Scope and proof targets come from the ledger. */
