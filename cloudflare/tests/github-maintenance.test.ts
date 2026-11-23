@@ -106,6 +106,7 @@ it.each([
   { scenario: "automation occurrence admission fails", automationFailure: true },
   { scenario: "automation schedule reconciliation fails", automationScheduleFailure: true },
   { scenario: "delivery dispatch expiry fails", expiryFailure: true },
+  { scenario: "monitoring incident admission fails", monitoringFailure: true },
 ])(
   "runs independent maintenance when $scenario",
   async ({
@@ -128,6 +129,7 @@ it.each([
     automationScheduleFailure,
     automationScheduleDue,
     expiryFailure,
+    monitoringFailure,
   }) => {
     const bindings = env as unknown as Env;
     const query = {
@@ -220,6 +222,15 @@ it.each([
                 ? { data: null, error: { message: "Routing alert evaluation unavailable" } }
                 : { data: { evaluated: 2, created: 1 }, error: null },
             ),
+        };
+      }
+      if (name === "admit_next_factory_monitoring_incident") {
+        return {
+          abortSignal: () =>
+            Promise.resolve({
+              data: null,
+              error: monitoringFailure ? { message: "Monitoring temporarily unavailable" } : null,
+            }),
         };
       }
       if (name === "list_due_factory_automation_schedules") {
@@ -420,6 +431,12 @@ it.each([
         "expire_factory_delivery_dispatches",
       );
       expect(expiry).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal));
+      expect(rpc).toHaveBeenCalledWith("admit_next_factory_monitoring_incident");
+      if (monitoringFailure) {
+        expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
+          task: "factory monitoring incidents",
+        });
+      }
       if (expiryFailure) {
         expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
           task: "factory delivery dispatch expiry",

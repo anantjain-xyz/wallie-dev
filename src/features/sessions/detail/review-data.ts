@@ -1,3 +1,5 @@
+import { monitoringIncidentEvidenceSchema } from "@/lib/factory-monitoring/contracts";
+
 import type { SessionActivityContext, SessionReviewData, SessionReviewSession } from "./data";
 
 export type SessionDetailRpcPayload = {
@@ -24,6 +26,7 @@ export function serializeSessionReviewData(
   payload: SessionDetailRpcPayload,
   attachments: SessionAttachmentRpcRow[] = [],
 ): SessionReviewData {
+  const evidence = monitoringIncidentEvidenceSchema.safeParse(payload.session.monitoring);
   return {
     creatorDisplayName: payload.creatorDisplayName,
     session: {
@@ -50,6 +53,7 @@ export function serializeSessionReviewData(
       id: payload.session.id,
       linearIssueId: payload.session.linearIssueId,
       linearIssueUrl: payload.session.linearIssueUrl,
+      ...(evidence.success ? { monitoring: evidence.data } : {}),
       number: payload.session.number,
       phaseCompletions: payload.session.phaseCompletions.map((completion) => ({
         completedAt: completion.completedAt,
