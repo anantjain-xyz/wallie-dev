@@ -44,9 +44,17 @@ Use `/api/workspaces/{workspaceId}/factories/{factoryId}/automations` with a fac
 | `GET /{automationId}`  | Optional `revisionId`. The response includes the requested revision and the current pointers.                                                         |
 | `POST /{automationId}` | `action` and `expectedRevisionId`. `save` also takes `definition`. `archive` also takes `expectedPublication` with a `revisionId` that can be `null`. |
 
+## Manage rules and history
+
+Open **Configure → Automations** and select an active factory you manage. Use **New rule** to pick a trigger, set its filters, and choose an eligible agent or published workflow. Save a draft to preview it before publishing.
+
+Publishing changes the revision that admits work. **Pause automation** parks pending occurrences, and **Resume automation** lets the worker try them again. If a stale draft conflicts with another edit, the editor keeps your field values while you load the current revision.
+
+**Occurrence history** shows when each event was received, its revision, admission status, reason, attempts, and retry time when available. An admitted occurrence links to its session when you can access it. Active factory managers can still read the history of an archived rule.
+
 ## Preview a rule
 
-In workspace **Settings → Integrations**, choose **Preview automations**. Select a factory, rule, and revision. Enter a sample event and run the preview. The result shows each filter decision alongside the current target and budget prerequisites.
+Select a factory, rule, and revision in **Automations**. Enter a sample event and run the preview. The result shows each filter decision alongside the current target and budget prerequisites.
 
 | Event        | Match checks                                                             |
 | ------------ | ------------------------------------------------------------------------ |
@@ -98,7 +106,7 @@ fields to match.
 | Pause and resume                                     | Keep the cursor fixed while paused. Freeze the catch-up cutoff when the manager resumes. Apply the same 24-hour policy. |
 | An earlier session still uses the available capacity | Retain the scheduled occurrence. The admission worker retries when capacity is available.                               |
 
-In **Settings → Integrations → Preview automations**, a scheduled revision
+In **Configure → Automations**, a scheduled revision
 shows its next calendar matches. The published rule also shows the missed
 occurrence eligible for catch-up with its cutoff, then the occurrence actually
 queued at resume. A dry-run sample still represents one normalized event.

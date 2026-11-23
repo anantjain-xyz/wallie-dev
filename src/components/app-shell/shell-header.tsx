@@ -439,7 +439,7 @@ export function ShellHeader({
 
   function navLinkProps(item: WorkspaceNavItem, mobile = false) {
     const href =
-      item.id === "workflows"
+      item.id === "workflows" || item.id === "automations"
         ? withFactoryQuery(item.href, workflowFactory)
         : isFactoryAggregatePath(item.href, workspace.slug)
           ? withFactoryQuery(item.href, factory)

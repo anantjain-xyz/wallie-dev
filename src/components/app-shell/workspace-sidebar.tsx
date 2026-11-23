@@ -25,6 +25,7 @@ const navIconPaths = {
     "M4 13v-1.5A3.5 3.5 0 0 1 7.5 8h1a3.5 3.5 0 0 1 3.5 3.5V13zM10 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z",
   scorers: "M3 4h2m-2 4h2m-2 4h2m2-8h6M7 8h6m-6 4h3",
   workflows: "M2.5 7h3v3h-3zM10.5 3.5h3v3h-3zM10.5 10.5h3v3h-3zM5.5 8.5H8V5h2.5M8 8.5V12h2.5",
+  automations: "M8.5 2.5 4 8.5h3l-.5 5 5.5-6h-3l.5-5z",
   "factory-definition": "M4 2.5h5l3 3v8H4zM9 2.5v3h3M6 8.5h4m-4 2h4",
   settings: "M3 4.5h10m-10 7h10M6 3v3m4 4v3",
 } satisfies Record<WorkspaceNavItem["id"], string>;

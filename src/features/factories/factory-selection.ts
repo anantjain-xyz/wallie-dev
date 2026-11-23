@@ -1,5 +1,6 @@
 import {
   workspaceActivityPath,
+  workspaceAutomationPreviewPath,
   workspaceBasePath,
   workspaceContextPath,
   workspaceGovernancePath,
@@ -83,6 +84,7 @@ export function defaultsToAllFactories(pathname: string, workspaceSlug: string) 
 
 export function isManagedFactoryPath(pathname: string, workspaceSlug: string) {
   return (
+    pathname === workspaceAutomationPreviewPath(workspaceSlug) ||
     pathname === workspaceGovernancePath(workspaceSlug) ||
     pathname === workspaceContextPath(workspaceSlug) ||
     pathname === workspaceMemoryPath(workspaceSlug)
