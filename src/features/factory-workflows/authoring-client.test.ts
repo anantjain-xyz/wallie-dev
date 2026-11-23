@@ -38,7 +38,11 @@ it.each([
   async ({ action, expected, observed, moved }) => {
     const commandContext = {
       requestId: id(8),
-      expected: { activationId: expected, draftId, baseDefinition },
+      expected: {
+        activationId: expected,
+        draftId: action === "save" ? id(10) : draftId,
+        baseDefinition,
+      },
     };
     const command: WorkflowAuthoringCommand =
       action === "save"
@@ -71,7 +75,7 @@ it.each([
       selectedDraftBaseDefinition: baseDefinition,
     };
     const fetch = vi
-      .fn()
+      .fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(Response.json(result))
       .mockResolvedValueOnce(Response.json(snapshot));
     vi.stubGlobal("fetch", fetch);
@@ -81,5 +85,8 @@ it.each([
       snapshot,
       moved,
     });
+    const [url, init] = fetch.mock.calls[1] ?? [];
+    expect(url).toBe(`${endpoint}?${new URLSearchParams({ draftId: result.receipt.draftId })}`);
+    expect(init?.method ?? "GET").toBe("GET");
   },
 );

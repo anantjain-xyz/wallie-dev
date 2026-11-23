@@ -77,6 +77,12 @@ export const defaultDelegationPolicy: WorkflowDelegationPolicy = {
   targets: {},
 };
 
+export const defaultRoutePolicy: RoutePolicyDraft = {
+  maxNodeVisits: 32,
+  maxLoopTraversals: 4,
+  nodes: {},
+};
+
 export function makeNode(id: string, kind: WorkflowNodeDraft["kind"]): WorkflowNodeDraft {
   switch (kind) {
     case "agent":
@@ -117,11 +123,7 @@ export function nextEditorId(prefix: string, used: readonly { id: string }[]) {
 }
 
 export function setNodeRoute(graph: WorkflowGraphDraft, id: string, update: RouteDraft) {
-  const policy = graph.routePolicy ?? {
-    maxNodeVisits: 32,
-    maxLoopTraversals: 4,
-    nodes: {},
-  };
+  const policy = graph.routePolicy ?? defaultRoutePolicy;
   return {
     ...graph,
     routePolicy: { ...policy, nodes: { ...policy.nodes, [id]: update } },
@@ -192,7 +194,11 @@ export function setEditorNode(graph: WorkflowGraphDraft, index: number, node: Wo
       }),
     );
   }
-  return renamed || prior.kind !== node.kind ? syncRepositoryWriters(graph, next) : next;
+  const grantChanged =
+    node.kind === "agent" && prior.kind === "agent" && node.grantId !== prior.grantId;
+  return renamed || prior.kind !== node.kind || grantChanged
+    ? syncRepositoryWriters(graph, next)
+    : next;
 }
 
 export function deleteEditorNode(graph: WorkflowGraphDraft, index: number) {
@@ -236,6 +242,21 @@ export function branchEdgesForJoin(graph: WorkflowGraphDraft, joinId: string) {
       .map(({ from }) => from),
   );
   return graph.edges.filter((edge) => edge.kind === "branch" && joinedAgents.has(edge.to));
+}
+
+export function getAgentRepositoryWriter(graph: WorkflowGraphDraft, agentId: string) {
+  let assignment: { joinId: string; writerGrant: RepositoryWriterDraft["writerGrant"] } | undefined;
+  for (const [joinId, writers] of Object.entries(graph.repositorySets ?? {})) {
+    const branchIds = new Set(
+      branchEdgesForJoin(graph, joinId)
+        .filter(({ to }) => to === agentId)
+        .map(({ id }) => id),
+    );
+    for (const { writerGrant, branchEdgeIds } of writers) {
+      if (branchEdgeIds.some((id) => branchIds.has(id))) assignment = { joinId, writerGrant };
+    }
+  }
+  return assignment;
 }
 
 function syncRepositoryWriters(

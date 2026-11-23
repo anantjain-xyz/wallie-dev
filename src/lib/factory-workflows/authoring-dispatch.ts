@@ -11,6 +11,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { executeFactoryWorkflowOccurrence } from "./execute";
 
 const rpcTimeoutMs = 5_000;
+const hostedDispatchBatchSize = 4;
 const uuid = z.string().uuid();
 const authoredEntryClaim = z.strictObject({
   leaseId: uuid,
@@ -79,4 +80,13 @@ export async function drainAuthoredFactoryWorkflowEntry(admin: SupabaseClient<Da
       .abortSignal(AbortSignal.timeout(rpcTimeoutMs));
     if (error) throw error;
   }
+}
+
+/** Let independent leases progress within one maintenance cycle. */
+export async function drainAuthoredFactoryWorkflowBatch(admin: SupabaseClient<Database>) {
+  const batch = await Promise.allSettled(
+    Array.from({ length: hostedDispatchBatchSize }, () => drainAuthoredFactoryWorkflowEntry(admin)),
+  );
+  const failure = batch.find((entry) => entry.status === "rejected");
+  if (failure) throw failure.reason;
 }

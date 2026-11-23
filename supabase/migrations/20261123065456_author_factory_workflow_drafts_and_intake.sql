@@ -1027,9 +1027,9 @@ grant execute on function public.create_session_command_once(
 -- Admissions offer the current compatible activation to factory members. No
 -- drafts or workflow bytes cross this picker boundary.
 create function public.list_factory_workflow_intake_options(p_workspace_id uuid, p_factory_id uuid)
-returns table(workflow_id uuid, activation_id uuid, display_name text)
+returns table(workflow_id uuid, activation_id uuid, display_name text, definition_digest text)
 language sql stable security definer set search_path = '' as $$
-  select workflow.id, published.id, workflow.display_name
+  select workflow.id, published.id, workflow.display_name, base.digest
   from internal.factory_workflow_authoring_workflows workflow
   join public.factories factory on (factory.workspace_id, factory.id) = (workflow.workspace_id, workflow.factory_id)
   cross join lateral internal.factory_workflow_authoring_base(p_workspace_id, p_factory_id) base

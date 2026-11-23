@@ -177,6 +177,9 @@ describe("workflow editing", () => {
     ]);
     expect(assigned.nodes[1]).toMatchObject({ grantId: secondary.id });
     expect(assigned.grants).toEqual([primary, secondary]);
+    const edited = setEditorNode(assigned, 1, makeNode("writer", "agent"));
+    expect(edited.nodes[1]).toMatchObject({ grantId: secondary.id });
+    expect(edited.repositorySets).toEqual(assigned.repositorySets);
     expect(updateEditorEdge(assigned, 0, { ...assigned.edges[0], id: "output" })).toBe(assigned);
     const renamed = updateEditorEdge(assigned, 0, { ...assigned.edges[0], id: "build" });
     expect(renamed.repositorySets?.join[0].branchEdgeIds).toEqual(["build"]);

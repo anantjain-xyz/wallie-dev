@@ -185,7 +185,8 @@ export async function mutateWorkflowAuthoring(
   const { baseDefinition: base } = command.expected;
   const admin = createAdmin();
   const requestFingerprint = workflowAuthoringFingerprint(command);
-  if (requestFingerprint) {
+  const findReceipt = async () => {
+    if (!requestFingerprint) return null;
     const { data, error } = await admin.rpc("find_factory_workflow_authoring_receipt", {
       p_workspace_id: scope.workspaceId,
       p_factory_id: scope.factoryId,
@@ -196,16 +197,17 @@ export async function mutateWorkflowAuthoring(
       p_request_fingerprint: requestFingerprint,
     });
     if (error) throw error;
-    if (data) {
-      return command.action === "save"
-        ? ({ ok: true, action: "save", receipt: workflowSaveReceiptSchema.parse(data) } as const)
-        : ({
-            ok: true,
-            action: "publish",
-            receipt: workflowPublishReceiptSchema.parse(data),
-          } as const);
-    }
-  }
+    if (!data) return null;
+    return command.action === "save"
+      ? ({ ok: true, action: "save", receipt: workflowSaveReceiptSchema.parse(data) } as const)
+      : ({
+          ok: true,
+          action: "publish",
+          receipt: workflowPublishReceiptSchema.parse(data),
+        } as const);
+  };
+  const existing = await findReceipt();
+  if (existing) return existing;
   if (command.action === "publish" && !sameBase(snapshot.selectedDraftBaseDefinition, base)) {
     return {
       ok: false,
@@ -214,14 +216,24 @@ export async function mutateWorkflowAuthoring(
     } as const;
   }
   const graph = command.action === "save" ? command.graph : snapshot.selectedDraftGraph;
-  const compiled = await compileScopedWorkflow(admin, scope, base, graph);
-  if (!compiled)
-    return {
-      ok: false,
-      status: 409,
-      error: "The workflow base definition is unavailable.",
-    } as const;
-  if (!compiled.ok) {
+  let compiled: Awaited<ReturnType<typeof compileScopedWorkflow>>;
+  try {
+    compiled = await compileScopedWorkflow(admin, scope, base, graph);
+  } catch (error) {
+    const committed = await findReceipt();
+    if (committed) return committed;
+    throw error;
+  }
+  if (!compiled?.ok) {
+    // A concurrent exact request can commit before these live references change.
+    const committed = await findReceipt();
+    if (committed) return committed;
+    if (!compiled)
+      return {
+        ok: false,
+        status: 409,
+        error: "The workflow base definition is unavailable.",
+      } as const;
     return {
       ok: false,
       status: 422,
@@ -256,6 +268,8 @@ export async function mutateWorkflowAuthoring(
     return { ok: true, action: "save", receipt: workflowSaveReceiptSchema.parse(data) } as const;
   }
   if (compiled.canonicalDigest !== snapshot.selectedDraftDigest) {
+    const committed = await findReceipt();
+    if (committed) return committed;
     return {
       ok: false,
       status: 409,

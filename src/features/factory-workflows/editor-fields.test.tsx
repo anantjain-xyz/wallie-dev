@@ -5,35 +5,51 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { useState } from "react";
 import { afterEach, expect, it } from "vitest";
 
-import { EdgeFields, NodeFields } from "./editor-fields";
+import { EdgeFields, NodeFields, PolicyFields } from "./editor-fields";
 import {
   defaultDelegationPolicy,
   initialGraph,
   makeNode,
+  setEditorRepositoryWriters,
+  type WorkflowEditorChoices,
   type WorkflowGraphDraft,
 } from "./editor-graph";
 
 afterEach(cleanup);
 
+const primaryGrant = { id: "655d0000-0000-4000-8000-000000000011", version: 1 };
+const secondaryGrant = { id: "655d0000-0000-4000-8000-000000000012", version: 2 };
+const secondaryWriter = {
+  ...secondaryGrant,
+  repositoryId: "655d0000-0000-4000-8000-000000000013",
+  label: "Repository Docs · Grant version 2",
+};
+const choices: WorkflowEditorChoices = {
+  prompts: [],
+  approvers: [],
+  profiles: [],
+  grant: primaryGrant,
+  writers: [secondaryWriter],
+};
+
 function Inspector({
   initial,
   node,
   edge,
+  policies = false,
 }: {
   initial: WorkflowGraphDraft;
   node: number;
   edge?: number;
+  policies?: boolean;
 }) {
   const [graph, edit] = useState(initial);
   const fields = { graph, edit, diagnostics: [] };
   return (
     <>
-      <NodeFields
-        {...fields}
-        index={node}
-        choices={{ prompts: [], approvers: [], profiles: [], grant: null, writers: [] }}
-      />
+      <NodeFields {...fields} index={node} choices={choices} />
       {edge === undefined ? null : <EdgeFields {...fields} index={edge} />}
+      {policies ? <PolicyFields {...fields} choices={choices} /> : null}
     </>
   );
 }
@@ -151,4 +167,93 @@ it("keeps repair eligibility on the intended review rule when another rule is re
   expect(eligible).toHaveValue(["security"]);
   expect(within(eligible).getByRole("option", { name: "security-check" })).toBeInTheDocument();
   expect(screen.getByRole("spinbutton", { name: "Maximum repairs" })).toHaveValue(2);
+});
+
+it("opens a join named constructor and edits only its own repository assignments", () => {
+  const initial: WorkflowGraphDraft = {
+    ...initialGraph,
+    nodes: [makeNode("constructor", "join"), makeNode("integrate", "join")],
+    repositorySets: {
+      integrate: [
+        {
+          repositoryId: secondaryWriter.repositoryId,
+          writerGrant: secondaryGrant,
+          branchEdgeIds: [],
+        },
+      ],
+    },
+  };
+  const { rerender } = render(<Inspector node={0} initial={initial} />);
+  expect(screen.getByRole("button", { name: "Add secondary repository" })).toBeEnabled();
+  const writer = { name: "Repository and exact writer grant" };
+  expect(screen.queryByRole("combobox", writer)).toBeNull();
+
+  rerender(<Inspector node={1} initial={initial} />);
+  expect(screen.getByRole("combobox", writer)).toHaveTextContent(secondaryWriter.label);
+  fireEvent.click(screen.getByRole("button", { name: "Remove secondary repository" }));
+  expect(screen.queryByRole("combobox", writer)).toBeNull();
+});
+
+it("shows a branch agent's exact secondary grant until the join removes its assignment", () => {
+  const graph: WorkflowGraphDraft = {
+    ...initialGraph,
+    entryNodeId: "split",
+    nodes: [makeNode("split", "branch"), makeNode("build", "agent"), makeNode("integrate", "join")],
+    edges: [
+      { id: "work", from: "split", to: "build", kind: "branch", required: true },
+      { id: "output", from: "build", to: "integrate", kind: "branch-result" },
+    ],
+    grants: [primaryGrant],
+  };
+  const initial = setEditorRepositoryWriters(graph, "integrate", [
+    {
+      repositoryId: secondaryWriter.repositoryId,
+      writerGrant: secondaryGrant,
+      branchEdgeIds: ["work"],
+    },
+  ]);
+  const { rerender } = render(<Inspector node={1} initial={initial} />);
+  const grant = () => screen.getByRole("combobox", { name: "Execution grant" });
+  expect(grant()).toHaveTextContent(secondaryWriter.label);
+  expect(grant()).toBeDisabled();
+  expect(grant()).toHaveAccessibleDescription(
+    "To change this grant, edit the secondary repository assignment at join “integrate”.",
+  );
+
+  rerender(<Inspector node={2} initial={initial} />);
+  fireEvent.click(screen.getByRole("button", { name: "Remove secondary repository" }));
+  rerender(<Inspector node={1} initial={initial} />);
+  expect(grant()).toBeEnabled();
+  expect(grant()).toHaveTextContent("Use workflow default");
+  choose("Execution grant", "Factory grant · Version 1");
+  expect(grant()).toHaveAttribute("data-value", primaryGrant.id);
+});
+
+it("sets graph-wide limits with a loop and keeps them when a Route step is added", () => {
+  render(
+    <Inspector
+      node={1}
+      policies
+      initial={{
+        ...initialGraph,
+        nodes: [...initialGraph.nodes, makeNode("check", "deterministic")],
+        edges: [
+          { id: "next", from: "checkpoint", to: "check", kind: "next" },
+          { id: "repeat", from: "check", to: "checkpoint", kind: "loop", maxTraversals: 2 },
+        ],
+      }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Set workflow limits" }));
+  const visits = screen.getByRole("spinbutton", { name: "Maximum workflow visits" });
+  const traversals = screen.getByRole("spinbutton", { name: "Maximum total loop traversals" });
+  fireEvent.change(visits, { target: { value: "41" } });
+  fireEvent.change(traversals, { target: { value: "7" } });
+  expect(visits).toHaveValue(41);
+  expect(traversals).toHaveValue(7);
+
+  choose("Step kind", "Route");
+  expect(screen.getByLabelText("Minimum confidence")).toBeInTheDocument();
+  expect(visits).toHaveValue(41);
+  expect(traversals).toHaveValue(7);
 });

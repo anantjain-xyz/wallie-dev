@@ -1,6 +1,9 @@
 import { expect, it, vi } from "vitest";
 
-import { drainAuthoredFactoryWorkflowEntry } from "./authoring-dispatch";
+import {
+  drainAuthoredFactoryWorkflowBatch,
+  drainAuthoredFactoryWorkflowEntry,
+} from "./authoring-dispatch";
 import { executeFactoryWorkflowOccurrence } from "./execute";
 
 vi.mock("./execute", () => ({ executeFactoryWorkflowOccurrence: vi.fn() }));
@@ -102,4 +105,51 @@ it("asks the native receipt to settle even when execution loses its result", asy
   );
 
   expect(rpc.mock.calls[1][0]).toBe("finish_factory_workflow_authoring_dispatch");
+});
+
+it("starts four independent leases together and awaits every settlement even after a failure", async () => {
+  vi.clearAllMocks();
+  const claimIds: unknown[] = [];
+  const settledSessions: unknown[] = [];
+  const rpc = vi.fn((name: string, params: Record<string, unknown>) => ({
+    abortSignal: async () => {
+      if (name === "claim_factory_workflow_authoring_dispatch") {
+        claimIds.push(params.p_lease_id);
+        return {
+          data: {
+            ...entry,
+            rootSessionId: id(20 + claimIds.length),
+            leaseId: params.p_lease_id,
+          },
+          error: null,
+        };
+      }
+      settledSessions.push(params.p_session_id);
+      return { data: "complete", error: null };
+    },
+  }));
+  const release = Promise.withResolvers<void>();
+  vi.mocked(executeFactoryWorkflowOccurrence).mockImplementation(async (_admin, pin) => {
+    if (pin.p_root_session_id === id(21)) throw new Error("Failed first entry.");
+    await release.promise;
+    return { status: "blocked", code: "invalid_route_policy" };
+  });
+  let finished = false;
+  const completion = drainAuthoredFactoryWorkflowBatch({ rpc } as never).finally(() => {
+    finished = true;
+  });
+  const failure = expect(completion).rejects.toThrow("Failed first entry.");
+  try {
+    await vi.waitFor(() => {
+      expect(executeFactoryWorkflowOccurrence).toHaveBeenCalledTimes(4);
+      expect(settledSessions).toEqual([id(21)]);
+    });
+    expect(new Set(claimIds).size).toBe(4);
+    expect(finished).toBe(false);
+  } finally {
+    release.resolve();
+    await failure;
+    vi.mocked(executeFactoryWorkflowOccurrence).mockReset();
+  }
+  expect(settledSessions.toSorted()).toEqual([id(21), id(22), id(23), id(24)]);
 });

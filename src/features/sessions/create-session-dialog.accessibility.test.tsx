@@ -981,7 +981,9 @@ describe("CreateSessionDialog accessibility", () => {
     const pending = Promise.withResolvers<Response>();
     const fetch = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(Response.json({ options: [workflow] }))
+      .mockResolvedValueOnce(
+        Response.json({ definitionDigest: "d".repeat(64), options: [workflow] }),
+      )
       .mockReturnValueOnce(pending.promise);
     function dialog(open: boolean) {
       return (
@@ -1009,10 +1011,141 @@ describe("CreateSessionDialog accessibility", () => {
       view.rerender(dialog(true));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       expect(screen.queryByRole("combobox", { name: "Workflow" })).not.toBeInTheDocument();
-      await act(async () => pending.resolve(Response.json({ options: [nextWorkflow] })));
+      await act(async () =>
+        pending.resolve(
+          Response.json({ definitionDigest: "d".repeat(64), options: [nextWorkflow] }),
+        ),
+      );
       await user.click(await screen.findByRole("combobox", { name: "Workflow" }));
       expect(await screen.findByRole("option", { name: nextWorkflow.label })).toBeVisible();
       expect(screen.queryByRole("option", { name: workflow.label })).toBeNull();
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("offers a published workflow only on its factory’s default repository", async () => {
+    const user = userEvent.setup();
+    const definitionDigest = "d".repeat(64);
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...draftOptions(),
+      factoryDefinitionDigest: definitionDigest,
+      repositoryOptions: [
+        { id: "repo-1", fullName: "acme/app" },
+        { id: "repo-2", fullName: "acme/other" },
+      ],
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    const published = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Published workflow",
+    };
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ definitionDigest, options: [published] }));
+    try {
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            creationFactoryId="factory-1"
+            onClose={vi.fn()}
+            open
+            userId="user-1"
+            workspaceId="workspace-1"
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+      await user.type(screen.getByLabelText("Prompt"), "Build with the selected source");
+      const workflow = await screen.findByRole("combobox", { name: "Workflow" });
+      const repository = screen.getByRole("combobox", { name: "Repository" });
+      await user.click(repository);
+      await user.click(await screen.findByRole("option", { name: "acme/other" }));
+      expect(workflow).toBeDisabled();
+
+      await user.click(repository);
+      await user.click(await screen.findByRole("option", { name: "acme/app" }));
+      await user.click(workflow);
+      await user.click(await screen.findByRole("option", { name: published.label }));
+      await user.click(repository);
+      await user.click(await screen.findByRole("option", { name: "acme/other" }));
+      expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+      await user.click(workflow);
+      expect(screen.queryByRole("option", { name: published.label })).toBeNull();
+      await user.click(await screen.findByRole("option", { name: "Default pipeline" }));
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce());
+      const [request] = clientMocks.createSessionFromClient.mock.calls[0];
+      expect(request).toMatchObject({ githubRepositoryId: "repo-2" });
+      expect(request).not.toHaveProperty("workflowSelection");
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("keeps the workflow catalog hidden until it matches the refreshed definition", async () => {
+    const user = userEvent.setup();
+    const oldDefinition = "d".repeat(64);
+    const newDefinition = "e".repeat(64);
+    const options = draftOptions();
+    const nextRepository = Promise.withResolvers<
+      typeof options & { factoryDefinitionDigest: string }
+    >();
+    clientMocks.loadSessionRepositoryOptionsFromClient
+      .mockResolvedValueOnce({ ...options, factoryDefinitionDigest: oldDefinition })
+      .mockReturnValueOnce(nextRepository.promise);
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    const published = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Workflow for the new definition",
+    };
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        Response.json({ definitionDigest: newDefinition, options: [published] }),
+      );
+    try {
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            creationFactoryId="factory-1"
+            onClose={vi.fn()}
+            open
+            userId="user-1"
+            workspaceId="workspace-1"
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+      await user.type(screen.getByLabelText("Prompt"), "Build from the current definition");
+      await waitFor(() =>
+        expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenCalledTimes(2),
+      );
+      expect(screen.queryByRole("combobox", { name: "Workflow" })).toBeNull();
+
+      await act(async () =>
+        nextRepository.resolve({ ...options, factoryDefinitionDigest: newDefinition }),
+      );
+      await user.click(await screen.findByRole("combobox", { name: "Workflow" }));
+      await user.click(await screen.findByRole("option", { name: published.label }));
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+
+      await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce());
+      expect(clientMocks.createSessionFromClient.mock.calls[0][0]).toMatchObject({
+        factoryDefinitionDigest: newDefinition,
+        workflowSelection: {
+          workflowId: published.workflowId,
+          activationId: published.activationId,
+        },
+      });
     } finally {
       fetch.mockRestore();
     }
@@ -1038,7 +1171,9 @@ describe("CreateSessionDialog accessibility", () => {
     });
     const fetch = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => Response.json({ options: [published] }));
+      .mockImplementation(async () =>
+        Response.json({ definitionDigest: "d".repeat(64), options: [published] }),
+      );
 
     try {
       render(

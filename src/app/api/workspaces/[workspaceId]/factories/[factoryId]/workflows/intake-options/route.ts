@@ -15,6 +15,7 @@ export async function GET(request: Request, { params }: Context) {
     if (error) throw error;
     return Response.json(
       {
+        definitionDigest: data[0]?.definition_digest ?? null,
         options: data.map(({ workflow_id, activation_id, display_name }) => ({
           workflowId: workflow_id,
           activationId: activation_id,

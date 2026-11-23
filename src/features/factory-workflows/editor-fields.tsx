@@ -8,7 +8,9 @@ import type { EditorDiagnostic } from "@/features/factory-definition/editor-requ
 import {
   branchEdgesForJoin,
   defaultDelegationPolicy,
+  defaultRoutePolicy,
   edgeLabels,
+  getAgentRepositoryWriter,
   makeEdge,
   makeNode,
   nextEditorId,
@@ -56,11 +58,13 @@ function Field({
   path,
   label,
   diagnostics,
+  description,
   children,
 }: {
   path: Path;
   label: string;
   diagnostics: readonly EditorDiagnostic[];
+  description?: string;
   children: (attributes: {
     id: string;
     "aria-invalid": true | undefined;
@@ -71,6 +75,8 @@ function Field({
   const issue = diagnostics.find(
     ({ path: value }) => JSON.stringify(value) === JSON.stringify(path),
   );
+  const descriptionId = description ? `${id}-description` : undefined;
+  const errorId = issue ? `${id}-error` : undefined;
   return (
     <div className="grid min-w-0 content-start gap-1.5">
       <label className="type-label" htmlFor={id}>
@@ -79,10 +85,15 @@ function Field({
       {children({
         id,
         "aria-invalid": issue ? true : undefined,
-        "aria-describedby": issue ? `${id}-error` : undefined,
+        "aria-describedby": [descriptionId, errorId].filter(Boolean).join(" ") || undefined,
       })}
+      {description ? (
+        <p className="text-sm text-muted" id={descriptionId}>
+          {description}
+        </p>
+      ) : null}
       {issue ? (
-        <p className="text-sm text-danger" id={`${id}-error`}>
+        <p className="text-sm text-danger" id={errorId}>
           {issue.message}
         </p>
       ) : null}
@@ -97,11 +108,13 @@ export function WorkflowOptions({
   options,
   change,
   empty,
+  disabled,
   ...field
 }: FieldProps & {
   value: string;
   options: readonly Option[];
   empty?: string;
+  disabled?: boolean;
   change: (value: string) => void;
 }) {
   const current = options.find(({ id }) => id === value);
@@ -110,6 +123,7 @@ export function WorkflowOptions({
     <Field {...field}>
       {(attributes) => (
         <Select
+          disabled={disabled}
           value={value}
           onValueChange={(next) => {
             if (next !== value) change(next);
@@ -556,7 +570,8 @@ function JoinRepositoryFields({
   choices: WorkflowEditorChoices;
   joinId: string;
 }) {
-  const rows = graph.repositorySets?.[joinId] ?? [];
+  const sets = graph.repositorySets;
+  const rows = sets && Object.hasOwn(sets, joinId) ? sets[joinId] : [];
   const path = ["repositorySets", joinId];
   const branchEdges = branchEdgesForJoin(graph, joinId);
   const withBranches = (entries: RepositoryWriterDraft[]) =>
@@ -652,6 +667,7 @@ export function NodeFields({
   const node = graph.nodes[index];
   if (!node) return null;
   const path = ["nodes", index];
+  const assignment = node.kind === "agent" ? getAgentRepositoryWriter(graph, node.id) : undefined;
   const update = (next: WorkflowNodeDraft) => edit(setEditorNode(graph, index, next));
   const setProfile = (profile?: { definitionRevisionId: string; definitionDigest: string }) => {
     const policy = graph.delegationPolicy ?? defaultDelegationPolicy;
@@ -738,16 +754,23 @@ export function NodeFields({
             label="Execution grant"
             path={[...path, "grantId"]}
             diagnostics={diagnostics}
-            options={graph.grants
-              .filter(({ id }) => id === choices.grant?.id || id === node.grantId)
-              .map(({ id, version }) => ({
-                id,
-                label:
-                  choices.writers.find((writer) => writer.id === id && writer.version === version)
-                    ?.label ?? `Factory grant · Version ${version}`,
-              }))}
-            value={node.grantId ?? ""}
-            empty="Use workflow default"
+            description={
+              assignment
+                ? `To change this grant, edit the secondary repository assignment at join “${assignment.joinId}”.`
+                : undefined
+            }
+            disabled={!!assignment}
+            options={(assignment
+              ? [assignment.writerGrant]
+              : graph.grants.filter(({ id }) => id === choices.grant?.id || id === node.grantId)
+            ).map(({ id, version }) => ({
+              id,
+              label:
+                choices.writers.find((writer) => writer.id === id && writer.version === version)
+                  ?.label ?? `Factory grant · Version ${version}`,
+            }))}
+            value={assignment?.writerGrant.id ?? node.grantId ?? ""}
+            empty={assignment ? undefined : "Use workflow default"}
             change={(grantId) => update({ ...node, grantId: grantId || undefined })}
           />
         </>
@@ -913,6 +936,15 @@ export function PolicyFields({
             }
           />
         </>
+      ) : graph.edges.some(({ kind }) => kind === "loop") ? (
+        <button
+          id={workflowFieldId(["routePolicy"])}
+          type="button"
+          className="ui-button w-fit"
+          onClick={() => edit({ ...graph, routePolicy: defaultRoutePolicy })}
+        >
+          Set workflow limits
+        </button>
       ) : null}
       {delegation ? (
         delegationLimits.map(([key, label, step]) => (

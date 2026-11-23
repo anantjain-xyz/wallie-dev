@@ -25,7 +25,7 @@ import { reconcileLinearState } from "@/worker/reconciler";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
-import { drainAuthoredFactoryWorkflowEntry } from "@/lib/factory-workflows/authoring-dispatch";
+import { drainAuthoredFactoryWorkflowBatch } from "@/lib/factory-workflows/authoring-dispatch";
 import { drainFactoryWorkflowRepositoryDeliveries } from "@/lib/factory-workflows/repository-delivery";
 import { drainFactoryWorkflowBranches } from "@/lib/factory-workflows/branch-dispatch";
 import {
@@ -320,7 +320,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ],
       ["checkpoint publication", () => drainCheckpointPublications(admin)],
       ["accepted triage route", () => drainAcceptedTriageRoute(admin)],
-      ["authored workflow entry", () => drainAuthoredFactoryWorkflowEntry(admin)],
+      ["authored workflow entry", () => drainAuthoredFactoryWorkflowBatch(admin)],
       ["workflow branches", () => drainFactoryWorkflowBranches(admin)],
       ["workflow repository delivery", () => drainFactoryWorkflowRepositoryDeliveries(admin)],
       ["exact workflow review", () => drainExactFactoryWorkflowReview(admin)],

@@ -14107,6 +14107,7 @@ export type Database = {
         Args: { p_factory_id: string; p_workspace_id: string }
         Returns: {
           activation_id: string
+          definition_digest: string
           display_name: string
           workflow_id: string
         }[]

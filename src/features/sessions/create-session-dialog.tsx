@@ -57,9 +57,15 @@ import { finishInteraction } from "@/lib/telemetry/interaction-rum";
 import { workflowIntakeSelectionSchema } from "@/lib/factory-workflows/intake-selection";
 import { workflowAuthoringApiPath } from "@/lib/routes";
 
-const intakeOptionsSchema = z.object({
-  options: workflowIntakeSelectionSchema.extend({ label: z.string() }).array(),
-});
+const intakeOptionsSchema = z
+  .object({
+    definitionDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+    options: workflowIntakeSelectionSchema.extend({ label: z.string() }).array(),
+  })
+  .refine(({ definitionDigest, options }) => definitionDigest !== null || options.length === 0);
 const defaultWorkflowOption = { label: "Default pipeline", value: "" };
 
 type CreateSessionDialogProps = {
@@ -257,8 +263,6 @@ function CreateSessionDialogBody({
       : null;
   const workflowOptions = currentWorkflowCatalog?.options ?? [];
   const workflowOptionsError = currentWorkflowCatalog?.options === null;
-  const workflow = workflowOptions.find((option) => option.activationId === workflowActivationId);
-  const workflowSelectionUnavailable = Boolean(workflowActivationId && !workflow);
 
   useEffect(() => {
     if (!open || !creationFactoryId || !factoryDefinitionDigest) return;
@@ -270,13 +274,21 @@ function CreateSessionDialogBody({
       .then(async (response) => {
         if (!response.ok) throw new Error("Workflow options are unavailable.");
         const result = intakeOptionsSchema.parse(await response.json());
-        if (!controller.signal.aborted) {
+        if (controller.signal.aborted) return;
+        if (result.definitionDigest && result.definitionDigest !== factoryDefinitionDigest) {
           setWorkflowCatalog({
             factoryId: creationFactoryId,
             definitionDigest: factoryDefinitionDigest,
-            options: result.options,
+            options: null,
           });
+          invalidateSessionRepositoryCache(workspaceId);
+          return;
         }
+        setWorkflowCatalog({
+          factoryId: creationFactoryId,
+          definitionDigest: result.definitionDigest ?? factoryDefinitionDigest,
+          options: result.options,
+        });
       })
       .catch(() => {
         if (!controller.signal.aborted) {
@@ -539,6 +551,14 @@ function CreateSessionDialogBody({
   const factoryRepositorySelectionRequired = Boolean(
     factoryDefinitionDigest && !selectedGithubRepositoryId,
   );
+  const workflowRepositoryAvailable = Boolean(
+    defaultGithubRepositoryId && selectedGithubRepositoryId === defaultGithubRepositoryId,
+  );
+  const eligibleWorkflowOptions = workflowRepositoryAvailable ? workflowOptions : [];
+  const workflow = eligibleWorkflowOptions.find(
+    (option) => option.activationId === workflowActivationId,
+  );
+  const workflowSelectionUnavailable = Boolean(workflowActivationId && !workflow);
   const overrideOptions = repositorySnapshot.data?.routingOverrideOptions;
   const overrideScope = JSON.stringify([
     overrideOptions?.activationNumber,
@@ -1082,7 +1102,9 @@ function CreateSessionDialogBody({
                     unconfirmed ||
                     draftSpecification ||
                     overrideChoice !== null ||
-                    ((!factoryDefinitionDigest || repositorySnapshot.isStale) &&
+                    ((!factoryDefinitionDigest ||
+                      repositorySnapshot.isStale ||
+                      !workflowRepositoryAvailable) &&
                       !workflowActivationId)
                   }
                   emptyOption={defaultWorkflowOption}
@@ -1099,7 +1121,7 @@ function CreateSessionDialogBody({
                           },
                         ]
                       : []),
-                    ...workflowOptions.map(({ activationId, label }) => ({
+                    ...eligibleWorkflowOptions.map(({ activationId, label }) => ({
                       label,
                       value: activationId,
                     })),
@@ -1107,7 +1129,13 @@ function CreateSessionDialogBody({
                   value={workflowActivationId}
                   wrap
                 />
-                {workflowOptionsError ? (
+                {factoryDefinitionDigest &&
+                selectedGithubRepositoryId &&
+                !workflowRepositoryAvailable ? (
+                  <p className="type-secondary text-warning" role="status">
+                    Choose the factory’s default repository to use a published workflow.
+                  </p>
+                ) : workflowOptionsError ? (
                   <p className="type-secondary text-warning" role="status">
                     Published workflows are unavailable.{" "}
                     <button

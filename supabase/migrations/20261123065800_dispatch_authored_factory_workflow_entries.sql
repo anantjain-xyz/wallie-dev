@@ -11,6 +11,8 @@ create table internal.factory_workflow_authoring_dispatches (
   next_attempt_at timestamptz not null default clock_timestamp(),
   lease_id uuid unique,
   lease_expires_at timestamptz,
+  lease_generation bigint check (lease_generation between 1 and 9007199254740991),
+  lease_ownership_token uuid,
   completed_at timestamptz,
   unique nulls not distinct (session_id, input_run_id, occurrence_id),
   foreign key (session_id, workspace_id, factory_id)
@@ -18,6 +20,8 @@ create table internal.factory_workflow_authoring_dispatches (
   foreign key (session_id, occurrence_id)
     references internal.factory_workflow_node_occurrences(root_session_id, occurrence_id) on delete cascade,
   check ((lease_id is null) = (lease_expires_at is null)),
+  check ((lease_id is null) = (lease_generation is null)),
+  check ((lease_id is null) = (lease_ownership_token is null)),
   check (completed_at is null or lease_id is null)
 );
 create index factory_workflow_authoring_dispatches_due
@@ -128,7 +132,8 @@ begin
   if not found then return new; end if;
   if new.phase_status = 'rejected' then
     update internal.factory_workflow_authoring_dispatches
-    set completed_at = clock_timestamp(), lease_id = null, lease_expires_at = null
+    set completed_at = clock_timestamp(), lease_id = null, lease_expires_at = null,
+      lease_generation = null, lease_ownership_token = null
     where dispatch_id = pending_dispatch_id;
     return new;
   end if;
@@ -201,7 +206,8 @@ begin
         selected.workspace_id,selected.factory_id,selected.session_id,selected.input_run_id
       ) then
         update internal.factory_workflow_authoring_dispatches
-        set completed_at = claimed_at, lease_id = null, lease_expires_at = null
+        set completed_at = claimed_at, lease_id = null, lease_expires_at = null,
+          lease_generation = null, lease_ownership_token = null
         where dispatch_id = selected.dispatch_id;
         return null;
       end if;
@@ -213,7 +219,8 @@ begin
         -- A live prerequisite can change after publication. Yield to other
         -- sessions while preserving the reviewable source and its pending handoff.
         update internal.factory_workflow_authoring_dispatches
-        set next_attempt_at = claimed_at + interval '1 minute', lease_id = null, lease_expires_at = null
+        set next_attempt_at = claimed_at + interval '1 minute', lease_id = null, lease_expires_at = null,
+          lease_generation = null, lease_ownership_token = null
         where dispatch_id = selected.dispatch_id;
         return null;
       end;
@@ -232,7 +239,8 @@ begin
     if selected.lease_id is distinct from p_lease_id then
       update internal.factory_workflow_authoring_dispatches dispatch
       set occurrence_id = occurrence.occurrence_id, lease_id = p_lease_id,
-        lease_expires_at = clock_timestamp() + interval '75 seconds'
+        lease_expires_at = clock_timestamp() + interval '75 seconds',
+        lease_generation = execution.generation, lease_ownership_token = execution.ownership_token
       where dispatch.dispatch_id = selected.dispatch_id
       returning dispatch.* into selected;
     end if;
@@ -240,7 +248,7 @@ begin
       'leaseId',p_lease_id,'leaseExpiresAt',selected.lease_expires_at,'rootSessionId',selected.session_id,'workspaceId',selected.workspace_id,
       'factoryId',selected.factory_id,'inputRunId',selected.input_run_id,'workflowDigest',execution.workflow_digest,
       'occurrenceId',occurrence.occurrence_id,'nodeId',occurrence.node_id,
-      'generation',execution.generation,'ownershipToken',execution.ownership_token
+      'generation',selected.lease_generation,'ownershipToken',selected.lease_ownership_token
     );
   end loop;
   return null;
@@ -266,27 +274,47 @@ begin
   for update;
   if not found or selected.lease_expires_at <= clock_timestamp() then return 'stale'; end if;
 
-  select * into strict execution from internal.factory_workflow_executions where root_session_id = p_session_id;
+  select * into execution from internal.factory_workflow_executions where root_session_id = p_session_id;
+  if not found or p_expected_generation is distinct from selected.lease_generation
+    or (execution.generation,execution.ownership_token,execution.lifecycle_status) is distinct from
+      (selected.lease_generation,selected.lease_ownership_token,'running') then
+    return 'stale';
+  end if;
   select * into strict occurrence from internal.factory_workflow_node_occurrences target
   where (target.root_session_id,target.occurrence_id) = (p_session_id,selected.occurrence_id);
-  resolved := execution.generation = p_expected_generation and execution.lifecycle_status = 'running' and (
-    exists (select 1 from internal.factory_workflow_branch_groups branch
-      where (branch.root_session_id,branch.branch_occurrence_id) = (p_session_id,occurrence.occurrence_id))
-    or exists (select 1 from internal.factory_workflow_route_decisions route
-      where (route.root_session_id,route.route_occurrence_id) = (p_session_id,occurrence.occurrence_id))
-    or exists (
-      select 1 from internal.factory_workflow_node_results result
-      where (result.root_session_id,result.occurrence_id) = (p_session_id,occurrence.occurrence_id)
-        and (result.outcome <> 'succeeded'
-          or not exists (select 1 from jsonb_array_elements(execution.workflow_json::jsonb->'edges') edge
-            where (edge->>'from',edge->>'kind') = (occurrence.node_id,'next'))
-          or exists (select 1 from internal.factory_workflow_transition_receipts transition
-            where (transition.root_session_id,transition.source_occurrence_id,transition.source_result_id) =
-              (p_session_id,occurrence.occurrence_id,result.result_id)))
-    )
-  );
+  if occurrence.node_kind = 'route' then
+    -- A Foreman decision can precede another command in its accepted plan.
+    select invocation.status in ('blocked','stale')
+      or (invocation.status = 'issued' and invocation.deadline_at <= clock_timestamp())
+      or (invocation.status = 'accepted' and coalesce((
+        select bool_and(command.receipt_json is not null) or bool_or(command.receipt_json->>'status' = 'blocked')
+        from internal.factory_workflow_foreman_commands command
+        where command.foreman_run_id = invocation.foreman_run_id
+      ),false)) into resolved
+    from internal.factory_workflow_foreman_runs invocation
+    where (invocation.root_session_id,invocation.route_occurrence_id,invocation.workspace_id,invocation.factory_id,
+      invocation.workflow_digest) = (p_session_id,occurrence.occurrence_id,selected.workspace_id,selected.factory_id,
+      execution.workflow_digest);
+    if not found then
+      resolved := exists (select 1 from internal.factory_workflow_route_decisions route
+        where (route.root_session_id,route.route_occurrence_id) = (p_session_id,occurrence.occurrence_id));
+    end if;
+  else
+    resolved := exists (select 1 from internal.factory_workflow_branch_groups branch
+        where (branch.root_session_id,branch.branch_occurrence_id) = (p_session_id,occurrence.occurrence_id))
+      or exists (
+        select 1 from internal.factory_workflow_node_results result
+        where (result.root_session_id,result.occurrence_id) = (p_session_id,occurrence.occurrence_id)
+          and (result.outcome <> 'succeeded'
+            or not exists (select 1 from jsonb_array_elements(execution.workflow_json::jsonb->'edges') edge
+              where (edge->>'from',edge->>'kind') = (occurrence.node_id,'next'))
+            or exists (select 1 from internal.factory_workflow_transition_receipts transition
+              where (transition.root_session_id,transition.source_occurrence_id,transition.source_result_id) =
+                (p_session_id,occurrence.occurrence_id,result.result_id)))
+      );
+  end if;
   update internal.factory_workflow_authoring_dispatches
-  set lease_id = null, lease_expires_at = null,
+  set lease_id = null, lease_expires_at = null, lease_generation = null, lease_ownership_token = null,
     completed_at = case when resolved then clock_timestamp() end,
     next_attempt_at = clock_timestamp() + interval '30 seconds'
   where dispatch_id = selected.dispatch_id;

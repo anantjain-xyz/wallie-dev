@@ -126,6 +126,12 @@ select ok((select activation.draft_id=(draft.result->>'draftId')::uuid and graph
   join internal.factory_workflow_authoring_activations activation on activation.draft_id=stored.id
   join internal.factory_workflow_graph_revisions graph on graph.id=activation.graph_revision_id
   where activation.id=(record.result->>'activationId')::uuid),'publication pins one exact draft and canonical runtime revision atomically');
+select ok(exists (
+  select 1 from op655_scope scope cross join op655_activation_first record
+  cross join lateral public.list_factory_workflow_intake_options(scope.workspace_id,scope.factory_id) option
+  where (option.workflow_id,option.activation_id,option.definition_digest) =
+    (scope.workflow_id,(record.result->>'activationId')::uuid,scope.base_digest)
+), 'intake catalog returns its selected activation and authoritative base digest from one read');
 select is((select pg_temp.op655_publish('second',933,(result->>'draftId')::uuid)->>'created' from op655_draft_second),
   'false','a lost publication response replays the immutable activation');
 select throws_ok($$select pg_temp.op655_publish('second',934,(result->>'draftId')::uuid) from op655_draft_second$$,

@@ -16,26 +16,16 @@ select public.create_factory_workflow_authoring(
   workspace_id,factory_id,pg_temp.op651_id(1),workflow_id,'Authored fixture workflow'
 ) from authored_scope;
 
-create function pg_temp.publish_authored(
-  first_node text, request_slot integer, expected_draft uuid default null, expected_activation uuid default null,
-  first_operation text default 'checkpoint'
+create function pg_temp.publish_authored_graph(
+  body text, request_slot integer, expected_draft uuid, expected_activation uuid
 ) returns table(draft_id uuid,activation_id uuid,graph_revision_id uuid) language plpgsql as $$
 declare
   scope record;
-  body text;
   digest text;
   saved jsonb;
   published jsonb;
 begin
   select * into strict scope from authored_scope;
-  body:=jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId',first_node,'grants','[]'::jsonb,
-    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation',first_operation),
-      jsonb_build_object('id','check.policy','kind','deterministic','operation','policy'),
-      jsonb_build_object('id','human.review','kind','human-gate','anyoneCanApprove',false,
-        'approverMemberIds',jsonb_build_array(pg_temp.op651_id(21)))),
-    'edges',jsonb_build_array(
-      jsonb_build_object('id','next.policy','kind','next','from',first_node,'to','check.policy'),
-      jsonb_build_object('id','next.review','kind','next','from','check.policy','to','human.review')))::text;
   digest:=encode(sha256(convert_to(body,'UTF8')),'hex');
   saved:=public.save_factory_workflow_authoring_draft(
     p_workspace_id=>scope.workspace_id,p_factory_id=>scope.factory_id,p_actor_user_id=>pg_temp.op651_id(1),
@@ -56,6 +46,22 @@ begin
   graph_revision_id:=(published->>'graphRevisionId')::uuid;
   return next;
 end;
+$$;
+
+create function pg_temp.publish_authored(
+  first_node text, request_slot integer, expected_draft uuid default null, expected_activation uuid default null,
+  first_operation text default 'checkpoint'
+) returns table(draft_id uuid,activation_id uuid,graph_revision_id uuid) language sql as $$
+  select * from pg_temp.publish_authored_graph(jsonb_build_object(
+    'schemaVersion',1,'kind','graph','entryNodeId',first_node,'grants','[]'::jsonb,
+    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation',first_operation),
+      jsonb_build_object('id','check.policy','kind','deterministic','operation','policy'),
+      jsonb_build_object('id','human.review','kind','human-gate','anyoneCanApprove',false,
+        'approverMemberIds',jsonb_build_array(pg_temp.op651_id(21)))),
+    'edges',jsonb_build_array(
+      jsonb_build_object('id','next.policy','kind','next','from',first_node,'to','check.policy'),
+      jsonb_build_object('id','next.review','kind','next','from','check.policy','to','human.review')))::text,
+    request_slot,expected_draft,expected_activation)
 $$;
 
 create temp table authored_version_a as select * from pg_temp.publish_authored('old.checkpoint',202);
@@ -104,6 +110,26 @@ select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(210)
 select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(211)),null::jsonb,
   'another worker cannot claim the same entry while its lease is active');
 
+create temp table replacement_owner as
+select replacement.* from first_lease
+cross join lateral public.acquire_factory_workflow_ownership(
+  (claim->>'rootSessionId')::uuid,(claim->>'workspaceId')::uuid,(claim->>'factoryId')::uuid,
+  (claim->>'generation')::bigint,pg_temp.op651_id(225)
+) replacement;
+select ok((select execution_generation = (claim->>'generation')::bigint + 1
+    and ownership_token = pg_temp.op651_id(225)
+  from first_lease cross join replacement_owner), 'ownership replacement uses a fresh generation and capability');
+select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(210)),
+  (select claim from first_lease),'the old live lease replay preserves only its originally issued capability');
+select is((select public.finish_factory_workflow_authoring_dispatch(session_id,run_id,pg_temp.op651_id(210),
+  (claim->>'generation')::bigint) from preparation cross join first_lease),'stale',
+  'a lease issued to a previous generation cannot settle');
+select is((select public.finish_factory_workflow_authoring_dispatch(session_id,run_id,pg_temp.op651_id(210),
+  execution_generation) from preparation cross join replacement_owner),'stale',
+  'supplying the replacement generation cannot transfer the old lease');
+select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(211)),null::jsonb,
+  'stale settlement preserves the outstanding lease until expiration');
+
 update internal.factory_workflow_authoring_dispatches dispatch set lease_expires_at=clock_timestamp()-interval '1 second'
 from preparation where dispatch.session_id=preparation.session_id;
 select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(210)),null::jsonb,
@@ -111,9 +137,12 @@ select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(210)
 create temp table resumed_lease as
 select public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(211)) as claim;
 select ok((select resumed.claim is not null and
-    (resumed.claim-'leaseId'-'leaseExpiresAt')=(first.claim-'leaseId'-'leaseExpiresAt')
-  from first_lease first cross join resumed_lease resumed),
-  'a new worker resumes the original occurrence and existing workflow ownership');
+    (resumed.claim-array['leaseId','leaseExpiresAt','generation','ownershipToken']) =
+      (first.claim-array['leaseId','leaseExpiresAt','generation','ownershipToken'])
+    and (resumed.claim->>'generation')::bigint = owner.execution_generation
+    and (resumed.claim->>'ownershipToken')::uuid = owner.ownership_token
+  from first_lease first cross join resumed_lease resumed cross join replacement_owner owner),
+  'a new lease resumes the original occurrence under the replacement workflow ownership');
 select is((select public.finish_factory_workflow_authoring_dispatch(session_id,run_id,pg_temp.op651_id(210),
   (claim->>'generation')::bigint) from preparation cross join first_lease),'stale',
   'the retired lease cannot finish the entry');
@@ -298,6 +327,104 @@ select ok((select dispatch.completed_at is null and dispatch.occurrence_id is nu
   join internal.factory_workflow_authoring_dispatches dispatch
     on (dispatch.session_id,dispatch.input_run_id)=(source.session_id,source.run_id)),
   'the replacement source creates its own pending dispatch');
+
+update internal.factory_workflow_authoring_dispatches dispatch set next_attempt_at=clock_timestamp()+interval '1 day'
+from replacement_preparation source where dispatch.session_id=source.session_id;
+
+create temp table authored_foreman_graph as
+select jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId','route.choose',
+  'nodes',jsonb_build_array(
+    jsonb_build_object('id','route.choose','kind','route','agentPromptRevisionId',pg_temp.op651_id(91),'grantId',approved.id),
+    jsonb_build_object('id','agent.child','kind','agent','agentPromptRevisionId',pg_temp.op651_id(91),'grantId',approved.id)),
+  'edges','[{"id":"route.child","kind":"route","from":"route.choose","to":"agent.child"}]'::jsonb,
+  'grants',jsonb_build_array(jsonb_build_object('id',approved.id,'version',approved.version)),
+  'routePolicy',jsonb_build_object('maxNodeVisits',16,'maxLoopTraversals',0,'nodes',jsonb_build_object('route.choose',
+    jsonb_build_object('minimumConfidence',0.7,'allowedDestinationIds',jsonb_build_array('agent.child'),
+      'fallback','{"kind":"clarification"}'::jsonb,
+      'foremanProfile',jsonb_build_object('definitionRevisionId',foreman.id,'definitionDigest',foreman.canonical_digest)))),
+  'delegationPolicy',jsonb_build_object('maxChildren',1,'maxConcurrentChildren',1,'maxAttempts',4,
+    'maxTotalTokens',1000,'maxTokensPerAttempt',50,'maxCostUsd',2,'maxCostUsdPerAttempt',0.2,
+    'targets',jsonb_build_object('agent.child',
+      jsonb_build_object('definitionRevisionId',child.id,'definitionDigest',child.canonical_digest)))
+)::text body
+from op651_grant approved
+join public.factory_definition_revisions foreman on foreman.id=pg_temp.op651_id(43)
+join public.factory_definition_revisions child on child.id=pg_temp.op651_id(44);
+create temp table authored_foreman_activation as
+select published.* from authored_blocked_version version cross join authored_foreman_graph graph
+cross join lateral pg_temp.publish_authored_graph(graph.body,230,version.draft_id,version.activation_id) published;
+create temp table authored_foreman_session as
+select admitted.* from authored_scope scope cross join authored_foreman_activation activation
+cross join lateral public.create_session_command_once(
+  scope.workspace_id,pg_temp.op651_id(21),pg_temp.op651_id(232),repeat('c',64),scope.base_digest,
+  'Authored Foreman route','Run the selected route.','codex','gpt-5.5','{}',target_factory_id=>scope.factory_id,
+  p_workflow_selection=>jsonb_build_object('workflowId',scope.workflow_id,'activationId',activation.activation_id)
+) admitted;
+create temp table foreman_preparation as
+select session_id,pg_temp.adopt_source_checkpoint(session_id,job_id) as run_id from authored_foreman_session;
+create temp table foreman_route_lease as
+select public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(233)) as claim;
+create temp table foreman_ticket as
+select public.begin_factory_workflow_foreman_inference(
+  (claim->>'rootSessionId')::uuid,(claim->>'workspaceId')::uuid,(claim->>'factoryId')::uuid,
+  (claim->>'generation')::bigint,(claim->>'ownershipToken')::uuid,(claim->>'occurrenceId')::uuid
+) as ticket from foreman_route_lease;
+select ok((select claim->>'nodeId'='route.choose' and ticket->>'status'='issued'
+  from foreman_route_lease cross join foreman_ticket), 'the exact authored route issues one scoped Foreman run');
+
+create temp table foreman_accepted_plan as
+select public.settle_factory_workflow_foreman_inference(
+  (claim->>'rootSessionId')::uuid,(claim->>'workspaceId')::uuid,(claim->>'factoryId')::uuid,
+  (claim->>'generation')::bigint,(claim->>'ownershipToken')::uuid,(claim->>'occurrenceId')::uuid,
+  (ticket->>'issueId')::uuid,jsonb_build_object('status','accepted','planJson',plan,
+    'planDigest',encode(sha256(convert_to(plan,'UTF8')),'hex'),
+    'usage','{"inputTokens":12,"outputTokens":3,"costUsd":0.05}'::jsonb,'providerReceiptId','authoring-fixture')
+) as run
+from foreman_route_lease cross join foreman_ticket cross join (values
+  ('{"version":1,"commands":[{"kind":"route","decision":{"kind":"choose","destinationNodeId":"agent.child","confidence":0.9,"reason":"Proceed."}},
+    {"kind":"delegate","targetNodeId":"agent.child","title":"Child","promptMd":"Inspect the checkpoint."}]}')
+) intent(plan);
+select is((select run->>'status' from foreman_accepted_plan),'accepted','the authored route retains its accepted ordered plan');
+create function pg_temp.dispatch_authored_foreman_command(claim jsonb, ordinal integer) returns jsonb language sql as $$
+  select public.dispatch_factory_workflow_foreman_command(
+    (claim->>'rootSessionId')::uuid,(claim->>'workspaceId')::uuid,(claim->>'factoryId')::uuid,
+    (claim->>'generation')::bigint,(claim->>'ownershipToken')::uuid,(claim->>'occurrenceId')::uuid,
+    (run->>'foremanRunId')::uuid,ordinal
+  ) from foreman_accepted_plan
+$$;
+create temp table foreman_route_decision as
+select pg_temp.dispatch_authored_foreman_command(claim,1) as receipt from foreman_route_lease;
+select ok((select receipt->>'status'='accepted' and receipt->>'targetOccurrenceId' is not null
+    and not exists (select 1 from internal.factory_workflow_delegations where root_session_id=(claim->>'rootSessionId')::uuid)
+  from foreman_route_decision cross join foreman_route_lease),
+  'the first command durably chooses the agent before its child has been created');
+select is((select public.finish_factory_workflow_authoring_dispatch(session_id,run_id,pg_temp.op651_id(233),
+  (claim->>'generation')::bigint) from foreman_preparation cross join foreman_route_lease),'retry',
+  'a committed Foreman route with a pending delegate command remains retryable');
+
+update internal.factory_workflow_authoring_dispatches dispatch set next_attempt_at=clock_timestamp()-interval '1 minute'
+from foreman_route_lease where dispatch.occurrence_id=(claim->>'occurrenceId')::uuid;
+create temp table resumed_foreman_route_lease as
+select public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(234)) as claim;
+select ok((select resumed.claim-'leaseId'-'leaseExpiresAt'=original.claim-'leaseId'-'leaseExpiresAt'
+  from resumed_foreman_route_lease resumed cross join foreman_route_lease original),
+  'another worker claims the same Foreman route to resume its recorded plan');
+create temp table foreman_child_receipt as
+select pg_temp.dispatch_authored_foreman_command(claim,2) as receipt from resumed_foreman_route_lease;
+select ok((select child.receipt->>'status'='accepted'
+    and (child.receipt->>'decisionId',child.receipt->>'targetOccurrenceId') =
+      (route.receipt->>'decisionId',route.receipt->>'targetOccurrenceId')
+    and child.receipt->>'childSessionId' is not null
+  from foreman_child_receipt child cross join foreman_route_decision route),
+  'the resumed exact plan admits the child for the original decision and target');
+select is((select pg_temp.dispatch_authored_foreman_command(claim,2) from resumed_foreman_route_lease),
+  (select receipt from foreman_child_receipt),'a repeated delegate command returns the original child receipt');
+select is((select count(*) from foreman_preparation source
+  join internal.factory_workflow_delegations child on child.root_session_id=source.session_id),1::bigint,
+  'the authored Foreman route creates exactly one child');
+select is((select public.finish_factory_workflow_authoring_dispatch(session_id,run_id,pg_temp.op651_id(234),
+  (claim->>'generation')::bigint) from foreman_preparation cross join resumed_foreman_route_lease),'complete',
+  'the route settles once the durable Foreman plan commands are recorded');
 
 select ok(not has_function_privilege('authenticated','public.claim_factory_workflow_authoring_dispatch(uuid)','execute')
   and not has_function_privilege('authenticated','public.finish_factory_workflow_authoring_dispatch(uuid,uuid,uuid,bigint)','execute'),
