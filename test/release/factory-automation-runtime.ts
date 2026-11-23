@@ -57,8 +57,8 @@ for (const endpoint of [appUrl, supabaseUrl, databaseUrl]) {
 const admin = localOutcomeClient(supabaseUrl, serviceKey);
 const shutdown = new AbortController();
 const stop = () => shutdown.abort(new Error("M12 runtime qualification interrupted."));
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
 type Broker = Awaited<ReturnType<typeof startLinearFixture>>;
 type Counts = Record<string, number>;
 type NativeCounts = Record<keyof AutomationInputScope["rules"], Counts>;
@@ -210,49 +210,78 @@ async function waitForNode(isRunning: () => boolean, ready: () => boolean | Prom
   throw new Error("Node maintenance did not settle the expected M12 receipts.");
 }
 
-function hasProcessGroup(pid: number) {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
-    throw error;
+function startFixtureProcess(args: string[], env: NodeJS.ProcessEnv, group = false) {
+  const child = spawn(process.execPath, args, { env, detached: group, stdio: "inherit" });
+  let closed = false;
+  const running = () => !closed && child.exitCode === null && child.signalCode === null;
+  const finished = new Promise<number>((complete) => {
+    child.once("error", () => {
+      closed = true;
+      complete(1);
+    });
+    child.once("close", (code) => {
+      closed = true;
+      complete(code ?? 1);
+    });
+  });
+  function signal(value: NodeJS.Signals) {
+    if (!running()) return;
+    if (group && child.pid) {
+      try {
+        process.kill(-child.pid, value);
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          !("code" in error) ||
+          (error.code !== "ESRCH" && error.code !== "EPERM")
+        ) {
+          throw error;
+        }
+      }
+    }
+    child.kill(value);
   }
-}
-
-async function stopProcessGroup(pid: number | undefined) {
-  if (!pid || !hasProcessGroup(pid)) return;
-  process.kill(-pid, "SIGTERM");
-  const deadline = Date.now() + 12_000;
-  while (Date.now() < deadline && hasProcessGroup(pid)) await delay(100);
-  if (hasProcessGroup(pid)) {
-    process.kill(-pid, "SIGKILL");
-    throw new Error("An isolated M12 worker did not finish shutting down.");
-  }
+  return {
+    running,
+    finished,
+    async stop() {
+      signal("SIGTERM");
+      const stopped = await Promise.race([
+        finished.then(() => true),
+        delay(12_000, false, { ref: false }),
+      ]);
+      if (stopped) return;
+      signal("SIGKILL");
+      await finished;
+      throw new Error("An isolated M12 worker did not finish shutting down.");
+    },
+  };
 }
 
 async function withNodeDaemon<T>(broker: Broker, run: (isRunning: () => boolean) => Promise<T>) {
   shutdown.signal.throwIfAborted();
-  const child = spawn("pnpm", ["worker"], {
-    env: {
+  const worker = startFixtureProcess(
+    [
+      "--import",
+      "./scripts/install-crash-handlers.mjs",
+      "--import",
+      "./scripts/register-server-only.mjs",
+      "--import",
+      "tsx",
+      "src/worker/index.ts",
+    ],
+    {
       ...process.env,
       NODE_OPTIONS: "--import ./test/release/factory-automation-runtime-fetch.mjs",
       WALLIE_M12_LINEAR_ENDPOINT: broker.endpoint,
       WALLIE_SANDBOX_IMPL: "fake",
     },
-    detached: true,
-    stdio: "inherit",
-  });
-  let exited = false;
-  const markExited = () => {
-    exited = true;
-  };
-  child.once("exit", markExited);
-  child.once("error", markExited);
+  );
   try {
-    return await run(() => !exited);
+    return await run(worker.running);
   } finally {
-    await stopProcessGroup(child.pid);
+    await worker.stop();
   }
 }
 
@@ -348,8 +377,7 @@ async function runNative(
       },
     }),
   };
-  const child = spawn(
-    process.execPath,
+  const worker = startFixtureProcess(
     [
       resolve("node_modules/vitest/vitest.mjs"),
       "run",
@@ -357,23 +385,24 @@ async function runNative(
       "--config",
       "cloudflare/vitest.config.mts",
     ],
-    {
-      env: { ...process.env, WALLIE_FACTORY_AUTOMATION_RUNTIME_FIXTURE: JSON.stringify(witness) },
-      detached: true,
-      signal: shutdown.signal,
-      stdio: "inherit",
-      timeout: 120_000,
-    },
+    { ...process.env, WALLIE_FACTORY_AUTOMATION_RUNTIME_FIXTURE: JSON.stringify(witness) },
+    true,
   );
+  const timeout = new AbortController();
   try {
-    await new Promise<void>((complete, fail) => {
-      child.once("error", fail);
-      child.once("exit", (code) =>
-        code === 0 ? complete() : fail(new Error("Native M12 maintenance failed.")),
-      );
-    });
+    const exit = await Promise.race([
+      worker.finished,
+      delay(120_000, undefined, {
+        ref: false,
+        signal: AbortSignal.any([shutdown.signal, timeout.signal]),
+      }).then(() => {
+        throw new Error("Native M12 maintenance timed out.");
+      }),
+    ]);
+    assert.equal(exit, 0, "Native M12 maintenance failed.");
   } finally {
-    await stopProcessGroup(child.pid);
+    timeout.abort();
+    await worker.stop();
   }
 }
 

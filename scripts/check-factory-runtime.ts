@@ -235,8 +235,8 @@ async function runFactoryRuntime() {
         },
       );
       const stopRuntime = () => runtime.kill("SIGTERM");
-      process.once("SIGINT", stopRuntime);
-      process.once("SIGTERM", stopRuntime);
+      process.on("SIGINT", stopRuntime);
+      process.on("SIGTERM", stopRuntime);
       try {
         process.exitCode = await new Promise<number>((finished, failed) => {
           runtime.once("error", failed);
