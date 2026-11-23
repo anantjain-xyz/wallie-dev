@@ -412,10 +412,19 @@ export async function submitFactoryWorkflowRouteProposal(
     : routeDecisionProgress(data);
 }
 
+function boundedWorkflowDelegationText(maxLength: number) {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .refine((text) => text.length <= maxLength * 2 && [...text].length <= maxLength)
+    .refine(isFactoryDefinitionText);
+}
+
 const workflowDelegationRequestSchema = z
   .object({
-    title: z.string().trim().min(1).max(200).refine(isFactoryDefinitionText),
-    promptMd: z.string().trim().min(1).max(20_000).refine(isFactoryDefinitionText),
+    title: boundedWorkflowDelegationText(200),
+    promptMd: boundedWorkflowDelegationText(20_000),
   })
   .strict();
 

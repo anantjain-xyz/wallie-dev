@@ -142,8 +142,22 @@ it("sends exact work, source and owned occurrence pins and returns the same nati
   expect(submissions).toEqual([expected, expected]);
 });
 
+it("accepts Unicode work text at the database character limits", async () => {
+  const { admin, pin, rpc } = fixture();
+  const work = { title: "🧱".repeat(200), promptMd: "🧱".repeat(20_000) };
+  expect(await admitFactoryWorkflowDelegatedSession(admin, pin, work)).toEqual({
+    status: "delegated",
+    receipt: { ...creationReceipt, created: true },
+  });
+  expect(rpc).toHaveBeenCalledWith(
+    "admit_factory_workflow_delegated_session",
+    expect.objectContaining({ p_title: work.title, p_prompt_md: work.promptMd }),
+  );
+});
+
 it.each([
   { ...delegate, title: " " },
+  { ...delegate, title: "🧱".repeat(201) },
   { ...delegate, promptMd: "a".repeat(20_001) },
   { ...delegate, promptMd: "contains\u0000nul" },
   { ...delegate, sourceCheckpointRunId: uuid(30), definitionRevisionId: uuid(31) },

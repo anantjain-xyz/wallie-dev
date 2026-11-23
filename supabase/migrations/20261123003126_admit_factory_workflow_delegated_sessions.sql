@@ -706,6 +706,47 @@ revoke all on table internal.factory_workflow_delegations from public, anon, aut
 create index factory_workflow_delegations_parent_idx on internal.factory_workflow_delegations(parent_session_id);
 create index factory_workflow_delegations_source_idx on internal.factory_workflow_delegations(source_checkpoint_run_id);
 
+-- The caller holds the root and execution locks. Walk exact immutable parents,
+-- then lock sessions from the root down through the last ancestor.
+create function internal.recheck_factory_workflow_delegation_lineage(
+  p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_last_ancestor_id uuid
+) returns boolean language plpgsql set search_path = '' as $$
+declare
+  ancestor_ids uuid[];
+  ancestor_id uuid;
+  ancestor public.sessions;
+begin
+  with recursive lineage(session_id, distance) as (
+    select p_last_ancestor_id, 0
+    union all
+    select marker.parent_session_id, lineage.distance + 1
+    from lineage join internal.factory_workflow_delegations marker
+      on (marker.root_session_id, marker.workspace_id, marker.factory_id, marker.child_session_id) =
+        (p_root_session_id, p_workspace_id, p_factory_id, lineage.session_id)
+    where lineage.session_id <> p_root_session_id and lineage.distance < 1023
+  )
+  select array_agg(lineage.session_id order by lineage.distance desc) into ancestor_ids from lineage;
+  if ancestor_ids[1] is distinct from p_root_session_id then return false; end if;
+
+  foreach ancestor_id in array ancestor_ids loop
+    select session.* into ancestor from public.sessions session
+    join public.session_factory_admission_inputs pin
+      on (pin.session_id, pin.workspace_id, pin.factory_id, pin.definition_revision_id) =
+        (session.id, session.workspace_id, session.factory_id, session.factory_definition_revision_id)
+    where (session.id, session.workspace_id, session.factory_id) = (ancestor_id, p_workspace_id, p_factory_id)
+      and session.execute_pinned_definition and session.execution_purpose = 'production'
+      and session.phase_status <> 'rejected' and (session.archived_at is null or session.phase_status = 'approved')
+      and pin.execution_grant_id is not null
+    for no key update of session;
+    if not found then return false; end if;
+    perform internal.recheck_session_execution_grant(ancestor);
+  end loop;
+  return true;
+end;
+$$;
+revoke all on function internal.recheck_factory_workflow_delegation_lineage(uuid, uuid, uuid, uuid)
+  from public, anon, authenticated, service_role;
+
 -- Grants and their effective definition scopes both bound a child. A grant can
 -- be wider than the immutable definition that actually exercises it.
 create function internal.factory_workflow_delegated_scope_is_subset(
@@ -814,18 +855,13 @@ begin
     raise exception 'The parent does not own the routed occurrence.' using errcode = '42501';
   end if;
 
-  select session.* into strict root from public.sessions session
-  where (session.id, session.workspace_id, session.factory_id) = (p_root_session_id, p_workspace_id, p_factory_id);
-  select session.* into parent from public.sessions session
-  where (session.id, session.workspace_id, session.factory_id) = (p_parent_session_id, p_workspace_id, p_factory_id)
-    and session.execute_pinned_definition and session.execution_purpose = 'production'
-    and (session.archived_at is null or session.phase_status = 'approved')
-    and session.phase_status <> 'rejected'
-  for no key update;
-  if not found or not root.execute_pinned_definition or root.execution_purpose <> 'production'
-    or root.phase_status = 'rejected' or (root.archived_at is not null and root.phase_status <> 'approved') then
+  if not internal.recheck_factory_workflow_delegation_lineage(p_root_session_id, p_workspace_id, p_factory_id, p_parent_session_id) then
     raise exception 'The root or parent is unavailable for delegation.' using errcode = 'PT409';
   end if;
+  select session.* into strict root from public.sessions session
+  where (session.id, session.workspace_id, session.factory_id) = (p_root_session_id, p_workspace_id, p_factory_id);
+  select session.* into strict parent from public.sessions session
+  where (session.id, session.workspace_id, session.factory_id) = (p_parent_session_id, p_workspace_id, p_factory_id);
   select checkpoint.repository_id into source_repository_id from public.session_git_heads head
   join public.session_git_checkpoints checkpoint
     on (checkpoint.run_id, checkpoint.session_id, checkpoint.workspace_id) = (head.checkpoint_run_id, head.session_id, head.workspace_id)
@@ -862,7 +898,6 @@ begin
     raise exception 'The child delivery policy requires a pull request that delegated children cannot publish.' using errcode = 'PT422';
   end if;
 
-  perform internal.recheck_session_execution_grant(root);
   root_definition := internal.pinned_session_execution_definition(root);
   select grant_row.* into root_grant from public.session_factory_admission_inputs pin
   join public.factory_execution_grants grant_row on (grant_row.workspace_id, grant_row.factory_id, grant_row.id, grant_row.version) =
@@ -872,7 +907,6 @@ begin
     parent_definition := root_definition;
     parent_grant := root_grant;
   else
-    perform internal.recheck_session_execution_grant(parent);
     parent_definition := internal.pinned_session_execution_definition(parent);
     select grant_row.* into parent_grant from public.session_factory_admission_inputs pin
     join public.factory_execution_grants grant_row on (grant_row.workspace_id, grant_row.factory_id, grant_row.id, grant_row.version) =
@@ -1401,6 +1435,11 @@ begin
     return;
   end if;
 
+  if exists (select 1 from internal.factory_workflow_delegations marker
+    where (marker.child_session_id, marker.workspace_id, marker.factory_id) =
+      (p_root_session_id, p_workspace_id, p_factory_id)) then
+    raise exception 'A delegated child cannot start an independent workflow graph.' using errcode = 'PT409';
+  end if;
   if exists (select 1 from public.sessions session
     where session.id = p_root_session_id and session.archived_at is not null) then
     raise exception 'The graph revision must match an active session definition pin.' using errcode = 'PT409';
@@ -2018,6 +2057,7 @@ create or replace function internal.start_session_job_attempt(
 ) returns uuid language plpgsql security definer set search_path='' as $$
 declare control internal.git_continuity_release_control; job public.agent_jobs; session public.sessions; execution_id uuid; routing jsonb;
   budget_root_id uuid;
+  budget_parent_id uuid;
   budget_execution internal.factory_workflow_executions;
   budget_root public.sessions;
 begin
@@ -2039,13 +2079,21 @@ begin
   if budget_root_id is not null then
     perform internal.lock_factory_workflow_root(budget_root_id, session.workspace_id, session.factory_id);
     select * into strict budget_root from public.sessions where id = budget_root_id;
-    if (budget_root.id <> session.id and budget_root.phase_status = 'rejected') or (
-      budget_root.archived_at is not null and budget_root.phase_status <> 'approved'
-    ) then return null; end if;
-    perform internal.recheck_session_execution_grant(budget_root);
+    if budget_root.archived_at is not null and budget_root.phase_status <> 'approved' then return null; end if;
     select workflow.* into budget_execution from internal.factory_workflow_executions workflow
     where workflow.root_session_id = budget_root_id for no key update;
-    if not found or not internal.reserve_factory_workflow_attempt(
+    if not found then return null; end if;
+    if budget_root.id = session.id then
+      perform internal.recheck_session_execution_grant(budget_root);
+    else
+      select marker.parent_session_id into budget_parent_id from internal.factory_workflow_delegations marker
+      where (marker.root_session_id, marker.workspace_id, marker.factory_id, marker.child_session_id) =
+        (budget_root_id, session.workspace_id, session.factory_id, session.id);
+      if not found or not internal.recheck_factory_workflow_delegation_lineage(
+        budget_root_id, session.workspace_id, session.factory_id, budget_parent_id
+      ) then return null; end if;
+    end if;
+    if not internal.reserve_factory_workflow_attempt(
       budget_execution, session.id, p_job_id, p_attempt_count
     ) then return null; end if;
   end if;
