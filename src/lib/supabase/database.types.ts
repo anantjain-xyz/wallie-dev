@@ -10352,6 +10352,24 @@ export type Database = {
               workspace_id: string
             }[]
           }
+      admit_factory_workflow_branch_slot: {
+        Args: {
+          p_branch_edge_id: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_group_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          child_session_id: string
+          created: boolean
+          job_id: string
+          run_id: string
+          target_occurrence_id: string
+        }[]
+      }
       admit_factory_workflow_delegated_session: {
         Args: {
           p_expected_generation: number
@@ -10444,6 +10462,17 @@ export type Database = {
           p_factory_id: string
           p_publication_id: string
           p_values: Json
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      advance_factory_workflow_branch_occurrence: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_occurrence_id: string
+          p_ownership_token: string
+          p_root_session_id: string
           p_workspace_id: string
         }
         Returns: Json
@@ -12367,6 +12396,7 @@ export type Database = {
         }
         Returns: Json
       }
+      dispatch_next_factory_workflow_branch: { Args: never; Returns: boolean }
       enable_factory_benchmark_live_inference: {
         Args: {
           p_attempt_count: number
@@ -14129,6 +14159,21 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      open_factory_workflow_branch_group: {
+        Args: {
+          p_branch_occurrence_id: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_source_checkpoint_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          group_id: string
+        }[]
+      }
       persist_codex_auth_json: {
         Args: {
           new_account_email: string
@@ -14817,6 +14862,15 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_workflow_branch_group: {
+        Args: {
+          p_factory_id: string
+          p_group_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_workflow_delegated_scope: {
         Args: {
           p_attempt_count: number
@@ -14957,6 +15011,25 @@ export type Database = {
         Returns: {
           created: boolean
           receipt_id: string
+        }[]
+      }
+      record_factory_workflow_branch_outcome: {
+        Args: {
+          p_attempt_count: number
+          p_branch_edge_id: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_group_id: string
+          p_job_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          outcome: Database["public"]["Enums"]["factory_workflow_node_outcome"]
+          outcome_id: string
         }[]
       }
       record_factory_workflow_command_result: {
