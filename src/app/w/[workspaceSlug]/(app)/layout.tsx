@@ -29,14 +29,14 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
     <AppShell
       canManageFactoryDefinition={isWorkspaceOperator(currentMember)}
       canManageGovernance={factories.some(({ canManage }) => canManage)}
-      canManageWorkflows={factories.some(
-        ({ canManage, status }) => canManage && status === "active",
-      )}
       creationFactory={defaultFactory ? { id: defaultFactory.id, name: defaultFactory.name } : null}
       onboarding={onboarding}
       viewerAvatarUrl={viewerAvatarUrl}
       viewerEmail={user.email ?? null}
       viewerId={user.id}
+      workflowFactoryIds={factories
+        .filter(({ canManage, status }) => canManage && status === "active")
+        .map(({ id }) => id)}
       workspace={workspace}
       workspaceAvatarUrl={workspaceAvatarUrl}
     >

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import type { EditorDiagnostic } from "@/features/factory-definition/editor-requests";
@@ -96,7 +96,12 @@ export function WorkflowOptions({
   return (
     <Field {...field}>
       {(attributes) => (
-        <Select value={value} onValueChange={change}>
+        <Select
+          value={value}
+          onValueChange={(next) => {
+            if (next !== value) change(next);
+          }}
+        >
           <SelectTrigger className="w-full" {...attributes} fallbackLabel={label}>
             <span className="min-w-0 truncate">{label}</span>
           </SelectTrigger>
@@ -120,10 +125,12 @@ export function WorkflowOptions({
 function TextField({
   value,
   change,
+  onBlur,
   ...field
 }: FieldProps & {
   value: string;
   change: (value: string) => void;
+  onBlur?: () => void;
 }) {
   return (
     <Field {...field}>
@@ -134,6 +141,7 @@ function TextField({
           value={value}
           maxLength={96}
           onChange={(event) => change(event.currentTarget.value)}
+          onBlur={onBlur}
         />
       )}
     </Field>
@@ -362,9 +370,26 @@ export function NodeFields({
   choices: WorkflowEditorChoices;
   index: number;
 }) {
+  const [rejectedRename, setRejectedRename] = useState<{
+    index: number;
+    id: string;
+    attempted: string;
+  } | null>(null);
   const node = graph.nodes[index];
   if (!node) return null;
   const path = ["nodes", index];
+  const idPath = [...path, "id"];
+  const rejectedId =
+    rejectedRename?.index === index && rejectedRename.id === node.id
+      ? rejectedRename.attempted
+      : undefined;
+  const renameIssue =
+    rejectedId === undefined
+      ? null
+      : {
+          path: idPath,
+          message: `Step ID “${rejectedId}” is already in use. Choose a unique ID.`,
+        };
   const update = (next: WorkflowNodeDraft) => edit(setEditorNode(graph, index, next));
   const setProfile = (profile?: { definitionRevisionId: string; definitionDigest: string }) => {
     const policy = graph.delegationPolicy ?? defaultDelegationPolicy;
@@ -377,10 +402,19 @@ export function NodeFields({
     <div className="grid gap-4 sm:grid-cols-2">
       <TextField
         label="Step ID"
-        path={[...path, "id"]}
-        diagnostics={diagnostics}
-        value={node.id}
-        change={(id) => update({ ...node, id })}
+        path={idPath}
+        diagnostics={renameIssue ? [renameIssue, ...diagnostics] : diagnostics}
+        value={rejectedId ?? node.id}
+        onBlur={() => setRejectedRename(null)}
+        change={(id) => {
+          const next = setEditorNode(graph, index, { ...node, id });
+          if (next === graph) {
+            setRejectedRename({ index, id: node.id, attempted: id });
+            return;
+          }
+          setRejectedRename(null);
+          edit(next);
+        }}
       />
       <WorkflowOptions
         label="Step kind"

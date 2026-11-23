@@ -10,11 +10,16 @@ import {
 import type {
   WorkflowAuthoringCommand,
   WorkflowAuthoringSnapshot,
+  WorkflowEditorCatalog,
+  WorkflowReferenceKind,
+  WorkflowReferencePage,
 } from "@/lib/factory-workflows/authoring-contracts";
 import { workspaceWorkflowDetailPath, workspaceWorkflowsPath } from "@/lib/routes";
 
 import {
-  loadWorkflowAuthoringSnapshot,
+  loadCurrentWorkflowEditor,
+  loadMoreWorkflowReferences,
+  sameWorkflowEditorBase,
   submitWorkflowAuthoringCommand,
   workflowDraftNeedsRebase,
 } from "./authoring-client";
@@ -34,7 +39,6 @@ import {
   nextEditorId,
   nodeLabels,
   workflowLayers,
-  type WorkflowEditorChoices,
   type WorkflowGraphDraft,
 } from "./editor-graph";
 
@@ -213,31 +217,48 @@ function diagnosticLabel(path: EditorDiagnostic["path"], graph: WorkflowGraphDra
 }
 
 type Notice = { kind: "status" | "alert"; message: string };
-type Action = "save" | "publish" | "reload";
+type DraftAction = "save" | "publish" | "reload";
+const catalogLabels = {
+  prompts: "prompt revisions",
+  approvers: "approvers",
+  profiles: "execution profiles",
+} satisfies Record<WorkflowReferenceKind, string>;
+
+function appendReferencePage(choices: WorkflowEditorCatalog, page: WorkflowReferencePage) {
+  const seen = new Set(choices[page.catalog].map(({ id }) => id));
+  return {
+    ...choices,
+    [page.catalog]: [...choices[page.catalog], ...page.items.filter(({ id }) => !seen.has(id))],
+    nextOffsets: { ...choices.nextOffsets, [page.catalog]: page.nextOffset },
+  };
+}
 
 export function WorkflowEditor({
   initial,
   endpoint,
   workspaceSlug,
   factoryId,
-  choices,
+  choices: initialChoices,
 }: {
   initial: WorkflowAuthoringSnapshot;
   endpoint: string;
   workspaceSlug: string;
   factoryId: string;
-  choices: WorkflowEditorChoices;
+  choices: WorkflowEditorCatalog;
 }) {
   const historical = initial.selectedDraftId !== null;
   const initialValue = initial.selectedDraftGraph ?? initial.graph ?? initialGraph;
   const [graph, setGraph] = useState<WorkflowGraphDraft>(initialValue);
-  const [snapshot, setSnapshot] = useState(initial);
+  const [{ snapshot, choices }, setEditorData] = useState({
+    snapshot: initial,
+    choices: initialChoices,
+  });
   const [view, setView] = useState<"Graph" | "Ordered list">("Graph");
   const [nodeIndex, setNodeIndex] = useState(0);
   const [edgeIndex, setEdgeIndex] = useState(0);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [action, setAction] = useState<Action | null>(null);
+  const [action, setAction] = useState<DraftAction | WorkflowReferenceKind | null>(null);
   const [hasConflict, setHasConflict] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const commandRef = useRef<WorkflowAuthoringCommand | null>(null);
@@ -251,6 +272,14 @@ export function WorkflowEditor({
   const currentDraftId = snapshot.draftId;
   const canPublish =
     !rebase && !dirty && !!currentDraftId && currentDraftId !== snapshot.publishedDraftId;
+  const selectedNode = graph.nodes[nodeIndex];
+  const stepCatalogs: WorkflowReferenceKind[] = [];
+  if (selectedNode?.kind === "agent" || selectedNode?.kind === "route") {
+    stepCatalogs.push("prompts", "profiles");
+  }
+  if (selectedNode?.kind === "human-gate" && !selectedNode.anyoneCanApprove) {
+    stepCatalogs.push("approvers");
+  }
 
   useEffect(() => {
     if (!focusId) return;
@@ -277,7 +306,31 @@ export function WorkflowEditor({
     else setFocusId(next);
   }
 
-  async function run(nextAction: Action) {
+  async function loadMoreReferences(catalog: WorkflowReferenceKind) {
+    const offset = choices.nextOffsets[catalog];
+    if (submitting.current || offset === null) return;
+    submitting.current = true;
+    setAction(catalog);
+    setNotice(null);
+    try {
+      const page = await loadMoreWorkflowReferences(endpoint, catalog, offset);
+      setEditorData((current) => ({
+        ...current,
+        choices: appendReferencePage(current.choices, page),
+      }));
+      setNotice({ kind: "status", message: `More ${catalogLabels[catalog]} loaded.` });
+    } catch (failure) {
+      setNotice({
+        kind: "alert",
+        message: failure instanceof Error ? failure.message : "Could not load more references.",
+      });
+    } finally {
+      submitting.current = false;
+      setAction(null);
+    }
+  }
+
+  async function run(nextAction: DraftAction) {
     if (submitting.current || (nextAction !== "reload" && readOnly)) return;
     submitting.current = true;
     setAction(nextAction);
@@ -286,9 +339,13 @@ export function WorkflowEditor({
     setFocusId(null);
     try {
       if (nextAction === "reload") {
-        const latest = await loadWorkflowAuthoringSnapshot(endpoint);
-        setSnapshot(latest);
-        setGraph(latest.graph ?? initialGraph);
+        const latest = await loadCurrentWorkflowEditor(endpoint);
+        setEditorData((current) =>
+          sameWorkflowEditorBase(current.snapshot.baseDefinition, latest.snapshot.baseDefinition)
+            ? { ...current, snapshot: latest.snapshot }
+            : latest,
+        );
+        setGraph(latest.snapshot.graph ?? initialGraph);
         setNodeIndex(0);
         setEdgeIndex(0);
         setHasConflict(false);
@@ -324,12 +381,15 @@ export function WorkflowEditor({
         setNotice({
           kind: "alert",
           message:
-            "A newer draft or publication is current. Load the current draft before editing again.",
+            "The draft, publication, or base definition changed. Load the current draft before editing again.",
         });
         return;
       }
       const savedGraph = result.snapshot.graph ?? initialGraph;
-      setSnapshot({ ...result.snapshot, selectedDraftGraph: null, selectedDraftId: null });
+      setEditorData((current) => ({
+        ...current,
+        snapshot: { ...result.snapshot, selectedDraftGraph: null, selectedDraftId: null },
+      }));
       setGraph(savedGraph);
       setNodeIndex(
         Math.max(
@@ -570,6 +630,25 @@ export function WorkflowEditor({
           <fieldset disabled={readOnly || !!action}>
             <NodeFields {...editorProps} index={nodeIndex} choices={choices} />
           </fieldset>
+          {!readOnly ? (
+            <div className="mt-3 flex flex-wrap gap-2 empty:hidden">
+              {stepCatalogs
+                .filter((catalog) => choices.nextOffsets[catalog] !== null)
+                .map((catalog) => (
+                  <button
+                    key={catalog}
+                    type="button"
+                    className="ui-button"
+                    disabled={!!action}
+                    onClick={() => void loadMoreReferences(catalog)}
+                  >
+                    {action === catalog
+                      ? `Loading ${catalogLabels[catalog]}…`
+                      : `Load more ${catalogLabels[catalog]}`}
+                  </button>
+                ))}
+            </div>
+          ) : null}
         </section>
       </div>
 

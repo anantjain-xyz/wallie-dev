@@ -221,10 +221,11 @@ function CreateSessionDialogBody({
   const [prompt, setPrompt] = useState("");
   const [draftSpecification, setDraftSpecification] = useState(false);
   const [workflowActivationId, setWorkflowActivationId] = useState("");
-  const [workflowOptions, setWorkflowOptions] = useState<
-    z.output<typeof intakeOptionsSchema>["options"]
-  >([]);
-  const [workflowOptionsError, setWorkflowOptionsError] = useState(false);
+  const [workflowCatalog, setWorkflowCatalog] = useState<{
+    factoryId: string;
+    definitionDigest: string;
+    options: z.output<typeof intakeOptionsSchema>["options"] | null;
+  } | null>(null);
   const [workflowOptionsRevision, setWorkflowOptionsRevision] = useState(0);
   const [imageDrafts, setImageDrafts] = useState<SessionImageDraft[]>([]);
   const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
@@ -243,6 +244,14 @@ function CreateSessionDialogBody({
   const repositorySnapshot = useSessionRepositories(repositoryCacheKey);
   const factoryDefinitionDigest = repositorySnapshot.data?.factoryDefinitionDigest;
   const canDraftSpecification = repositorySnapshot.data?.canDraftSpecification === true;
+  const currentWorkflowCatalog =
+    workflowCatalog?.factoryId === creationFactoryId &&
+    workflowCatalog?.definitionDigest === factoryDefinitionDigest &&
+    !repositorySnapshot.isStale
+      ? workflowCatalog
+      : null;
+  const workflowOptions = currentWorkflowCatalog?.options ?? [];
+  const workflowOptionsError = currentWorkflowCatalog?.options === null;
   const workflow = workflowOptions.find((option) => option.activationId === workflowActivationId);
   const workflowSelectionUnavailable = Boolean(workflowActivationId && !workflow);
 
@@ -257,14 +266,20 @@ function CreateSessionDialogBody({
         if (!response.ok) throw new Error("Workflow options are unavailable.");
         const result = intakeOptionsSchema.parse(await response.json());
         if (!controller.signal.aborted) {
-          setWorkflowOptions(result.options);
-          setWorkflowOptionsError(false);
+          setWorkflowCatalog({
+            factoryId: creationFactoryId,
+            definitionDigest: factoryDefinitionDigest,
+            options: result.options,
+          });
         }
       })
       .catch(() => {
         if (!controller.signal.aborted) {
-          setWorkflowOptions([]);
-          setWorkflowOptionsError(true);
+          setWorkflowCatalog({
+            factoryId: creationFactoryId,
+            definitionDigest: factoryDefinitionDigest,
+            options: null,
+          });
         }
       });
     return () => controller.abort();
@@ -757,7 +772,7 @@ function CreateSessionDialogBody({
         invalidateSessionRepositoryCache(workspaceId);
         if (attempt.input.routingOverride) invalidateOverrideChoice();
         if (attempt.input.workflowSelection) {
-          setWorkflowOptions([]);
+          setWorkflowCatalog(null);
           setWorkflowOptionsRevision((revision) => revision + 1);
         }
       }
@@ -1062,8 +1077,8 @@ function CreateSessionDialogBody({
                     unconfirmed ||
                     draftSpecification ||
                     overrideChoice !== null ||
-                    !factoryDefinitionDigest ||
-                    repositorySnapshot.isStale
+                    ((!factoryDefinitionDigest || repositorySnapshot.isStale) &&
+                      !workflowActivationId)
                   }
                   emptyOption={defaultWorkflowOption}
                   label="Workflow"

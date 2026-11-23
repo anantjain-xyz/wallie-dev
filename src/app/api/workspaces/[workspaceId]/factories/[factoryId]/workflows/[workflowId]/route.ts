@@ -4,17 +4,34 @@ import { mutateWorkflowAuthoring, readWorkflowAuthoring } from "@/lib/factory-wo
 import {
   workflowAuthoringCommandSchema,
   workflowAuthoringPathSchema,
+  workflowReferenceKindSchema,
 } from "@/lib/factory-workflows/authoring-contracts";
 import {
   readWorkflowAuthoringCommand,
   workflowAuthoringError,
   workflowAuthoringResponse,
 } from "@/lib/factory-workflows/authoring-http";
+import {
+  loadWorkflowEditorChoices,
+  loadWorkflowReferencePage,
+} from "@/lib/factory-workflows/reference-catalog";
 import { resolveFactoryRouteContext } from "@/lib/factories/route-context";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type Context = { params: Promise<{ workspaceId: string; factoryId: string; workflowId: string }> };
-const querySchema = z.strictObject({ draftId: z.string().uuid().toLowerCase().optional() });
+const draftIdSchema = z.string().uuid().toLowerCase().optional();
+const querySchema = z.union([
+  z.strictObject({ draftId: draftIdSchema }),
+  z.strictObject({ draftId: draftIdSchema, includeChoices: z.literal("true") }),
+  z.strictObject({
+    catalog: workflowReferenceKindSchema,
+    offset: z
+      .string()
+      .regex(/^\d{1,10}$/)
+      .transform(Number)
+      .pipe(z.number().int().nonnegative().max(2_147_483_647)),
+  }),
+]);
 
 export async function GET(request: Request, { params }: Context) {
   const ids = workflowAuthoringPathSchema.safeParse(await params);
@@ -26,14 +43,22 @@ export async function GET(request: Request, { params }: Context) {
   try {
     const context = await resolveFactoryRouteContext(Promise.resolve(ids.data));
     if (!context.ok) return context.response;
+    const scope = { ...ids.data, supabase: context.access.supabase };
     const snapshot = await readWorkflowAuthoring(
-      context.access.supabase,
+      scope.supabase,
       ids.data,
-      selection.data.draftId,
+      "draftId" in selection.data ? selection.data.draftId : undefined,
     );
-    return snapshot
-      ? workflowAuthoringResponse(snapshot)
-      : workflowAuthoringResponse({ error: "Workflow draft not found." }, 404);
+    if (!snapshot) return workflowAuthoringResponse({ error: "Workflow draft not found." }, 404);
+    if ("catalog" in selection.data) {
+      const { catalog, offset } = selection.data;
+      return workflowAuthoringResponse(await loadWorkflowReferencePage(scope, catalog, offset));
+    }
+    if ("includeChoices" in selection.data) {
+      const choices = await loadWorkflowEditorChoices(scope, snapshot.baseDefinition);
+      return workflowAuthoringResponse({ snapshot, choices });
+    }
+    return workflowAuthoringResponse(snapshot);
   } catch (error) {
     return workflowAuthoringError(error);
   }

@@ -112,6 +112,9 @@ export function setEditorNode(graph: WorkflowGraphDraft, index: number, node: Wo
   const prior = graph.nodes[index];
   if (!prior) return graph;
   const renamed = prior.id !== node.id;
+  if (renamed && graph.nodes.some(({ id }, position) => position !== index && id === node.id)) {
+    return graph;
+  }
   const alias = (id: string) => (renamed && id === prior.id ? node.id : id);
   const next = {
     ...graph,
@@ -132,9 +135,7 @@ export function setEditorNode(graph: WorkflowGraphDraft, index: number, node: Wo
       };
       return [[alias(id), updated] as const];
     });
-    next.routePolicy = routes.length
-      ? { ...graph.routePolicy, nodes: Object.fromEntries(routes) }
-      : undefined;
+    next.routePolicy = { ...graph.routePolicy, nodes: Object.fromEntries(routes) };
   }
   if (graph.delegationPolicy) {
     const targets = Object.entries(graph.delegationPolicy.targets).flatMap(([id, target]) =>

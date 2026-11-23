@@ -10,6 +10,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { CreateSessionDialogLoading } from "@/components/app-shell/shell-header";
 import {
+  getSessionRepositorySnapshot,
   invalidateSessionRepositoryCache,
   loadSessionRepositories,
   resetSessionRepositoryCacheForTests,
@@ -958,6 +959,71 @@ describe("CreateSessionDialog accessibility", () => {
     expect(clientMocks.createSessionFromClient.mock.calls[0][0]).not.toHaveProperty(
       "draftSpecification",
     );
+  });
+
+  it("can clear a selected workflow when refreshed options lose the active definition", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "00000000-0000-4000-8000-000000000009";
+    const creationFactoryId = "00000000-0000-4000-8000-000000000010";
+    const published = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Published workflow",
+    };
+    const options = draftOptions();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...options,
+      factoryDefinitionDigest: "d".repeat(64),
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ options: [published] }));
+
+    try {
+      render(
+        <OverlayProvider>
+          <CreateSessionDialog
+            creationFactoryId={creationFactoryId}
+            onClose={vi.fn()}
+            open
+            userId="user-1"
+            workspaceId={workspaceId}
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>,
+      );
+      await user.type(screen.getByLabelText("Prompt"), "Keep this draft");
+      const selector = await screen.findByRole("combobox", { name: "Workflow" });
+      await user.click(selector);
+      await user.click(await screen.findByRole("option", { name: published.label }));
+      expect(selector).toHaveTextContent(published.label);
+
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(options);
+      act(() => invalidateSessionRepositoryCache(workspaceId));
+      expect(await screen.findByText(/The selected workflow changed/)).toBeVisible();
+      await waitFor(() =>
+        expect(getSessionRepositorySnapshot({ userId: "user-1", workspaceId })).toMatchObject({
+          data: options,
+          isStale: false,
+        }),
+      );
+      await user.click(selector);
+      expect(screen.queryByRole("option", { name: published.label })).toBeNull();
+      await user.click(await screen.findByRole("option", { name: "Default pipeline" }));
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+
+      await waitFor(() => expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce());
+      const [input] = clientMocks.createSessionFromClient.mock.calls[0];
+      expect(input).toMatchObject({ promptMd: "Keep this draft" });
+      expect(input).not.toHaveProperty("workflowSelection");
+      expect(input).not.toHaveProperty("factoryDefinitionDigest");
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   it("blocks keyboard submission while cached repository options are stale", async () => {

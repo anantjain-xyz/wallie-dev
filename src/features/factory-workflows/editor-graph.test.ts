@@ -93,6 +93,7 @@ describe("workflow editing", () => {
       fallback: { kind: "route", destinationId: "checkpoint" },
       minimumConfidence: 0.8,
     });
+    expect(setEditorNode(governed, 0, { ...graph.nodes[0], id: "route" })).toBe(governed);
     const renamed = setEditorNode(governed, 0, {
       id: "review",
       kind: "deterministic",
@@ -117,5 +118,28 @@ describe("workflow editing", () => {
         nodes: { route: { allowedDestinationIds: [], fallback: { kind: "clarification" } } },
       },
     });
+  });
+
+  it("preserves the graph-wide visit and loop limits after removing its final route", () => {
+    const graph: WorkflowGraphDraft = {
+      ...initialGraph,
+      nodes: [...initialGraph.nodes, makeNode("route", "route")],
+      routePolicy: {
+        nodes: {
+          route: {
+            minimumConfidence: 0.8,
+            allowedDestinationIds: [],
+            fallback: { kind: "clarification" },
+          },
+        },
+        maxNodeVisits: 11,
+        maxLoopTraversals: 3,
+      },
+    };
+    const expectedPolicy = { nodes: {}, maxNodeVisits: 11, maxLoopTraversals: 3 };
+    expect(deleteEditorNode(graph, 1).routePolicy).toEqual(expectedPolicy);
+    expect(setEditorNode(graph, 1, makeNode("route", "deterministic")).routePolicy).toEqual(
+      expectedPolicy,
+    );
   });
 });

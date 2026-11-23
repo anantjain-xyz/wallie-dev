@@ -68,10 +68,17 @@ $$;
 
 select throws_ok($$select pg_temp.op655_save('initial',930,p_actor=>911)$$,
   '42501','Factory manager access is required.','an ordinary authenticated actor cannot save through the service broker');
-select throws_ok($$select public.save_factory_workflow_authoring_draft(p_workspace_id => workspace_id,p_factory_id => factory_id,p_actor_user_id => pg_temp.op651_id(910),p_workflow_id => workflow_id,
-  p_request_id => gen_random_uuid(),p_expected_draft_id => null,p_expected_activation_id => null,p_expected_base_activation_id => base_activation_id,p_expected_base_revision_id => revision_id,p_expected_base_digest => base_digest,p_workflow_json => '{"kind":"graph","kind":"graph"}',p_workflow_digest => repeat('a',64))
-  from op655_scope$$,'22023','Verified compiled workflow JSON is required.',
-  'native validation rejects ambiguous JSON keys and a substituted digest');
+insert into op655_graphs(label,body,digest)
+select 'duplicate',payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
+from op655_graphs graph
+cross join lateral (select '{"kind":"graph",' || substr(graph.body,2) as body) payload
+where graph.label='initial';
+insert into op655_graphs(label,body,digest)
+select 'wrong-digest',body,repeat('a',64) from op655_graphs where label='initial';
+select throws_ok($$select pg_temp.op655_save('duplicate',930)$$,'22023','Verified compiled workflow JSON is required.',
+  'native validation rejects duplicate JSON keys even with the exact digest');
+select throws_ok($$select pg_temp.op655_save('wrong-digest',930)$$,'22023','Verified compiled workflow JSON is required.',
+  'native validation rejects a substituted digest on a valid graph');
 create temp table op655_draft_first as select pg_temp.op655_save('initial',930) as result;
 select ok((select (result->>'created')::boolean and result->>'draftId' is not null from op655_draft_first),'first save appends an immutable draft');
 select is(pg_temp.op655_save('initial',930)->>'draftId',(select result->>'draftId' from op655_draft_first),

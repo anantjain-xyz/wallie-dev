@@ -8,7 +8,6 @@ import { getWorkspaceNavItems } from "@/lib/routes";
 type AppShellProps = {
   canManageFactoryDefinition?: boolean;
   canManageGovernance?: boolean;
-  canManageWorkflows?: boolean;
   creationFactory: CreationFactory | null;
   children: ReactNode;
   onboarding: OnboardingResumeState | null;
@@ -17,6 +16,7 @@ type AppShellProps = {
   viewerAvatarUrl: string | null;
   viewerEmail: string | null;
   viewerId: string;
+  workflowFactoryIds?: readonly string[];
   workspace: WorkspaceSummary;
   workspaceAvatarUrl: string | null;
 };
@@ -24,7 +24,6 @@ type AppShellProps = {
 export function AppShell({
   canManageFactoryDefinition,
   canManageGovernance,
-  canManageWorkflows,
   creationFactory,
   children,
   onboarding,
@@ -32,13 +31,14 @@ export function AppShell({
   viewerAvatarUrl,
   viewerEmail,
   viewerId,
+  workflowFactoryIds,
   workspace,
   workspaceAvatarUrl,
 }: AppShellProps) {
   const navItems = getWorkspaceNavItems(workspace.slug, {
     canManageFactoryDefinition,
     canManageGovernance,
-    canManageWorkflows,
+    canManageWorkflows: Boolean(workflowFactoryIds?.length),
   });
 
   return (
@@ -51,6 +51,7 @@ export function AppShell({
         viewerAvatarUrl={viewerAvatarUrl}
         viewerEmail={viewerEmail}
         viewerId={viewerId}
+        workflowFactoryIds={workflowFactoryIds}
         workspace={workspace}
         workspaceAvatarUrl={workspaceAvatarUrl}
       >

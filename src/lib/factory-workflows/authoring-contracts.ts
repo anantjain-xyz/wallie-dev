@@ -79,6 +79,32 @@ export const workflowPublishReceiptSchema = workflowSaveReceiptSchema.extend({
   graphRevisionId: id,
 });
 
+export const workflowReferencePageSize = 100;
+export const workflowReferenceKindSchema = z.enum(["prompts", "approvers", "profiles"]);
+const referenceChoice = z.strictObject({ id, label: z.string() });
+const profileChoice = referenceChoice.extend({ digest });
+const nextOffset = z.number().int().nonnegative().safe().nullable();
+const referenceChoices = referenceChoice.array().max(workflowReferencePageSize);
+const profileChoices = profileChoice.array().max(workflowReferencePageSize);
+export const workflowReferencePageSchema = z.discriminatedUnion("catalog", [
+  z.strictObject({ catalog: z.literal("prompts"), items: referenceChoices, nextOffset }),
+  z.strictObject({ catalog: z.literal("approvers"), items: referenceChoices, nextOffset }),
+  z.strictObject({ catalog: z.literal("profiles"), items: profileChoices, nextOffset }),
+]);
+const workflowEditorChoicesSchema = z.strictObject({
+  prompts: referenceChoices,
+  approvers: referenceChoices,
+  profiles: profileChoices,
+  grant: z.strictObject({ id, version: z.number().int().positive().safe() }).nullable(),
+  nextOffsets: z.strictObject({ prompts: nextOffset, approvers: nextOffset, profiles: nextOffset }),
+});
+export const workflowAuthoringEditorSchema = z.strictObject({
+  snapshot: workflowAuthoringSnapshotSchema,
+  choices: workflowEditorChoicesSchema,
+});
 export type WorkflowAuthoringSnapshot = z.output<typeof workflowAuthoringSnapshotSchema>;
 export type WorkflowAuthoringCommand = z.output<typeof workflowAuthoringCommandSchema>;
 export type WorkflowBaseDefinition = z.output<typeof workflowBaseDefinitionSchema>;
+export type WorkflowReferenceKind = z.output<typeof workflowReferenceKindSchema>;
+export type WorkflowReferencePage = z.output<typeof workflowReferencePageSchema>;
+export type WorkflowEditorCatalog = z.output<typeof workflowEditorChoicesSchema>;
