@@ -9,7 +9,10 @@ import {
 import { untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import type { RunContextManifest } from "@/lib/run-context/contracts";
 import { fingerprintRunContextInput } from "@/lib/run-context/packing";
-import { LEADING_ACCEPTED_SCOPE_DIRECTIVE } from "@/lib/sessions/specification-contracts";
+import {
+  escapeSpecificationScopeMarkdown,
+  LEADING_ACCEPTED_SCOPE_DIRECTIVE,
+} from "@/lib/sessions/specification-contracts";
 
 const MAX_PROPOSAL_BYTES = 12_288;
 const MAX_ARTIFACT_BYTES = 16_384;
@@ -79,17 +82,15 @@ export function eligibleTriageEvidence(manifest: RunContextManifest): Set<string
   ]);
 }
 
-function markdownText(value: string) {
-  return value.replace(/[\\<>`*_\[\]{}!#|~&]/g, "\\$&");
-}
-
 function renderScope(scope: Scope) {
   return [
     "## Scope",
-    markdownText(scope.scope),
+    escapeSpecificationScopeMarkdown(scope.scope),
     "",
     "## Acceptance criteria",
-    ...scope.acceptanceCriteria.map((criterion) => `- ${markdownText(criterion)}`),
+    ...scope.acceptanceCriteria.map(
+      (criterion) => `- ${escapeSpecificationScopeMarkdown(criterion)}`,
+    ),
     "",
     "## Evidence",
     ...scope.evidenceReferences.map((ref) => `- \`${ref}\``),
@@ -126,7 +127,7 @@ export function prepareTriageArtifact(input: {
       }).replaceAll("--", "\\u002d\\u002d");
       return {
         status: "clarification",
-        artifactMarkdown: `<!-- wallie-clarification: ${question} -->\n\n## Scope clarification\n\n${markdownText(decision.question)}`,
+        artifactMarkdown: `<!-- wallie-clarification: ${question} -->\n\n## Scope clarification\n\n${escapeSpecificationScopeMarkdown(decision.question)}`,
       } as const;
     }
     case "unsupported":

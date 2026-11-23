@@ -1,4 +1,7 @@
-import { LEADING_ACCEPTED_SCOPE_DIRECTIVE } from "@/lib/sessions/specification-contracts";
+import {
+  LEADING_ACCEPTED_SCOPE_DIRECTIVE,
+  specificationScopeMarkdownToPlainText,
+} from "@/lib/sessions/specification-contracts";
 
 import type { ArtifactSourceAnchor } from "./source-anchor";
 
@@ -60,8 +63,17 @@ export function summarizeRevisionChanges(rows: readonly RevisionDiff[]) {
   let count = 0;
   let added = "";
   let removed = "";
-  let beforeSource = true;
-  let afterSource = true;
+  const beforeSource = { first: true, acceptedScope: false };
+  const afterSource = { first: true, acceptedScope: false };
+
+  function briefText(text: string, source: typeof beforeSource) {
+    if (source.first) {
+      source.first = false;
+      source.acceptedScope = LEADING_ACCEPTED_SCOPE_DIRECTIVE.test(text);
+      if (source.acceptedScope) text = text.replace(LEADING_ACCEPTED_SCOPE_DIRECTIVE, "");
+    }
+    return source.acceptedScope ? specificationScopeMarkdownToPlainText(text) : text;
+  }
 
   function finishChange() {
     if (!added && !removed) return;
@@ -82,14 +94,12 @@ export function summarizeRevisionChanges(rows: readonly RevisionDiff[]) {
   // selection anchors retain the complete artifact, including the receipt line.
   for (const row of rows) {
     if (row.kind === "added") {
-      added += afterSource ? row.text.replace(LEADING_ACCEPTED_SCOPE_DIRECTIVE, "") : row.text;
-      afterSource = false;
+      added += briefText(row.text, afterSource);
     } else if (row.kind === "removed") {
-      removed += beforeSource ? row.text.replace(LEADING_ACCEPTED_SCOPE_DIRECTIVE, "") : row.text;
-      beforeSource = false;
+      removed += briefText(row.text, beforeSource);
     } else {
-      beforeSource = false;
-      afterSource = false;
+      briefText(row.text, beforeSource);
+      briefText(row.text, afterSource);
       finishChange();
     }
   }

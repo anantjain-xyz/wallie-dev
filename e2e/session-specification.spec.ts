@@ -526,6 +526,9 @@ test(journeyTitle, async ({ browser, page, baseURL }, testInfo) => {
       if (fixture.triageGraph) {
         await specification.getByRole("tab", { name: "Full artifact", exact: true }).click();
         await expect(specification.getByText(acceptanceCriterion, { exact: true })).toBeVisible();
+        await expect(
+          specification.getByText(literalAcceptanceCriterion, { exact: true }),
+        ).toBeVisible();
       }
       await expect(specification.getByText(revision)).toBeVisible();
     };
@@ -556,14 +559,20 @@ test(journeyTitle, async ({ browser, page, baseURL }, testInfo) => {
       });
       expect(blocked.error).toBeNull();
       expect(blocked.data).toBeNull();
-      await page.getByRole("link", { name: "Inbox", exact: true }).click();
-      await page.waitForURL((url) => url.pathname === workspaceInboxPath(slug));
-      const clarificationLink = page.getByRole("link", {
-        name: `Answer clarification for ${title}`,
-      });
-      await expect(clarificationLink).toHaveAttribute("href", pendingReviewPath);
-      await clarificationLink.click();
-      await expect(clarification.getByText(question)).toBeVisible();
+      const inbox = await page.context().newPage();
+      try {
+        await inbox.goto(workspaceInboxPath(slug));
+        const clarificationLink = inbox.getByRole("link", {
+          name: `Answer clarification for ${title}`,
+        });
+        await expect(clarificationLink).toHaveAttribute("href", pendingReviewPath);
+        await clarificationLink.click();
+        await expect(
+          inbox.getByRole("region", { name: "Specification clarification" }).getByText(question),
+        ).toBeVisible();
+      } finally {
+        await inbox.close();
+      }
     }
     const staleApprove = await page.request.post(`/api/sessions/${session.id}/phase-action`, {
       data: {
@@ -715,7 +724,8 @@ ${revision}`,
     if (fixture.triageGraph) {
       const brief = specification.getByRole("tabpanel", { name: "Review brief", exact: true });
       await expect(brief.getByText(acceptanceCriterion)).toBeVisible();
-      await expect(brief.getByText(literalAcceptanceCriterion, { exact: true })).toBeVisible();
+      await expect(brief).toContainText(literalAcceptanceCriterion);
+      await expect(brief).not.toContainText("\\&copy;");
       await expect(brief.getByText(/wallie-accepted-scope/)).toHaveCount(0);
       await page.screenshot({
         path: testInfo.outputPath("04-approved-scope-review-brief.png"),
