@@ -25,6 +25,7 @@ create function pg_temp.issue_page(p_first integer, p_last integer) returns json
   select jsonb_agg(jsonb_build_object('sessionId', session.id, 'linkedIssueId', session.linear_issue_id) order by item)
   from generate_series(p_first, p_last) item
   join public.sessions session on session.id = pg_temp.op651_id(1000 + item)
+  where session.archived_at is null
 $$;
 create function pg_temp.issue_span(
   p_link integer, p_issue integer, p_span text, p_state text, p_started_at text, p_updated_at text, p_project text default null
@@ -168,6 +169,34 @@ select is((select count(*) from internal.factory_automation_occurrences
 select ok(generation = 7 and after_session_id = pg_temp.op651_id(1050),
   'retaining and routing the terminal link does not move the automation cursor')
 from public.read_linear_automation_span_cursor(pg_temp.op651_id(11));
+
+-- Multiple aliases may be read on either side of a genuine provider transition.
+select ok(generation = 8 and after_session_id is null, 'the final page resets the automation scan')
+from public.commit_linear_automation_span_page(7, pg_temp.issue_page(51, 52), '[]', pg_temp.op651_id(11));
+
+create temp table issue_alias_observations as
+select jsonb_build_array(
+  pg_temp.issue_span(2, 501, 'same-page-leave', 'todo', '2026-11-22T17:00:00Z', '2026-11-22T17:00:00Z'),
+  pg_temp.issue_span(51, 501, 'same-page-enter', 'in-progress', '2026-11-22T16:00:00Z', '2026-11-22T16:15:00Z'),
+  pg_temp.issue_span(1, 501, 'same-page-enter', 'in-progress', '2026-11-22T16:00:00Z', '2026-11-22T16:00:00Z')
+) as spans;
+
+select ok(generation = 9 and occurrence_count = 1,
+  'the shared page admits the earlier matching span once even when the newest alias is a nonmatch')
+from issue_alias_observations batch cross join lateral
+  public.commit_linear_automation_span_page(8, pg_temp.issue_page(1, 51), batch.spans, pg_temp.op651_id(11));
+select is((select count(*) from internal.issue_automation_state_spans
+  where workspace_id = pg_temp.op651_id(11) and source_span_id in ('same-page-enter', 'same-page-leave')),
+  2::bigint, 'one canonical issue retains each distinct span across all aliases');
+select ok(exists (select 1 from internal.issue_automation_span_watermarks
+  where (workspace_id, source_issue_id, source_span_id) =
+    (pg_temp.op651_id(11), pg_temp.op651_id(501)::text, 'same-page-leave')),
+  'the later span advances the canonical watermark');
+select ok(generation = 10 and after_session_id is null, 'the shorter final page resets again')
+from public.commit_linear_automation_span_page(9, pg_temp.issue_page(52, 52), '[]', pg_temp.op651_id(11));
+select ok(generation = 11 and occurrence_count = 0, 'replaying both aliases creates no duplicate occurrence')
+from issue_alias_observations batch cross join lateral
+  public.commit_linear_automation_span_page(10, pg_temp.issue_page(1, 51), batch.spans, pg_temp.op651_id(11));
 
 select * from finish();
 rollback;

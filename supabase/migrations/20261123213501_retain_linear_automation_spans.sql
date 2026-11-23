@@ -318,20 +318,24 @@ begin
     raise exception 'A state span must match one session in the exact scan page.' using errcode = 'PT409';
   end if;
 
-  -- Legacy links can use either an identifier or the provider issue UUID.
-  -- Prefer the latest coherent snapshot when several links refer to one issue.
+  -- Several links can observe different spans of the same canonical issue.
+  -- Record each distinct span in order so the watermark advances through them.
   for observed in
-    select distinct on (session.workspace_id, session.factory_id, (observation->>'issueId')::uuid)
-      session.workspace_id, session.factory_id, (observation->>'issueId')::uuid::text as issue_id,
-      observation->>'spanId' as span_id, (observation->>'startedAt')::timestamptz as started_at,
-      (observation->>'issueUpdatedAt')::timestamptz as issue_updated_at,
-      internal.normalize_factory_automation_event(jsonb_build_object(
-        'kind', 'issue-state', 'stateId', observation->'stateId', 'teamId', observation->'teamId', 'projectId', observation->'projectId'
-      )) as event
-    from jsonb_array_elements(p_observations) observation
-    join public.sessions session on session.id = (observation->>'sessionId')::uuid
-    order by session.workspace_id, session.factory_id, (observation->>'issueId')::uuid,
-      (observation->>'issueUpdatedAt')::timestamptz desc, (observation->>'startedAt')::timestamptz desc, session.id
+    with distinct_spans as (
+      select distinct on (session.workspace_id, session.factory_id, (observation->>'issueId')::uuid, observation->>'spanId')
+        session.workspace_id, session.factory_id, (observation->>'issueId')::uuid::text as issue_id,
+        observation->>'spanId' as span_id, (observation->>'startedAt')::timestamptz as started_at,
+        (observation->>'issueUpdatedAt')::timestamptz as issue_updated_at,
+        internal.normalize_factory_automation_event(jsonb_build_object(
+          'kind', 'issue-state', 'stateId', observation->'stateId', 'teamId', observation->'teamId', 'projectId', observation->'projectId'
+        )) as event
+      from jsonb_array_elements(p_observations) observation
+      join public.sessions session on session.id = (observation->>'sessionId')::uuid
+      order by session.workspace_id, session.factory_id, (observation->>'issueId')::uuid, observation->>'spanId',
+        (observation->>'issueUpdatedAt')::timestamptz desc, (observation->>'startedAt')::timestamptz desc, session.id
+    )
+    select * from distinct_spans
+    order by workspace_id, factory_id, issue_id, issue_updated_at, started_at, span_id
   loop
     inserted := inserted + internal.record_issue_automation_state_span(observed.workspace_id, observed.factory_id,
       source_namespace, observed.issue_id, observed.span_id, observed.started_at, observed.issue_updated_at, observed.event);
