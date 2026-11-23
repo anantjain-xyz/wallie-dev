@@ -4,27 +4,34 @@ import { z } from "zod";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 const uuid = z.string().uuid();
+const claimShape = {
+  rootSessionId: uuid,
+  workspaceId: uuid,
+  factoryId: uuid,
+  parentSessionId: uuid,
+  joinId: uuid,
+  jobId: uuid,
+  runId: uuid,
+  attemptCount: z.number().int().positive().safe(),
+  generation: z.number().int().positive().safe(),
+  ownershipToken: uuid,
+  artifactVersion: z.number().int().nonnegative().safe(),
+  baseSha: z.string().regex(/^[a-f0-9]{40}$/),
+  baseRef: z.string().nullable(),
+  deadlineAt: z.string().datetime({ offset: true }),
+  deadlineReason: z.enum(["worker", "elapsed_execution"]),
+};
+
 const result = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("ordinary") }),
   z.strictObject({ kind: z.literal("retired") }),
   z.strictObject({ kind: z.literal("started_elsewhere") }),
+  z.strictObject({ ...claimShape, kind: z.literal("started") }),
   z.strictObject({
-    kind: z.literal("started"),
-    rootSessionId: uuid,
-    workspaceId: uuid,
-    factoryId: uuid,
-    parentSessionId: uuid,
-    joinId: uuid,
-    jobId: uuid,
-    runId: uuid,
-    attemptCount: z.number().int().positive().safe(),
-    generation: z.number().int().positive().safe(),
-    ownershipToken: uuid,
-    artifactVersion: z.number().int().nonnegative().safe(),
-    baseSha: z.string().regex(/^[a-f0-9]{40}$/),
-    baseRef: z.string().nullable(),
-    deadlineAt: z.string().datetime({ offset: true }),
-    deadlineReason: z.enum(["worker", "elapsed_execution"]),
+    ...claimShape,
+    kind: z.literal("repository"),
+    repositoryId: uuid,
+    baseReceiptId: uuid,
   }),
 ]);
 
@@ -53,7 +60,7 @@ export async function startFactoryWorkflowJoinClaim({
   if (command.error) throw command.error;
   const claim = result.parse(command.data);
   if (
-    claim.kind === "started" &&
+    (claim.kind === "started" || claim.kind === "repository") &&
     (claim.jobId !== job.id ||
       claim.workspaceId !== job.workspace_id ||
       claim.parentSessionId !== job.session_id ||

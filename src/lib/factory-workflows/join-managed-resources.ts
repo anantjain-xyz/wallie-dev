@@ -11,7 +11,7 @@ import {
   settleWorkspaceResource,
 } from "@/lib/workspaces/resource-operations";
 import { conflictBucket } from "./join-conflict";
-import type { Context, ManagedResources } from "./join-worker-runtime";
+import { repositoryAttemptScope, type Context, type ManagedResources } from "./join-worker-runtime";
 
 function exactAttempt({ claim }: Context) {
   return {
@@ -29,9 +29,14 @@ function exactAttempt({ claim }: Context) {
 
 async function assertActive(context: Context) {
   context.signal.throwIfAborted();
-  const { data, error } = await context.admin
-    .rpc("is_factory_workflow_join_attempt_active", exactAttempt(context))
-    .abortSignal(context.signal);
+  const request =
+    context.claim.kind === "repository"
+      ? context.admin.rpc(
+          "is_factory_workflow_repository_validation_active",
+          repositoryAttemptScope(context.claim),
+        )
+      : context.admin.rpc("is_factory_workflow_join_attempt_active", exactAttempt(context));
+  const { data, error } = await request.abortSignal(context.signal);
   if (error || data !== true)
     throw new Error("The exact workflow join no longer owns the attempt.");
 }

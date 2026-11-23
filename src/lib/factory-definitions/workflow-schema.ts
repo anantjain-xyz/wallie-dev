@@ -24,6 +24,10 @@ const uuid = z
   .uuid()
   .transform((id) => id.toLowerCase());
 
+const workflowGrantRevision = z
+  .object({ id: uuid, version: z.number().int().positive().safe() })
+  .strict();
+
 const node = z.object({ id: workflowNodeIdSchema }).strict();
 const agentBinding = { agentPromptRevisionId: uuid, grantId: uuid.optional() };
 const workflowNodeSchema = z.discriminatedUnion("kind", [
@@ -146,6 +150,24 @@ const workflowDelegationPolicySchema = z
       });
   });
 
+const workflowRepositorySetSchema = z
+  .array(
+    z
+      .object({
+        repositoryId: uuid,
+        writerGrant: workflowGrantRevision,
+        branchEdgeIds: z.array(workflowEdgeIdSchema).min(1).max(MAX_WORKFLOW_NODES),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(8);
+
+const workflowRepositorySetsSchema = z
+  .unknown()
+  .refine(hasBoundedNodeMapSize, `Declare at most ${MAX_WORKFLOW_NODES} repository sets.`)
+  .pipe(z.record(workflowNodeIdTextSchema, workflowRepositorySetSchema));
+
 export const workflowGraphSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -153,11 +175,10 @@ export const workflowGraphSchema = z
     entryNodeId: workflowNodeIdSchema,
     nodes: z.array(workflowNodeSchema).min(1).max(MAX_WORKFLOW_NODES),
     edges: z.array(workflowEdgeSchema).max(512),
-    grants: z
-      .array(z.object({ id: uuid, version: z.number().int().positive().safe() }).strict())
-      .max(128),
+    grants: z.array(workflowGrantRevision).max(128),
     routePolicy: workflowRoutePolicySchema.optional(),
     delegationPolicy: workflowDelegationPolicySchema.optional(),
+    repositorySets: workflowRepositorySetsSchema.optional(),
   })
   .strict();
 
@@ -176,6 +197,7 @@ export type WorkflowDiagnostic = {
     | "invalid_edge"
     | "unreachable_node"
     | "invalid_join"
+    | "invalid_repository_set"
     | "unbounded_cycle"
     | "invalid_loop"
     | "invalid_route_policy"
