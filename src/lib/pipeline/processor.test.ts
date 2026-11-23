@@ -178,7 +178,8 @@ vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
 
-vi.mock("@/lib/workspaces/resource-operations", () => ({
+vi.mock("@/lib/workspaces/resource-operations", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/workspaces/resource-operations")>()),
   createWorkspaceSessionSandbox: (_admin: unknown, input: unknown) =>
     mocked.createSessionSandbox(input),
 }));
@@ -408,6 +409,8 @@ interface MockOptions {
   retentionUpdateError?: { message: string } | null;
   beforeRetentionUpdate?: () => Promise<void>;
   runSandboxUpdateMissed?: boolean;
+  sandboxReservationRefused?: boolean;
+  lateSandboxRetained?: boolean;
   runRows?: Array<Record<string, unknown>>;
   githubInstallation?: { id: string; installation_id: number } | null;
   githubRepositories?: Array<{
@@ -829,6 +832,13 @@ function buildAdminMock(opts: MockOptions) {
 
   const invokeRpc = async (fn: string, args?: unknown) => {
     const payload = (args ?? {}) as Record<string, unknown>;
+    if (fn === "register_factory_workflow_sandbox_acquisition") {
+      return { data: !opts.sandboxReservationRefused, error: null };
+    }
+    if (fn === "settle_workspace_resource_operation") return { data: null, error: null };
+    if (fn === "record_late_factory_workflow_sandbox" && opts.lateSandboxRetained) {
+      return { data: true, error: null };
+    }
     if (fn === "read_factory_workflow_delegated_scope") {
       return { data: { status: "ordinary" }, error: null };
     }
@@ -3426,39 +3436,77 @@ describe("processPipelineJob (generic stage runner)", () => {
     },
   );
 
-  it("recognizes sanitized ownership loss and stops a sandbox that lands after cancellation", async () => {
-    const session = baseSession();
-    const { admin, rpc, insertedMessages } = buildAdminMock({
-      session,
-      agentConfig: [],
-      runSandboxUpdateMissed: true,
-    });
+  it.each([true, false])(
+    "recognizes sanitized ownership loss when late sandbox retention succeeds = %s",
+    async (lateSandboxRetained) => {
+      const session = baseSession();
+      const { admin, rpc, insertedMessages } = buildAdminMock({
+        session,
+        agentConfig: [],
+        runSandboxUpdateMissed: true,
+        lateSandboxRetained,
+      });
 
-    mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
-      try {
-        await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
-        throw new Error("Expected ownership callback to reject");
-      } catch (error) {
-        const sanitized = new Error(error instanceof Error ? error.message : String(error));
-        sanitized.name = error instanceof Error ? error.name : "SandboxError";
-        throw sanitized;
+      mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+        await input.onSandboxReserved?.("operation-1");
+        try {
+          await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
+          throw new Error("Expected ownership callback to reject");
+        } catch (error) {
+          const sanitized = new Error(error instanceof Error ? error.message : String(error));
+          sanitized.name = error instanceof Error ? error.name : "SandboxError";
+          throw sanitized;
+        }
+      });
+      expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
+      expect(
+        rpc.mock.calls.map(([name]) => name).filter((name) => name !== "append_agent_run_event"),
+      ).toEqual([
+        "start_session_job_attempt",
+        "get_session_execution_budget",
+        "register_factory_workflow_sandbox_acquisition",
+        "record_late_factory_workflow_sandbox",
+      ]);
+      expect(rpc).toHaveBeenCalledWith("register_factory_workflow_sandbox_acquisition", {
+        p_run_id: "run-1",
+        p_attempt_count: 1,
+        p_operation_id: "operation-1",
+      });
+      expect(insertedMessages.some((message) => message.kind === "worker_error")).toBe(false);
+
+      if (lateSandboxRetained) {
+        expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+      } else {
+        expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
+          connection: {
+            credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+            provider: "vercel",
+            revision: "revision-1",
+          },
+        });
       }
-    });
-    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
-    expect(
-      rpc.mock.calls.map(([name]) => name).filter((name) => name !== "append_agent_run_event"),
-    ).toEqual(["start_session_job_attempt", "get_session_execution_budget"]);
-    expect(insertedMessages.some((message) => message.kind === "worker_error")).toBe(false);
+    },
+  );
 
-    // updateRunSandbox matched zero rows (run already canceled), so the
-    // freshly-created sandbox must be stopped instead of left running detached.
-    expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
-      connection: {
-        credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
-        provider: "vercel",
-        revision: "revision-1",
-      },
+  it("releases the empty reservation when registration reports that cancellation won", async () => {
+    const { admin, rpc, insertedMessages } = buildAdminMock({
+      session: baseSession(),
+      agentConfig: [],
+      sandboxReservationRefused: true,
     });
+    const issueProviderRequest = vi.fn();
+    mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+      await input.onSandboxReserved?.("operation-1");
+      issueProviderRequest();
+    });
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
+    expect(rpc).toHaveBeenCalledWith("settle_workspace_resource_operation", {
+      p_operation_id: "operation-1",
+      p_transferred: true,
+    });
+    expect(issueProviderRequest).not.toHaveBeenCalled();
+    expect(insertedMessages.some((message) => message.kind === "worker_error")).toBe(false);
   });
 
   it("bails before creating a sandbox when the job was canceled after the claim", async () => {

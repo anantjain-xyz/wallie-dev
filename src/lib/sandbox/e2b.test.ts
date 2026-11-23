@@ -38,6 +38,7 @@ vi.mock("./setup", () => ({ prepareSessionSandbox: mocked.prepare }));
 
 import {
   createE2BSessionSandbox,
+  e2bSandboxDriver,
   hasRecoverableE2BSandboxSource,
   listRunningE2BSandboxes,
   stopE2BSandboxById,
@@ -246,4 +247,24 @@ describe("E2B retained source inspection", () => {
       "Unauthorized",
     );
   });
+});
+
+it("finds only exact lost-create metadata without resuming E2B sandboxes", async () => {
+  const identity = { operationId: "operation-1", workspaceId: "workspace-1" };
+  const metadata = { wallie_acquisition_id: "operation-1", wallie_workspace_id: "workspace-1" };
+  mocked.list.mockReturnValue({
+    hasNext: false,
+    nextItems: vi.fn().mockResolvedValue([
+      { sandboxId: "exact", metadata },
+      { sandboxId: "foreign", metadata: { ...metadata, wallie_workspace_id: "other" } },
+    ]),
+  });
+
+  await expect(e2bSandboxDriver.findAcquisition(identity, connection)).resolves.toEqual(["exact"]);
+  expect(mocked.list).toHaveBeenCalledWith({
+    apiKey: "e2b_secret",
+    limit: 10,
+    query: { metadata, state: ["running", "paused"] },
+  });
+  expect(mocked.connect).not.toHaveBeenCalled();
 });

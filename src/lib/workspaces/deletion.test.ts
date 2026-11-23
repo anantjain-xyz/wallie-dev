@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { stopRunSandbox } from "@/lib/pipeline/cancel";
 import type { Tables } from "@/lib/supabase/database.types";
 
 const mocked = vi.hoisted(() => ({
   loadWorkspaceSandboxConnection: vi.fn().mockResolvedValue({
     connection: { provider: "e2b", revision: "revision-1", credentials: { apiKey: "fixture" } },
   }),
+  findSandboxAcquisition: vi.fn().mockResolvedValue([]),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   stopWorkspaceProviderSandboxes: vi.fn().mockResolvedValue({ stoppedSandboxIds: [] }),
 }));
-vi.mock("@/lib/sandbox", () => ({ stopSandboxById: mocked.stopSandboxById }));
+vi.mock("@/lib/sandbox", () => ({
+  findSandboxAcquisition: mocked.findSandboxAcquisition,
+  stopSandboxById: mocked.stopSandboxById,
+}));
 vi.mock("@/lib/sandbox-connections/server", () => ({
   loadWorkspaceSandboxConnection: mocked.loadWorkspaceSandboxConnection,
 }));
@@ -49,6 +54,9 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
     objects: new Map<string, Set<string>>(),
     removeFailure: false,
     reservationDeleteFailure: false,
+    cleanupReceiptFailure: false,
+    acquisitionSettlementFailure: false,
+    cleanupReceipts: [] as Tables<"workspace_sandbox_cleanup_receipts">[],
     lateSandboxId: null as string | null,
     transferBeforeClaim: false,
   };
@@ -76,6 +84,34 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
     }),
   };
   const from = (table: string) => {
+    if (table === "workspace_sandbox_cleanup_receipts") {
+      const criteria = new Map<string, string>();
+      const receipts = {
+        select: () => receipts,
+        eq: (column: keyof Tables<"workspace_sandbox_cleanup_receipts">, value: string) => {
+          criteria.set(column, value);
+          return receipts;
+        },
+        maybeSingle: async () => ({
+          data:
+            state.cleanupReceipts.find((row) =>
+              Object.entries(row).every(
+                ([column, value]) => !criteria.has(column) || criteria.get(column) === value,
+              ),
+            ) ?? null,
+          error: null,
+        }),
+        upsert: async (
+          receipt: Omit<Tables<"workspace_sandbox_cleanup_receipts">, "confirmed_at">,
+        ) => {
+          if (state.cleanupReceiptFailure)
+            return { error: new Error("Could not record cleanup receipt") };
+          state.cleanupReceipts.push({ ...receipt, confirmed_at: "2026-10-10T00:00:00Z" });
+          return { error: null };
+        },
+      };
+      return receipts;
+    }
     let deleting = false;
     let update: Pick<Tables<"workspace_resource_operations">, "settled_at"> | undefined;
     const filters: Array<(row: Tables<"workspace_resource_operations">) => boolean> = [];
@@ -156,22 +192,48 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
     };
     return query;
   };
-  const rpc = vi.fn(async (name: string) => {
-    if (name !== "finish_workspace_deletion") throw new Error(`Unexpected RPC ${name}`);
-    const blocked =
-      state.operations.length > 0 ||
-      [...state.objects.values()].some((paths) =>
-        [...paths].some((path) => path.startsWith(`${workspaceId}/`)),
-      );
-    if (!blocked) state.exists = false;
-    return { data: !blocked, error: null };
-  });
+  const rpc = vi.fn(
+    async (name: string, args?: { p_operation_id?: string; p_sandbox_id?: string }) => {
+      if (name === "record_workspace_sandbox_acquisition_stop") {
+        if (state.cleanupReceiptFailure)
+          return { data: null, error: new Error("Could not record cleanup receipt") };
+        const operation = state.operations.find(
+          (candidate) => candidate.id === args?.p_operation_id,
+        );
+        if (!operation?.provider || !operation.connection_revision || !args?.p_sandbox_id)
+          return { data: false, error: null };
+        if (!state.cleanupReceipts.some((receipt) => receipt.sandbox_id === args.p_sandbox_id)) {
+          state.cleanupReceipts.push({
+            workspace_id: operation.workspace_id,
+            provider: operation.provider,
+            connection_revision: operation.connection_revision,
+            sandbox_id: args.p_sandbox_id,
+            confirmed_at: "2026-10-10T00:00:00Z",
+          });
+        }
+        return { data: true, error: null };
+      }
+      if (name === "settle_factory_workflow_sandbox_acquisition")
+        return { data: !state.acquisitionSettlementFailure, error: null };
+      if (name !== "finish_workspace_deletion") throw new Error(`Unexpected RPC ${name}`);
+      const blocked =
+        state.operations.length > 0 ||
+        [...state.objects.values()].some((paths) =>
+          [...paths].some((path) => path.startsWith(`${workspaceId}/`)),
+        );
+      if (!blocked) state.exists = false;
+      return { data: !blocked, error: null };
+    },
+  );
   return { admin: { from, rpc, storage } as never, lists, removals, rpc, state };
 }
 
 describe("durable workspace deletion", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mocked.loadWorkspaceSandboxConnection.mockReset().mockResolvedValue({
+      connection: { provider: "e2b", revision: "revision-1", credentials: { apiKey: "fixture" } },
+    });
   });
 
   it("drains more than one page including nested prefixes without skipping shifted objects", async () => {
@@ -236,6 +298,146 @@ describe("durable workspace deletion", () => {
     });
     expect(f.state.operations).toEqual([]);
     expect(f.state.exists).toBe(false);
+  });
+
+  it("recovers a lost create response by immutable acquisition identity after its horizon", async () => {
+    const f = fixture([operation({ connection_revision: "revision-1" })]);
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(false);
+    expect(mocked.findSandboxAcquisition).not.toHaveBeenCalled();
+    expect(f.state.operations).toHaveLength(1);
+
+    f.state.operations[0]!.recovery_after = "2020-01-01T00:00:00Z";
+    mocked.findSandboxAcquisition.mockResolvedValueOnce(["recovered-sandbox"]);
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
+    expect(mocked.findSandboxAcquisition).toHaveBeenCalledWith(
+      { operationId: "operation-1", workspaceId },
+      expect.objectContaining({ provider: "e2b", revision: "revision-1" }),
+    );
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith(
+      "recovered-sandbox",
+      expect.objectContaining({ throwOnError: true }),
+    );
+    expect(f.state.cleanupReceipts).toEqual([
+      {
+        workspace_id: workspaceId,
+        provider: "e2b",
+        connection_revision: "revision-1",
+        sandbox_id: "recovered-sandbox",
+        confirmed_at: "2026-10-10T00:00:00Z",
+      },
+    ]);
+    expect(f.rpc).toHaveBeenCalledWith("record_workspace_sandbox_acquisition_stop", {
+      p_operation_id: "operation-1",
+      p_sandbox_id: "recovered-sandbox",
+    });
+    expect(f.rpc).toHaveBeenCalledWith("settle_factory_workflow_sandbox_acquisition", {
+      p_operation_id: "operation-1",
+      p_stopped_sandbox_ids: ["recovered-sandbox"],
+    });
+    expect(f.state.operations).toEqual([]);
+  });
+
+  it("keeps the acquisition reservation until its workflow proof is reconciled", async () => {
+    const f = fixture([
+      operation({ resource_id: "recovered-sandbox", connection_revision: "revision-1" }),
+    ]);
+    f.state.acquisitionSettlementFailure = true;
+    await expect(resumeWorkspaceDeletion(f.admin, workspaceId)).rejects.toThrow(
+      "Could not reconcile workflow sandbox acquisition.",
+    );
+    expect(f.state.cleanupReceipts).toEqual([
+      expect.objectContaining({ sandbox_id: "recovered-sandbox" }),
+    ]);
+    expect(f.state.operations).toHaveLength(1);
+
+    f.state.acquisitionSettlementFailure = false;
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
+    expect(f.state.operations).toEqual([]);
+  });
+
+  it("keeps the credential fence until confirmed stop is durably reusable", async () => {
+    const f = fixture([
+      operation({ resource_id: "late-workflow-sandbox", connection_revision: "revision-1" }),
+    ]);
+    f.state.cleanupReceiptFailure = true;
+    await expect(resumeWorkspaceDeletion(f.admin, workspaceId)).rejects.toThrow(
+      "Could not record cleanup receipt",
+    );
+    expect(mocked.stopSandboxById).toHaveBeenCalledOnce();
+    expect(f.state.operations).toHaveLength(1);
+    expect(f.state.cleanupReceipts).toEqual([]);
+
+    f.state.cleanupReceiptFailure = false;
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
+    expect(f.state.cleanupReceipts).toEqual([
+      expect.objectContaining({
+        workspace_id: workspaceId,
+        provider: "e2b",
+        connection_revision: "revision-1",
+        sandbox_id: "late-workflow-sandbox",
+      }),
+    ]);
+    expect(f.state.operations).toEqual([]);
+  });
+
+  it("lets the workflow drain reuse a late-handle confirmation after workspace credentials rotate", async () => {
+    const f = fixture([
+      operation({
+        resource_id: "late-workflow-sandbox",
+        connection_revision: "revision-1",
+        settled_at: "2026-10-10T00:00:00Z",
+      }),
+    ]);
+    f.state.deleting = false;
+    await resumePendingWorkspaceDeletions(f.admin);
+    expect(f.state.operations).toEqual([]);
+    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
+
+    mocked.loadWorkspaceSandboxConnection.mockResolvedValueOnce({
+      connection: {
+        provider: "e2b",
+        revision: "revision-2",
+        credentials: { apiKey: "replacement" },
+      },
+    });
+    await expect(
+      stopRunSandbox(
+        f.admin,
+        {
+          id: "retired-run",
+          workspace_id: workspaceId,
+          sandbox_id: "late-workflow-sandbox",
+          sandbox_provider: "e2b",
+          sandbox_connection_revision: "revision-1",
+          sandbox_vercel_project_id: null,
+          sandbox_vercel_team_id: null,
+        },
+        undefined,
+        { throwOnError: true },
+      ),
+    ).resolves.toBe(true);
+    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
+    expect(mocked.loadWorkspaceSandboxConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps credentials available on lookup failure and creates no stop after a verified empty lookup", async () => {
+    const f = fixture([
+      operation({
+        connection_revision: "revision-1",
+        recovery_after: "2020-01-01T00:00:00Z",
+      }),
+    ]);
+    mocked.findSandboxAcquisition.mockRejectedValueOnce(new Error("Provider lookup unavailable"));
+    await expect(resumeWorkspaceDeletion(f.admin, workspaceId)).rejects.toThrow(
+      "Provider lookup unavailable",
+    );
+    expect(f.state.operations).toHaveLength(1);
+    expect(f.state.exists).toBe(true);
+
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
+    expect(f.state.operations).toEqual([]);
+    expect(f.state.cleanupReceipts).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
   it("retains a known sandbox after stop failure even after its recovery deadline", async () => {

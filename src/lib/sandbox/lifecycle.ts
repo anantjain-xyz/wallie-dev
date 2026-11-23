@@ -30,7 +30,6 @@ export async function finalizeSandboxAcquisition(input: {
   };
   input.request.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    input.request.signal?.throwIfAborted();
     await input.request.onSandboxCreated?.({
       provider: input.provider,
       sandboxId: input.handle.id,

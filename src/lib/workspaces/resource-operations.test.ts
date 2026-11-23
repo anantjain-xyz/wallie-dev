@@ -80,6 +80,20 @@ describe("workspace resource admission", () => {
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
   });
 
+  it("checks the exact saved reservation before issuing provider work", async () => {
+    const state = client();
+    const onSandboxReserved = vi.fn(async (operationId: string) => {
+      expect(state.operations).toEqual([{ id: operationId, resourceId: null, settled: false }]);
+      expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+      throw new Error("Workflow no longer owns this attempt.");
+    });
+    await expect(
+      createWorkspaceSessionSandbox(state.admin, { ...input, onSandboxReserved }),
+    ).rejects.toThrow("Workflow no longer owns this attempt.");
+    expect(onSandboxReserved).toHaveBeenCalledExactlyOnceWith("operation-1");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+  });
+
   it("retains a late sandbox ID for deletion cleanup without granting run ownership", async () => {
     const state = client({ deleting: true });
     const owner = vi.fn();
@@ -106,6 +120,28 @@ describe("workspace resource admission", () => {
     );
     await expect(createWorkspaceSessionSandbox(state.admin, input)).rejects.toThrow(
       "Database unavailable",
+    );
+    expect(state.operations).toEqual([{ id: "operation-1", resourceId: null, settled: false }]);
+  });
+
+  it("passes the persisted reservation into provider create before a response can be lost", async () => {
+    const state = client();
+    mocked.createSessionSandbox.mockImplementationOnce(
+      async (request: CreateSessionSandboxInput) => {
+        expect(request.acquisition).toEqual({
+          operationId: "operation-1",
+          workspaceId: "workspace-1",
+        });
+        expect(state.operations[0]).toEqual({
+          id: "operation-1",
+          resourceId: null,
+          settled: false,
+        });
+        throw new Error("Create response lost");
+      },
+    );
+    await expect(createWorkspaceSessionSandbox(state.admin, input)).rejects.toThrow(
+      "Create response lost",
     );
     expect(state.operations).toEqual([{ id: "operation-1", resourceId: null, settled: false }]);
   });

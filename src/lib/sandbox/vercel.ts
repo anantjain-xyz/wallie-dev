@@ -7,11 +7,13 @@ import {
   vercelSandboxFetch,
 } from "@/lib/vercel-sandbox/errors";
 
+import { sandboxAcquisitionLabels, sandboxAcquisitionName } from "./acquisition-identity";
 import { finalizeSandboxAcquisition, observeUntilAbort } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
   CreateUtilitySandboxInput,
   RunningSandboxSummary,
+  SandboxAcquisitionIdentity,
   SandboxConnection,
   SandboxExecHandle,
   SandboxExecOptions,
@@ -358,6 +360,12 @@ export async function createVercelSessionSandbox(
     runtime: "node22",
     timeout: timeoutMs,
     persistent: false,
+    ...(input.acquisition
+      ? {
+          name: sandboxAcquisitionName(input.acquisition),
+          tags: sandboxAcquisitionLabels(input.acquisition),
+        }
+      : {}),
     ...(input.signal ? { signal: input.signal } : {}),
     resources: { vcpus: 2 },
     env: {
@@ -410,6 +418,31 @@ export async function stopVercelSandboxById(
       sandboxId,
     });
   }
+}
+
+async function findVercelAcquisition(
+  identity: SandboxAcquisitionIdentity,
+  connection: VercelConnection,
+) {
+  const name = sandboxAcquisitionName(identity);
+  const page = await Sandbox.list({
+    ...vercelClientOptions(connection.credentials),
+    limit: 10,
+    namePrefix: name,
+  });
+  if (page.pagination.next)
+    throw new Error("Sandbox acquisition lookup exceeded its result limit.");
+  const exact = page.sandboxes.find((sandbox) => sandbox.name === name);
+  if (!exact) return [];
+  if (
+    exact.persistent ||
+    exact.tags?.wallie_workspace_id !== identity.workspaceId ||
+    exact.tags?.wallie_acquisition_id !== identity.operationId
+  ) {
+    throw new Error("Sandbox acquisition lookup returned a different owner.");
+  }
+  if (TERMINAL_SOURCE_STATUSES.has(exact.status) && !exact.currentSnapshotId) return [];
+  return [exact.name];
 }
 
 async function eachVercelSandboxPage(
@@ -576,6 +609,7 @@ export async function createVercelQualifiedBenchmarkReplaySandbox(
 export const vercelSandboxDriver: SandboxProviderDriver<VercelConnection> = {
   create: createVercelSessionSandbox,
   createUtility: (input, connection) => createVercelUtilitySandbox(input, connection, "utility"),
+  findAcquisition: findVercelAcquisition,
   hasRecoverableSource: hasRecoverableVercelSandboxSource,
   listRunning: (connection, options) =>
     listRunningVercelSandboxes(connection, { throwOnError: true, ...options }),

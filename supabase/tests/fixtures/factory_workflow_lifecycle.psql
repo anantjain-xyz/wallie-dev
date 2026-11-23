@@ -1,0 +1,248 @@
+set local request.jwt.claim.role = 'service_role';
+select set_config('wallie.workflow_lifecycle_fixture', :'workflow_fixture_namespace', false);
+
+create function pg_temp.workflow_fixture_id(slot integer) returns uuid language sql stable as $$
+  select (current_setting('wallie.workflow_lifecycle_fixture') || '-0000-4000-8000-' ||
+    lpad(slot::text, 12, '0'))::uuid
+$$;
+select set_config('request.jwt.claim.sub', pg_temp.workflow_fixture_id(1)::text, true);
+insert into auth.users(id, email) values (pg_temp.workflow_fixture_id(1), 'op650-' || current_setting('wallie.workflow_lifecycle_fixture') || '@example.test');
+insert into public.workspaces(id, slug, name) values (pg_temp.workflow_fixture_id(11), 'op650-' || current_setting('wallie.workflow_lifecycle_fixture'), 'Workflow lifecycle fixture');
+insert into public.workspace_members(id, workspace_id, user_id, kind, role)
+values (pg_temp.workflow_fixture_id(21), pg_temp.workflow_fixture_id(11), pg_temp.workflow_fixture_id(1), 'human', 'owner');
+
+create temp table workflow_fixture_scope as
+select workspace_id, id as factory_id from public.factories
+where workspace_id = pg_temp.workflow_fixture_id(11) and is_default;
+insert into public.factory_agent_prompt_revisions(id, workspace_id, factory_id, agent_id, revision_number,
+  prompt_md, prompt_sha256, created_by)
+select pg_temp.workflow_fixture_id(91), workspace_id, factory_id, id, 2,
+  'Choose a configured destination.', encode(sha256(convert_to('Choose a configured destination.', 'UTF8')), 'hex'),
+  pg_temp.workflow_fixture_id(21)
+from public.factory_agents where workspace_id = pg_temp.workflow_fixture_id(11) and is_default;
+insert into public.pipelines(id, workspace_id, factory_id, name, is_default)
+select pg_temp.workflow_fixture_id(31), workspace_id, factory_id, 'Workflow receipt pipeline', true from workflow_fixture_scope;
+insert into public.pipeline_stages(id, pipeline_id, workspace_id, position, slug, name)
+values (pg_temp.workflow_fixture_id(32), pg_temp.workflow_fixture_id(31), pg_temp.workflow_fixture_id(11), 1, 'inspect-output', 'Inspect output');
+insert into public.github_installations(id, workspace_id, installation_id, installation_url, app_id, target_type, target_name, permissions)
+values (pg_temp.workflow_fixture_id(33), pg_temp.workflow_fixture_id(11), current_setting('wallie.workflow_lifecycle_fixture')::bigint + 33,
+  'https://github.test/installations/' || (current_setting('wallie.workflow_lifecycle_fixture')::bigint + 33),
+  current_setting('wallie.workflow_lifecycle_fixture')::bigint, 'Organization', 'Fixture', '{"contents":"write","pull_requests":"write"}');
+insert into public.github_repositories(id, workspace_id, factory_id, github_installation_id, repo_id, name, full_name, private, html_url, default_branch)
+select pg_temp.workflow_fixture_id(34), workspace_id, factory_id, pg_temp.workflow_fixture_id(33), current_setting('wallie.workflow_lifecycle_fixture')::bigint + 34,
+  'workflow-fixture', 'fixture/workflow-fixture', true, 'https://github.test/fixture/workflow-fixture', 'main'
+from workflow_fixture_scope;
+
+create temp table grant_scope as
+select principal.*, policy.id as policy_id
+from workflow_fixture_scope scope
+cross join lateral public.create_service_principal(
+  scope.workspace_id, scope.factory_id, pg_temp.workflow_fixture_id(1), 'Workflow router', 'workflow-router') principal
+cross join lateral public.save_execution_policy(scope.workspace_id, pg_temp.workflow_fixture_id(1), 0,
+  '{"version":1,"maxRepairAttempts":1,"maxExecutionMs":60000,"maxTotalTokens":null,"maxCostUsd":null}') policy;
+
+create temp table approved_grants as
+select intent.scenario, intent.revision_slot, intent.activation_number, approved.*
+from grant_scope scope
+cross join (values
+  ('root', 43, 2, interval '2 hours'),
+  ('child', 44, 1, interval '1 hour')
+) intent(scenario, revision_slot, activation_number, expires_in)
+cross join lateral public.approve_factory_execution_grant(
+  scope.workspace_id, scope.factory_id, pg_temp.workflow_fixture_id(1), scope.id, pg_temp.workflow_fixture_id(34),
+  '{}', '{}', scope.policy_id, pg_temp.workflow_fixture_id(21),
+  clock_timestamp() + intent.expires_in, 0, null, '{sessions:create}'::public.factory_command_scope[]) approved;
+create temp view lifecycle_root_grant as select * from approved_grants where scenario = 'root';
+
+insert into public.workspace_secrets(id, workspace_id, key, encrypted_value)
+select pg_temp.workflow_fixture_id(revision_slot + 30), workspace_id, 'OP650_GRANT_KEY_' || revision_slot, 'fixture-ciphertext'
+from approved_grants;
+insert into public.workspace_sandbox_settings(workspace_id, active_provider) values (pg_temp.workflow_fixture_id(11), 'e2b')
+on conflict (workspace_id) do update set active_provider = excluded.active_provider;
+insert into public.workspace_e2b_sandbox_connections(workspace_id, encrypted_api_key)
+values (pg_temp.workflow_fixture_id(11), 'fixture-sandbox-ciphertext');
+
+create temp table scoped_revisions as
+select grant_row.scenario, pg_temp.workflow_fixture_id(grant_row.revision_slot) as revision_id, grant_row.activation_number,
+  grant_row.id as grant_id, grant_row.version as grant_version, binding.id as binding_id,
+  grant_row.workspace_id, grant_row.factory_id,
+  jsonb_build_object(
+    'schemaVersion', 1, 'kind', 'serial', 'pipelineId', pg_temp.workflow_fixture_id(31),
+    'repositoryId', grant_row.github_repository_id, 'sandboxProvider', 'e2b',
+    'credentialBindingId', binding.id, 'executionGrant', jsonb_build_object('id', grant_row.id, 'version', grant_row.version),
+    'implementationAgent', jsonb_build_object('agentId', prompt.agent_id, 'promptRevisionId', prompt.id,
+      'promptMd', prompt.prompt_md, 'promptSha256', prompt.prompt_sha256),
+    'agent', jsonb_build_object('provider', 'codex', 'model', 'gpt-5.5', 'effort', 'high',
+      'concurrencyLimit', 4, 'stallTimeoutMs', 900000, 'maxRetries', 3, 'maxTurns', 5),
+    'executionPolicyRevisionId', grant_row.execution_policy_revision_id, 'deliveryPolicyRevisionId', null,
+    'skillIds', '[]'::jsonb, 'toolIds', '[]'::jsonb, 'operatingRulesMd', '', 'operatingRuleStageIds', '[]'::jsonb,
+    'stages', jsonb_build_array(jsonb_build_object('id', pg_temp.workflow_fixture_id(32), 'slug', 'inspect-output',
+      'name', 'Inspect output', 'description', '', 'promptTemplateMd', 'Inspect the admitted output.',
+      'anyoneCanApprove', false, 'previousStageIds', '[]'::jsonb, 'approverMemberIds', jsonb_build_array(pg_temp.workflow_fixture_id(21))))
+  )::text as body
+from approved_grants grant_row
+join public.factory_agent_prompt_revisions prompt on prompt.id = pg_temp.workflow_fixture_id(91)
+cross join lateral public.create_factory_secret_binding(grant_row.workspace_id, grant_row.factory_id, pg_temp.workflow_fixture_id(1),
+  grant_row.id, grant_row.version, prompt.agent_id, 'codex', pg_temp.workflow_fixture_id(grant_row.revision_slot + 30)) binding;
+
+
+insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version, definition_json, canonical_digest, created_by)
+select revision_id, workspace_id, factory_id, 1, body, encode(sha256(convert_to(body, 'UTF8')), 'hex'), pg_temp.workflow_fixture_id(21)
+from scoped_revisions;
+insert into public.factory_definition_activations(workspace_id, factory_id, revision_id, activation_number, created_by)
+select workspace_id, factory_id, revision_id, activation_number, pg_temp.workflow_fixture_id(21)
+from scoped_revisions order by activation_number;
+select public.issue_factory_machine_token(workspace_id, factory_id, pg_temp.workflow_fixture_id(1), id, version,
+  pg_temp.workflow_fixture_id(36), repeat('a', 64), 'Workflow lifecycle fixture', '{sessions:create}') from lifecycle_root_grant;
+create function pg_temp.workflow_fixture_create_service_root(p_slot integer, p_title text) returns jsonb language plpgsql as $$
+declare
+  scope record;
+  permit record;
+  request_id uuid := gen_random_uuid();
+  receipt jsonb;
+begin
+  select workspace_id, factory_id into strict scope from workflow_fixture_scope;
+  select * into strict permit from public.admit_factory_command(scope.workspace_id, scope.factory_id, 'machine_token',
+    pg_temp.workflow_fixture_id(36), repeat('a', 64), 'sessions:create', request_id, repeat('b', 64), 'api');
+  if permit.status <> 'admitted' then raise exception 'Service route fixture admission failed: %', permit.status; end if;
+  receipt := public.execute_factory_session_mutation(scope.workspace_id, scope.factory_id, 'machine_token',
+    pg_temp.workflow_fixture_id(36), repeat('a', 64), request_id, repeat('b', 64), 'api', permit.admission_id, permit.lease_id,
+    'create', pg_temp.workflow_fixture_id(p_slot), jsonb_build_object('title', p_title, 'prompt', 'Choose a configured route.',
+      'agentId', (select agent_id from public.factory_agent_prompt_revisions where id = pg_temp.workflow_fixture_id(91)),
+      'repositoryId', pg_temp.workflow_fixture_id(34), 'draftSpecification', false));
+  perform public.release_factory_command_admission(permit.admission_id, permit.lease_id);
+  return receipt;
+end;
+$$;
+
+create temp table delegated_root as
+select fixture.scenario, scope.*, fields.*
+from workflow_fixture_scope scope
+cross join (values ('running-child', 101), ('queued-child', 102), ('budget-root', 103), ('late-registration', 104))
+  fixture(scenario, request_slot)
+cross join lateral jsonb_to_record(pg_temp.workflow_fixture_create_service_root(fixture.request_slot,
+  'Workflow lifecycle root ' || fixture.scenario)) fields(
+  "sessionId" uuid, "jobId" uuid, "runId" uuid
+);
+create temp table lifecycle_release_before as select * from public.get_git_continuity_release_state();
+select public.set_git_continuity_release(true, revision, 'Workflow lifecycle fixture')
+from lifecycle_release_before where not enabled;
+
+create function pg_temp.adopt_source_checkpoint(p_session_id uuid, p_job_id uuid)
+returns uuid language plpgsql as $$
+declare
+  started uuid;
+  lease uuid;
+begin
+  update public.agent_jobs set status = 'running', attempt_count = 1,
+    git_continuity_release_revision = (select revision from public.get_git_continuity_release_state())
+  where id = p_job_id;
+  started := public.start_session_job_attempt(p_job_id, 1, pg_temp.workflow_fixture_id(32), 0,
+    'codex', 'gpt-5.5', 'code', 'wallie/op650-root-' || p_job_id);
+  if started is null then raise exception 'Root attempt failed to start.'; end if;
+  perform public.pin_session_job_git_input(p_job_id, 1, started, pg_temp.workflow_fixture_id(34), 'main', repeat('a', 40));
+  if not found or not public.prepare_session_source_and_checkpoint_publication(started, pg_temp.workflow_fixture_id(34), 'main',
+    repeat('a', 40), repeat('a', 40), 'Root source', 'Delegation source proof', '', '', '', 0, 'Private root checkpoint.') then
+    raise exception 'Root checkpoint preparation failed.';
+  end if;
+  lease := public.claim_session_checkpoint_publication(started);
+  if lease is null or not public.adopt_session_checkpoint_publication(started, lease, null, null) then
+    raise exception 'Root checkpoint adoption failed.';
+  end if;
+  if not exists (select 1 from public.session_git_heads h where (h.session_id, h.checkpoint_run_id) = (p_session_id, started)) then
+    raise exception 'Root checkpoint did not become the accepted head.';
+  end if;
+  return started;
+end;
+$$;
+create temp table root_checkpoint as
+select root.*, pg_temp.adopt_source_checkpoint("sessionId", "jobId") as checkpoint_run_id from delegated_root root;
+
+create temp table route_graph as
+select jsonb_build_object(
+  'schemaVersion', 1, 'kind', 'graph', 'entryNodeId', 'route.choose',
+  'nodes', jsonb_build_array(
+    jsonb_build_object('id', 'route.choose', 'kind', 'route', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id),
+    jsonb_build_object('id', 'agent.child', 'kind', 'agent', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id),
+    jsonb_build_object('id', 'route.nested', 'kind', 'route', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id),
+    jsonb_build_object('id', 'agent.nested', 'kind', 'agent', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id)
+  ),
+  'edges', '[
+    {"id":"route.child","kind":"route","from":"route.choose","to":"agent.child"},
+    {"id":"child.continue","kind":"next","from":"agent.child","to":"route.nested"},
+    {"id":"route.grandchild","kind":"route","from":"route.nested","to":"agent.nested"}
+  ]'::jsonb,
+  'grants', jsonb_build_array(jsonb_build_object('id', approved.id, 'version', approved.version)),
+  'routePolicy', '{"maxNodeVisits":16,"maxLoopTraversals":0,"nodes":{"route.choose":{"minimumConfidence":0.7,
+    "allowedDestinationIds":["agent.child"],"fallback":{"kind":"clarification"}},
+    "route.nested":{"minimumConfidence":0.7,"allowedDestinationIds":["agent.nested"],"fallback":{"kind":"clarification"}}}}'::jsonb,
+  'delegationPolicy', jsonb_build_object('maxChildren', 2, 'maxConcurrentChildren', 1, 'maxAttempts', 4,
+    'maxTotalTokens', 1000, 'maxTokensPerAttempt', 50, 'maxCostUsd', 2, 'maxCostUsdPerAttempt', 0.2,
+    'targets', jsonb_build_object('agent.child', jsonb_build_object(
+      'definitionRevisionId', definition.id, 'definitionDigest', definition.canonical_digest),
+      'agent.nested', jsonb_build_object(
+        'definitionRevisionId', definition.id, 'definitionDigest', definition.canonical_digest)))
+)::text as body
+from lifecycle_root_grant approved
+join scoped_revisions profile on profile.scenario = 'child'
+join public.factory_definition_revisions definition on definition.id = profile.revision_id;
+
+create temp table lifecycle_roots as
+select root.*, registered.graph_revision_id, started.*
+from root_checkpoint root
+join public.session_factory_admission_inputs pin on pin.session_id = root."sessionId"
+cross join route_graph graph
+cross join lateral public.register_factory_workflow_graph_revision(
+  pin.workspace_id, pin.factory_id, pin.definition_revision_id, pin.definition_digest,
+  graph.body, encode(sha256(convert_to(graph.body, 'UTF8')), 'hex')) registered
+cross join lateral public.start_factory_workflow_graph_execution(root."sessionId", root.workspace_id, root.factory_id,
+  registered.graph_revision_id, root.checkpoint_run_id) started;
+update public.sessions session set archived_at = clock_timestamp(), phase_status = 'approved'
+from lifecycle_roots root where session.id = root."sessionId";
+
+create temp table selected_child as
+select root.scenario, routed.* from lifecycle_roots root
+cross join lateral public.admit_factory_workflow_route_decision(root."sessionId", root.workspace_id, root.factory_id,
+  root.execution_generation, root.ownership_token, root.entry_occurrence_id,
+  'Exact delegated profile selected.', 'agent.child', 0.9) routed;
+create function pg_temp.admit_scoped_child(p_scenario text)
+returns table(child_session_id uuid, job_id uuid, run_id uuid, created boolean) language sql as $$
+  select admitted.* from lifecycle_roots root join selected_child selected using (scenario)
+  cross join lateral public.admit_factory_workflow_delegated_session(
+    root."sessionId", root.workspace_id, root.factory_id, root.execution_generation, root.ownership_token,
+    root."sessionId", selected.target_occurrence_id, root.checkpoint_run_id,
+    'Workflow lifecycle child', 'Handle the exact accepted parent checkpoint.') admitted
+  where root.scenario = p_scenario
+$$;
+
+
+create temp table lifecycle_children as
+select test.scenario, child.* from (values ('running-child'), ('queued-child')) test(scenario)
+cross join lateral pg_temp.admit_scoped_child(test.scenario) child;
+
+create function pg_temp.prepare_child_publication(p_scenario text)
+returns table(job_id uuid, run_id uuid, claim_id uuid)
+language plpgsql as $$
+declare
+  selected_job uuid;
+  claimed public.agent_jobs;
+  started uuid;
+  publication_claim uuid;
+begin
+  select child.job_id into strict selected_job from lifecycle_children child where child.scenario = p_scenario;
+  update public.agent_jobs job set created_at = '2000-01-01' where job.id = selected_job;
+  select * into strict claimed from public.claim_next_agent_job(false, 1000, 'node');
+  if claimed.id is distinct from selected_job then raise exception 'Lifecycle setup selected a different queued job.'; end if;
+  started := public.start_session_job_attempt(claimed.id, 1, claimed.stage_id, 0,
+    'codex', 'gpt-5.5', 'code', 'wallie/op650-child-' || claimed.id);
+  if started is null then raise exception 'Lifecycle child attempt failed to start.'; end if;
+  perform public.pin_session_job_git_input(claimed.id, 1, started, pg_temp.workflow_fixture_id(34), 'main', repeat('a',40));
+  if not found or not public.prepare_session_source_and_checkpoint_publication(started, pg_temp.workflow_fixture_id(34), 'main',
+    repeat('a',40), repeat('a',40), 'Race child', 'Private output', '', '', '', 0, 'Exact race checkpoint.') then
+    raise exception 'Lifecycle child publication failed to prepare.';
+  end if;
+  publication_claim := public.claim_session_checkpoint_publication(started);
+  if publication_claim is null then raise exception 'The exact child publication could not be claimed.'; end if;
+  return query select claimed.id, started, publication_claim;
+end;
+$$;

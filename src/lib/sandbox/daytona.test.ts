@@ -18,6 +18,7 @@ vi.mock("./setup", () => ({ prepareSessionSandbox: mocked.prepare }));
 
 import {
   createDaytonaSessionSandbox,
+  daytonaSandboxDriver,
   hasRecoverableDaytonaSandboxSource,
   listRunningDaytonaSandboxes,
   stopDaytonaSandboxById,
@@ -261,4 +262,29 @@ describe("Daytona retained source inspection", () => {
     );
     expect(f.dispose).toHaveBeenCalledTimes(2);
   });
+});
+
+it("uses Daytona name lookup and checks both immutable owner labels", async () => {
+  const f = fixture();
+  const identity = { operationId: "operation-1", workspaceId: "workspace-1" };
+  f.client.get.mockResolvedValueOnce({
+    id: "exact",
+    name: "wallie-operation-1",
+    labels: { wallie_acquisition_id: "operation-1", wallie_workspace_id: "workspace-1" },
+    state: "archived",
+  });
+  await expect(daytonaSandboxDriver.findAcquisition(identity, connection)).resolves.toEqual([
+    "exact",
+  ]);
+  expect(f.client.get).toHaveBeenCalledWith("wallie-operation-1");
+
+  f.client.get.mockResolvedValueOnce({
+    ...f.sandbox,
+    id: "foreign",
+    name: "wallie-operation-1",
+    labels: { wallie_acquisition_id: "operation-1", wallie_workspace_id: "other" },
+  });
+  await expect(daytonaSandboxDriver.findAcquisition(identity, connection)).rejects.toThrow(
+    "different owner",
+  );
 });

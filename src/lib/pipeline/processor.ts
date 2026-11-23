@@ -79,7 +79,10 @@ import { getOpenCodeAuthForSession } from "@/lib/opencode/tokens";
 import { resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
 import { redactSecrets } from "@/lib/sandbox/command";
 import { formatVercelSandboxError, isVercelSandboxApiError } from "@/lib/vercel-sandbox/errors";
-import { createWorkspaceSessionSandbox } from "@/lib/workspaces/resource-operations";
+import {
+  createWorkspaceSessionSandbox,
+  settleWorkspaceResource,
+} from "@/lib/workspaces/resource-operations";
 import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
@@ -630,8 +633,21 @@ async function runStage(input: {
       signal,
       sessionId: session.id,
       workspaceId: session.workspace_id,
+      onSandboxReserved: async (operationId) => {
+        if (!sandboxSelection || !runId) return;
+        const { data, error } = await admin.rpc("register_factory_workflow_sandbox_acquisition", {
+          p_run_id: runId,
+          p_attempt_count: job.attempt_count,
+          p_operation_id: operationId,
+        });
+        if (error) throw error;
+        if (!data) {
+          // A definitive refusal came before the provider request.
+          await settleWorkspaceResource(admin, operationId, true).catch(() => undefined);
+          throw new ExecutionOwnershipLostError();
+        }
+      },
       onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
-        throwIfAborted(signal);
         if (!runId) return;
         if (sandboxProvider === "fake") {
           const attached = await updateRunSandbox(admin, runId, job.attempt_count, sandboxId, {
@@ -651,12 +667,29 @@ async function runStage(input: {
           provider: sandboxSelection.provider,
         });
         if (!attached) {
-          // The run was canceled before its sandbox id landed; stop the
-          // sandbox we just created so it doesn't keep executing detached
-          // from the now-canceled run.
-          await stopSandboxById(sandboxId, {
-            connection: sandboxSelection.connection,
-          });
+          const connection = sandboxSelection.connection;
+          let retained = false;
+          try {
+            const { data } = await admin.rpc("record_late_factory_workflow_sandbox", {
+              p_run_id: runId,
+              p_attempt_count: job.attempt_count,
+              p_sandbox_id: sandboxId,
+              p_sandbox_provider: sandboxProvider,
+              p_sandbox_connection_revision: connection.revision,
+              ...(connection.provider === "vercel"
+                ? {
+                    p_sandbox_vercel_project_id: connection.credentials.projectId,
+                    p_sandbox_vercel_team_id: connection.credentials.teamId,
+                  }
+                : {}),
+            });
+            retained = data === true;
+          } catch {
+            // The workspace operation still retains this handle for recovery.
+          }
+          if (!retained) {
+            await stopSandboxById(sandboxId, { connection });
+          }
           throw new ExecutionOwnershipLostError();
         }
       },

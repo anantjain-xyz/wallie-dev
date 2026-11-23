@@ -1,10 +1,12 @@
 import { CommandExitError, FileNotFoundError, Sandbox, SandboxNotFoundError } from "e2b";
 
 import { SandboxLogBuffer, shellJoin, shellQuote } from "./command";
+import { sandboxAcquisitionLabels } from "./acquisition-identity";
 import { finalizeSandboxAcquisition } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
   RunningSandboxSummary,
+  SandboxAcquisitionIdentity,
   SandboxConnection,
   SandboxExecHandle,
   SandboxExecOptions,
@@ -131,6 +133,7 @@ export async function createE2BSessionSandbox(
     metadata: {
       wallie_owner_id: input.ownerId ?? input.sessionId,
       wallie_session_id: input.sessionId,
+      ...(input.acquisition ? sandboxAcquisitionLabels(input.acquisition) : {}),
       wallie_workspace_id: input.workspaceId ?? input.sessionId,
     },
     signal: input.signal,
@@ -181,6 +184,24 @@ export async function listRunningE2BSandboxes(
   return result;
 }
 
+async function findE2BAcquisition(identity: SandboxAcquisitionIdentity, connection: E2BConnection) {
+  const metadata = sandboxAcquisitionLabels(identity);
+  const paginator = Sandbox.list({
+    apiKey: connection.credentials.apiKey,
+    limit: 10,
+    query: { metadata, state: ["running", "paused"] },
+  });
+  const matches = await paginator.nextItems();
+  if (paginator.hasNext) throw new Error("Sandbox acquisition lookup exceeded its result limit.");
+  return matches
+    .filter(
+      ({ metadata: candidate }) =>
+        candidate.wallie_acquisition_id === metadata.wallie_acquisition_id &&
+        candidate.wallie_workspace_id === metadata.wallie_workspace_id,
+    )
+    .map(({ sandboxId }) => sandboxId);
+}
+
 export async function stopE2BSandboxById(
   sandboxId: string,
   connection: E2BConnection,
@@ -224,6 +245,7 @@ export const e2bSandboxDriver: SandboxProviderDriver<E2BConnection> = {
       throw error;
     }
   },
+  findAcquisition: findE2BAcquisition,
   listRunning: listRunningE2BSandboxes,
   hasRecoverableSource: hasRecoverableE2BSandboxSource,
   stopById: stopE2BSandboxById,

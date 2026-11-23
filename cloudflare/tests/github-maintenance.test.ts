@@ -16,6 +16,7 @@ import { drainFactoryDiagnoses } from "@/lib/factory-diagnosis/worker";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import { requestFactoryEventDispatch } from "@/lib/factory-event-subscriptions/relay";
+import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbox-stop-drain";
 import type { Env } from "../index";
 
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
@@ -31,6 +32,9 @@ vi.mock("@/lib/pipeline/checkpoint-cleanup", () => ({ drainCheckpointCleanup: vi
 vi.mock("@/worker/stall-detector", () => ({ sweepStalledRuns: vi.fn() }));
 vi.mock("@/worker/reconciler", () => ({ reconcileLinearState: vi.fn() }));
 vi.mock("@/worker/sandbox-reaper", () => ({ reapOrphanSandboxes: vi.fn() }));
+vi.mock("@/lib/factory-workflows/sandbox-stop-drain", () => ({
+  drainFactoryWorkflowSandboxStops: vi.fn(),
+}));
 vi.mock("@/lib/storage/session-attachment-cleanup", () => ({
   cleanupExpiredSessionAttachments: vi.fn(),
 }));
@@ -74,6 +78,7 @@ it.each([
   { scenario: "routing canary alert evaluation fails", canaryAlertFailure: true },
   { scenario: "benchmark scheduling fails", benchmarkFailure: true },
   { scenario: "a judge dispatch fails", judgeFailure: true },
+  { scenario: "a workflow sandbox stop fails", sandboxStopFailure: true },
 ])(
   "runs independent maintenance when $scenario",
   async ({
@@ -89,6 +94,7 @@ it.each([
     canaryAlertFailure,
     benchmarkFailure,
     judgeFailure,
+    sandboxStopFailure,
   }) => {
     const bindings = env as unknown as Env;
     const id = `maintenance-${crypto.randomUUID()}`;
@@ -213,6 +219,10 @@ it.each([
         new Error("relay temporarily unavailable"),
       );
     }
+    if (sandboxStopFailure)
+      vi.mocked(drainFactoryWorkflowSandboxStops).mockRejectedValue(
+        new Error("Provider stop temporarily unavailable"),
+      );
     const inspection = await introspectWorkflowInstance(bindings.MAINTENANCE, id);
     try {
       await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
@@ -231,6 +241,7 @@ it.each([
         vi.mocked(reconcilePrReadiness).mock.invocationCallOrder[0],
       );
       expect(sweepStalledRuns).toHaveBeenCalledExactlyOnceWith(admin, 900_000);
+      expect(drainFactoryWorkflowSandboxStops).toHaveBeenCalledExactlyOnceWith(admin);
       expect(vi.mocked(reconcilePrReadiness).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0],
       );

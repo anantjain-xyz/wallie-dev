@@ -11253,6 +11253,20 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      claim_factory_workflow_sandbox_stops: {
+        Args: { p_limit: number }
+        Returns: {
+          lease_token: string
+          obligation_id: string
+          run_id: string
+          sandbox_connection_revision: string
+          sandbox_id: string
+          sandbox_provider: string
+          sandbox_vercel_project_id: string
+          sandbox_vercel_team_id: string
+          workspace_id: string
+        }[]
+      }
       claim_github_pr_refresh: {
         Args: { p_workspace_id?: string }
         Returns: Json
@@ -11666,6 +11680,29 @@ export type Database = {
       }
       control_factory_flow_projection: {
         Args: { p_action: string; p_factory_id: string; p_workspace_id: string }
+        Returns: Json
+      }
+      control_factory_workflow_lifecycle: {
+        Args: {
+          p_action: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_request_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      control_factory_workflow_lifecycle_for_user: {
+        Args: {
+          p_action: string
+          p_actor_user_id: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_request_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
         Returns: Json
       }
       correct_factory_memory: {
@@ -14967,6 +15004,18 @@ export type Database = {
           result_id: string
         }[]
       }
+      record_late_factory_workflow_sandbox: {
+        Args: {
+          p_attempt_count: number
+          p_run_id: string
+          p_sandbox_connection_revision: string
+          p_sandbox_id: string
+          p_sandbox_provider: string
+          p_sandbox_vercel_project_id?: string
+          p_sandbox_vercel_team_id?: string
+        }
+        Returns: boolean
+      }
       record_pr_verification_observation: {
         Args: {
           p_artifact_review_revision: number
@@ -15187,6 +15236,10 @@ export type Database = {
         Args: { p_operation_id: string; p_resource_id: string }
         Returns: boolean
       }
+      record_workspace_sandbox_acquisition_stop: {
+        Args: { p_operation_id: string; p_sandbox_id: string }
+        Returns: boolean
+      }
       register_factory_context_source: {
         Args: {
           p_actor_user_id: string
@@ -15265,6 +15318,14 @@ export type Database = {
           created: boolean
           graph_revision_id: string
         }[]
+      }
+      register_factory_workflow_sandbox_acquisition: {
+        Args: {
+          p_attempt_count: number
+          p_operation_id: string
+          p_run_id: string
+        }
+        Returns: boolean
       }
       reject_session_stage: {
         Args: {
@@ -16589,6 +16650,18 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      settle_factory_workflow_sandbox_acquisition: {
+        Args: { p_operation_id: string; p_stopped_sandbox_ids: string[] }
+        Returns: boolean
+      }
+      settle_factory_workflow_sandbox_stop: {
+        Args: {
+          p_confirmed: boolean
+          p_lease_token: string
+          p_obligation_id: string
+        }
+        Returns: boolean
       }
       settle_workspace_resource_operation: {
         Args: { p_operation_id: string; p_transferred: boolean }
