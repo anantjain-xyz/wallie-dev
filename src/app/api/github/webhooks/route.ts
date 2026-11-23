@@ -9,6 +9,7 @@ import {
 } from "@/features/github/webhook-payloads";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
+import { captureGitHubAutomationPullRequest } from "@/features/github/pr-automation";
 import {
   handleGitHubInstallationEvent,
   handleGitHubInstallationRepositoriesEvent,
@@ -66,11 +67,21 @@ export async function POST(request: Request) {
     const signal = verificationEventPayloadSchemas[eventName].safeParse(payload);
     const delivery = githubDeliveryIdSchema.safeParse(request.headers.get("x-github-delivery"));
     if (!signal.success || !delivery.success) return invalidPayload();
-    // Validate the full PR lifecycle payload before enqueuing anything. Other
-    // events consume only their scoped identity; their conclusions are ignored.
-    if (eventName === "pull_request" && !pullRequestEventSchema.safeParse(payload).success)
-      return invalidPayload();
-    await handleGitHubVerificationEvent(signal.data, delivery.data);
+    if (eventName === "pull_request") {
+      const parsed = pullRequestEventSchema.safeParse(payload);
+      if (!parsed.success) return invalidPayload();
+
+      const results = await Promise.allSettled([
+        handleGitHubVerificationEvent(signal.data, delivery.data).then(() =>
+          handleGitHubPullRequestEvent(parsed.data),
+        ),
+        captureGitHubAutomationPullRequest(payload, delivery.data),
+      ]);
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure) throw failure.reason;
+    } else {
+      await handleGitHubVerificationEvent(signal.data, delivery.data);
+    }
   }
 
   switch (eventName) {
@@ -84,12 +95,6 @@ export async function POST(request: Request) {
       const parsed = installationEventSchema.safeParse(payload);
       if (!parsed.success) return invalidPayload();
       await handleGitHubInstallationRepositoriesEvent(parsed.data);
-      break;
-    }
-    case "pull_request": {
-      const parsed = pullRequestEventSchema.safeParse(payload);
-      if (!parsed.success) return invalidPayload();
-      await handleGitHubPullRequestEvent(parsed.data);
       break;
     }
     default:

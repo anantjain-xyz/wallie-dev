@@ -13631,6 +13631,25 @@ export type Database = {
         }
         Returns: boolean
       }
+      ingest_factory_github_automation_pr: {
+        Args: {
+          p_action: string
+          p_base_branch: string
+          p_delivery_id: string
+          p_draft: boolean
+          p_github_repository_id: number
+          p_head_branch: string
+          p_head_repository_id?: number
+          p_head_sha: string
+          p_installation_id: number
+          p_merge_commit_sha?: string
+          p_provider_updated_at: string
+          p_pull_request_id: number
+          p_pull_request_number: number
+          p_state: string
+        }
+        Returns: Json
+      }
       inspect_factory_mcp_identity: {
         Args: {
           p_credential_digest: string
