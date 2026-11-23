@@ -46,9 +46,26 @@ flowchart LR
 - **Publication.** The existing checkpoint publisher records the exact integrated commit and tree, advances the parent checkpoint, and creates the parent review artifact in one transaction. Downstream nodes can read that accepted checkpoint after adoption.
 - **Blocked joins.** Conflicts retain a private, immutable report for the exact join attempt. Missing inputs, stale ownership, and failed validation keep the current parent checkpoint. Each child approval applies to its own artifact. The joined artifact requires its own parent approval.
 
+## Deliver a repository set
+
+A compiled `repositorySets` entry assigns named branch edges to each secondary repository and pins its exact writer grant revision. Each repository needs a required branch. Unassigned branches use the primary repository. The worker observes the first secondary base under its current repository-specific grant. Later forks use the exact accepted secondary head and retained ref.
+
+Join admission records an independent delivery obligation for each secondary repository. The primary checkpoint creates the parent review artifact. For each secondary repository, a dedicated attempt integrates its selected branch outputs and replays compatible frozen branch plans in a credential-free sandbox. The parent delivery policy sets the evidence requirements. The worker retains the exact validation run, joined tree, and checkpoint.
+
+| Delivery status | Meaning                                                                          |
+| --------------- | -------------------------------------------------------------------------------- |
+| `pending`       | The join still needs its first accepted checkpoint.                              |
+| `partial`       | The primary is accepted and at least one secondary delivery remains outstanding. |
+| `blocked`       | The primary failed or delivery is blocked before any checkpoint was accepted.    |
+| `adopted`       | All declared repositories have accepted checkpoints. The graph can continue.     |
+
+Read a repository set with `GET /api/sessions/{sessionId}/workflow-join?joinId={joinId}`. The response includes each secondary base, validated output, validation run, and delivery status. The workflow lifecycle state remains visible while paused or canceled. Resume gives an unfinished validation a fresh attempt against the same repository base. A sealed checkpoint resumes publication without another validation run.
+
+Publication verifies the exact retained ref in each repository. A transient failure leaves the sealed checkpoint available for a fresh lease. The next claimant checks the remote ref before writing. A changed repository head, revoked writer, or incompatible remote ref blocks only that repository. The ledger records when a remote ref still needs reconciliation. Published repositories retain their adopted checkpoints while another repository recovers.
+
 ## Review a joined checkpoint
 
-A graph can place a `review` node immediately after a join. The node pins a factory reviewer prompt revision, a set of rule IDs, and an optional repair declaration.
+A graph can place a `review` node immediately after a join. For a repository set, review starts after every repository adopts its checkpoint. The review pins the accepted primary checkpoint, a factory reviewer prompt revision, a set of rule IDs, and an optional repair declaration.
 
 ```mermaid
 flowchart LR

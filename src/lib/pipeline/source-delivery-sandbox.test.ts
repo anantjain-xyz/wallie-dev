@@ -13,7 +13,10 @@ import {
   type SandboxHandle,
 } from "@/lib/sandbox/types";
 import { SOURCE_CHECKPOINT_REF } from "./source-checkpoint";
-import { restoreAndPushSourceInSandbox } from "./source-delivery-sandbox";
+import {
+  readRetainedSourceRefInSandbox,
+  restoreAndPushSourceInSandbox,
+} from "./source-delivery-sandbox";
 
 vi.mock("@/lib/sandbox", () => ({
   createUtilitySandbox: vi.fn(),
@@ -29,7 +32,7 @@ vi.mock("@/lib/workspaces/resource-operations", async (original) => ({
   settleWorkspaceResource: vi.fn(),
 }));
 
-function fixture(provider: (typeof SANDBOX_PROVIDER_IDS)[number] = "vercel") {
+function fixture(provider: (typeof SANDBOX_PROVIDER_IDS)[number] = "vercel", remoteOutput = "") {
   const connection = {
     provider,
     revision: "captured-revision",
@@ -57,12 +60,15 @@ function fixture(provider: (typeof SANDBOX_PROVIDER_IDS)[number] = "vercel") {
     writeFile: vi.fn().mockResolvedValue(undefined),
     readFile: vi.fn(),
     stop: vi.fn(),
+    [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
     exec: vi.fn(async (command, args) => ({
       output: async () => ({
         stdout:
           command === "git" && args[0] === "bundle" && args[1] === "unbundle"
             ? `${headSha} ${SOURCE_CHECKPOINT_REF}\n`
-            : "",
+            : command === "git" && args.includes("ls-remote")
+              ? remoteOutput
+              : "",
         stderr: "",
       }),
       exitCode: Promise.resolve(0),
@@ -132,6 +138,7 @@ describe("source delivery utility sandboxes", () => {
         throwOnError: true,
       });
       expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(f.admin, "operation", true);
+      expect(f.handle[Symbol.asyncDispose]).toHaveBeenCalledOnce();
     },
   );
 
@@ -142,6 +149,7 @@ describe("source delivery utility sandboxes", () => {
       "Source delivery sandbox cleanup will retry.",
     );
     expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(f.admin, "operation", false);
+    expect(f.handle[Symbol.asyncDispose]).toHaveBeenCalledOnce();
   });
 
   it("retains an unknown acquisition until its provider recovery deadline", async () => {
@@ -165,4 +173,41 @@ describe("source delivery utility sandboxes", () => {
     );
     expect(settleWorkspaceResource).toHaveBeenCalledExactlyOnceWith(f.admin, "operation", false);
   });
+});
+
+describe("retained ref reads", () => {
+  const ref = "refs/wallie/checkpoints/producing-run/exact-candidate";
+  const sha = "e".repeat(40);
+  const suffix = `${"1".repeat(40)}\trefs/heads/other/${ref}\n`;
+  const exact = `${sha}\t${ref}\n`;
+
+  it.each([
+    [suffix + exact, sha],
+    [suffix, null],
+  ])("selects only an exact ref", async (stdout, expected) => {
+    const f = fixture("daytona", stdout);
+    const { remoteUrl, token } = f.input;
+    await expect(
+      readRetainedSourceRefInSandbox(
+        { remoteUrl, token, ref, signal: new AbortController().signal },
+        f.context,
+      ),
+    ).resolves.toBe(expected);
+    expect(f.handle[Symbol.asyncDispose]).toHaveBeenCalledOnce();
+  });
+
+  it.each([exact + exact, `malformed\t${ref}\n`])(
+    "rejects an ambiguous or malformed exact ref",
+    async (stdout) => {
+      const f = fixture("daytona", stdout);
+      const { remoteUrl, token } = f.input;
+      await expect(
+        readRetainedSourceRefInSandbox(
+          { remoteUrl, token, ref, signal: new AbortController().signal },
+          f.context,
+        ),
+      ).rejects.toThrow("Retained checkpoint ref could not be verified.");
+      expect(f.handle[Symbol.asyncDispose]).toHaveBeenCalledOnce();
+    },
+  );
 });

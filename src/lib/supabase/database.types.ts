@@ -11315,6 +11315,18 @@ export type Database = {
         Args: { p_operation_id: string; p_path: string; p_workspace_id: string }
         Returns: boolean
       }
+      claim_factory_workflow_repository_delivery: {
+        Args: {
+          p_factory_id: string
+          p_generation: number
+          p_join_id: string
+          p_owner: string
+          p_repository_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       claim_factory_workflow_sandbox_stops: {
         Args: { p_limit: number }
         Returns: {
@@ -12445,6 +12457,10 @@ export type Database = {
         Args: { p_permit: string }
         Returns: Json
       }
+      dispatch_next_factory_workflow_repository_validation: {
+        Args: never
+        Returns: boolean
+      }
       dispatch_next_factory_workflow_review_repair: {
         Args: never
         Returns: boolean
@@ -12891,6 +12907,26 @@ export type Database = {
           p_session_id: string
         }
         Returns: string
+      }
+      finish_factory_workflow_repository_validation: {
+        Args: {
+          p_attempt_count: number
+          p_bundle_base64?: string
+          p_bundle_sha256?: string
+          p_candidate_sha?: string
+          p_factory_id: string
+          p_generation: number
+          p_job_id: string
+          p_join_id: string
+          p_owner: string
+          p_repository_id: string
+          p_result: string
+          p_root_session_id: string
+          p_run_id: string
+          p_tree_sha?: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       finish_github_pr_refresh: {
         Args: {
@@ -13585,6 +13621,21 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_factory_workflow_repository_validation_active: {
+        Args: {
+          p_attempt_count: number
+          p_factory_id: string
+          p_generation: number
+          p_job_id: string
+          p_join_id: string
+          p_owner: string
+          p_repository_id: string
+          p_root_session_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       issue_factory_machine_token: {
         Args: {
           p_actor_user_id: string
@@ -14035,12 +14086,41 @@ export type Database = {
         }
         Returns: Json
       }
+      list_factory_workflow_branch_repository_bases: {
+        Args: never
+        Returns: {
+          base_branch: string
+          factory_id: string
+          generation: number
+          group_id: string
+          installation_id: string
+          installation_numeric_id: number
+          repository_full_name: string
+          repository_id: string
+          repository_numeric_id: number
+          requires_observation: boolean
+          root_session_id: string
+          workspace_id: string
+        }[]
+      }
       list_factory_workflow_intake_options: {
         Args: { p_factory_id: string; p_workspace_id: string }
         Returns: {
           activation_id: string
           display_name: string
           workflow_id: string
+        }[]
+      }
+      list_factory_workflow_repository_deliveries: {
+        Args: never
+        Returns: {
+          factory_id: string
+          generation: number
+          join_id: string
+          ownership_token: string
+          repository_id: string
+          root_session_id: string
+          workspace_id: string
         }[]
       }
       list_run_artifacts: {
@@ -14363,6 +14443,22 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      pin_factory_workflow_branch_repository_base: {
+        Args: {
+          p_base_branch: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_group_id: string
+          p_installation_id: string
+          p_installation_numeric_id: number
+          p_observed_sha?: string
+          p_repository_id: string
+          p_repository_numeric_id: number
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       pin_session_attempt_manifest: {
         Args: {
@@ -15123,6 +15219,28 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: string
+      }
+      read_factory_workflow_repository_bundle: {
+        Args: {
+          p_claim_id: string
+          p_factory_id: string
+          p_generation: number
+          p_join_id: string
+          p_owner: string
+          p_repository_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
+      read_factory_workflow_repository_delivery: {
+        Args: {
+          p_factory_id: string
+          p_join_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       read_factory_workflow_review_repair_input: {
         Args: {
@@ -17041,6 +17159,23 @@ export type Database = {
           p_ownership_token: string
           p_root_session_id: string
           p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
+      settle_factory_workflow_repository_delivery: {
+        Args: {
+          p_action: string
+          p_claim_id: string
+          p_factory_id: string
+          p_generation: number
+          p_join_id: string
+          p_owner: string
+          p_remote_ref?: string
+          p_remote_repository_id?: number
+          p_remote_sha?: string
+          p_repository_id: string
+          p_root_session_id: string
           p_workspace_id: string
         }
         Returns: string
