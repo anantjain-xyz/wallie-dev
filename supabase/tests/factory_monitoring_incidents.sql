@@ -12,10 +12,11 @@ select pg_temp.delivery_prepare(250, 'timeout');
 select pg_temp.delivery_claim(250);
 select pg_temp.delivery_report(260, 250, 1, 'timeout', 'succeeded', repeat('c', 40));
 
-create function pg_temp.approve_monitor(p_actor uuid default pg_temp.op651_id(1))
+create function pg_temp.approve_monitor(p_actor uuid default pg_temp.op651_id(1),
+  p_binding uuid default pg_temp.op651_id(270), p_secret text default repeat('x', 64))
 returns jsonb language sql as $$
   select public.approve_factory_monitoring_binding(scope.workspace_id, scope.factory_id, p_actor,
-    pg_temp.op651_id(270), source.source_id, pg_temp.op651_id(271), '98765', repeat('x', 64), 60)
+    p_binding, source.source_id, pg_temp.op651_id(271), '98765', p_secret, 60)
   from op651_scope scope cross join delivery_sources source where source.name = 'timeout'
 $$;
 select throws_ok($$select pg_temp.approve_monitor(pg_temp.op651_id(2))$$, '42501', null,
@@ -28,9 +29,10 @@ select ok(not has_function_privilege('authenticated', 'public.read_factory_monit
 create function pg_temp.monitor_alert(p_event integer, p_issue text default '751',
   p_installation uuid default pg_temp.op651_id(271), p_project text default '98765',
   p_command integer default 250, p_environment text default 'timeout',
-  p_source_sha text default repeat('c', 40), p_digest text default repeat('a', 64))
+  p_source_sha text default repeat('c', 40), p_digest text default repeat('a', 64),
+  p_binding uuid default pg_temp.op651_id(270))
 returns jsonb language sql as $$
-  select public.record_factory_monitoring_signal(pg_temp.op651_id(270), p_installation, p_project,
+  select public.record_factory_monitoring_signal(p_binding, p_installation, p_project,
     lpad(to_hex(p_event), 32, '0'), p_issue, pg_temp.op651_id(p_command),
     p_environment, p_source_sha, clock_timestamp(), p_digest)
 $$;
@@ -87,32 +89,62 @@ select is(public.get_session_detail_page(:'monitoring_workspace_slug', :monitori
 reset role;
 set local request.jwt.claim.role = 'service_role';
 
-select is(pg_temp.monitor_alert(3, '752')->>'status', 'queued', 'a separate Sentry issue starts another window');
+create temp table monitor_invalidated as select pg_temp.monitor_alert(3, '752') item;
+select is(item->>'status', 'queued', 'a separate Sentry issue starts another window') from monitor_invalidated;
 select pg_temp.delivery_report(261, 250, 3, 'timeout', 'failed', repeat('c', 40));
 select pg_temp.delivery_report(262, 250, 2, 'timeout', 'succeeded', repeat('c', 40));
 select is(pg_temp.monitor_alert(4, '753')->>'status', 'ignored', 'out-of-order success does not supersede a current failed deployment');
 select is(public.admit_next_factory_monitoring_incident()->>'status', 'denied', 'a pending alert loses authorization after current deployment changes');
 select pg_temp.delivery_report(263, 250, 4, 'timeout', 'succeeded', repeat('c', 40));
 
-update internal.factory_monitoring_incidents set suppress_until = clock_timestamp() - interval '1 second'
-where binding_id = pg_temp.op651_id(270) and sentry_issue_id = '751';
-select isnt(pg_temp.monitor_alert(5)->>'incidentId', item->>'incidentId', 'a new qualified alert after expiry opens a new incident')
-from monitor_first;
-select is(pg_temp.monitor_alert(1)->>'incidentId', item->>'incidentId', 'a replay after suppression expiry still resolves to the original incident')
-from monitor_first;
+create temp table monitor_recovered as select pg_temp.monitor_alert(6, '752') item;
+select is(item->>'status', 'queued', 'a fresh alert after authoritative recovery can queue an incident')
+from monitor_recovered;
+select isnt(monitor_recovered.item->>'incidentId', monitor_invalidated.item->>'incidentId',
+  'the recovered alert does not attach to the denied incident')
+from monitor_recovered cross join monitor_invalidated;
+select is(public.admit_next_factory_monitoring_incident()->>'status', 'admitted',
+  'the recovered deployment can start incident work before the denied window expires');
+select is(pg_temp.monitor_alert(3, '752'),
+  jsonb_build_object('status', 'duplicate', 'incidentId', item->>'incidentId'),
+  'the original event still replays the denied incident receipt') from monitor_invalidated;
 
-select pg_temp.monitor_alert(event) from generate_series(10, 40) event;
-select is((select count(*) from internal.factory_monitoring_signals where binding_id = pg_temp.op651_id(270)),
-  30::bigint, 'the signed burst is capped without storing excess deliveries');
-select is(pg_temp.monitor_alert(50, '753')->>'status', 'rate_limited', 'another alert cannot exceed the binding rate limit');
-select is((select count(*) from internal.factory_monitoring_incidents where binding_id = pg_temp.op651_id(270)),
-  3::bigint, 'the burst adds no extra incident work');
-
+select is(pg_temp.monitor_alert(7, '754')->>'status', 'queued', 'another alert is pending before disable');
 select public.disable_factory_monitoring_binding(workspace_id, factory_id, pg_temp.op651_id(1), pg_temp.op651_id(270))
 from op651_scope;
 select is(public.read_factory_monitoring_secret(pg_temp.op651_id(270)), null::jsonb, 'disable immediately removes signing authority');
-select is(pg_temp.monitor_alert(51)->>'status', 'ignored', 'disabled bindings cannot queue or replay an alert');
+select is(pg_temp.monitor_alert(1)->>'status', 'ignored', 'a disabled binding cannot replay an existing event');
+select is(pg_temp.monitor_alert(51)->>'status', 'ignored', 'a disabled binding cannot queue a fresh event');
 select is(public.admit_next_factory_monitoring_incident()->>'status', 'denied', 'disable also prevents queued work from starting');
+
+select is(pg_temp.approve_monitor(p_binding => pg_temp.op651_id(272), p_secret => repeat('y', 64))->>'id',
+  pg_temp.op651_id(272)::text, 'the manager approves a replacement binding for the same monitoring scope');
+select is(public.read_factory_monitoring_secret(pg_temp.op651_id(272))->>'encryptedSecret', repeat('y', 64),
+  'the replacement binding uses the rotated signing secret');
+select is(pg_temp.monitor_alert(1, p_binding => pg_temp.op651_id(272)),
+  jsonb_build_object('status', 'duplicate', 'incidentId', item->>'incidentId'),
+  'an exact event replay after rotation returns the original admitted incident') from monitor_first;
+select is(pg_temp.monitor_alert(8, p_binding => pg_temp.op651_id(272)),
+  jsonb_build_object('status', 'suppressed', 'incidentId', item->>'incidentId'),
+  'a fresh event after rotation shares the original admitted suppression window') from monitor_first;
+select is(public.admit_next_factory_monitoring_incident(), null::jsonb,
+  'replayed and suppressed alerts after rotation create no second session');
+
+update internal.factory_monitoring_incidents set suppress_until = clock_timestamp() - interval '1 second'
+where binding_id = pg_temp.op651_id(270) and sentry_issue_id = '751';
+select isnt(pg_temp.monitor_alert(5, p_binding => pg_temp.op651_id(272))->>'incidentId', item->>'incidentId',
+  'a new qualified alert after expiry opens a new incident') from monitor_first;
+select is(pg_temp.monitor_alert(1, p_binding => pg_temp.op651_id(272))->>'incidentId', item->>'incidentId',
+  'a replay after suppression expiry still resolves to the original incident') from monitor_first;
+
+select pg_temp.monitor_alert(event, p_binding => pg_temp.op651_id(272)) from generate_series(10, 40) event;
+select is((select count(*) from internal.factory_monitoring_signals where binding_id in
+  (pg_temp.op651_id(270), pg_temp.op651_id(272))), 30::bigint,
+  'the monitoring scope shares the signed burst limit across replacement bindings');
+select is(pg_temp.monitor_alert(50, '753', p_binding => pg_temp.op651_id(272))->>'status', 'rate_limited',
+  'another alert cannot exceed the scoped rate limit after rotation');
+select is((select count(*) from internal.factory_monitoring_incidents where binding_id in
+  (pg_temp.op651_id(270), pg_temp.op651_id(272))), 5::bigint, 'the burst adds no extra incident work');
 
 select * from finish();
 rollback;

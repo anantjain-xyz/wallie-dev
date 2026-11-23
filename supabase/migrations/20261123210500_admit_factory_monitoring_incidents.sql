@@ -4,6 +4,7 @@ create table internal.factory_monitoring_bindings (
   factory_id uuid not null,
   repository_id uuid not null,
   deployment_source_id uuid not null,
+  scope_key text not null,
   sentry_installation_id uuid not null,
   sentry_project_id text not null check (sentry_project_id ~ '^[1-9][0-9]{0,19}$'),
   encrypted_secret text not null,
@@ -17,14 +18,14 @@ create table internal.factory_monitoring_bindings (
     references internal.factory_deployment_sources (workspace_id, factory_id, repository_id, id) on delete cascade
 );
 create unique index factory_monitoring_binding_active_idx on internal.factory_monitoring_bindings
-  (workspace_id, factory_id, deployment_source_id, sentry_installation_id, sentry_project_id)
-  where disabled_at is null;
+  (scope_key) where disabled_at is null;
 
 create table internal.factory_monitoring_incidents (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null,
   factory_id uuid not null,
   binding_id uuid not null,
+  scope_key text not null,
   delivery_command_id uuid not null,
   deployment_id uuid not null,
   observation_id uuid not null,
@@ -55,10 +56,12 @@ create index factory_monitoring_pending_idx on internal.factory_monitoring_incid
 create index factory_monitoring_active_factory_idx on internal.factory_monitoring_incidents (workspace_id, factory_id, status)
   where status in ('pending', 'admitted');
 create index factory_monitoring_windows_idx on internal.factory_monitoring_incidents
-  (binding_id, delivery_command_id, sentry_issue_id, suppress_until desc);
+  (scope_key, delivery_command_id, sentry_issue_id, suppress_until desc)
+  where status in ('pending', 'admitted');
 
 create table internal.factory_monitoring_signals (
   binding_id uuid not null references internal.factory_monitoring_bindings (id) on delete cascade,
+  scope_key text not null,
   workspace_id uuid not null,
   factory_id uuid not null,
   sentry_event_id text not null,
@@ -66,12 +69,12 @@ create table internal.factory_monitoring_signals (
   recorded_at timestamptz not null,
   body_digest text not null,
   incident_id uuid not null references internal.factory_monitoring_incidents (id) on delete cascade,
-  primary key (binding_id, sentry_event_id)
+  primary key (scope_key, sentry_event_id)
 );
 create index factory_monitoring_factory_rate_idx on internal.factory_monitoring_signals
   (workspace_id, factory_id, recorded_at desc);
-create index factory_monitoring_binding_rate_idx on internal.factory_monitoring_signals
-  (binding_id, recorded_at desc);
+create index factory_monitoring_scope_rate_idx on internal.factory_monitoring_signals
+  (scope_key, recorded_at desc);
 
 create table internal.factory_monitoring_admission_permits (
   incident_id uuid primary key references internal.factory_monitoring_incidents (id) on delete cascade,
@@ -110,6 +113,7 @@ declare
   approved public.factory_execution_grants;
   binding internal.factory_monitoring_bindings;
   assignment jsonb;
+  scope_key text;
 begin
   actor := internal.factory_automation_actor(p_workspace_id, p_factory_id, p_actor_user_id);
   if p_binding_id is null or p_installation_id is null or p_project_id is null
@@ -123,6 +127,8 @@ begin
     and candidate.revoked_at is null
   for share;
   if not found then raise exception 'Deployment source is unavailable.' using errcode = 'P0002'; end if;
+  scope_key := encode(sha256(convert_to(jsonb_build_array(p_workspace_id, p_factory_id, source.repository_id,
+    source.provider, source.provider_project_id, source.environment, p_installation_id, p_project_id)::text, 'UTF8')), 'hex');
   select * into base from internal.factory_workflow_authoring_base(p_workspace_id, p_factory_id);
   if (base.definition->>'repositoryId')::uuid is distinct from source.repository_id then
     raise exception 'The deployment and incident agent must use the same repository.' using errcode = 'PT422';
@@ -140,9 +146,9 @@ begin
     raise exception 'Too many active monitoring bindings.' using errcode = 'PT409';
   end if;
   insert into internal.factory_monitoring_bindings(
-    id, workspace_id, factory_id, repository_id, deployment_source_id, sentry_installation_id,
+    id, workspace_id, factory_id, repository_id, deployment_source_id, scope_key, sentry_installation_id,
     sentry_project_id, encrypted_secret, assignment, suppression_seconds, approved_by_member_id
-  ) values (p_binding_id, p_workspace_id, p_factory_id, source.repository_id, source.id, p_installation_id,
+  ) values (p_binding_id, p_workspace_id, p_factory_id, source.repository_id, source.id, scope_key, p_installation_id,
     p_project_id, p_encrypted_secret, assignment, p_suppression_seconds, actor)
   returning * into binding;
   return internal.factory_monitoring_binding_summary(binding);
@@ -284,7 +290,7 @@ begin
   recorded_now := clock_timestamp();
 
   select prior.* into signal from internal.factory_monitoring_signals prior
-  where (prior.binding_id, prior.sentry_event_id) = (p_binding_id, p_event_id);
+  where (prior.scope_key, prior.sentry_event_id) = (binding.scope_key, p_event_id);
   if found then
     if signal.body_digest <> p_body_digest then return jsonb_build_object('status', 'ignored'); end if;
     return jsonb_build_object('status', 'duplicate', 'incidentId', signal.incident_id);
@@ -303,13 +309,15 @@ begin
       where (recent.workspace_id, recent.factory_id) = (binding.workspace_id, binding.factory_id)
         and recent.recorded_at > recorded_now - interval '1 minute') >= 100
     or (select count(*) from internal.factory_monitoring_signals recent
-      where recent.binding_id = binding.id and recent.recorded_at > recorded_now - interval '1 minute') >= 30 then
+      where recent.scope_key = binding.scope_key and recent.recorded_at > recorded_now - interval '1 minute') >= 30 then
     return jsonb_build_object('status', 'rate_limited');
   end if;
 
   select candidate.* into incident from internal.factory_monitoring_incidents candidate
-  where (candidate.binding_id, candidate.delivery_command_id, candidate.sentry_issue_id) =
-    (binding.id, p_command_id, p_issue_id) and candidate.suppress_until > recorded_now
+  where (candidate.scope_key, candidate.delivery_command_id, candidate.sentry_issue_id) =
+    (binding.scope_key, p_command_id, p_issue_id) and candidate.suppress_until > recorded_now
+    and (candidate.status = 'admitted' or (candidate.status = 'pending'
+      and (candidate.binding_id, candidate.observation_id) = (binding.id, proof.observation_id)))
   order by candidate.suppress_until desc limit 1;
   if not found then
     if (select count(*) from internal.factory_monitoring_incidents pending
@@ -318,17 +326,17 @@ begin
       return jsonb_build_object('status', 'rate_limited');
     end if;
     insert into internal.factory_monitoring_incidents (
-      workspace_id, factory_id, binding_id, delivery_command_id, deployment_id, observation_id,
+      workspace_id, factory_id, binding_id, scope_key, delivery_command_id, deployment_id, observation_id,
       causing_session_id, source_sha, sentry_issue_id, first_event_id, first_event_at, opened_at, suppress_until, next_attempt_at
-    ) values (binding.workspace_id, binding.factory_id, binding.id, p_command_id, proof.deployment_id, proof.observation_id,
+    ) values (binding.workspace_id, binding.factory_id, binding.id, binding.scope_key, p_command_id, proof.deployment_id, proof.observation_id,
       proof.session_id, p_source_sha, p_issue_id, p_event_id, p_event_at, recorded_now,
       recorded_now + make_interval(secs => binding.suppression_seconds), recorded_now)
     returning * into incident;
   end if;
 
   insert into internal.factory_monitoring_signals(
-    binding_id, workspace_id, factory_id, sentry_event_id, occurred_at, recorded_at, body_digest, incident_id
-  ) values (binding.id, binding.workspace_id, binding.factory_id, p_event_id, p_event_at, recorded_now, p_body_digest, incident.id);
+    binding_id, scope_key, workspace_id, factory_id, sentry_event_id, occurred_at, recorded_at, body_digest, incident_id
+  ) values (binding.id, binding.scope_key, binding.workspace_id, binding.factory_id, p_event_id, p_event_at, recorded_now, p_body_digest, incident.id);
   return jsonb_build_object('status', case when incident.first_event_id = p_event_id then 'queued' else 'suppressed' end,
     'incidentId', incident.id);
 end;
