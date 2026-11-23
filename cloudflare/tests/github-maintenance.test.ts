@@ -9,6 +9,11 @@ import { sweepStalledRuns } from "@/worker/stall-detector";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { drainFactoryWorkflowRepositoryDeliveries } from "@/lib/factory-workflows/repository-delivery";
 import { drainFactoryWorkflowBranches } from "@/lib/factory-workflows/branch-dispatch";
+import {
+  drainExactFactoryWorkflowReview,
+  drainExactFactoryWorkflowReviewRepair,
+  expireExactFactoryWorkflowReview,
+} from "@/lib/factory-workflows/exact-review-runtime";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
@@ -59,6 +64,11 @@ vi.mock("@/lib/factory-workflows/repository-delivery", () => ({
 vi.mock("@/lib/factory-workflows/branch-dispatch", () => ({
   drainFactoryWorkflowBranches: vi.fn(),
 }));
+vi.mock("@/lib/factory-workflows/exact-review-runtime", () => ({
+  drainExactFactoryWorkflowReview: vi.fn(),
+  drainExactFactoryWorkflowReviewRepair: vi.fn(),
+  expireExactFactoryWorkflowReview: vi.fn(),
+}));
 vi.mock("@/lib/workspaces/deletion", () => ({ resumePendingWorkspaceDeletions: vi.fn() }));
 vi.mock("@/lib/run-exports/worker", () => ({
   cleanupRunExports: vi.fn(),
@@ -70,6 +80,7 @@ beforeEach(() => vi.resetAllMocks());
 it.each([
   { scenario: "all tasks succeed" },
   { scenario: "accepted triage routing fails", triageFailure: true },
+  { scenario: "exact workflow review fails", exactReviewFailure: true },
   { scenario: "GitHub verification fails", githubFailure: true },
   { scenario: "readiness fails", readinessFailure: true },
   {
@@ -91,6 +102,7 @@ it.each([
   "runs independent maintenance when $scenario",
   async ({
     triageFailure,
+    exactReviewFailure,
     githubFailure,
     readinessFailure,
     oauthCleanupFailure,
@@ -195,6 +207,10 @@ it.each([
       vi.mocked(drainAcceptedTriageRoute).mockRejectedValue(
         new Error("Triage routing unavailable."),
       );
+    if (exactReviewFailure)
+      vi.mocked(drainExactFactoryWorkflowReview).mockRejectedValue(
+        new Error("Review permit is unavailable."),
+      );
     if (judgeFailure)
       vi.mocked(drainFactoryJudges).mockRejectedValue(new Error("Judge dispatch unavailable."));
     if (githubFailure)
@@ -255,6 +271,9 @@ it.each([
       );
       expect(drainFactoryWorkflowBranches).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainFactoryWorkflowRepositoryDeliveries).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(drainExactFactoryWorkflowReview).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(drainExactFactoryWorkflowReviewRepair).toHaveBeenCalledExactlyOnceWith(admin);
+      expect(expireExactFactoryWorkflowReview).toHaveBeenCalledExactlyOnceWith(admin);
       expect(cleanupExpiredSessionAttachments).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainRunRetention).toHaveBeenCalledExactlyOnceWith(admin);
       expect(pruneFactoryOAuthCredentials).toHaveBeenCalledExactlyOnceWith(admin);

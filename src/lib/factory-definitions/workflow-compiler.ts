@@ -117,6 +117,16 @@ function canonicalWorkflowNode(
   if (node.kind === "human-gate") {
     return { ...node, approverMemberIds: [...new Set(node.approverMemberIds)].sort() };
   }
+  if (node.kind === "review") {
+    const { repair, ...review } = node;
+    return {
+      ...review,
+      ruleIds: [...review.ruleIds].sort(),
+      ...(repair
+        ? { repair: { ...repair, eligibleRuleIds: [...repair.eligibleRuleIds].sort() } }
+        : {}),
+    };
+  }
   if (node.kind === "agent" || node.kind === "route") {
     const { grantId, ...binding } = node;
     return grantId === undefined ? binding : node;
@@ -171,6 +181,13 @@ function validateWorkflowReferences(
         path: ["nodes", index, "agentPromptRevisionId"],
         code: "missing_reference",
         message: `Agent prompt revision "${node.agentPromptRevisionId}" is unavailable to this workflow.`,
+      });
+    }
+    if (node.kind === "review" && !allowedAgents.has(node.reviewerPromptRevisionId)) {
+      diagnostics.push({
+        path: ["nodes", index, "reviewerPromptRevisionId"],
+        code: "missing_reference",
+        message: `Reviewer prompt revision "${node.reviewerPromptRevisionId}" is unavailable to this workflow.`,
       });
     }
     if ("grantId" in node && node.grantId && !declared.has(node.grantId)) {

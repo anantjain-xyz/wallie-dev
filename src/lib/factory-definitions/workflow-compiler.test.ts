@@ -4,13 +4,17 @@ import { describe, expect, it, vi } from "vitest";
 import { compileWorkflowGraph } from "./workflow-compiler";
 
 const agentPromptRevisionId = "c5410000-0000-4000-8000-000000000013";
+const reviewerPromptRevisionId = "c5410000-0000-4000-8000-000000000014";
 const approverId = "c5410000-0000-4000-8000-000000000010";
 const grant = { id: "c5410000-0000-4000-8000-000000000020", version: 3 };
 const workspaceId = "c5410000-0000-4000-8000-000000000001";
 const otherWorkspaceId = "c5410000-0000-4000-8000-000000000002";
 const catalog = {
   workspaceId,
-  agentPromptRevisions: [{ id: agentPromptRevisionId, workspaceId }],
+  agentPromptRevisions: [
+    { id: agentPromptRevisionId, workspaceId },
+    { id: reviewerPromptRevisionId, workspaceId },
+  ],
   approvers: [{ id: approverId, workspaceId }],
 };
 
@@ -80,6 +84,46 @@ function multiRepositoryGraph() {
           branchEdgeIds: ["run-platform"],
         },
       ],
+    },
+  };
+}
+
+const exactReview = {
+  id: "review",
+  kind: "review",
+  reviewerPromptRevisionId,
+  ruleIds: ["lint", "changed-files"],
+  repair: {
+    edgeId: "review.repair",
+    maxRepairs: 2,
+    eligibleRuleIds: ["lint", "changed-files"],
+  },
+};
+
+function exactReviewGraph(review: Partial<typeof exactReview> = {}) {
+  const graph = parallelGraph();
+  const profile = {
+    definitionRevisionId: "c5410000-0000-4000-8000-000000000019",
+    definitionDigest: "a".repeat(64),
+  };
+  return {
+    ...graph,
+    nodes: [...graph.nodes, { ...exactReview, ...review }],
+    edges: [
+      ...graph.edges.map((edge) =>
+        edge.id === "check-output" ? { ...edge, from: "review" } : edge,
+      ),
+      { id: "review-output", from: "integrate", to: "review", kind: "next" },
+    ],
+    delegationPolicy: {
+      maxChildren: 2,
+      maxConcurrentChildren: 2,
+      maxAttempts: 8,
+      maxTotalTokens: 100_000,
+      maxCostUsd: 10,
+      maxTokensPerAttempt: 5_000,
+      maxCostUsdPerAttempt: 1,
+      targets: { services: profile, docs: profile },
     },
   };
 }
@@ -236,6 +280,131 @@ describe("workflow graph compiler", () => {
           message: "Leave at least one required branch for the primary repository.",
         }),
       ]),
+    });
+  });
+
+  it("pins the reviewer and compiles one canonical rule set without adding a public loop edge", () => {
+    const graph = exactReviewGraph();
+    const compiled = compile(graph);
+    expect(compiled.ok).toBe(true);
+    expect(compiled).toEqual(
+      compile(
+        exactReviewGraph({
+          ruleIds: [...exactReview.ruleIds].reverse(),
+          repair: {
+            ...exactReview.repair,
+            eligibleRuleIds: [...exactReview.repair.eligibleRuleIds].reverse(),
+          },
+        }),
+      ),
+    );
+    if (!compiled.ok) throw new Error("Expected the exact review graph to compile.");
+    expect(compiled.bundle.nodes).toContainEqual({
+      ...exactReview,
+      ruleIds: ["changed-files", "lint"],
+      repair: { ...exactReview.repair, eligibleRuleIds: ["changed-files", "lint"] },
+    });
+    expect(compiled.bundle.edges).not.toContainEqual(
+      expect.objectContaining({ id: "review.repair" }),
+    );
+    expect(compiled.bundle.nodes).toContainEqual(
+      expect.objectContaining({ id: "approve", kind: "human-gate" }),
+    );
+  });
+
+  it("rejects a review without one exact upstream join and its shared budget", () => {
+    const graph = exactReviewGraph();
+    const compiled = compile({
+      ...graph,
+      delegationPolicy: undefined,
+      edges: graph.edges.map((edge) =>
+        edge.id === "review-output" ? { ...edge, from: "services" } : edge,
+      ),
+    });
+    expect(compiled).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid_review",
+          message: expect.stringContaining("adopted join"),
+        }),
+        expect.objectContaining({
+          code: "invalid_review",
+          message: expect.stringContaining("shared delegation policy"),
+        }),
+      ]),
+    });
+  });
+
+  it("rejects undeclared repair rules and a repair ID aliasing a regular edge", () => {
+    const compiled = compile(
+      exactReviewGraph({
+        repair: { edgeId: "check-output", maxRepairs: 2, eligibleRuleIds: ["undeclared"] },
+      }),
+    );
+    expect(compiled).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: "duplicate_id", path: ["nodes", 6, "repair", "edgeId"] }),
+        expect.objectContaining({
+          code: "invalid_review",
+          path: ["nodes", 6, "repair", "eligibleRuleIds"],
+        }),
+      ]),
+    });
+  });
+
+  it("rejects duplicate rule identities, excess repair visits, and cross-workspace reviewer pins", () => {
+    expect(compile(exactReviewGraph({ ruleIds: ["lint", "lint"] }))).toMatchObject({ ok: false });
+    expect(
+      compile(
+        exactReviewGraph({
+          repair: { ...exactReview.repair, maxRepairs: 9 },
+        }),
+      ),
+    ).toMatchObject({ ok: false });
+    expect(
+      compileWorkflowGraph(
+        { kind: "structured", value: exactReviewGraph() },
+        {
+          ...catalog,
+          agentPromptRevisions: [
+            { id: agentPromptRevisionId, workspaceId },
+            { id: reviewerPromptRevisionId, workspaceId: otherWorkspaceId },
+          ],
+        },
+      ),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: "missing_reference",
+          path: ["nodes", 6, "reviewerPromptRevisionId"],
+        }),
+      ]),
+    });
+  });
+
+  it("canonically compiles repository-specific delivery before an exact review", () => {
+    const graph = multiRepositoryGraph();
+    const reviewed = {
+      ...graph,
+      nodes: [...graph.nodes, exactReview],
+      edges: [
+        ...graph.edges.map((edge) =>
+          edge.id === "check-output" ? { ...edge, from: "review" } : edge,
+        ),
+        { id: "review-output", from: "integrate", to: "review", kind: "next" },
+      ],
+    };
+    expect(compile(reviewed, [grant, platformGrant])).toMatchObject({
+      ok: true,
+      bundle: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ id: "review", reviewerPromptRevisionId }),
+        ]),
+        repositorySets: { integrate: [...graph.repositorySets.integrate].reverse() },
+      },
     });
   });
 

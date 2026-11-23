@@ -2124,6 +2124,23 @@ begin
 end;
 $$;
 
+-- The accepted primary can carry the original review scope while the whole
+-- join waits for secondary delivery. Guarded successors still need the result.
+create function internal.factory_workflow_join_keeps_primary_scope(
+  p_root_session_id uuid, p_join_id uuid, p_occurrence_id uuid, p_checkpoint_run_id uuid
+) returns boolean language sql stable set search_path = '' as $$
+  select exists (
+    select 1 from internal.factory_workflow_node_results result
+    where (result.root_session_id, result.occurrence_id, result.outcome, result.evidence_ref) =
+      (p_root_session_id, p_occurrence_id, 'succeeded', 'join-checkpoint:' || p_checkpoint_run_id)
+  ) or exists (
+    select 1 from internal.factory_workflow_repository_delivery_targets delivery
+    where (delivery.root_session_id, delivery.join_id) = (p_root_session_id, p_join_id)
+  )
+$$;
+revoke all on function internal.factory_workflow_join_keeps_primary_scope(uuid, uuid, uuid, uuid)
+  from public, anon, authenticated, service_role;
+
 create or replace function internal.factory_workflow_root_join_keeps_scope(
   p_binding internal.factory_workflow_triage_bindings, p_saved internal.factory_workflow_accepted_scopes
 ) returns boolean language plpgsql set search_path = '' as $$
@@ -2156,7 +2173,7 @@ begin
         and clarification.status = 'pending')
     and not exists (select 1 from public.artifact_review_threads thread
       where (thread.session_id, thread.workspace_id) = (p_saved.session_id, p_saved.workspace_id)
-        and thread.kind = 'blocking' and thread.status = 'open')
+        and thread.artifact_id = p_saved.artifact_id and thread.kind = 'blocking' and thread.status = 'open')
   for share of head;
   if not found then return false; end if;
   accepted := internal.factory_workflow_adopted_checkpoint(p_saved.session_id, p_saved.workspace_id,
@@ -2164,25 +2181,43 @@ begin
   if accepted.run_id is null or accepted.repository_id is distinct from p_saved.repository_id then return false; end if;
 
   return exists (
-    with recursive lineage(run_id, depth) as (
+    with recursive accepted_edges(run_id, prior_run_id) as (
+      select terminal.checkpoint_run_id, manifest.expected_head_run_id
+      from internal.factory_workflow_join_outcomes terminal
+      join internal.factory_workflow_joins manifest using (root_session_id, join_id)
+      where internal.factory_workflow_join_keeps_primary_scope(
+        manifest.root_session_id, manifest.join_id, manifest.join_occurrence_id, terminal.checkpoint_run_id)
+        and (manifest.root_session_id, manifest.workspace_id, manifest.factory_id, manifest.parent_session_id,
+        manifest.workflow_digest, manifest.repository_id, terminal.outcome) =
+        (p_saved.session_id, p_saved.workspace_id, p_saved.factory_id, p_saved.session_id, p_saved.workflow_digest,
+          p_saved.repository_id, 'adopted')
+      union all
+      select checkpoint.run_id, review.checkpoint_run_id
+      from internal.factory_workflow_review_repairs repair
+      join internal.factory_workflow_exact_reviews review using (root_session_id, review_id)
+      join public.session_git_checkpoints checkpoint on
+        (checkpoint.job_id, checkpoint.workspace_id, checkpoint.session_id, checkpoint.repository_id, checkpoint.input_sha) =
+        (repair.job_id, review.workspace_id, review.parent_session_id, review.repository_id, review.commit_sha)
+      join public.session_job_git_inputs input on
+        (input.job_id, input.workspace_id, input.session_id, input.source_checkpoint_run_id, input.pinned_run_id,
+          input.pinned_attempt_count) =
+        (repair.job_id, review.workspace_id, review.parent_session_id, review.checkpoint_run_id, checkpoint.run_id,
+          checkpoint.attempt_count)
+      join public.session_checkpoint_publications publication on
+        (publication.run_id, publication.workspace_id, publication.session_id, publication.job_id,
+          publication.attempt_count, publication.artifact_id, publication.status) =
+        (checkpoint.run_id, checkpoint.workspace_id, checkpoint.session_id, checkpoint.job_id,
+          checkpoint.attempt_count, checkpoint.artifact_id, 'adopted')
+      where (review.root_session_id, review.workspace_id, review.factory_id, review.parent_session_id,
+        review.workflow_digest, review.repository_id) =
+        (p_saved.session_id, p_saved.workspace_id, p_saved.factory_id, p_saved.session_id, p_saved.workflow_digest,
+          p_saved.repository_id)
+    ), lineage(run_id, depth) as (
       select current_run_id, 0
       union all
-      select manifest.expected_head_run_id, lineage.depth + 1
-      from lineage
-      join internal.factory_workflow_join_outcomes terminal on (terminal.root_session_id, terminal.checkpoint_run_id) =
-        (p_saved.session_id, lineage.run_id) and terminal.outcome = 'adopted'
-      join internal.factory_workflow_joins manifest using (root_session_id, join_id)
-      where (exists (
-        select 1 from internal.factory_workflow_node_results result
-        where (result.root_session_id, result.occurrence_id, result.outcome, result.evidence_ref) =
-          (manifest.root_session_id, manifest.join_occurrence_id, 'succeeded', 'join-checkpoint:' || lineage.run_id)
-      ) or exists (
-        select 1 from internal.factory_workflow_repository_delivery_targets delivery
-        where (delivery.root_session_id, delivery.join_id) = (manifest.root_session_id, manifest.join_id)
-      )) and (manifest.workspace_id, manifest.factory_id, manifest.parent_session_id,
-        manifest.workflow_digest, manifest.repository_id) =
-        (p_saved.workspace_id, p_saved.factory_id, p_saved.session_id, p_saved.workflow_digest, p_saved.repository_id)
-        and lineage.depth < 1023 and lineage.run_id <> p_saved.run_id
+      select edge.prior_run_id, lineage.depth + 1
+      from lineage join accepted_edges edge using (run_id)
+      where lineage.depth < 1023 and lineage.run_id <> p_saved.run_id
     )
     select 1 from lineage where lineage.run_id = p_saved.run_id
   );

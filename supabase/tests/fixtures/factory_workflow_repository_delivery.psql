@@ -38,6 +38,7 @@ insert into public.factory_definition_activations (workspace_id, factory_id, rev
 select workspace_id, factory_id, id, 6, pg_temp.op651_id(21) from secondary_definition;
 
 create temp table multi_graph as
+with repository_graph as (
 select jsonb_set(jsonb_set(jsonb_set(jsonb_set(graph.body::jsonb,
   '{nodes,2,grantId}', to_jsonb(writer.id)), '{edges,1,required}', 'true'::jsonb),
   '{delegationPolicy,targets,agent.optional}', jsonb_build_object(
@@ -48,7 +49,14 @@ select jsonb_set(jsonb_set(jsonb_set(jsonb_set(graph.body::jsonb,
     'branchEdgeIds', jsonb_build_array('run.optional'))))) as body
 from branch_graphs graph cross join secondary_grant writer
 join public.factory_definition_revisions revision on revision.id = pg_temp.op651_id(48)
-where graph.scenario = 'parallel';
+where graph.scenario = 'parallel'
+)
+select body || jsonb_build_object(
+  'nodes', (body->'nodes') || jsonb_build_array(jsonb_build_object(
+    'id','review.final','kind','review','reviewerPromptRevisionId',pg_temp.op651_id(91),'ruleIds','["scope","tests"]'::jsonb)),
+  'edges',(body->'edges') || jsonb_build_array(jsonb_build_object(
+    'id','inspect.join','kind','next','from','join.finish','to','review.final'))
+) as body from repository_graph;
 
 create function pg_temp.register_repository_graph(p_body jsonb) returns uuid language sql as $$
   select registered.graph_revision_id from multi_root root
@@ -203,6 +211,11 @@ select ok((select public.adopt_session_checkpoint_publication(run_id,lease,null,
 select is(pg_temp.multi_status()->>'status', 'partial', 'a primary adoption with unfinished secondary delivery is visibly partial');
 select ok(not exists(select 1 from internal.factory_workflow_node_results r join multi_join q
   on r.occurrence_id = (q.receipt->>'occurrenceId')::uuid), 'partial delivery cannot continue the graph');
+
+select is((select count(*) from internal.factory_workflow_node_occurrences occurrence
+  join multi_owner owner on owner."sessionId" = occurrence.root_session_id
+  where occurrence.node_kind = 'review'), 0::bigint,
+  'the configured exact review waits while the primary delivery is partial');
 
 select is(public.dispatch_next_factory_workflow_repository_validation(), true,
   'production dispatch admits a dedicated exact secondary validation job');

@@ -196,6 +196,7 @@ export function renderStagePrompt(
     sessionAttachments?: UntrustedPromptValue;
     sessionAttachmentInstructions?: TrustedPromptValue;
     retryCheckpointInstructions?: TrustedPromptValue;
+    workflowRepair?: { instructions: TrustedPromptValue; findings: UntrustedPromptValue };
     validationPlanInstructions?: TrustedPromptValue;
     specification?: SpecificationPromptContext;
     // Workspace-editable operating rules (pipelines.operating_rules_md),
@@ -307,6 +308,12 @@ export function renderStagePrompt(
       : []),
     ...(input.retryCheckpointInstructions
       ? [verifyPromptBoundary(input.retryCheckpointInstructions)]
+      : []),
+    ...(input.workflowRepair
+      ? [
+          verifyPromptBoundary(input.workflowRepair.instructions),
+          verifyPromptBoundary(input.workflowRepair.findings),
+        ]
       : []),
     ...(input.validationPlanInstructions
       ? [verifyPromptBoundary(input.validationPlanInstructions)]

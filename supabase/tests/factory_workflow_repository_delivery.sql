@@ -80,5 +80,16 @@ select ok(exists(select 1 from internal.factory_workflow_node_results r join mul
   on r.occurrence_id = (q.receipt->>'occurrenceId')::uuid where r.outcome = 'succeeded'),
   'the last repository adoption publishes exactly one causal join result');
 
+select is((select count(*) from internal.factory_workflow_node_occurrences occurrence
+  join multi_owner owner on owner."sessionId" = occurrence.root_session_id
+  where occurrence.node_kind = 'review'), 1::bigint,
+  'the durable whole-repository result admits the configured review once');
+select is((select public.claim_factory_workflow_exact_review(owner."sessionId", owner.workspace_id, owner.factory_id,
+    owner.execution_generation, owner.ownership_token, occurrence.occurrence_id, pg_temp.op651_id(490))->>'checkpointRunId'
+  from internal.factory_workflow_node_occurrences occurrence join multi_owner owner on owner."sessionId" = occurrence.root_session_id
+  where occurrence.node_kind = 'review'),
+  (select claim->>'runId' from primary_claim),
+  'the review pins the exact accepted primary checkpoint');
+
 select * from finish();
 rollback;

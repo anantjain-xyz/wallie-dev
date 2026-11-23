@@ -62,3 +62,22 @@ Join admission records an independent delivery obligation for each secondary rep
 Read a repository set with `GET /api/sessions/{sessionId}/workflow-join?joinId={joinId}`. The response includes each secondary base, validated output, validation run, and delivery status. The workflow lifecycle state remains visible while paused or canceled. Resume gives an unfinished validation a fresh attempt against the same repository base. A sealed checkpoint resumes publication without another validation run.
 
 Publication verifies the exact retained ref in each repository. A transient failure leaves the sealed checkpoint available for a fresh lease. The next claimant checks the remote ref before writing. A changed repository head, revoked writer, or incompatible remote ref blocks only that repository. The ledger records when a remote ref still needs reconciliation. Published repositories retain their adopted checkpoints while another repository recovers.
+
+## Review a joined checkpoint
+
+A graph can place a `review` node immediately after a join. For a repository set, review starts after every repository adopts its checkpoint. The review pins the accepted primary checkpoint, a factory reviewer prompt revision, a set of rule IDs, and an optional repair declaration.
+
+```mermaid
+flowchart LR
+  Join[Adopted join] --> Review[Exact commit review]
+  Review -->|Pass| Gate[Independent workflow gate]
+  Review -->|Eligible findings| Repair[Reserved repair job]
+  Repair --> Validate[Fresh validation and checkpoint adoption]
+  Validate --> Review
+  Review -->|Ineligible or repeated findings| Escalate[Recorded escalation]
+```
+
+- **Review input.** The permit pins the checkpoint run, commit, tree, repository, and reviewer prompt. The worker verifies the retained ref and reads the exact Git diff with read-only access. It verifies required validation receipts before inference.
+- **Inference budget.** Node and Workerd share the one-use review permit. The OpenAI adapter uses the inherited parent credential, disables tools, and checks tokens and spend before generation. The bounded charge remains reserved if the provider response is lost.
+- **Repair.** The declaration records a unique `edgeId`, a `maxRepairs` value from 1 through 8, and the `eligibleRuleIds` subset. Admission reserves one job and its root budget together. Replays return the same job. A repeated rule and path escalates even when the finding moves to another line.
+- **Validation and approval.** The repair starts from the reviewed checkpoint and receives the saved findings as untrusted input. Adoption requires fresh evidence on the repaired commit and tree. The repaired artifact keeps the original human blocking requests and requires its own independent approval. Existing PR readiness observes the current delivery state.
