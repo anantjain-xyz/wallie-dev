@@ -82,3 +82,36 @@ stateDiagram-v2
 An approved root still occupies a slot while its workflow has pending nodes, dispatches, or repository delivery.
 
 Factory managers can read `GET /{automationId}/admission-control` and send `POST` to the same path with `expectedGeneration`, `paused`, and `maxConcurrentSessions`. A stale generation returns a conflict. The occurrence worker and control change use the same rule lock.
+
+## Scheduled occurrences
+
+A schedule interprets its cron fields in the revision's timezone. It skips a
+wall time that does not exist. If a wall time occurs twice, it uses the earlier
+instant. When the day-of-month and day-of-week fields are both restricted,
+either field can match. A leading wildcard in either field requires both
+fields to match.
+
+| Situation                                            | Scheduling behavior                                                                                                     |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| First publication or a timezone change               | Start at the exact revision's publication time.                                                                         |
+| Worker downtime                                      | Queue the latest unscanned occurrence in the preceding 24 hours. Earlier missed ticks expire.                           |
+| Pause and resume                                     | Keep the cursor fixed while paused. Freeze the catch-up cutoff when the manager resumes. Apply the same 24-hour policy. |
+| An earlier session still uses the available capacity | Retain the scheduled occurrence. The admission worker retries when capacity is available.                               |
+
+In **Settings → Integrations → Preview automations**, a scheduled revision
+shows its next calendar matches. The published rule also shows the missed
+occurrence eligible for catch-up with its cutoff, then the occurrence actually
+queued at resume. A dry-run sample still represents one normalized event.
+
+```mermaid
+flowchart LR
+  A[Published schedule cursor] --> B[Calculate due tick]
+  B --> C[Commit occurrence and cursor together]
+  C --> D[Shared occurrence admission]
+```
+
+Node and Cloudflare read the same due cursors. The database checks the exact
+published revision, cursor version, and admission generation before recording
+the UTC minute and advancing the cursor in one transaction. The UTC minute
+identifies the occurrence across retries. A worker that loses the response or
+restarts cannot enqueue that occurrence again.
