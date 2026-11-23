@@ -163,16 +163,25 @@ select jsonb_build_object(
   'schemaVersion', 1, 'kind', 'graph', 'entryNodeId', 'route.choose',
   'nodes', jsonb_build_array(
     jsonb_build_object('id', 'route.choose', 'kind', 'route', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id),
-    jsonb_build_object('id', 'agent.child', 'kind', 'agent', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id)
+    jsonb_build_object('id', 'agent.child', 'kind', 'agent', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id),
+    jsonb_build_object('id', 'route.nested', 'kind', 'route', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id),
+    jsonb_build_object('id', 'agent.nested', 'kind', 'agent', 'agentPromptRevisionId', pg_temp.workflow_fixture_id(91), 'grantId', approved.id)
   ),
-  'edges', jsonb_build_array(jsonb_build_object('id','route.child','kind','route','from','route.choose','to','agent.child')),
+  'edges', '[
+    {"id":"route.child","kind":"route","from":"route.choose","to":"agent.child"},
+    {"id":"child.continue","kind":"next","from":"agent.child","to":"route.nested"},
+    {"id":"route.grandchild","kind":"route","from":"route.nested","to":"agent.nested"}
+  ]'::jsonb,
   'grants', jsonb_build_array(jsonb_build_object('id', approved.id, 'version', approved.version)),
   'routePolicy', '{"maxNodeVisits":16,"maxLoopTraversals":0,"nodes":{"route.choose":{"minimumConfidence":0.7,
-    "allowedDestinationIds":["agent.child"],"fallback":{"kind":"clarification"}}}}'::jsonb,
-  'delegationPolicy', jsonb_build_object('maxChildren', 1, 'maxConcurrentChildren', 1, 'maxAttempts', 4,
+    "allowedDestinationIds":["agent.child"],"fallback":{"kind":"clarification"}},
+    "route.nested":{"minimumConfidence":0.7,"allowedDestinationIds":["agent.nested"],"fallback":{"kind":"clarification"}}}}'::jsonb,
+  'delegationPolicy', jsonb_build_object('maxChildren', 2, 'maxConcurrentChildren', 1, 'maxAttempts', 4,
     'maxTotalTokens', 1000, 'maxTokensPerAttempt', 50, 'maxCostUsd', 2, 'maxCostUsdPerAttempt', 0.2,
     'targets', jsonb_build_object('agent.child', jsonb_build_object(
-      'definitionRevisionId', definition.id, 'definitionDigest', definition.canonical_digest)))
+      'definitionRevisionId', definition.id, 'definitionDigest', definition.canonical_digest),
+      'agent.nested', jsonb_build_object(
+        'definitionRevisionId', definition.id, 'definitionDigest', definition.canonical_digest)))
 )::text as body
 from lifecycle_root_grant approved
 join scoped_revisions profile on profile.scenario = 'child'

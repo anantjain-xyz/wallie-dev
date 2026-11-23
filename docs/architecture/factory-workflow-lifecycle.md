@@ -16,7 +16,7 @@ stateDiagram-v2
 | Paused   | Queued work stays parked. Running attempts retire with their exact job and run IDs. |
 | Canceled | Queued and running work retire. Accepted checkpoints and receipts stay available.   |
 
-Resume rechecks the pinned policies, grants, source, and stage. It reuses parked jobs and starts one new attempt for each eligible retired stage. An old worker cannot adopt new output or restart a retired attempt. An exact replay returns the recorded command receipt.
+Resume rechecks the pinned policies, grants, source, and stage. It queues the original job for one fresh attempt, preserving any feedback, Git input, and retry origin bound to that job. A still-parked job that never had a claim can keep its first attempt. An old worker cannot adopt new output or restart a retired attempt. An exact replay returns the recorded command receipt.
 
 An interrupted foreman keeps its original issue and measured usage. After resume rotates ownership, the current owner can resolve an undecided occurrence through the scoped route command.
 

@@ -70,10 +70,11 @@ select is((select count(*) from public.claim_next_agent_job(false, 1000, 'node')
 
 create temp table resume_running as select pg_temp.control_workflow('running-child',2,653,'resume') as receipt;
 select ok((select receipt->>'lifecycleStatus' = 'running' and receipt->>'generation' = '3'
-  and jsonb_array_length(receipt->'resumed') = 1 and receipt#>>'{resumed,0,jobId}' <> child.job_id::text
-  from resume_running cross join running_child child), 'resume queues one replacement exact stage job after retiring its old attempt');
+  and jsonb_array_length(receipt->'resumed') = 1 and receipt#>>'{resumed,0,jobId}' = child.job_id::text
+  and receipt#>>'{resumed,0,attemptCount}' = '2'
+  from resume_running cross join running_child child), 'resume queues the original job for one fresh exact attempt');
 select is(pg_temp.control_workflow('running-child',2,653,'resume'), (select receipt from resume_running),
-  'replayed resume preserves the replacement job and run');
+  'replayed resume preserves the original job and next attempt number');
 select ok((select public.start_session_job_attempt(job.id,1,job.stage_id,0,
   'codex','gpt-5.5','code','wallie/op650-stale') is null
   from running_child child join public.agent_jobs job on job.id = child.job_id),
@@ -85,7 +86,7 @@ select ok((select root.checkpoint_run_id = head.checkpoint_run_id from lifecycle
 create temp table canceled_workflow as select pg_temp.control_workflow('running-child',3,654,'cancel') as receipt;
 select ok((select cancel.receipt->>'lifecycleStatus' = 'canceled' and cancel.receipt->>'generation' = '4'
   and cancel.receipt#>'{retired,0,jobIds}' = jsonb_build_array(resume.receipt#>'{resumed,0,jobId}')
-  from canceled_workflow cancel cross join resume_running resume), 'termination retires queued replacement work');
+  from canceled_workflow cancel cross join resume_running resume), 'termination retires the queued job before its fresh attempt');
 select throws_ok($$select pg_temp.control_workflow('running-child',4,655,'resume')$$, 'PT409',
   'The workflow lifecycle transition is unavailable.', 'a canceled workflow cannot resume');
 select ok((select receipt->'resumed' = '[]'::jsonb from (

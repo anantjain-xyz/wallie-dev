@@ -147,7 +147,7 @@ begin
         resume_input->>'stageId', (resume_input->>'artifactVersion')::integer)
         and session.id = any(member_ids) and session.archived_at is null
         and session.current_artifact_id::text is not distinct from resume_input->>'artifactId'
-        and session.phase_status in ('in_progress', 'rejected');
+        and session.phase_status in ('in_progress', 'rejected', 'awaiting_review');
       if not found or not internal.session_execution_admissible(owner.id, owner.workspace_id) then continue; end if;
 
       if owner.id <> p_root_session_id then
@@ -160,15 +160,23 @@ begin
       end if;
       perform internal.recheck_session_execution_grant(owner);
 
-      select * into strict restart from public.enqueue_session_job_with_run(owner.id, owner.workspace_id,
-        owner.current_stage_id, p_run_type => case when owner.github_repository_id is null then 'project' else 'code' end);
-      if restart.created then
+      -- The job already owns the exact feedback, retry origin, and Git
+      -- input. The queue assigns a fresh attempt and run on its next claim.
+      update public.agent_jobs job
+      set status = 'queued', finished_at = null, scheduled_at = null, started_at = null, last_error = null,
+        claimed_worker_runtime = null, git_continuity_release_revision = null
+      where (job.id::text, job.workspace_id, job.session_id, job.stage_id, job.attempt_count) =
+        (resume_input#>>'{jobs,0,jobId}', owner.workspace_id, owner.id, owner.current_stage_id,
+          (resume_input#>>'{jobs,0,attemptCount}')::integer)
+        and job.status = 'canceled'
+      returning job.id, job.attempt_count + 1 as next_attempt into restart;
+      if found then
         if execution.workflow_json::jsonb ? 'delegationPolicy'
-          and not internal.reserve_factory_workflow_attempt(execution, owner.id, restart.job_id, 1) then
+          and not internal.reserve_factory_workflow_attempt(execution, owner.id, restart.id, restart.next_attempt) then
           raise exception 'The workflow budget cannot restart the paused attempt.' using errcode = 'PT409';
         end if;
         resumed := resumed || jsonb_build_array(jsonb_build_object(
-          'sessionId', owner.id, 'jobId', restart.job_id, 'runId', restart.run_id));
+          'sessionId', owner.id, 'jobId', restart.id, 'attemptCount', restart.next_attempt));
       end if;
     end loop;
   else
@@ -190,7 +198,10 @@ begin
             from public.agent_jobs job where job.id = any(retirement.job_ids)),
           'stageId', owner.current_stage_id, 'artifactId', owner.current_artifact_id,
           'artifactVersion', owner.current_artifact_version,
-          'restartRequired', p_action = 'pause' and owner.phase_status in ('in_progress', 'rejected')
+          'restartRequired', p_action = 'pause' and owner.archived_at is null
+            and owner.phase_status in ('in_progress', 'rejected', 'awaiting_review')
+            and not exists (select 1 from public.agent_runs run
+              where run.id = any(retirement.run_ids) and run.status = 'success')
         ));
       end if;
     end loop;

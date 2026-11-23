@@ -24,6 +24,41 @@ select child.job_id, format('select public.control_factory_workflow_lifecycle(%L
 from lifecycle_roots root
 cross join lateral pg_temp.admit_scoped_child(root.scenario) child
 where root.scenario = 'budget-root';
+insert into lifecycle_children
+select 'late-registration', child.* from pg_temp.admit_scoped_child('late-registration') child;
+create temp table intermediate_attempt as
+select * from pg_temp.prepare_child_publication('late-registration');
+select public.adopt_session_checkpoint_publication(run_id, claim_id, null, null) from intermediate_attempt;
+select accepted.id from lifecycle_children child
+join public.sessions owner on owner.id = child.child_session_id
+cross join lateral public.approve_session_stage(owner.id, owner.workspace_id, owner.current_stage_id,
+  owner.current_artifact_id, owner.current_artifact_version,
+  pg_temp.workflow_fixture_id(21), 'codex', 'gpt-5.5', 'code', owner.artifact_review_revision) accepted
+where child.scenario = 'late-registration';
+
+create temp table nested_target as
+select root."sessionId" as root_session_id, child.child_session_id as intermediate_id,
+  attempt.run_id as intermediate_head,
+  format('select * from public.admit_factory_workflow_delegated_session(%L,%L,%L,1,%L,%L,%L,%L,%L,%L)',
+    root."sessionId", root.workspace_id, root.factory_id, root.ownership_token, child.child_session_id,
+    routed.target_occurrence_id, attempt.run_id, 'Nested child', 'Use the exact intermediate checkpoint.') as admit_query,
+  format('select public.control_factory_workflow_lifecycle(%L,%L,%L,1,%L,''cancel'')',
+    root."sessionId", root.workspace_id, root.factory_id, gen_random_uuid()) as cancel_query
+from lifecycle_roots root
+join lifecycle_children child using (scenario)
+join intermediate_attempt attempt on attempt.job_id = child.job_id
+join selected_child selected using (scenario)
+cross join lateral public.record_factory_workflow_delegated_result(root."sessionId", root.workspace_id,
+  root.factory_id, 1, root.ownership_token, selected.target_occurrence_id) result
+cross join lateral public.admit_factory_workflow_next(root."sessionId", root.workspace_id,
+  root.factory_id, 1, root.ownership_token, selected.target_occurrence_id, 'child.continue', result.result_id) successor
+cross join lateral public.admit_factory_workflow_route_decision(root."sessionId", root.workspace_id,
+  root.factory_id, 1, root.ownership_token, successor.target_occurrence_id,
+  'Delegate the remaining work.', 'agent.nested', 0.9) routed
+where root.scenario = 'late-registration';
+select is((select count(*) from nested_target), 1::bigint,
+  'an approved intermediate checkpoint yields an exact nested delegation intent');
+
 commit;
 
 create function pg_temp.wait_for_lifecycle_lock() returns boolean language plpgsql as $$
@@ -105,6 +140,36 @@ from pause_target target cross join lateral extensions.dblink('op650_owner', tar
 select is((select claimed.attempt_count from extensions.dblink('op650_contender',
   'select id, attempt_count from public.claim_next_agent_job(false, 1000, ''node'')') claimed(id uuid, attempt_count integer)
   join pause_target target on target.job_id = claimed.id), 1, 'the scheduler claims the same original job once after resume');
+
+-- Root cancellation sees a grandchild whose admission commits while it
+-- waits for the same root lock. The intermediate checkpoint survives.
+select extensions.dblink_exec('op650_owner', 'begin');
+create temp table admitted_grandchild as
+select child.* from nested_target target
+cross join lateral extensions.dblink('op650_owner', target.admit_query)
+  child(child_session_id uuid, job_id uuid, run_id uuid, created boolean);
+select ok((select created from admitted_grandchild), 'the exact nested admission owns the root before commit');
+select extensions.dblink_send_query('op650_contender', cancel_query) from nested_target;
+select ok(pg_temp.wait_for_lifecycle_lock(), 'root cancellation waits for nested admission to commit');
+select extensions.dblink_exec('op650_owner', 'commit');
+select ok((select receipt->>'lifecycleStatus' = 'canceled'
+  and receipt#>>'{retired,0,sessionId}' = child.child_session_id::text
+  and receipt#>'{retired,0,jobIds}' = jsonb_build_array(child.job_id)
+  and receipt#>'{retired,0,runIds}' = jsonb_build_array(child.run_id)
+  from extensions.dblink_get_result('op650_contender') reply(receipt jsonb)
+  cross join admitted_grandchild child),
+  'fanout observes the newly admitted grandchild and retires its exact queued job and run');
+select count(*) from extensions.dblink_get_result('op650_contender') reply(receipt jsonb);
+select ok((select job.status = 'canceled' and run.status = 'canceled'
+  and head.checkpoint_run_id = target.intermediate_head
+  from admitted_grandchild child join public.agent_jobs job on job.id = child.job_id
+  join public.agent_runs run on run.id = child.run_id cross join nested_target target
+  join public.session_git_heads head on head.session_id = target.intermediate_id),
+  'grandchild cancellation preserves the approved intermediate checkpoint');
+select is((select count(*) from extensions.dblink('op650_contender',
+  'select id from public.claim_next_agent_job(false, 1000, ''node'')') claimed(id uuid)
+  join admitted_grandchild child on child.job_id = claimed.id), 0::bigint,
+  'restart cannot claim a retired grandchild');
 
 select extensions.dblink_disconnect('op650_owner');
 select extensions.dblink_disconnect('op650_contender');
