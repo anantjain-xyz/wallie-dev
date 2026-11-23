@@ -45,6 +45,13 @@ const qualifiedWorkflow = [
   ].flatMap((name) => [`      ${name}:`, "        type: string", "        required: true"]),
 ].join("\n");
 
+const publishedRelease = {
+  tag_name: target.tag,
+  immutable: true,
+  draft: false,
+  published_at: "2026-11-23T20:00:00Z",
+};
+
 function provider(responses: Record<string, unknown> = {}) {
   const file = {
     type: "file",
@@ -60,12 +67,7 @@ function provider(responses: Record<string, unknown> = {}) {
       path: target.workflowPath,
       state: "active",
     },
-    "/repos/fixture/delivery/releases/tags/delivery%2Fverified": {
-      tag_name: target.tag,
-      immutable: true,
-      draft: false,
-      published_at: "2026-11-23T20:00:00Z",
-    },
+    "/repos/fixture/delivery/releases/tags/delivery%2Fverified": publishedRelease,
     "/repos/fixture/delivery/git/ref/tags/delivery/verified": {
       ref: `refs/tags/${target.tag}`,
       object: { type: "commit", sha: target.sourceRevision },
@@ -151,7 +153,7 @@ describe("GitHub Actions guarded delivery", () => {
       "mutable tag",
       {
         "/repos/fixture/delivery/releases/tags/delivery%2Fverified": {
-          tag_name: target.tag,
+          ...publishedRelease,
           immutable: false,
         },
       },
