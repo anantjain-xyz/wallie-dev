@@ -25,6 +25,7 @@ import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/admission-service";
 import { reconcileFactoryAutomationSchedules } from "@/lib/factory-automations/schedule-service";
+import { expireFactoryDeliveryDispatches } from "@/lib/factory-delivery-commands/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
@@ -241,6 +242,7 @@ async function main() {
     let reconcilingBenchmarkEvaluations = false;
     let admittingFactoryAutomationOccurrences = false;
     let reconcilingFactoryAutomationSchedules = false;
+    let expiringFactoryDeliveryDispatches = false;
     maintenanceTimers.push(
       setInterval(() => {
         if (!deliveringFactoryEvents) {
@@ -350,6 +352,16 @@ async function main() {
               await reconcileFactoryAutomationSchedules(admin);
             } finally {
               reconcilingFactoryAutomationSchedules = false;
+            }
+          });
+        }
+        if (!expiringFactoryDeliveryDispatches) {
+          expiringFactoryDeliveryDispatches = true;
+          timerTasks.run("factory delivery dispatch expiry", async () => {
+            try {
+              await expireFactoryDeliveryDispatches(admin);
+            } finally {
+              expiringFactoryDeliveryDispatches = false;
             }
           });
         }
