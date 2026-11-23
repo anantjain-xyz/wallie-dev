@@ -45,6 +45,7 @@ import { drainFactoryDiagnoses } from "@/lib/factory-diagnosis/worker";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/admission-service";
+import { expireFactoryDeliveryDispatches } from "@/lib/factory-delivery-commands/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
@@ -108,6 +109,12 @@ export class Dispatcher extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(Date.now() + 60_000);
     const config = cloudflareEnvSchema.parse(this.env);
     const admin = createSupabaseAdminClient();
+    const maintenance =
+      config.WALLIE_WORKER_DISPATCH_ENABLED === "true"
+        ? this.maintain().catch(() => {
+            console.error("[cloudflare-dispatch] maintenance failed; recovery alarm armed");
+          })
+        : undefined;
     try {
       const result = await dispatchWork(
         admin,
@@ -119,10 +126,10 @@ export class Dispatcher extends DurableObject<Env> {
         },
       );
       if (result.delivered || result.failed) console.log("[cloudflare-dispatch] batch", result);
-      if (config.WALLIE_WORKER_DISPATCH_ENABLED === "true") await this.maintain();
     } catch {
       console.error("[cloudflare-dispatch] batch failed; recovery alarm armed");
     }
+    await maintenance;
     const active = await admin
       .from("agent_jobs")
       .select("id")
@@ -360,6 +367,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["run exports", () => drainRunExports(admin)],
       ["run export cleanup", () => cleanupRunExports(admin)],
       ["factory automation occurrences", () => drainFactoryAutomationOccurrences(admin)],
+      ["factory delivery dispatch expiry", () => expireFactoryDeliveryDispatches(admin)],
     ] as const;
     for (const [name, task] of tasks) {
       try {

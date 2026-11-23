@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { introspectWorkflowInstance } from "cloudflare:test";
+import { introspectWorkflowInstance, runInDurableObject } from "cloudflare:test";
 import { beforeEach, expect, it, vi } from "vitest";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
@@ -25,7 +25,7 @@ import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import { requestFactoryEventDispatch } from "@/lib/factory-event-subscriptions/relay";
 import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbox-stop-drain";
-import type { Env } from "../index";
+import { Dispatcher, type Env } from "../index";
 
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
 vi.mock("@/features/github/pr-verification-service", () => ({
@@ -83,6 +83,7 @@ beforeEach(() => vi.resetAllMocks());
 
 it.each([
   { scenario: "all tasks succeed" },
+  { scenario: "the dispatcher cannot load pending jobs", dispatchFailure: true },
   { scenario: "accepted triage routing fails", triageFailure: true },
   { scenario: "exact workflow review fails", exactReviewFailure: true },
   { scenario: "GitHub verification fails", githubFailure: true },
@@ -103,9 +104,11 @@ it.each([
   { scenario: "a judge dispatch fails", judgeFailure: true },
   { scenario: "a workflow sandbox stop fails", sandboxStopFailure: true },
   { scenario: "automation occurrence admission fails", automationFailure: true },
+  { scenario: "delivery dispatch expiry fails", expiryFailure: true },
 ])(
   "runs independent maintenance when $scenario",
   async ({
+    dispatchFailure,
     triageFailure,
     exactReviewFailure,
     githubFailure,
@@ -121,15 +124,15 @@ it.each([
     judgeFailure,
     sandboxStopFailure,
     automationFailure,
+    expiryFailure,
   }) => {
     const bindings = env as unknown as Env;
-    const id = `maintenance-${crypto.randomUUID()}`;
     const query = {
       select: () => query,
       eq: () => query,
       order: () => query,
       limit: () => query,
-      in: () => query,
+      in: vi.fn(() => query),
       then(resolve: (value: { data: never[]; count: number; error: null }) => unknown) {
         return Promise.resolve({ data: [], count: 0, error: null }).then(resolve);
       },
@@ -156,7 +159,15 @@ it.each([
             error: null,
           },
     );
+    const expiry = vi
+      .fn()
+      .mockResolvedValue(
+        expiryFailure
+          ? { data: null, error: { message: "Delivery dispatch expiry unavailable" } }
+          : { data: 2, error: null },
+      );
     const rpc = vi.fn((name: string) => {
+      if (name === "expire_factory_delivery_dispatches") return { abortSignal: expiry };
       if (name === "reconcile_factory_benchmark_schedules") {
         return {
           abortSignal: () =>
@@ -217,7 +228,20 @@ it.each([
           ),
       };
     });
-    const admin = { from: () => query, rpc };
+    const loadPending = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "Pending dispatches unavailable" },
+    });
+    const dispatchQuery = {
+      select: () => dispatchQuery,
+      is: () => dispatchQuery,
+      order: () => dispatchQuery,
+      limit: loadPending,
+    };
+    const admin = {
+      from: (table: string) => (table === "worker_dispatches" ? dispatchQuery : query),
+      rpc,
+    };
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin as never);
     if (triageFailure)
       vi.mocked(drainAcceptedTriageRoute).mockRejectedValue(
@@ -263,9 +287,32 @@ it.each([
       vi.mocked(drainFactoryWorkflowSandboxStops).mockRejectedValue(
         new Error("Provider stop temporarily unavailable"),
       );
+    let id = `maintenance-${crypto.randomUUID()}`;
+    if (dispatchFailure) {
+      const stub = bindings.DISPATCHER.getByName(id);
+      const scheduled = await runInDurableObject(stub, async (_instance, state) => {
+        const dispatcher = new Dispatcher(state, {
+          ...bindings,
+          WALLIE_WORKER_DISPATCH_ENABLED: "true",
+        });
+        await dispatcher.alarm();
+        await state.storage.deleteAlarm();
+        return state.storage.get<string>("maintenance");
+      });
+      if (!scheduled)
+        throw new Error("Dispatch failure prevented maintenance from being scheduled.");
+      id = scheduled;
+    }
     const inspection = await introspectWorkflowInstance(bindings.MAINTENANCE, id);
+    const warn = vi.spyOn(console, "warn");
     try {
-      await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
+      if (dispatchFailure) {
+        expect(loadPending).toHaveBeenCalledExactlyOnceWith(100);
+        expect(query.in).toHaveBeenCalledWith("status", ["queued", "started", "running"]);
+        expect(query.in).toHaveBeenCalledWith("status", ["starting", "processing", "prompted"]);
+      } else {
+        await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
+      }
       await inspection.waitForStatus("complete");
       expect(drainAcceptedTriageRoute).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainAuthoredFactoryWorkflowBatch).toHaveBeenCalledExactlyOnceWith(admin);
@@ -321,6 +368,13 @@ it.each([
       });
       expect(rpc).toHaveBeenNthCalledWith(8, "prune_factory_analytics_exports", { p_limit: 100 });
       expect(rpc).toHaveBeenNthCalledWith(9, "admit_next_factory_automation_occurrence");
+      expect(rpc).toHaveBeenNthCalledWith(10, "expire_factory_delivery_dispatches");
+      expect(expiry).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal));
+      if (expiryFailure) {
+        expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
+          task: "factory delivery dispatch expiry",
+        });
+      }
       expect(vi.mocked(sweepStalledRuns).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(cleanupExpiredSessionAttachments).mock.invocationCallOrder[0],
       );
@@ -335,6 +389,7 @@ it.each([
         vi.mocked(drainFactoryJudges).mock.invocationCallOrder[0],
       );
     } finally {
+      warn.mockRestore();
       await inspection.dispose();
     }
   },
