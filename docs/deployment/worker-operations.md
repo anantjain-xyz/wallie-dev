@@ -7,6 +7,8 @@ and reaps orphaned sandboxes. It cannot run as a Vercel serverless callback.
 Deployment setup lives in [Self-hosting](self-hosting.md). Session transition
 semantics live in
 [Pipeline and worker lifecycle](../architecture/pipeline-worker-lifecycle.md).
+For graph enrollment and recovery, see
+[Factory workflow rollout and recovery](factory-workflow-rollout.md).
 
 ## Runtime entry
 

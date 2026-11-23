@@ -163,7 +163,7 @@ ordered capture.
 
 ## Rollback
 
-- Set `WALLIE_WORKER_DISPATCH_ENABLED=false` through the controlled deployment configuration to stop new claims. Keep that setting effective on subsequent automatic builds. Existing attempts finish or recover through their captured ownership guards.
+- Set `WALLIE_WORKER_DISPATCH_ENABLED=false` through the controlled deployment configuration to stop claims and maintenance scheduling from subsequent dispatcher batches. Keep that setting effective on automatic builds. An already running batch can claim up to `WORKER_MAX_CONCURRENT_JOBS` jobs and schedule maintenance. Wait for it to return and account for its claims before rolling back. Existing attempts finish or recover through their captured ownership guards.
 - Select the previous Cloudflare revision for subsequent attempts and coordinate the automatic deployment source so the next build does not immediately reintroduce the bad revision. Preserve the dispatcher binding, Workflow classes, database records, checkpoints, and delivery outbox.
 - For schema changes, retain compatibility with in-flight Workflow versions. Never delete Workflow definitions or Durable Object namespaces as part of rollback.
 - Railway is retired. Generic Node/container operations remain documented in [Worker operations](worker-operations.md) and [Worker container](worker-container.md).

@@ -6,78 +6,8 @@ select no_plan();
 \set op651_parallel_only true
 \unset op652_join_evidence
 \ir fixtures/factory_workflow_branch.psql
+\ir fixtures/factory_workflow_authored_setup.psql
 
-create temp table authored_scope as
-select scope.*, pg_temp.op651_id(201) as workflow_id, base.id as base_activation_id,
-  base.revision_id as base_revision_id, base.digest as base_digest
-from op651_scope scope
-cross join lateral internal.factory_workflow_authoring_base(scope.workspace_id,scope.factory_id) base;
-select public.create_factory_workflow_authoring(
-  workspace_id,factory_id,pg_temp.op651_id(1),workflow_id,'Authored fixture workflow'
-) from authored_scope;
-
-create function pg_temp.save_authored_graph(
-  body text, request_slot integer, expected_draft uuid, expected_activation uuid
-) returns uuid language sql as $$
-  select (public.save_factory_workflow_authoring_draft(
-    p_workspace_id=>scope.workspace_id,p_factory_id=>scope.factory_id,p_actor_user_id=>pg_temp.op651_id(1),
-    p_workflow_id=>scope.workflow_id,p_request_id=>pg_temp.op651_id(request_slot),
-    p_expected_draft_id=>expected_draft,p_expected_activation_id=>expected_activation,
-    p_expected_base_activation_id=>scope.base_activation_id,p_expected_base_revision_id=>scope.base_revision_id,
-    p_expected_base_digest=>scope.base_digest,p_workflow_json=>body,
-    p_workflow_digest=>encode(sha256(convert_to(body,'UTF8')),'hex')
-  )->>'draftId')::uuid from authored_scope scope
-$$;
-
-create function pg_temp.publish_authored_graph(
-  body text, request_slot integer, expected_draft uuid, expected_activation uuid
-) returns table(draft_id uuid,activation_id uuid,graph_revision_id uuid) language plpgsql as $$
-declare
-  scope record;
-  digest text;
-  published jsonb;
-begin
-  select * into strict scope from authored_scope;
-  digest:=encode(sha256(convert_to(body,'UTF8')),'hex');
-  draft_id:=pg_temp.save_authored_graph(body,request_slot,expected_draft,expected_activation);
-  published:=public.publish_factory_workflow_authoring_draft(
-    p_workspace_id=>scope.workspace_id,p_factory_id=>scope.factory_id,p_actor_user_id=>pg_temp.op651_id(1),
-    p_workflow_id=>scope.workflow_id,p_request_id=>pg_temp.op651_id(request_slot+1),
-    p_expected_draft_id=>draft_id,p_expected_activation_id=>expected_activation,
-    p_expected_base_activation_id=>scope.base_activation_id,p_expected_base_revision_id=>scope.base_revision_id,
-    p_expected_base_digest=>scope.base_digest,p_verified_draft_digest=>digest
-  );
-  activation_id:=(published->>'activationId')::uuid;
-  graph_revision_id:=(published->>'graphRevisionId')::uuid;
-  return next;
-end;
-$$;
-
-create function pg_temp.publish_authored(
-  first_node text, request_slot integer, expected_draft uuid default null, expected_activation uuid default null
-) returns table(draft_id uuid,activation_id uuid,graph_revision_id uuid) language sql as $$
-  select * from pg_temp.publish_authored_graph(jsonb_build_object(
-    'schemaVersion',1,'kind','graph','entryNodeId',first_node,'grants','[]'::jsonb,
-    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation','checkpoint'),
-      jsonb_build_object('id','check.policy','kind','deterministic','operation','policy'),
-      jsonb_build_object('id','human.review','kind','human-gate','anyoneCanApprove',false,
-        'approverMemberIds',jsonb_build_array(pg_temp.op651_id(21)))),
-    'edges',jsonb_build_array(
-      jsonb_build_object('id','next.policy','kind','next','from',first_node,'to','check.policy'),
-      jsonb_build_object('id','next.review','kind','next','from','check.policy','to','human.review')))::text,
-    request_slot,expected_draft,expected_activation)
-$$;
-
-create temp table authored_version_a as select * from pg_temp.publish_authored('old.checkpoint',202);
-create temp table authored_session as
-select admitted.*
-from authored_scope scope cross join authored_version_a activation
-cross join lateral public.create_session_command_once(
-  scope.workspace_id,pg_temp.op651_id(21),pg_temp.op651_id(206),repeat('a',64),scope.base_digest,
-  'Authored dispatch fixture','Run the selected workflow.','codex','gpt-5.5','{}',
-  target_factory_id=>scope.factory_id,
-  p_workflow_selection=>jsonb_build_object('workflowId',scope.workflow_id,'activationId',activation.activation_id)
-) admitted;
 select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(210)),null::jsonb,
   'a queue claim cannot enroll before the exact preparation checkpoint is adopted');
 create temp table authored_version_b as
