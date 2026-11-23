@@ -284,6 +284,7 @@ export function validateWorkflowTopology(graph: WorkflowGraphDefinition): Workfl
   }
 
   const reachable = reachableForward(entry.id, outgoing);
+  let reviewRepairVisits = 0;
   graph.nodes.forEach((node, index) => {
     if (!reachable.has(node.id)) {
       diagnostics.push({
@@ -341,6 +342,48 @@ export function validateWorkflowTopology(graph: WorkflowGraphDefinition): Workfl
         }
         break;
       }
+      case "review": {
+        const first = predecessors[0]?.edge;
+        if (
+          predecessors.length !== 1 ||
+          first?.kind !== "next" ||
+          nodesById.get(first.from)?.kind !== "join"
+        ) {
+          diagnostics.push({
+            code: "invalid_review",
+            path,
+            message: "An exact review requires one incoming edge from an adopted join.",
+          });
+        }
+        if (!graph.delegationPolicy) {
+          diagnostics.push({
+            code: "invalid_review",
+            path,
+            message: "An exact review requires a bounded shared delegation policy.",
+          });
+        }
+        if (node.repair) {
+          const repairPath = ["nodes", index, "repair"];
+          const { edgeId, eligibleRuleIds, maxRepairs } = node.repair;
+          if (edgeIds.has(edgeId)) {
+            diagnostics.push({
+              code: "duplicate_id",
+              path: [...repairPath, "edgeId"],
+              message: `Repair edge ID "${edgeId}" is already used.`,
+            });
+          }
+          edgeIds.add(edgeId);
+          reviewRepairVisits += maxRepairs;
+          if (eligibleRuleIds.some((ruleId) => !node.ruleIds.includes(ruleId))) {
+            diagnostics.push({
+              code: "invalid_review",
+              path: [...repairPath, "eligibleRuleIds"],
+              message: "Repair can use only rules declared by the exact review.",
+            });
+          }
+        }
+        break;
+      }
       case "agent":
         if (
           predecessors.some(({ edge }) => edge.kind === "branch") ||
@@ -395,7 +438,7 @@ export function validateWorkflowTopology(graph: WorkflowGraphDefinition): Workfl
       });
     }
   });
-  if (graph.nodes.length * (1 + loopTraversals) > MAX_WORKFLOW_NODE_VISITS) {
+  if ((graph.nodes.length + reviewRepairVisits) * (1 + loopTraversals) > MAX_WORKFLOW_NODE_VISITS) {
     diagnostics.push({
       code: "expansion_limit",
       path: ["edges"],

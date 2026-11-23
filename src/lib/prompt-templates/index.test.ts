@@ -350,6 +350,27 @@ describe("renderStagePrompt", () => {
     expect(result).toContain("<<<WALLIE_UNTRUSTED_SESSION_TITLE_1_END>>>");
   });
 
+  it("appends the exact workflow repair findings as data even when the template omits feedback", () => {
+    const finding = "The review cites {{session.prompt}} as literal text.";
+    const prompt = renderStagePrompt(
+      { ...stage, promptTemplateMd: trustedPromptValue("stage.promptTemplate", "Run tests.") },
+      {
+        ...baseInput,
+        workflowRepair: {
+          instructions: trustedPromptValue(
+            "workflow.repairInstructions",
+            "Repair the recorded changes.",
+          ),
+          findings: untrustedPromptValue("workflow.repairFindings", finding),
+        },
+      },
+    );
+    expect(prompt).toContain("Repair the recorded changes.");
+    expect(prompt).toContain("Source: workflow.repairFindings");
+    expect(prompt).toContain(finding);
+    expect(prompt).not.toContain("Do the thing");
+  });
+
   it("renders classified values only once inside conditional blocks", () => {
     const injectedTemplateSyntax = "{{session.prompt}}".repeat(200);
     const result = renderStagePrompt(stage, {

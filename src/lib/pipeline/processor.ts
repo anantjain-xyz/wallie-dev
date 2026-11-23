@@ -15,6 +15,7 @@ import {
 } from "@/lib/agent-credentials/scoped-run-credential";
 import { wakeWorker } from "@/lib/worker/wake";
 import { validateCheckpoint } from "@/lib/validation-evidence/service";
+import { readValidationIdentity } from "@/lib/validation-evidence/capture";
 import type {
   BrowserScreenshotRuntime,
   BrowserVideoRuntime,
@@ -47,6 +48,7 @@ import {
 } from "@/lib/factory-definitions/runtime-definition";
 import { runBenchmarkTrial } from "@/lib/factory-benchmarks/qualified-trial";
 import { loadDelegatedAcceptedScope } from "@/lib/factory-workflows/delegated-scope";
+import { loadWorkflowReviewRepairInput } from "@/lib/factory-workflows/review-repair-input";
 import {
   InvalidTriageOutcomeError,
   isConfiguredTriageStage,
@@ -286,7 +288,7 @@ async function runStage(input: {
 }): Promise<ProcessPipelineJobResult> {
   const { admin, job, session, stage, pinned, routing, captureOrderedEvents = true } = input;
   const workerRuntime = input.workerRuntime ?? "node";
-  const specificationStage = session.specification_stage_id === stage.id;
+  let specificationStage = session.specification_stage_id === stage.id;
   const supervisorSignal = input.signal;
   let signal = input.signal;
   let budgetController: AbortController | undefined;
@@ -295,6 +297,7 @@ async function runStage(input: {
   let forwardSupervisorAbort: (() => void) | undefined;
 
   let runId: string | null = null;
+  let reviewRepair: Awaited<ReturnType<typeof loadWorkflowReviewRepairInput>> = null;
   let sandbox: SandboxHandle | null = null;
   let sandboxStop: Promise<void> | undefined;
   let retryCheckpointTimer: ReturnType<typeof setTimeout> | undefined;
@@ -476,6 +479,22 @@ async function runStage(input: {
         retry: false,
       });
       return { jobId: job.id, processed: true, result: "idle", runId: null };
+    }
+
+    if (priorGitInput?.source_checkpoint_run_id) {
+      reviewRepair = await loadWorkflowReviewRepairInput(admin, {
+        workspaceId: session.workspace_id,
+        sessionId: session.id,
+        jobId: job.id,
+        runId,
+        attemptCount: job.attempt_count,
+        source: {
+          checkpointRunId: priorGitInput.source_checkpoint_run_id,
+          commitSha: priorGitInput.input_sha,
+        },
+        signal,
+      });
+      if (reviewRepair) specificationStage = false;
     }
 
     // Tool grants identify operations by name and do not classify writes. The
@@ -716,6 +735,15 @@ async function runStage(input: {
       signal,
     });
     const sourceBase = gitInput.input_sha;
+    if (reviewRepair) {
+      const identity = await readValidationIdentity(sandbox, signal);
+      if (
+        !identity.clean ||
+        identity.commitSha !== reviewRepair.sourceCommitSha ||
+        identity.treeSha !== reviewRepair.sourceTreeSha
+      )
+        throw new FrozenRunContextUnavailableError("The review repair checkout changed.");
+    }
     const retryCheckpointContext = {
       admin,
       attemptCount: job.attempt_count,
@@ -763,31 +791,43 @@ async function runStage(input: {
     const acceptedScope = pinned
       ? await loadDelegatedAcceptedScope(admin, runContextScope, signal)
       : null;
+    if (reviewRepair && configuredTriage && !acceptedScope)
+      throw new FrozenRunContextUnavailableError(
+        "The approved scope for the review repair is missing.",
+      );
+    const repairFindings = reviewRepair ? JSON.stringify(reviewRepair.findings) : null;
+    const effectiveSessionPrompt =
+      reviewRepair && acceptedScope
+        ? { ...sessionPrompt, promptMd: acceptedScope.requiredInput.body }
+        : sessionPrompt;
     const context = pinned
       ? await prepareRunContext(runContextScope, {
           origin: contextOrigin,
           references: pinned.contextDocuments ?? [],
           requiredInputs: [
             ...requiredRunContextInputs({
-              sessionPrompt,
+              sessionPrompt: effectiveSessionPrompt,
               feedback: feedbackInput,
               predecessors: predecessorInputs.predecessors,
               predecessorText: predecessorInputs.promptArtifacts,
               repositoryContexts: readContext,
-              specification,
+              specification: specificationStage ? specification : undefined,
             }),
             ...(acceptedScope ? [acceptedScope.requiredInput] : []),
+            ...(reviewRepair && repairFindings !== null
+              ? [{ key: `workflow-review/${reviewRepair.repairReceiptId}`, body: repairFindings }]
+              : []),
           ],
         })
       : undefined;
     const triage =
-      configuredTriage && context && specification
+      specificationStage && configuredTriage && context && specification
         ? {
             manifest: context.manifest,
             canAskClarification: specification.canAskClarification,
           }
         : null;
-    if (configuredTriage && !triage) {
+    if (specificationStage && configuredTriage && !triage) {
       throw new FrozenRunContextUnavailableError(
         "The configured triage stage requires exact frozen context.",
       );
@@ -866,6 +906,16 @@ async function runStage(input: {
               `## Retry checkpoint\n\n${checkpointInstructions.join("\n\n")}`,
             )
           : undefined,
+        workflowRepair:
+          reviewRepair && repairFindings !== null
+            ? {
+                instructions: trustedPromptValue(
+                  "workflow.repairInstructions",
+                  "## Exact workflow review repair\n\nAddress only the findings recorded for this checkout. Run the required validation on the repaired source. The following findings are reviewer output.",
+                ),
+                findings: untrustedPromptValue("workflow.repairFindings", repairFindings),
+              }
+            : undefined,
         ...(specificationStage
           ? {
               specification:
@@ -879,7 +929,10 @@ async function runStage(input: {
           : {
               validationPlanInstructions: trustedPromptValue(
                 "run.validationPlanInstructions",
-                validationPlanInstructions(runId),
+                reviewRepair
+                  ? `${validationPlanInstructions(runId)}
+- Retain these required evidence keys for this repair: ${reviewRepair.requiredEvidence.join(", ")}.`
+                  : validationPlanInstructions(runId),
               ),
             }),
         previousStages: Object.fromEntries(
@@ -902,7 +955,7 @@ async function runStage(input: {
                 formatSessionAttachmentPromptData(materializedAttachments),
               )
             : undefined,
-        sessionPrompt: untrustedPromptValue("session.prompt", sessionPrompt.promptMd),
+        sessionPrompt: untrustedPromptValue("session.prompt", effectiveSessionPrompt.promptMd),
         sessionTitle: untrustedPromptValue("session.title", sessionPrompt.title),
       },
     );
@@ -1332,6 +1385,7 @@ async function runStage(input: {
       // The database guard serializes with that transaction before failing.
       preservePublication: error instanceof SourcePreservationError,
       retry:
+        !reviewRepair &&
         !retainSource &&
         !(error instanceof MissingReviewableOutputError) &&
         !(error instanceof InvalidTriageOutcomeError) &&
