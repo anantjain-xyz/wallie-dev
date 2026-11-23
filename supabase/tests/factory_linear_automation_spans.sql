@@ -107,5 +107,47 @@ select is(public.admit_next_factory_automation_occurrence(), null::jsonb, 'the w
 select is((select count(*) from internal.factory_automation_occurrences where workspace_id = pg_temp.op651_id(11)), 1::bigint,
   'the complete reconciliation leaves exactly one logical occurrence');
 
+-- A terminal route can run on a lifecycle page outside the automation cursor.
+with draft as materialized (
+  select scope.workspace_id, scope.factory_id, pg_temp.create_dry_run_automation(102,
+    jsonb_set(pg_temp.dry_run_definition('issue-state'), '{filters,stateIds}', '["canceled"]')) as rule
+  from op651_scope scope
+)
+select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1),
+  (rule->>'automationId')::uuid, (rule->>'draftRevisionId')::uuid)
+from draft;
+select ok(has_function_privilege('service_role', 'public.retain_terminal_linear_automation_span(uuid,jsonb)', 'execute')
+  and not has_function_privilege('authenticated', 'public.retain_terminal_linear_automation_span(uuid,jsonb)', 'execute')
+  and not has_function_privilege('anon', 'public.retain_terminal_linear_automation_span(uuid,jsonb)', 'execute'),
+  'only the worker can retain an exact observation before routing the terminal link');
+select is(public.retain_terminal_linear_automation_span(pg_temp.op651_id(600), pg_temp.issue_span(
+  3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
+  false, 'the terminal path cannot retain a span against another workspace');
+select ok(public.retain_terminal_linear_automation_span(pg_temp.op651_id(11), pg_temp.issue_span(
+  3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
+  'the terminal path retains the exact span without consuming the batch cursor');
+select is(public.retain_terminal_linear_automation_span(pg_temp.op651_id(11), pg_temp.issue_span(
+  3, 502, 'late-b', 'canceled', '2026-11-22T13:00:00Z', '2026-11-22T13:00:00Z')),
+  false, 'a superseded terminal span cannot authorize routing');
+select is((select transition.outcome from public.sessions session
+  join public.workspace_linear_routing config on config.workspace_id = session.workspace_id
+  cross join lateral public.apply_linear_session_transition(session.id, session.workspace_id, session.linear_issue_id,
+    session.updated_at, config.updated_at, 'closed-b', '2026-11-22T14:00:00Z', 'canceled',
+    '2026-11-22T14:00:00Z', 'Canceled') transition
+  where session.id = pg_temp.op651_id(1003)),
+  'archived', 'legacy routing can archive the sole link after the observation commits');
+select ok((select archived_at is not null from public.sessions where id = pg_temp.op651_id(1003))
+  and exists (
+    select 1 from internal.issue_automation_state_spans span
+    where (span.workspace_id, span.source_issue_id, span.source_span_id) = (pg_temp.op651_id(11), pg_temp.op651_id(502)::text, 'closed-b')
+      and span.event->>'stateId' = 'canceled' and not span.baseline
+  ), 'the exact terminal event remains durable after its only active link disappears');
+select is((select count(*) from internal.factory_automation_occurrences
+  where workspace_id = pg_temp.op651_id(11) and event->>'stateId' = 'canceled' and status = 'pending'),
+  1::bigint, 'the terminal event leaves exactly one pending occurrence after archival');
+select ok(generation = 5 and after_session_id = pg_temp.op651_id(1050),
+  'retaining and routing the terminal link does not move the automation cursor')
+from public.read_linear_automation_span_cursor(pg_temp.op651_id(11));
+
 select * from finish();
 rollback;

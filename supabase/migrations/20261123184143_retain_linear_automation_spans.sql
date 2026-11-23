@@ -45,7 +45,7 @@ revoke all on internal.issue_automation_state_spans, internal.issue_automation_s
 -- their original scope and filter payload, independently of provider edits.
 create function internal.record_issue_automation_state_span(
   p_workspace_id uuid, p_factory_id uuid, p_source_namespace text, p_issue_id text, p_span_id text,
-  p_started_at timestamptz, p_source_updated_at timestamptz, p_event jsonb
+  p_started_at timestamptz, p_source_updated_at timestamptz, p_event jsonb, p_retain_archived boolean default false
 ) returns integer language plpgsql set search_path = '' as $$
 declare
   current_span record;
@@ -53,14 +53,15 @@ declare
   rule record;
   occurrence jsonb;
   inserted integer := 0;
+  active_factory boolean;
   source_key text := encode(sha256(convert_to(jsonb_build_array(p_issue_id, p_span_id)::text, 'UTF8')), 'hex');
 begin
   perform 1 from public.workspaces workspace
   where workspace.id = p_workspace_id and workspace.deletion_requested_at is null for share;
   if not found then return 0; end if;
-  perform 1 from public.factories factory
-  where (factory.workspace_id, factory.id) = (p_workspace_id, p_factory_id) and factory.status = 'active' for no key update;
-  if not found then return 0; end if;
+  select factory.status = 'active' into active_factory from public.factories factory
+  where (factory.workspace_id, factory.id) = (p_workspace_id, p_factory_id) for no key update;
+  if not found or (not active_factory and not p_retain_archived) then return 0; end if;
 
   select span.* into prior_span from internal.issue_automation_state_spans span
   where (span.workspace_id, span.factory_id, span.source_namespace, span.source_issue_id, span.source_span_id) =
@@ -102,7 +103,7 @@ begin
   on conflict (workspace_id, factory_id, source_namespace, source_issue_id) do update
     set source_span_id = excluded.source_span_id, source_updated_at = excluded.source_updated_at;
 
-  if current_span.source_span_id is null then return 0; end if;
+  if current_span.source_span_id is null or not active_factory then return 0; end if;
   for rule in
     select automation.id, revision.id as revision_id
     from internal.factory_automations automation
@@ -119,6 +120,77 @@ begin
     inserted := inserted + (occurrence->'replayed' = 'false'::jsonb)::integer;
   end loop;
   return inserted;
+end;
+$$;
+
+create function internal.valid_linked_linear_automation_observation(observation jsonb)
+returns boolean language sql stable set search_path = '' as $$
+  select case when jsonb_typeof(observation) = 'object' then (
+    observation ?& array['sessionId','linkedIssueId','issueId','spanId','startedAt','issueUpdatedAt','stateId','teamId','projectId']
+    and observation - array['sessionId','linkedIssueId','issueId','spanId','startedAt','issueUpdatedAt','stateId','teamId','projectId'] = '{}'::jsonb
+    and pg_input_is_valid(observation->>'sessionId', 'uuid')
+    and pg_input_is_valid(observation->>'issueId', 'uuid')
+    and internal.valid_factory_automation_filter_values(jsonb_build_array(observation->'spanId'))
+    and internal.valid_factory_automation_filter_values(jsonb_build_array(observation->'linkedIssueId'))
+    and pg_input_is_valid(observation->>'startedAt', 'timestamp with time zone')
+    and pg_input_is_valid(observation->>'issueUpdatedAt', 'timestamp with time zone')
+  ) is true else false end
+$$;
+
+-- A lifecycle route can remove the only active link before the batch cursor
+-- reaches it. Retain that exact source observation without advancing the cursor.
+create function public.retain_terminal_linear_automation_span(p_workspace_id uuid, p_observation jsonb)
+returns boolean language plpgsql security definer set search_path = '' as $$
+declare
+  linked_session_id uuid;
+  linked_factory_id uuid;
+  canonical_issue_id text;
+  observed_span_id text;
+  observed_started_at timestamptz;
+  observed_updated_at timestamptz;
+  event jsonb;
+begin
+  perform internal.assert_checkpoint_publication_service();
+  if not internal.valid_linked_linear_automation_observation(p_observation) then
+    raise exception 'A valid linked Linear state span is required.' using errcode = '22023';
+  end if;
+  linked_session_id := (p_observation->>'sessionId')::uuid;
+  canonical_issue_id := (p_observation->>'issueId')::uuid::text;
+  observed_span_id := p_observation->>'spanId';
+  observed_started_at := (p_observation->>'startedAt')::timestamptz;
+  observed_updated_at := (p_observation->>'issueUpdatedAt')::timestamptz;
+  if observed_started_at > observed_updated_at or not isfinite(observed_started_at) or not isfinite(observed_updated_at) then
+    raise exception 'A coherent linked Linear state span is required.' using errcode = '22023';
+  end if;
+  event := internal.normalize_factory_automation_event(jsonb_build_object(
+    'kind', 'issue-state', 'stateId', p_observation->'stateId',
+    'teamId', p_observation->'teamId', 'projectId', p_observation->'projectId'
+  ));
+
+  select session.factory_id into linked_factory_id from public.sessions session
+  where (session.workspace_id, session.id) = (p_workspace_id, linked_session_id);
+  if not found then return false; end if;
+  perform 1 from public.workspaces workspace
+  where workspace.id = p_workspace_id and workspace.deletion_requested_at is null for share;
+  if not found then return false; end if;
+  perform 1 from public.factories factory
+  where (factory.workspace_id, factory.id) = (p_workspace_id, linked_factory_id) for no key update;
+  if not found then return false; end if;
+  perform 1 from public.sessions session
+  where (session.workspace_id, session.factory_id, session.id) = (p_workspace_id, linked_factory_id, linked_session_id)
+    and session.linear_issue_id = p_observation->>'linkedIssueId' and session.archived_at is null
+    and session.phase_status in ('in_progress', 'awaiting_review', 'approved', 'rejected')
+  for share;
+  if not found then return false; end if;
+
+  perform internal.record_issue_automation_state_span(p_workspace_id, linked_factory_id, 'linear.issue-state',
+    canonical_issue_id, observed_span_id, observed_started_at, observed_updated_at, event, true);
+  return exists (
+    select 1 from internal.issue_automation_span_watermarks watermark
+    where (watermark.workspace_id, watermark.factory_id, watermark.source_namespace, watermark.source_issue_id,
+      watermark.source_span_id, watermark.source_updated_at) = (p_workspace_id, linked_factory_id, 'linear.issue-state',
+      canonical_issue_id, observed_span_id, observed_updated_at)
+  );
 end;
 $$;
 
@@ -140,6 +212,7 @@ language plpgsql security definer set search_path = '' as $$
 declare
   progress internal.issue_automation_scan_cursors;
   expected_ids uuid[];
+  locked_ids uuid[];
   observed record;
   source_namespace constant text := 'linear.issue-state';
   inserted integer := 0;
@@ -151,6 +224,13 @@ begin
   end if;
   if jsonb_array_length(p_observations) > cardinality(p_session_ids) or octet_length(p_observations::text) > 65536 then
     raise exception 'The Linear automation scan page is too large.' using errcode = '22023';
+  end if;
+
+  if p_workspace_id is not null then
+    perform 1 from public.workspaces workspace where workspace.id = p_workspace_id for share;
+    if not found then
+      raise exception 'The linked-session page workspace changed. Reload it and retry.' using errcode = 'PT409';
+    end if;
   end if;
 
   insert into internal.issue_automation_scan_cursors(source_namespace, workspace_id)
@@ -174,24 +254,36 @@ begin
     raise exception 'The linked-session page changed. Reload it and retry.' using errcode = 'PT409';
   end if;
 
+  -- Take scope locks before session locks, as terminal retention does.
+  -- Hold the chosen links through validation, span persistence, and cursor advance.
+  perform 1 from public.workspaces workspace where workspace.id in (
+    select session.workspace_id from public.sessions session where session.id = any(expected_ids)
+  ) order by workspace.id for share;
+  perform 1 from public.factories factory where (factory.workspace_id, factory.id) in (
+    select session.workspace_id, session.factory_id from public.sessions session where session.id = any(expected_ids)
+  ) order by factory.workspace_id, factory.id for no key update;
+  select coalesce(array_agg(page.id order by page.id), '{}'::uuid[]) into locked_ids
+  from (
+    select session.id from public.sessions session where session.id = any(expected_ids)
+      and session.linear_issue_id is not null and session.archived_at is null
+      and session.phase_status in ('in_progress', 'awaiting_review', 'approved', 'rejected')
+      and (p_workspace_id is null or session.workspace_id = p_workspace_id)
+    order by session.id for share
+  ) page;
+  if locked_ids is distinct from expected_ids then
+    raise exception 'The linked-session page changed. Reload it and retry.' using errcode = 'PT409';
+  end if;
+
   if exists (
     select 1 from jsonb_array_elements(p_observations) observation
-    where jsonb_typeof(observation) is distinct from 'object'
-      or not (observation ?& array['sessionId','linkedIssueId','issueId','spanId','startedAt','issueUpdatedAt','stateId','teamId','projectId'])
-      or observation - array['sessionId','linkedIssueId','issueId','spanId','startedAt','issueUpdatedAt','stateId','teamId','projectId'] <> '{}'::jsonb
-      or not coalesce(pg_input_is_valid(observation->>'sessionId', 'uuid'), false)
-      or not coalesce(pg_input_is_valid(observation->>'issueId', 'uuid'), false)
-      or not internal.valid_factory_automation_filter_values(jsonb_build_array(observation->'spanId'))
-      or not internal.valid_factory_automation_filter_values(jsonb_build_array(observation->'linkedIssueId'))
-      or not coalesce(pg_input_is_valid(observation->>'startedAt', 'timestamp with time zone'), false)
-      or not coalesce(pg_input_is_valid(observation->>'issueUpdatedAt', 'timestamp with time zone'), false)
+    where not internal.valid_linked_linear_automation_observation(observation)
   ) then
     raise exception 'A valid linked Linear state span is required.' using errcode = '22023';
   end if;
   if exists (
     select 1 from jsonb_array_elements(p_observations) observation
     left join public.sessions session on session.id = (observation->>'sessionId')::uuid
-    where session.id is null or not (session.id = any(expected_ids))
+    where session.id is null or not (session.id = any(locked_ids))
       or session.linear_issue_id is distinct from observation->>'linkedIssueId'
       or (observation->>'startedAt')::timestamptz > (observation->>'issueUpdatedAt')::timestamptz
       or not isfinite((observation->>'startedAt')::timestamptz) or not isfinite((observation->>'issueUpdatedAt')::timestamptz)
@@ -212,9 +304,7 @@ begin
         'kind', 'issue-state', 'stateId', observation->'stateId', 'teamId', observation->'teamId', 'projectId', observation->'projectId'
       )) as event
     from jsonb_array_elements(p_observations) observation
-    join public.sessions session on session.id = (observation->>'sessionId')::uuid and session.id = any(expected_ids)
-      and session.linear_issue_id = observation->>'linkedIssueId' and session.archived_at is null
-      and (p_workspace_id is null or session.workspace_id = p_workspace_id)
+    join public.sessions session on session.id = (observation->>'sessionId')::uuid
     order by session.workspace_id, session.factory_id, (observation->>'issueId')::uuid,
       (observation->>'issueUpdatedAt')::timestamptz desc, (observation->>'startedAt')::timestamptz desc, session.id
   loop
@@ -233,8 +323,10 @@ end;
 $$;
 
 revoke all on function
-  internal.record_issue_automation_state_span(uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb),
+  internal.record_issue_automation_state_span(uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb, boolean),
+  internal.valid_linked_linear_automation_observation(jsonb), public.retain_terminal_linear_automation_span(uuid, jsonb),
   public.read_linear_automation_span_cursor(uuid), public.commit_linear_automation_span_page(bigint, uuid[], jsonb, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function public.read_linear_automation_span_cursor(uuid),
+grant execute on function public.retain_terminal_linear_automation_span(uuid, jsonb),
+  public.read_linear_automation_span_cursor(uuid),
   public.commit_linear_automation_span_page(bigint, uuid[], jsonb, uuid) to service_role;

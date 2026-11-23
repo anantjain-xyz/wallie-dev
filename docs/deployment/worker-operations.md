@@ -418,14 +418,21 @@ status-name mappings and its exact per-session transition receipt.
 - Unrelated edits and repeat reads of the same span do not rematch rules.
   The first accepted filter payload is retained. Older snapshots cannot move
   the issue watermark backward.
-- The scan cursor, issue watermarks, and matching occurrences commit together.
-  After a failed or throttled read, the next sweep resumes after the last
-  committed page.
-  A short final page resets the cursor to the beginning. Global and
-  workspace-scoped scans keep separate cursors and share span receipts.
+- Each workspace has its own automation cursor. Its exact linked page, issue
+  watermarks, and matching occurrences commit together. A failed or throttled
+  read, or an unreadable configured key, leaves that workspace at its last
+  committed page. Other workspaces continue. A short final page resets its
+  cursor to the beginning. Normal and workspace-scoped sweeps share the same
+  workspace cursor.
+- Lifecycle routing starts at the first linked session each sweep, even when
+  the automation continuation is held by an unsuccessful page. Before a
+  terminal Linear route can archive a session, the worker retains the exact
+  observation against its current link. A failed retention keeps the link
+  available for another sweep.
 
 Linear rate limits are retried once with a bounded delay. Persistent throttling
-ends the current sweep. The worker only reads existing links and only considers
+ends polling for that workspace in the current sweep. The worker only reads
+existing links and only considers
 the current open span. Historical closed spans, issue discovery, and provider
 subscriptions are outside this polling path.
 

@@ -16141,6 +16141,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      retain_terminal_linear_automation_span: {
+        Args: { p_observation: Json; p_workspace_id: string }
+        Returns: boolean
+      }
       retry_factory_event_delivery: {
         Args: {
           p_actor_user_id: string

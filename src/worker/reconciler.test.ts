@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   routing: vi.fn(),
   cleanup: vi.fn(),
   runConfig: vi.fn(),
+  decrypt: vi.fn<(value: string) => string>(),
 }));
 vi.mock("@/lib/linear-routing/observations", async (original) => ({
   ...(await original<typeof import("@/lib/linear-routing/observations")>()),
@@ -15,7 +16,7 @@ vi.mock("@/lib/linear-routing/server", () => ({ loadLinearRoutingSnapshot: mocks
 vi.mock("@/lib/pipeline/cancel", () => ({ cleanupSessionWorkReceipt: mocks.cleanup }));
 vi.mock("@/lib/wallie/service", () => ({ resolveQueuedRunConfig: mocks.runConfig }));
 vi.mock("@/lib/secrets/crypto", () => ({
-  decryptSecretValue: (value: string) => `decoded:${value}`,
+  decryptSecretValue: mocks.decrypt,
 }));
 import { reconcileLinearState } from "./reconciler";
 import { LinearRateLimitedError } from "@/lib/linear-routing/observations";
@@ -38,7 +39,13 @@ const session = (id = "session-1", workspace = "workspace-1", phase = "awaiting_
   updated_at: updatedAt,
   phase_status: phase,
 });
-function adminFor(rows = [session()]) {
+function adminFor(
+  rows = [session()],
+  credentials = [...new Set(rows.map((row) => row.workspace_id))].map((workspace_id) => ({
+    workspace_id,
+    encrypted_value: workspace_id,
+  })),
+) {
   const reads: Array<{ table: string; filters: Record<string, unknown> }> = [];
   const rpc = vi.fn().mockResolvedValue({
     data: [
@@ -56,22 +63,30 @@ function adminFor(rows = [session()]) {
     data: [{ after_session_id: null, generation: 0 }],
     error: null,
   });
-  const commitPage = vi.fn((input: { p_session_ids: string[]; p_expected_generation: number }) =>
-    Promise.resolve({
-      data: [
-        {
-          after_session_id: input.p_session_ids.length === 50 ? input.p_session_ids.at(-1) : null,
-          generation: input.p_expected_generation + 1,
-          occurrence_count: 0,
-        },
-      ],
-      error: null,
-    }),
+  const commitPage = vi.fn(
+    (input: {
+      p_session_ids: string[];
+      p_expected_generation: number;
+      p_workspace_id: string;
+      p_observations: unknown[];
+    }): Promise<{ data: unknown; error: { code: string; message: string } | null }> =>
+      Promise.resolve({
+        data: [
+          {
+            after_session_id: input.p_session_ids.length === 50 ? input.p_session_ids.at(-1) : null,
+            generation: input.p_expected_generation + 1,
+            occurrence_count: 0,
+          },
+        ],
+        error: null,
+      }),
   );
+  const retainSpan = vi.fn().mockResolvedValue({ data: true, error: null });
   const admin = {
     rpc(name: string, input: never) {
       if (name === "read_linear_automation_span_cursor") return readCursor(name, input);
       if (name === "commit_linear_automation_span_page") return commitPage(input);
+      if (name === "retain_terminal_linear_automation_span") return retainSpan(name, input);
       return rpc(name, input);
     },
     from(table: string) {
@@ -82,7 +97,10 @@ function adminFor(rows = [session()]) {
         select: () => builder,
         not: () => builder,
         is: () => builder,
-        in: () => builder,
+        in: (column: string, values: string[]) => {
+          filters[`in.${column}`] = values;
+          return builder;
+        },
         order: (column: string) => {
           filters.order = column;
           return builder;
@@ -106,10 +124,9 @@ function adminFor(rows = [session()]) {
               error: null,
               data:
                 table === "workspace_secrets"
-                  ? [...new Set(rows.map((row) => row.workspace_id))].map((workspace_id) => ({
-                      workspace_id,
-                      encrypted_value: workspace_id,
-                    }))
+                  ? credentials.filter((row) =>
+                      (filters["in.workspace_id"] as string[]).includes(row.workspace_id),
+                    )
                   : rows
                       .filter(
                         (row) =>
@@ -124,7 +141,7 @@ function adminFor(rows = [session()]) {
       return builder;
     },
   };
-  return { admin, rpc, reads, readCursor, commitPage };
+  return { admin, rpc, reads, readCursor, commitPage, retainSpan };
 }
 
 beforeEach(() => {
@@ -140,6 +157,7 @@ beforeEach(() => {
     runType: "project",
   });
   mocks.cleanup.mockResolvedValue(undefined);
+  mocks.decrypt.mockImplementation((value) => `decoded:${value}`);
 });
 
 describe("reconcileLinearState", () => {
@@ -296,7 +314,18 @@ describe("reconcileLinearState", () => {
 
     await reconcileLinearState(admin as never, { workspaceId: "workspace-1" });
 
-    expect(reads[0]?.filters).toMatchObject({ "gt.id": "session-1", workspace_id: "workspace-1" });
+    const sessionReads = reads.filter((read) => read.table === "sessions");
+    expect(sessionReads[0]?.filters).toMatchObject({ workspace_id: "workspace-1" });
+    expect(sessionReads[0]?.filters).not.toHaveProperty("gt.id");
+    expect(sessionReads[1]?.filters).toMatchObject({
+      "gt.id": "session-1",
+      workspace_id: "workspace-1",
+    });
+    expect(mocks.observations).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith(
+      "apply_linear_session_transition",
+      expect.objectContaining({ p_session_id: "session-1" }),
+    );
     expect(commitPage).toHaveBeenCalledExactlyOnceWith({
       p_expected_generation: 7,
       p_session_ids: ["session-2"],
@@ -320,19 +349,192 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({ p_session_id: "session-2" }),
     );
   });
-  it("retains the source checkpoint on rate limiting and still routes already fetched workspaces", async () => {
+  it("routes the healthy prefix on every sweep while a later automation page keeps failing", async () => {
+    const { admin, readCursor, commitPage, rpc } = adminFor(
+      Array.from({ length: 51 }, (_, index) =>
+        session(`session-${String(index).padStart(3, "0")}`),
+      ),
+    );
+    readCursor.mockResolvedValue({
+      data: [{ after_session_id: "session-049", generation: 7 }],
+      error: null,
+    });
+    commitPage.mockResolvedValue({
+      data: [],
+      error: { code: "XX000", message: "write unavailable" },
+    });
     mocks.observations
-      .mockResolvedValueOnce(new Map([["ISSUE-session-1", observation]]))
-      .mockRejectedValueOnce(new LinearRateLimitedError());
-    const { admin, rpc, commitPage } = adminFor([session(), session("session-2", "workspace-2")]);
+      .mockImplementationOnce(
+        async (_key: string, ids: string[]) =>
+          new Map(ids.map((id) => [id, { ...observation, statusName: "Todo" }])),
+      )
+      .mockImplementationOnce(
+        async (_key: string, ids: string[]) => new Map(ids.map((id) => [id, observation])),
+      )
+      .mockImplementationOnce(
+        async (_key: string, ids: string[]) =>
+          new Map(
+            ids.map((id) => [
+              id,
+              { ...observation, spanId: "prefix-new", statusName: "In Review" },
+            ]),
+          ),
+      );
+
+    await reconcileLinearState(admin as never);
+    await reconcileLinearState(admin as never);
+
+    const prefix = rpc.mock.calls.filter(([, args]) => args.p_session_id === "session-000");
+    expect(prefix.map(([, args]) => args.p_status_name)).toEqual(["Todo", "In Review"]);
+    expect(mocks.observations).toHaveBeenCalledTimes(4);
+    expect(commitPage).toHaveBeenCalledTimes(2);
+    for (const [page] of commitPage.mock.calls) {
+      expect(page).toMatchObject({ p_expected_generation: 7, p_session_ids: ["session-050"] });
+    }
+  });
+
+  it.each(["Canceled", "Done"])(
+    "keeps the sole link on span write failure before %s and routes it after durable retention",
+    async (statusName) => {
+      const { admin, commitPage, retainSpan, rpc } = adminFor([session(), session("session-2")]);
+      commitPage.mockResolvedValue({
+        data: [],
+        error: { code: "XX000", message: "write unavailable" },
+      });
+      retainSpan.mockResolvedValueOnce({
+        data: null,
+        error: { message: "single span write unavailable" },
+      });
+      mocks.observations.mockImplementation(
+        async (_key: string, ids: string[]) =>
+          new Map(
+            ids.map((id) => [
+              id,
+              id === "ISSUE-session-1" ? { ...observation, statusName } : observation,
+            ]),
+          ),
+      );
+
+      await reconcileLinearState(admin as never);
+      expect(rpc).toHaveBeenCalledExactlyOnceWith(
+        "apply_linear_session_transition",
+        expect.objectContaining({ p_session_id: "session-2" }),
+      );
+      expect(retainSpan).toHaveBeenCalledWith("retain_terminal_linear_automation_span", {
+        p_workspace_id: "workspace-1",
+        p_observation: {
+          sessionId: "session-1",
+          linkedIssueId: "ISSUE-session-1",
+          issueId: observation.issueId,
+          spanId: observation.spanId,
+          startedAt: updatedAt,
+          issueUpdatedAt: updatedAt,
+          stateId: observation.stateId,
+          teamId: observation.teamId,
+          projectId: null,
+        },
+      });
+
+      rpc.mockClear();
+      await reconcileLinearState(admin as never);
+      expect(rpc).toHaveBeenCalledWith(
+        "apply_linear_session_transition",
+        expect.objectContaining({ p_session_id: "session-1", p_status_name: statusName }),
+      );
+      expect(retainSpan.mock.invocationCallOrder[1]).toBeLessThan(rpc.mock.invocationCallOrder[0]!);
+    },
+  );
+  it("resumes each workspace independently when another workspace keeps failing", async () => {
+    const { admin, commitPage, readCursor, rpc } = adminFor([
+      session(),
+      session("session-2", "workspace-2"),
+    ]);
+    readCursor.mockResolvedValue({
+      data: [{ after_session_id: null, generation: 7 }],
+      error: null,
+    });
+    mocks.observations.mockImplementation(async (key: string, ids: string[]) => {
+      if (key === "decoded:workspace-1") throw new Error("incomplete history");
+      return new Map(ids.map((id) => [id, observation]));
+    });
+
+    await reconcileLinearState(admin as never);
+    await reconcileLinearState(admin as never);
+
+    expect(mocks.observations).toHaveBeenCalledTimes(4);
+    expect(commitPage).toHaveBeenCalledTimes(2);
+    for (const [page] of commitPage.mock.calls) {
+      expect(page).toMatchObject({
+        p_expected_generation: 7,
+        p_session_ids: ["session-2"],
+        p_workspace_id: "workspace-2",
+        p_observations: [expect.objectContaining({ sessionId: "session-2" })],
+      });
+    }
+    for (const [, input] of readCursor.mock.calls) {
+      expect(input).toEqual({ p_workspace_id: "workspace-2" });
+    }
+    expect(rpc.mock.calls.map(([, input]) => input.p_session_id)).toEqual([
+      "session-2",
+      "session-2",
+    ]);
+  });
+
+  it("holds the unreadable credential workspace and skips an unconfigured workspace normally", async () => {
+    const { admin, commitPage } = adminFor(
+      [session(), session("session-2", "workspace-2"), session("session-3", "workspace-3")],
+      [
+        { workspace_id: "workspace-1", encrypted_value: "unreadable-fixture-material" },
+        { workspace_id: "workspace-2", encrypted_value: "valid-fixture" },
+      ],
+    );
+    mocks.decrypt.mockImplementation((value) => {
+      if (value === "unreadable-fixture-material") throw new Error(value);
+      return `decoded:${value}`;
+    });
+
+    await reconcileLinearState(admin as never);
+
+    expect(mocks.observations).toHaveBeenCalledExactlyOnceWith(
+      "decoded:valid-fixture",
+      ["ISSUE-session-2"],
+      expect.any(Function),
+    );
+    expect(commitPage.mock.calls.map(([page]) => page.p_workspace_id)).toEqual([
+      "workspace-2",
+      "workspace-3",
+    ]);
+    expect(commitPage.mock.calls[1]?.[0]).toMatchObject({
+      p_observations: [],
+      p_session_ids: ["session-3"],
+    });
+    expect(console.error).toHaveBeenCalledExactlyOnceWith(
+      "[reconciler] failed to decrypt Linear API key",
+      { workspaceId: "workspace-1" },
+    );
+  });
+
+  it("holds only the throttled workspace and advances healthy scopes on both sides", async () => {
+    mocks.observations.mockImplementation(async (key: string, ids: string[]) => {
+      if (key === "decoded:workspace-2") throw new LinearRateLimitedError();
+      return new Map(ids.map((id) => [id, observation]));
+    });
+    const { admin, rpc, commitPage } = adminFor([
+      session(),
+      session("session-2", "workspace-2"),
+      session("session-3", "workspace-3"),
+    ]);
 
     expect((await reconcileLinearState(admin as never)).rateLimited).toBe(true);
 
-    expect(commitPage).not.toHaveBeenCalled();
-    expect(rpc).toHaveBeenCalledExactlyOnceWith(
-      "apply_linear_session_transition",
-      expect.objectContaining({ p_session_id: "session-1" }),
-    );
+    expect(commitPage.mock.calls.map(([page]) => page.p_workspace_id)).toEqual([
+      "workspace-1",
+      "workspace-3",
+    ]);
+    expect(rpc.mock.calls.map(([, input]) => input.p_session_id)).toEqual([
+      "session-1",
+      "session-3",
+    ]);
   });
   it("uses a unique ID cursor so equal creation timestamps cannot skip a page", async () => {
     const { admin, rpc, reads } = adminFor(
@@ -342,7 +544,9 @@ describe("reconcileLinearState", () => {
     );
     await reconcileLinearState(admin as never);
     expect(rpc).toHaveBeenCalledTimes(51);
-    expect(reads.filter((read) => read.table === "sessions")[1]?.filters).toMatchObject({
+    expect(
+      reads.filter((read) => read.table === "sessions" && !read.filters.workspace_id)[1]?.filters,
+    ).toMatchObject({
       order: "id",
       "gt.id": "session-049",
     });
