@@ -110,6 +110,28 @@ describe("workspace resource admission", () => {
     expect(state.operations).toEqual([{ id: "operation-1", resourceId: null, settled: false }]);
   });
 
+  it("passes the persisted reservation into provider create before a response can be lost", async () => {
+    const state = client();
+    mocked.createSessionSandbox.mockImplementationOnce(
+      async (request: CreateSessionSandboxInput) => {
+        expect(request.acquisition).toEqual({
+          operationId: "operation-1",
+          workspaceId: "workspace-1",
+        });
+        expect(state.operations[0]).toEqual({
+          id: "operation-1",
+          resourceId: null,
+          settled: false,
+        });
+        throw new Error("Create response lost");
+      },
+    );
+    await expect(createWorkspaceSessionSandbox(state.admin, input)).rejects.toThrow(
+      "Create response lost",
+    );
+    expect(state.operations).toEqual([{ id: "operation-1", resourceId: null, settled: false }]);
+  });
+
   it("retains cleanup ownership when a canceled run refuses its sandbox", async () => {
     const state = client();
     mocked.createSessionSandbox.mockImplementationOnce(

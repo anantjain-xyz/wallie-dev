@@ -15,6 +15,7 @@ import {
   hasRecoverableVercelSandboxSource,
   listRunningVercelSandboxes,
   stopVercelSandboxById,
+  vercelSandboxDriver,
 } from "./vercel";
 import type { CreateSessionSandboxInput, VercelSandboxCredentials } from "./types";
 
@@ -632,4 +633,40 @@ describe("Vercel retained source inspection", () => {
       "Provider unavailable",
     );
   });
+});
+
+it("finds only an exact nonpersistent Vercel reservation and never resumes for lookup", async () => {
+  const identity = { operationId: "operation-1", workspaceId: "workspace-1" };
+  const exact = {
+    name: "wallie-operation-1",
+    persistent: false,
+    status: "running",
+    tags: {
+      wallie_acquisition_id: identity.operationId,
+      wallie_workspace_id: identity.workspaceId,
+    },
+  };
+  mocked.sandboxList.mockResolvedValueOnce({
+    pagination: { next: null },
+    sandboxes: [exact, { ...exact, name: "wallie-operation-1-extra" }],
+  });
+  await expect(vercelSandboxDriver.findAcquisition(identity, vercelConnection)).resolves.toEqual([
+    exact.name,
+  ]);
+  expect(mocked.sandboxList).toHaveBeenCalledWith(
+    expect.objectContaining({
+      namePrefix: exact.name,
+      projectId: credentials.projectId,
+      teamId: credentials.teamId,
+    }),
+  );
+  expect(mocked.sandboxGet).not.toHaveBeenCalled();
+
+  mocked.sandboxList.mockResolvedValueOnce({
+    pagination: { next: null },
+    sandboxes: [{ ...exact, status: "stopped" }],
+  });
+  await expect(vercelSandboxDriver.findAcquisition(identity, vercelConnection)).resolves.toEqual(
+    [],
+  );
 });

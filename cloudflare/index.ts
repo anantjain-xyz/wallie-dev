@@ -25,6 +25,7 @@ import { reconcileLinearState } from "@/worker/reconciler";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
+import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbox-stop-drain";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
 import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
@@ -323,6 +324,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ["benchmark evaluations", () => reconcileBenchmarkEvaluations(admin)],
       ["source delivery", () => drainSourceDeliveries(admin)],
       ["checkpoint cleanup", () => drainCheckpointCleanup(admin)],
+      ["workflow sandbox stops", () => drainFactoryWorkflowSandboxStops(admin)],
       ["Linear reconciliation", () => reconcileLinearState(admin)],
       ["sandbox reaping", () => reapOrphanSandboxes(admin)],
       ["attachment cleanup", () => cleanupExpiredSessionAttachments(admin)],

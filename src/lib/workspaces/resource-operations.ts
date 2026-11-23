@@ -96,6 +96,7 @@ export async function createWorkspaceSessionSandbox(
   try {
     const sandbox = await createSessionSandbox({
       ...input,
+      acquisition: { operationId, workspaceId: input.workspaceId },
       onSandboxCreated: async (metadata) => {
         // Record before the run/check CAS: cancellation must not erase the ID
         // needed by deletion cleanup if acquisition's best-effort stop fails.

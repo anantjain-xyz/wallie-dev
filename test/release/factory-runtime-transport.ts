@@ -200,6 +200,9 @@ export function createFactoryRuntimeTransport() {
     async createUtility() {
       throw new Error("The unchanged fixture checkout cannot require a delivery sandbox.");
     },
+    async findAcquisition() {
+      return [];
+    },
     async listRunning() {
       return [];
     },

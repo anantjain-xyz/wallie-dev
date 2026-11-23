@@ -2,6 +2,7 @@ import type {
   CreateSessionSandboxInput,
   CreateUtilitySandboxInput,
   RunningSandboxSummary,
+  SandboxAcquisitionIdentity,
   SandboxConnection,
   SandboxHandle,
   SandboxImplementation,
@@ -217,6 +218,21 @@ export async function hasRecoverableSandboxSource(
       provider: connection.provider,
       run: async () =>
         (await loadProviderDriver(connection)).hasRecoverableSource(sandboxId, connection),
+    });
+  } catch (error) {
+    throw sanitizedSandboxError(error, connection, []);
+  }
+}
+
+export async function findSandboxAcquisition(
+  identity: SandboxAcquisitionIdentity,
+  connection: SandboxConnection,
+) {
+  try {
+    return await runBoundedSandboxProviderOperation({
+      operation: "listRunning",
+      provider: connection.provider,
+      run: async () => (await loadProviderDriver(connection)).findAcquisition(identity, connection),
     });
   } catch (error) {
     throw sanitizedSandboxError(error, connection, []);

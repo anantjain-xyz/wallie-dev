@@ -31,6 +31,28 @@ export async function hasSandboxCleanupReceipt(
   return data !== null;
 }
 
+/** Persist an exact provider acknowledgement before releasing its credential fence. */
+export async function recordSandboxCleanupReceipt(
+  admin: AdminClient,
+  owner: {
+    connectionRevision: string;
+    provider: SandboxConnection["provider"];
+    sandboxId: string;
+    workspaceId: string;
+  },
+) {
+  const { error } = await admin.from("workspace_sandbox_cleanup_receipts").upsert(
+    {
+      workspace_id: owner.workspaceId,
+      provider: owner.provider,
+      connection_revision: owner.connectionRevision,
+      sandbox_id: owner.sandboxId,
+    },
+    { ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
+
 /**
  * After active-work protection succeeds, but before replacing/discarding the
  * credentials, verify each recorded owner under the held connection-mutation
@@ -74,15 +96,7 @@ export async function confirmConnectionSandboxCleanup(input: {
         };
         if (await hasSandboxCleanupReceipt(input.admin, owner)) continue;
         await stopSandboxById(row.sandbox_id, { connection: input.connection, throwOnError: true });
-        const { error: receiptError } = await input.admin
-          .from("workspace_sandbox_cleanup_receipts")
-          .upsert({
-            workspace_id: input.workspaceId,
-            provider: input.connection.provider,
-            connection_revision: input.connection.revision,
-            sandbox_id: row.sandbox_id,
-          });
-        if (receiptError) throw receiptError;
+        await recordSandboxCleanupReceipt(input.admin, owner);
       }
       afterId = data[data.length - 1]!.id;
       if (data.length < 100) break;

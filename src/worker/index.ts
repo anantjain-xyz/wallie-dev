@@ -5,6 +5,7 @@ import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 import { drainCheckpointPublications } from "@/lib/pipeline/checkpoint-publication";
+import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbox-stop-drain";
 import { drainCheckpointCleanup } from "@/lib/pipeline/checkpoint-cleanup";
 import { cleanupRunExports, drainRunExports } from "@/lib/run-exports/worker";
 import { drainRunRetention } from "@/lib/run-retention/maintenance";
@@ -181,6 +182,7 @@ async function main() {
           await reconcilePrReadiness(admin);
           await drainSourceDeliveries(admin);
           await drainCheckpointCleanup(admin);
+          await drainFactoryWorkflowSandboxStops(admin);
           const [result, attachmentCleanup, workspaceDeletion] = await Promise.all([
             reconcileLinearState(admin),
             cleanupExpiredSessionAttachments(admin),

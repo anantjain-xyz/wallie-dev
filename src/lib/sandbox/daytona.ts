@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import { Daytona, DaytonaNotFoundError } from "@daytona/sdk";
 
 import { SandboxLogBuffer, shellEnvPrefix, shellJoin, shellQuote } from "./command";
+import { sandboxAcquisitionLabels, sandboxAcquisitionName } from "./acquisition-identity";
 import { finalizeSandboxAcquisition } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
   RunningSandboxSummary,
+  SandboxAcquisitionIdentity,
   SandboxConnection,
   SandboxExecHandle,
   SandboxExecOptions,
@@ -185,8 +187,10 @@ export async function createDaytonaSessionSandbox(
         labels: {
           wallie_owner_id: input.ownerId ?? input.sessionId,
           wallie_session_id: input.sessionId,
+          ...(input.acquisition ? sandboxAcquisitionLabels(input.acquisition) : {}),
           wallie_workspace_id: input.workspaceId ?? input.sessionId,
         },
+        ...(input.acquisition ? { name: sandboxAcquisitionName(input.acquisition) } : {}),
         resources: { cpu: 2, disk: 10, memory: 4 },
         ttlMinutes: Math.ceil(timeoutMs / 60_000) + 10,
       },
@@ -244,6 +248,31 @@ export async function listRunningDaytonaSandboxes(
       });
     }
     return sandboxes;
+  } finally {
+    await client[Symbol.asyncDispose]();
+  }
+}
+
+async function findDaytonaAcquisition(
+  identity: SandboxAcquisitionIdentity,
+  connection: DaytonaConnection,
+) {
+  const name = sandboxAcquisitionName(identity);
+  const labels = sandboxAcquisitionLabels(identity);
+  const client = createClient(connection);
+  try {
+    const sandbox = await client.get(name);
+    if (
+      sandbox.name !== name ||
+      sandbox.labels.wallie_acquisition_id !== labels.wallie_acquisition_id ||
+      sandbox.labels.wallie_workspace_id !== labels.wallie_workspace_id
+    ) {
+      throw new Error("Sandbox acquisition lookup returned a different owner.");
+    }
+    return [sandbox.id];
+  } catch (error) {
+    if (error instanceof DaytonaNotFoundError) return [];
+    throw error;
   } finally {
     await client[Symbol.asyncDispose]();
   }
@@ -308,6 +337,7 @@ export const daytonaSandboxDriver: SandboxProviderDriver<DaytonaConnection> = {
       throw error;
     }
   },
+  findAcquisition: findDaytonaAcquisition,
   listRunning: listRunningDaytonaSandboxes,
   hasRecoverableSource: hasRecoverableDaytonaSandboxSource,
   stopById: stopDaytonaSandboxById,

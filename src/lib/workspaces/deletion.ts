@@ -2,7 +2,8 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { stopSandboxById } from "@/lib/sandbox";
+import { findSandboxAcquisition, stopSandboxById } from "@/lib/sandbox";
+import { recordSandboxCleanupReceipt } from "@/lib/sandbox-connections/cleanup-receipts";
 import { loadWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import type { SandboxProvider } from "@/lib/sandbox/types";
 import type { Database } from "@/lib/supabase/database.types";
@@ -58,7 +59,10 @@ async function cleanupResourceReservations(
     for (const operation of data) {
       const recoveryDue = Date.parse(operation.recovery_after) <= Date.now();
       if (recoverOnly && !operation.settled_at && !recoveryDue) continue;
-      if (operation.kind === "sandbox" && operation.resource_id) {
+      if (
+        operation.kind === "sandbox" &&
+        (operation.resource_id || (recoveryDue && operation.connection_revision))
+      ) {
         const connection =
           operation.provider === "fake"
             ? null
@@ -76,10 +80,30 @@ async function cleanupResourceReservations(
         ) {
           throw new Error("Workspace sandbox cleanup connection changed.");
         }
-        await stopSandboxById(operation.resource_id, {
-          connection: connection?.connection,
-          throwOnError: true,
-        });
+        const ids = operation.resource_id
+          ? [operation.resource_id]
+          : connection
+            ? await findSandboxAcquisition(
+                { operationId: operation.id, workspaceId },
+                connection.connection,
+              )
+            : [];
+        for (const sandboxId of ids) {
+          await stopSandboxById(sandboxId, {
+            connection: connection?.connection,
+            throwOnError: true,
+          });
+          if (connection && operation.connection_revision) {
+            await recordSandboxCleanupReceipt(admin, {
+              workspaceId,
+              provider: connection.connection.provider,
+              connectionRevision: operation.connection_revision,
+              sandboxId,
+            });
+          }
+        }
+        // An empty lookup after the recovery horizon releases the expiry
+        // reservation. Only a known, stopped handle can support a stop receipt.
       } else if (!operation.settled_at && !recoveryDue) {
         // A creator may still publish a sandbox ID or finish an upload. Keep
         // the workspace, provider credentials, and prefix until it settles.

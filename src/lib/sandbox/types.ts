@@ -162,6 +162,8 @@ export interface CreateSessionSandboxInput {
   connection?: SandboxConnection;
   /** Run/check id used only as provider metadata for ownership and diagnostics. */
   ownerId?: string;
+  /** Durable reservation persisted before this provider request starts. */
+  acquisition?: SandboxAcquisitionIdentity;
   /**
    * Called immediately after the provider sandbox is created and before setup
    * commands run. Use this to persist Wallie ownership for crash cleanup.
@@ -172,6 +174,8 @@ export interface CreateSessionSandboxInput {
   }) => void | Promise<void>;
 }
 
+export type SandboxAcquisitionIdentity = { operationId: string; workspaceId: string };
+
 export interface SandboxProviderDriver<Connection extends SandboxConnection = SandboxConnection> {
   create(input: CreateSessionSandboxInput, connection: Connection): Promise<SandboxHandle>;
   createUtility(input: CreateUtilitySandboxInput, connection: Connection): Promise<SandboxHandle>;
@@ -181,6 +185,7 @@ export interface SandboxProviderDriver<Connection extends SandboxConnection = Sa
   ): Promise<RunningSandboxSummary[]>;
   /** Read only: false proves the sandbox no longer retains its source filesystem. */
   hasRecoverableSource(sandboxId: string, connection: Connection): Promise<boolean>;
+  findAcquisition(identity: SandboxAcquisitionIdentity, connection: Connection): Promise<string[]>;
   stopById(sandboxId: string, connection: Connection): Promise<void>;
   validate(connection: Connection): Promise<{ error?: string; ok: boolean }>;
 }

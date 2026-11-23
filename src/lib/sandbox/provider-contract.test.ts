@@ -127,14 +127,15 @@ describe("sandbox provider lifecycle contract", () => {
     await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
   });
 
-  it("does not begin setup or publish an already canceled acquisition", async () => {
+  it("retains the exact acquired handle for cleanup before honoring cancellation", async () => {
     const controller = new AbortController();
     controller.abort(new Error("expired before acquisition"));
     const onSandboxCreated = vi.fn();
+    const exec = vi.fn();
     const stop = vi.fn().mockResolvedValue(undefined);
     await expect(
       finalizeSandboxAcquisition({
-        handle: { stop } as unknown as SandboxHandle,
+        handle: { id: "late-sandbox", exec, stop } as unknown as SandboxHandle,
         provider: "e2b",
         repoAlreadyCloned: false,
         request: {
@@ -149,7 +150,11 @@ describe("sandbox provider lifecycle contract", () => {
         },
       }),
     ).rejects.toThrow("expired before acquisition");
-    expect(onSandboxCreated).not.toHaveBeenCalled();
+    expect(onSandboxCreated).toHaveBeenCalledExactlyOnceWith({
+      provider: "e2b",
+      sandboxId: "late-sandbox",
+    });
+    expect(exec).not.toHaveBeenCalled();
     expect(stop).toHaveBeenCalledOnce();
   });
   it.each(SANDBOX_PROVIDER_IDS)(
