@@ -140,6 +140,18 @@ alter table internal.factory_workflow_branch_slots enable row level security;
 revoke all on table internal.factory_workflow_branch_groups, internal.factory_workflow_branch_slots
   from public, anon, authenticated, service_role;
 
+create table internal.factory_workflow_branch_slot_dispatches (
+  root_session_id uuid not null,
+  slot_id uuid not null,
+  last_attempted_at timestamptz,
+  terminal_blocker text check (terminal_blocker in ('workflow_child_limit', 'workflow_visit_limit_exhausted')),
+  primary key (root_session_id, slot_id),
+  foreign key (root_session_id, slot_id)
+    references internal.factory_workflow_branch_slots(root_session_id, slot_id) on delete cascade
+);
+alter table internal.factory_workflow_branch_slot_dispatches enable row level security;
+revoke all on table internal.factory_workflow_branch_slot_dispatches from public, anon, authenticated, service_role;
+
 create function internal.reject_factory_workflow_branch_manifest_update()
 returns trigger language plpgsql set search_path = '' as $$
 begin
@@ -854,6 +866,7 @@ declare
   decision_edge jsonb;
   target jsonb;
   parent_input public.session_factory_admission_inputs;
+  terminal_blocker text;
   title text;
   prompt text;
 begin
@@ -873,6 +886,13 @@ begin
   if found then
     return query select prior.target_occurrence_id, prior.child_session_id, prior.child_job_id, prior.child_run_id, false;
     return;
+  end if;
+  select state.terminal_blocker into terminal_blocker
+  from internal.factory_workflow_branch_slot_dispatches state
+  where (state.root_session_id, state.slot_id) = (p_root_session_id, slot.slot_id);
+  if terminal_blocker is not null then
+    raise exception 'The workflow branch slot has reached its lifetime limit.'
+      using errcode = 'PT409', detail = terminal_blocker;
   end if;
 
   -- Ready mandatory work takes the next capacity within this group.
@@ -1146,8 +1166,11 @@ begin
     branch_outcome := 'succeeded';
   elsif (job.status = 'error' and (run.id is null or run.status = 'error'))
     or (job.status = 'canceled' and (run.id is null or run.status = 'canceled')) then
+    -- Pause retirement is provisional while the child can resume. An explicit
+    -- archive prevents resume and leaves the exact retired cancellation final.
     if child.phase_status = 'approved' or (
-      not internal.factory_workflow_branch_resume_waits_for_claim(p_root_session_id, job) and exists (
+      child.archived_at is null
+      and not internal.factory_workflow_branch_resume_waits_for_claim(p_root_session_id, job) and exists (
         select 1 from internal.factory_workflow_lifecycle_commands command
         cross join lateral jsonb_array_elements(command.receipt->'retired') retired
         cross join lateral jsonb_array_elements(retired->'jobs') attempt
@@ -1193,9 +1216,9 @@ create function public.read_factory_workflow_branch_group(
   from internal.factory_workflow_branch_groups manifest
   join internal.factory_workflow_executions execution on execution.root_session_id = manifest.root_session_id
   cross join lateral (
-    select bool_or(slot.required and terminal.outcome <> 'succeeded') as required_failure,
-      bool_or(not slot.required and terminal.outcome <> 'succeeded') as optional_failure,
-      bool_or(terminal.outcome is null) as pending,
+    select bool_or(slot.required and (terminal.outcome <> 'succeeded' or state.terminal_blocker is not null)) as required_failure,
+      bool_or(not slot.required and (terminal.outcome <> 'succeeded' or state.terminal_blocker is not null)) as optional_failure,
+      bool_or(terminal.outcome is null and state.terminal_blocker is null) as pending,
       jsonb_agg(jsonb_build_object(
         'slot', to_jsonb(slot),
         'admission', case when admitted.child_session_id is not null then jsonb_build_object(
@@ -1204,9 +1227,12 @@ create function public.read_factory_workflow_branch_group(
         'currentAttempt', case when activity.job_id is not null then jsonb_build_object(
           'jobId', activity.job_id, 'runId', activity.run_id, 'attemptCount', activity.attempt_count,
           'jobStatus', activity.job_status) end,
-        'outcome', to_jsonb(terminal)
+        'outcome', to_jsonb(terminal),
+        'admissionBlocker', state.terminal_blocker
       ) order by slot.required desc, slot.branch_edge_id) as payload
     from internal.factory_workflow_branch_slots slot
+    left join internal.factory_workflow_branch_slot_dispatches state
+      on (state.root_session_id, state.slot_id) = (slot.root_session_id, slot.slot_id)
     left join internal.factory_workflow_delegations admitted
       on (admitted.root_session_id, admitted.source_branch_slot_id) = (slot.root_session_id, slot.slot_id)
     left join lateral (
@@ -1353,16 +1379,22 @@ begin
       end;
     end loop;
 
-    -- Required work gets first use of the root reservation. A bounded batch
-    -- leaves the remaining named slots due, and every admission can replay.
+    -- Required slots use capacity first. Within each tier, defer recently
+    -- attempted slots so a slot-specific rejection cannot starve siblings.
     for pending_slot in
-      select slot.branch_edge_id from internal.factory_workflow_branch_slots slot
+      select slot.slot_id, slot.branch_edge_id from internal.factory_workflow_branch_slots slot
+      left join internal.factory_workflow_branch_slot_dispatches state
+        on (state.root_session_id, state.slot_id) = (slot.root_session_id, slot.slot_id)
       where (slot.root_session_id, slot.group_id) = (p_root_session_id, manifest_id)
+        and state.terminal_blocker is null
         and not exists (select 1 from internal.factory_workflow_delegations marker
           where (marker.root_session_id, marker.source_branch_slot_id) = (slot.root_session_id, slot.slot_id))
-      order by slot.required desc, slot.branch_edge_id
+      order by slot.required desc, state.last_attempted_at asc nulls first, slot.branch_edge_id
       limit 8
     loop
+      insert into internal.factory_workflow_branch_slot_dispatches(root_session_id, slot_id, last_attempted_at)
+      values (p_root_session_id, pending_slot.slot_id, clock_timestamp())
+      on conflict (root_session_id, slot_id) do update set last_attempted_at = excluded.last_attempted_at;
       begin
         perform public.admit_factory_workflow_branch_slot(
           p_root_session_id, p_workspace_id, p_factory_id, execution.generation, execution.ownership_token,
@@ -1370,7 +1402,19 @@ begin
         );
       exception when sqlstate 'PT409' or sqlstate 'PT422' or insufficient_privilege then
         get stacked diagnostics current_blocker = pg_exception_detail;
-        if current_blocker in ('workflow_visit_limit_exhausted', 'workflow_child_limit', 'workflow_child_attempt_limit') then
+        if current_blocker in ('workflow_visit_limit_exhausted', 'workflow_child_limit') then
+          insert into internal.factory_workflow_branch_slot_dispatches(root_session_id, slot_id, terminal_blocker)
+          select slot.root_session_id, slot.slot_id, current_blocker
+          from internal.factory_workflow_branch_slots slot
+          where (slot.root_session_id, slot.group_id) = (p_root_session_id, manifest_id)
+            and not exists (select 1 from internal.factory_workflow_delegations marker
+              where (marker.root_session_id, marker.source_branch_slot_id) = (slot.root_session_id, slot.slot_id))
+          on conflict (root_session_id, slot_id) do update set terminal_blocker = excluded.terminal_blocker
+            where factory_workflow_branch_slot_dispatches.terminal_blocker is null;
+          admission_blocker := current_blocker;
+          exit;
+        end if;
+        if current_blocker = 'workflow_child_attempt_limit' then
           admission_blocker := current_blocker;
           exit;
         end if;
@@ -1382,10 +1426,12 @@ begin
     set due_at = clock_timestamp() + interval '10 seconds',
       completed_at = case when not exists (
         select 1 from internal.factory_workflow_branch_slots slot
-        where (slot.root_session_id, slot.group_id) = (p_root_session_id, manifest_id) and not exists (
-          select 1 from internal.factory_workflow_branch_outcomes outcome
-          where (outcome.root_session_id, outcome.slot_id) = (slot.root_session_id, slot.slot_id)
-        )
+        left join internal.factory_workflow_branch_slot_dispatches state
+          on (state.root_session_id, state.slot_id) = (slot.root_session_id, slot.slot_id)
+        left join internal.factory_workflow_branch_outcomes outcome
+          on (outcome.root_session_id, outcome.slot_id) = (slot.root_session_id, slot.slot_id)
+        where (slot.root_session_id, slot.group_id) = (p_root_session_id, manifest_id)
+          and state.terminal_blocker is null and outcome.outcome_id is null
       ) then clock_timestamp() end
     where (candidate.root_session_id, candidate.branch_occurrence_id) = (p_root_session_id, dispatch.branch_occurrence_id);
   end if;

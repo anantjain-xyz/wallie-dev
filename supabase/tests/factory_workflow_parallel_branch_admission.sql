@@ -292,6 +292,41 @@ select is((select public.control_factory_workflow_lifecycle(root."sessionId",roo
 select is(pg_temp.read_group('paused')->>'joinStatus', 'paused', 'paused work has no join readiness');
 select is(pg_temp.read_group('paused')#>>'{slots,0,currentAttempt,jobStatus}', 'canceled',
   'the paused projection shows the exact retired attempt');
+
+savepoint archive_paused_work;
+select archived.* from paused_required child cross join branch_owner root
+cross join lateral public.archive_session_job_attempts(child.child_session_id, root.workspace_id,
+  'Archive the paused branch child.') archived
+where root.scenario = 'paused';
+select ok((select child.archived_at is not null and job.status = 'canceled' and run.status = 'canceled'
+  from paused_required admission join public.sessions child on child.id = admission.child_session_id
+  join public.agent_jobs job on job.id = admission.job_id join public.agent_runs run on run.id = admission.run_id),
+  'archiving a paused child retains its exact retired job and run');
+select ok(pg_temp.read_group('paused')->>'joinStatus' = 'paused'
+    and pg_temp.read_group('paused')#>'{slots,0,outcome}' = 'null'::jsonb,
+  'archiving while paused does not publish an outcome ahead of workflow resume');
+create temp table archived_branch_resume as
+select root.*, public.control_factory_workflow_lifecycle(root."sessionId",root.workspace_id,root.factory_id,
+  root.execution_generation + 1,gen_random_uuid(),'resume') as receipt
+from branch_owner root where root.scenario = 'paused';
+select ok((select receipt->>'lifecycleStatus' = 'running' and receipt->'resumed' = '[]'::jsonb from archived_branch_resume),
+  'the workflow resumes without requeueing the explicitly archived child');
+update branch_owner root set execution_generation = owner.execution_generation, ownership_token = owner.ownership_token
+from archived_branch_resume resumed cross join lateral public.acquire_factory_workflow_ownership(
+  resumed."sessionId",resumed.workspace_id,resumed.factory_id,(resumed.receipt->>'generation')::bigint,gen_random_uuid()) owner
+where root.scenario = 'paused';
+select is((select public.advance_factory_workflow_branch_occurrence(root."sessionId",root.workspace_id,root.factory_id,
+    root.execution_generation,root.ownership_token,root.entry_occurrence_id)->>'joinStatus'
+  from branch_owner root where root.scenario = 'paused'), 'required_blocked',
+  'the dispatcher settles the archived required branch after root resume');
+select ok((select (outcome.child_session_id,outcome.job_id,outcome.attempt_count,outcome.run_id) =
+    (retired.child_session_id,retired.job_id,1,retired.run_id)
+    and outcome.outcome = 'canceled' and outcome.run_started
+    and outcome.checkpoint_run_id is null and outcome.artifact_id is null
+  from paused_required retired join internal.factory_workflow_branch_outcomes outcome on outcome.job_id = retired.job_id),
+  'the archived branch outcome retains the exact retired attempt without a completed artifact');
+rollback to archive_paused_work;
+
 create temp table resumed_group as
 select root.*, public.control_factory_workflow_lifecycle(root."sessionId",root.workspace_id,root.factory_id,
   root.execution_generation + 1,gen_random_uuid(),'resume') as receipt
