@@ -162,7 +162,9 @@ begin
 end;
 $$;
 
-create function pg_temp.op647_enroll_root(p_label text, p_graph jsonb, p_head_sha text default repeat('a', 40))
+create function pg_temp.op647_enroll_root(
+  p_label text, p_graph jsonb, p_head_sha text default repeat('a', 40), p_approve boolean default true
+)
 returns table (
   root_session_id uuid, workspace_id uuid, factory_id uuid, input_run_id uuid,
   execution_generation bigint, ownership_token uuid, entry_occurrence_id uuid
@@ -196,12 +198,14 @@ begin
       case when retained_ref is not null then p_head_sha end) then
     raise exception 'Could not enroll or adopt the source checkpoint.';
   end if;
-  select * into strict owner from public.sessions where id = root.root_session_id;
-  select result.id into strict approved from public.approve_session_stage(owner.id, owner.workspace_id,
-    owner.current_stage_id, owner.current_artifact_id, owner.current_artifact_version,
-    pg_temp.op647_id(21), 'codex', 'gpt-5.5', 'code', owner.artifact_review_revision) result;
-  if approved is distinct from root.root_session_id then
-    raise exception 'Could not approve the delegated root checkpoint.';
+  if p_approve then
+    select * into strict owner from public.sessions where id = root.root_session_id;
+    select result.id into strict approved from public.approve_session_stage(owner.id, owner.workspace_id,
+      owner.current_stage_id, owner.current_artifact_id, owner.current_artifact_version,
+      pg_temp.op647_id(21), 'codex', 'gpt-5.5', 'code', owner.artifact_review_revision) result;
+    if approved is distinct from root.root_session_id then
+      raise exception 'Could not approve the delegated root checkpoint.';
+    end if;
   end if;
   return query select root.root_session_id, registered.workspace_id, registered.factory_id,
     root.input_run_id, started.execution_generation, started.ownership_token, started.entry_occurrence_id;
@@ -231,11 +235,13 @@ create function pg_temp.op647_graph(p_max_attempts integer) returns jsonb langua
     'nodes', jsonb_build_array(
       jsonb_build_object('id', 'route.select', 'kind', 'route', 'agentPromptRevisionId', prompt.id, 'grantId', approved.id),
       jsonb_build_object('id', 'child.first', 'kind', 'agent', 'agentPromptRevisionId', prompt.id, 'grantId', approved.id),
-      jsonb_build_object('id', 'child.second', 'kind', 'agent', 'agentPromptRevisionId', prompt.id, 'grantId', approved.id)
+      jsonb_build_object('id', 'child.second', 'kind', 'agent', 'agentPromptRevisionId', prompt.id, 'grantId', approved.id),
+      jsonb_build_object('id', 'child.followup', 'kind', 'deterministic', 'operation', 'policy')
     ),
     'edges', '[
       {"id":"route.first","kind":"route","from":"route.select","to":"child.first"},
-      {"id":"route.second","kind":"route","from":"route.select","to":"child.second"}
+      {"id":"route.second","kind":"route","from":"route.select","to":"child.second"},
+      {"id":"child.followup","kind":"next","from":"child.first","to":"child.followup"}
     ]'::jsonb,
     'grants', jsonb_build_array(jsonb_build_object('id', approved.id, 'version', approved.version)),
     'routePolicy', '{
@@ -279,11 +285,12 @@ begin
     'Delegate through the admitted route.', candidate.destination, 0.9) decision;
 end;
 $$;
--- Use after fixture rows are committed and visible to both contenders.
 create function pg_temp.op647_connect_contender(p_name text) returns void
 language plpgsql as $$
 declare
-  connection text := current_setting('wallie.test_db_connection');
+  connection text := coalesce(nullif(current_setting('wallie.test_db_connection', true), ''),
+    format('host=%L port=%s dbname=%L user=supabase_admin password=postgres',
+      coalesce(host(inet_server_addr()), '127.0.0.1'), current_setting('port'), current_database()));
 begin
   perform extensions.dblink_connect(p_name, connection);
   perform extensions.dblink_exec(p_name, format(
@@ -337,14 +344,11 @@ begin
 end;
 $$;
 
-
-commit;
+-- Check both connections before making any fixture rows visible to other tests.
+select pg_temp.op647_connect_contender('op647_first');
+select pg_temp.op647_connect_contender('op647_second');
 
 -- Exactly one delegated attempt remains after the root's source attempt.
-begin;
-set local request.jwt.claim.role = 'service_role';
-set local request.jwt.claim.sub = '647a0000-0000-4000-8000-000000000001';
-
 create temp table op647_race_root as
 select * from pg_temp.op647_enroll_root('Delegated admission race', pg_temp.op647_graph(2));
 create temp table op647_requests as
@@ -365,8 +369,6 @@ commit;
 begin;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '647a0000-0000-4000-8000-000000000001';
-select pg_temp.op647_connect_contender('op647_first');
-select pg_temp.op647_connect_contender('op647_second');
 select extensions.dblink_exec('op647_first', 'begin');
 create temp table op647_first_pid as
 select r.pid from extensions.dblink('op647_first', 'select pg_backend_pid()') r(pid integer);
@@ -460,6 +462,57 @@ begin
 end;
 $$;
 
+create temp table op647_rejected_root as
+select * from pg_temp.op647_enroll_root('Delegation root in review', pg_temp.op647_graph(4), p_approve => false);
+create temp table op647_rejected_targets as
+select target.slot, pg_temp.op647_admission_sql(
+  scope.root_session_id, scope.workspace_id, scope.factory_id, scope.execution_generation,
+  scope.ownership_token, scope.root_session_id, target.occurrence_id, scope.input_run_id,
+  'Rejected root child ' || target.slot) as statement
+from op647_rejected_root scope cross join lateral pg_temp.op647_targets(
+  scope.root_session_id, scope.workspace_id, scope.factory_id, scope.execution_generation,
+  scope.ownership_token, scope.entry_occurrence_id) target;
+create temp table op647_child_before_rejection as
+select pg_temp.op647_run_admission(statement) as receipt from op647_rejected_targets where slot = 'first';
+select is((pg_temp.op647_claim_only((receipt->>'job_id')::uuid, 1)).attempt_count, 1,
+  'the child has an exact claim before review rejects the root')
+from op647_child_before_rejection;
+
+create temp table op647_root_repair as
+select repair.* from op647_rejected_root scope
+join public.sessions owner on owner.id = scope.root_session_id
+cross join lateral public.reject_session_stage(owner.id, owner.workspace_id, owner.current_artifact_version,
+  'Repair the source under review.', 'codex', 'gpt-5.5', owner.current_stage_id, owner.current_artifact_id,
+  'code', pg_temp.op647_id(21)) repair;
+select ok((select phase_status = 'rejected' and job_created and run_id is not null from op647_root_repair),
+  'rejecting the reviewed checkpoint queues the canonical root repair');
+select throws_ok($$select pg_temp.op647_run_admission(statement) from op647_rejected_targets where slot = 'second'$$,
+  'PT409', 'The root or parent is unavailable for delegation.', 'a rejected root cannot admit another child');
+select is(public.start_session_job_attempt((admitted.receipt->>'job_id')::uuid, 1,
+  owner.current_stage_id, owner.current_artifact_version, 'codex', 'gpt-5.5', 'code', 'wallie/op647-rejected-child'),
+  null::uuid, 'a rejected root prevents an already claimed child from starting')
+from op647_child_before_rejection admitted
+join public.sessions owner on owner.id = (admitted.receipt->>'child_session_id')::uuid;
+
+update public.agent_jobs job set scheduled_at = null, created_at = '1900-01-01T00:00:00Z'
+from op647_root_repair repair where job.id = repair.job_id;
+create temp table op647_root_repair_claim as select id, attempt_count from public.claim_next_agent_job(false, 1000, 'node');
+select is((select claim.id from op647_root_repair_claim claim where claim.attempt_count = 1),
+  (select job_id from op647_root_repair), 'the worker claims the rejected root canonical repair');
+-- Supply an exact claim only if the claim regression failed, so the start guard is independently tested.
+update public.agent_jobs job set status = 'running', attempt_count = 1, claimed_worker_runtime = 'node',
+  git_continuity_release_revision = (select revision from public.get_git_continuity_release_state())
+from op647_root_repair repair where job.id = repair.job_id and job.status = 'queued';
+select is(public.start_session_job_attempt(job_id, 1, current_stage_id, current_artifact_version,
+  'codex', 'gpt-5.5', 'code', 'wallie/op647-root-repair'), run_id,
+  'the worker starts the canonical repair and reuses its queued run') from op647_root_repair;
+select canceled.job_ids from op647_child_before_rejection admitted cross join op647_rejected_root scope
+cross join lateral public.cancel_session_job_attempts(
+  (admitted.receipt->>'child_session_id')::uuid, scope.workspace_id, 'Retire the rejected root child claim',
+  (admitted.receipt->>'run_id')::uuid) canceled;
+select canceled.job_ids from op647_root_repair repair cross join lateral public.cancel_session_job_attempts(
+  repair.session_id, repair.workspace_id, 'Retire the verified root repair', repair.run_id) canceled;
+
 create temp table op647_usage_roots as
 select scenario.prior, scope.*
 from (values ('estimated'), ('unavailable')) scenario(prior)
@@ -524,6 +577,12 @@ create temp table op647_budget_before as
 select run.prior, run.root_session_id, budget.*
 from op647_current_runs run cross join lateral internal.factory_workflow_attempt_budget(
   run.root_session_id, pg_temp.op647_graph(3)->'delegationPolicy') budget;
+create temp table op647_replacement_usage_before as
+select reservation.root_session_id, reservation.job_id, reservation.attempt_count, reservation.run_id,
+  reservation.reported_tokens, reservation.reported_cost_usd, reservation.token_provenance, reservation.cost_provenance
+from op647_current_runs run join internal.factory_workflow_attempt_reservations reservation
+  on (reservation.root_session_id, reservation.job_id, reservation.attempt_count, reservation.run_id) =
+    (run.root_session_id, run.job_id, 2, run.new_run_id);
 select ok((select attempts = 3 and active_children = 1 from op647_budget_before where prior = 'estimated'),
   'a terminal old attempt and active replacement both count alongside the root');
 select is((select unavailable.tokens - estimated.tokens from op647_budget_before unavailable
@@ -585,6 +644,12 @@ select ok((select bool_and(
   on (reservation.root_session_id, reservation.job_id, reservation.attempt_count, reservation.run_id) =
     (run.root_session_id, run.job_id, 1, run.old_run_id)),
   'only the exact historical reservation has the measured value');
+select is((select count(*) from op647_replacement_usage_before prior
+  join internal.factory_workflow_attempt_reservations current
+    using (root_session_id, job_id, attempt_count, run_id)
+  where (current.reported_tokens, current.reported_cost_usd, current.token_provenance, current.cost_provenance)
+    is not distinct from (prior.reported_tokens, prior.reported_cost_usd, prior.token_provenance, prior.cost_provenance)),
+  2::bigint, 'the exact replacement reservations preserve their previous usage and provenance');
 select ok((select bool_and(job.attempt_count = 2 and current_run.status = 'running' and retired_run.status = 'error')
   from op647_current_runs run join public.agent_jobs job on job.id = run.job_id
   join public.agent_runs current_run on current_run.id = run.new_run_id
@@ -599,11 +664,12 @@ select ok(public.prepare_session_source_and_checkpoint_publication(
   'the current child attempt can prepare a private source checkpoint')
 from op647_current_runs run where run.prior = 'estimated';
 create temp table op647_private_checkpoint as
-select run.child_session_id, run.workspace_id, run.root_session_id, run.input_run_id, run.new_run_id,
-  publication.retained_ref,
+select run.child_session_id, run.workspace_id, run.factory_id, run.root_session_id, run.input_run_id, run.new_run_id,
+  run.execution_generation, run.ownership_token, marker.target_occurrence_id, publication.retained_ref,
   public.claim_session_checkpoint_publication(run.new_run_id) as claim_id
 from op647_current_runs run
 join public.session_checkpoint_publications publication on publication.run_id = run.new_run_id
+join internal.factory_workflow_delegations marker on marker.child_session_id = run.child_session_id
 where run.prior = 'estimated';
 select throws_ok($$select public.adopt_session_checkpoint_publication(
   child.new_run_id, child.claim_id, 'refs/heads/main', repeat('d', 40)) from op647_private_checkpoint child$$,
@@ -640,10 +706,65 @@ select throws_ok($$insert into public.session_pull_requests(session_id, workspac
   '42501', 'A delegated child cannot publish or link a pull request.',
   'a direct PR insert cannot evade the child publisher guard by supplying another workspace');
 
+select is((select count(*) from op647_private_checkpoint child
+  cross join lateral public.record_factory_workflow_delegated_result(child.root_session_id, child.workspace_id,
+    child.factory_id, child.execution_generation, child.ownership_token, child.target_occurrence_id)),
+  0::bigint, 'a verified private checkpoint alone leaves the delegated occurrence pending');
+select is((select approved.id from public.approve_session_stage(owner.id, owner.workspace_id, owner.current_stage_id,
+    owner.current_artifact_id, owner.current_artifact_version,
+    pg_temp.op647_id(21), 'codex', 'gpt-5.5', 'code', owner.artifact_review_revision) approved),
+  child.child_session_id, 'the reviewer approves the exact artifact from the delegated retry')
+from op647_private_checkpoint child join public.sessions owner on owner.id = child.child_session_id;
+
+create temp table op647_child_result as
+select child.*, receipt.result_id, receipt.created
+from op647_private_checkpoint child
+cross join lateral public.record_factory_workflow_delegated_result(child.root_session_id, child.workspace_id,
+  child.factory_id, child.execution_generation, child.ownership_token, child.target_occurrence_id) receipt;
+select ok((select child.created and result.outcome = 'succeeded'
+    and result.evidence_ref = 'delegated-checkpoint:' || child.new_run_id::text
+  from op647_child_result child join internal.factory_workflow_node_results result
+    on (result.root_session_id, result.occurrence_id, result.result_id) =
+      (child.root_session_id, child.target_occurrence_id, child.result_id)),
+  'the guarded completion pins the approved retry checkpoint as the durable delegated result');
+-- Simulate loss of live child approval after the result has been recorded.
+update public.sessions owner set phase_status = 'awaiting_review'
+from op647_child_result child where owner.id = child.child_session_id;
+select ok((select not replay.created and replay.result_id = child.result_id from op647_child_result child
+  cross join lateral public.record_factory_workflow_delegated_result(child.root_session_id, child.workspace_id,
+    child.factory_id, child.execution_generation, child.ownership_token, child.target_occurrence_id) replay),
+  'the exact recorded delegated result remains replayable when live approval is unavailable');
+select is((select count(*) from op647_child_result child
+  cross join lateral public.admit_factory_workflow_next(child.root_session_id, child.workspace_id, child.factory_id,
+    child.execution_generation, child.ownership_token, child.target_occurrence_id, 'child.followup', child.result_id)),
+  0::bigint, 'a recorded delegated result needs current approval proof to admit fresh work');
+update public.sessions owner set phase_status = 'approved'
+from op647_child_result child where owner.id = child.child_session_id;
+
+create temp table op647_child_next as
+select child.*, next.transition_id, next.target_occurrence_id as next_occurrence_id, next.created as next_created
+from op647_child_result child
+cross join lateral public.admit_factory_workflow_next(child.root_session_id, child.workspace_id, child.factory_id,
+  child.execution_generation, child.ownership_token, child.target_occurrence_id, 'child.followup', child.result_id) next;
+select ok((select child.next_created and occurrence.node_id = 'child.followup'
+  from op647_child_next child join internal.factory_workflow_node_occurrences occurrence
+    on (occurrence.root_session_id, occurrence.occurrence_id) = (child.root_session_id, child.next_occurrence_id)),
+  'the approved delegated result admits the configured successor');
+update public.sessions owner set phase_status = 'awaiting_review'
+from op647_child_next child where owner.id = child.child_session_id;
+select ok((select not replay.created and (replay.transition_id, replay.target_occurrence_id) =
+    (child.transition_id, child.next_occurrence_id) from op647_child_next child
+  cross join lateral public.admit_factory_workflow_next(child.root_session_id, child.workspace_id, child.factory_id,
+    child.execution_generation, child.ownership_token, child.target_occurrence_id, 'child.followup', child.result_id) replay),
+  'the exact delegated successor remains replayable when live approval is unavailable');
+update public.sessions owner set phase_status = 'approved'
+from op647_child_next child where owner.id = child.child_session_id;
+
 select ok(not has_table_privilege(role.name, 'internal.factory_workflow_delegations', 'SELECT')
   and not has_table_privilege(role.name, 'internal.factory_workflow_attempt_reservations', 'SELECT')
   and not has_function_privilege(role.name, 'internal.delegated_workflow_git_input(uuid,uuid)', 'EXECUTE')
   and not has_function_privilege(role.name, 'public.admit_factory_workflow_delegated_session(uuid,uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text)', 'EXECUTE')
+  and not has_function_privilege(role.name, 'public.record_factory_workflow_delegated_result(uuid,uuid,uuid,bigint,uuid,uuid)', 'EXECUTE')
   and not has_function_privilege(role.name, 'public.record_session_run_usage(uuid,integer,uuid,bigint,bigint,text,numeric,text,text,boolean)', 'EXECUTE'),
   role.name || ' cannot read private delegation data or invoke admission and accounting writes')
 from (values ('anon'), ('authenticated')) role(name);
@@ -723,6 +844,27 @@ select is((select count(*) from op647_headroom_new pending
     and ((pending.phase = 'queued' and job.status = 'queued' and job.attempt_count = 0)
       or (pending.phase = 'claimed' and job.status = 'running' and job.attempt_count = 1))),
   2::bigint, 'neither oversubscribed hold starts, binds a run, or increments the wrong claim');
+
+select is((public.archive_factory(workspace_id, factory_id, pg_temp.op647_id(1), 'Retire the proof factory')).status,
+  'archived', 'the factory is archived before the exact late provider report') from op647_scope;
+create temp table op647_archived_attempt as
+select prior.root_session_id, prior.old_job_id, prior.old_run_id, run.started_at, run.finished_at
+from op647_headroom_previous prior join public.agent_runs run on run.id = prior.old_run_id where prior.phase = 'queued';
+select lives_ok($$select report.accepted from op647_archived_attempt attempt
+cross join lateral public.record_session_run_usage(attempt.old_job_id, 1, attempt.old_run_id,
+  40, 25, 'measured', 0.25, 'measured', null, true) report$$,
+  'exact late usage can be recorded after the factory is archived');
+select ok((select (reservation.reported_tokens, reservation.reported_cost_usd,
+    reservation.token_provenance, reservation.cost_provenance) = (65::bigint, 0.25::numeric, 'measured', 'measured')
+  from op647_archived_attempt attempt join internal.factory_workflow_attempt_reservations reservation
+    on (reservation.root_session_id, reservation.job_id, reservation.attempt_count, reservation.run_id) =
+      (attempt.root_session_id, attempt.old_job_id, 1, attempt.old_run_id)),
+  'the exact archived historical reservation reflects measured usage');
+select ok((select run.status = 'error' and job.status = 'error' and job.attempt_count = 1
+    and (run.started_at, run.finished_at) = (attempt.started_at, attempt.finished_at)
+  from op647_archived_attempt attempt join public.agent_runs run on run.id = attempt.old_run_id
+  join public.agent_jobs job on job.id = attempt.old_job_id),
+  'the late measurement leaves the archived attempt retired');
 select * from finish();
 rollback;
 

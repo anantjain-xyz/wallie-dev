@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
 import {
   admitFactoryWorkflowDelegatedSession,
+  executeFactoryWorkflowOccurrence,
   type WorkflowDelegationPin,
 } from "@/lib/factory-workflows/execute";
 import type { Database } from "@/lib/supabase/database.types";
@@ -17,6 +18,9 @@ const sourceRunId = uuid(6);
 const promptRevisionId = uuid(7);
 const routeDecisionId = uuid(8);
 const routeResultId = uuid(9);
+const delegatedResultId = uuid(16);
+const successorTransitionId = uuid(17);
+const successorOccurrenceId = uuid(18);
 const generation = 2;
 const work = {
   title: "Review the delegated changes",
@@ -36,11 +40,15 @@ const graph = serializeFactoryDefinition({
   nodes: [
     { id: "route", kind: "route", agentPromptRevisionId: promptRevisionId },
     { id: "worker", kind: "agent", agentPromptRevisionId: promptRevisionId },
+    { id: "check", kind: "deterministic", operation: "policy" },
   ],
-  edges: [{ id: "delegate", from: "route", to: "worker", kind: "route" }],
+  edges: [
+    { id: "delegate", from: "route", to: "worker", kind: "route" },
+    { id: "next.check", from: "worker", to: "check", kind: "next" },
+  ],
   grants: [],
   routePolicy: {
-    maxNodeVisits: 2,
+    maxNodeVisits: 3,
     maxLoopTraversals: 0,
     nodes: {
       route: {
@@ -75,6 +83,8 @@ const pin = {
 function fixture({ observedGeneration = generation, rejectOwnership = false } = {}) {
   const requests: Array<{ name: string; args: unknown }> = [];
   let created = false;
+  let childApproved = false;
+  let completionRecorded = false;
   const transport: typeof fetch = async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     const url = new URL(request.url);
@@ -107,6 +117,15 @@ function fixture({ observedGeneration = generation, rejectOwnership = false } = 
               outcome: "succeeded",
               evidence_ref: "route:" + routeDecisionId,
             },
+            ...(completionRecorded
+              ? [
+                  {
+                    occurrence_id: targetOccurrenceId,
+                    result_id: delegatedResultId,
+                    outcome: "succeeded",
+                  },
+                ]
+              : []),
           ],
           transitions: [
             {
@@ -124,6 +143,19 @@ function fixture({ observedGeneration = generation, rejectOwnership = false } = 
         created = true;
         return Response.json(receipt);
       }
+      case "record_factory_workflow_delegated_result":
+        if (!childApproved) return Response.json([]);
+        completionRecorded = true;
+        return Response.json([{ result_id: delegatedResultId, created: true }]);
+      case "admit_factory_workflow_next":
+        expect(completionRecorded).toBe(true);
+        return Response.json([
+          {
+            transition_id: successorTransitionId,
+            target_occurrence_id: successorOccurrenceId,
+            created: true,
+          },
+        ]);
       default:
         throw new Error("Unexpected delegation request: " + url.pathname);
     }
@@ -132,7 +164,13 @@ function fixture({ observedGeneration = generation, rejectOwnership = false } = 
     auth: { autoRefreshToken: false, persistSession: false },
     global: { fetch: transport },
   });
-  return { admin, requests };
+  return {
+    admin,
+    requests,
+    approveChild: () => {
+      childApproved = true;
+    },
+  };
 }
 
 const readRequest = { name: "read_factory_workflow_execution", args: scope };
@@ -198,4 +236,41 @@ it("propagates a native ownership loss between the ledger read and admission", a
     message: staleOwner.message,
   });
   expect(requests).toEqual([readRequest, admitRequest]);
+});
+
+it("observes an approved child before admitting its successor and replays the retained result", async () => {
+  const { admin, requests, approveChild } = fixture();
+  const ownership = {
+    ...scope,
+    p_expected_generation: generation,
+    p_ownership_token: pin.p_ownership_token,
+  };
+  const record = {
+    name: "record_factory_workflow_delegated_result",
+    args: { ...ownership, p_occurrence_id: targetOccurrenceId },
+  };
+  const next = {
+    name: "admit_factory_workflow_next",
+    args: {
+      ...ownership,
+      p_source_occurrence_id: targetOccurrenceId,
+      p_edge_id: "next.check",
+      p_expected_result_id: delegatedResultId,
+    },
+  };
+  await expect(executeFactoryWorkflowOccurrence(admin, pin)).resolves.toEqual({
+    status: "pending",
+    code: "child_completion_pending",
+  });
+  approveChild();
+  const admitted = {
+    status: "admitted",
+    resultId: delegatedResultId,
+    transitionId: successorTransitionId,
+    targetOccurrenceId: successorOccurrenceId,
+    nextNodeId: "check",
+  };
+  await expect(executeFactoryWorkflowOccurrence(admin, pin)).resolves.toEqual(admitted);
+  await expect(executeFactoryWorkflowOccurrence(admin, pin)).resolves.toEqual(admitted);
+  expect(requests).toEqual([readRequest, record, readRequest, record, next, readRequest, next]);
 });

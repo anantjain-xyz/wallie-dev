@@ -503,7 +503,26 @@ export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: Workfl
     }
     return result.data ?? { status: "blocked", code: "evidence_stale" };
   };
-  const stored = results.find((row) => row.occurrence_id === pin.occurrenceId);
+  let stored = results.find((row) => row.occurrence_id === pin.occurrenceId);
+  if (!stored && node.kind === "agent") {
+    if (!graph.delegationPolicy || !Object.hasOwn(graph.delegationPolicy.targets, node.id))
+      return { status: "blocked", code: "invalid_delegation_target" } as const;
+    const { data, error } = await admin
+      .rpc("record_factory_workflow_delegated_result", {
+        ...scope,
+        p_expected_generation: pin.p_expected_generation,
+        p_ownership_token: pin.p_ownership_token,
+        p_occurrence_id: occurrence.occurrence_id,
+      })
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return { status: "pending", code: "child_completion_pending" } as const;
+    stored = {
+      occurrence_id: occurrence.occurrence_id,
+      result_id: data.result_id,
+      outcome: "succeeded",
+    };
+  }
   if (stored) {
     const terminal = {
       status: "terminal" as const,

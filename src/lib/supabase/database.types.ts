@@ -14827,6 +14827,20 @@ export type Database = {
           result_id: string
         }[]
       }
+      record_factory_workflow_delegated_result: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_occurrence_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          result_id: string
+        }[]
+      }
       record_factory_workflow_node_result: {
         Args: {
           p_evidence_ref?: string

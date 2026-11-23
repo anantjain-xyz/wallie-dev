@@ -152,4 +152,5 @@ Admission checks the current grant and execution budget under the root lock. It 
 - The child keeps the parent’s repository and receives only the repositories, tools, and credential authority allowed by the inherited grant and pinned profile.
 - One transaction records the child, its frozen Git input, its queued job, and the first root attempt reservation. An exact retry returns the original child.
 - The root shares child, concurrency, attempt, token, and spend limits across descendants. Retired claims that never started release their holds. Started attempts retain actual usage or a conservative debit while usage is unavailable. A trusted late receipt can reconcile its exact attempt.
-- Children can retain private checkpoints. Canonical pull request publication remains with the parent.
+- Children can retain private checkpoints. The parent owns canonical pull request publication.
+- A child advances its agent occurrence after final approval of the exact artifact attached to its current adopted checkpoint. The resulting receipt preserves the child checkpoint identity. Any parent approval still follows its own gate.

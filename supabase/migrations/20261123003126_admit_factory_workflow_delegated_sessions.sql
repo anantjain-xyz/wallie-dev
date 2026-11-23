@@ -1536,6 +1536,291 @@ begin
 end;
 $$;
 
+-- Root commands and delegated outcomes share the exact adopted checkpoint proof.
+create function internal.factory_workflow_adopted_checkpoint(
+  p_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_definition_revision_id uuid,
+  p_definition_digest text, p_checkpoint_run_id uuid
+) returns public.session_git_checkpoints
+language plpgsql set search_path = '' as $$
+declare
+  accepted public.session_git_checkpoints;
+begin
+  select checkpoint.* into accepted
+  from public.session_git_checkpoints checkpoint
+  join public.session_factory_admission_inputs admission
+    on (admission.session_id, admission.workspace_id, admission.factory_id, admission.github_repository_id) =
+       (checkpoint.session_id, checkpoint.workspace_id, p_factory_id, checkpoint.repository_id)
+  join public.agent_runs run
+    on (run.id, run.workspace_id, run.session_id, run.agent_job_id, run.attempt_count) =
+       (checkpoint.run_id, checkpoint.workspace_id, checkpoint.session_id, checkpoint.job_id, checkpoint.attempt_count)
+  join public.agent_jobs job
+    on (job.id, job.workspace_id, job.session_id, job.attempt_count, job.stage_id) =
+       (checkpoint.job_id, checkpoint.workspace_id, checkpoint.session_id, checkpoint.attempt_count, run.stage_id)
+  join public.session_job_git_inputs input
+    on (input.job_id, input.workspace_id, input.session_id, input.repository_id, input.repository_full_name,
+        input.initial_base_sha, input.input_sha) =
+       (checkpoint.job_id, checkpoint.workspace_id, checkpoint.session_id, checkpoint.repository_id,
+        checkpoint.repository_full_name, checkpoint.initial_base_sha, checkpoint.input_sha)
+  join public.session_source_deliveries source
+    on (source.run_id, source.workspace_id, source.session_id, source.job_id, source.attempt_count,
+        source.repository_id, source.repository_full_name, source.base_branch, source.base_sha, source.head_sha,
+        source.branch_name) =
+       (checkpoint.run_id, checkpoint.workspace_id, checkpoint.session_id, checkpoint.job_id,
+        checkpoint.attempt_count, checkpoint.repository_id, checkpoint.repository_full_name, input.base_branch,
+        checkpoint.input_sha, checkpoint.output_sha, run.branch_name)
+  join public.session_checkpoint_publications publication
+    on (publication.run_id, publication.workspace_id, publication.session_id, publication.job_id,
+        publication.attempt_count, publication.artifact_id) =
+       (checkpoint.run_id, checkpoint.workspace_id, checkpoint.session_id, checkpoint.job_id,
+        checkpoint.attempt_count, checkpoint.artifact_id)
+  join public.session_artifacts artifact
+    on (artifact.id, artifact.workspace_id, artifact.session_id, artifact.stage_id) =
+       (checkpoint.artifact_id, checkpoint.workspace_id, checkpoint.session_id, run.stage_id)
+  join public.github_repositories repository
+    on (repository.id, repository.workspace_id, repository.factory_id) =
+       (checkpoint.repository_id, checkpoint.workspace_id, p_factory_id)
+  join public.github_installations installation
+    on (installation.id, installation.workspace_id, installation.installation_id) =
+       (repository.github_installation_id, checkpoint.workspace_id, source.installation_id)
+  where (checkpoint.run_id, checkpoint.workspace_id, checkpoint.session_id) =
+        (p_checkpoint_run_id, p_workspace_id, p_session_id)
+    and (admission.definition_revision_id, admission.definition_digest) =
+        (p_definition_revision_id, p_definition_digest)
+    and run.status = 'success' and job.status = 'success'
+    and publication.status = 'adopted' and publication.adopted_at is not null
+    and internal.approved_predecessor_artifact_text(artifact.artifact_json) = publication.artifact_md
+    and not repository.is_archived and not installation.suspended
+    and case checkpoint.output_kind
+      when 'code' then checkpoint.output_ref = publication.retained_ref
+        and publication.remote_verified_ref = checkpoint.output_ref
+        and publication.remote_verified_sha = checkpoint.output_sha
+        and publication.remote_verified_at is not null
+        and source.bundle_sha256 = checkpoint.bundle_sha256
+      when 'no-code' then checkpoint.output_ref is null and publication.retained_ref is null
+        and publication.remote_verified_ref is null and publication.remote_verified_sha is null
+        and publication.remote_verified_at is null
+      else false
+    end
+  for share of repository, installation nowait;
+  return accepted;
+exception when lock_not_available then
+  -- Integration shutdown may already hold the provider row and wait for this session.
+  return null;
+end;
+$$;
+
+create or replace function internal.factory_workflow_input_checkpoint(
+  p_execution internal.factory_workflow_executions
+) returns public.session_git_checkpoints
+language sql set search_path = '' as $$
+  select internal.factory_workflow_adopted_checkpoint(p_execution.root_session_id, p_execution.workspace_id,
+    p_execution.factory_id, p_execution.definition_revision_id, p_execution.definition_digest, p_execution.graph_input_run_id)
+$$;
+
+revoke all on function internal.factory_workflow_adopted_checkpoint(uuid, uuid, uuid, uuid, text, uuid)
+  from public, anon, authenticated, service_role;
+
+-- The caller holds the workflow root and execution locks. Read the child's
+-- current accepted source and exact surviving approval while owning its lock.
+create function internal.factory_workflow_delegated_completion_ref(
+  p_delegation internal.factory_workflow_delegations
+) returns text language plpgsql set search_path = '' as $$
+declare
+  child public.sessions;
+  final_stage jsonb;
+  checkpoint_run_id uuid;
+  accepted public.session_git_checkpoints;
+  approval_id uuid;
+begin
+  if not exists (select 1 from public.sessions root
+    where (root.id, root.workspace_id, root.factory_id) =
+      (p_delegation.root_session_id, p_delegation.workspace_id, p_delegation.factory_id)
+      and root.phase_status <> 'rejected'
+      and (root.archived_at is null or root.phase_status = 'approved')) then
+    return null;
+  end if;
+
+  select owner.* into child from public.sessions owner
+  where (owner.id, owner.workspace_id, owner.factory_id, owner.factory_definition_revision_id) =
+    (p_delegation.child_session_id, p_delegation.workspace_id, p_delegation.factory_id, p_delegation.child_definition_revision_id)
+    and owner.execute_pinned_definition and owner.execution_purpose = 'production' and owner.phase_status = 'approved'
+  for no key update;
+  if not found or child.current_artifact_id is null then return null; end if;
+
+  select stage.value into final_stage from public.session_factory_admission_inputs pin
+  cross join lateral jsonb_array_elements(internal.pinned_session_execution_definition(child)->'stages') stage(value)
+  where (pin.session_id, pin.workspace_id, pin.factory_id, pin.definition_revision_id, pin.definition_digest) =
+    (child.id, child.workspace_id, child.factory_id, p_delegation.child_definition_revision_id, p_delegation.child_definition_digest)
+    and pin.selected_stage_ids[cardinality(pin.selected_stage_ids)] = child.current_stage_id
+    and stage.value->>'id' = child.current_stage_id::text;
+  if not found then return null; end if;
+
+  select head.checkpoint_run_id into checkpoint_run_id from public.session_git_heads head
+  where (head.session_id, head.workspace_id) = (child.id, child.workspace_id) for share;
+  if not found then return null; end if;
+  accepted := internal.factory_workflow_adopted_checkpoint(child.id, child.workspace_id, child.factory_id,
+    child.factory_definition_revision_id, p_delegation.child_definition_digest, checkpoint_run_id);
+  if accepted.run_id is null or accepted.artifact_id is distinct from child.current_artifact_id
+    or accepted.repository_id is distinct from p_delegation.repository_id
+    or accepted.initial_base_sha is distinct from p_delegation.initial_base_sha then
+    return null;
+  end if;
+
+  select approval.id into approval_id from public.session_stage_approval_receipts approval
+  where (approval.workspace_id, approval.session_id, approval.stage_id, approval.artifact_id, approval.artifact_version) =
+    (child.workspace_id, child.id, child.current_stage_id, child.current_artifact_id, child.current_artifact_version)
+  order by approval.approval_number desc limit 1;
+  if not found or not internal.factory_workflow_human_approval_passes(child, accepted, final_stage, approval_id) then
+    return null;
+  end if;
+
+  begin
+    perform 1 from internal.checkpoint_execution_input(accepted.run_id, child.id, child.workspace_id);
+    if not found then return null; end if;
+  exception when object_not_in_prerequisite_state or check_violation then
+    return null;
+  end;
+  return 'delegated-checkpoint:' || accepted.run_id;
+end;
+$$;
+revoke all on function internal.factory_workflow_delegated_completion_ref(internal.factory_workflow_delegations)
+  from public, anon, authenticated, service_role;
+
+create function public.record_factory_workflow_delegated_result(
+  p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
+  p_ownership_token uuid, p_occurrence_id uuid
+) returns table (result_id uuid, created boolean)
+language plpgsql security definer set search_path = '' as $$
+declare
+  execution internal.factory_workflow_executions;
+  delegation internal.factory_workflow_delegations;
+  prior internal.factory_workflow_node_results;
+  completion_ref text;
+begin
+  execution := internal.lock_factory_workflow_owner(p_root_session_id, p_workspace_id, p_factory_id,
+    p_expected_generation, p_ownership_token);
+  if execution.graph_revision_id is null or not exists (
+    select 1 from internal.factory_workflow_node_occurrences occurrence
+    where (occurrence.root_session_id, occurrence.occurrence_id, occurrence.node_kind) =
+      (p_root_session_id, p_occurrence_id, 'agent')
+  ) then
+    raise exception 'Workflow delegated agent occurrence is unavailable.' using errcode = 'PT404';
+  end if;
+
+  select marker.* into delegation from internal.factory_workflow_delegations marker
+  where (marker.root_session_id, marker.workspace_id, marker.factory_id, marker.target_occurrence_id) =
+    (p_root_session_id, p_workspace_id, p_factory_id, p_occurrence_id);
+  if not found then return; end if;
+
+  select result.* into prior from internal.factory_workflow_node_results result
+  where (result.root_session_id, result.occurrence_id) = (p_root_session_id, p_occurrence_id);
+  if found then
+    if prior.outcome <> 'succeeded' or not coalesce(prior.evidence_ref collate "C" ~
+      '^delegated-checkpoint:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', false) then
+      raise exception 'The workflow node already has a different result.' using errcode = 'PT409';
+    end if;
+    return query select prior.result_id, false;
+    return;
+  end if;
+
+  completion_ref := internal.factory_workflow_delegated_completion_ref(delegation);
+  if completion_ref is null then return; end if;
+  return query select * from internal.insert_factory_workflow_node_result(execution, p_occurrence_id, 'succeeded', completion_ref);
+end;
+$$;
+revoke all on function public.record_factory_workflow_delegated_result(uuid, uuid, uuid, bigint, uuid, uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.record_factory_workflow_delegated_result(uuid, uuid, uuid, bigint, uuid, uuid)
+  to service_role;
+
+
+create or replace function public.admit_factory_workflow_next(
+  p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_expected_generation bigint,
+  p_ownership_token uuid, p_source_occurrence_id uuid, p_edge_id text, p_expected_result_id uuid
+) returns table (transition_id uuid, target_occurrence_id uuid, created boolean)
+language plpgsql security definer set search_path = '' as $$
+declare
+  execution internal.factory_workflow_executions;
+  source_node_id text;
+  source_node_kind internal.factory_workflow_node_kind;
+  evidence_ref text;
+  completion_ref text;
+  command jsonb;
+  target_node jsonb;
+  edge jsonb;
+  target_id uuid;
+  receipt internal.factory_workflow_transition_receipts;
+begin
+  execution := internal.lock_factory_workflow_owner(p_root_session_id, p_workspace_id, p_factory_id,
+    p_expected_generation, p_ownership_token);
+  select occurrence.node_id, occurrence.node_kind, result.evidence_ref
+    into source_node_id, source_node_kind, evidence_ref
+    from internal.factory_workflow_node_occurrences occurrence
+    join internal.factory_workflow_node_results result
+      on (result.root_session_id, result.occurrence_id) = (occurrence.root_session_id, occurrence.occurrence_id)
+   where (occurrence.root_session_id, occurrence.occurrence_id, result.result_id) =
+     (p_root_session_id, p_source_occurrence_id, p_expected_result_id)
+     and result.outcome = 'succeeded';
+  if not found then
+    raise exception 'The expected successful predecessor result is unavailable.' using errcode = 'PT409';
+  end if;
+
+  if execution.graph_revision_id is not null and source_node_kind = 'route' then
+    raise exception 'This workflow node requires a guarded route decision.' using errcode = '42501';
+  end if;
+
+  select candidate into edge
+    from jsonb_array_elements(execution.workflow_json::jsonb->'edges') candidate
+   where candidate->>'from' = source_node_id and candidate->>'id' = p_edge_id and candidate->>'kind' = 'next';
+  if not found then
+    raise exception 'The workflow has no matching next edge.' using errcode = '22023';
+  end if;
+
+  select transition.* into receipt from internal.factory_workflow_transition_receipts transition
+   where (transition.root_session_id, transition.source_occurrence_id, transition.edge_id) =
+     (p_root_session_id, p_source_occurrence_id, p_edge_id);
+  if found then
+    return query select receipt.transition_id, receipt.target_occurrence_id, false;
+    return;
+  end if;
+
+  if execution.graph_revision_id is not null and exists (
+    select 1 from public.sessions root where root.id = p_root_session_id
+      and root.archived_at is not null and root.phase_status <> 'approved'
+  ) then return; end if;
+
+  if execution.graph_revision_id is not null and source_node_kind in ('deterministic', 'human-gate') then
+    command := internal.factory_workflow_occurrence_command(execution, p_source_occurrence_id);
+    if not internal.factory_workflow_command_evidence_is_current(execution, command, evidence_ref) then
+      return;
+    end if;
+    if command->>'operation' is distinct from 'policy'
+      and internal.refresh_session_execution_exhaustion(p_root_session_id, p_workspace_id) is not null then
+      return;
+    end if;
+  elsif execution.graph_revision_id is not null and source_node_kind = 'agent' then
+    select internal.factory_workflow_delegated_completion_ref(marker) into completion_ref
+    from internal.factory_workflow_delegations marker
+    where (marker.root_session_id, marker.workspace_id, marker.factory_id, marker.target_occurrence_id) =
+      (p_root_session_id, p_workspace_id, p_factory_id, p_source_occurrence_id);
+    if completion_ref is null or completion_ref is distinct from evidence_ref then return; end if;
+  end if;
+
+  perform internal.assert_factory_workflow_route_capacity(execution, edge);
+  select node into strict target_node
+    from jsonb_array_elements(execution.workflow_json::jsonb->'nodes') node
+   where node->>'id' = edge->>'to';
+  insert into internal.factory_workflow_node_occurrences(root_session_id, node_id, node_kind, admitted_generation)
+  values (p_root_session_id, target_node->>'id', (target_node->>'kind')::internal.factory_workflow_node_kind, p_expected_generation)
+  returning occurrence_id into target_id;
+  insert into internal.factory_workflow_transition_receipts(
+    root_session_id, source_occurrence_id, source_result_id, target_occurrence_id, edge_id, edge_kind, recorded_generation
+  ) values (p_root_session_id, p_source_occurrence_id, p_expected_result_id, target_id, p_edge_id, 'next', p_expected_generation)
+  returning * into receipt;
+  return query select receipt.transition_id, receipt.target_occurrence_id, true;
+end;
+$$;
+
 create function internal.find_factory_workflow_budget_root(p_session_id uuid)
 returns uuid language sql stable set search_path = '' as $$
   select execution.root_session_id
@@ -1633,7 +1918,8 @@ begin
       perform 1 from public.sessions root
       where (root.id, root.workspace_id, root.factory_id) =
         (budget_root_id, candidate.workspace_id, session_owner.factory_id)
-        and (root.archived_at is null or root.phase_status = 'approved') and root.phase_status <> 'rejected'
+        and (root.archived_at is null or root.phase_status = 'approved')
+        and (root.id = candidate.session_id or root.phase_status <> 'rejected')
       for no key update skip locked;
       if not found then continue; end if;
       select workflow.* into budget_execution from internal.factory_workflow_executions workflow
@@ -1753,7 +2039,7 @@ begin
   if budget_root_id is not null then
     perform internal.lock_factory_workflow_root(budget_root_id, session.workspace_id, session.factory_id);
     select * into strict budget_root from public.sessions where id = budget_root_id;
-    if budget_root.phase_status = 'rejected' or (
+    if (budget_root.id <> session.id and budget_root.phase_status = 'rejected') or (
       budget_root.archived_at is not null and budget_root.phase_status <> 'approved'
     ) then return null; end if;
     perform internal.recheck_session_execution_grant(budget_root);
@@ -1809,9 +2095,16 @@ begin
   select hold.* into reservation from internal.factory_workflow_attempt_reservations hold
   where (hold.job_id, hold.attempt_count, hold.run_id) = (p_job_id, p_attempt_count, p_run_id);
   if found then
-    perform internal.lock_factory_workflow_root(
-      reservation.root_session_id, reservation.workspace_id, reservation.factory_id
-    );
+    -- Preserve the admission lock order for existing attempts. Archived or
+    -- deleting scopes still accept accounting until their rows are erased.
+    perform 1 from public.workspaces workspace where workspace.id = reservation.workspace_id for share;
+    if not found then return query select false, null::text; return; end if;
+    perform 1 from public.factories factory
+    where (factory.workspace_id, factory.id) = (reservation.workspace_id, reservation.factory_id) for share;
+    if not found then return query select false, null::text; return; end if;
+    perform 1 from public.sessions root where (root.id, root.workspace_id, root.factory_id) =
+      (reservation.root_session_id, reservation.workspace_id, reservation.factory_id) for no key update;
+    if not found then return query select false, null::text; return; end if;
   end if;
   select * into strict normal_receipt from internal.record_session_run_usage_before_workflow(
     p_job_id, p_attempt_count, p_run_id, p_input_tokens, p_output_tokens, p_token_provenance,
