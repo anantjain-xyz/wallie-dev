@@ -10369,6 +10369,26 @@ export type Database = {
           transition_id: string
         }[]
       }
+      admit_factory_workflow_route_decision: {
+        Args: {
+          p_confidence?: number
+          p_destination_id?: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_ownership_token: string
+          p_reason: string
+          p_root_session_id: string
+          p_route_occurrence_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created: boolean
+          decision_id: string
+          resolution: string
+          target_occurrence_id: string
+          transition_id: string
+        }[]
+      }
       adopt_factory_improvement: {
         Args: {
           p_actor_user_id: string
@@ -14679,6 +14699,15 @@ export type Database = {
         Args: {
           p_factory_id: string
           p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_workflow_route_decision: {
+        Args: {
+          p_factory_id: string
+          p_root_session_id: string
+          p_route_occurrence_id: string
           p_workspace_id: string
         }
         Returns: Json

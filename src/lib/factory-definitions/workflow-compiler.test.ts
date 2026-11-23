@@ -58,6 +58,29 @@ function routeGraph() {
   };
 }
 
+function governedRouteGraph() {
+  const graph = routeGraph();
+  return {
+    ...graph,
+    nodes: [
+      ...graph.nodes,
+      { id: "escalate", kind: "human-gate", anyoneCanApprove: false, approverMemberIds: [] },
+    ],
+    edges: [...graph.edges, { id: "escalation", from: "decide", to: "escalate", kind: "route" }],
+    routePolicy: {
+      maxNodeVisits: 12,
+      maxLoopTraversals: 2,
+      nodes: {
+        decide: {
+          minimumConfidence: 0.8,
+          allowedDestinationIds: ["implement", "complete"],
+          fallback: { kind: "route", destinationId: "escalate" },
+        },
+      },
+    },
+  };
+}
+
 function compile(value: unknown, approvedGrants?: readonly (typeof grant)[]) {
   return compileWorkflowGraph(
     { kind: "structured", value },
@@ -298,4 +321,178 @@ describe("workflow graph compiler", () => {
       ]),
     });
   });
+});
+
+describe("workflow route policies", () => {
+  it("canonicalizes proposed destinations and retains the separate forward fallback", () => {
+    const graph = governedRouteGraph();
+    const compiled = compile(graph);
+    if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics));
+    expect(compiled.bundle.routePolicy?.nodes).toEqual({
+      decide: {
+        minimumConfidence: 0.8,
+        allowedDestinationIds: ["complete", "implement"],
+        fallback: { kind: "route", destinationId: "escalate" },
+      },
+    });
+    const reordered = {
+      ...graph,
+      routePolicy: {
+        ...graph.routePolicy,
+        nodes: {
+          decide: {
+            ...graph.routePolicy.nodes.decide,
+            allowedDestinationIds: ["complete", "implement"],
+          },
+        },
+      },
+    };
+    expect(
+      compileWorkflowGraph({ kind: "json", text: JSON.stringify(reordered) }, catalog),
+    ).toEqual(compiled);
+  });
+
+  it("leaves the canonical bytes of a structural graph unchanged when policy is omitted or undefined", () => {
+    const graph = routeGraph();
+    const omitted = compile(graph);
+    if (!omitted.ok) throw new Error(JSON.stringify(omitted.diagnostics));
+    expect(compile({ ...graph, routePolicy: undefined })).toEqual(omitted);
+    expect(JSON.parse(omitted.definitionJson)).not.toHaveProperty("routePolicy");
+  });
+
+  it("allows clarification and zero root loop traversals", () => {
+    const graph = routeGraph();
+    expect(
+      compile({
+        ...graph,
+        routePolicy: {
+          maxNodeVisits: 1024,
+          maxLoopTraversals: 0,
+          nodes: {
+            decide: {
+              minimumConfidence: 1,
+              allowedDestinationIds: ["complete"],
+              fallback: { kind: "clarification" },
+            },
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("requires a policy entry for every route node and only route nodes", () => {
+    const graph = governedRouteGraph();
+    expect(
+      compile({
+        ...graph,
+        routePolicy: { ...graph.routePolicy, nodes: { implement: graph.routePolicy.nodes.decide } },
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid_route_policy",
+          path: ["routePolicy", "nodes", "implement"],
+        }),
+        expect.objectContaining({
+          code: "invalid_route_policy",
+          path: ["routePolicy", "nodes", "decide"],
+        }),
+      ]),
+    });
+  });
+
+  it.each([
+    ["duplicate", ["complete", "complete"], 1],
+    ["off-edge", ["complete", "unknown"], 1],
+    ["fallback", ["escalate"], 0],
+  ] as const)("rejects a %s proposal destination", (_, allowedDestinationIds, index) => {
+    const graph = governedRouteGraph();
+    expect(
+      compile({
+        ...graph,
+        routePolicy: {
+          ...graph.routePolicy,
+          nodes: { decide: { ...graph.routePolicy.nodes.decide, allowedDestinationIds } },
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [
+        expect.objectContaining({
+          code: "invalid_route_policy",
+          path: ["routePolicy", "nodes", "decide", "allowedDestinationIds", index],
+        }),
+      ],
+    });
+  });
+
+  it("rejects a bounded loop as an escalation route", () => {
+    const graph = governedRouteGraph();
+    expect(
+      compile({
+        ...graph,
+        routePolicy: {
+          ...graph.routePolicy,
+          nodes: {
+            decide: {
+              ...graph.routePolicy.nodes.decide,
+              allowedDestinationIds: ["complete"],
+              fallback: { kind: "route", destinationId: "implement" },
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [
+        expect.objectContaining({
+          code: "invalid_route_policy",
+          path: ["routePolicy", "nodes", "decide", "fallback", "destinationId"],
+        }),
+      ],
+    });
+  });
+
+  it.each([
+    ["maxNodeVisits", 0],
+    ["maxNodeVisits", 1025],
+    ["maxLoopTraversals", -1],
+    ["maxLoopTraversals", 1025],
+    ["maxLoopTraversals", 1.5],
+  ] as const)("rejects out-of-range root limit %s=%s", (field, value) => {
+    const graph = governedRouteGraph();
+    expect(
+      compile({ ...graph, routePolicy: { ...graph.routePolicy, [field]: value } }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: [
+        expect.objectContaining({ code: "invalid_schema", path: ["routePolicy", field] }),
+      ],
+    });
+  });
+
+  it.each([-0.1, 1.1, Infinity])(
+    "rejects an out-of-range confidence threshold %s",
+    (minimumConfidence) => {
+      const graph = governedRouteGraph();
+      expect(
+        compile({
+          ...graph,
+          routePolicy: {
+            ...graph.routePolicy,
+            nodes: { decide: { ...graph.routePolicy.nodes.decide, minimumConfidence } },
+          },
+        }),
+      ).toMatchObject({
+        ok: false,
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: "invalid_schema",
+            path: ["routePolicy", "nodes", "decide", "minimumConfidence"],
+          }),
+        ]),
+      });
+    },
+  );
 });

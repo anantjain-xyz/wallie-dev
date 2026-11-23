@@ -2,10 +2,16 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { loadFactoryDefinitionCatalog } from "@/lib/factory-definitions/authority";
+import { withCatalogSignal } from "@/lib/factory-definitions/catalog-query";
 import type { FactoryDefinitionSource } from "@/lib/factory-definitions/compiler";
+import { parseFactoryDefinitionJson } from "@/lib/factory-definitions/serialization";
+import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import { compileWorkflowGraph } from "@/lib/factory-definitions/workflow-compiler";
-import type { Database } from "@/lib/supabase/database.types";
+import {
+  workflowGraphSchema,
+  type WorkflowGraphDefinition,
+} from "@/lib/factory-definitions/workflow-schema";
+import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { executeFactoryWorkflowOccurrence, resumeEnrolledFactoryWorkflowGraph } from "./execute";
 
@@ -14,6 +20,124 @@ type WorkflowScope = {
   workspaceId: string;
   factoryId: string;
 };
+
+type AdmissionPin = Pick<
+  Tables<"session_factory_admission_inputs">,
+  | "definition_revision_id"
+  | "definition_digest"
+  | "execution_grant_id"
+  | "execution_grant_version"
+  | "github_repository_id"
+  | "execution_policy_revision_id"
+  | "credential_owner_service_principal_id"
+  | "budget_payer_member_id"
+>;
+
+async function loadApprovedWorkflowGrants({
+  admin,
+  workspaceId,
+  factoryId,
+  graph,
+  pin,
+  signal,
+}: Pick<WorkflowScope, "workspaceId" | "factoryId"> & {
+  admin: SupabaseClient<Database>;
+  graph: WorkflowGraphDefinition;
+  pin: AdmissionPin;
+  signal?: AbortSignal;
+}) {
+  const {
+    execution_grant_id: id,
+    execution_grant_version: version,
+    github_repository_id: repositoryId,
+    execution_policy_revision_id: policyId,
+    credential_owner_service_principal_id: principalId,
+    budget_payer_member_id: payerId,
+  } = pin;
+  if (
+    !id ||
+    version === null ||
+    !repositoryId ||
+    !policyId ||
+    !principalId ||
+    !payerId ||
+    !graph.grants.some((grant) => grant.id === id && grant.version === version)
+  )
+    return [];
+
+  const revision = await withCatalogSignal(
+    admin
+      .from("factory_definition_revisions")
+      .select("definition_json")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .eq("id", pin.definition_revision_id)
+      .eq("canonical_digest", pin.definition_digest),
+    signal,
+  ).maybeSingle();
+  if (revision.error) throw revision.error;
+  if (!revision.data) return [];
+  const definition = readVerifiedFactoryDefinition(
+    revision.data.definition_json,
+    pin.definition_digest,
+  );
+  if (
+    definition?.executionGrant?.id !== id ||
+    definition.executionGrant.version !== version ||
+    definition.repositoryId !== repositoryId ||
+    definition.executionPolicyRevisionId !== policyId
+  )
+    return [];
+
+  const grant = await withCatalogSignal(
+    admin
+      .from("factory_execution_grants")
+      .select("id, version, workspace_id, expires_at")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .eq("id", id)
+      .eq("version", version)
+      .eq("github_repository_id", repositoryId)
+      .eq("execution_policy_revision_id", policyId)
+      .eq("service_principal_id", principalId)
+      .eq("budget_payer_member_id", payerId)
+      .contains("read_context_repository_ids", definition.readContextRepositoryIds ?? [])
+      .contains("tool_ids", definition.toolIds)
+      .is("revoked_at", null)
+      .gt("expires_at", new Date().toISOString()),
+    signal,
+  ).maybeSingle();
+  if (grant.error) throw grant.error;
+  if (!grant.data || !(Date.parse(grant.data.expires_at) > Date.now())) return [];
+  return [{ id: grant.data.id, version: grant.data.version, workspaceId: grant.data.workspace_id }];
+}
+
+async function loadWorkflowApprovers(
+  admin: SupabaseClient<Database>,
+  workspaceId: string,
+  approverIds: string[],
+  signal?: AbortSignal,
+) {
+  const approvers: { id: string; workspaceId: string }[] = [];
+  const batchSize = 128;
+  for (let from = 0; from < approverIds.length; from += batchSize) {
+    const { data, error } = await withCatalogSignal(
+      admin
+        .from("workspace_members")
+        .select("id, workspace_id")
+        .eq("workspace_id", workspaceId)
+        .eq("kind", "human")
+        .eq("is_active", true)
+        .in("id", approverIds.slice(from, from + batchSize)),
+      signal,
+    );
+    if (error) throw error;
+    approvers.push(
+      ...(data ?? []).map(({ id, workspace_id }) => ({ id, workspaceId: workspace_id })),
+    );
+  }
+  return approvers;
+}
 
 export async function enrollFactoryWorkflowGraph(
   admin: SupabaseClient<Database>,
@@ -65,22 +189,83 @@ export async function enrollFactoryWorkflowGraph(
     };
   }
 
-  const { data: pin, error: pinError } = await admin
-    .from("session_factory_admission_inputs")
-    .select("definition_revision_id, definition_digest")
-    .eq("session_id", rootSessionId)
-    .eq("workspace_id", workspaceId)
-    .eq("factory_id", factoryId)
-    .maybeSingle();
+  const input =
+    source.kind === "json"
+      ? parseFactoryDefinitionJson(source.text)
+      : { ok: true as const, value: source.value };
+  const graph = workflowGraphSchema.safeParse(input.ok ? input.value : null);
+  if (!graph.success) {
+    return compileWorkflowGraph(source, { workspaceId, agentPromptRevisions: [], approvers: [] });
+  }
+
+  if (!graph.data.routePolicy && graph.data.nodes.some(({ kind }) => kind === "route"))
+    return {
+      ok: false as const,
+      diagnostics: [
+        {
+          path: ["routePolicy"],
+          code: "invalid_route_policy" as const,
+          message: "Route nodes require a pinned workflow route policy before execution.",
+        },
+      ],
+    };
+
+  const { data: pin, error: pinError } = await withCatalogSignal(
+    admin
+      .from("session_factory_admission_inputs")
+      .select(
+        "definition_revision_id, definition_digest, execution_grant_id, execution_grant_version, github_repository_id, execution_policy_revision_id, credential_owner_service_principal_id, budget_payer_member_id",
+      )
+      .eq("session_id", rootSessionId)
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId),
+    signal,
+  ).maybeSingle();
   if (pinError) throw pinError;
   if (!pin) throw new Error("The workflow root has no scoped session definition.");
 
-  const catalog = await loadFactoryDefinitionCatalog(admin, { workspaceId, factoryId }, signal);
-  const compiled = compileWorkflowGraph(source, {
-    workspaceId,
-    agentPromptRevisions: catalog.agentPromptRevisions ?? [],
-    approvers: catalog.approvers,
-  });
+  const revisionIds = [
+    ...new Set(
+      graph.data.nodes.flatMap((node) =>
+        "agentPromptRevisionId" in node ? [node.agentPromptRevisionId] : [],
+      ),
+    ),
+  ];
+  const approverIds = [
+    ...new Set(
+      graph.data.nodes.flatMap((node) =>
+        node.kind === "human-gate" ? node.approverMemberIds : [],
+      ),
+    ),
+  ];
+  const [prompts, approvers, approvedGrants] = await Promise.all([
+    revisionIds.length
+      ? withCatalogSignal(
+          admin
+            .from("factory_agent_prompt_revisions")
+            .select("id, workspace_id")
+            .eq("workspace_id", workspaceId)
+            .eq("factory_id", factoryId)
+            .in("id", revisionIds),
+          signal,
+        )
+      : { data: [], error: null },
+    loadWorkflowApprovers(admin, workspaceId, approverIds, signal),
+    loadApprovedWorkflowGrants({ admin, workspaceId, factoryId, graph: graph.data, pin, signal }),
+  ]);
+  if (prompts.error) throw prompts.error;
+  const compiled = compileWorkflowGraph(
+    { kind: "structured", value: graph.data },
+    {
+      workspaceId,
+      agentPromptRevisions: (prompts.data ?? []).map(({ id, workspace_id }) => ({
+        id,
+        workspaceId: workspace_id,
+      })),
+      approvers,
+      approvedGrants,
+    },
+  );
   if (!compiled.ok) return compiled;
 
   const { data: registered, error: registrationError } = await admin
