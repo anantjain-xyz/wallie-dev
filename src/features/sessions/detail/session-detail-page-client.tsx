@@ -25,6 +25,7 @@ import {
   useStageExecution,
 } from "@/features/sessions/detail/execution-summary";
 import { useOptionalToast } from "@/components/ui/toast";
+import type { WorkflowInspectionHeader } from "@/lib/factory-workflows/inspection-contracts";
 import {
   archiveSessionFromClient,
   isSessionPhaseMutationResult,
@@ -139,6 +140,7 @@ type SessionDetailPageClientProps = {
   initialFormattedArtifactKey: string | null;
   initialNow?: string;
   repository?: SessionReviewRepository | null;
+  workflowInspection?: WorkflowInspectionHeader;
 };
 
 type ArchiveUndoVersion = {
@@ -249,6 +251,7 @@ function SessionDetailContent({
   initialFormattedArtifactKey,
   initialNow,
   repository = null,
+  workflowInspection,
 }: SessionDetailPageClientProps) {
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
@@ -1417,6 +1420,7 @@ function SessionDetailContent({
         repository={repository}
         session={session}
         workspaceSlug={initialData.workspaceSlug}
+        workflowInspection={workflowInspection}
         title={
           <EditableSessionTitle
             onTitleChanged={handleTitleChanged}

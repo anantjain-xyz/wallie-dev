@@ -65,6 +65,7 @@ export default async function RunInspectorPage({
       skills={data.skills}
       workspaceId={data.workspaceId}
       workspaceSlug={data.workspaceSlug}
+      workflowInspection={data.workflowInspection ?? undefined}
       transcript={
         <RunTranscriptLive
           initialPage={data.transcript}

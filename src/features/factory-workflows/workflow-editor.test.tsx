@@ -317,3 +317,116 @@ it("focuses the same diagnostic again after selecting another step", async () =>
   expect(field).toHaveValue("verify");
   expect(field).toHaveFocus();
 });
+
+it("saves and publishes the product template with scoped roles and source-stage approval", async () => {
+  const template = { id: "product-delivery", version: 1 } as const;
+  const empty: WorkflowAuthoringSnapshot = {
+    ...initial,
+    template,
+    graph: null,
+    draftId: null,
+    draftDigest: null,
+    draftBaseDefinition: null,
+  };
+  const prompt = { id: id(31), label: "Configured writer prompt" };
+  const reviewer = { id: id(32), label: "Review exact evidence" };
+  const profile = { id: id(33), digest, label: "Activated role" };
+  const approver = id(34);
+  const draftId = id(35);
+  const activationId = id(36);
+  const graphRevisionId = id(37);
+  let saved: WorkflowAuthoringSnapshot | undefined;
+  const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === "POST") {
+      const command = JSON.parse(String(options.body));
+      if (command.action === "save") {
+        expect(command.expected).toEqual({ draftId: null, activationId: null, baseDefinition });
+        const graph = workflowGraphSchema.parse(command.graph);
+        expect(graph).toMatchObject({
+          entryNodeId: "scope.approval",
+          nodes: expect.arrayContaining([
+            {
+              id: "scope.approval",
+              kind: "human-gate",
+              anyoneCanApprove: false,
+              approverMemberIds: [approver],
+            },
+            {
+              id: "final.approval",
+              kind: "human-gate",
+              anyoneCanApprove: false,
+              approverMemberIds: [approver],
+            },
+            expect.objectContaining({ kind: "route", agentPromptRevisionId: prompt.id }),
+            expect.objectContaining({ kind: "review", reviewerPromptRevisionId: reviewer.id }),
+          ]),
+          routePolicy: {
+            nodes: {
+              "triage.route": {
+                foremanProfile: {
+                  definitionRevisionId: profile.id,
+                  definitionDigest: profile.digest,
+                },
+              },
+            },
+          },
+        });
+        saved = {
+          ...empty,
+          graph,
+          draftId,
+          draftDigest: digest,
+          draftBaseDefinition: baseDefinition,
+          selectedDraftId: draftId,
+          selectedDraftGraph: graph,
+          selectedDraftDigest: digest,
+          selectedDraftBaseDefinition: baseDefinition,
+        };
+        return Response.json({ action: "save", receipt: { draftId, digest, created: true } });
+      }
+      if (command.action === "publish" && saved) {
+        expect(command.expected).toEqual({ draftId, activationId: null, baseDefinition });
+        saved = {
+          ...saved,
+          activationId,
+          publishedDraftId: draftId,
+          publishedGraphRevisionId: graphRevisionId,
+        };
+        return Response.json({
+          action: "publish",
+          receipt: { draftId, digest, created: true, activationId, graphRevisionId },
+        });
+      }
+    }
+    if (saved && url === `${endpoint}?draftId=${draftId}`) return Response.json(saved);
+    throw new Error(`Unexpected template request for ${url}.`);
+  });
+  vi.stubGlobal("fetch", fetch);
+  openEditor(empty, {
+    ...choices,
+    prompts: [prompt, reviewer],
+    profiles: [{ ...profile, templateRole: { promptRevisionId: prompt.id, canRunForeman: true } }],
+    templateSource: {
+      label: "Specification",
+      anyoneCanApprove: false,
+      approverMemberIds: [approver],
+      hasRequiredEvidence: true,
+      canDraftProductScope: true,
+    },
+  });
+
+  const save = screen.getByRole("button", { name: "Save draft" });
+  expect(save).toBeDisabled();
+  for (const role of ["Foreman profile", "Implementation profile", "Support profile"]) {
+    fireEvent.click(screen.getByRole("combobox", { name: role }));
+    fireEvent.click(await screen.findByRole("option", { name: /Activated role/ }));
+  }
+  fireEvent.click(screen.getByRole("combobox", { name: "Reviewer prompt revision" }));
+  fireEvent.click(await screen.findByRole("option", { name: reviewer.label }));
+  fireEvent.click(screen.getByRole("button", { name: "Apply template" }));
+  expect(screen.getByRole("textbox", { name: "Step ID" })).toHaveValue("scope.approval");
+  fireEvent.click(save);
+  await screen.findByText("Draft saved.");
+  fireEvent.click(screen.getByRole("button", { name: "Publish draft" }));
+  await screen.findByText("Workflow published.");
+});

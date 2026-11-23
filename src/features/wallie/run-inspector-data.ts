@@ -18,6 +18,7 @@ import {
   type RecordedRunExecutionProfile,
 } from "@/lib/factory-definitions/execution-profile-contracts";
 import { factoryMcpManifestSchema } from "@/lib/factory-mcp/manifest";
+import { loadWorkflowInspectionHeader } from "@/lib/factory-workflows/inspection";
 import {
   routingDecisionSchema,
   routingOverrideReceiptSchema,
@@ -299,19 +300,28 @@ export async function loadRunInspectorData(
     run = await loadRun();
     if (!run) notFound();
   }
-  const [artifact, skills, credential, mcp, executionProfile, frozenContext, routingDecision] =
-    await Promise.all([
-      loadRunInspectorArtifact({ ...context, run }),
-      loadRunInspectorSkills({ ...context, run }),
-      loadRunInspectorCredential({ ...context, run }),
-      loadRunInspectorMcpManifest({ ...context, run }),
-      loadRunInspectorExecutionProfile({
-        ...context,
-        run: { id: run.id, attemptCount: executionProfileAttempt ?? run.attemptCount },
-      }),
-      loadRunInspectorContext({ ...context, run }),
-      loadRunInspectorRoutingDecision({ ...context, run }),
-    ]);
+  const [
+    artifact,
+    skills,
+    credential,
+    mcp,
+    executionProfile,
+    frozenContext,
+    routingDecision,
+    workflowInspection,
+  ] = await Promise.all([
+    loadRunInspectorArtifact({ ...context, run }),
+    loadRunInspectorSkills({ ...context, run }),
+    loadRunInspectorCredential({ ...context, run }),
+    loadRunInspectorMcpManifest({ ...context, run }),
+    loadRunInspectorExecutionProfile({
+      ...context,
+      run: { id: run.id, attemptCount: executionProfileAttempt ?? run.attemptCount },
+    }),
+    loadRunInspectorContext({ ...context, run }),
+    loadRunInspectorRoutingDecision({ ...context, run }),
+    loadWorkflowInspectionHeader(supabase, run.sessionId, run.id),
+  ]);
   const canOpenRoutingPolicy =
     routingDecision.kind === "recorded" &&
     isWorkspaceOperator(currentMember) &&
@@ -341,6 +351,7 @@ export async function loadRunInspectorData(
     frozenContext,
     routingDecision,
     canOpenRoutingPolicy,
+    workflowInspection,
     memoryProposalHref:
       memoryProposal?.data === true &&
       frozenContext.kind === "recorded" &&

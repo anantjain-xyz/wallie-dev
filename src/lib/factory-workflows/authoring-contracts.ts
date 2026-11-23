@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { workflowGraphSchema } from "@/lib/factory-definitions/workflow-schema";
+import { workflowTemplateRevisionSchema } from "./workflow-templates";
 
 const id = z.string().uuid().toLowerCase();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -22,7 +23,9 @@ const workflowIdentitySchema = z.strictObject({
   displayName: z.string().trim().min(1).max(120),
 });
 
-export const createWorkflowAuthoringSchema = workflowIdentitySchema;
+export const createWorkflowAuthoringSchema = workflowIdentitySchema.extend({
+  template: workflowTemplateRevisionSchema.optional(),
+});
 export const workflowAuthoringPathSchema = z.object({
   workspaceId: id,
   factoryId: id,
@@ -41,6 +44,7 @@ export const workflowAuthoringSnapshotSchema = workflowIdentitySchema
       .max(20),
     publishedDraftId: id.nullable(),
     publishedGraphRevisionId: id.nullable(),
+    template: workflowTemplateRevisionSchema.nullish(),
     selectedDraftId: id.nullable(),
     selectedDraftGraph: workflowGraphSchema.nullable(),
     selectedDraftDigest: digest.nullable(),
@@ -94,7 +98,10 @@ export const workflowReferenceQuerySchema = z.union([
   }),
 ]);
 const referenceChoice = z.strictObject({ id, label: z.string() });
-const profileChoice = referenceChoice.extend({ digest });
+const profileChoice = referenceChoice.extend({
+  digest,
+  templateRole: z.strictObject({ promptRevisionId: id, canRunForeman: z.boolean() }).optional(),
+});
 const writerChoice = referenceChoice.extend({
   repositoryId: id,
   version: z.number().int().positive().safe(),
@@ -130,6 +137,15 @@ const workflowEditorChoicesSchema = z.strictObject({
   profiles: profileChoices,
   writers: writerChoices,
   grant: z.strictObject({ id, version: z.number().int().positive().safe() }).nullable(),
+  templateSource: z
+    .strictObject({
+      label: z.string(),
+      anyoneCanApprove: z.boolean(),
+      approverMemberIds: id.array(),
+      hasRequiredEvidence: z.boolean(),
+      canDraftProductScope: z.boolean(),
+    })
+    .optional(),
   nextCursors: z.strictObject({
     prompts: datedReferenceCursor.nullable(),
     approvers: memberReferenceCursor.nullable(),

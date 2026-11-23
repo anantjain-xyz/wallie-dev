@@ -18,6 +18,7 @@ import {
   type WorkflowBaseDefinition,
 } from "./authoring-contracts";
 import { loadWorkflowGraphReferences } from "./reference-catalog";
+import type { WorkflowTemplateRevision } from "./workflow-templates";
 
 type Client = SupabaseClient<Database>;
 type FactoryScope = { workspaceId: string; factoryId: string };
@@ -39,16 +40,22 @@ export async function listWorkflowAuthoring(client: Client, scope: FactoryScope,
   };
 }
 
-export async function createWorkflowAuthoring(admin: Client, scope: Author, displayName: string) {
+export async function createWorkflowAuthoring(
+  admin: Client,
+  scope: Author,
+  displayName: string,
+  template?: WorkflowTemplateRevision,
+) {
   const { data, error } = await admin.rpc("create_factory_workflow_authoring", {
     p_workspace_id: scope.workspaceId,
     p_factory_id: scope.factoryId,
     p_actor_user_id: scope.actorUserId,
     p_workflow_id: scope.workflowId,
     p_display_name: displayName,
+    ...(template ? { p_template_id: template.id, p_template_version: template.version } : {}),
   });
   if (error) throw error;
-  return createWorkflowAuthoringSchema.parse({ workflowId: data, displayName });
+  return createWorkflowAuthoringSchema.parse({ workflowId: data, displayName, template });
 }
 
 export async function readWorkflowAuthoring(

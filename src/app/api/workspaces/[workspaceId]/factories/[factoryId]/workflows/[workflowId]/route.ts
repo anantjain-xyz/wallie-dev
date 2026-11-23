@@ -54,11 +54,20 @@ export async function GET(request: Request, { params }: Context) {
         );
       }
       return workflowAuthoringResponse(
-        await loadWorkflowReferencePage(scope, selection.data, snapshot.baseDefinition),
+        await loadWorkflowReferencePage(
+          scope,
+          selection.data,
+          snapshot.baseDefinition,
+          snapshot.template,
+        ),
       );
     }
     if ("includeChoices" in selection.data) {
-      const choices = await loadWorkflowEditorChoices(scope, snapshot.baseDefinition);
+      const choices = await loadWorkflowEditorChoices(
+        scope,
+        snapshot.baseDefinition,
+        snapshot.template,
+      );
       return workflowAuthoringResponse({ snapshot, choices });
     }
     return workflowAuthoringResponse(snapshot);

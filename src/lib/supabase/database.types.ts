@@ -12199,6 +12199,8 @@ export type Database = {
           p_actor_user_id: string
           p_display_name: string
           p_factory_id: string
+          p_template_id?: string
+          p_template_version?: number
           p_workflow_id: string
           p_workspace_id: string
         }
@@ -15200,6 +15202,15 @@ export type Database = {
           p_root_session_id: string
           p_route_occurrence_id: string
           p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_workflow_inspection: {
+        Args: {
+          p_before?: Json
+          p_page_size?: number
+          p_run_id?: string
+          p_session_id: string
         }
         Returns: Json
       }

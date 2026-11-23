@@ -138,6 +138,7 @@ export default async function SessionDetailPage({ params, searchParams }: Sessio
       initialFormattedArtifactKey={initialFormattedArtifactKey}
       initialExactReviewTarget={exactReview?.target}
       repository={data.repository}
+      workflowInspection={data.workflowInspection ?? undefined}
     />
   );
 }
