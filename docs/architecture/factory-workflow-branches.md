@@ -25,3 +25,23 @@ An unstarted reservation or estimated usage can leave another slot pending. Once
 | Paused or canceled | The root lifecycle controls further work.                                                                     |
 
 A successful receipt identifies the named slot, exact child job and run, frozen input commit, adopted checkpoint, and retained output ref. Approval stays tied to the exact child artifact. An unstarted failure or cancellation has a terminal job receipt without a checkpoint. Pause retires the old attempt, and a valid resume can start a fresh attempt on the same job. Root branches of a triage workflow use the approved task and retain its acceptance criteria.
+
+## Join branch outputs
+
+A factory manager submits the branch group, workflow generation, exact parent checkpoint run, and selected outcome IDs. Every required slot must supply a successful output. Optional slots must be terminal and can be omitted. Within the same workflow generation, replaying the request returns its original join, job, and run.
+
+```mermaid
+flowchart LR
+  Selection[Named branch outputs] --> Receipt[Sealed join receipt]
+  Receipt --> Merge[Verify and merge retained Git inputs]
+  Merge -->|Conflict| Report[Private conflict report]
+  Merge --> Validate[Validate exact commit and tree]
+  Validate -->|Passed| Adopt[Atomic checkpoint and artifact adoption]
+  Validate -->|Blocked| Keep[Keep the accepted parent checkpoint]
+  Adopt --> Review[Parent artifact review]
+```
+
+- **Source.** The worker fetches each frozen Git input and verifies its commit before merging. The parent generation and checkpoint run are checked again at adoption, including when a newer checkpoint has the same commit.
+- **Validation.** The pinned parent delivery policy defines which evidence must pass. The worker preserves the parent’s frozen validation order. For a specification checkpoint, compatible plans from the selected branches supply the required checks in their original relative order. Validation runs against the joined commit and tree in a separate sandbox without GitHub or model credentials. The worker prepares Node tooling and installs dependencies from supported repository lockfiles before replaying the plan. Other toolchains can include their setup in the frozen plan. The branch selection response exposes the 48 MiB packed-source limit before submission.
+- **Publication.** The existing checkpoint publisher records the exact integrated commit and tree, advances the parent checkpoint, and creates the parent review artifact in one transaction. Downstream nodes can read that accepted checkpoint after adoption.
+- **Blocked joins.** Conflicts retain a private, immutable report for the exact join attempt. Missing inputs, stale ownership, and failed validation keep the current parent checkpoint. Each child approval applies to its own artifact. The joined artifact requires its own parent approval.

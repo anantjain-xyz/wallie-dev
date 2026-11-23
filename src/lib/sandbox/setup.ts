@@ -164,6 +164,23 @@ function resolveMemoryBootstrap(provider: SandboxProvider): string {
   )`;
 }
 
+/** Provision the same Node runtime in a fresh utility sandbox without injecting credentials. */
+export async function prepareUtilitySandboxNode(
+  sandbox: SandboxHandle,
+  provider: SandboxProvider,
+  signal: AbortSignal,
+) {
+  signal.throwIfAborted();
+  const process = await sandbox.exec(
+    "bash",
+    ["--noprofile", "--norc", "-c", resolveNodeBootstrap(provider) + " >/dev/null 2>&1"],
+    { cwd: "/tmp", env: { CI: "1", BASH_ENV: "/dev/null" }, signal },
+  );
+  const code = await process.exitCode;
+  signal.throwIfAborted();
+  if (code !== 0) throw new Error("The utility sandbox could not prepare its Node runtime.");
+}
+
 function resolveNodeBootstrap(provider: SandboxProvider): string {
   if (provider !== "e2b") return NODE_VERSION_CHECK;
 

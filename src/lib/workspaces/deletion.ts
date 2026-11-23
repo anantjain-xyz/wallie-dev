@@ -118,7 +118,21 @@ async function cleanupResourceReservations(
         continue;
       }
       if (operation.kind === "upload" && operation.resource_id && operation.storage_bucket) {
-        if (
+        if (operation.storage_bucket === "factory-workflow-join-conflicts") {
+          const { data: claimed, error: claimError } = await admin.rpc(
+            "claim_factory_workflow_join_conflict_cleanup",
+            {
+              p_workspace_id: workspaceId,
+              p_operation_id: operation.id,
+              p_path: operation.resource_id,
+            },
+          );
+          if (claimError) throw claimError;
+          if (!claimed) {
+            pending = true;
+            continue;
+          }
+        } else if (
           (operation.storage_bucket === "session-source-checkpoints" &&
             (/\/[a-f0-9-]{36}-retry-\d+-[a-f0-9-]{36}\.bundle$/.test(operation.resource_id) ||
               /\/benchmark\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/[a-f0-9]{64}\.bundle$/.test(
@@ -181,6 +195,7 @@ export async function resumeWorkspaceDeletion(admin: AdminClient, workspaceId: s
   await removeWorkspaceStoragePrefix(admin, "session-validation-evidence", workspaceId);
   await removeWorkspaceStoragePrefix(admin, "workspace-run-exports", workspaceId);
   await removeWorkspaceStoragePrefix(admin, "factory-workflow-usage-recovery", workspaceId);
+  await removeWorkspaceStoragePrefix(admin, "factory-workflow-join-conflicts", workspaceId);
   const { data: deleted, error: finishError } = await admin.rpc("finish_workspace_deletion", {
     p_workspace_id: workspaceId,
   });

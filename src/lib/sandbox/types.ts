@@ -191,6 +191,7 @@ export interface SandboxProviderDriver<Connection extends SandboxConnection = Sa
 }
 
 export interface CreateUtilitySandboxInput {
+  acquisition?: SandboxAcquisitionIdentity;
   workspaceId: string;
   ownerId: string;
   timeoutMs: number;

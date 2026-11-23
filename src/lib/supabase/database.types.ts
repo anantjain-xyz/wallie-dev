@@ -11282,6 +11282,10 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      claim_factory_workflow_join_conflict_cleanup: {
+        Args: { p_operation_id: string; p_path: string; p_workspace_id: string }
+        Returns: boolean
+      }
       claim_factory_workflow_sandbox_stops: {
         Args: { p_limit: number }
         Returns: {
@@ -12423,6 +12427,20 @@ export type Database = {
         }
         Returns: Json
       }
+      enqueue_factory_workflow_join_for_user: {
+        Args: {
+          p_actor_user_id: string
+          p_branch_group_id: string
+          p_expected_generation: number
+          p_expected_head_run_id: string
+          p_factory_id: string
+          p_request_id: string
+          p_root_session_id: string
+          p_selected_outcome_ids: string[]
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       enqueue_github_pr_refresh_event: {
         Args: {
           p_base_branch?: string
@@ -13448,6 +13466,20 @@ export type Database = {
           p_diagnosis_id: string
           p_factory_id: string
           p_lease_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      is_factory_workflow_join_attempt_active: {
+        Args: {
+          p_attempt_count: number
+          p_expected_generation: number
+          p_factory_id: string
+          p_job_id: string
+          p_join_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_run_id: string
           p_workspace_id: string
         }
         Returns: boolean
@@ -14871,6 +14903,18 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_workflow_command_source: {
+        Args: {
+          p_factory_id: string
+          p_occurrence_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          run_id: string
+          session_id: string
+        }[]
+      }
       read_factory_workflow_delegated_scope: {
         Args: {
           p_attempt_count: number
@@ -14896,6 +14940,24 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      read_factory_workflow_join: {
+        Args: {
+          p_factory_id: string
+          p_join_id: string
+          p_root_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_workflow_join_conflict_digest: {
+        Args: {
+          p_join_id: string
+          p_root_session_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       read_factory_workflow_route_decision: {
         Args: {
@@ -14938,6 +15000,23 @@ export type Database = {
       reconcile_factory_benchmark_schedules: {
         Args: { p_limit: number }
         Returns: number
+      }
+      record_active_factory_workflow_join_candidate: {
+        Args: {
+          p_attempt_count: number
+          p_bundle_sha256?: string
+          p_commit_sha: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_job_id: string
+          p_join_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_run_id: string
+          p_tree_sha: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       record_factory_benchmark_replay_operation: {
         Args: {
@@ -15504,6 +15583,21 @@ export type Database = {
       reserve_factory_benchmark_evaluation_attempt: {
         Args: { p_attempt_id: string; p_trial_id: string }
         Returns: boolean
+      }
+      reserve_factory_workflow_join_conflict: {
+        Args: {
+          p_attempt_count: number
+          p_digest: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_job_id: string
+          p_join_id: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       resolve_factory_run_credential: {
         Args: {
@@ -16724,6 +16818,22 @@ export type Database = {
         }
         Returns: Json
       }
+      settle_factory_workflow_join_blocker: {
+        Args: {
+          p_attempt_count: number
+          p_detail: Json
+          p_expected_generation: number
+          p_factory_id: string
+          p_job_id: string
+          p_join_id: string
+          p_outcome: string
+          p_ownership_token: string
+          p_root_session_id: string
+          p_run_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       settle_factory_workflow_sandbox_acquisition: {
         Args: { p_operation_id: string; p_stopped_sandbox_ids: string[] }
         Returns: boolean
@@ -16937,6 +17047,16 @@ export type Database = {
           execution_generation: number
           ownership_token: string
         }[]
+      }
+      start_factory_workflow_join_attempt: {
+        Args: {
+          p_attempt_count: number
+          p_deadline_at: string
+          p_job_id: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       start_sandbox_capability_check: {
         Args: {

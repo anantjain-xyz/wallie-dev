@@ -549,6 +549,12 @@ async function createVercelUtilitySandbox(
     resources: { vcpus: 2 },
     signal: input.signal,
     ...(benchmarkReplay ? { networkPolicy: { allow: ["github.com"] } } : {}),
+    ...(input.acquisition
+      ? {
+          name: sandboxAcquisitionName(input.acquisition),
+          tags: sandboxAcquisitionLabels(input.acquisition),
+        }
+      : {}),
   }).catch((error: unknown) => {
     rethrowVercelSandboxError(error, secrets);
   });

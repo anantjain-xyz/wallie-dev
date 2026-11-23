@@ -98,11 +98,11 @@ const snapshotSchema = z.object({
   ),
 });
 
-async function readRequiredValidationKeys(admin: Admin, scope: WorkflowScope) {
+async function readRequiredValidationKeys(admin: Admin, scope: WorkflowScope, sessionId: string) {
   const session = await admin
     .from("sessions")
     .select("pinned_delivery_policy_revision_id")
-    .eq("id", scope.p_root_session_id)
+    .eq("id", sessionId)
     .eq("workspace_id", scope.p_workspace_id)
     .eq("factory_id", scope.p_factory_id)
     .maybeSingle();
@@ -123,7 +123,7 @@ async function loadCommandTarget(
   admin: Admin,
   node: GraphNode,
   pin: WorkflowOccurrencePin,
-  inputRunId: string | null | undefined,
+  input: { sessionId: string; runId: string } | null,
 ): Promise<CommandTarget | ValidationPolicyBlocker | null> {
   if (node.kind === "deterministic" && node.operation === "policy") {
     const { data, error } = await admin
@@ -145,23 +145,23 @@ async function loadCommandTarget(
   }
   const validationKeys =
     node.kind === "deterministic" && node.operation === "validation"
-      ? await readRequiredValidationKeys(admin, pin)
+      ? await readRequiredValidationKeys(admin, pin, input?.sessionId ?? pin.p_root_session_id)
       : null;
   if (validationKeys?.length === 0)
     return { status: "blocked", code: "validation_policy_required" };
-  if (!inputRunId || (node.kind !== "deterministic" && node.kind !== "human-gate")) return null;
+  if (!input || (node.kind !== "deterministic" && node.kind !== "human-gate")) return null;
 
   const { data: source, error: sourceError } = await admin
     .from("session_source_deliveries")
     .select("run_id, job_id, attempt_count, repository_id, head_sha")
-    .eq("run_id", inputRunId)
-    .eq("session_id", pin.p_root_session_id)
+    .eq("run_id", input.runId)
+    .eq("session_id", input.sessionId)
     .eq("workspace_id", pin.p_workspace_id)
     .maybeSingle();
   if (sourceError) throw sourceError;
   if (!source?.repository_id) return null;
   const run = {
-    sessionId: pin.p_root_session_id,
+    sessionId: input.sessionId,
     runId: source.run_id,
     jobId: source.job_id,
     attemptCount: source.attempt_count,
@@ -570,7 +570,30 @@ export async function executeFactoryWorkflowOccurrence(
           nextNodeId: nextEdge.to,
         };
   }
-  const command = await loadCommandTarget(admin, node, pin, execution.graph_input_run_id);
+  const rootInput = execution.graph_input_run_id
+    ? { sessionId: pin.p_root_session_id, runId: execution.graph_input_run_id }
+    : null;
+  let input = rootInput;
+  if (
+    graph.nodes.some((candidate) => candidate.kind === "join") &&
+    (node.kind === "human-gate" || (node.kind === "deterministic" && node.operation !== "policy"))
+  ) {
+    const { data, error } = await admin
+      .rpc("read_factory_workflow_command_source", {
+        ...scope,
+        p_occurrence_id: occurrence.occurrence_id,
+      })
+      .maybeSingle();
+    if (error) throw error;
+    const observed = z
+      .object({ session_id: z.string().uuid(), run_id: z.string().uuid() })
+      .safeParse(data);
+    input = observed.success
+      ? { sessionId: observed.data.session_id, runId: observed.data.run_id }
+      : null;
+  }
+  const sourceSessionId = input?.sessionId;
+  const command = await loadCommandTarget(admin, node, pin, input);
   if (!command) return { status: "pending", code: "evidence_missing" } as const;
   if ("status" in command) return command;
   const captured: DeterministicWorkflowOccurrence = {
@@ -604,10 +627,17 @@ export async function executeFactoryWorkflowOccurrence(
         return { status: "blocked", code: "execution_budget_exhausted" };
       return { status: "passed", receiptRef: target.executionPolicyRevisionId };
     },
-    readCheckpointAdoption: (input) => observeWorkflowCheckpoint({ admin, ...input }),
-    readHumanApproval: (input) => observeWorkflowHumanApproval({ admin, ...input }),
+    readCheckpointAdoption: (input) =>
+      observeWorkflowCheckpoint({ admin, ...input, causalSessionId: sourceSessionId }),
+    readHumanApproval: (input) =>
+      observeWorkflowHumanApproval({ admin, ...input, causalSessionId: sourceSessionId }),
     readValidationEvidence: async ({ pin: current, target }) => {
-      const checkpoint = await observeWorkflowCheckpoint({ admin, pin: current, target });
+      const checkpoint = await observeWorkflowCheckpoint({
+        admin,
+        pin: current,
+        target,
+        causalSessionId: sourceSessionId,
+      });
       if (checkpoint.status !== "passed") return checkpoint;
       const outcomes = await evaluateExactRunValidationEvidence({
         admin,

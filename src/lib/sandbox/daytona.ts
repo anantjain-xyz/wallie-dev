@@ -322,7 +322,12 @@ export const daytonaSandboxDriver: SandboxProviderDriver<DaytonaConnection> = {
           ephemeral: true,
           autoStopInterval: 0,
           ttlMinutes: Math.ceil(input.timeoutMs / 60_000) + 10,
-          labels: { wallie_owner_id: input.ownerId, wallie_workspace_id: input.workspaceId },
+          labels: {
+            wallie_owner_id: input.ownerId,
+            wallie_workspace_id: input.workspaceId,
+            ...(input.acquisition ? sandboxAcquisitionLabels(input.acquisition) : {}),
+          },
+          ...(input.acquisition ? { name: sandboxAcquisitionName(input.acquisition) } : {}),
           resources: { cpu: 2, disk: 10, memory: 4 },
         },
         { timeout: 60 },

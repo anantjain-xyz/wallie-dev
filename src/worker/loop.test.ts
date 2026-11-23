@@ -1,15 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ExecutionBudgetExhaustedError } from "@/lib/pipeline/execution-budget";
 import { createWorkerAttemptDeadline } from "@/lib/pipeline/worker-attempt-deadline";
 
 import type { WorkerConfig } from "./config";
 
 const mocked = vi.hoisted(() => ({
   processPipelineJob: vi.fn(),
+  processFactoryWorkflowJoinJob: vi.fn().mockResolvedValue("ordinary"),
 }));
 
 vi.mock("@/lib/pipeline/processor", () => ({
   processPipelineJob: mocked.processPipelineJob,
+}));
+
+vi.mock("@/lib/factory-workflows/join-worker-runtime", () => ({
+  processFactoryWorkflowJoinJob: mocked.processFactoryWorkflowJoinJob,
 }));
 
 import { claimNextJob, runClaimedJob } from "./loop";
@@ -205,6 +211,68 @@ describe("runClaimedJob", () => {
     expect(admin.rpc).not.toHaveBeenCalled();
   });
 
+  it("gives a join the exact claimed attempt and deadline without entering the serial runner", async () => {
+    const admin = recoveryAdmin();
+    const deadlineAt = new Date(Date.now() + 60_000).toISOString();
+    mocked.processFactoryWorkflowJoinJob.mockResolvedValueOnce("handled");
+
+    await runClaimedJob(admin as never, baseJob as never, { deadlineAt });
+
+    expect(mocked.processFactoryWorkflowJoinJob).toHaveBeenCalledExactlyOnceWith({
+      admin,
+      job: baseJob,
+      signal: expect.any(AbortSignal),
+      deadlineAt,
+      resources: expect.any(Object),
+    });
+    expect(mocked.processPipelineJob).not.toHaveBeenCalled();
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it("recovers a failed join through the exact owned run", async () => {
+    const admin = recoveryAdmin();
+    mocked.processFactoryWorkflowJoinJob.mockRejectedValueOnce(new Error("join failed"));
+
+    await runClaimedJob(admin as never, baseJob as never);
+
+    expect(mocked.processPipelineJob).not.toHaveBeenCalled();
+    expect(admin.query.eq.mock.calls).toEqual([
+      ["agent_job_id", "job-1"],
+      ["attempt_count", 1],
+    ]);
+    expect(admin.rpc).toHaveBeenCalledWith("fail_stalled_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: "join failed",
+      p_retry: false,
+      p_max_retries: 0,
+    });
+  });
+
+  it("retains the exact join's elapsed budget reason without scheduling a retry", async () => {
+    const admin = recoveryAdmin();
+    const exhausted = new ExecutionBudgetExhaustedError("elapsed_execution");
+    mocked.processFactoryWorkflowJoinJob.mockRejectedValueOnce(exhausted);
+
+    await runClaimedJob(admin as never, baseJob as never);
+
+    expect(admin.rpc).toHaveBeenCalledExactlyOnceWith("fail_stalled_session_job_attempt", {
+      p_job_id: "job-1",
+      p_attempt_count: 1,
+      p_run_id: "run-attempt-1",
+      p_error: exhausted.message,
+      p_retry: false,
+      p_max_retries: 0,
+    });
+    expect(admin.query.insert).toHaveBeenCalledWith({
+      agent_run_id: "run-attempt-1",
+      workspace_id: "workspace-1",
+      kind: "worker_error",
+      message_md: exhausted.message,
+    });
+  });
+
   it("pins the worker capture setting into the claimed attempt", async () => {
     vi.stubEnv("WALLIE_ORDERED_RUN_CAPTURE_ENABLED", "false");
     try {
@@ -271,6 +339,7 @@ describe("runClaimedJob", () => {
     });
     await vi.advanceTimersByTimeAsync(20);
     await processing;
+    await Promise.resolve();
     const workSignal = mocked.processPipelineJob.mock.calls[0][0].signal;
     expect(workSignal.aborted).toBe(true);
     const recoverySignal = admin.query.abortSignal.mock.calls[0][0];
@@ -379,6 +448,7 @@ describe("runClaimedJob", () => {
     const admin = recoveryAdmin();
     admin.rpcResult.mockResolvedValueOnce({ data: "stale", error: null });
     const processing = runClaimedJob(admin as never, claim as never);
+    await Promise.resolve();
     claim.attempt_count = 2;
     reject(new Error("old processor failed"));
     await processing;
@@ -432,6 +502,7 @@ describe("runClaimedJob", () => {
     mocked.processPipelineJob.mockImplementation(() => new Promise(() => {}));
     const admin = recoveryAdmin();
     const processing = runClaimedJob(admin as never, baseJob as never, { timeoutMs: 50 });
+    await Promise.resolve();
     const signal = mocked.processPipelineJob.mock.calls.at(-1)![0].signal as AbortSignal;
     await vi.advanceTimersByTimeAsync(50);
     await processing;
@@ -475,6 +546,7 @@ describe("runClaimedJob", () => {
     mocked.processPipelineJob.mockImplementation(() => new Promise(() => {}));
     const admin = recoveryAdmin();
     const processing = runClaimedJob(admin as never, baseJob as never, { deadlineAt });
+    await Promise.resolve();
     expect(mocked.processPipelineJob.mock.calls.at(-1)![0].deadlineAt).toBe(deadlineAt);
     const signal = mocked.processPipelineJob.mock.calls.at(-1)![0].signal as AbortSignal;
     await vi.advanceTimersByTimeAsync(20);
