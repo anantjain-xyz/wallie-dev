@@ -1,4 +1,4 @@
-export async function readBoundedJsonBody(request: Request, maxBodyBytes: number) {
+export async function readBoundedJsonBytes(request: Request, maxBodyBytes: number) {
   const contentType = request.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase();
   if (contentType !== "application/json") {
     return { ok: false, code: "unsupported_media_type" } as const;
@@ -10,8 +10,7 @@ export async function readBoundedJsonBody(request: Request, maxBodyBytes: number
   if (!request.body) return { ok: false, code: "invalid_request" } as const;
 
   const reader = request.body.getReader();
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  const parts: string[] = [];
+  const parts: Uint8Array[] = [];
   let size = 0;
   try {
     for (;;) {
@@ -22,14 +21,29 @@ export async function readBoundedJsonBody(request: Request, maxBodyBytes: number
         void reader.cancel().catch(() => undefined);
         return { ok: false, code: "request_too_large" } as const;
       }
-      parts.push(decoder.decode(value, { stream: true }));
+      parts.push(value);
     }
-    parts.push(decoder.decode());
-    const body: unknown = JSON.parse(parts.join(""));
-    return { ok: true, body } as const;
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const part of parts) {
+      bytes.set(part, offset);
+      offset += part.byteLength;
+    }
+    return { ok: true, bytes } as const;
   } catch {
     return { ok: false, code: "invalid_request" } as const;
   } finally {
     reader.releaseLock();
+  }
+}
+
+export async function readBoundedJsonBody(request: Request, maxBodyBytes: number) {
+  const raw = await readBoundedJsonBytes(request, maxBodyBytes);
+  if (!raw.ok) return raw;
+  try {
+    const body: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw.bytes));
+    return { ok: true, body } as const;
+  } catch {
+    return { ok: false, code: "invalid_request" } as const;
   }
 }
