@@ -10,6 +10,10 @@ import { automationAdmissionControlSchema } from "@/lib/factory-automations/admi
 const responseSchema = z.object({ control: automationAdmissionControlSchema });
 type Control = z.infer<typeof automationAdmissionControlSchema>;
 
+function newerControl(current: Control | null, incoming: Control | null) {
+  return incoming && (!current || incoming.generation > current.generation) ? incoming : current;
+}
+
 export function AutomationAdmissionPanel({
   initial,
   endpoint,
@@ -20,12 +24,12 @@ export function AutomationAdmissionPanel({
   activeRevision: boolean;
 }) {
   const router = useRouter();
-  const [confirmed, setConfirmed] = useState<Control | null>(null);
+  const [control, setControl] = useState(initial);
   const [feedback, setFeedback] = useState("");
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
-  const control =
-    confirmed && (!initial || confirmed.generation > initial.generation) ? confirmed : initial;
+  const latest = newerControl(control, initial);
+  if (latest !== control) setControl(latest);
 
   async function update() {
     if (!control || !activeRevision || busy.current) return;
@@ -51,7 +55,7 @@ export function AutomationAdmissionPanel({
         if (!latest.ok) throw new Error("Control unavailable");
         const parsed = responseSchema.parse(await latest.json()).control;
         if (parsed.automationId !== control.automationId) throw new Error("Unexpected automation");
-        setConfirmed(parsed);
+        setControl((current) => newerControl(current, parsed));
         setFeedback("The automation changed. Review its current status and try again.");
         router.refresh();
         return;
@@ -59,7 +63,7 @@ export function AutomationAdmissionPanel({
       if (!response.ok) throw new Error("Control unavailable");
       const parsed = responseSchema.parse(await response.json()).control;
       if (parsed.automationId !== control.automationId) throw new Error("Unexpected automation");
-      setConfirmed(parsed);
+      setControl((current) => newerControl(current, parsed));
       router.refresh();
     } catch {
       setFeedback("Could not change automation status. Refresh this page and try again.");
