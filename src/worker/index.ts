@@ -23,6 +23,7 @@ import { pruneFactoryCommandAdmissions } from "@/lib/factory-command-authorizati
 import { drainFactoryDiagnoses } from "@/lib/factory-diagnosis/worker";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
+import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/admission-service";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
   reconcileBenchmarkEvaluations,
@@ -237,6 +238,7 @@ async function main() {
     let checkingRoutingCanaries = false;
     let reconcilingBenchmarkSchedules = false;
     let reconcilingBenchmarkEvaluations = false;
+    let admittingFactoryAutomationOccurrences = false;
     maintenanceTimers.push(
       setInterval(() => {
         if (!deliveringFactoryEvents) {
@@ -336,6 +338,16 @@ async function main() {
               await reconcileBenchmarkEvaluations(admin);
             } finally {
               reconcilingBenchmarkEvaluations = false;
+            }
+          });
+        }
+        if (!admittingFactoryAutomationOccurrences) {
+          admittingFactoryAutomationOccurrences = true;
+          timerTasks.run("factory automation occurrences", async () => {
+            try {
+              await drainFactoryAutomationOccurrences(admin);
+            } finally {
+              admittingFactoryAutomationOccurrences = false;
             }
           });
         }

@@ -10440,6 +10440,7 @@ export type Database = {
           transition_id: string
         }[]
       }
+      admit_next_factory_automation_occurrence: { Args: never; Returns: Json }
       adopt_factory_improvement: {
         Args: {
           p_actor_user_id: string
@@ -11597,6 +11598,18 @@ export type Database = {
       complete_session_job_attempt: {
         Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
         Returns: boolean
+      }
+      configure_factory_automation_admission: {
+        Args: {
+          p_actor_user_id: string
+          p_automation_id: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_max_concurrent_sessions: number
+          p_paused: boolean
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       configure_factory_benchmark_inference_connection: {
         Args: {
@@ -14921,6 +14934,14 @@ export type Database = {
         }
         Returns: Json
       }
+      read_factory_automation_admission_control: {
+        Args: {
+          p_automation_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_factory_benchmark_comparison: {
         Args: {
           p_actor_user_id: string
@@ -15380,6 +15401,19 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: boolean
+      }
+      record_factory_automation_occurrence: {
+        Args: {
+          p_automation_id: string
+          p_causal_session_id?: string
+          p_event: Json
+          p_expected_revision_id: string
+          p_factory_id: string
+          p_source_key: string
+          p_source_namespace: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       record_factory_benchmark_replay_operation: {
         Args: {

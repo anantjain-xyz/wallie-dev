@@ -1,0 +1,25 @@
+\ir factory_automation_dry_run.psql
+
+create temp table automation_occurrence_rule as
+select scope.*, (draft.value->>'automationId')::uuid as automation_id,
+  (draft.value->>'draftRevisionId')::uuid as revision_id
+from op651_scope scope
+cross join lateral (select pg_temp.create_dry_run_automation(101, pg_temp.dry_run_definition('schedule')) as value) draft;
+select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, revision_id)
+from automation_occurrence_rule;
+
+create function pg_temp.record_test_occurrence(
+  p_key text, p_revision_id uuid default null, p_causal_session_id uuid default null,
+  p_event jsonb default '{"kind":"schedule","scheduledFor":"2026-11-23T09:00:00-08:00"}'::jsonb
+) returns jsonb language sql as $$
+  select public.record_factory_automation_occurrence(rule.workspace_id, rule.factory_id, rule.automation_id,
+    coalesce(p_revision_id, rule.revision_id), 'schedule', p_key, p_event, p_causal_session_id)
+  from automation_occurrence_rule rule
+$$;
+
+create function pg_temp.configure_test_automation(p_generation bigint, p_paused boolean, p_capacity integer)
+returns jsonb language sql as $$
+  select public.configure_factory_automation_admission(rule.workspace_id, rule.factory_id, pg_temp.op651_id(1),
+    rule.automation_id, p_generation, p_paused, p_capacity)
+  from automation_occurrence_rule rule
+$$;

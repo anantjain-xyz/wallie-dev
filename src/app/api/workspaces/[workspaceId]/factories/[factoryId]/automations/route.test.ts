@@ -7,6 +7,10 @@ const mocked = vi.hoisted(() => ({ workspaceAccess: vi.fn(), adminClient: vi.fn(
 vi.mock("@/lib/workspaces/access", () => ({ requireWorkspaceAccessById: mocked.workspaceAccess }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: mocked.adminClient }));
 
+import {
+  GET as getAdmissionControl,
+  POST as configureAdmission,
+} from "./[automationId]/admission-control/route";
 import { POST as dryRun } from "./[automationId]/dry-run/route";
 import { GET as getDetail, POST as mutate } from "./[automationId]/route";
 import { GET, POST } from "./route";
@@ -45,6 +49,8 @@ const automation = {
     createdByMemberId: id(13),
   },
 };
+const admissionControl = { automationId, generation: 0, paused: false, maxConcurrentSessions: 1 };
+const updatedControl = { automationId, generation: 1, paused: true, maxConcurrentSessions: 2 };
 const event = { kind: "pull-request", repositoryId: id(6), action: "merged", baseBranch: "main" };
 const preview = {
   automationId,
@@ -76,17 +82,27 @@ function fixture({
     if (name === "factories") return Response.json(visible ? [{ id: scope.factoryId }] : []);
     if (!readable) return Response.json(null);
     if (name === "dry_run_factory_automation") return Response.json(dryRunResult);
+    if (name === "read_factory_automation_admission_control")
+      return Response.json(admissionControl);
     return Response.json(
       name === "list_factory_automations"
         ? { automations: [automation], nextCursor: null }
         : automation,
     );
   });
-  const writeFetch = vi.fn<typeof fetch>(async () =>
-    errorCode
-      ? Response.json({ code: errorCode, message: "Private assignment detail" }, { status: 400 })
-      : Response.json(automation),
-  );
+  const writeFetch = vi.fn<typeof fetch>(async (input) => {
+    if (errorCode) {
+      return Response.json(
+        { code: errorCode, message: "Private assignment detail" },
+        { status: 400 },
+      );
+    }
+    return Response.json(
+      String(input).endsWith("/configure_factory_automation_admission")
+        ? updatedControl
+        : automation,
+    );
+  });
   const reader = createClient<Database>("https://fixture.invalid", "reader-key", {
     global: { fetch: signedInFetch },
   });
@@ -276,6 +292,67 @@ describe("factory automation dry run", () => {
     const result = await dryRun(command({ revisionId, event: invalid }), { params: detailParams });
     expect(result.status).toBe(400);
     expect(signedInFetch).toHaveBeenCalledTimes(1);
+    expect(mocked.adminClient).not.toHaveBeenCalled();
+  });
+});
+
+describe("automation admission controls", () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  const pause = { expectedGeneration: 0, paused: true, maxConcurrentSessions: 2 };
+
+  it("loads the scoped control with the signed-in client", async () => {
+    const { signedInFetch } = fixture();
+    const response = await getAdmissionControl(new Request(api), { params: detailParams });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ control: admissionControl });
+    const [url, request] = signedInFetch.mock.calls[1];
+    expect(String(url)).toMatch(/\/read_factory_automation_admission_control$/);
+    expect(JSON.parse(String(request?.body))).toEqual({
+      p_workspace_id: scope.workspaceId,
+      p_factory_id: scope.factoryId,
+      p_automation_id: automationId,
+    });
+    expect(mocked.adminClient).not.toHaveBeenCalled();
+  });
+
+  it("configures pause and capacity using the signed-in actor and expected generation", async () => {
+    const { writeFetch } = fixture();
+    const response = await configureAdmission(command(pause), { params: detailParams });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ control: updatedControl });
+    const [url, request] = writeFetch.mock.calls[0];
+    expect(String(url)).toMatch(/\/configure_factory_automation_admission$/);
+    expect(JSON.parse(String(request?.body))).toEqual({
+      p_workspace_id: scope.workspaceId,
+      p_factory_id: scope.factoryId,
+      p_actor_user_id: actorId,
+      p_automation_id: automationId,
+      p_expected_generation: 0,
+      p_paused: true,
+      p_max_concurrent_sessions: 2,
+    });
+  });
+
+  it("rejects an overwritten generation and masks out-of-scope controls", async () => {
+    fixture({ errorCode: "PT409", readable: false });
+    const stale = await configureAdmission(command(pause), { params: detailParams });
+    expect(stale.status).toBe(409);
+    expect((await getAdmissionControl(new Request(api), { params: detailParams })).status).toBe(
+      404,
+    );
+  });
+
+  it.each([
+    { ...pause, maxConcurrentSessions: 0 },
+    { ...pause, maxConcurrentSessions: 101 },
+    { ...pause, expectedGeneration: -1 },
+    { ...pause, actorUserId: id(77) },
+  ])("rejects invalid controls before a privileged command", async (invalid) => {
+    fixture();
+    const response = await configureAdmission(command(invalid), { params: detailParams });
+    expect(response.status).toBe(400);
     expect(mocked.adminClient).not.toHaveBeenCalled();
   });
 });
