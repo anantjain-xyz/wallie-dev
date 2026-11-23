@@ -2,6 +2,7 @@ import {
   MAX_WORKFLOW_NODE_VISITS,
   type WorkflowDiagnostic,
   type WorkflowGraphDefinition,
+  type WorkflowRoutePolicy,
 } from "./workflow-schema";
 
 type WorkflowNode = WorkflowGraphDefinition["nodes"][number];
@@ -103,6 +104,68 @@ function validateBranch(
   }
 }
 
+function validateRoutePolicy(
+  policy: WorkflowRoutePolicy,
+  nodes: readonly WorkflowNode[],
+  outgoing: EdgesByNode,
+): WorkflowDiagnostic[] {
+  const diagnostics: WorkflowDiagnostic[] = [];
+  const routes = nodes.filter(({ kind }) => kind === "route");
+  const routeIds = new Set<string>(routes.map(({ id }) => id));
+  for (const id of Object.keys(policy.nodes)) {
+    if (!routeIds.has(id)) {
+      diagnostics.push({
+        code: "invalid_route_policy",
+        path: ["routePolicy", "nodes", id],
+        message: `Only route nodes can have a route policy. "${id}" is not a route node.`,
+      });
+    }
+  }
+
+  for (const { id } of routes) {
+    const path = ["routePolicy", "nodes", id];
+    if (!Object.hasOwn(policy.nodes, id)) {
+      diagnostics.push({
+        code: "invalid_route_policy",
+        path,
+        message: `Declare a policy for route node "${id}".`,
+      });
+      continue;
+    }
+    const { allowedDestinationIds, fallback } = policy.nodes[id];
+    const edges = new Map((outgoing.get(id) ?? []).map(({ edge }) => [edge.to, edge.kind]));
+    if (fallback.kind === "route" && edges.get(fallback.destinationId) !== "route") {
+      diagnostics.push({
+        code: "invalid_route_policy",
+        path: [...path, "fallback", "destinationId"],
+        message: "Use a forward route edge from this node for the fallback.",
+      });
+    }
+
+    const seen = new Set<NodeId>();
+    allowedDestinationIds.forEach((destination, index) => {
+      const edgeKind = edges.get(destination);
+      let message: string | undefined;
+      if (seen.has(destination)) {
+        message = `Destination "${destination}" is already allowed.`;
+      } else if (edgeKind !== "route" && edgeKind !== "loop") {
+        message = `Declare a route or loop edge from "${id}" to "${destination}".`;
+      } else if (fallback.kind === "route" && fallback.destinationId === destination) {
+        message = "Keep the fallback destination out of the proposed destination list.";
+      }
+      if (message) {
+        diagnostics.push({
+          code: "invalid_route_policy",
+          path: [...path, "allowedDestinationIds", index],
+          message,
+        });
+      }
+      seen.add(destination);
+    });
+  }
+  return diagnostics;
+}
+
 export function validateWorkflowTopology(graph: WorkflowGraphDefinition): WorkflowDiagnostic[] {
   const diagnostics: WorkflowDiagnostic[] = [];
   const nodesById = new Map<NodeId, WorkflowNode>();
@@ -165,6 +228,9 @@ export function validateWorkflowTopology(graph: WorkflowGraphDefinition): Workfl
     });
   }
   if (!entry || diagnostics.length) return diagnostics;
+  if (graph.routePolicy) {
+    diagnostics.push(...validateRoutePolicy(graph.routePolicy, graph.nodes, outgoing));
+  }
 
   if (entry.kind === "join" || incoming.get(entry.id)?.some(({ edge }) => edge.kind !== "loop")) {
     diagnostics.push({

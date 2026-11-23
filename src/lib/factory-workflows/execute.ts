@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
@@ -16,8 +16,10 @@ import {
   type DeterministicWorkflowOccurrence,
   type WorkflowOccurrenceMetadata,
   type WorkflowOccurrencePin,
+  workflowVisitLimitBlocker,
 } from "./deterministic-command";
 import { observeWorkflowCheckpoint, observeWorkflowHumanApproval } from "./observe-evidence";
+import { parseWorkflowRouteProposal } from "./route-decision";
 
 type Admin = SupabaseClient<Database>;
 type CommandTarget = DeterministicWorkflowOccurrence["command"];
@@ -28,6 +30,37 @@ type WorkflowScope = Pick<
 >;
 type ValidationPolicyBlocker = { status: "blocked"; code: "validation_policy_required" };
 
+const routeDecisionId = z.object({ decision_id: z.string().uuid() });
+const routeDecisionReceiptSchema = z.union([
+  routeDecisionId.extend({
+    resolution: z.enum(["selected", "fallback"]),
+    transition_id: z.string().uuid(),
+    target_occurrence_id: z.string().uuid(),
+  }),
+  routeDecisionId.extend({
+    resolution: z.literal("clarification"),
+    transition_id: z.null(),
+    target_occurrence_id: z.null(),
+  }),
+]);
+
+function isWorkflowVisitLimitError(error: PostgrestError) {
+  return error.code === "PT409" && error.details === workflowVisitLimitBlocker.code;
+}
+
+function routeDecisionProgress(value: unknown) {
+  const receipt = routeDecisionReceiptSchema.parse(value);
+  const decision = { status: "route_decided" as const, decisionId: receipt.decision_id };
+  if (receipt.resolution === "clarification")
+    return { ...decision, resolution: receipt.resolution };
+  return {
+    ...decision,
+    resolution: receipt.resolution,
+    transitionId: receipt.transition_id,
+    targetOccurrenceId: receipt.target_occurrence_id,
+  };
+}
+
 const snapshotSchema = z.object({
   execution: z.object({
     root_session_id: z.string().uuid(),
@@ -35,6 +68,10 @@ const snapshotSchema = z.object({
     factory_id: z.string().uuid(),
     graph_revision_id: z.string().uuid(),
     graph_input_run_id: z.string().uuid().nullish(),
+    graph_visit_limit_exhausted: z.boolean().optional(),
+    graph_route_blocker: z
+      .enum(["root_unavailable", "execution_policy_required", "execution_budget_exhausted"])
+      .optional(),
     workflow_json: z.string(),
     workflow_digest: z.string().regex(/^[0-9a-f]{64}$/),
     generation: z.number().int().positive().safe(),
@@ -246,7 +283,7 @@ async function readOccurrenceContext(admin: Admin, pin: WorkflowOccurrenceMetada
     occurrence,
     node,
     results,
-    edges: graph.edges,
+    graph,
   };
 }
 
@@ -323,15 +360,87 @@ export async function resumeFactoryWorkflowOccurrence(
   return { ownership, progress };
 }
 
+/** Submit bounded agent output for the exact owned route occurrence. */
+export async function submitFactoryWorkflowRouteProposal(
+  admin: Admin,
+  pin: WorkflowOccurrencePin,
+  rawProposal: string,
+) {
+  const parsed = parseWorkflowRouteProposal(rawProposal);
+  if (!parsed.ok) return { status: "blocked", code: parsed.code } as const;
+  const observed = await readOccurrenceContext(admin, pin);
+  if (observed.status !== "current") return observed;
+  const { scope, node, graph, execution } = observed;
+  if (
+    node.kind !== "route" ||
+    !graph.routePolicy ||
+    !Object.hasOwn(graph.routePolicy.nodes, node.id)
+  )
+    return { status: "blocked", code: "invalid_route_policy" } as const;
+
+  const proposal = parsed.proposal;
+  const policy = graph.routePolicy.nodes[node.id];
+  if (
+    proposal.kind === "choose" &&
+    !policy.allowedDestinationIds.some(
+      (destinationId) => destinationId === proposal.destinationNodeId,
+    )
+  )
+    return { status: "blocked", code: "destination_not_allowed" } as const;
+  const { data, error } = await admin
+    .rpc("admit_factory_workflow_route_decision", {
+      ...scope,
+      p_expected_generation: pin.p_expected_generation,
+      p_ownership_token: pin.p_ownership_token,
+      p_route_occurrence_id: pin.occurrenceId,
+      p_reason: proposal.reason,
+      ...(proposal.kind === "choose"
+        ? { p_destination_id: proposal.destinationNodeId, p_confidence: proposal.confidence }
+        : {}),
+    })
+    .maybeSingle();
+  if (error) {
+    if (isWorkflowVisitLimitError(error)) return workflowVisitLimitBlocker;
+    throw error;
+  }
+  return data === null
+    ? ({
+        status: "blocked",
+        code: execution.graph_route_blocker ?? "execution_budget_exhausted",
+      } as const)
+    : routeDecisionProgress(data);
+}
+
 /** The worker supplies the captured ownership token. Scope and proof targets come from the ledger. */
 export async function executeFactoryWorkflowOccurrence(admin: Admin, pin: WorkflowOccurrencePin) {
   const observed = await readOccurrenceContext(admin, pin);
   if (observed.status !== "current") return observed;
-  const { scope, execution, occurrence, node, results, edges } = observed;
-  const nextEdge = edges.find((edge) => edge.kind === "next" && edge.from === pin.nodeId);
+  const { scope, execution, occurrence, node, results, graph } = observed;
+  if (node.kind === "route") {
+    if (!graph.routePolicy || !Object.hasOwn(graph.routePolicy.nodes, node.id))
+      return { status: "blocked", code: "invalid_route_policy" } as const;
+    const { data, error } = await admin.rpc("read_factory_workflow_route_decision", {
+      ...scope,
+      p_route_occurrence_id: occurrence.occurrence_id,
+    });
+    if (error) throw error;
+    if (data !== null) return routeDecisionProgress(data);
+    if (execution.graph_route_blocker)
+      return { status: "blocked", code: execution.graph_route_blocker } as const;
+    if (
+      execution.graph_visit_limit_exhausted &&
+      graph.routePolicy.nodes[node.id].fallback.kind === "route"
+    )
+      return workflowVisitLimitBlocker;
+    return { status: "pending", code: "route_proposal_required" } as const;
+  }
+  const nextEdge = graph.edges.find((edge) => edge.kind === "next" && edge.from === pin.nodeId);
   const admitNext: DeterministicWorkflowCommands["admitNext"] = async (args) => {
     const result = await admin.rpc("admit_factory_workflow_next", args).maybeSingle();
-    if (result.error) throw result.error;
+    if (result.error) {
+      if (isWorkflowVisitLimitError(result.error)) return workflowVisitLimitBlocker;
+      throw result.error;
+    }
     return result.data ?? { status: "blocked", code: "evidence_stale" };
   };
   const stored = results.find((row) => row.occurrence_id === pin.occurrenceId);

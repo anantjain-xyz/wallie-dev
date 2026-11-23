@@ -131,3 +131,17 @@ A graph execution pins the compiled graph revision and its base factory definiti
 | Human gate | A current approval of the exact artifact under the pinned approver policy                                            |
 
 Pending evidence and open blockers leave the occurrence available for recovery. Success records the verified result before admitting a successor. A recovery handoff issues a fresh token and continues from the original result or transition.
+
+## Bounded route decisions
+
+Route nodes use stable destination IDs and a pinned confidence threshold. The compiled policy declares each route's proposal allowlist, one escalation path, and root-wide visit and loop limits.
+
+| Proposal                                                                 | Outcome                                                       |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| Allowed destination with sufficient confidence                           | Record the exact route decision and admit that destination    |
+| Allowed destination below the threshold or an unresolved proposal        | Use the configured forward fallback or record a clarification |
+| Unknown destination, exhausted limits, or a grant outside the root scope | Reject without admitting work                                 |
+
+The worker accepts bounded JSON with a destination, confidence, and reason, or an explicit unresolved reason. The reason is evidence text. The configured policy supplies every destination and permission.
+
+Admission checks the current grant and execution budget under the root lock. It records the decision before creating a target occurrence in the same transaction. A clarification retains the decision without creating a target. An exact retry returns the original receipt across ownership changes. A changed proposal for the same occurrence conflicts with the retained decision.

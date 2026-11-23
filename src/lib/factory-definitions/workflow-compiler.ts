@@ -10,6 +10,7 @@ import {
   type WorkflowDiagnostic,
   type WorkflowGraphDefinition,
   type WorkflowNodeId,
+  type WorkflowRoutePolicy,
 } from "./workflow-schema";
 
 type WorkflowReference = Pick<FactoryReferenceEntry, "id" | "workspaceId">;
@@ -63,13 +64,32 @@ export function compileWorkflowGraph(
   ];
   if (diagnostics.length) return { ok: false, diagnostics };
 
+  const { routePolicy, ...graphWithoutPolicy } = graph;
   const bundle = {
-    ...graph,
+    ...graphWithoutPolicy,
+    ...(routePolicy ? { routePolicy: canonicalRoutePolicy(routePolicy) } : {}),
     nodes: graph.nodes.map(canonicalWorkflowNode).sort(compareIds),
     edges: [...graph.edges].sort(compareIds),
     grants: [...graph.grants].sort(compareIds),
   };
   return { ok: true, bundle, ...serializeFactoryDefinition(bundle) };
+}
+
+function canonicalRoutePolicy(policy: WorkflowRoutePolicy): WorkflowRoutePolicy {
+  return {
+    ...policy,
+    maxLoopTraversals: Math.max(0, policy.maxLoopTraversals),
+    nodes: Object.fromEntries(
+      Object.entries(policy.nodes).map(([id, node]) => [
+        id,
+        {
+          ...node,
+          minimumConfidence: Math.max(0, node.minimumConfidence),
+          allowedDestinationIds: [...node.allowedDestinationIds].sort(),
+        },
+      ]),
+    ),
+  };
 }
 
 function canonicalWorkflowNode(

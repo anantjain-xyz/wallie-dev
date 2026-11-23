@@ -3,12 +3,14 @@ import { z } from "zod";
 import { pipelineApproversSchema } from "@/lib/pipeline/stage-schema";
 
 export const MAX_WORKFLOW_NODE_VISITS = 1_024;
+const MAX_WORKFLOW_NODES = 128;
 
-export const workflowNodeIdSchema = z
+const workflowNodeIdTextSchema = z
   .string()
   .max(96)
-  .regex(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/, "Use a stable lowercase node ID.")
-  .brand<"WorkflowNodeId">();
+  .regex(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/, "Use a stable lowercase node ID.");
+
+export const workflowNodeIdSchema = workflowNodeIdTextSchema.brand<"WorkflowNodeId">();
 
 export const workflowEdgeIdSchema = z
   .string()
@@ -52,20 +54,58 @@ const workflowEdgeSchema = z.discriminatedUnion("kind", [
   edge.extend({ kind: z.literal("branch-result") }),
 ]);
 
+const workflowRouteFallbackSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("route"), destinationId: workflowNodeIdSchema }).strict(),
+  z.object({ kind: z.literal("clarification") }).strict(),
+]);
+const workflowRoutePoliciesByNodeSchema = z
+  .unknown()
+  .refine((value) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return true;
+    // Match the record parser's enumerable keys without reading entry values.
+    const keys = new Set<string>();
+    for (const key in value) {
+      keys.add(key);
+      if (keys.size > MAX_WORKFLOW_NODES) return false;
+    }
+    return true;
+  }, `Declare at most ${MAX_WORKFLOW_NODES} route policy entries.`)
+  .pipe(
+    z.record(
+      workflowNodeIdTextSchema,
+      z
+        .object({
+          minimumConfidence: z.number().finite().min(0).max(1),
+          allowedDestinationIds: z.array(workflowNodeIdSchema).max(MAX_WORKFLOW_NODES),
+          fallback: workflowRouteFallbackSchema,
+        })
+        .strict(),
+    ),
+  );
+const workflowRoutePolicySchema = z
+  .object({
+    maxNodeVisits: z.number().int().min(1).max(MAX_WORKFLOW_NODE_VISITS),
+    maxLoopTraversals: z.number().int().min(0).max(MAX_WORKFLOW_NODE_VISITS),
+    nodes: workflowRoutePoliciesByNodeSchema,
+  })
+  .strict();
+
 export const workflowGraphSchema = z
   .object({
     schemaVersion: z.literal(1),
     kind: z.literal("graph"),
     entryNodeId: workflowNodeIdSchema,
-    nodes: z.array(workflowNodeSchema).min(1).max(128),
+    nodes: z.array(workflowNodeSchema).min(1).max(MAX_WORKFLOW_NODES),
     edges: z.array(workflowEdgeSchema).max(512),
     grants: z
       .array(z.object({ id: uuid, version: z.number().int().positive().safe() }).strict())
       .max(128),
+    routePolicy: workflowRoutePolicySchema.optional(),
   })
   .strict();
 
 export type WorkflowGraphDefinition = z.output<typeof workflowGraphSchema>;
+export type WorkflowRoutePolicy = z.output<typeof workflowRoutePolicySchema>;
 export type WorkflowNodeId = z.output<typeof workflowNodeIdSchema>;
 
 export type WorkflowDiagnostic = {
@@ -80,6 +120,7 @@ export type WorkflowDiagnostic = {
     | "invalid_join"
     | "unbounded_cycle"
     | "invalid_loop"
+    | "invalid_route_policy"
     | "expansion_limit"
     | "invalid_grant";
   message: string;
