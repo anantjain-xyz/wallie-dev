@@ -83,6 +83,7 @@ export async function createWorkspaceSessionSandbox(
   admin: AdminClient,
   input: CreateSessionSandboxInput & {
     onSandboxCreated: NonNullable<CreateSessionSandboxInput["onSandboxCreated"]>;
+    onSandboxReserved?: (operationId: string) => Promise<void>;
     workspaceId: string;
   },
 ) {
@@ -94,6 +95,7 @@ export async function createWorkspaceSessionSandbox(
   });
   let recorded = false;
   try {
+    await input.onSandboxReserved?.(operationId);
     const sandbox = await createSessionSandbox({
       ...input,
       acquisition: { operationId, workspaceId: input.workspaceId },

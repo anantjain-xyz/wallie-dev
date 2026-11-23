@@ -102,6 +102,14 @@ async function cleanupResourceReservations(
             });
           }
         }
+        if (connection && operation.connection_revision) {
+          const { data, error } = await admin.rpc("settle_factory_workflow_sandbox_acquisition", {
+            p_operation_id: operation.id,
+            p_stopped_sandbox_ids: ids,
+          });
+          if (error) throw error;
+          if (!data) throw new Error("Could not reconcile workflow sandbox acquisition.");
+        }
         // An empty lookup after the recovery horizon releases the expiry
         // reservation. Only a known, stopped handle can support a stop receipt.
       } else if (!operation.settled_at && !recoveryDue) {

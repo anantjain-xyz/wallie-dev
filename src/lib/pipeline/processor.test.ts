@@ -178,7 +178,8 @@ vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
 
-vi.mock("@/lib/workspaces/resource-operations", () => ({
+vi.mock("@/lib/workspaces/resource-operations", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/workspaces/resource-operations")>()),
   createWorkspaceSessionSandbox: (_admin: unknown, input: unknown) =>
     mocked.createSessionSandbox(input),
 }));
@@ -407,6 +408,7 @@ interface MockOptions {
   retentionUpdateError?: { message: string } | null;
   beforeRetentionUpdate?: () => Promise<void>;
   runSandboxUpdateMissed?: boolean;
+  sandboxReservationRefused?: boolean;
   runRows?: Array<Record<string, unknown>>;
   githubInstallation?: { id: string; installation_id: number } | null;
   githubRepositories?: Array<{
@@ -828,6 +830,10 @@ function buildAdminMock(opts: MockOptions) {
 
   const invokeRpc = async (fn: string, args?: unknown) => {
     const payload = (args ?? {}) as Record<string, unknown>;
+    if (fn === "register_factory_workflow_sandbox_acquisition") {
+      return { data: !opts.sandboxReservationRefused, error: null };
+    }
+    if (fn === "settle_workspace_resource_operation") return { data: null, error: null };
     if (fn === "get_session_factory_routing_execution") {
       return { data: opts.routingExecution ?? null, error: null };
     }
@@ -3320,6 +3326,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
 
     mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+      await input.onSandboxReserved?.("operation-1");
       try {
         await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
         throw new Error("Expected ownership callback to reject");
@@ -3332,7 +3339,17 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
     expect(
       rpc.mock.calls.map(([name]) => name).filter((name) => name !== "append_agent_run_event"),
-    ).toEqual(["start_session_job_attempt", "get_session_execution_budget"]);
+    ).toEqual([
+      "start_session_job_attempt",
+      "get_session_execution_budget",
+      "register_factory_workflow_sandbox_acquisition",
+      "record_late_factory_workflow_sandbox",
+    ]);
+    expect(rpc).toHaveBeenCalledWith("register_factory_workflow_sandbox_acquisition", {
+      p_run_id: "run-1",
+      p_attempt_count: 1,
+      p_operation_id: "operation-1",
+    });
     expect(insertedMessages.some((message) => message.kind === "worker_error")).toBe(false);
 
     // updateRunSandbox matched zero rows (run already canceled), so the
@@ -3344,6 +3361,27 @@ describe("processPipelineJob (generic stage runner)", () => {
         revision: "revision-1",
       },
     });
+  });
+
+  it("releases the empty reservation when registration reports that cancellation won", async () => {
+    const { admin, rpc, insertedMessages } = buildAdminMock({
+      session: baseSession(),
+      agentConfig: [],
+      sandboxReservationRefused: true,
+    });
+    const issueProviderRequest = vi.fn();
+    mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+      await input.onSandboxReserved?.("operation-1");
+      issueProviderRequest();
+    });
+
+    expect((await processPipelineJob({ admin, job: baseJob() })).result).toBe("idle");
+    expect(rpc).toHaveBeenCalledWith("settle_workspace_resource_operation", {
+      p_operation_id: "operation-1",
+      p_transferred: true,
+    });
+    expect(issueProviderRequest).not.toHaveBeenCalled();
+    expect(insertedMessages.some((message) => message.kind === "worker_error")).toBe(false);
   });
 
   it("bails before creating a sandbox when the job was canceled after the claim", async () => {

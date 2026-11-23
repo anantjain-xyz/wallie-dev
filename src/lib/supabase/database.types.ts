@@ -15238,6 +15238,14 @@ export type Database = {
           graph_revision_id: string
         }[]
       }
+      register_factory_workflow_sandbox_acquisition: {
+        Args: {
+          p_attempt_count: number
+          p_operation_id: string
+          p_run_id: string
+        }
+        Returns: boolean
+      }
       reject_session_stage: {
         Args: {
           p_agent_model_name: string
@@ -16561,6 +16569,10 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      settle_factory_workflow_sandbox_acquisition: {
+        Args: { p_operation_id: string; p_stopped_sandbox_ids: string[] }
+        Returns: boolean
       }
       settle_factory_workflow_sandbox_stop: {
         Args: {

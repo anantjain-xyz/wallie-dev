@@ -18,11 +18,14 @@ stateDiagram-v2
 
 Resume rechecks the pinned policies, grants, source, and stage. It reuses parked jobs and starts one new attempt for each eligible retired stage. An old worker cannot adopt new output or restart a retired attempt. An exact replay returns the recorded command receipt.
 
+An interrupted foreman keeps its original issue and measured usage. After resume rotates ownership, the current owner can resolve an undecided occurrence through the scoped route command.
+
 ## Cleanup
 
 - Workflow retirement records the exact sandbox obligation before returning. Node and Workerd maintenance lease and retry each pending stop.
 - A provider-confirmed stop or an exact already-gone response settles a known handle. The receipt names the workspace, provider, connection revision, and handle.
-- If cancellation wins before the provider address arrives, a late callback records the handle against the retired run. If no callback arrives, maintenance looks up the existing provisioning reservation under the original connection.
+- The saved provisioning reservation binds the exact run before provider creation. A late callback records the handle against the retired run. When a worker dies before its callback, maintenance uses the same reservation to find the sandbox and reconcile its stop receipt.
+- If cancellation wins before registration, the worker releases its empty reservation. The ledger records unregistered acquisitions separately from provider stops and still accepts an exact late handle from work started before registration was deployed.
 - An unresolved provider request keeps its credentials and obligation through the acquisition and lifetime window. An empty exact lookup after that window records expiry. A stop confirmation requires provider evidence.
 
 ## Operator commands

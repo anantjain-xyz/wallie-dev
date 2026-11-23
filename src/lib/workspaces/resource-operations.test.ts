@@ -80,6 +80,20 @@ describe("workspace resource admission", () => {
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
   });
 
+  it("checks the exact saved reservation before issuing provider work", async () => {
+    const state = client();
+    const onSandboxReserved = vi.fn(async (operationId: string) => {
+      expect(state.operations).toEqual([{ id: operationId, resourceId: null, settled: false }]);
+      expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+      throw new Error("Workflow no longer owns this attempt.");
+    });
+    await expect(
+      createWorkspaceSessionSandbox(state.admin, { ...input, onSandboxReserved }),
+    ).rejects.toThrow("Workflow no longer owns this attempt.");
+    expect(onSandboxReserved).toHaveBeenCalledExactlyOnceWith("operation-1");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+  });
+
   it("retains a late sandbox ID for deletion cleanup without granting run ownership", async () => {
     const state = client({ deleting: true });
     const owner = vi.fn();

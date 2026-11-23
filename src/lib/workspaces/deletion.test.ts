@@ -55,6 +55,7 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
     removeFailure: false,
     reservationDeleteFailure: false,
     cleanupReceiptFailure: false,
+    acquisitionSettlementFailure: false,
     cleanupReceipts: [] as Tables<"workspace_sandbox_cleanup_receipts">[],
     lateSandboxId: null as string | null,
     transferBeforeClaim: false,
@@ -192,6 +193,8 @@ function fixture(initialOperations: Tables<"workspace_resource_operations">[] = 
     return query;
   };
   const rpc = vi.fn(async (name: string) => {
+    if (name === "settle_factory_workflow_sandbox_acquisition")
+      return { data: !state.acquisitionSettlementFailure, error: null };
     if (name !== "finish_workspace_deletion") throw new Error(`Unexpected RPC ${name}`);
     const blocked =
       state.operations.length > 0 ||
@@ -302,6 +305,28 @@ describe("durable workspace deletion", () => {
         confirmed_at: "2026-10-10T00:00:00Z",
       },
     ]);
+    expect(f.rpc).toHaveBeenCalledWith("settle_factory_workflow_sandbox_acquisition", {
+      p_operation_id: "operation-1",
+      p_stopped_sandbox_ids: ["recovered-sandbox"],
+    });
+    expect(f.state.operations).toEqual([]);
+  });
+
+  it("keeps the acquisition reservation until its workflow proof is reconciled", async () => {
+    const f = fixture([
+      operation({ resource_id: "recovered-sandbox", connection_revision: "revision-1" }),
+    ]);
+    f.state.acquisitionSettlementFailure = true;
+    await expect(resumeWorkspaceDeletion(f.admin, workspaceId)).rejects.toThrow(
+      "Could not reconcile workflow sandbox acquisition.",
+    );
+    expect(f.state.cleanupReceipts).toEqual([
+      expect.objectContaining({ sandbox_id: "recovered-sandbox" }),
+    ]);
+    expect(f.state.operations).toHaveLength(1);
+
+    f.state.acquisitionSettlementFailure = false;
+    expect(await resumeWorkspaceDeletion(f.admin, workspaceId)).toBe(true);
     expect(f.state.operations).toEqual([]);
   });
 

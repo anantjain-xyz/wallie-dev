@@ -590,8 +590,83 @@ begin
   return execution_id;
 end;
 $$;
--- Provider work follows the durable cancellation receipt. An unbound handle
--- stays unresolved until the exact retired run's late callback identifies it.
+-- The reservation survives transfer and deletion of the workspace operation.
+-- Its evidence can arrive before or after workflow retirement.
+create table internal.factory_workflow_sandbox_acquisitions (
+  operation_id uuid primary key,
+  root_session_id uuid not null references internal.factory_workflow_executions(root_session_id) on delete cascade,
+  workspace_id uuid not null,
+  factory_id uuid not null,
+  session_id uuid not null,
+  job_id uuid not null,
+  run_id uuid not null unique,
+  attempt_count integer not null check (attempt_count > 0),
+  sandbox_provider text not null check (sandbox_provider in ('vercel', 'e2b', 'daytona')),
+  sandbox_connection_revision uuid not null,
+  recovery_after timestamptz not null,
+  lookup_completed_at timestamptz,
+  stopped_sandbox_ids text[],
+  foreign key (root_session_id, workspace_id, factory_id)
+    references public.sessions(id, workspace_id, factory_id) on delete cascade,
+  check ((lookup_completed_at is null) = (stopped_sandbox_ids is null))
+);
+alter table internal.factory_workflow_sandbox_acquisitions enable row level security;
+revoke all on table internal.factory_workflow_sandbox_acquisitions from public, anon, authenticated, service_role;
+
+create function public.register_factory_workflow_sandbox_acquisition(
+  p_run_id uuid, p_attempt_count integer, p_operation_id uuid
+) returns boolean language plpgsql security definer set search_path = '' as $$
+declare
+  run public.agent_runs;
+  operation public.workspace_resource_operations;
+  workflow_root_id uuid;
+  workflow_factory_id uuid;
+begin
+  perform internal.assert_checkpoint_publication_service();
+  if p_attempt_count is null or p_attempt_count <= 0 or p_operation_id is null then return false; end if;
+  select active.* into run from public.agent_runs active where active.id = p_run_id;
+  if not found then return false; end if;
+  workflow_root_id := internal.find_factory_workflow_lifecycle_root(run.session_id);
+  if workflow_root_id is null then return true; end if;
+
+  select execution.factory_id into strict workflow_factory_id from internal.factory_workflow_executions execution
+  where (execution.root_session_id, execution.workspace_id) = (workflow_root_id, run.workspace_id);
+  perform internal.lock_factory_workflow_root(workflow_root_id, run.workspace_id, workflow_factory_id);
+  perform 1 from internal.factory_workflow_executions execution
+  where execution.root_session_id = workflow_root_id and execution.lifecycle_status = 'running' for no key update;
+  if not found then return false; end if;
+
+  perform 1 from public.agent_jobs job where (job.id, job.workspace_id, job.session_id, job.attempt_count) =
+    (run.agent_job_id, run.workspace_id, run.session_id, p_attempt_count) and job.status in ('started', 'running')
+  for update;
+  if not found then return false; end if;
+  select active.* into run from public.agent_runs active
+  where (active.id, active.attempt_count) = (p_run_id, p_attempt_count) and active.status in ('started', 'running')
+  for update;
+  if not found then return false; end if;
+
+  select reservation.* into operation from public.workspace_resource_operations reservation
+  where (reservation.id, reservation.workspace_id, reservation.kind) = (p_operation_id, run.workspace_id, 'sandbox')
+    and reservation.provider in ('vercel', 'e2b', 'daytona') and reservation.connection_revision is not null
+    and reservation.resource_id is null and reservation.settled_at is null and reservation.recovery_after > clock_timestamp()
+    and (run.sandbox_provider is null or run.sandbox_provider = reservation.provider)
+    and (run.sandbox_connection_revision is null or run.sandbox_connection_revision = reservation.connection_revision)
+  for update;
+  if not found then return false; end if;
+
+  insert into internal.factory_workflow_sandbox_acquisitions (
+    operation_id, root_session_id, workspace_id, factory_id, session_id, job_id, run_id, attempt_count,
+    sandbox_provider, sandbox_connection_revision, recovery_after
+  ) values (
+    operation.id, workflow_root_id, run.workspace_id, workflow_factory_id, run.session_id, run.agent_job_id,
+    run.id, p_attempt_count, operation.provider, operation.connection_revision, operation.recovery_after
+  ) on conflict do nothing;
+  return exists (select 1 from internal.factory_workflow_sandbox_acquisitions acquisition
+    where (acquisition.operation_id, acquisition.run_id, acquisition.attempt_count) = (operation.id, run.id, p_attempt_count)
+      and acquisition.lookup_completed_at is null);
+end;
+$$;
+
 create table internal.factory_workflow_sandbox_stops (
   obligation_id uuid primary key default gen_random_uuid(),
   root_session_id uuid not null references internal.factory_workflow_executions(root_session_id) on delete cascade,
@@ -606,39 +681,63 @@ create table internal.factory_workflow_sandbox_stops (
   sandbox_connection_revision uuid,
   sandbox_vercel_project_id text,
   sandbox_vercel_team_id text,
+  acquisition_operation_id uuid references internal.factory_workflow_sandbox_acquisitions(operation_id) on delete cascade,
   lease_token uuid,
   lease_until timestamptz,
   confirmed_at timestamptz,
+  lookup_expired_at timestamptz,
+  acquisition_unregistered_at timestamptz,
   next_attempt_at timestamptz not null default clock_timestamp(),
   created_at timestamptz not null default clock_timestamp(),
   foreign key (root_session_id, workspace_id, factory_id)
     references public.sessions(id, workspace_id, factory_id) on delete cascade,
-  check ((lease_token is null) = (lease_until is null))
+  check ((lease_token is null) = (lease_until is null)),
+  check (confirmed_at is null or lookup_expired_at is null),
+  check (acquisition_unregistered_at is null or (acquisition_operation_id is null and sandbox_id is null))
 );
 create index factory_workflow_sandbox_stops_ready_idx
   on internal.factory_workflow_sandbox_stops(next_attempt_at, created_at, obligation_id)
-  where confirmed_at is null and sandbox_id is not null and sandbox_connection_revision is not null;
+  where confirmed_at is null and lookup_expired_at is null and sandbox_id is not null and sandbox_connection_revision is not null;
 alter table internal.factory_workflow_sandbox_stops enable row level security;
 revoke all on table internal.factory_workflow_sandbox_stops from public, anon, authenticated, service_role;
 
 create function internal.enqueue_factory_workflow_sandbox_stops()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
+  -- Generic cleanup may settle an operation concurrently. Lock its durable
+  -- acquisition before reading evidence or inserting a stop.
+  perform 1 from internal.factory_workflow_sandbox_acquisitions acquisition
+  where acquisition.root_session_id = new.root_session_id and acquisition.run_id in (
+    select removed.id::uuid from jsonb_array_elements(new.receipt->'retired') retired
+    cross join lateral jsonb_array_elements_text(retired.value->'runIds') removed(id)
+  ) order by acquisition.run_id for update;
+
   insert into internal.factory_workflow_sandbox_stops (
     root_session_id, workspace_id, factory_id, session_id, job_id, run_id, attempt_count,
-    sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_project_id, sandbox_vercel_team_id
+    sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_project_id, sandbox_vercel_team_id,
+    acquisition_operation_id, confirmed_at, lookup_expired_at, acquisition_unregistered_at
   )
   select execution.root_session_id, execution.workspace_id, execution.factory_id, run.session_id,
     run.agent_job_id, run.id, run.attempt_count,
-    case when char_length(run.sandbox_id) between 1 and 256 and run.sandbox_id not like 'provisioning:%' then run.sandbox_id end,
-    case when run.sandbox_provider in ('vercel', 'e2b', 'daytona') then run.sandbox_provider end,
-    run.sandbox_connection_revision, run.sandbox_vercel_project_id, run.sandbox_vercel_team_id
+    coalesce(known.sandbox_id, case when cardinality(acquisition.stopped_sandbox_ids) = 1 then acquisition.stopped_sandbox_ids[1] end),
+    coalesce(acquisition.sandbox_provider, case when run.sandbox_provider in ('vercel', 'e2b', 'daytona') then run.sandbox_provider end),
+    coalesce(acquisition.sandbox_connection_revision, run.sandbox_connection_revision),
+    run.sandbox_vercel_project_id, run.sandbox_vercel_team_id, acquisition.operation_id,
+    case when cardinality(acquisition.stopped_sandbox_ids) > 0 and
+      (known.sandbox_id is null or known.sandbox_id = any(acquisition.stopped_sandbox_ids)) then acquisition.lookup_completed_at end,
+    case when cardinality(acquisition.stopped_sandbox_ids) = 0 and known.sandbox_id is null then acquisition.lookup_completed_at end,
+    case when acquisition.operation_id is null and known.sandbox_id is null then clock_timestamp() end
   from internal.factory_workflow_executions execution
   cross join lateral jsonb_array_elements(new.receipt->'retired') retired
   cross join lateral jsonb_array_elements_text(retired.value->'runIds') removed(id)
   join public.agent_runs run on run.id = removed.id::uuid
   join public.agent_jobs job on (job.workspace_id, job.session_id, job.id, job.attempt_count) =
     (run.workspace_id, run.session_id, run.agent_job_id, run.attempt_count)
+  left join internal.factory_workflow_sandbox_acquisitions acquisition
+    on (acquisition.root_session_id, acquisition.run_id, acquisition.attempt_count) =
+      (execution.root_session_id, run.id, run.attempt_count)
+  cross join lateral (select case when char_length(run.sandbox_id) between 1 and 256
+    and run.sandbox_id not like 'provisioning:%' then run.sandbox_id end as sandbox_id) known
   where execution.root_session_id = new.root_session_id
     and (run.workspace_id, run.session_id) = (execution.workspace_id, (retired.value->>'sessionId')::uuid)
     and retired.value->'jobIds' ? job.id::text and job.status = 'canceled'
@@ -652,6 +751,76 @@ revoke all on function internal.enqueue_factory_workflow_sandbox_stops()
   from public, anon, authenticated, service_role;
 create trigger enqueue_factory_workflow_sandbox_stops after insert on internal.factory_workflow_lifecycle_commands
   for each row execute function internal.enqueue_factory_workflow_sandbox_stops();
+
+create function public.settle_factory_workflow_sandbox_acquisition(
+  p_operation_id uuid, p_stopped_sandbox_ids text[]
+) returns boolean language plpgsql security definer set search_path = '' as $$
+declare
+  acquisition internal.factory_workflow_sandbox_acquisitions;
+  operation public.workspace_resource_operations;
+  obligation internal.factory_workflow_sandbox_stops;
+  stopped_ids text[];
+  completed_at timestamptz;
+begin
+  perform internal.assert_checkpoint_publication_service();
+  select linked.* into acquisition from internal.factory_workflow_sandbox_acquisitions linked
+  where linked.operation_id = p_operation_id;
+  if not found then return true; end if;
+  if p_stopped_sandbox_ids is null or cardinality(p_stopped_sandbox_ids) > 100 or exists (
+    select 1 from unnest(p_stopped_sandbox_ids) handle(id)
+    where handle.id is null or char_length(handle.id) not between 1 and 256 or handle.id like 'provisioning:%'
+  ) then return false; end if;
+  -- Preserve the same workspace → operation → acquisition → stop order as
+  -- registration and keep erasure from dropping credentials during settlement.
+  perform 1 from public.workspaces workspace where workspace.id = acquisition.workspace_id for share;
+  if not found then return false; end if;
+  select reservation.* into operation from public.workspace_resource_operations reservation
+  where reservation.id = p_operation_id for update;
+  select linked.* into acquisition from internal.factory_workflow_sandbox_acquisitions linked
+  where linked.operation_id = p_operation_id for update;
+  if not found then return true; end if;
+  if operation.id is null then
+    return coalesce(p_stopped_sandbox_ids <@ acquisition.stopped_sandbox_ids, false);
+  end if;
+  if (operation.workspace_id, operation.kind, operation.provider, operation.connection_revision)
+    is distinct from (acquisition.workspace_id, 'sandbox', acquisition.sandbox_provider, acquisition.sandbox_connection_revision)
+    then return false; end if;
+
+  -- A retry after stopping a discovered sandbox can find an empty provider
+  -- listing. Preserve exact proofs from earlier successful settlements.
+  select array(select distinct handle.id from unnest(p_stopped_sandbox_ids || acquisition.stopped_sandbox_ids) handle(id)
+    order by handle.id) into stopped_ids;
+  if cardinality(stopped_ids) > 100 then return false; end if;
+
+  select stop.* into obligation from internal.factory_workflow_sandbox_stops stop
+  where stop.acquisition_operation_id = p_operation_id for update;
+  if (operation.resource_id is not null and operation.resource_id <> all(stopped_ids))
+    or (obligation.sandbox_id is not null and obligation.sandbox_id <> all(stopped_ids)) then return false; end if;
+  if cardinality(stopped_ids) = 0 then
+    if acquisition.recovery_after > clock_timestamp() then return false; end if;
+  elsif exists (
+    select 1 from unnest(stopped_ids) handle(id) where not exists (
+      select 1 from public.workspace_sandbox_cleanup_receipts receipt
+      where (receipt.workspace_id, receipt.provider, receipt.connection_revision, receipt.sandbox_id) =
+        (acquisition.workspace_id, acquisition.sandbox_provider, acquisition.sandbox_connection_revision, handle.id)
+    )
+  ) then return false; end if;
+
+  completed_at := case when (cardinality(stopped_ids) > 0) <> (cardinality(acquisition.stopped_sandbox_ids) > 0)
+    then clock_timestamp() else coalesce(acquisition.lookup_completed_at, clock_timestamp()) end;
+  update internal.factory_workflow_sandbox_acquisitions linked
+  set lookup_completed_at = completed_at, stopped_sandbox_ids = stopped_ids
+  where linked.operation_id = p_operation_id;
+  if obligation.obligation_id is not null then
+    update internal.factory_workflow_sandbox_stops stop set
+      sandbox_id = coalesce(stop.sandbox_id, operation.resource_id, case when cardinality(stopped_ids) = 1 then stopped_ids[1] end),
+      confirmed_at = case when cardinality(stopped_ids) > 0 then coalesce(stop.confirmed_at, completed_at) end,
+      lookup_expired_at = case when cardinality(stopped_ids) = 0 then completed_at end
+    where stop.obligation_id = obligation.obligation_id;
+  end if;
+  return true;
+end;
+$$;
 
 create function public.record_late_factory_workflow_sandbox(
   p_run_id uuid, p_attempt_count integer, p_sandbox_id text, p_sandbox_provider text, p_sandbox_connection_revision uuid,
@@ -686,7 +855,9 @@ begin
   if obligation.sandbox_id is null or obligation.sandbox_provider is null or obligation.sandbox_connection_revision is null then
     update internal.factory_workflow_sandbox_stops stop
     set sandbox_id = p_sandbox_id, sandbox_provider = p_sandbox_provider, sandbox_connection_revision = p_sandbox_connection_revision,
-      sandbox_vercel_project_id = p_sandbox_vercel_project_id, sandbox_vercel_team_id = p_sandbox_vercel_team_id
+      sandbox_vercel_project_id = p_sandbox_vercel_project_id, sandbox_vercel_team_id = p_sandbox_vercel_team_id,
+      confirmed_at = case when stop.sandbox_id is not null then stop.confirmed_at end,
+      lookup_expired_at = null, acquisition_unregistered_at = null
     where stop.obligation_id = obligation.obligation_id;
   end if;
   return true;
@@ -705,7 +876,8 @@ begin
   return query
     with ready as (
       select stop.obligation_id from internal.factory_workflow_sandbox_stops stop
-      where stop.confirmed_at is null and stop.sandbox_id is not null and stop.sandbox_provider is not null
+      where stop.confirmed_at is null and stop.lookup_expired_at is null
+        and stop.sandbox_id is not null and stop.sandbox_provider is not null
         and stop.sandbox_connection_revision is not null and stop.next_attempt_at <= clock_timestamp()
         and (stop.lease_until is null or stop.lease_until <= clock_timestamp())
       order by stop.next_attempt_at, stop.created_at, stop.obligation_id
@@ -753,9 +925,13 @@ begin
 end;
 $$;
 revoke all on function public.record_late_factory_workflow_sandbox(uuid, integer, text, text, uuid, text, text),
+  public.register_factory_workflow_sandbox_acquisition(uuid, integer, uuid),
+  public.settle_factory_workflow_sandbox_acquisition(uuid, text[]),
   public.claim_factory_workflow_sandbox_stops(integer), public.settle_factory_workflow_sandbox_stop(uuid, uuid, boolean)
   from public, anon, authenticated, service_role;
 grant execute on function public.record_late_factory_workflow_sandbox(uuid, integer, text, text, uuid, text, text),
+  public.register_factory_workflow_sandbox_acquisition(uuid, integer, uuid),
+  public.settle_factory_workflow_sandbox_acquisition(uuid, text[]),
   public.claim_factory_workflow_sandbox_stops(integer), public.settle_factory_workflow_sandbox_stop(uuid, uuid, boolean)
   to service_role;
 create function public.control_factory_workflow_lifecycle_for_user(
