@@ -49,21 +49,29 @@ export async function reconcileFactoryAutomationSchedules(admin: Client) {
   const due = z.array(dueScheduleSchema).max(4).parse(data);
   const results = await Promise.allSettled(
     due.map(async (row) => {
+      const expected = {
+        p_workspace_id: row.workspaceId,
+        p_factory_id: row.factoryId,
+        p_automation_id: row.automationId,
+        p_revision_id: row.revisionId,
+        p_expected_cursor_version: row.cursorVersion,
+        p_expected_admission_generation: row.admissionGeneration,
+      };
       const schedule = createFactoryAutomationSchedule(row);
       if (!schedule) {
-        throw new Error(`The schedule for automation ${row.automationId} could not be resolved.`);
+        const deferred = await admin
+          .rpc("defer_factory_automation_schedule", expected)
+          .abortSignal(signal);
+        throw new Error(`The schedule for automation ${row.automationId} could not be resolved.`, {
+          cause: deferred.error ?? undefined,
+        });
       }
       const through = Date.parse(row.through);
       const occurrenceAt = schedule.latestDueOccurrence(Date.parse(row.scannedThrough), through);
       const nextDueAt = schedule.nextOccurrences(through, 1)[0] ?? null;
       const settled = await admin
         .rpc("commit_factory_automation_schedule", {
-          p_workspace_id: row.workspaceId,
-          p_factory_id: row.factoryId,
-          p_automation_id: row.automationId,
-          p_revision_id: row.revisionId,
-          p_expected_cursor_version: row.cursorVersion,
-          p_expected_admission_generation: row.admissionGeneration,
+          ...expected,
           p_plan: {
             through: row.through,
             occurrenceAt: toTimestamp(occurrenceAt),

@@ -12448,6 +12448,17 @@ export type Database = {
           state: string
         }[]
       }
+      defer_factory_automation_schedule: {
+        Args: {
+          p_automation_id: string
+          p_expected_admission_generation: number
+          p_expected_cursor_version: number
+          p_factory_id: string
+          p_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       defer_session_job_for_continuity_release: {
         Args: { p_attempt_count: number; p_job_id: string }
         Returns: boolean
@@ -13623,6 +13634,25 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: boolean
+      }
+      ingest_factory_github_automation_pr: {
+        Args: {
+          p_action: string
+          p_base_branch: string
+          p_delivery_id: string
+          p_draft: boolean
+          p_github_repository_id: number
+          p_head_branch: string
+          p_head_repository_id?: number
+          p_head_sha: string
+          p_installation_id: number
+          p_merge_commit_sha?: string
+          p_provider_updated_at: string
+          p_pull_request_id: number
+          p_pull_request_number: number
+          p_state: string
+        }
+        Returns: Json
       }
       inspect_factory_mcp_identity: {
         Args: {

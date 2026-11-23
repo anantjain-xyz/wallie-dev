@@ -8,8 +8,14 @@ select ok(has_function_privilege('service_role', 'public.list_due_factory_automa
   and not has_function_privilege('authenticated', 'public.list_due_factory_automation_schedules()', 'execute')
   and not has_function_privilege('authenticated',
     'public.commit_factory_automation_schedule(uuid,uuid,uuid,uuid,bigint,bigint,jsonb)', 'execute')
+  and has_function_privilege('service_role',
+    'public.defer_factory_automation_schedule(uuid,uuid,uuid,uuid,bigint,bigint)', 'execute')
+  and not has_function_privilege('authenticated',
+    'public.defer_factory_automation_schedule(uuid,uuid,uuid,uuid,bigint,bigint)', 'execute')
+  and not has_function_privilege('anon',
+    'public.defer_factory_automation_schedule(uuid,uuid,uuid,uuid,bigint,bigint)', 'execute')
   and not has_function_privilege('anon', 'public.read_factory_automation_schedule_preview(uuid,uuid,uuid,uuid)', 'execute'),
-  'schedule producer, commit, and preview have separate RPC permissions');
+  'schedule producer, commit, deferral, and preview have separate RPC permissions');
 
 select ok(cursor_row.activated_at = cursor_row.scanned_through and cursor_row.cursor_version = 0
   and cursor_row.revision_id = rule.revision_id, 'publishing a schedule initializes an exact cursor immediately')
@@ -83,7 +89,48 @@ create temp table resumed_schedule_snapshot as
 select candidate->>'through' as through_at
 from jsonb_array_elements(public.list_due_factory_automation_schedules()) candidate
 join automation_occurrence_rule rule on candidate->>'automationId' = rule.automation_id::text;
-select is(pg_temp.commit_test_automation_schedule(1, 2, snapshot.through_at::timestamptz,
+create function pg_temp.defer_test_automation_schedule(p_version bigint, p_generation bigint)
+returns boolean language sql as $$
+  select public.defer_factory_automation_schedule(rule.workspace_id, rule.factory_id, rule.automation_id,
+    rule.revision_id, p_version, p_generation)
+  from automation_occurrence_rule rule
+$$;
+create temp table cursor_before_deferral as
+select cursor_row.* from internal.factory_automation_schedule_cursors cursor_row
+join automation_occurrence_rule rule using (automation_id, revision_id);
+select is(pg_temp.defer_test_automation_schedule(1, 1), false,
+  'a stale admission generation cannot defer the resumed schedule');
+select is(public.defer_factory_automation_schedule(pg_temp.op651_id(91), factory_id, automation_id, revision_id, 1, 2),
+  false, 'the worker cannot defer a cursor through the wrong workspace') from automation_occurrence_rule;
+select is(pg_temp.defer_test_automation_schedule(1, 2), true,
+  'a worker can defer the exact unresolved due cursor');
+select is(pg_temp.defer_test_automation_schedule(1, 2), false,
+  'a stale cursor version cannot extend a deferral');
+select is(pg_temp.defer_test_automation_schedule(2, 2), false,
+  'the current cursor cannot be deferred again before it is due');
+select ok(cursor_row.cursor_version = previous.cursor_version + 1
+  and cursor_row.recheck_at between statement_timestamp() + interval '4 minutes'
+    and statement_timestamp() + interval '5 minutes'
+  and (to_jsonb(cursor_row) - array['cursor_version', 'recheck_at']) =
+    (to_jsonb(previous) - array['cursor_version', 'recheck_at']),
+  'deferral changes only the version and bounded retry time, preserving the frozen resume scope')
+from internal.factory_automation_schedule_cursors cursor_row
+join cursor_before_deferral previous using (automation_id, revision_id);
+select is(count(*), 1::bigint, 'deferral records no occurrence')
+from internal.factory_automation_occurrences occurrence
+join automation_occurrence_rule rule using (automation_id);
+
+-- Bring the persisted retry into the past without waiting five minutes.
+update internal.factory_automation_schedule_cursors cursor_row
+set recheck_at = statement_timestamp() - interval '1 second'
+from automation_occurrence_rule rule
+where (cursor_row.automation_id, cursor_row.revision_id) = (rule.automation_id, rule.revision_id);
+select ok(public.list_due_factory_automation_schedules() @> jsonb_build_array(
+  jsonb_build_object('automationId', rule.automation_id, 'revisionId', rule.revision_id,
+    'cursorVersion', 2, 'through', snapshot.through_at)),
+  'the retried schedule still offers the original resume cutoff')
+from automation_occurrence_rule rule cross join resumed_schedule_snapshot snapshot;
+select is(pg_temp.commit_test_automation_schedule(2, 2, snapshot.through_at::timestamptz,
   clock.resume_occurrence, clock.next_due), true,
   'a resumed worker commits against the frozen resume cutoff')
 from resumed_schedule_snapshot snapshot cross join schedule_clock clock;
@@ -106,9 +153,41 @@ select ok(cursor_row.cursor_version = 0 and cursor_row.scanned_through = cursor_
   'a timezone change starts the replacement revision at publication without replaying old ticks')
 from revised_schedule revised cross join schedule_clock clock
 join internal.factory_automation_schedule_cursors cursor_row on cursor_row.revision_id = revised.revision_id;
-select is(pg_temp.commit_test_automation_schedule(2, 2, clock.first_through, null, clock.next_due), false,
+select is(pg_temp.commit_test_automation_schedule(3, 2, clock.first_through, null, clock.next_due), false,
   'a cursor snapshot from the prior timezone cannot advance the replacement revision')
 from schedule_clock clock;
+
+select is(pg_temp.defer_test_automation_schedule(3, 2), false,
+  'an unpublished prior revision cannot defer the replacement schedule');
+
+-- Fill every slot in the worker batch with older candidates.
+create temp table unresolved_rules as
+select scope.workspace_id, scope.factory_id,
+  (draft.value->>'automationId')::uuid as automation_id,
+  (draft.value->>'draftRevisionId')::uuid as revision_id
+from op651_scope scope cross join generate_series(102, 105) candidate(slot)
+cross join lateral (select pg_temp.create_dry_run_automation(candidate.slot,
+  pg_temp.dry_run_definition('schedule')) as value) draft;
+select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, revision_id)
+from unresolved_rules;
+update internal.factory_automation_schedule_cursors cursor_row
+set recheck_at = statement_timestamp() - interval '1 day'
+from unresolved_rules rule
+where (cursor_row.automation_id, cursor_row.revision_id) = (rule.automation_id, rule.revision_id);
+
+select is(count(*), 4::bigint, 'four older due candidates fill a worker batch')
+from jsonb_array_elements(public.list_due_factory_automation_schedules()) candidate
+join unresolved_rules rule on candidate->>'automationId' = rule.automation_id::text;
+select ok(bool_and(public.defer_factory_automation_schedule(workspace_id, factory_id, automation_id, revision_id, 0, 0)),
+  'the worker can defer all unresolved schedules in a full batch')
+from unresolved_rules;
+select ok(public.list_due_factory_automation_schedules() @> jsonb_build_array(
+  jsonb_build_object('revisionId', revision_id, 'cursorVersion', 0)),
+  'the next worker batch can reach the later healthy schedule')
+from revised_schedule;
+select is(count(*), 0::bigint, 'deferred candidates no longer occupy the available due slots')
+from jsonb_array_elements(public.list_due_factory_automation_schedules()) candidate
+join unresolved_rules rule on candidate->>'automationId' = rule.automation_id::text;
 
 select * from finish();
 rollback;

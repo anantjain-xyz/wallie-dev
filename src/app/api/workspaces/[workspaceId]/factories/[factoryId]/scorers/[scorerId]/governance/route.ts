@@ -12,6 +12,7 @@ import {
   calibrationCandidateCursorSchema,
   calibrationCandidatePageSchema,
   scorerGovernanceCommandSchema,
+  type ScorerGovernanceCommand,
 } from "@/lib/factory-evaluations/scorer-governance-contracts";
 import {
   handleScorerGovernanceCommand,
@@ -54,7 +55,7 @@ export async function GET(request: Request, { params }: RouteContext) {
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
-  return handleScorerGovernanceCommand(
+  return handleScorerGovernanceCommand<ScorerGovernanceCommand>(
     request,
     params,
     (await params).scorerId,

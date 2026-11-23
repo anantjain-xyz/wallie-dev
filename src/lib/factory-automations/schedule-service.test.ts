@@ -134,7 +134,7 @@ it("lets other due rules commit when a schedule handoff fails", async () => {
   ).toEqual([id(3), id(5)]);
 });
 
-it("leaves an unresolved schedule cursor intact and commits the next due rule", async () => {
+it("defers an unresolved cursor without a plan and commits the next due rule", async () => {
   const unresolved = { ...snapshot, automationId: id(5), timeZone: "Unknown/Zone" };
   const { client, fetch } = fixture(
     Response.json([unresolved, snapshot]),
@@ -149,15 +149,43 @@ it("leaves an unresolved schedule cursor intact and commits the next due rule", 
     },
   });
 
-  expect(fetch.mock.calls.map(([url]) => String(url).split("/").at(-1))).toEqual([
-    "list_due_factory_automation_schedules",
-    "commit_factory_automation_schedule",
-  ]);
-  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toMatchObject({
-    p_automation_id: snapshot.automationId,
-    p_plan: {
-      occurrenceAt: "2026-11-01T05:30:00.000Z",
-      nextDueAt: "2026-11-02T06:30:00.000Z",
+  expect(fetch).toHaveBeenCalledTimes(3);
+  const requests = Object.fromEntries(
+    fetch.mock.calls
+      .slice(1)
+      .map(([url, request]) => [String(url).split("/").at(-1), JSON.parse(String(request?.body))]),
+  );
+  expect(requests).toEqual({
+    defer_factory_automation_schedule: {
+      p_workspace_id: unresolved.workspaceId,
+      p_factory_id: unresolved.factoryId,
+      p_automation_id: unresolved.automationId,
+      p_revision_id: unresolved.revisionId,
+      p_expected_cursor_version: unresolved.cursorVersion,
+      p_expected_admission_generation: unresolved.admissionGeneration,
+    },
+    commit_factory_automation_schedule: expect.objectContaining({
+      p_automation_id: snapshot.automationId,
+      p_plan: {
+        through: cutoff,
+        occurrenceAt: "2026-11-01T05:30:00.000Z",
+        nextDueAt: "2026-11-02T06:30:00.000Z",
+      },
+    }),
+  });
+});
+
+it("retains the unresolved schedule error when deferral fails", async () => {
+  const unresolved = { ...snapshot, timeZone: "Unknown/Zone" };
+  const { client } = fixture(
+    Response.json([unresolved]),
+    Response.json({ code: "XX000", message: "Database unavailable" }, { status: 500 }),
+  );
+
+  await expect(reconcileFactoryAutomationSchedules(client)).rejects.toMatchObject({
+    cause: {
+      message: `The schedule for automation ${unresolved.automationId} could not be resolved.`,
+      cause: { code: "XX000", message: "Database unavailable" },
     },
   });
 });

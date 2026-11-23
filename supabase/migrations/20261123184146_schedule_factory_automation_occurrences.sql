@@ -189,6 +189,43 @@ exception when lock_not_available then
 end;
 $$;
 
+-- A worker may have older time-zone data than Postgres. Yield the due slot
+-- without treating the unevaluated window as scanned.
+create function public.defer_factory_automation_schedule(
+  p_workspace_id uuid, p_factory_id uuid, p_automation_id uuid, p_revision_id uuid,
+  p_expected_cursor_version bigint, p_expected_admission_generation bigint
+) returns boolean language plpgsql security definer set search_path = '' as $$
+declare tick_at timestamptz := statement_timestamp();
+begin
+  perform internal.assert_checkpoint_publication_service();
+  perform 1 from public.workspaces workspace
+  where workspace.id = p_workspace_id and workspace.deletion_requested_at is null for share nowait;
+  if not found then return false; end if;
+  perform 1 from public.factories factory
+  where (factory.workspace_id, factory.id) = (p_workspace_id, p_factory_id)
+    and factory.status = 'active' for share nowait;
+  if not found then return false; end if;
+  perform 1 from internal.factory_automations rule
+  where (rule.workspace_id, rule.factory_id, rule.id, rule.published_revision_id, rule.admission_generation) =
+    (p_workspace_id, p_factory_id, p_automation_id, p_revision_id, p_expected_admission_generation)
+    and rule.archived_at is null and not rule.admission_paused for no key update nowait;
+  if not found then return false; end if;
+  perform 1 from internal.factory_automation_schedule_cursors current
+  where (current.automation_id, current.revision_id, current.cursor_version) =
+    (p_automation_id, p_revision_id, p_expected_cursor_version)
+    and current.recheck_at <= tick_at for update nowait;
+  if not found then return false; end if;
+
+  update internal.factory_automation_schedule_cursors current
+  set recheck_at = tick_at + interval '5 minutes',
+    cursor_version = current.cursor_version + 1
+  where (current.automation_id, current.revision_id) = (p_automation_id, p_revision_id);
+  return true;
+exception when lock_not_available then
+  return false;
+end;
+$$;
+
 create function public.read_factory_automation_schedule_preview(
   p_workspace_id uuid, p_factory_id uuid, p_automation_id uuid, p_revision_id uuid
 ) returns jsonb language sql stable security definer set search_path = '' as $$
@@ -212,10 +249,12 @@ $$;
 revoke all on function internal.sync_factory_automation_schedule_cursor(),
   public.list_due_factory_automation_schedules(),
   public.commit_factory_automation_schedule(uuid, uuid, uuid, uuid, bigint, bigint, jsonb),
+  public.defer_factory_automation_schedule(uuid, uuid, uuid, uuid, bigint, bigint),
   public.read_factory_automation_schedule_preview(uuid, uuid, uuid, uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.list_due_factory_automation_schedules(),
-  public.commit_factory_automation_schedule(uuid, uuid, uuid, uuid, bigint, bigint, jsonb)
+  public.commit_factory_automation_schedule(uuid, uuid, uuid, uuid, bigint, bigint, jsonb),
+  public.defer_factory_automation_schedule(uuid, uuid, uuid, uuid, bigint, bigint)
   to service_role;
 grant execute on function public.read_factory_automation_schedule_preview(uuid, uuid, uuid, uuid)
   to authenticated;
