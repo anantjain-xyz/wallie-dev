@@ -19,4 +19,6 @@ A route node can pin a foreman profile in `routePolicy.nodes[routeId].foremanPro
 
 Every plan starts with a route decision. It may also delegate work to the selected destination or inspect one offered child. Fresh commands recheck ownership, lineage, grants, budget, and exact inputs. Foreman runs and command receipts retain the plan, decisions, measured usage, and child provenance. A duplicate request reuses its receipt. Once inference is issued, recovery waits for exact settlement or expiry so it cannot silently issue another provider request.
 
+If settlement is unavailable, Wallie keeps measured usage in an encrypted private journal. Replay settles accounting against the original issue, without storing a plan in the journal or creating another inference request.
+
 The foreman has no checkout or publisher authority. Child jobs use the ordinary pipeline and review path, and the parent source remains bound to human-approved checkpoints.

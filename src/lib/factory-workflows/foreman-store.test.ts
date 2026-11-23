@@ -176,16 +176,20 @@ function fixture(hasProfile = true) {
     occurrences: [{ occurrence_id: occurrenceId, node_id: pin.nodeId, is_entry: true }],
     results: [],
   };
-  return { pin, issued, accepted, snapshot };
+  return { pin, issued, accepted, snapshot, identity };
 }
 
 type RpcCall = { name: string; body: unknown };
 type Reply = { name: string; data: unknown; status?: number };
 
-function adminFixture(replies: Reply[]) {
+function adminFixture(replies: Reply[], storageFetch?: typeof fetch) {
   const calls: RpcCall[] = [];
   const mockFetch: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
+    if (url.pathname.startsWith("/storage/v1/"))
+      return storageFetch
+        ? storageFetch(input, init)
+        : Response.json({ statusCode: "404", message: "Object not found." }, { status: 404 });
     const name = url.pathname.split("/").at(-1) ?? "";
     calls.push({ name, body: JSON.parse(String(init?.body)) });
     const next = replies.shift();
@@ -497,6 +501,125 @@ it("recovers a committed settlement with a lost RPC response without invoking th
     dispatch,
   ]);
   expect(calls[2]).toEqual(calls[3]);
+});
+
+it("blocks definitive issuance and dispatch denials without requesting inference", async () => {
+  const { pin, accepted } = fixture();
+  const bindProvider = vi.fn<typeof createOpenAiForemanProvider>();
+  const denial = { code: "42501", message: "Execution grant is unavailable." };
+  const denied = adminFixture([
+    { name: read, data: null },
+    { name: begin, data: denial, status: 403 },
+  ]);
+  expect(await executeFactoryWorkflowForeman(denied.admin, pin, { bindProvider })).toMatchObject({
+    status: "blocked",
+    code: "authority_unavailable",
+  });
+
+  const alreadyRouted = {
+    ...accepted,
+    commands: [
+      { command: route, ordinal: 1, receipt: routeReceipt },
+      { command: delegate, ordinal: 2 },
+    ],
+  };
+  const replay = adminFixture([
+    { name: read, data: alreadyRouted },
+    { name: dispatch, data: denial, status: 403 },
+  ]);
+  expect(await executeFactoryWorkflowForeman(replay.admin, pin, { bindProvider })).toMatchObject({
+    status: "blocked",
+    code: "authority_unavailable",
+    receipts: [{ ...routeReceipt, foremanRunId }],
+  });
+  expect(replay.replies).toHaveLength(0);
+  expect(bindProvider).not.toHaveBeenCalled();
+});
+
+it("recovers measured usage after a restart when neither settlement write committed", async () => {
+  const { pin, identity, issued, accepted } = fixture();
+  const pending = {
+    ...identity,
+    status: "issued",
+    issuedAt: accepted.issuedAt,
+    issuedGeneration: 7,
+    currentGeneration: 7,
+    usage: { inputTokens: null, outputTokens: null, costUsd: null },
+    commands: [],
+  };
+  const unavailable = {
+    name: settle,
+    data: { code: "XX000", message: "Settlement storage unavailable." },
+    status: 503,
+  };
+  let saved = "";
+  let restarted = false;
+  const objects: typeof fetch = async (_url, init) => {
+    if (init?.method === "POST") {
+      saved = String(init.body);
+      return Response.json({ Key: "encrypted-usage" });
+    }
+    if (init?.method === "DELETE") {
+      saved = "";
+      return Response.json([]);
+    }
+    return restarted && saved
+      ? new Response(saved)
+      : Response.json({ statusCode: "404", message: "Object unavailable." }, { status: 404 });
+  };
+  const invoke = vi.fn().mockResolvedValue({ status: "completed", output: planJson, usage });
+  const bindProvider = vi.fn<typeof createOpenAiForemanProvider>().mockReturnValue(invoke);
+  vi.stubEnv("WALLIE_ENCRYPTION_KEY", environment.WALLIE_ENCRYPTION_KEY);
+  try {
+    const first = adminFixture(
+      [
+        { name: read, data: null },
+        { name: begin, data: issued },
+        unavailable,
+        unavailable,
+        { name: read, data: pending },
+      ],
+      objects,
+    );
+    const firstResult = await executeFactoryWorkflowForeman(first.admin, pin, { bindProvider });
+    expect(firstResult).toMatchObject({ status: "waiting", code: "inference_pending" });
+    expect(saved).not.toBe("");
+    expect(saved).not.toContain(pin.p_ownership_token);
+    expect(saved).not.toContain(planJson);
+    expect(first.replies).toHaveLength(0);
+
+    restarted = true;
+    const handedOff = { ...pending, currentGeneration: 8 };
+    const replay = adminFixture(
+      [
+        { name: read, data: handedOff },
+        { name: settle, data: { ...handedOff, usage } },
+      ],
+      objects,
+    );
+    expect(
+      await executeFactoryWorkflowForeman(
+        replay.admin,
+        { ...pin, p_expected_generation: 8, p_ownership_token: id(99) },
+        { bindProvider },
+      ),
+    ).toMatchObject({ status: "waiting", usage });
+    expect(replay.calls[1]).toEqual({
+      name: settle,
+      body: {
+        ...readScope,
+        p_expected_generation: 7,
+        p_ownership_token: pin.p_ownership_token,
+        p_issue_id: issued.issueId,
+        p_outcome: { status: "accounting", usage },
+      },
+    });
+    expect(replay.replies).toHaveLength(0);
+    expect(saved).toBe("");
+    expect(invoke).toHaveBeenCalledOnce();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 it("accepts an existing native issuance only as a retained run with receipts", async () => {

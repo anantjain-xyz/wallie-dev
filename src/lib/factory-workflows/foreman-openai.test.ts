@@ -313,14 +313,17 @@ describe("issued foreman OpenAI transport", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("retains only measured token axes and ignores undocumented USD fields", async () => {
+  it("retains known usage while blocking a completed output with unavailable usage", async () => {
     const { request, infer, bind } = setup();
     infer.mockResolvedValueOnce(
-      response({ usage: { input_tokens: 0, output_tokens: "100", cost_usd: 0.001 } }),
+      response({
+        usage: { input_tokens: 23, output_tokens: "100", total_tokens: 30_000, cost_usd: 0.001 },
+      }),
     );
     await expect(bind()(request)).resolves.toMatchObject({
-      status: "completed",
-      usage: { inputTokens: 0, outputTokens: null, costUsd: null },
+      status: "blocked",
+      code: "provider_unavailable",
+      usage: { inputTokens: 23, outputTokens: null, costUsd: null },
     });
 
     infer.mockResolvedValueOnce(

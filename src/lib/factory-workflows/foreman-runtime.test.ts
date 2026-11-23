@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 
 import type { WorkflowOccurrencePin } from "./deterministic-command";
+import { MAX_FOREMAN_PLAN_BYTES, parseForemanPlan } from "./foreman-command";
 import {
   runFactoryWorkflowForeman,
   type ForemanCommandReceipt,
@@ -112,6 +113,7 @@ function fixture({
   loseDispatch = false,
   stopAtFallback = false,
   childReadReceipt,
+  blockDispatchAuthorityAt,
   initial = null,
   modelOutput = plan,
 }: {
@@ -120,6 +122,7 @@ function fixture({
   loseDispatch?: boolean;
   stopAtFallback?: boolean;
   childReadReceipt?: ForemanCommandReceipt & { kind: "read_child" };
+  blockDispatchAuthorityAt?: number;
   initial?: ForemanRunSnapshot | null;
   modelOutput?: string;
 } = {}) {
@@ -146,6 +149,8 @@ function fixture({
     expect(runId).toBe(identity.foremanRunId);
     if (run?.phase !== "accepted") throw new Error("The plan had not been sealed.");
     expect(ordinal).toBe(run.receipts.length + 1);
+    if (ordinal === blockDispatchAuthorityAt)
+      return { status: "blocked", code: "authority_unavailable" };
     const receipt: ForemanCommandReceipt =
       ordinal === 1
         ? stopAtFallback
@@ -455,44 +460,88 @@ it("retries the exact settlement after a failure before commit without issuing a
   expect(invoke).toHaveBeenCalledOnce();
 });
 
-it("settles late measured usage against the original issue after abort without accepting its plan", async () => {
-  const { invoke, store } = fixture();
-  const caller = new AbortController();
-  const { promise: provider, resolve: finishProvider } =
-    Promise.withResolvers<Awaited<ReturnType<ForemanInferenceProvider>>>();
-  invoke.mockReturnValueOnce(provider);
-  const running = runFactoryWorkflowForeman({ pin, invoke, store, signal: caller.signal });
-  await vi.waitFor(() => expect(invoke).toHaveBeenCalledOnce());
-  caller.abort();
-  await vi.waitFor(() => expect(store.settleInference).toHaveBeenCalledOnce());
-
-  finishProvider({
-    status: "completed",
-    output: plan,
-    providerReceiptId: "fixture-receipt-1",
-    usage: inferenceUsage,
+function useControlledDeadlines() {
+  vi.useFakeTimers();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((delay) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), delay);
+    return controller.signal;
   });
-  await expect(running).resolves.toEqual({ status: "blocked", code: "timeout" });
-  expect(store.settleInference.mock.calls.map((call) => call.slice(0, 4))).toEqual([
-    [
-      pin,
-      identity.foremanRunId,
-      "issue-1",
-      {
-        status: "blocked",
-        code: "timeout",
-        usage: { inputTokens: null, outputTokens: null, costUsd: null },
-      },
-    ],
-    [
-      pin,
-      identity.foremanRunId,
-      "issue-1",
-      { status: "accounting", usage: inferenceUsage, providerReceiptId: "fixture-receipt-1" },
-    ],
-  ]);
-  expect(store.dispatchCommand).not.toHaveBeenCalled();
-});
+  return () => {
+    timeout.mockRestore();
+    vi.useRealTimers();
+  };
+}
+
+it.each(["native settlement", "durable retention"])(
+  "accounts for a provider result observed before the deadline but after caller abort via %s",
+  async (accounting) => {
+    const restore = useControlledDeadlines();
+    try {
+      const { invoke, store } = fixture();
+      const retainUsage = vi.fn<NonNullable<ForemanRunStore["retainUsage"]>>();
+      if (accounting === "durable retention") {
+        const settle = store.settleInference.getMockImplementation();
+        if (!settle) throw new Error("The fixture requires its normal timeout settlement.");
+        store.settleInference
+          .mockImplementationOnce(settle)
+          .mockRejectedValueOnce(new TypeError("Transient accounting failure."))
+          .mockRejectedValueOnce(new TypeError("Accounting still unavailable."));
+      }
+      const caller = new AbortController();
+      const { promise: provider, resolve: finishProvider } =
+        Promise.withResolvers<Awaited<ReturnType<ForemanInferenceProvider>>>();
+      invoke.mockReturnValueOnce(provider);
+      const running = runFactoryWorkflowForeman({
+        pin,
+        invoke,
+        store: { ...store, retainUsage },
+        signal: caller.signal,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(invoke).toHaveBeenCalledOnce();
+      caller.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.settleInference).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(100);
+      finishProvider({
+        status: "completed",
+        output: plan,
+        providerReceiptId: "fixture-receipt-1",
+        usage: inferenceUsage,
+      });
+      await expect(running).resolves.toEqual({ status: "blocked", code: "timeout" });
+      const expectedAccounting = {
+        status: "accounting",
+        usage: inferenceUsage,
+        providerReceiptId: "fixture-receipt-1",
+      };
+      const scope = [pin, identity.foremanRunId, "issue-1"];
+      const settlements = store.settleInference.mock.calls.map((call) => call.slice(0, 4));
+      expect(settlements[0]).toEqual([
+        ...scope,
+        {
+          status: "blocked",
+          code: "timeout",
+          usage: { inputTokens: null, outputTokens: null, costUsd: null },
+        },
+      ]);
+      expect(settlements.slice(1)).toEqual(
+        Array.from({ length: accounting === "durable retention" ? 2 : 1 }, () => [
+          ...scope,
+          expectedAccounting,
+        ]),
+      );
+      expect(retainUsage.mock.calls).toEqual(
+        accounting === "durable retention" ? [[...scope, expectedAccounting]] : [],
+      );
+      expect(store.dispatchCommand).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  },
+);
 
 it("reports an expired retained issue as blocked without possessing its issuance capability", async () => {
   const { invoke, store } = fixture({
@@ -513,20 +562,116 @@ it("reports an expired retained issue as blocked without possessing its issuance
 });
 
 it("waits only through the bounded accounting window when the canceled provider never answers", async () => {
-  const { invoke, store } = fixture();
-  const caller = new AbortController();
-  const issued = permit();
-  issued.budget.deadlineAt = new Date(Date.now() + 75).toISOString();
-  store.beginInference.mockResolvedValueOnce({ status: "issued", permit: issued });
-  invoke.mockImplementationOnce(async () => {
-    caller.abort();
-    return new Promise(() => {});
-  });
+  const restore = useControlledDeadlines();
+  try {
+    const { invoke, store } = fixture();
+    const finished = vi.fn();
+    const caller = new AbortController();
+    const issued = permit();
+    issued.budget.deadlineAt = new Date(Date.now() + 1_000).toISOString();
+    store.beginInference.mockResolvedValueOnce({ status: "issued", permit: issued });
+    invoke.mockImplementationOnce(async () => {
+      caller.abort();
+      return new Promise(() => {});
+    });
 
-  await expect(
-    runFactoryWorkflowForeman({ pin, invoke, store, signal: caller.signal }),
-  ).resolves.toEqual({ status: "blocked", code: "timeout" });
-  expect(invoke).toHaveBeenCalledOnce();
-  expect(store.settleInference).toHaveBeenCalledOnce();
+    const running = runFactoryWorkflowForeman({ pin, invoke, store, signal: caller.signal }).then(
+      (result) => {
+        finished();
+        return result;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(1_249);
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(store.settleInference).toHaveBeenCalledOnce();
+    expect(finished).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(running).resolves.toEqual({ status: "blocked", code: "timeout" });
+    expect(store.dispatchCommand).not.toHaveBeenCalled();
+  } finally {
+    restore();
+  }
+});
+
+it("blocks the expanded canonical plan before settling it while keeping measured usage", async () => {
+  const numeric = plan.replace('"confidence":0.9', '"confidence":1e-6');
+  const available = MAX_FOREMAN_PLAN_BYTES - Buffer.byteLength(numeric);
+  const padding = "🌱".repeat(Math.floor(available / 4)) + "x".repeat(available % 4);
+  const providerOutput = numeric.replace("Verify it.", padding + "Verify it.");
+  expect(Buffer.byteLength(providerOutput)).toBe(MAX_FOREMAN_PLAN_BYTES);
+  const parsed = parseForemanPlan(providerOutput);
+  expect(parsed.status).toBe("parsed");
+  if (parsed.status !== "parsed") throw new Error("The raw plan should parse.");
+  expect(Buffer.byteLength(JSON.stringify(parsed.plan))).toBeGreaterThan(MAX_FOREMAN_PLAN_BYTES);
+
+  const { invoke, store } = fixture({ modelOutput: providerOutput });
+  await expect(runFactoryWorkflowForeman({ pin, invoke, store })).resolves.toEqual({
+    status: "blocked",
+    code: "invalid_plan",
+  });
+  expect(store.settleInference).toHaveBeenCalledWith(
+    pin,
+    identity.foremanRunId,
+    "issue-1",
+    {
+      status: "blocked",
+      code: "invalid_plan",
+      usage: inferenceUsage,
+      providerReceiptId: "fixture-receipt-1",
+    },
+    expect.any(AbortSignal),
+  );
   expect(store.dispatchCommand).not.toHaveBeenCalled();
+});
+
+it.each(["accepted", "blocked", "unknown usage"])(
+  "retains only measured accounting when both writes fail for %s",
+  async (scenario) => {
+    const { invoke, store } = fixture();
+    const retainUsage = vi.fn<NonNullable<ForemanRunStore["retainUsage"]>>();
+    store.settleInference
+      .mockRejectedValueOnce(new TypeError("First settlement unavailable."))
+      .mockRejectedValueOnce(new TypeError("Settlement remains unavailable."));
+    if (scenario === "blocked") {
+      invoke.mockResolvedValueOnce({
+        status: "blocked",
+        code: "provider_unavailable",
+        usage: inferenceUsage,
+        providerReceiptId: "fixture-receipt-1",
+      });
+    } else if (scenario === "unknown usage") {
+      invoke.mockRejectedValueOnce(new TypeError("No receipt."));
+    }
+
+    await expect(
+      runFactoryWorkflowForeman({ pin, invoke, store: { ...store, retainUsage } }),
+    ).resolves.toEqual({ status: "waiting", code: "inference_pending" });
+    expect(store.settleInference).toHaveBeenCalledTimes(2);
+    if (scenario === "unknown usage") {
+      expect(retainUsage).not.toHaveBeenCalled();
+    } else {
+      expect(retainUsage.mock.calls).toEqual([
+        [
+          pin,
+          identity.foremanRunId,
+          "issue-1",
+          { status: "accounting", usage: inferenceUsage, providerReceiptId: "fixture-receipt-1" },
+        ],
+      ]);
+    }
+    expect(store.dispatchCommand).not.toHaveBeenCalled();
+  },
+);
+
+it("surfaces a definitive authority denial while keeping the earlier route receipt", async () => {
+  const { invoke, store } = fixture({ blockDispatchAuthorityAt: 2 });
+  await expect(runFactoryWorkflowForeman({ pin, invoke, store })).resolves.toEqual({
+    status: "blocked",
+    code: "authority_unavailable",
+    receipts: [recordedRoute],
+  });
+  expect(store.dispatchCommand.mock.calls).toEqual([
+    [pin, identity.foremanRunId, 1],
+    [pin, identity.foremanRunId, 2],
+  ]);
 });

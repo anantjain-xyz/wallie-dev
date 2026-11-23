@@ -134,7 +134,8 @@ select fixture.scenario, scope.*, fields.*
 from op648_scope scope
 cross join (values ('narrow', 101), ('outside-parent-definition', 102), ('outside-parent-grant', 103),
   ('unknown-usage', 104), ('over-budget', 105), ('revoked-authority', 106),
-  ('reordered-usage', 108), ('late-cost', 109), ('read-after-route', 110))
+  ('reordered-usage', 108), ('late-cost', 109), ('read-after-route', 110), ('stale-owner', 111),
+  ('foreman-only', 112), ('deadline-during-lineage', 113))
   fixture(scenario, request_slot)
 cross join lateral jsonb_to_record(pg_temp.op648_create_service_root(fixture.request_slot,
   'Grant narrowing root ' || fixture.scenario)) fields(
@@ -221,8 +222,16 @@ join public.factory_definition_revisions foreman on foreman.id = pg_temp.op648_i
 insert into route_graph(scenario, body)
 select extra.scenario, graph.body from route_graph graph
 cross join (values ('unknown-usage'), ('over-budget'), ('revoked-authority'), ('reordered-usage'),
-  ('late-cost'), ('read-after-route')) extra(scenario)
+  ('late-cost'), ('read-after-route'), ('stale-owner'), ('deadline-during-lineage')) extra(scenario)
 where graph.scenario = 'narrow';
+insert into route_graph(scenario, body)
+select 'foreman-only', jsonb_set(jsonb_set(jsonb_set(jsonb_set(
+  graph.body::jsonb,
+  '{nodes,1}', '{"id":"policy.check","kind":"deterministic","operation":"policy"}'),
+  '{edges,0,to}', '"policy.check"'),
+  '{routePolicy,nodes,route.choose,allowedDestinationIds}', '["policy.check"]'),
+  '{delegationPolicy,targets}', '{}')::text
+from route_graph graph where graph.scenario = 'narrow';
 
 create temp table root_owner as
 select root.*, registered.graph_revision_id, started.*
@@ -234,8 +243,14 @@ cross join lateral public.register_factory_workflow_graph_revision(
   graph.body, encode(sha256(convert_to(graph.body, 'UTF8')), 'hex')) registered
 cross join lateral public.start_factory_workflow_graph_execution(root."sessionId", root.workspace_id, root.factory_id,
   registered.graph_revision_id, root.checkpoint_run_id) started;
-select is((select count(*) from root_owner where created and ownership_token is not null), 9::bigint,
+select is((select count(*) from root_owner where created and ownership_token is not null), 12::bigint,
   'all roots enroll their graph and exact historical target profile');
+select ok((select created and ownership_token is not null from root_owner where scenario = 'foreman-only'),
+  'a foreman-only route enrolls with a bounded policy and empty child targets');
+select is(internal.is_enrollable_factory_workflow_delegation(workspace_id, factory_id,
+    jsonb_set(graph.body::jsonb, '{delegationPolicy,maxAttempts}', '1025')), false,
+  'a foreman-only route applies the same native bounds to its root policy')
+from op648_scope cross join route_graph graph where graph.scenario = 'foreman-only';
 update public.sessions session set archived_at = clock_timestamp(), phase_status = 'approved'
 from root_owner root where session.id = root."sessionId";
 
@@ -257,8 +272,11 @@ cross join lateral internal.factory_workflow_attempt_budget(root."sessionId", ex
 
 create temp table foreman_tickets as
 select scenario, pg_temp.begin_foreman(scenario) as ticket from root_owner;
-select is((select count(*) from foreman_tickets where ticket->>'status' = 'issued'), 8::bigint,
+select is((select count(*) from foreman_tickets where ticket->>'status' = 'issued'), 11::bigint,
   'fresh scoped routes issue one provider ticket under root accounting');
+select ok((select ticket->>'status' = 'issued' and ticket->'allowedDestinationIds' = '["policy.check"]'::jsonb
+  from foreman_tickets where scenario = 'foreman-only'),
+  'the foreman-only route issues inference for its exact deterministic destination');
 select ok((select invocation.deadline_at - invocation.issued_at = interval '15 seconds'
   from root_owner root join internal.factory_workflow_foreman_runs invocation on invocation.root_session_id = root."sessionId"
   where root.scenario = 'unknown-usage'), 'the provider deadline is bounded by the root session’s remaining execution time');
@@ -338,23 +356,50 @@ select ok((select budget.attempts = baseline.attempts + 1 and budget.tokens = ba
   cross join lateral internal.factory_workflow_attempt_budget(root."sessionId", execution.workflow_json::jsonb->'delegationPolicy') budget
   where root.scenario = 'narrow'), 'measured usage reconciles the conservative inference hold exactly');
 
+-- Stretch the private lineage check past a still-live issue deadline inside
+-- this rollback-only fixture. Assert it ran so an already-expired issue cannot
+-- accidentally satisfy the test on a loaded database.
+create temp table original_foreman_lineage as select pg_get_functiondef(
+  'internal.recheck_factory_workflow_delegation_lineage(uuid,uuid,uuid,uuid)'::regprocedure) as definition;
+do $$
+declare definition text := (select original.definition from original_foreman_lineage original);
+begin
+  execute replace(definition, '  return true;', $test$
+  if p_root_session_id::text = current_setting('wallie.foreman_deadline_fixture_root', true) then
+    perform set_config('wallie.foreman_deadline_fixture_waited', 'yes', true);
+    perform pg_sleep(0.6);
+  end if;
+  return true;$test$);
+end;
+$$;
+select set_config('wallie.foreman_deadline_fixture_root', root."sessionId"::text, true)
+from root_owner root where root.scenario = 'deadline-during-lineage';
+update internal.factory_workflow_foreman_runs invocation set deadline_at = clock_timestamp() + interval '0.5 seconds'
+from root_owner root where root.scenario = 'deadline-during-lineage' and root."sessionId" = invocation.root_session_id;
+create temp table expired_foreman as select pg_temp.settle_foreman('deadline-during-lineage', outcome) as result from planned;
+select ok((select current_setting('wallie.foreman_deadline_fixture_waited', true) = 'yes'
+  and result->>'status' = 'stale' and result->>'code' = 'inference_deadline_elapsed'
+  and result#>>'{usage,inputTokens}' = '12' and result->'commands' = '[]'::jsonb and not result ? 'planJson'
+  from expired_foreman), 'the deadline is enforced after lineage waits while exact usage is retained');
+do $$ begin execute (select definition from original_foreman_lineage); end; $$;
+
 create temp table foreman_handoff as
 select owner.* from root_owner root
 cross join lateral public.acquire_factory_workflow_ownership(root."sessionId", root.workspace_id, root.factory_id,
   root.execution_generation, gen_random_uuid()) owner
-where root.scenario = 'outside-parent-definition';
-create temp table stale_foreman as select pg_temp.settle_foreman('outside-parent-definition', outcome) as result from planned;
+where root.scenario = 'stale-owner';
+create temp table stale_foreman as select pg_temp.settle_foreman('stale-owner', outcome) as result from planned;
 select ok((select result->>'status' = 'stale' and result->>'code' = 'ownership_lost'
   and result#>>'{usage,inputTokens}' = '12' and result->'commands' = '[]'::jsonb and not result ? 'planJson'
   from stale_foreman), 'an exact old owner settles usage after handoff without appending a domain plan');
 update public.sessions session set phase_status = 'rejected' from root_owner root
-where root.scenario = 'outside-parent-definition' and session.id = root."sessionId";
-create temp table late_foreman as select pg_temp.settle_foreman('outside-parent-definition',
+where root.scenario = 'stale-owner' and session.id = root."sessionId";
+create temp table late_foreman as select pg_temp.settle_foreman('stale-owner',
   '{"status":"accounting","usage":{"inputTokens":20,"outputTokens":7,"costUsd":0.09},"providerReceiptId":"fixture-response"}') as result;
 select ok((select result->>'status' = 'stale' and result#>>'{usage,inputTokens}' = '20'
   and result#>>'{usage,outputTokens}' = '7' and (result#>>'{usage,costUsd}')::numeric = 0.09
   from late_foreman), 'a later absolute receipt on the same issue can raise debit without changing terminal ownership');
-select is((select pg_temp.settle_foreman('outside-parent-definition', outcome) from planned), (select result from late_foreman),
+select is((select pg_temp.settle_foreman('stale-owner', outcome) from planned), (select result from late_foreman),
   'reordered receipt cannot reduce measured usage or revive a stale plan');
 select is(pg_temp.settle_foreman('unknown-usage',
   '{"status":"blocked","code":"timeout","usage":{"inputTokens":4,"outputTokens":null,"costUsd":null}}')#>>'{status}',
@@ -395,6 +440,21 @@ select ok((select route.receipt->>'status' = 'accepted' and delegate.receipt->>'
   'the persisted plan dispatches an exact native route and separately granted child in order');
 select is(pg_temp.dispatch_foreman(2), (select receipt from dispatched_delegate),
   'replayed dispatch retains the original child receipt');
+select is(pg_temp.settle_foreman('outside-parent-definition', outcome)->>'status', 'accepted',
+  'the current owner can settle a plan before the child profile is checked') from planned;
+create temp table denied_child_route as select pg_temp.dispatch_foreman(1, 'outside-parent-definition') as receipt;
+create temp table denied_child as select pg_temp.dispatch_foreman(2, 'outside-parent-definition') as receipt;
+select ok((select route.receipt->>'status' = 'accepted'
+  and denied.receipt = '{"ordinal":2,"kind":"delegate","status":"blocked","code":"child_admission_denied"}'::jsonb
+  and not exists (select 1 from internal.factory_workflow_delegations marker
+    where marker.root_session_id = root."sessionId")
+  from denied_child_route route cross join denied_child denied cross join root_owner root
+  where root.scenario = 'outside-parent-definition'),
+  'the child grant cannot exceed the parent definition and its denied ordinal is recorded');
+select is(pg_temp.dispatch_foreman(2, 'outside-parent-definition'), (select receipt from denied_child),
+  'a definitively denied command replays the same blocked receipt');
+select is(pg_temp.dispatch_foreman(1, 'outside-parent-definition'), (select receipt from denied_child_route),
+  'a denied child does not roll back the committed route');
 create temp table read_plans as
 select scenario, jsonb_build_object('status', 'accepted', 'planJson', raw.plan,
   'planDigest', encode(sha256(convert_to(raw.plan, 'UTF8')), 'hex'),

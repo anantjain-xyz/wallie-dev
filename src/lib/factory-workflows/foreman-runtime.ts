@@ -9,7 +9,7 @@ import {
 } from "@/lib/pipeline/prompt-safety";
 
 import type { WorkflowOccurrencePin } from "./deterministic-command";
-import { parseForemanPlan, type ForemanPlan } from "./foreman-command";
+import { MAX_FOREMAN_PLAN_BYTES, parseForemanPlan, type ForemanPlan } from "./foreman-command";
 
 type ForemanCommandKind = ForemanPlan["commands"][number]["kind"];
 
@@ -42,6 +42,8 @@ export type ForemanInferenceOutcome = { usage: ForemanUsage; providerReceiptId?:
   | { status: "blocked"; code: InferenceBlocker }
   | { status: "accounting" }
 );
+
+export type ForemanAccountingOutcome = Extract<ForemanInferenceOutcome, { status: "accounting" }>;
 
 export type ForemanCommandReceipt = {
   foremanRunId: string;
@@ -108,6 +110,7 @@ export type ForemanInferencePermit = {
 
 type CommandDispatch =
   | { status: "recorded"; receipt: ForemanCommandReceipt }
+  | { status: "blocked"; code: "authority_unavailable" }
   | { status: "waiting" | "unavailable" };
 
 export type ForemanRunStore = {
@@ -125,6 +128,12 @@ export type ForemanRunStore = {
     issueId: string,
     outcome: ForemanInferenceOutcome,
     signal?: AbortSignal,
+  ): Promise<void>;
+  retainUsage?(
+    pin: WorkflowOccurrencePin,
+    foremanRunId: string,
+    issueId: string,
+    outcome: ForemanAccountingOutcome,
   ): Promise<void>;
   dispatchCommand(
     pin: WorkflowOccurrencePin,
@@ -210,7 +219,7 @@ function normalizedUsage({ inputTokens, outputTokens, costUsd }: ForemanUsage): 
   };
 }
 
-function accountingFields(response: ProviderOutcome) {
+function accountingFields(response: Pick<ForemanInferenceOutcome, "usage" | "providerReceiptId">) {
   const usage = normalizedUsage(response.usage);
   const providerReceiptId = response.providerReceiptId;
   return {
@@ -219,6 +228,10 @@ function accountingFields(response: ProviderOutcome) {
       ? { providerReceiptId }
       : {}),
   };
+}
+
+function hasMeasuredUsage({ inputTokens, outputTokens, costUsd }: ForemanUsage) {
+  return inputTokens !== null || outputTokens !== null || costUsd !== null;
 }
 
 async function observeUntilAbort<T>(work: Promise<T>, signal: AbortSignal) {
@@ -255,11 +268,22 @@ async function settleExactInference(
       // This exact settlement may already be committed. Retry the same payload.
     }
   }
+
+  const fields = accountingFields(outcome);
+  if (!hasMeasuredUsage(fields.usage)) return;
+  try {
+    await store.retainUsage?.(pin, permit.identity.foremanRunId, permit.issueId, {
+      status: "accounting",
+      ...fields,
+    });
+  } catch {
+    // The original issue retains its conservative hold if the fallback write is unavailable.
+  }
 }
 
 type InferenceResolution = {
   outcome: Exclude<ForemanInferenceOutcome, { status: "accounting" }>;
-  lateAccounting?: () => Promise<Extract<ForemanInferenceOutcome, { status: "accounting" }> | null>;
+  lateAccounting?: () => Promise<ForemanAccountingOutcome | null>;
 };
 
 async function performInference(
@@ -341,14 +365,7 @@ async function performInference(
         const late = await observeUntilAbort(provider, AbortSignal.timeout(remaining));
         if (!late) return null;
         const fields = accountingFields(late);
-        const { inputTokens, outputTokens, costUsd } = fields.usage;
-        if (
-          inputTokens === null &&
-          outputTokens === null &&
-          costUsd === null &&
-          !fields.providerReceiptId
-        )
-          return null;
+        if (!hasMeasuredUsage(fields.usage) && !fields.providerReceiptId) return null;
         return { status: "accounting", ...fields };
       },
     };
@@ -373,6 +390,8 @@ async function performInference(
   )
     return blocked("invalid_plan", fields);
   const planJson = JSON.stringify(parsed.plan);
+  if (new TextEncoder().encode(planJson).byteLength > MAX_FOREMAN_PLAN_BYTES)
+    return blocked("invalid_plan", fields);
   return {
     outcome: { status: "accepted", planJson, planDigest: digest(planJson), ...fields },
   };
@@ -471,6 +490,8 @@ export async function runFactoryWorkflowForeman({
     if (!receipts[index]) {
       if (signal?.aborted) return { status: "waiting", code: "interrupted", receipts } as const;
       const result = await store.dispatchCommand(pin, runId, index + 1);
+      if (result.status === "blocked")
+        return { status: "blocked", code: result.code, receipts } as const;
       if (result.status !== "recorded")
         return { status: "waiting", code: "command_pending", receipts } as const;
       if (!matchesReceipt(result.receipt, runId, command.kind, index + 1))

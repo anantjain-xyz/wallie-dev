@@ -158,6 +158,83 @@ $$;
 revoke all on function internal.is_enrollable_factory_workflow_foreman(uuid, uuid, jsonb)
   from public, anon, authenticated, service_role;
 
+-- A foreman-only graph reserves inference from the same bounded root budget.
+create or replace function internal.is_enrollable_factory_workflow_delegation(
+  p_workspace_id uuid, p_factory_id uuid, p_plan jsonb
+) returns boolean
+language plpgsql stable set search_path = '' as $$
+declare
+  policy jsonb := p_plan->'delegationPolicy';
+  targets jsonb := policy->'targets';
+  agent_count integer;
+begin
+  select count(*) into agent_count from jsonb_array_elements(p_plan->'nodes') node
+  where node->>'kind' = 'agent';
+  if agent_count = 0 and not exists (
+    select 1 from jsonb_array_elements(p_plan->'nodes') node
+    where node->>'kind' = 'route'
+      and p_plan #> array['routePolicy', 'nodes', node->>'id', 'foremanProfile'] is not null
+  ) then
+    return policy is null;
+  end if;
+  if jsonb_typeof(policy) is distinct from 'object' or jsonb_typeof(targets) is distinct from 'object' then
+    return false;
+  end if;
+  if policy - array['targets', 'maxChildren', 'maxConcurrentChildren', 'maxAttempts',
+      'maxTotalTokens', 'maxTokensPerAttempt', 'maxCostUsd', 'maxCostUsdPerAttempt'] <> '{}'::jsonb
+    or (select count(*) from jsonb_object_keys(targets)) <> agent_count then
+    return false;
+  end if;
+
+  if exists (select 1 from unnest(array['maxChildren', 'maxConcurrentChildren', 'maxAttempts',
+      'maxTotalTokens', 'maxTokensPerAttempt']) as limit_key(name)
+    where jsonb_typeof(policy->limit_key.name) is distinct from 'number'
+      or (policy->>limit_key.name) collate "C" !~ '^[1-9][0-9]{0,12}$')
+    or jsonb_typeof(policy->'maxCostUsd') is distinct from 'number'
+    or jsonb_typeof(policy->'maxCostUsdPerAttempt') is distinct from 'number' then
+    return false;
+  end if;
+
+  if (policy->>'maxAttempts')::bigint > 1024
+    or (policy->>'maxChildren')::bigint > (policy->>'maxAttempts')::bigint
+    or (policy->>'maxConcurrentChildren')::bigint > (policy->>'maxChildren')::bigint
+    or (policy->>'maxTotalTokens')::bigint > 1000000000000
+    or (policy->>'maxTokensPerAttempt')::bigint > (policy->>'maxTotalTokens')::bigint
+    or (policy->>'maxCostUsd')::numeric not between 0.000001 and 1000000
+    or (policy->>'maxCostUsdPerAttempt')::numeric not between 0.000001 and (policy->>'maxCostUsd')::numeric then
+    return false;
+  end if;
+
+  return not exists (
+    select 1 from jsonb_array_elements(p_plan->'nodes') node
+    where node->>'kind' = 'agent' and (
+      node->>'id' = p_plan->>'entryNodeId'
+      or exists (select 1 from jsonb_array_elements(p_plan->'edges') edge
+        where edge->>'to' = node->>'id' and edge->>'kind' not in ('route', 'loop'))
+      or not exists (
+        select 1 from jsonb_each(targets) target
+        join public.factory_definition_revisions revision on
+          (revision.workspace_id, revision.factory_id, revision.id::text, revision.canonical_digest) =
+          (p_workspace_id, p_factory_id, target.value->>'definitionRevisionId', target.value->>'definitionDigest')
+        where target.key = node->>'id'
+          and jsonb_typeof(target.value) = 'object'
+          and jsonb_typeof(target.value->'definitionRevisionId') = 'string'
+          and jsonb_typeof(target.value->'definitionDigest') = 'string'
+          and target.value - array['definitionRevisionId', 'definitionDigest'] = '{}'::jsonb
+          and revision.definition_json::jsonb#>>'{implementationAgent,promptRevisionId}' = node->>'agentPromptRevisionId'
+          and revision.definition_json::jsonb ?& array['executionGrant', 'credentialBindingId']
+          and not (revision.definition_json::jsonb ? 'modelRouting')
+          and exists (select 1 from public.factory_definition_activations activation
+            where (activation.workspace_id, activation.factory_id, activation.revision_id) =
+              (revision.workspace_id, revision.factory_id, revision.id))
+      )
+    )
+  );
+end;
+$$;
+revoke all on function internal.is_enrollable_factory_workflow_delegation(uuid, uuid, jsonb)
+  from public, anon, authenticated, service_role;
+
 create or replace function public.start_factory_workflow_graph_execution(
   p_root_session_id uuid, p_workspace_id uuid, p_factory_id uuid, p_graph_revision_id uuid,
   p_input_run_id uuid default null
@@ -918,6 +995,9 @@ begin
         if not lineage_current then
           next_status := 'stale';
           settled_code := 'ownership_lost';
+        elsif invocation.deadline_at <= clock_timestamp() then
+          next_status := 'stale';
+          settled_code := 'inference_deadline_elapsed';
         elsif internal.factory_workflow_foreman_usage_exhausted(effective_input_tokens, effective_output_tokens,
           effective_cost, invocation.reserved_tokens, invocation.reserved_cost_usd) then
           next_status := 'blocked';
@@ -1067,16 +1147,20 @@ begin
     elsif invocation.source_checkpoint_run_id is null then
       blocked_code := 'checkpoint_required';
     else
-      select * into strict child_receipt from public.admit_factory_workflow_delegated_session(
-        p_root_session_id, p_workspace_id, p_factory_id, p_expected_generation, p_ownership_token,
-        invocation.parent_session_id, target_occurrence, invocation.source_checkpoint_run_id,
-        command.command_json->>'title', command.command_json->>'promptMd'
-      );
-      child_id := child_receipt.child_session_id;
-      child_job := child_receipt.job_id;
-      child_run := child_receipt.run_id;
-      effect := jsonb_build_object('decisionId', route_decision, 'targetOccurrenceId', target_occurrence,
-        'childSessionId', child_id, 'jobId', child_job, 'runId', child_run);
+      begin
+        select * into strict child_receipt from public.admit_factory_workflow_delegated_session(
+          p_root_session_id, p_workspace_id, p_factory_id, p_expected_generation, p_ownership_token,
+          invocation.parent_session_id, target_occurrence, invocation.source_checkpoint_run_id,
+          command.command_json->>'title', command.command_json->>'promptMd'
+        );
+        child_id := child_receipt.child_session_id;
+        child_job := child_receipt.job_id;
+        child_run := child_receipt.run_id;
+        effect := jsonb_build_object('decisionId', route_decision, 'targetOccurrenceId', target_occurrence,
+          'childSessionId', child_id, 'jobId', child_job, 'runId', child_run);
+      exception when insufficient_privilege or sqlstate 'PT422' then
+        blocked_code := 'child_admission_denied';
+      end;
     end if;
   elsif kind = 'read_child' then
     select offered into planned_child from jsonb_array_elements(invocation.offered_children) offered

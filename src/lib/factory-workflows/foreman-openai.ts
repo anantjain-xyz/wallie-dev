@@ -207,6 +207,8 @@ function readOutcome(
   const usage = readUsage(parsed.data.usage, rate);
   if ((usage.inputTokens ?? 0) > limits.input || (usage.outputTokens ?? 0) > limits.output)
     return blocked("budget_exhausted", usage, id);
+  if (usage.inputTokens === null || usage.outputTokens === null)
+    return blocked("provider_unavailable", usage, id);
   if (status !== "completed") return blocked("provider_unavailable", usage, id);
   const items = responseOutput.safeParse(output);
   if (!items.success) return blocked("provider_unavailable", usage, id);

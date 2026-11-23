@@ -6,7 +6,7 @@ import { workflowNodeIdSchema } from "@/lib/factory-definitions/workflow-schema"
 import { workflowDelegationRequestSchema } from "./delegation-request";
 import { workflowRouteProposalSchema } from "./route-decision";
 
-const maxForemanPlanBytes = 24 * 1024;
+export const MAX_FOREMAN_PLAN_BYTES = 24 * 1024;
 
 const routeCommandSchema = z.strictObject({
   kind: z.literal("route"),
@@ -38,8 +38,8 @@ type ReadChildCommand = z.output<typeof readChildCommandSchema>;
 
 export function parseForemanPlan(source: string) {
   if (
-    source.length > maxForemanPlanBytes ||
-    new TextEncoder().encode(source).byteLength > maxForemanPlanBytes
+    source.length > MAX_FOREMAN_PLAN_BYTES ||
+    new TextEncoder().encode(source).byteLength > MAX_FOREMAN_PLAN_BYTES
   ) {
     return { status: "blocked", code: "plan_too_large" } as const;
   }

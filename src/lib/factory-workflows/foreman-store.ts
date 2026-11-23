@@ -16,6 +16,7 @@ import {
   type ForemanRunSnapshot,
   type ForemanRunStore,
 } from "./foreman-runtime";
+import { recoverForemanUsage, retainForemanUsage } from "./foreman-usage-recovery";
 
 const uuid = z.string().uuid();
 const digest = z.string().regex(/^[0-9a-f]{64}$/);
@@ -85,6 +86,7 @@ const receiptSchema = z.union([
         "checkpoint_required",
         "child_unavailable",
         "budget_exhausted",
+        "child_admission_denied",
       ]),
     })
     .strict(),
@@ -341,7 +343,19 @@ export async function executeFactoryWorkflowForeman(
       const { data, error } = await admin.rpc("read_factory_workflow_foreman_run", readArgs(owner));
       if (error) throw new Error("The factory foreman run could not be read.");
       if (data === null) return null;
-      const parsed = parseProjection(data, owner);
+      const initial = parseProjection(data, owner);
+      const recovered =
+        initial.status === "issued" ||
+        initial.usage.inputTokens === null ||
+        initial.usage.outputTokens === null
+          ? await recoverForemanUsage(
+              admin,
+              owner,
+              initial.foremanRunId,
+              initial.issuedGeneration,
+            ).catch(() => null)
+          : null;
+      const parsed = recovered === null ? initial : parseProjection(recovered, owner);
       const snapshot = toSnapshot(parsed);
       state.projection = parsed;
       return snapshot;
@@ -352,6 +366,7 @@ export async function executeFactoryWorkflowForeman(
         "begin_factory_workflow_foreman_inference",
         ownerArgs(owner),
       );
+      if (error?.code === "42501") return { status: "blocked", code: "authority_unavailable" };
       const parsed = beginSchema.safeParse(data);
       if (error || !parsed.success) throw new Error("The factory foreman issuance is unavailable.");
       const issued = parsed.data;
@@ -380,12 +395,16 @@ export async function executeFactoryWorkflowForeman(
       )
         throw new Error("The factory foreman settlement has a different issue.");
     },
+    retainUsage(owner, runId, issueId, outcome) {
+      return retainForemanUsage(admin, owner, runId, issueId, outcome);
+    },
     async dispatchCommand(owner, runId, commandOrdinal) {
       const { data, error } = await admin.rpc("dispatch_factory_workflow_foreman_command", {
         ...ownerArgs(owner),
         p_foreman_run_id: runId,
         p_ordinal: commandOrdinal,
       });
+      if (error?.code === "42501") return { status: "blocked", code: "authority_unavailable" };
       if (error) return { status: "unavailable" };
       const parsed = dispatchSchema.safeParse(data);
       if (!parsed.success) return { status: "unavailable" };
