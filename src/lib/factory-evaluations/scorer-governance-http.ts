@@ -31,7 +31,7 @@ const failures: Record<string, { status: number; message: string }> = {
 };
 
 type CommandScope = { workspaceId: string; factoryId: string };
-type Admin = ReturnType<typeof createSupabaseAdminClient>;
+type Admin = Pick<ReturnType<typeof createSupabaseAdminClient>, "rpc">;
 
 export function scorerGovernanceFailure(
   error: unknown,
