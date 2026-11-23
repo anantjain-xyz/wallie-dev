@@ -1,5 +1,7 @@
+import { Suspense } from "react";
 import { z } from "zod";
 
+import { AutomationPreviewLink } from "@/features/settings/automation-preview-link";
 import { PersonalOAuthConnections } from "@/features/settings/personal-oauth-connections";
 import { loadSettingsPageData } from "@/features/settings/data";
 import { parseSettingsCategory } from "@/features/settings/settings-categories";
@@ -27,6 +29,13 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
 
   return (
     <SettingsServerShell
+      automationPreview={
+        category === "integrations" ? (
+          <Suspense fallback={null}>
+            <AutomationPreviewLink workspaceSlug={workspaceSlug} />
+          </Suspense>
+        ) : undefined
+      }
       category={category}
       initialData={initialData}
       personalConnections={

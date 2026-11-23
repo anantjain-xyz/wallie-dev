@@ -7,6 +7,7 @@ const mocked = vi.hoisted(() => ({ workspaceAccess: vi.fn(), adminClient: vi.fn(
 vi.mock("@/lib/workspaces/access", () => ({ requireWorkspaceAccessById: mocked.workspaceAccess }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: mocked.adminClient }));
 
+import { POST as dryRun } from "./[automationId]/dry-run/route";
 import { GET as getDetail, POST as mutate } from "./[automationId]/route";
 import { GET, POST } from "./route";
 
@@ -44,20 +45,37 @@ const automation = {
     createdByMemberId: id(13),
   },
 };
+const event = { kind: "pull-request", repositoryId: id(6), action: "merged", baseBranch: "main" };
+const preview = {
+  automationId,
+  revisionId,
+  matched: true,
+  checks: [{ field: "kind", actual: "pull-request", expected: ["pull-request"], passed: true }],
+  budgetPayerMemberId: definition.budgetPayerMemberId,
+  assignment: {
+    status: "eligible",
+    agentName: "Reviewer",
+    workflowName: null,
+    executionPolicyRevisionId: id(14),
+  },
+};
 
 function fixture({
   visible = true,
   readable = true,
   errorCode,
+  dryRunResult = preview,
 }: {
   visible?: boolean;
   readable?: boolean;
   errorCode?: string;
+  dryRunResult?: unknown;
 } = {}) {
   const signedInFetch = vi.fn<typeof fetch>(async (input) => {
     const name = new URL(String(input)).pathname.split("/").at(-1);
     if (name === "factories") return Response.json(visible ? [{ id: scope.factoryId }] : []);
     if (!readable) return Response.json(null);
+    if (name === "dry_run_factory_automation") return Response.json(dryRunResult);
     return Response.json(
       name === "list_factory_automations"
         ? { automations: [automation], nextCursor: null }
@@ -198,5 +216,66 @@ describe("factory automation definition routes", () => {
     expect(result.status).toBe(201);
     const [, request] = writeFetch.mock.calls[0];
     expect(JSON.parse(String(request?.body)).p_definition).toEqual(schedule);
+  });
+});
+
+describe("factory automation dry run", () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it("passes one exact revision and normalized event through the signed-in client", async () => {
+    const { signedInFetch } = fixture();
+    const result = await dryRun(command({ revisionId, event }), { params: detailParams });
+    expect(result.status).toBe(200);
+    expect(result.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await result.json()).toEqual(preview);
+    const [, request] =
+      signedInFetch.mock.calls.find(([url]) =>
+        String(url).endsWith("/dry_run_factory_automation"),
+      ) ?? [];
+    expect(JSON.parse(String(request?.body))).toEqual({
+      p_workspace_id: scope.workspaceId,
+      p_factory_id: scope.factoryId,
+      p_automation_id: automationId,
+      p_revision_id: revisionId,
+      p_event: event,
+    });
+    expect(mocked.adminClient).not.toHaveBeenCalled();
+  });
+
+  it("returns an actionable denial independently of a matching event", async () => {
+    const denied = {
+      ...preview,
+      assignment: {
+        status: "denied",
+        reason: "invalid_assignment",
+        message: "Approve a new execution grant and update the rule.",
+      },
+    };
+    fixture({ dryRunResult: denied });
+    const result = await dryRun(command({ revisionId, event }), { params: detailParams });
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual(denied);
+    expect(mocked.adminClient).not.toHaveBeenCalled();
+  });
+
+  it("masks an inaccessible or unknown revision", async () => {
+    fixture({ readable: false });
+    const result = await dryRun(command({ revisionId, event }), { params: detailParams });
+    expect(result.status).toBe(404);
+    expect(mocked.adminClient).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ...event, actorUserId: actorId },
+    { ...event, action: "unverified" },
+    { kind: "issue-state", stateId: "done", teamId: null },
+    { kind: "schedule", scheduledFor: "2026-02-29T08:00:00Z" },
+    { kind: "schedule", scheduledFor: "2026-11-23T08:00:00+16:00" },
+  ])("rejects a malformed sample event before evaluating a revision", async (invalid) => {
+    const { signedInFetch } = fixture();
+    const result = await dryRun(command({ revisionId, event: invalid }), { params: detailParams });
+    expect(result.status).toBe(400);
+    expect(signedInFetch).toHaveBeenCalledTimes(1);
+    expect(mocked.adminClient).not.toHaveBeenCalled();
   });
 });

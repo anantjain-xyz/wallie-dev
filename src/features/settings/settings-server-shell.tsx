@@ -32,6 +32,7 @@ import { workspaceFactoryDefinitionPath } from "@/lib/routes";
 import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
 type SettingsServerShellProps = {
+  automationPreview?: ReactNode;
   category: SettingsCategory;
   initialData: SettingsInitialData;
   personalConnections?: ReactNode;
@@ -151,6 +152,7 @@ function IntegrationsCategory(props: SettingsServerShellProps) {
         githubStatus={props.searchState.githubStatus}
         workspaceId={props.initialData.workspace.id}
       />
+      {props.automationPreview}
       <Suspense
         fallback={<SettingsSectionFallback label="integration details" minHeight="min-h-96" />}
       >

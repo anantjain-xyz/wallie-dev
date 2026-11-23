@@ -1,0 +1,43 @@
+\set op651_parallel_only true
+\set op651_seed_only true
+\ir factory_workflow_branch.psql
+
+insert into auth.users(id, email)
+values (pg_temp.op651_id(2), 'automation-viewer-' || current_setting('wallie.op651_fixture_namespace') || '@example.test');
+insert into public.workspace_members(id, workspace_id, user_id, kind, role)
+values (pg_temp.op651_id(22), pg_temp.op651_id(11), pg_temp.op651_id(2), 'human', 'member');
+
+create function pg_temp.dry_run_definition(p_kind text) returns jsonb language sql as $$
+  select jsonb_build_object(
+    'name', case p_kind
+      when 'schedule' then 'Inspect weekday changes'
+      when 'pull-request' then 'Review merged pull requests'
+      when 'issue-state' then 'Review issues in progress'
+    end,
+    'trigger', case p_kind
+      when 'schedule' then jsonb_build_object('kind', p_kind, 'cron', '0 9 * * 1-5', 'timeZone', 'America/Los_Angeles')
+      when 'pull-request' then jsonb_build_object('kind', p_kind, 'repositoryId', granted.github_repository_id)
+      when 'issue-state' then jsonb_build_object('kind', p_kind)
+    end,
+    'filters', case p_kind
+      when 'schedule' then '{}'::jsonb
+      when 'pull-request' then '{"actions":["merged"], "baseBranches":["main"]}'::jsonb
+      when 'issue-state' then '{"stateIds":["in-progress"], "teamIds":["platform"], "projectIds":[]}'::jsonb
+    end,
+    'target', jsonb_build_object('kind', 'agent', 'definitionRevisionId', revision.revision_id,
+      'agentId', revision.body::jsonb#>>'{implementationAgent,agentId}'),
+    'executionGrant', jsonb_build_object('id', granted.id, 'version', granted.version),
+    'servicePrincipalId', granted.service_principal_id,
+    'budgetPayerMemberId', granted.budget_payer_member_id,
+    'credentialBindingId', revision.binding_id
+  )
+  from scoped_revisions revision cross join op651_grant granted
+  where revision.scenario = 'root'
+$$;
+
+create function pg_temp.create_dry_run_automation(p_slot integer, p_definition jsonb)
+returns jsonb language sql as $$
+  select public.create_factory_automation(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+    pg_temp.op651_id(p_slot), p_definition)
+  from op651_scope scope
+$$;

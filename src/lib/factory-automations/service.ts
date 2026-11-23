@@ -13,6 +13,7 @@ import {
   type factoryAutomationReadQuerySchema,
   type FactoryAutomationCommand,
 } from "./contracts";
+import { automationDryRunResponseSchema, type AutomationDryRunRequest } from "./dry-run-contracts";
 
 type Client = SupabaseClient<Database>;
 type AutomationScope = z.output<typeof factoryAutomationPathSchema>;
@@ -46,6 +47,22 @@ export async function readFactoryAutomation(
   });
   if (error) throw error;
   return data === null ? null : factoryAutomationSnapshotSchema.parse(data);
+}
+
+export async function dryRunFactoryAutomation(
+  client: Client,
+  scope: AutomationScope,
+  input: AutomationDryRunRequest,
+) {
+  const { data, error } = await client.rpc("dry_run_factory_automation", {
+    p_workspace_id: scope.workspaceId,
+    p_factory_id: scope.factoryId,
+    p_automation_id: scope.automationId,
+    p_revision_id: input.revisionId,
+    p_event: input.event,
+  });
+  if (error) throw error;
+  return data === null ? null : automationDryRunResponseSchema.parse(data);
 }
 
 export async function createFactoryAutomation(

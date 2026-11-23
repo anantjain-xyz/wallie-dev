@@ -230,6 +230,21 @@ export function workspaceSettingsPath(workspaceSlug: string, query?: Record<stri
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
+export function workspaceAutomationPreviewPath(
+  workspaceSlug: string,
+  query?: { factory?: string; automation?: string; revision?: string; afterId?: string },
+) {
+  return withSearchParams(`${workspaceSettingsPath(workspaceSlug)}/automations`, query);
+}
+
+export function automationDryRunApiPath(
+  workspaceId: string,
+  factoryId: string,
+  automationId: string,
+) {
+  return `/api/workspaces/${encodeURIComponent(workspaceId)}/factories/${encodeURIComponent(factoryId)}/automations/${encodeURIComponent(automationId)}/dry-run`;
+}
+
 export function workspaceWorkflowsPath(
   workspaceSlug: string,
   query?: { factory?: string; after?: string },

@@ -1,0 +1,42 @@
+-- Use a disposable local project and a unique numeric op651_fixture_namespace.
+\o /dev/null
+begin;
+\ir ../../supabase/tests/fixtures/factory_automation_dry_run.psql
+
+update public.workspaces set name = 'Automation dry-run qualification' where id = pg_temp.op651_id(11);
+update auth.users set instance_id = '00000000-0000-0000-0000-000000000000', aud = 'authenticated', role = 'authenticated',
+  email_confirmed_at = now(), created_at = now(), updated_at = now(), confirmation_token = '', recovery_token = '',
+  email_change_token_new = '', email_change = '', raw_app_meta_data = '{"provider":"email","providers":["email"]}',
+  raw_user_meta_data = '{}'
+where id in (pg_temp.op651_id(1), pg_temp.op651_id(2));
+insert into public.workspace_onboarding(workspace_id, status, completed_at, selected_github_repository_id)
+values (pg_temp.op651_id(11), 'completed', now(), pg_temp.op651_id(34))
+on conflict (workspace_id) do update set status = excluded.status, completed_at = excluded.completed_at,
+  selected_github_repository_id = excluded.selected_github_repository_id;
+
+create temp table browser_automation as
+select pg_temp.create_dry_run_automation(101, pg_temp.dry_run_definition('pull-request')) as value;
+select public.publish_factory_automation(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  (automation.value->>'automationId')::uuid, (automation.value->>'draftRevisionId')::uuid)
+from op651_scope scope cross join browser_automation automation;
+\o
+
+select jsonb_build_object(
+  'workspaceId', scope.workspace_id,
+  'workspaceSlug', workspace.slug,
+  'factoryId', scope.factory_id,
+  'automationId', automation.value->'automationId',
+  'revisionId', automation.value->'draftRevisionId',
+  'repositoryId', pg_temp.op651_id(34),
+  'ownerId', owner_user.id,
+  'ownerEmail', owner_user.email,
+  'viewerEmail', viewer_user.email,
+  'bindingId', binding.id,
+  'bindingVersion', binding.version
+)::text
+from op651_scope scope cross join browser_automation automation
+join public.workspaces workspace on workspace.id = scope.workspace_id
+join auth.users owner_user on owner_user.id = pg_temp.op651_id(1)
+join auth.users viewer_user on viewer_user.id = pg_temp.op651_id(2)
+join public.factory_secret_bindings binding on binding.id = (automation.value#>>'{revision,definition,credentialBindingId}')::uuid;
+commit;

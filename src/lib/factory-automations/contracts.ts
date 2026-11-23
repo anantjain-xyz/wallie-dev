@@ -14,7 +14,7 @@ function isAutomationText(value: string) {
   return isFactoryDefinitionText(value) && !/\p{Cc}/u.test(value) && [...value].length <= 120;
 }
 
-const filterText = z
+export const automationFilterTextSchema = z
   .string()
   .min(1)
   .refine((value) => isAutomationText(value) && value === value.trim());
@@ -80,15 +80,15 @@ export const factoryAutomationDefinitionSchema = z.union([
     trigger: z.strictObject({ kind: z.literal("pull-request"), repositoryId: id }),
     filters: z.strictObject({
       actions: distinctFilters(automationPullRequestActionSchema),
-      baseBranches: distinctFilters(filterText),
+      baseBranches: distinctFilters(automationFilterTextSchema),
     }),
   }),
   automationAssignment.extend({
     trigger: z.strictObject({ kind: z.literal("issue-state") }),
     filters: z.strictObject({
-      stateIds: distinctFilters(filterText, 1),
-      teamIds: distinctFilters(filterText),
-      projectIds: distinctFilters(filterText),
+      stateIds: distinctFilters(automationFilterTextSchema, 1),
+      teamIds: distinctFilters(automationFilterTextSchema),
+      projectIds: distinctFilters(automationFilterTextSchema),
     }),
   }),
 ]);
