@@ -24,6 +24,7 @@ import { drainFactoryDiagnoses } from "@/lib/factory-diagnosis/worker";
 import { drainFactoryJudges } from "@/lib/factory-evaluations/judge-worker";
 import { maintainFactoryEvaluationQueue } from "@/lib/factory-evaluations/maintenance";
 import { drainFactoryAutomationOccurrences } from "@/lib/factory-automations/admission-service";
+import { reconcileFactoryAutomationSchedules } from "@/lib/factory-automations/schedule-service";
 import { expireFactoryDeliveryDispatches } from "@/lib/factory-delivery-commands/maintenance";
 import { processFactoryFailureCohorts } from "@/lib/factory-failures/maintenance";
 import {
@@ -240,6 +241,7 @@ async function main() {
     let reconcilingBenchmarkSchedules = false;
     let reconcilingBenchmarkEvaluations = false;
     let admittingFactoryAutomationOccurrences = false;
+    let reconcilingFactoryAutomationSchedules = false;
     let expiringFactoryDeliveryDispatches = false;
     maintenanceTimers.push(
       setInterval(() => {
@@ -340,6 +342,16 @@ async function main() {
               await reconcileBenchmarkEvaluations(admin);
             } finally {
               reconcilingBenchmarkEvaluations = false;
+            }
+          });
+        }
+        if (!reconcilingFactoryAutomationSchedules) {
+          reconcilingFactoryAutomationSchedules = true;
+          timerTasks.run("factory automation schedules", async () => {
+            try {
+              await reconcileFactoryAutomationSchedules(admin);
+            } finally {
+              reconcilingFactoryAutomationSchedules = false;
             }
           });
         }
