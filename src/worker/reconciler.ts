@@ -185,7 +185,7 @@ async function loadLinkedSessionPage(
   let query = admin
     .from("sessions")
     .select("id, workspace_id, linear_issue_id, updated_at, phase_status, execution_exhausted_at")
-    .not("linear_issue_id", "is", null)
+    .neq("linear_issue_id", "")
     .is("archived_at", null)
     .in("phase_status", ["in_progress", "awaiting_review", "approved", "rejected"])
     .order("id", { ascending: true })

@@ -101,7 +101,10 @@ function adminFor(
       const filters: Record<string, unknown> = {};
       const builder = {
         select: () => builder,
-        not: () => builder,
+        neq: (column: string, value: unknown) => {
+          filters[`neq.${column}`] = value;
+          return builder;
+        },
         is: () => builder,
         in: (column: string, values: string[]) => {
           filters[`in.${column}`] = values;
@@ -137,6 +140,8 @@ function adminFor(
                       .filter(
                         (row) =>
                           (!filters.workspace_id || row.workspace_id === filters.workspace_id) &&
+                          (!("neq.linear_issue_id" in filters) ||
+                            row.linear_issue_id !== filters["neq.linear_issue_id"]) &&
                           (!filters["gt.id"] || row.id > String(filters["gt.id"])),
                       )
                       .slice(0, 50),
@@ -828,6 +833,26 @@ describe("reconcileLinearState", () => {
     }
 
     expect((await work).rateLimited).toBe(true);
+  });
+
+  it("excludes empty legacy links from provider reads and the exact cursor page", async () => {
+    const { admin, commitPage, rpc } = adminFor([
+      { ...session("session-0"), linear_issue_id: "" },
+      session("session-1"),
+    ]);
+
+    expect((await reconcileLinearState(admin as never)).checked).toBe(1);
+
+    expect(mocks.observations).toHaveBeenCalledExactlyOnceWith("decoded:workspace-1", [
+      "ISSUE-session-1",
+    ]);
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(
+      "apply_linear_session_transition",
+      expect.objectContaining({ p_session_id: "session-1" }),
+    );
+    expect(commitPage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ p_session_links: [linked("session-1")] }),
+    );
   });
 
   it("uses a unique ID cursor so equal creation timestamps cannot skip a page", async () => {

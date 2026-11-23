@@ -271,7 +271,7 @@ begin
 
   select coalesce(array_agg(page.id order by page.id), '{}'::uuid[]) into expected_ids
   from (
-    select session.id from public.sessions session where session.linear_issue_id is not null and session.archived_at is null
+    select session.id from public.sessions session where session.linear_issue_id <> '' and session.archived_at is null
       and session.phase_status in ('in_progress', 'awaiting_review', 'approved', 'rejected')
       and (p_workspace_id is null or session.workspace_id = p_workspace_id)
       and (progress.after_session_id is null or session.id > progress.after_session_id)
@@ -289,7 +289,7 @@ begin
     order by page.id), '[]'::jsonb) into locked_links
   from (
     select session.id, session.linear_issue_id from public.sessions session where session.id = any(expected_ids)
-      and session.linear_issue_id is not null and session.archived_at is null
+      and session.linear_issue_id <> '' and session.archived_at is null
       and session.phase_status in ('in_progress', 'awaiting_review', 'approved', 'rejected')
       and (p_workspace_id is null or session.workspace_id = p_workspace_id)
     order by session.id for share
@@ -318,24 +318,18 @@ begin
     raise exception 'A state span must match one session in the exact scan page.' using errcode = 'PT409';
   end if;
 
-  -- Several links can observe different spans of the same canonical issue.
-  -- Record each distinct span in order so the watermark advances through them.
+  -- Process snapshots in source order. The recorder retains the first event for
+  -- a span and lets later copies advance its watermark without matching again.
   for observed in
-    with distinct_spans as (
-      select distinct on (session.workspace_id, session.factory_id, (observation->>'issueId')::uuid, observation->>'spanId')
-        session.workspace_id, session.factory_id, (observation->>'issueId')::uuid::text as issue_id,
-        observation->>'spanId' as span_id, (observation->>'startedAt')::timestamptz as started_at,
-        (observation->>'issueUpdatedAt')::timestamptz as issue_updated_at,
-        internal.normalize_factory_automation_event(jsonb_build_object(
-          'kind', 'issue-state', 'stateId', observation->'stateId', 'teamId', observation->'teamId', 'projectId', observation->'projectId'
-        )) as event
-      from jsonb_array_elements(p_observations) observation
-      join public.sessions session on session.id = (observation->>'sessionId')::uuid
-      order by session.workspace_id, session.factory_id, (observation->>'issueId')::uuid, observation->>'spanId',
-        (observation->>'issueUpdatedAt')::timestamptz desc, (observation->>'startedAt')::timestamptz desc, session.id
-    )
-    select * from distinct_spans
-    order by workspace_id, factory_id, issue_id, issue_updated_at, started_at, span_id
+    select session.workspace_id, session.factory_id, (observation->>'issueId')::uuid::text as issue_id,
+      observation->>'spanId' as span_id, (observation->>'startedAt')::timestamptz as started_at,
+      (observation->>'issueUpdatedAt')::timestamptz as issue_updated_at,
+      internal.normalize_factory_automation_event(jsonb_build_object(
+        'kind', 'issue-state', 'stateId', observation->'stateId', 'teamId', observation->'teamId', 'projectId', observation->'projectId'
+      )) as event
+    from jsonb_array_elements(p_observations) observation
+    join public.sessions session on session.id = (observation->>'sessionId')::uuid
+    order by session.workspace_id, session.factory_id, issue_id, issue_updated_at, started_at, session.id
   loop
     inserted := inserted + internal.record_issue_automation_state_span(observed.workspace_id, observed.factory_id,
       source_namespace, observed.issue_id, observed.span_id, observed.started_at, observed.issue_updated_at, observed.event);

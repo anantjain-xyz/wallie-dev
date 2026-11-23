@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select no_plan();
+select plan(40);
 \set op651_fixture_namespace 66310000
 \ir fixtures/factory_automation_dry_run.psql
 
@@ -25,7 +25,7 @@ create function pg_temp.issue_page(p_first integer, p_last integer) returns json
   select jsonb_agg(jsonb_build_object('sessionId', session.id, 'linkedIssueId', session.linear_issue_id) order by item)
   from generate_series(p_first, p_last) item
   join public.sessions session on session.id = pg_temp.op651_id(1000 + item)
-  where session.archived_at is null
+  where session.archived_at is null and session.linear_issue_id <> ''
 $$;
 create function pg_temp.issue_span(
   p_link integer, p_issue integer, p_span text, p_state text, p_started_at text, p_updated_at text, p_project text default null
@@ -40,16 +40,17 @@ select ok(has_function_privilege('service_role', 'public.commit_linear_automatio
   and not has_function_privilege('authenticated', 'public.commit_linear_automation_span_page(bigint,jsonb,jsonb,uuid)', 'execute')
   and not has_function_privilege('anon', 'public.read_linear_automation_span_cursor(uuid)', 'execute'),
   'only the worker can read or commit Linear automation scans');
-select ok(generation = 0 and after_session_id is null, 'a new scoped scan begins at the first linked session')
-from public.read_linear_automation_span_cursor(pg_temp.op651_id(11));
+select ok((select count(*) = 1 and bool_and(generation = 0 and after_session_id is null)
+  from public.read_linear_automation_span_cursor(pg_temp.op651_id(11))),
+  'a new scoped scan begins at the first linked session');
 
-select ok(generation = 1 and after_session_id = pg_temp.op651_id(1050) and occurrence_count = 0,
-  'the first linked page commits and keeps current spans as a baseline')
-from public.commit_linear_automation_span_page(0, pg_temp.issue_page(1, 50), jsonb_build_array(
+select ok((select count(*) = 1 and bool_and(generation = 1 and after_session_id = pg_temp.op651_id(1050) and occurrence_count = 0)
+  from public.commit_linear_automation_span_page(0, pg_temp.issue_page(1, 50), jsonb_build_array(
   pg_temp.issue_span(1, 501, 'initial-a', 'in-progress', '2026-11-22T10:00:00Z', '2026-11-22T10:30:00Z'),
   pg_temp.issue_span(2, 501, 'initial-a', 'in-progress', '2026-11-22T10:00:00Z', '2026-11-22T10:30:00Z'),
   pg_temp.issue_span(3, 502, 'initial-b', 'in-progress', '2026-11-22T10:00:00Z', '2026-11-22T10:30:00Z')
-), pg_temp.op651_id(11));
+), pg_temp.op651_id(11))),
+  'the first linked page commits and keeps current spans as a baseline');
 select is((select count(*) from internal.issue_automation_state_spans where workspace_id = pg_temp.op651_id(11) and baseline),
   2::bigint, 'an identifier and canonical UUID for one issue freeze a single baseline');
 select throws_ok($$
@@ -58,16 +59,17 @@ select throws_ok($$
       '{linkedIssueId}', '"not-the-linked-issue"')
   ), pg_temp.op651_id(11))
 $$, 'PT409', null, 'a mismatched provider reconciliation cannot consume the page');
-select ok(generation = 1 and after_session_id = pg_temp.op651_id(1050),
-  'failure preserves the exact durable continuation for the next worker')
-from public.read_linear_automation_span_cursor(pg_temp.op651_id(11));
-select ok(generation = 0 and after_session_id is null, 'the global scan has its own durable cursor')
-from public.read_linear_automation_span_cursor();
-select ok(generation = 2 and after_session_id is null and occurrence_count = 0,
-  'restart resumes at the saved next page and wraps after the nonmatching leave span')
-from public.commit_linear_automation_span_page(1, pg_temp.issue_page(51, 52), jsonb_build_array(
+select ok((select count(*) = 1 and bool_and(generation = 1 and after_session_id = pg_temp.op651_id(1050))
+  from public.read_linear_automation_span_cursor(pg_temp.op651_id(11))),
+  'failure preserves the exact durable continuation for the next worker');
+select ok((select count(*) = 1 and bool_and(generation = 0 and after_session_id is null)
+  from public.read_linear_automation_span_cursor()),
+  'the global scan has its own durable cursor');
+select ok((select count(*) = 1 and bool_and(generation = 2 and after_session_id is null and occurrence_count = 0)
+  from public.commit_linear_automation_span_page(1, pg_temp.issue_page(51, 52), jsonb_build_array(
   pg_temp.issue_span(51, 501, 'left-a', 'todo', '2026-11-22T11:00:00Z', '2026-11-22T11:00:00Z')
-), pg_temp.op651_id(11));
+), pg_temp.op651_id(11))),
+  'restart resumes at the saved next page and wraps after the nonmatching leave span');
 
 select throws_ok($$
   select public.commit_linear_automation_span_page(2, pg_temp.issue_page(1, 50), jsonb_build_array(
@@ -76,31 +78,33 @@ select throws_ok($$
   ), pg_temp.op651_id(11))
 $$, '22023', 'An issue automation state span changed identity.',
   'a later inconsistent span aborts the entire page, including earlier eligible work');
-select ok(generation = 2 and after_session_id is null, 'an aborted eligible page does not consume its cursor')
-from public.read_linear_automation_span_cursor(pg_temp.op651_id(11));
+select ok((select count(*) = 1 and bool_and(generation = 2 and after_session_id is null)
+  from public.read_linear_automation_span_cursor(pg_temp.op651_id(11))),
+  'an aborted eligible page does not consume its cursor');
 select is((select count(*) from internal.factory_automation_occurrences where workspace_id = pg_temp.op651_id(11)),
   0::bigint, 'failure rolls back an occurrence staged earlier on the same page');
 
-select ok(generation = 3 and after_session_id = pg_temp.op651_id(1050) and occurrence_count = 1,
-  'a true return to the matching state creates one occurrence under its new span ID')
-from public.commit_linear_automation_span_page(2, pg_temp.issue_page(1, 50), jsonb_build_array(
+select ok((select count(*) = 1 and bool_and(generation = 3 and after_session_id = pg_temp.op651_id(1050) and occurrence_count = 1)
+  from public.commit_linear_automation_span_page(2, pg_temp.issue_page(1, 50), jsonb_build_array(
   pg_temp.issue_span(1, 501, 'returned-a', 'in-progress', '2026-11-22T12:00:00Z', '2026-11-22T12:00:00Z'),
   pg_temp.issue_span(2, 501, 'returned-a', 'in-progress', '2026-11-22T12:00:00Z', '2026-11-22T12:00:00Z')
-), pg_temp.op651_id(11));
+), pg_temp.op651_id(11))),
+  'a true return to the matching state creates one occurrence under its new span ID');
 select throws_ok($$
   select public.commit_linear_automation_span_page(2, pg_temp.issue_page(1, 50), '[]', pg_temp.op651_id(11))
 $$, 'PT409', null, 'an older worker cannot commit under an out-of-date cursor generation');
-select ok(generation = 4 and after_session_id is null and occurrence_count = 0,
-  'unrelated project edits on the same span do not create or alter an occurrence')
-from public.commit_linear_automation_span_page(3, pg_temp.issue_page(51, 52), jsonb_build_array(
+select ok((select count(*) = 1 and bool_and(generation = 4 and after_session_id is null and occurrence_count = 0)
+  from public.commit_linear_automation_span_page(3, pg_temp.issue_page(51, 52), jsonb_build_array(
   pg_temp.issue_span(51, 501, 'returned-a', 'in-progress', '2026-11-22T12:00:00Z', '2026-11-22T13:00:00Z', 'moved-project')
-), pg_temp.op651_id(11));
+), pg_temp.op651_id(11))),
+  'unrelated project edits on the same span do not create or alter an occurrence');
 select is(event->'projectId', 'null'::jsonb, 'the admitted event retains the project context from its first observation')
 from internal.factory_automation_occurrences where workspace_id = pg_temp.op651_id(11);
-select ok(generation = 5 and occurrence_count = 0, 'a previously unobserved but older provider snapshot cannot re-arm a rule')
-from public.commit_linear_automation_span_page(4, pg_temp.issue_page(1, 50), jsonb_build_array(
+select ok((select count(*) = 1 and bool_and(generation = 5 and occurrence_count = 0)
+  from public.commit_linear_automation_span_page(4, pg_temp.issue_page(1, 50), jsonb_build_array(
   pg_temp.issue_span(1, 501, 'stale-a', 'in-progress', '2026-11-22T11:30:00Z', '2026-11-22T11:45:00Z')
-), pg_temp.op651_id(11));
+), pg_temp.op651_id(11))),
+  'a previously unobserved but older provider snapshot cannot re-arm a rule');
 select is((select count(*) from internal.issue_automation_state_spans
   where workspace_id = pg_temp.op651_id(11) and source_span_id = 'stale-a'), 0::bigint,
   'the stale snapshot does not replace or extend durable issue history');
@@ -140,14 +144,16 @@ select is(pg_temp.route_terminal_issue(pg_temp.op651_id(600), pg_temp.issue_span
   3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
   'stale', 'the terminal path cannot retain or route a span against another workspace');
 
-select ok(generation = 6 and occurrence_count = 0, 'a different link records the terminal span for its canonical issue')
-from public.commit_linear_automation_span_page(5, pg_temp.issue_page(51, 52), jsonb_build_array(
+select ok((select count(*) = 1 and bool_and(generation = 6 and occurrence_count = 0)
+  from public.commit_linear_automation_span_page(5, pg_temp.issue_page(51, 52), jsonb_build_array(
   pg_temp.issue_span(51, 501, 'closed-a', 'wont-fix', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')
-), pg_temp.op651_id(11));
-select ok(generation = 7 and occurrence_count = 1, 'the UUID alias retains a newer open span for the same issue')
-from public.commit_linear_automation_span_page(6, pg_temp.issue_page(1, 50), jsonb_build_array(
+), pg_temp.op651_id(11))),
+  'a different link records the terminal span for its canonical issue');
+select ok((select count(*) = 1 and bool_and(generation = 7 and occurrence_count = 1)
+  from public.commit_linear_automation_span_page(6, pg_temp.issue_page(1, 50), jsonb_build_array(
   pg_temp.issue_span(2, 501, 'reopened-a', 'in-progress', '2026-11-22T15:00:00Z', '2026-11-22T15:00:00Z')
-), pg_temp.op651_id(11));
+), pg_temp.op651_id(11))),
+  'the UUID alias retains a newer open span for the same issue');
 select is(pg_temp.route_terminal_issue(pg_temp.op651_id(11), pg_temp.issue_span(
   1, 501, 'closed-a', 'wont-fix', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
   'stale', 'the newer canonical issue watermark blocks the old terminal route on another alias');
@@ -166,25 +172,38 @@ select ok((select archived_at is not null from public.sessions where id = pg_tem
 select is((select count(*) from internal.factory_automation_occurrences
   where workspace_id = pg_temp.op651_id(11) and event->>'stateId' = 'canceled' and status = 'pending'),
   1::bigint, 'the terminal event leaves exactly one pending occurrence after archival');
-select ok(generation = 7 and after_session_id = pg_temp.op651_id(1050),
-  'retaining and routing the terminal link does not move the automation cursor')
-from public.read_linear_automation_span_cursor(pg_temp.op651_id(11));
+select ok((select count(*) = 1 and bool_and(generation = 7 and after_session_id = pg_temp.op651_id(1050))
+  from public.read_linear_automation_span_cursor(pg_temp.op651_id(11))),
+  'retaining and routing the terminal link does not move the automation cursor');
 
 -- Multiple aliases may be read on either side of a genuine provider transition.
-select ok(generation = 8 and after_session_id is null, 'the final page resets the automation scan')
-from public.commit_linear_automation_span_page(7, pg_temp.issue_page(51, 52), '[]', pg_temp.op651_id(11));
+select ok((select count(*) = 1 and bool_and(generation = 8 and after_session_id is null)
+  from public.commit_linear_automation_span_page(7, pg_temp.issue_page(51, 52), '[]', pg_temp.op651_id(11))),
+  'the final page resets the automation scan');
+
+with draft as materialized (
+  select scope.workspace_id, scope.factory_id, pg_temp.create_dry_run_automation(103,
+    jsonb_set(pg_temp.dry_run_definition('issue-state'), '{filters,projectIds}', '["original-project"]')) as rule
+  from op651_scope scope
+)
+select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1),
+  (rule->>'automationId')::uuid, (rule->>'draftRevisionId')::uuid)
+from draft;
 
 create temp table issue_alias_observations as
 select jsonb_build_array(
   pg_temp.issue_span(2, 501, 'same-page-leave', 'todo', '2026-11-22T17:00:00Z', '2026-11-22T17:00:00Z'),
-  pg_temp.issue_span(51, 501, 'same-page-enter', 'in-progress', '2026-11-22T16:00:00Z', '2026-11-22T16:15:00Z'),
-  pg_temp.issue_span(1, 501, 'same-page-enter', 'in-progress', '2026-11-22T16:00:00Z', '2026-11-22T16:00:00Z')
+  pg_temp.issue_span(51, 501, 'same-page-enter', 'in-progress', '2026-11-22T16:00:00Z', '2026-11-22T16:15:00Z', 'edited-project'),
+  pg_temp.issue_span(1, 501, 'same-page-enter', 'in-progress', '2026-11-22T16:00:00Z', '2026-11-22T16:00:00Z', 'original-project')
 ) as spans;
 
-select ok(generation = 9 and occurrence_count = 1,
-  'the shared page admits the earlier matching span once even when the newest alias is a nonmatch')
-from issue_alias_observations batch cross join lateral
-  public.commit_linear_automation_span_page(8, pg_temp.issue_page(1, 51), batch.spans, pg_temp.op651_id(11));
+select ok((select count(*) = 1 and bool_and(generation = 9 and occurrence_count = 2)
+  from issue_alias_observations batch cross join lateral
+  public.commit_linear_automation_span_page(8, pg_temp.issue_page(1, 51), batch.spans, pg_temp.op651_id(11))),
+  'the earlier span matches both rules once using its original project');
+select is((select event->>'projectId' from internal.issue_automation_state_spans
+  where workspace_id = pg_temp.op651_id(11) and source_span_id = 'same-page-enter'),
+  'original-project', 'later snapshots in the same page do not replace the retained project');
 select is((select count(*) from internal.issue_automation_state_spans
   where workspace_id = pg_temp.op651_id(11) and source_span_id in ('same-page-enter', 'same-page-leave')),
   2::bigint, 'one canonical issue retains each distinct span across all aliases');
@@ -192,11 +211,28 @@ select ok(exists (select 1 from internal.issue_automation_span_watermarks
   where (workspace_id, source_issue_id, source_span_id) =
     (pg_temp.op651_id(11), pg_temp.op651_id(501)::text, 'same-page-leave')),
   'the later span advances the canonical watermark');
-select ok(generation = 10 and after_session_id is null, 'the shorter final page resets again')
-from public.commit_linear_automation_span_page(9, pg_temp.issue_page(52, 52), '[]', pg_temp.op651_id(11));
-select ok(generation = 11 and occurrence_count = 0, 'replaying both aliases creates no duplicate occurrence')
-from issue_alias_observations batch cross join lateral
-  public.commit_linear_automation_span_page(10, pg_temp.issue_page(1, 51), batch.spans, pg_temp.op651_id(11));
+select ok((select count(*) = 1 and bool_and(generation = 10 and after_session_id is null)
+  from public.commit_linear_automation_span_page(9, pg_temp.issue_page(52, 52), '[]', pg_temp.op651_id(11))),
+  'the shorter final page resets again');
+select ok((select count(*) = 1 and bool_and(generation = 11 and occurrence_count = 0)
+  from issue_alias_observations batch cross join lateral
+  public.commit_linear_automation_span_page(10, pg_temp.issue_page(1, 51), batch.spans, pg_temp.op651_id(11))),
+  'replaying both aliases creates no duplicate occurrence');
+
+select ok((select count(*) = 1 and bool_and(generation = 12 and after_session_id is null)
+  from public.commit_linear_automation_span_page(11, pg_temp.issue_page(52, 52), '[]', pg_temp.op651_id(11))),
+  'the cursor restarts before the legacy empty-link regression');
+
+insert into public.sessions(id, workspace_id, pipeline_id, current_stage_id, number, title, linear_issue_id, phase_status)
+values (pg_temp.op651_id(1000), pg_temp.op651_id(11), pg_temp.op651_id(31), pg_temp.op651_id(32),
+  2000, 'Legacy empty link', '', 'in_progress');
+create temp table empty_link_receipt(after_session_id uuid, generation bigint, occurrence_count integer);
+select lives_ok($$
+  insert into empty_link_receipt
+  select * from public.commit_linear_automation_span_page(12, pg_temp.issue_page(1, 51), '[]', pg_temp.op651_id(11))
+$$, 'an empty legacy link does not block the next exact automation page');
+select ok((select count(*) = 1 and bool_and(generation = 13 and after_session_id = pg_temp.op651_id(1051))
+  from empty_link_receipt), 'the cursor advances across the healthy links and returns one receipt');
 
 select * from finish();
 rollback;
