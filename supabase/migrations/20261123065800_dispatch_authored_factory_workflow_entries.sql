@@ -143,6 +143,7 @@ create trigger guard_factory_workflow_authoring_pending_review
 create function public.claim_factory_workflow_authoring_dispatch(p_lease_id uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
+  candidate record;
   selected internal.factory_workflow_authoring_dispatches;
   pin internal.factory_workflow_authoring_session_pins;
   execution internal.factory_workflow_executions;
@@ -151,81 +152,98 @@ declare
 begin
   perform internal.assert_checkpoint_publication_service();
   if p_lease_id is null then return null; end if;
-  select dispatch.* into selected from internal.factory_workflow_authoring_dispatches dispatch
-  join public.workspaces workspace on workspace.id = dispatch.workspace_id
-  join public.factories factory on (factory.workspace_id,factory.id) = (dispatch.workspace_id,dispatch.factory_id)
-  join public.sessions session on (session.id,session.workspace_id,session.factory_id) =
-    (dispatch.session_id,dispatch.workspace_id,dispatch.factory_id)
-  left join internal.factory_workflow_executions owner on owner.root_session_id = dispatch.session_id
-  where dispatch.completed_at is null and workspace.deletion_requested_at is null and factory.status = 'active'
-    and (owner.lifecycle_status = 'running' or (owner.root_session_id is null and session.archived_at is null))
-    and (dispatch.lease_id = p_lease_id or
-      (dispatch.next_attempt_at <= clock_timestamp()
-        and (dispatch.lease_id is null or dispatch.lease_expires_at <= clock_timestamp())))
-  order by (dispatch.lease_id is not distinct from p_lease_id) desc,dispatch.next_attempt_at,dispatch.session_id,dispatch.dispatch_id
-  limit 1;
-  if not found then return null; end if;
-
-  -- Match adoption's workspace → factory → session order, then lease the row.
-  perform internal.lock_factory_workflow_root(selected.session_id,selected.workspace_id,selected.factory_id);
-  select dispatch.* into selected from internal.factory_workflow_authoring_dispatches dispatch
-  where dispatch.dispatch_id = selected.dispatch_id
-  for update;
-  claimed_at := clock_timestamp();
-  if not found or selected.completed_at is not null
-    or (selected.lease_id = p_lease_id and selected.lease_expires_at <= claimed_at)
-    or (selected.lease_id is distinct from p_lease_id and
-      (selected.next_attempt_at > claimed_at or selected.lease_expires_at > claimed_at
-        or exists (select 1 from internal.factory_workflow_authoring_dispatches where lease_id = p_lease_id)))
-    then return null; end if;
-  select * into strict pin from internal.factory_workflow_authoring_session_pins where session_id = selected.session_id;
-  select * into execution from internal.factory_workflow_executions where root_session_id = selected.session_id;
-  if not found then
-    if not internal.factory_workflow_authoring_checkpoint_is_ready(
-      selected.workspace_id,selected.factory_id,selected.session_id,selected.input_run_id
-    ) then
-      update internal.factory_workflow_authoring_dispatches
-      set completed_at = claimed_at, lease_id = null, lease_expires_at = null
-      where dispatch_id = selected.dispatch_id;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'factory-workflow-authoring-lease:' || p_lease_id::text, 0));
+  for candidate in
+    select dispatch.dispatch_id,dispatch.workspace_id,dispatch.factory_id,dispatch.session_id
+    from internal.factory_workflow_authoring_dispatches dispatch
+    join public.workspaces workspace on workspace.id = dispatch.workspace_id
+    join public.factories factory on (factory.workspace_id,factory.id) = (dispatch.workspace_id,dispatch.factory_id)
+    join public.sessions session on (session.id,session.workspace_id,session.factory_id) =
+      (dispatch.session_id,dispatch.workspace_id,dispatch.factory_id)
+    left join internal.factory_workflow_executions owner on owner.root_session_id = dispatch.session_id
+    where dispatch.completed_at is null and workspace.deletion_requested_at is null and factory.status = 'active'
+      and (owner.lifecycle_status = 'running' or (owner.root_session_id is null and session.archived_at is null))
+      and (dispatch.lease_id = p_lease_id or
+        (dispatch.next_attempt_at <= clock_timestamp()
+          and (dispatch.lease_id is null or dispatch.lease_expires_at <= clock_timestamp())))
+    order by (dispatch.lease_id is not distinct from p_lease_id) desc,dispatch.next_attempt_at,dispatch.session_id,dispatch.dispatch_id
+    limit 16
+  loop
+    -- Match the root lock order, skipping busy candidates before taking their lease.
+    perform 1 from public.workspaces workspace
+    where workspace.id = candidate.workspace_id and workspace.deletion_requested_at is null
+    for share skip locked;
+    if not found then continue; end if;
+    perform 1 from public.factories factory
+    where (factory.workspace_id,factory.id,factory.status) = (candidate.workspace_id,candidate.factory_id,'active')
+    for share skip locked;
+    if not found then continue; end if;
+    perform 1 from public.sessions session
+    where (session.id,session.workspace_id,session.factory_id) =
+      (candidate.session_id,candidate.workspace_id,candidate.factory_id)
+    for no key update skip locked;
+    if not found then continue; end if;
+    select dispatch.* into selected from internal.factory_workflow_authoring_dispatches dispatch
+    where dispatch.dispatch_id = candidate.dispatch_id
+    for update skip locked;
+    claimed_at := clock_timestamp();
+    if not found or selected.completed_at is not null
+      or (selected.lease_id = p_lease_id and selected.lease_expires_at <= claimed_at)
+      or (selected.lease_id is distinct from p_lease_id and
+        (selected.next_attempt_at > claimed_at or selected.lease_expires_at > claimed_at
+          or exists (select 1 from internal.factory_workflow_authoring_dispatches where lease_id = p_lease_id)))
+    then continue; end if;
+    select * into strict pin from internal.factory_workflow_authoring_session_pins where session_id = selected.session_id;
+    select * into execution from internal.factory_workflow_executions where root_session_id = selected.session_id;
+    if not found then
+      if not internal.factory_workflow_authoring_checkpoint_is_ready(
+        selected.workspace_id,selected.factory_id,selected.session_id,selected.input_run_id
+      ) then
+        update internal.factory_workflow_authoring_dispatches
+        set completed_at = claimed_at, lease_id = null, lease_expires_at = null
+        where dispatch_id = selected.dispatch_id;
+        return null;
+      end if;
+      begin
+        perform public.start_factory_workflow_graph_execution(
+          selected.session_id,selected.workspace_id,selected.factory_id,pin.graph_revision_id,selected.input_run_id
+        );
+      exception when sqlstate 'PT409' or sqlstate 'PT422' or insufficient_privilege then
+        -- A live prerequisite can change after publication. Yield to other
+        -- sessions while preserving the reviewable source and its pending handoff.
+        update internal.factory_workflow_authoring_dispatches
+        set next_attempt_at = claimed_at + interval '1 minute', lease_id = null, lease_expires_at = null
+        where dispatch_id = selected.dispatch_id;
+        return null;
+      end;
+      select * into strict execution from internal.factory_workflow_executions where root_session_id = selected.session_id;
+    end if;
+    if (execution.workspace_id,execution.factory_id,execution.graph_revision_id,execution.workflow_digest,
+        execution.graph_input_run_id,execution.lifecycle_status) is distinct from
+      (pin.workspace_id,pin.factory_id,pin.graph_revision_id,pin.workflow_digest,selected.input_run_id,'running') then
       return null;
     end if;
-    begin
-      perform public.start_factory_workflow_graph_execution(
-        selected.session_id,selected.workspace_id,selected.factory_id,pin.graph_revision_id,selected.input_run_id
-      );
-    exception when sqlstate 'PT409' or sqlstate 'PT422' or insufficient_privilege then
-      -- A live prerequisite can change after publication. Yield to other
-      -- sessions while preserving the reviewable source and its pending handoff.
-      update internal.factory_workflow_authoring_dispatches
-      set next_attempt_at = claimed_at + interval '1 minute', lease_id = null, lease_expires_at = null
-      where dispatch_id = selected.dispatch_id;
-      return null;
-    end;
-    select * into strict execution from internal.factory_workflow_executions where root_session_id = selected.session_id;
-  end if;
-  if (execution.workspace_id,execution.factory_id,execution.graph_revision_id,execution.workflow_digest,
-      execution.graph_input_run_id,execution.lifecycle_status) is distinct from
-    (pin.workspace_id,pin.factory_id,pin.graph_revision_id,pin.workflow_digest,selected.input_run_id,'running') then
-    return null;
-  end if;
-  select * into strict occurrence from internal.factory_workflow_node_occurrences target
-  where target.root_session_id = selected.session_id
-    and case when selected.occurrence_id is null then target.is_entry
-      else target.occurrence_id = selected.occurrence_id end;
+    select * into strict occurrence from internal.factory_workflow_node_occurrences target
+    where target.root_session_id = selected.session_id
+      and case when selected.occurrence_id is null then target.is_entry
+        else target.occurrence_id = selected.occurrence_id end;
 
-  if selected.lease_id is distinct from p_lease_id then
-    update internal.factory_workflow_authoring_dispatches dispatch
-    set occurrence_id = occurrence.occurrence_id, lease_id = p_lease_id,
-      lease_expires_at = clock_timestamp() + interval '75 seconds'
-    where dispatch.dispatch_id = selected.dispatch_id
-    returning dispatch.* into selected;
-  end if;
-  return jsonb_build_object(
-    'leaseId',p_lease_id,'leaseExpiresAt',selected.lease_expires_at,'rootSessionId',selected.session_id,'workspaceId',selected.workspace_id,
-    'factoryId',selected.factory_id,'inputRunId',selected.input_run_id,'workflowDigest',execution.workflow_digest,
-    'occurrenceId',occurrence.occurrence_id,'nodeId',occurrence.node_id,
-    'generation',execution.generation,'ownershipToken',execution.ownership_token
-  );
+    if selected.lease_id is distinct from p_lease_id then
+      update internal.factory_workflow_authoring_dispatches dispatch
+      set occurrence_id = occurrence.occurrence_id, lease_id = p_lease_id,
+        lease_expires_at = clock_timestamp() + interval '75 seconds'
+      where dispatch.dispatch_id = selected.dispatch_id
+      returning dispatch.* into selected;
+    end if;
+    return jsonb_build_object(
+      'leaseId',p_lease_id,'leaseExpiresAt',selected.lease_expires_at,'rootSessionId',selected.session_id,'workspaceId',selected.workspace_id,
+      'factoryId',selected.factory_id,'inputRunId',selected.input_run_id,'workflowDigest',execution.workflow_digest,
+      'occurrenceId',occurrence.occurrence_id,'nodeId',occurrence.node_id,
+      'generation',execution.generation,'ownershipToken',execution.ownership_token
+    );
+  end loop;
+  return null;
 end;
 $$;
 

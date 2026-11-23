@@ -80,23 +80,48 @@ export const workflowPublishReceiptSchema = workflowSaveReceiptSchema.extend({
 });
 
 export const workflowReferencePageSize = 100;
-export const workflowReferenceKindSchema = z.enum(["prompts", "approvers", "profiles"]);
+const referenceTimestamp = z.string().max(64).datetime({ offset: true });
+const memberReferenceCursor = z.strictObject({ id });
+const datedReferenceCursor = memberReferenceCursor.extend({ createdAt: referenceTimestamp });
+export const workflowReferenceQuerySchema = z.union([
+  z.strictObject({ catalog: z.literal("approvers"), afterId: id }),
+  z.strictObject({
+    catalog: z.enum(["prompts", "profiles"]),
+    afterId: id,
+    afterCreatedAt: referenceTimestamp,
+  }),
+]);
 const referenceChoice = z.strictObject({ id, label: z.string() });
 const profileChoice = referenceChoice.extend({ digest });
-const nextOffset = z.number().int().nonnegative().safe().nullable();
 const referenceChoices = referenceChoice.array().max(workflowReferencePageSize);
 const profileChoices = profileChoice.array().max(workflowReferencePageSize);
 export const workflowReferencePageSchema = z.discriminatedUnion("catalog", [
-  z.strictObject({ catalog: z.literal("prompts"), items: referenceChoices, nextOffset }),
-  z.strictObject({ catalog: z.literal("approvers"), items: referenceChoices, nextOffset }),
-  z.strictObject({ catalog: z.literal("profiles"), items: profileChoices, nextOffset }),
+  z.strictObject({
+    catalog: z.literal("prompts"),
+    items: referenceChoices,
+    nextCursor: datedReferenceCursor.nullable(),
+  }),
+  z.strictObject({
+    catalog: z.literal("approvers"),
+    items: referenceChoices,
+    nextCursor: memberReferenceCursor.nullable(),
+  }),
+  z.strictObject({
+    catalog: z.literal("profiles"),
+    items: profileChoices,
+    nextCursor: datedReferenceCursor.nullable(),
+  }),
 ]);
 const workflowEditorChoicesSchema = z.strictObject({
   prompts: referenceChoices,
   approvers: referenceChoices,
   profiles: profileChoices,
   grant: z.strictObject({ id, version: z.number().int().positive().safe() }).nullable(),
-  nextOffsets: z.strictObject({ prompts: nextOffset, approvers: nextOffset, profiles: nextOffset }),
+  nextCursors: z.strictObject({
+    prompts: datedReferenceCursor.nullable(),
+    approvers: memberReferenceCursor.nullable(),
+    profiles: datedReferenceCursor.nullable(),
+  }),
 });
 export const workflowAuthoringEditorSchema = z.strictObject({
   snapshot: workflowAuthoringSnapshotSchema,
@@ -105,6 +130,9 @@ export const workflowAuthoringEditorSchema = z.strictObject({
 export type WorkflowAuthoringSnapshot = z.output<typeof workflowAuthoringSnapshotSchema>;
 export type WorkflowAuthoringCommand = z.output<typeof workflowAuthoringCommandSchema>;
 export type WorkflowBaseDefinition = z.output<typeof workflowBaseDefinitionSchema>;
-export type WorkflowReferenceKind = z.output<typeof workflowReferenceKindSchema>;
+export type WorkflowReferenceQuery = z.output<typeof workflowReferenceQuerySchema>;
+export type WorkflowReferenceKind = WorkflowReferenceQuery["catalog"];
+export type WorkflowDatedReferenceCursor = z.output<typeof datedReferenceCursor>;
 export type WorkflowReferencePage = z.output<typeof workflowReferencePageSchema>;
+export type WorkflowReferenceCursor = NonNullable<WorkflowReferencePage["nextCursor"]>;
 export type WorkflowEditorCatalog = z.output<typeof workflowEditorChoicesSchema>;

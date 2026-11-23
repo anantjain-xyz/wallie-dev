@@ -12748,6 +12748,18 @@ export type Database = {
         }
         Returns: Json
       }
+      find_factory_workflow_authoring_receipt: {
+        Args: {
+          p_action: string
+          p_actor_user_id: string
+          p_factory_id: string
+          p_request_fingerprint: string
+          p_request_id: string
+          p_workflow_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       find_session_creation_command: {
         Args: {
           creator_member_id: string
@@ -14679,6 +14691,7 @@ export type Database = {
           p_expected_base_revision_id: string
           p_expected_draft_id: string
           p_factory_id: string
+          p_request_fingerprint?: string
           p_request_id: string
           p_verified_draft_digest: string
           p_workflow_id: string
@@ -16764,6 +16777,7 @@ export type Database = {
           p_expected_draft_id?: string
           p_factory_id: string
           p_rebase?: boolean
+          p_request_fingerprint?: string
           p_request_id: string
           p_workflow_digest: string
           p_workflow_id: string

@@ -13,6 +13,7 @@ import {
   type WorkflowAuthoringCommand,
   type WorkflowAuthoringSnapshot,
   type WorkflowBaseDefinition,
+  type WorkflowReferenceCursor,
   type WorkflowReferenceKind,
 } from "@/lib/factory-workflows/authoring-contracts";
 
@@ -35,9 +36,10 @@ export function loadCurrentWorkflowEditor(endpoint: string) {
 export async function loadMoreWorkflowReferences(
   endpoint: string,
   catalog: WorkflowReferenceKind,
-  offset: number,
+  cursor: WorkflowReferenceCursor,
 ) {
-  const query = new URLSearchParams({ catalog, offset: String(offset) });
+  const query = new URLSearchParams({ catalog, afterId: cursor.id });
+  if ("createdAt" in cursor) query.set("afterCreatedAt", cursor.createdAt);
   const page = await fetchFactoryEditor(`${endpoint}?${query}`, workflowReferencePageSchema);
   if (page.catalog !== catalog) throw new Error("The workflow reference page could not be loaded.");
   return page;
@@ -78,9 +80,11 @@ export async function submitWorkflowAuthoringCommand(
   ) {
     throw new Error("Could not reconcile the exact workflow revision with its receipt.");
   }
+  const expectedActivationId =
+    result.action === "publish" ? result.receipt.activationId : command.expected.activationId;
   const moved =
     snapshot.draftId !== result.receipt.draftId ||
     !sameWorkflowEditorBase(snapshot.baseDefinition, command.expected.baseDefinition) ||
-    (result.action === "publish" && snapshot.activationId !== result.receipt.activationId);
+    snapshot.activationId !== expectedActivationId;
   return { result, snapshot, moved };
 }

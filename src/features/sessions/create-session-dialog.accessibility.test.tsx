@@ -961,6 +961,63 @@ describe("CreateSessionDialog accessibility", () => {
     );
   });
 
+  it("waits for current published workflows after reopening the same factory", async () => {
+    const user = userEvent.setup();
+    const opts = draftOptions();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...opts,
+      factoryDefinitionDigest: "d".repeat(64),
+    });
+    const workflow = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Previous publication",
+    };
+    const nextWorkflow = {
+      ...workflow,
+      activationId: "00000000-0000-4000-8000-000000000013",
+      label: "Current publication",
+    };
+    const pending = Promise.withResolvers<Response>();
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ options: [workflow] }))
+      .mockReturnValueOnce(pending.promise);
+    function dialog(open: boolean) {
+      return (
+        <OverlayProvider>
+          <CreateSessionDialog
+            creationFactoryId="factory-1"
+            onClose={vi.fn()}
+            open={open}
+            userId="user-1"
+            workspaceId="workspace-1"
+            workspaceSlug="acme"
+          />
+        </OverlayProvider>
+      );
+    }
+
+    try {
+      const view = render(dialog(true));
+      const selector = await screen.findByRole("combobox", { name: "Workflow" });
+      await user.click(selector);
+      expect(await screen.findByRole("option", { name: workflow.label })).toBeVisible();
+      await user.keyboard("{Escape}");
+
+      view.rerender(dialog(false));
+      view.rerender(dialog(true));
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole("combobox", { name: "Workflow" })).not.toBeInTheDocument();
+      await act(async () => pending.resolve(Response.json({ options: [nextWorkflow] })));
+      await user.click(await screen.findByRole("combobox", { name: "Workflow" }));
+      expect(await screen.findByRole("option", { name: nextWorkflow.label })).toBeVisible();
+      expect(screen.queryByRole("option", { name: workflow.label })).toBeNull();
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   it("can clear a selected workflow when refreshed options lose the active definition", async () => {
     const user = userEvent.setup();
     const workspaceId = "00000000-0000-4000-8000-000000000009";

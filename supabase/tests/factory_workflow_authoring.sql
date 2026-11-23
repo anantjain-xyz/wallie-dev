@@ -176,6 +176,56 @@ select is((select graph.workflow_json from exact_review_activation receipt
   (select body from op655_graphs where label='scoped-review'),
   'published runtime retains the exact reviewer prompt, rules, and bounded repair draft');
 
+select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(906),
+  'Delegation eligibility workflow') from op655_scope;
+insert into op655_graphs(label,body,digest)
+select 'no-delegation',payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
+from lateral (
+  select jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId','checkpoint','grants','[]'::jsonb,
+    'nodes',jsonb_build_array(jsonb_build_object('id','checkpoint','kind','deterministic','operation','checkpoint'),
+      jsonb_build_object('id','worker','kind','agent','agentPromptRevisionId',pg_temp.op651_id(91))),
+    'edges',jsonb_build_array(jsonb_build_object('id','work','kind','next','from','checkpoint','to','worker')))::text body
+) payload;
+create temp table no_delegation_draft as
+select pg_temp.op655_save('no-delegation',945,p_workflow=>pg_temp.op651_id(906)) as result;
+select throws_ok($$select pg_temp.op655_publish('no-delegation',946,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906))
+  from no_delegation_draft$$,'PT422','The graph requires bounded delegation and exact scoped child profiles.',
+  'a scoped agent without an enrollable delegation policy cannot publish');
+
+insert into op655_graphs(label,body,digest)
+select 'mismatched-foreman',payload.body,encode(sha256(convert_to(payload.body,'UTF8')),'hex')
+from op655_scope scope
+join public.factory_definition_revisions profile on profile.id=scope.revision_id
+cross join lateral (
+  select prompt.id from public.factory_agent_prompt_revisions prompt
+  where (prompt.workspace_id,prompt.factory_id)=(scope.workspace_id,scope.factory_id)
+    and prompt.id<>pg_temp.op651_id(91) order by prompt.id limit 1
+) prompt
+cross join lateral (
+  select jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId','route','grants','[]'::jsonb,
+    'nodes',jsonb_build_array(jsonb_build_object('id','route','kind','route','agentPromptRevisionId',prompt.id),
+      jsonb_build_object('id','checkpoint','kind','deterministic','operation','checkpoint')),
+    'edges',jsonb_build_array(jsonb_build_object('id','choose','kind','route','from','route','to','checkpoint')),
+    'routePolicy',jsonb_build_object('maxNodeVisits',4,'maxLoopTraversals',0,'nodes',jsonb_build_object('route',
+      jsonb_build_object('minimumConfidence',0.8,'allowedDestinationIds',jsonb_build_array('checkpoint'),
+        'fallback',jsonb_build_object('kind','clarification'),
+        'foremanProfile',jsonb_build_object('definitionRevisionId',profile.id,'definitionDigest',profile.canonical_digest)))),
+    'delegationPolicy','{"targets":{},"maxChildren":1,"maxConcurrentChildren":1,"maxAttempts":1,"maxTotalTokens":100,
+      "maxTokensPerAttempt":100,"maxCostUsd":1,"maxCostUsdPerAttempt":1}'::jsonb)::text body
+) payload;
+create temp table mismatched_foreman_draft as
+select pg_temp.op655_save('mismatched-foreman',947,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906)) as result
+from no_delegation_draft;
+select throws_ok($$select pg_temp.op655_publish('mismatched-foreman',948,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906))
+  from mismatched_foreman_draft$$,'PT422','The graph requires a scoped foreman profile and bounded delegation.',
+  'a reviewable draft with a foreman profile bound to a different prompt cannot publish');
+create temp table corrected_authoring_draft as
+select pg_temp.op655_save('scoped-review',949,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906)) as result
+from mismatched_foreman_draft;
+select ok((select (pg_temp.op655_publish('scoped-review',959,(result->>'draftId')::uuid,p_workflow=>pg_temp.op651_id(906))
+  ->>'created')::boolean from corrected_authoring_draft),
+  'enrollment rejection preserves an editable draft that publishes after the runtime prerequisites are corrected');
+
 -- Compose the published activation with real browser and machine create commands.
 create function pg_temp.workflow_request_selection(p_version text)
 returns jsonb language sql stable as $$
@@ -184,12 +234,13 @@ returns jsonb language sql stable as $$
   where p_version = 'old'
 $$;
 
-create function pg_temp.browser_create_with_workflow(p_slot integer, p_hash text, p_selection jsonb)
+create function pg_temp.browser_create_with_workflow(p_slot integer, p_hash text, p_selection jsonb,
+  p_attachments uuid[] default '{}'::uuid[])
 returns table(session_id uuid, session_number integer, workspace_slug text, job_id uuid, run_id uuid)
 language sql as $$
   select created.* from op655_scope scope cross join lateral public.create_session_command_once(
     scope.workspace_id, pg_temp.op651_id(21), pg_temp.op651_id(p_slot), p_hash, scope.base_digest,
-    'Inspect the approved workflow', 'Run the selected exact workflow.', 'codex', 'gpt-5.5', '{}',
+    'Inspect the approved workflow', 'Run the selected exact workflow.', 'codex', 'gpt-5.5', p_attachments,
     target_factory_id => scope.factory_id, p_workflow_selection => p_selection) created
 $$;
 
@@ -229,6 +280,32 @@ select throws_ok($q$select pg_temp.machine_create_with_workflow(950, null)$q$, '
 select throws_ok($q$select * from pg_temp.browser_create_with_workflow(950,repeat('d',64),null)$q$, 'P0005', null,
   'an identical caller hash cannot omit the authored selection');
 
+insert into public.session_attachments(id,workspace_id,uploaded_by_member_id,original_filename,content_type,
+  size_bytes,storage_path,status,expires_at)
+select pg_temp.op651_id(slot),scope.workspace_id,pg_temp.op651_id(21),'workflow-'||slot||'.png','image/png',
+  1024,'fixture/workflow-'||slot||'.png','ready',now()+interval '1 hour'
+from op655_scope scope cross join (values (961),(962),(964)) image(slot);
+create temp table attached_workflow_intake as
+select * from pg_temp.browser_create_with_workflow(960,repeat('c',64),pg_temp.workflow_request_selection('old'),
+  array[pg_temp.op651_id(962),pg_temp.op651_id(961)]);
+select is((select array_agg(attachment.id order by attachment.position)
+  from attached_workflow_intake receipt join public.session_attachments attachment on attachment.session_id=receipt.session_id
+  where attachment.status='attached' and attachment.expires_at is null),
+  array[pg_temp.op651_id(962),pg_temp.op651_id(961)],'the selected workflow admits browser images in their original order');
+select ok((select pin.graph_revision_id=(activation.result->>'graphRevisionId')::uuid
+    and admission.definition_digest=scope.base_digest
+  from attached_workflow_intake receipt
+  join public.session_factory_admission_inputs admission on admission.session_id=receipt.session_id
+  join internal.factory_workflow_authoring_session_pins pin on (pin.session_id,pin.factory_id)=(admission.session_id,admission.factory_id)
+  cross join op655_activation_first activation cross join op655_scope scope),
+  'browser images retain the exact factory admission and immutable workflow activation');
+select results_eq($q$select * from pg_temp.browser_create_with_workflow(960,repeat('c',64),pg_temp.workflow_request_selection('old'),
+  array[pg_temp.op651_id(962),pg_temp.op651_id(961)])$q$,
+  'select * from attached_workflow_intake','replaying a request with images returns its original session, job, and run');
+select throws_ok($q$select * from pg_temp.browser_create_with_workflow(963,repeat('c',64),pg_temp.workflow_request_selection('old'),
+  array[pg_temp.op651_id(962)])$q$,'P0004','Session attachments changed, expired, or are not available',
+  'an already-bound image cannot create another authored session');
+
 create temp table op655_session as
 select pg_temp.op651_create_service_root(925,'OP655 pinned graph proof') as admitted;
 select is((select internal.pin_factory_workflow_authoring_session(workspace_id,factory_id,(admitted->>'sessionId')::uuid,
@@ -250,16 +327,28 @@ select results_eq($q$select * from pg_temp.browser_create_with_workflow(950,repe
   'select * from intake_browser_first', 'a browser retry after publication reuses the original immutable selection');
 select is((select pg_temp.machine_create_with_workflow(951,pg_temp.workflow_request_selection('old'))->>'sessionId'),
   (select result->>'sessionId' from intake_machine_first), 'a machine retry after publication reuses the original immutable selection');
+create temp table intake_session_count as
+select count(*) as count from public.sessions session join op655_scope scope on scope.workspace_id=session.workspace_id
+where session.title='Inspect the approved workflow';
+select results_eq($q$select * from pg_temp.browser_create_with_workflow(960,repeat('c',64),pg_temp.workflow_request_selection('old'),
+  array[pg_temp.op651_id(962),pg_temp.op651_id(961)])$q$,
+  'select * from attached_workflow_intake','an exact image request still replays after a later activation publishes');
 select throws_ok($q$select * from pg_temp.browser_create_with_workflow(952,repeat('d',64),pg_temp.workflow_request_selection('old'))$q$,
   'PT409','The selected workflow activation does not match the admitted definition.',
   'a stale selection rolls back new browser admission');
 select throws_ok($q$select pg_temp.machine_create_with_workflow(953,pg_temp.workflow_request_selection('old'))$q$,
   'PT409','The selected workflow activation does not match the admitted definition.',
   'a stale selection rolls back new machine admission');
-select is((select count(*) from internal.session_mutation_receipts where request_id in (pg_temp.op651_id(952),pg_temp.op651_id(953))),
+select throws_ok($q$select * from pg_temp.browser_create_with_workflow(965,repeat('d',64),pg_temp.workflow_request_selection('old'),
+  array[pg_temp.op651_id(964)])$q$,'PT409','The selected workflow activation does not match the admitted definition.',
+  'a stale selection rolls back new browser admission with images');
+select is((select status from public.session_attachments where id=pg_temp.op651_id(964)),'ready',
+  'a rejected authored session leaves its image ready for another request');
+select is((select count(*) from internal.session_mutation_receipts where request_id in (pg_temp.op651_id(952),pg_temp.op651_id(953),pg_temp.op651_id(965))),
   0::bigint, 'failed stale commands leave no creation receipt');
-select is((select count(*) from public.sessions where title = 'Inspect the approved workflow'),
-  2::bigint, 'failed stale commands leave no partial session');
+select is((select count(*) from public.sessions session join op655_scope scope on scope.workspace_id=session.workspace_id
+  where session.title='Inspect the approved workflow'),
+  (select count from intake_session_count), 'failed stale commands leave no partial session');
 
 create temp table op655_input as select pg_temp.adopt_source_checkpoint((admitted->>'sessionId')::uuid,(admitted->>'jobId')::uuid) as run_id
 from op655_session;
@@ -285,7 +374,7 @@ select is((select public.read_factory_workflow_authoring(workspace_id,factory_id
 select set_config('request.jwt.claim.role','service_role',true);
 select set_config('request.jwt.claim.sub',pg_temp.op651_id(1)::text,true);
 select ok(not has_function_privilege('authenticated',
-  'public.save_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,boolean)','EXECUTE')
+  'public.save_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,boolean,text)','EXECUTE')
   and not has_table_privilege('service_role','internal.factory_workflow_authoring_drafts','INSERT'),
   'native authoring writes are restricted to the checked service capabilities');
 

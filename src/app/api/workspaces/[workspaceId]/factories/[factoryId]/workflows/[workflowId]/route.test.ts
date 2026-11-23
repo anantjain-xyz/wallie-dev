@@ -45,6 +45,8 @@ const definitionJson = JSON.stringify({
   ],
 });
 const digest = createHash("sha256").update(definitionJson).digest("hex");
+const newest = "2026-11-22T23:00:00.000123+00:00";
+const oldest = "2026-11-22T23:00:00.000122+00:00";
 const snapshot: WorkflowAuthoringSnapshot = {
   workflowId: scope.workflowId,
   displayName: "Release",
@@ -70,7 +72,7 @@ function mockSignedInPostgrest(manageable = true) {
     factory_agents: { name: "Builder" },
     full_name: `Approver ${index + 1}`,
     canonical_digest: digest,
-    created_at: "2026-11-22T23:00:00Z",
+    created_at: index === 0 ? oldest : newest,
   }));
   const fetch = vi.fn(async (input: string | URL | Request) => {
     const url = new URL(String(input));
@@ -82,16 +84,44 @@ function mockSignedInPostgrest(manageable = true) {
     if (url.searchParams.get("select") === "definition_json") {
       return Response.json([{ definition_json: definitionJson }]);
     }
+    const dated = url.searchParams.get("order")?.startsWith("created_at.desc");
+    const boundary = url.searchParams.get("or");
+    const afterId = url.searchParams.get("id")?.replace(/^gt\./, "");
+    let matching = rows.toSorted((a, b) =>
+      dated
+        ? b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)
+        : a.id.localeCompare(b.id),
+    );
+    if (boundary) {
+      const parts =
+        /^\(created_at\.lt\.([^,]+),and\(created_at\.eq\.\1,id\.lt\.([a-f0-9-]+)\)\)$/.exec(
+          boundary,
+        );
+      if (!parts) throw new Error("Invalid dated keyset filter.");
+      const [, createdAt, id] = parts;
+      matching = matching.filter(
+        (row) => row.created_at < createdAt || (row.created_at === createdAt && row.id < id),
+      );
+    } else if (afterId) {
+      matching = matching.filter((row) => row.id > afterId);
+    }
     const offset = Number(url.searchParams.get("offset"));
     const limit = Number(url.searchParams.get("limit"));
-    return Response.json(rows.slice(offset, offset + limit));
+    return Response.json(matching.slice(offset, offset + limit));
   });
   const supabase = createClient<Database>("https://workflow-fixture.invalid", "fixture-key", {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: { fetch },
   });
   requireWorkspaceAccessById.mockResolvedValue({ ok: true, context: { supabase } });
-  return fetch;
+  return {
+    fetch,
+    remove(id: string) {
+      const index = rows.findIndex((row) => row.id === id);
+      if (index === -1) throw new Error("Fixture row could not be removed.");
+      rows.splice(index, 1);
+    },
+  };
 }
 
 function get(query: string) {
@@ -102,15 +132,22 @@ function get(query: string) {
 
 afterEach(() => vi.clearAllMocks());
 
-it("loads the current exact base grant and caps each initial catalog with a next offset", async () => {
-  const fetch = mockSignedInPostgrest();
+it("loads the current exact base grant and caps each catalog with a keyset cursor", async () => {
+  const { fetch } = mockSignedInPostgrest();
   const response = await get("includeChoices=true");
 
   expect(response.status).toBe(200);
   const editor = await response.json();
   expect(editor).toMatchObject({
     snapshot: { baseDefinition: { activationId, revisionId, digest } },
-    choices: { grant, nextOffsets: { prompts: 100, approvers: 100, profiles: 100 } },
+    choices: {
+      grant,
+      nextCursors: {
+        prompts: { id: id(202), createdAt: newest },
+        approvers: { id: id(299) },
+        profiles: { id: id(202), createdAt: newest },
+      },
+    },
   });
   for (const catalog of ["prompts", "approvers", "profiles"]) {
     expect(editor.choices[catalog]).toHaveLength(100);
@@ -126,35 +163,52 @@ it("loads the current exact base grant and caps each initial catalog with a next
 });
 
 it.each([
-  ["prompts", "factory_agent_prompt_revisions", "Builder · Revision 101"],
-  ["approvers", "workspace_members", "Approver 101"],
-  ["profiles", "factory_definition_revisions", `2026-11-22 · ${digest.slice(0, 10)}`],
-])("returns later %s in the original authorization scope", async (catalog, resource, label) => {
-  const fetch = mockSignedInPostgrest();
-  const response = await get(`catalog=${catalog}&offset=100`);
+  ["prompts", "factory_agent_prompt_revisions", [id(201), id(200)], "Builder · Revision 2"],
+  ["approvers", "workspace_members", [id(300), id(301)], "Approver 101"],
+  [
+    "profiles",
+    "factory_definition_revisions",
+    [id(201), id(200)],
+    `2026-11-22 · ${digest.slice(0, 10)}`,
+  ],
+])(
+  "returns surviving later %s after rows are removed from earlier pages",
+  async (catalog, resource, later, label) => {
+    const { fetch, remove } = mockSignedInPostgrest();
+    const editor = await (await get("includeChoices=true")).json();
+    const cursor = editor.choices.nextCursors[catalog];
+    remove(editor.choices[catalog][0].id);
+    remove(cursor.id);
+    const query = new URLSearchParams({ catalog, afterId: cursor.id });
+    if (cursor.createdAt) query.set("afterCreatedAt", cursor.createdAt);
+    const response = await get(query.toString());
 
-  expect(response.status).toBe(200);
-  const page = await response.json();
-  expect(page).toMatchObject({
-    catalog,
-    items: [{ id: id(300), label }, { id: id(301) }],
-    nextOffset: null,
-  });
-  const url = new URL(String(fetch.mock.calls.at(-1)?.[0]));
-  expect(url.pathname).toBe(`/rest/v1/${resource}`);
-  expect(Object.fromEntries(url.searchParams)).toMatchObject({
-    workspace_id: `eq.${scope.workspaceId}`,
-    offset: "100",
-    limit: "101",
-    ...(catalog === "approvers"
-      ? { kind: "eq.human", is_active: "eq.true" }
-      : { factory_id: `eq.${scope.factoryId}` }),
-  });
-});
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page).toMatchObject({
+      catalog,
+      items: [{ id: later[0], label }, { id: later[1] }],
+      nextCursor: null,
+    });
+    const url = new URL(String(fetch.mock.calls.at(-1)?.[0]));
+    expect(url.pathname).toBe(`/rest/v1/${resource}`);
+    expect(url.searchParams.has("offset")).toBe(false);
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      workspace_id: `eq.${scope.workspaceId}`,
+      limit: "101",
+      ...(catalog === "approvers"
+        ? { kind: "eq.human", is_active: "eq.true", id: `gt.${cursor.id}` }
+        : {
+            factory_id: `eq.${scope.factoryId}`,
+            or: `(created_at.lt.${newest},and(created_at.eq.${newest},id.lt.${cursor.id}))`,
+          }),
+    });
+  },
+);
 
 it("requires native manager access before fetching later catalog rows", async () => {
-  const fetch = mockSignedInPostgrest(false);
-  const response = await get("catalog=prompts&offset=100");
+  const { fetch } = mockSignedInPostgrest(false);
+  const response = await get(`catalog=approvers&afterId=${id(299)}`);
 
   expect(response.status).toBe(404);
   expect(fetch.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([

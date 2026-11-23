@@ -120,6 +120,19 @@ describe("workflow editing", () => {
     });
   });
 
+  it("creates an own route entry for a step named constructor", () => {
+    const graph = setEditorNode(initialGraph, 0, makeNode("constructor", "deterministic"));
+    const revisited = setEditorNode(
+      { ...graph, routePolicy: { maxNodeVisits: 4, maxLoopTraversals: 1, nodes: {} } },
+      0,
+      { id: "constructor", kind: "route", agentPromptRevisionId: promptRevisionId },
+    );
+    expect(Object.hasOwn(revisited.routePolicy?.nodes ?? {}, "constructor")).toBe(true);
+    expect(revisited.routePolicy?.nodes["constructor"]).toMatchObject({
+      fallback: { kind: "clarification" },
+    });
+  });
+
   it("preserves the graph-wide visit and loop limits after removing its final route", () => {
     const graph: WorkflowGraphDraft = {
       ...initialGraph,

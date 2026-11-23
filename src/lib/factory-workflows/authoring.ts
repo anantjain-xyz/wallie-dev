@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { serializeFactoryDefinition } from "@/lib/factory-definitions/serialization";
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import { compileWorkflowGraph } from "@/lib/factory-definitions/workflow-compiler";
 import { workflowGraphSchema } from "@/lib/factory-definitions/workflow-schema";
@@ -130,6 +131,14 @@ function sameBase(left: WorkflowBaseDefinition | null, right: WorkflowBaseDefini
   );
 }
 
+function workflowAuthoringFingerprint(command: WorkflowAuthoringCommand) {
+  if (command.action === "publish") return serializeFactoryDefinition(command).canonicalDigest;
+  const graph = workflowGraphSchema.safeParse(command.graph);
+  return graph.success
+    ? serializeFactoryDefinition({ ...command, graph: graph.data }).canonicalDigest
+    : null;
+}
+
 export async function mutateWorkflowAuthoring(
   reader: Client,
   createAdmin: () => Client,
@@ -144,6 +153,29 @@ export async function mutateWorkflowAuthoring(
   );
   if (!snapshot) return { ok: false, status: 404, error: "Workflow draft not found." } as const;
   const { baseDefinition: base } = command.expected;
+  const admin = createAdmin();
+  const requestFingerprint = workflowAuthoringFingerprint(command);
+  if (requestFingerprint) {
+    const { data, error } = await admin.rpc("find_factory_workflow_authoring_receipt", {
+      p_workspace_id: scope.workspaceId,
+      p_factory_id: scope.factoryId,
+      p_workflow_id: scope.workflowId,
+      p_actor_user_id: scope.actorUserId,
+      p_request_id: command.requestId,
+      p_action: command.action,
+      p_request_fingerprint: requestFingerprint,
+    });
+    if (error) throw error;
+    if (data) {
+      return command.action === "save"
+        ? ({ ok: true, action: "save", receipt: workflowSaveReceiptSchema.parse(data) } as const)
+        : ({
+            ok: true,
+            action: "publish",
+            receipt: workflowPublishReceiptSchema.parse(data),
+          } as const);
+    }
+  }
   if (command.action === "publish" && !sameBase(snapshot.selectedDraftBaseDefinition, base)) {
     return {
       ok: false,
@@ -151,7 +183,6 @@ export async function mutateWorkflowAuthoring(
       error: "Rebase the workflow draft before publication.",
     } as const;
   }
-  const admin = createAdmin();
   const graph = command.action === "save" ? command.graph : snapshot.selectedDraftGraph;
   const compiled = await compileScopedWorkflow(admin, scope, base, graph);
   if (!compiled)
@@ -168,12 +199,14 @@ export async function mutateWorkflowAuthoring(
       diagnostics: compiled.diagnostics,
     } as const;
   }
+  if (!requestFingerprint) throw new Error("The compiled workflow command has no fingerprint.");
   const expected = {
     p_workspace_id: scope.workspaceId,
     p_factory_id: scope.factoryId,
     p_workflow_id: scope.workflowId,
     p_actor_user_id: scope.actorUserId,
     p_request_id: command.requestId,
+    p_request_fingerprint: requestFingerprint,
     p_expected_base_activation_id: base.activationId,
     p_expected_base_revision_id: base.revisionId,
     p_expected_base_digest: base.digest,

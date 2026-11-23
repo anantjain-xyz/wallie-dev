@@ -229,7 +229,7 @@ function appendReferencePage(choices: WorkflowEditorCatalog, page: WorkflowRefer
   return {
     ...choices,
     [page.catalog]: [...choices[page.catalog], ...page.items.filter(({ id }) => !seen.has(id))],
-    nextOffsets: { ...choices.nextOffsets, [page.catalog]: page.nextOffset },
+    nextCursors: { ...choices.nextCursors, [page.catalog]: page.nextCursor },
   };
 }
 
@@ -260,7 +260,7 @@ export function WorkflowEditor({
   const [notice, setNotice] = useState<Notice | null>(null);
   const [action, setAction] = useState<DraftAction | WorkflowReferenceKind | null>(null);
   const [hasConflict, setHasConflict] = useState(false);
-  const [focusId, setFocusId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ fieldId: string } | null>(null);
   const commandRef = useRef<WorkflowAuthoringCommand | null>(null);
   const submitting = useRef(false);
   const dirty =
@@ -283,13 +283,14 @@ export function WorkflowEditor({
   }
 
   useEffect(() => {
-    if (!focusId) return;
+    if (!focusRequest) return;
     const element =
-      document.getElementById(focusId) ?? document.getElementById("workflow-diagnostics");
+      document.getElementById(focusRequest.fieldId) ??
+      document.getElementById("workflow-diagnostics");
     const details = element?.closest("details");
     if (details) details.open = true;
     element?.focus();
-  }, [focusId]);
+  }, [focusRequest]);
 
   function focusDiagnostic(path: EditorDiagnostic["path"]) {
     const [, index] = path;
@@ -302,19 +303,17 @@ export function WorkflowEditor({
       const node = graph.nodes.findIndex(({ id }) => id === path[2]);
       if (node !== -1) setNodeIndex(node);
     }
-    const next = workflowFieldId(path);
-    if (focusId === next) document.getElementById(next)?.focus();
-    else setFocusId(next);
+    setFocusRequest({ fieldId: workflowFieldId(path) });
   }
 
   async function loadMoreReferences(catalog: WorkflowReferenceKind) {
-    const offset = choices.nextOffsets[catalog];
-    if (submitting.current || offset === null) return;
+    const cursor = choices.nextCursors[catalog];
+    if (submitting.current || cursor === null) return;
     submitting.current = true;
     setAction(catalog);
     setNotice(null);
     try {
-      const page = await loadMoreWorkflowReferences(endpoint, catalog, offset);
+      const page = await loadMoreWorkflowReferences(endpoint, catalog, cursor);
       setEditorData((current) => ({
         ...current,
         choices: appendReferencePage(current.choices, page),
@@ -337,7 +336,7 @@ export function WorkflowEditor({
     setAction(nextAction);
     setNotice(null);
     setDiagnostics([]);
-    setFocusId(null);
+    setFocusRequest(null);
     try {
       if (nextAction === "reload") {
         const latest = await loadCurrentWorkflowEditor(endpoint);
@@ -434,7 +433,7 @@ export function WorkflowEditor({
       entryNodeId: graph.entryNodeId || id,
     });
     setNodeIndex(graph.nodes.length);
-    setFocusId(workflowFieldId(["nodes", graph.nodes.length, "id"]));
+    setFocusRequest({ fieldId: workflowFieldId(["nodes", graph.nodes.length, "id"]) });
   }
 
   function removeStep() {
@@ -443,7 +442,9 @@ export function WorkflowEditor({
     setGraph(next);
     setNodeIndex(Math.max(0, survivor));
     setEdgeIndex(0);
-    setFocusId(survivor < 0 ? "workflow-add-step" : workflowFieldId(["nodes", survivor, "id"]));
+    setFocusRequest({
+      fieldId: survivor < 0 ? "workflow-add-step" : workflowFieldId(["nodes", survivor, "id"]),
+    });
   }
 
   function addTransition() {
@@ -458,7 +459,7 @@ export function WorkflowEditor({
       ],
     });
     setEdgeIndex(graph.edges.length);
-    setFocusId(workflowFieldId(["edges", graph.edges.length, "kind"]));
+    setFocusRequest({ fieldId: workflowFieldId(["edges", graph.edges.length, "kind"]) });
   }
 
   const pageFor = (draft?: string) =>
@@ -634,7 +635,7 @@ export function WorkflowEditor({
           {!readOnly ? (
             <div className="mt-3 flex flex-wrap gap-2 empty:hidden">
               {stepCatalogs
-                .filter((catalog) => choices.nextOffsets[catalog] !== null)
+                .filter((catalog) => choices.nextCursors[catalog] !== null)
                 .map((catalog) => (
                   <button
                     key={catalog}

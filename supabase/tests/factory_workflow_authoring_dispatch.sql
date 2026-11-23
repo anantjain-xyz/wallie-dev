@@ -4,6 +4,7 @@ select no_plan();
 \set op651_fixture_namespace 65570000
 \set op651_open_groups false
 \set op651_parallel_only true
+\unset op652_join_evidence
 \ir fixtures/factory_workflow_branch.psql
 
 create temp table authored_scope as
@@ -17,7 +18,7 @@ select public.create_factory_workflow_authoring(
 
 create function pg_temp.publish_authored(
   first_node text, request_slot integer, expected_draft uuid default null, expected_activation uuid default null,
-  unused_delegation boolean default false
+  first_operation text default 'checkpoint'
 ) returns table(draft_id uuid,activation_id uuid,graph_revision_id uuid) language plpgsql as $$
 declare
   scope record;
@@ -27,18 +28,14 @@ declare
   published jsonb;
 begin
   select * into strict scope from authored_scope;
-  body:=(jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId',first_node,'grants','[]'::jsonb,
-    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation','checkpoint'),
+  body:=jsonb_build_object('schemaVersion',1,'kind','graph','entryNodeId',first_node,'grants','[]'::jsonb,
+    'nodes',jsonb_build_array(jsonb_build_object('id',first_node,'kind','deterministic','operation',first_operation),
       jsonb_build_object('id','check.policy','kind','deterministic','operation','policy'),
       jsonb_build_object('id','human.review','kind','human-gate','anyoneCanApprove',false,
         'approverMemberIds',jsonb_build_array(pg_temp.op651_id(21)))),
     'edges',jsonb_build_array(
       jsonb_build_object('id','next.policy','kind','next','from',first_node,'to','check.policy'),
-      jsonb_build_object('id','next.review','kind','next','from','check.policy','to','human.review')))
-    || case when unused_delegation then jsonb_build_object('delegationPolicy',
-      '{"targets":{},"maxChildren":1,"maxConcurrentChildren":1,"maxAttempts":1,"maxTotalTokens":100,
-        "maxTokensPerAttempt":100,"maxCostUsd":1,"maxCostUsdPerAttempt":1}'::jsonb)
-    else '{}'::jsonb end)::text;
+      jsonb_build_object('id','next.review','kind','next','from','check.policy','to','human.review')))::text;
   digest:=encode(sha256(convert_to(body,'UTF8')),'hex');
   saved:=public.save_factory_workflow_authoring_draft(
     p_workspace_id=>scope.workspace_id,p_factory_id=>scope.factory_id,p_actor_user_id=>pg_temp.op651_id(1),
@@ -252,7 +249,7 @@ select is((select count(*) from internal.factory_workflow_authoring_dispatches d
 
 create temp table authored_blocked_version as
 select later.* from authored_version_b version
-cross join lateral pg_temp.publish_authored('blocked.checkpoint',219,version.draft_id,version.activation_id,true) later;
+cross join lateral pg_temp.publish_authored('blocked.validation',219,version.draft_id,version.activation_id,'validation') later;
 create temp table blocked_preparation as
 select admitted.session_id,pg_temp.adopt_source_checkpoint(admitted.session_id,admitted.job_id) as run_id
 from authored_scope scope cross join authored_blocked_version activation
@@ -263,7 +260,7 @@ cross join lateral public.create_session_command_once(
   p_workflow_selection=>jsonb_build_object('workflowId',scope.workflow_id,'activationId',activation.activation_id)
 ) admitted;
 select is(public.claim_factory_workflow_authoring_dispatch(pg_temp.op651_id(222)),null::jsonb,
-  'a graph with delegation configured and no eligible delegates cannot enroll');
+  'a session without a pinned delivery policy providing required evidence cannot enroll a validation graph');
 select ok((select dispatch.next_attempt_at > clock_timestamp() and dispatch.completed_at is null
   from blocked_preparation source join internal.factory_workflow_authoring_dispatches dispatch
     on (dispatch.session_id,dispatch.input_run_id)=(source.session_id,source.run_id)),

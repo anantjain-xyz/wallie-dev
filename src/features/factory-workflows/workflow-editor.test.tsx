@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { workflowGraphSchema } from "@/lib/factory-definitions/workflow-schema";
@@ -20,6 +20,7 @@ const digest = "a".repeat(64);
 const endpoint = "/api/factory-workflow";
 const missingPrompt = id(7);
 const laterPrompt = { id: id(8), label: "Later revision" };
+const promptCursor = { id: id(12), createdAt: "2026-11-22T23:00:00.000123+00:00" };
 const baseDefinition = { activationId: id(1), revisionId: id(2), digest };
 const initial: WorkflowAuthoringSnapshot = {
   workflowId: id(3),
@@ -50,7 +51,7 @@ const choices: WorkflowEditorCatalog = {
   approvers: [],
   profiles: [],
   grant: { id: id(5), version: 1 },
-  nextOffsets: { prompts: 100, approvers: null, profiles: null },
+  nextCursors: { prompts: promptCursor, approvers: null, profiles: null },
 };
 
 function openEditor() {
@@ -74,7 +75,7 @@ it("keeps later choices on a same-base reload and preserves the saved missing pr
   const fetch = vi.fn(async (url: string) =>
     url.includes("includeChoices")
       ? Response.json({ snapshot: initial, choices })
-      : Response.json({ catalog: "prompts", items: [laterPrompt], nextOffset: null }),
+      : Response.json({ catalog: "prompts", items: [laterPrompt], nextCursor: null }),
   );
   vi.stubGlobal("fetch", fetch);
   openEditor();
@@ -83,7 +84,12 @@ it("keeps later choices on a same-base reload and preserves the saved missing pr
   expect(prompt).toHaveAttribute("data-value", missingPrompt);
   fireEvent.click(screen.getByRole("button", { name: "Load more prompt revisions" }));
   await screen.findByText("More prompt revisions loaded.");
-  expect(fetch).toHaveBeenCalledWith(`${endpoint}?catalog=prompts&offset=100`, {
+  const query = new URLSearchParams({
+    catalog: "prompts",
+    afterId: promptCursor.id,
+    afterCreatedAt: promptCursor.createdAt,
+  });
+  expect(fetch).toHaveBeenCalledWith(`${endpoint}?${query}`, {
     cache: "no-store",
   });
   fireEvent.click(screen.getByRole("button", { name: "Load current draft" }));
@@ -113,4 +119,57 @@ it("uses the new exact grant after loading a draft with a switched base activati
   expect(fetch).toHaveBeenCalledWith(`${endpoint}?includeChoices=true`, { cache: "no-store" });
   expect(screen.queryByLabelText("Use approved factory grant · Version 1")).toBeNull();
   expect(screen.getByLabelText("Use approved factory grant · Version 2")).toBeInTheDocument();
+});
+
+it("focuses the same diagnostic again after selecting another step", async () => {
+  const snapshot = {
+    ...initial,
+    graph: workflowGraphSchema.parse({
+      schemaVersion: 1,
+      kind: "graph",
+      entryNodeId: "prepare",
+      nodes: [
+        { id: "prepare", kind: "deterministic", operation: "checkpoint" },
+        { id: "verify", kind: "deterministic", operation: "policy" },
+      ],
+      edges: [{ id: "next", kind: "next", from: "prepare", to: "verify" }],
+      grants: [],
+    }),
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json(
+        {
+          error: "Resolve the workflow diagnostics.",
+          diagnostics: [{ path: ["nodes", 1, "id"], message: "Check the second step." }],
+        },
+        { status: 422 },
+      ),
+    ),
+  );
+  render(
+    <WorkflowEditor
+      initial={snapshot}
+      choices={choices}
+      workspaceSlug="acme"
+      factoryId={id(6)}
+      endpoint={endpoint}
+    />,
+  );
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Step ID" }), {
+    target: { value: "prepare-source" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  const diagnostic = await screen.findByRole("button", { name: /Check the second step/ });
+  expect(screen.getByRole("textbox", { name: "Step ID" })).toHaveValue("verify");
+
+  const steps = screen.getByRole("region", { name: "Workflow steps" });
+  fireEvent.click(within(steps).getByRole("button", { name: /prepare-source/ }));
+  expect(screen.getByRole("textbox", { name: "Step ID" })).toHaveValue("prepare-source");
+  fireEvent.click(diagnostic);
+  const field = screen.getByRole("textbox", { name: "Step ID" });
+  expect(field).toHaveValue("verify");
+  expect(field).toHaveFocus();
 });

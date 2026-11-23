@@ -20,6 +20,7 @@ create table internal.factory_workflow_authoring_drafts (
   previous_draft_id uuid,
   prior_activation_id uuid,
   request_id uuid not null,
+  request_fingerprint text check (request_fingerprint collate "C" ~ '^[a-f0-9]{64}$'),
   base_activation_id uuid not null references public.factory_definition_activations(id) deferrable initially deferred,
   base_activation_number bigint not null check (base_activation_number > 0),
   base_definition_revision_id uuid not null,
@@ -55,6 +56,7 @@ create table internal.factory_workflow_authoring_activations (
   graph_revision_id uuid not null,
   workflow_digest text not null,
   request_id uuid not null,
+  request_fingerprint text check (request_fingerprint collate "C" ~ '^[a-f0-9]{64}$'),
   published_by_member_id uuid not null,
   created_at timestamptz not null default clock_timestamp(),
   unique (workflow_id,activation_number),
@@ -248,11 +250,43 @@ create function public.read_factory_workflow_authoring(
     and (p_selected_draft_id is null or selected.id is not null)
 $$;
 
+create function public.find_factory_workflow_authoring_receipt(
+  p_workspace_id uuid,p_factory_id uuid,p_actor_user_id uuid,p_workflow_id uuid,p_request_id uuid,
+  p_action text,p_request_fingerprint text
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare
+  actor uuid;
+  saved internal.factory_workflow_authoring_drafts;
+  published internal.factory_workflow_authoring_activations;
+begin
+  actor:=internal.lock_factory_workflow_authoring_head(p_workspace_id,p_factory_id,p_actor_user_id,p_workflow_id);
+  if p_request_id is null or p_request_fingerprint is null or p_request_fingerprint collate "C" !~ '^[a-f0-9]{64}$'
+    then raise exception 'An exact workflow authoring request is required.' using errcode='22023'; end if;
+  if p_action='save' then
+    select * into saved from internal.factory_workflow_authoring_drafts
+    where workflow_id=p_workflow_id and request_id=p_request_id;
+    if not found then return null; end if;
+    if (saved.created_by_member_id,saved.request_fingerprint) is distinct from (actor,p_request_fingerprint)
+      then raise exception 'Workflow save request already identifies a different change.' using errcode='PT409'; end if;
+    return jsonb_build_object('draftId',saved.id,'digest',saved.workflow_digest,'created',false);
+  elsif p_action='publish' then
+    select * into published from internal.factory_workflow_authoring_activations
+    where workflow_id=p_workflow_id and request_id=p_request_id;
+    if not found then return null; end if;
+    if (published.published_by_member_id,published.request_fingerprint) is distinct from (actor,p_request_fingerprint)
+      then raise exception 'Workflow publish request already identifies a different change.' using errcode='PT409'; end if;
+    return jsonb_build_object('activationId',published.id,'draftId',published.draft_id,'graphRevisionId',published.graph_revision_id,
+      'digest',published.workflow_digest,'created',false);
+  end if;
+  raise exception 'An exact workflow authoring action is required.' using errcode='22023';
+end;
+$$;
+
 create function public.save_factory_workflow_authoring_draft(
   p_workspace_id uuid,p_factory_id uuid,p_actor_user_id uuid,p_workflow_id uuid,p_request_id uuid,
   p_expected_base_activation_id uuid,p_expected_base_revision_id uuid,p_expected_base_digest text,
   p_workflow_json text,p_workflow_digest text,p_expected_draft_id uuid default null,
-  p_expected_activation_id uuid default null,p_rebase boolean default false
+  p_expected_activation_id uuid default null,p_rebase boolean default false,p_request_fingerprint text default null
 ) returns jsonb language plpgsql security definer set search_path='' as $$
 declare
   actor uuid;
@@ -268,9 +302,10 @@ begin
   select * into saved from internal.factory_workflow_authoring_drafts where workflow_id=p_workflow_id and request_id=p_request_id;
   if found then
     if (saved.created_by_member_id,saved.previous_draft_id,saved.prior_activation_id,saved.base_activation_id,
-      saved.base_definition_revision_id,saved.base_definition_digest,saved.workflow_digest,saved.workflow_json,saved.explicitly_rebased)
+      saved.base_definition_revision_id,saved.base_definition_digest,saved.workflow_digest,saved.workflow_json,saved.explicitly_rebased,
+      saved.request_fingerprint)
       is distinct from (actor,p_expected_draft_id,p_expected_activation_id,p_expected_base_activation_id,p_expected_base_revision_id,
-        p_expected_base_digest,p_workflow_digest,p_workflow_json,p_rebase)
+        p_expected_base_digest,p_workflow_digest,p_workflow_json,p_rebase,p_request_fingerprint)
       then raise exception 'Workflow save request already identifies a different change.' using errcode='PT409'; end if;
     return jsonb_build_object('draftId',saved.id,'digest',saved.workflow_digest,'created',false);
   end if;
@@ -291,9 +326,9 @@ begin
   perform internal.assert_factory_workflow_authoring_references(p_workspace_id,p_factory_id,base.definition,plan);
   insert into internal.factory_workflow_authoring_drafts(workspace_id,factory_id,workflow_id,revision_number,
     previous_draft_id,prior_activation_id,request_id,base_activation_id,base_activation_number,base_definition_revision_id,
-    base_definition_digest,workflow_json,workflow_digest,created_by_member_id,explicitly_rebased)
+    base_definition_digest,workflow_json,workflow_digest,created_by_member_id,explicitly_rebased,request_fingerprint)
   values(p_workspace_id,p_factory_id,p_workflow_id,coalesce(previous.revision_number,0)+1,previous.id,prior_activation.id,
-    p_request_id,base.id,base.activation_number,base.revision_id,base.digest,p_workflow_json,p_workflow_digest,actor,p_rebase)
+    p_request_id,base.id,base.activation_number,base.revision_id,base.digest,p_workflow_json,p_workflow_digest,actor,p_rebase,p_request_fingerprint)
   returning * into saved;
   return jsonb_build_object('draftId',saved.id,'digest',saved.workflow_digest,'created',true);
 end;
@@ -302,7 +337,7 @@ $$;
 create function public.publish_factory_workflow_authoring_draft(
   p_workspace_id uuid,p_factory_id uuid,p_actor_user_id uuid,p_workflow_id uuid,p_request_id uuid,
   p_expected_draft_id uuid,p_expected_base_activation_id uuid,p_expected_base_revision_id uuid,
-  p_expected_base_digest text,p_verified_draft_digest text,p_expected_activation_id uuid default null
+  p_expected_base_digest text,p_verified_draft_digest text,p_expected_activation_id uuid default null,p_request_fingerprint text default null
 ) returns jsonb language plpgsql security definer set search_path='' as $$
 declare
   actor uuid;
@@ -320,9 +355,9 @@ begin
   where workflow_id=p_workflow_id and request_id=p_request_id;
   if found then
     if (published.published_by_member_id,published.draft_id,published.previous_activation_id,published.base_activation_id,
-      published.base_definition_revision_id,published.base_definition_digest,published.workflow_digest) is distinct from
+      published.base_definition_revision_id,published.base_definition_digest,published.workflow_digest,published.request_fingerprint) is distinct from
       (actor,p_expected_draft_id,p_expected_activation_id,p_expected_base_activation_id,p_expected_base_revision_id,
-        p_expected_base_digest,p_verified_draft_digest)
+        p_expected_base_digest,p_verified_draft_digest,p_request_fingerprint)
       then raise exception 'Workflow publish request already identifies a different change.' using errcode='PT409'; end if;
     return jsonb_build_object('activationId',published.id,'draftId',published.draft_id,'graphRevisionId',published.graph_revision_id,
       'digest',published.workflow_digest,'created',false);
@@ -346,6 +381,12 @@ begin
 
   plan:=internal.validate_factory_workflow_authoring_payload(draft.workflow_json,draft.workflow_digest);
   perform internal.assert_factory_workflow_authoring_references(p_workspace_id,p_factory_id,base.definition,plan);
+  if not internal.is_enrollable_factory_workflow_delegation(p_workspace_id,p_factory_id,plan) then
+    raise exception 'The graph requires bounded delegation and exact scoped child profiles.' using errcode='PT422';
+  end if;
+  if not internal.is_enrollable_factory_workflow_foreman(p_workspace_id,p_factory_id,plan) then
+    raise exception 'The graph requires a scoped foreman profile and bounded delegation.' using errcode='PT422';
+  end if;
   if not internal.is_enrollable_factory_workflow_review(p_workspace_id,p_factory_id,plan) then
     raise exception 'The review requires its scoped prompt, declared rules, and exact joined input.' using errcode='PT422';
   end if;
@@ -362,9 +403,9 @@ begin
     base.revision_id,base.digest,draft.workflow_json,draft.workflow_digest);
   insert into internal.factory_workflow_authoring_activations(workspace_id,factory_id,workflow_id,activation_number,
     previous_activation_id,draft_id,base_activation_id,base_activation_number,base_definition_revision_id,base_definition_digest,
-    graph_revision_id,workflow_digest,request_id,published_by_member_id)
+    graph_revision_id,workflow_digest,request_id,published_by_member_id,request_fingerprint)
   values(p_workspace_id,p_factory_id,p_workflow_id,coalesce(prior.activation_number,0)+1,prior.id,draft.id,base.id,
-    base.activation_number,base.revision_id,base.digest,graph.graph_revision_id,draft.workflow_digest,p_request_id,actor)
+    base.activation_number,base.revision_id,base.digest,graph.graph_revision_id,draft.workflow_digest,p_request_id,actor,p_request_fingerprint)
   returning * into published;
   return jsonb_build_object('activationId',published.id,'draftId',published.draft_id,'graphRevisionId',published.graph_revision_id,
     'digest',published.workflow_digest,'created',true);
@@ -432,13 +473,15 @@ revoke all on function internal.factory_workflow_authoring_base(uuid,uuid),inter
   internal.pin_factory_workflow_authoring_session(uuid,uuid,uuid,uuid,uuid)
 from public,anon,authenticated,service_role;
 revoke all on function public.create_factory_workflow_authoring(uuid,uuid,uuid,uuid,text),
-  public.save_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,boolean),
-  public.publish_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,uuid),
+  public.find_factory_workflow_authoring_receipt(uuid,uuid,uuid,uuid,uuid,text,text),
+  public.save_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,boolean,text),
+  public.publish_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,uuid,text),
   public.read_factory_workflow_authoring(uuid,uuid,uuid,uuid)
 from public,anon,authenticated,service_role;
 grant execute on function public.create_factory_workflow_authoring(uuid,uuid,uuid,uuid,text),
-  public.save_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,boolean),
-  public.publish_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,uuid)
+  public.find_factory_workflow_authoring_receipt(uuid,uuid,uuid,uuid,uuid,text,text),
+  public.save_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,uuid,uuid,boolean,text),
+  public.publish_factory_workflow_authoring_draft(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,uuid,text)
 to service_role;
 grant execute on function public.read_factory_workflow_authoring(uuid,uuid,uuid,uuid) to authenticated;
 
@@ -712,6 +755,9 @@ declare
   prior jsonb;
   receipt_exists boolean;
   selection jsonb := internal.normalize_factory_workflow_intake_selection(p_workflow_selection);
+  attachment_count integer := coalesce(cardinality(session_attachment_ids),0);
+  bound_attachment_count integer;
+  browser_only_input boolean := attachment_count > 0 or session_linear_issue_id is not null or session_linear_issue_url is not null;
 begin
   if selection is not null and (draft_specification or source_session_id is not null
     or coalesce(expected_factory_definition_digest, '') = '') then
@@ -745,8 +791,7 @@ begin
       (target_workspace_id, actual_factory_id, 'create', target_request_id)
   ) into receipt_exists;
 
-  if source_session_id is null and coalesce(cardinality(session_attachment_ids), 0) = 0
-    and session_linear_issue_id is null and session_linear_issue_url is null
+  if source_session_id is null and (selection is not null or not browser_only_input)
     and length(btrim(session_title, E' \t\r\n')) between 1 and 200
     and length(btrim(session_prompt_md, E' \t\r\n')) between 1 and 20000 then
     -- Browser creation confirmed an immutable published revision. An exact
@@ -777,6 +822,9 @@ begin
       if selection is not null then
         intent := intent || jsonb_build_object('workflowSelection', selection);
       end if;
+      if browser_only_input then
+        intent := intent || jsonb_build_object('browserRequestHash',target_request_hash);
+      end if;
       prior := internal.find_session_mutation_receipt(operation_actor, 'create', target_request_id, intent);
       if prior is not null then
         -- Bind the compatible browser request for early replay before the
@@ -794,16 +842,41 @@ begin
   end if;
 
   if intent is not null then
+    if attachment_count > 0 then
+      if attachment_count > 5 then
+        raise exception 'A session may include at most five image attachments' using errcode='22023';
+      end if;
+      if attachment_count <> (select count(distinct id) from unnest(session_attachment_ids) attachment(id)) then
+        raise exception 'Session attachment ids must be unique and non-null' using errcode='22023';
+      end if;
+      perform internal.lock_factory_session_creation_attachments(target_workspace_id, creator_member_id, session_attachment_ids);
+    end if;
     select * into strict accepted from internal.create_attributed_session(
       target_workspace_id, creator_member_id, intent->>'title', intent->>'prompt', agent_model_provider, agent_model_name,
+      session_linear_issue_id=>session_linear_issue_id, session_linear_issue_url=>session_linear_issue_url,
       session_github_repository_id=>repository_id, selected_pipeline_id=>selected_pipeline_id, selected_stage_ids=>selected_stage_ids,
       p_actor=>operation_actor, p_expected_agent_id=>agent_id, p_expected_definition_digest=>expected_factory_definition_digest);
+    if attachment_count > 0 then
+      update public.session_attachments attachment
+      set session_id = accepted.session_id, position = requested.ordinality, status = 'attached',
+        expires_at = null, delete_claimed_at = null, attached_at = now()
+      from unnest(session_attachment_ids) with ordinality requested(id, ordinality)
+      where attachment.id = requested.id and attachment.workspace_id = target_workspace_id
+        and attachment.uploaded_by_member_id = creator_member_id and attachment.status = 'ready' and attachment.session_id is null;
+      get diagnostics bound_attachment_count = row_count;
+      if bound_attachment_count <> attachment_count then
+        raise exception 'Session attachments could not be bound atomically' using errcode='P0004';
+      end if;
+    end if;
     insert into internal.session_creation_requests(workspace_id, creator_member_id, request_id, request_hash, session_id, job_id, run_id)
     values (target_workspace_id, creator_member_id, target_request_id, target_request_hash,
       accepted.session_id, accepted.job_id, accepted.run_id);
   else
     if receipt_exists then
       raise exception 'The session request identity was already used for different input.' using errcode = 'P0005';
+    end if;
+    if selection is not null then
+      raise exception 'The selected workflow requires the confirmed factory admission.' using errcode='PT409';
     end if;
     select * into strict accepted from internal.create_session_command_once(
       target_workspace_id, creator_member_id, target_request_id, target_request_hash, expected_factory_definition_digest,
@@ -812,9 +885,6 @@ begin
       selected_stage_ids, source_session_id, target_factory_id);
     operation_actor := internal.session_mutation_human_actor(target_workspace_id, actual_factory_id, creator_member_id, accepted.session_id);
     intent := jsonb_build_object('browserRequestHash', target_request_hash);
-    if selection is not null then
-      intent := intent || jsonb_build_object('workflowSelection', selection);
-    end if;
   end if;
   if selection is not null then
     perform internal.bind_factory_workflow_intake_selection(target_workspace_id, actual_factory_id,

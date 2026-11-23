@@ -10,9 +10,10 @@ import type { Database } from "@/lib/supabase/database.types";
 import {
   workflowReferencePageSize,
   type WorkflowBaseDefinition,
+  type WorkflowDatedReferenceCursor,
   type WorkflowEditorCatalog,
-  type WorkflowReferenceKind,
   type WorkflowReferencePage,
+  type WorkflowReferenceQuery,
 } from "./authoring-contracts";
 
 type CatalogScope = {
@@ -21,92 +22,111 @@ type CatalogScope = {
   factoryId: string;
 };
 
-function referencePage<T>(items: T[], offset: number) {
+function referencePage<Row, Choice, Cursor>(
+  rows: Row[],
+  choice: (row: Row) => Choice,
+  cursor: (row: Row) => Cursor,
+) {
+  const last = rows[workflowReferencePageSize - 1];
   return {
-    items: items.slice(0, workflowReferencePageSize),
-    nextOffset:
-      items.length > workflowReferencePageSize ? offset + workflowReferencePageSize : null,
+    items: rows.slice(0, workflowReferencePageSize).map(choice),
+    nextCursor: rows.length > workflowReferencePageSize && last ? cursor(last) : null,
   };
+}
+
+function olderReferenceFilter({ createdAt, id }: WorkflowDatedReferenceCursor) {
+  return `created_at.lt.${createdAt},and(created_at.eq.${createdAt},id.lt.${id})`;
 }
 
 async function loadPromptChoices(
   { supabase, workspaceId, factoryId }: CatalogScope,
-  offset: number,
+  after?: WorkflowDatedReferenceCursor,
 ) {
-  const { data, error } = await supabase
+  const query = supabase
     .from("factory_agent_prompt_revisions")
-    .select("id, revision_number, factory_agents!inner(name)")
+    .select("id, created_at, revision_number, factory_agents!inner(name)")
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factoryId)
     .order("created_at", { ascending: false })
-    .order("id")
-    .range(offset, offset + workflowReferencePageSize);
+    .order("id", { ascending: false })
+    .limit(workflowReferencePageSize + 1);
+  const { data, error } = await (after ? query.or(olderReferenceFilter(after)) : query);
   if (error) throw error;
   return referencePage(
-    data.map((item) => ({
+    data,
+    (item) => ({
       id: item.id,
       label: `${item.factory_agents.name} · Revision ${item.revision_number}`,
-    })),
-    offset,
+    }),
+    ({ id, created_at }) => ({ id, createdAt: created_at }),
   );
 }
 
-async function loadApproverChoices({ supabase, workspaceId }: CatalogScope, offset: number) {
-  const { data, error } = await supabase
+async function loadApproverChoices({ supabase, workspaceId }: CatalogScope, afterId?: string) {
+  const query = supabase
     .from("workspace_members")
     .select("id, full_name, username, email")
     .eq("workspace_id", workspaceId)
     .eq("kind", "human")
     .eq("is_active", true)
-    .order("full_name")
     .order("id")
-    .range(offset, offset + workflowReferencePageSize);
+    .limit(workflowReferencePageSize + 1);
+  const { data, error } = await (afterId ? query.gt("id", afterId) : query);
   if (error) throw error;
   return referencePage(
-    data.map(({ id, full_name, username, email }) => ({
+    data,
+    ({ id, full_name, username, email }) => ({
       id,
       label: full_name || username || email || id,
-    })),
-    offset,
+    }),
+    ({ id }) => ({ id }),
   );
 }
 
 async function loadProfileChoices(
   { supabase, workspaceId, factoryId }: CatalogScope,
-  offset: number,
+  after?: WorkflowDatedReferenceCursor,
 ) {
-  const { data, error } = await supabase
+  const query = supabase
     .from("factory_definition_revisions")
     .select("id, canonical_digest, created_at")
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factoryId)
     .order("created_at", { ascending: false })
-    .order("id")
-    .range(offset, offset + workflowReferencePageSize);
+    .order("id", { ascending: false })
+    .limit(workflowReferencePageSize + 1);
+  const { data, error } = await (after ? query.or(olderReferenceFilter(after)) : query);
   if (error) throw error;
   return referencePage(
-    data.map(({ id, canonical_digest, created_at }) => ({
+    data,
+    ({ id, canonical_digest, created_at }) => ({
       id,
       digest: canonical_digest,
       label: `${created_at.slice(0, 10)} · ${canonical_digest.slice(0, 10)}`,
-    })),
-    offset,
+    }),
+    ({ id, created_at }) => ({ id, createdAt: created_at }),
   );
 }
 
 /** The caller checks the current manager authority before using the signed-in RLS client. */
 export async function loadWorkflowReferencePage(
   scope: CatalogScope,
-  catalog: WorkflowReferenceKind,
-  offset: number,
+  query: WorkflowReferenceQuery,
 ): Promise<WorkflowReferencePage> {
-  switch (catalog) {
+  const { afterId } = query;
+  switch (query.catalog) {
     case "prompts":
-      return { catalog, ...(await loadPromptChoices(scope, offset)) };
+      return {
+        catalog: query.catalog,
+        ...(await loadPromptChoices(scope, { id: afterId, createdAt: query.afterCreatedAt })),
+      };
     case "approvers":
-      return { catalog, ...(await loadApproverChoices(scope, offset)) };
+      return { catalog: query.catalog, ...(await loadApproverChoices(scope, afterId)) };
     case "profiles":
-      return { catalog, ...(await loadProfileChoices(scope, offset)) };
+      return {
+        catalog: query.catalog,
+        ...(await loadProfileChoices(scope, { id: afterId, createdAt: query.afterCreatedAt })),
+      };
   }
 }
 
@@ -134,9 +154,9 @@ export async function loadWorkflowEditorChoices(
   base: WorkflowBaseDefinition | null,
 ): Promise<WorkflowEditorCatalog> {
   const [prompts, approvers, profiles, grant] = await Promise.all([
-    loadPromptChoices(scope, 0),
-    loadApproverChoices(scope, 0),
-    loadProfileChoices(scope, 0),
+    loadPromptChoices(scope),
+    loadApproverChoices(scope),
+    loadProfileChoices(scope),
     loadWorkflowBaseGrant(scope, base),
   ]);
   return {
@@ -144,10 +164,10 @@ export async function loadWorkflowEditorChoices(
     approvers: approvers.items,
     profiles: profiles.items,
     grant,
-    nextOffsets: {
-      prompts: prompts.nextOffset,
-      approvers: approvers.nextOffset,
-      profiles: profiles.nextOffset,
+    nextCursors: {
+      prompts: prompts.nextCursor,
+      approvers: approvers.nextCursor,
+      profiles: profiles.nextCursor,
     },
   };
 }

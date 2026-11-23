@@ -4,7 +4,7 @@ import { mutateWorkflowAuthoring, readWorkflowAuthoring } from "@/lib/factory-wo
 import {
   workflowAuthoringCommandSchema,
   workflowAuthoringPathSchema,
-  workflowReferenceKindSchema,
+  workflowReferenceQuerySchema,
 } from "@/lib/factory-workflows/authoring-contracts";
 import {
   readWorkflowAuthoringCommand,
@@ -23,14 +23,7 @@ const draftIdSchema = z.string().uuid().toLowerCase().optional();
 const querySchema = z.union([
   z.strictObject({ draftId: draftIdSchema }),
   z.strictObject({ draftId: draftIdSchema, includeChoices: z.literal("true") }),
-  z.strictObject({
-    catalog: workflowReferenceKindSchema,
-    offset: z
-      .string()
-      .regex(/^\d{1,10}$/)
-      .transform(Number)
-      .pipe(z.number().int().nonnegative().max(2_147_483_647)),
-  }),
+  workflowReferenceQuerySchema,
 ]);
 
 export async function GET(request: Request, { params }: Context) {
@@ -51,8 +44,7 @@ export async function GET(request: Request, { params }: Context) {
     );
     if (!snapshot) return workflowAuthoringResponse({ error: "Workflow draft not found." }, 404);
     if ("catalog" in selection.data) {
-      const { catalog, offset } = selection.data;
-      return workflowAuthoringResponse(await loadWorkflowReferencePage(scope, catalog, offset));
+      return workflowAuthoringResponse(await loadWorkflowReferencePage(scope, selection.data));
     }
     if ("includeChoices" in selection.data) {
       const choices = await loadWorkflowEditorChoices(scope, snapshot.baseDefinition);

@@ -146,7 +146,10 @@ export function setEditorNode(graph: WorkflowGraphDraft, index: number, node: Wo
     );
     next.delegationPolicy = { ...graph.delegationPolicy, targets: Object.fromEntries(targets) };
   }
-  if (node.kind === "route" && !next.routePolicy?.nodes[node.id]) {
+  if (
+    node.kind === "route" &&
+    (!next.routePolicy || !Object.hasOwn(next.routePolicy.nodes, node.id))
+  ) {
     return setNodeRoute(next, node.id, {
       minimumConfidence: 0.8,
       allowedDestinationIds: [],

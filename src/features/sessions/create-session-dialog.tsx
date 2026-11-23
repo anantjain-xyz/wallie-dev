@@ -227,6 +227,11 @@ function CreateSessionDialogBody({
     options: z.output<typeof intakeOptionsSchema>["options"] | null;
   } | null>(null);
   const [workflowOptionsRevision, setWorkflowOptionsRevision] = useState(0);
+  const [workflowCatalogOpen, setWorkflowCatalogOpen] = useState(open);
+  if (workflowCatalogOpen !== open) {
+    setWorkflowCatalogOpen(open);
+    setWorkflowCatalog(null);
+  }
   const [imageDrafts, setImageDrafts] = useState<SessionImageDraft[]>([]);
   const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -1115,8 +1120,9 @@ function CreateSessionDialogBody({
                   </p>
                 ) : workflowSelectionUnavailable ? (
                   <p className="type-secondary text-warning" role="status">
-                    The selected workflow changed. Choose a current workflow or the default
-                    pipeline.
+                    {factoryDefinitionDigest && creationFactoryId && !currentWorkflowCatalog
+                      ? "Loading current workflows…"
+                      : "The selected workflow changed. Choose a current workflow or the default pipeline."}
                   </p>
                 ) : null}
               </div>
