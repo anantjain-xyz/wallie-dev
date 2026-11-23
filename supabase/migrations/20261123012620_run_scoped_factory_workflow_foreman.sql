@@ -517,7 +517,8 @@ language sql stable set search_path = '' as $$
         where (reserve.job_id, reserve.attempt_count) = (run.agent_job_id, run.attempt_count)
       )
   ), foreman_attempts as (
-    select invocation.root_session_id as session_id, invocation.status = 'issued' as active,
+    select invocation.root_session_id as session_id,
+      invocation.status = 'issued' and invocation.deadline_at > statement_timestamp() as active,
       true as started, invocation.reserved_tokens, invocation.reserved_cost_usd,
       coalesce(invocation.input_tokens + invocation.output_tokens,
         greatest(invocation.reserved_tokens, coalesce(invocation.input_tokens, 0) + coalesce(invocation.output_tokens, 0)))
@@ -973,11 +974,11 @@ begin
     if received_status = 'blocked' then
       next_status := 'blocked';
       settled_code := p_outcome->>'code';
+    elsif invocation.deadline_at <= clock_timestamp() then
+      next_status := 'stale';
+      settled_code := 'inference_deadline_elapsed';
     elsif received_status = 'accepted' then
-      if invocation.deadline_at <= clock_timestamp() then
-        next_status := 'stale';
-        settled_code := 'inference_deadline_elapsed';
-      elsif workspace_active and factory_active and root.phase_status <> 'rejected'
+      if workspace_active and factory_active and root.phase_status <> 'rejected'
         and (root.archived_at is null or root.phase_status = 'approved') and root.execute_pinned_definition
         and (execution.generation, execution.ownership_token, execution.workflow_digest) =
           (p_expected_generation, p_ownership_token, invocation.workflow_digest)
@@ -1061,6 +1062,7 @@ declare
   child_run uuid;
   child_phase public.pipeline_phase_status;
   child_receipt record;
+  prior_child internal.factory_workflow_delegations;
   effect jsonb;
   receipt jsonb;
   blocked_code text;
@@ -1151,13 +1153,17 @@ begin
     elsif invocation.source_checkpoint_run_id is null then
       blocked_code := 'checkpoint_required';
     else
-      -- The root and parent lineage locks fence fresh child admission. Let the
-      -- existing admission command validate exact replays before applying new
-      -- checkpoint and total-child checks.
-      if not exists (
-        select 1 from internal.factory_workflow_delegations marker
-        where (marker.root_session_id, marker.target_occurrence_id) = (p_root_session_id, target_occurrence)
-      ) then
+      -- The root lock serializes the immutable intent comparison with admission.
+      select marker.* into prior_child from internal.factory_workflow_delegations marker
+      where (marker.root_session_id, marker.target_occurrence_id) = (p_root_session_id, target_occurrence);
+      if found then
+        if (prior_child.parent_session_id, prior_child.source_checkpoint_run_id, prior_child.title_sha256,
+            prior_child.prompt_sha256) is distinct from (invocation.parent_session_id, invocation.source_checkpoint_run_id,
+            encode(sha256(convert_to(btrim(command.command_json->>'title'), 'UTF8')), 'hex'),
+            encode(sha256(convert_to(btrim(command.command_json->>'promptMd'), 'UTF8')), 'hex')) then
+          blocked_code := 'child_intent_conflict';
+        end if;
+      else
         select head.checkpoint_run_id into current_parent_checkpoint
         from public.session_git_heads head
         where (head.session_id, head.workspace_id) = (invocation.parent_session_id, p_workspace_id)

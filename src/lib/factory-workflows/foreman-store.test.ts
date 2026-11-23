@@ -556,6 +556,7 @@ it.each(["completed", "stalled"])(
     };
     let saved = "";
     let restarted = false;
+    let retryingCleanup = false;
     let markCleanupStarted = () => {};
     const cleanupStarted = new Promise<void>((resolve) => {
       markCleanupStarted = resolve;
@@ -568,7 +569,7 @@ it.each(["completed", "stalled"])(
       }
       if (init?.method === "DELETE") {
         markCleanupStarted();
-        if (cleanup === "stalled") return new Promise<Response>(() => {});
+        if (cleanup === "stalled" && !retryingCleanup) return new Promise<Response>(() => {});
         saved = "";
         return Response.json([]);
       }
@@ -598,7 +599,14 @@ it.each(["completed", "stalled"])(
       expect(first.replies).toHaveLength(0);
 
       restarted = true;
-      const handedOff = { ...pending, currentGeneration: 8 };
+      const handedOff = {
+        ...pending,
+        currentGeneration: 8,
+        ...(cleanup === "stalled"
+          ? { status: "blocked", settledAt: accepted.settledAt, code: "timeout" }
+          : {}),
+      };
+      const nextOwner = { ...pin, p_expected_generation: 8, p_ownership_token: id(99) };
       const replay = adminFixture(
         [
           { name: read, data: handedOff },
@@ -615,17 +623,16 @@ it.each(["completed", "stalled"])(
         });
         restoreTimeout = () => timeout.mockRestore();
       }
-      const recovered = executeFactoryWorkflowForeman(
-        replay.admin,
-        { ...pin, p_expected_generation: 8, p_ownership_token: id(99) },
-        { bindProvider },
-      );
+      const recovered = executeFactoryWorkflowForeman(replay.admin, nextOwner, { bindProvider });
       await cleanupStarted;
       if (cleanup === "stalled") {
         expect(deadlines).toHaveLength(3);
         deadlines[2].abort();
       }
-      expect(await recovered).toMatchObject({ status: "waiting", usage });
+      expect(await recovered).toMatchObject({
+        status: cleanup === "stalled" ? "blocked" : "waiting",
+        usage,
+      });
       expect(replay.calls[1]).toEqual({
         name: settle,
         body: {
@@ -637,8 +644,25 @@ it.each(["completed", "stalled"])(
         },
       });
       expect(replay.replies).toHaveLength(0);
-      if (cleanup === "stalled") expect(saved).not.toBe("");
-      else expect(saved).toBe("");
+      if (cleanup === "stalled") {
+        expect(saved).not.toBe("");
+        retryingCleanup = true;
+        restoreTimeout();
+        const counted = { ...handedOff, usage };
+        const retry = adminFixture(
+          [
+            { name: read, data: counted },
+            { name: settle, data: counted },
+          ],
+          objects,
+        );
+        expect(
+          await executeFactoryWorkflowForeman(retry.admin, nextOwner, { bindProvider }),
+        ).toMatchObject({ status: "blocked", code: "timeout", usage });
+        expect(retry.calls[1]).toEqual(replay.calls[1]);
+        expect(retry.replies).toHaveLength(0);
+      }
+      expect(saved).toBe("");
       expect(invoke).toHaveBeenCalledOnce();
     } finally {
       restoreTimeout();

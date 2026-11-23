@@ -136,7 +136,7 @@ cross join (values ('narrow', 101), ('outside-parent-definition', 102), ('outsid
   ('unknown-usage', 104), ('over-budget', 105), ('revoked-authority', 106),
   ('reordered-usage', 108), ('late-cost', 109), ('read-after-route', 110), ('stale-owner', 111),
   ('foreman-only', 112), ('deadline-during-lineage', 113), ('moved-checkpoint', 114),
-  ('child-limit', 115))
+  ('child-limit', 115), ('expired-accounting', 116), ('conflicting-intent', 117))
   fixture(scenario, request_slot)
 cross join lateral jsonb_to_record(pg_temp.op648_create_service_root(fixture.request_slot,
   'Grant narrowing root ' || fixture.scenario)) fields(
@@ -225,7 +225,8 @@ join public.factory_definition_revisions foreman on foreman.id = pg_temp.op648_i
 insert into route_graph(scenario, body)
 select extra.scenario, graph.body from route_graph graph
 cross join (values ('unknown-usage'), ('over-budget'), ('revoked-authority'), ('reordered-usage'),
-  ('late-cost'), ('read-after-route'), ('stale-owner'), ('deadline-during-lineage'), ('moved-checkpoint'), ('child-limit')) extra(scenario)
+  ('late-cost'), ('read-after-route'), ('stale-owner'), ('deadline-during-lineage'), ('moved-checkpoint'), ('child-limit'),
+  ('expired-accounting'), ('conflicting-intent')) extra(scenario)
 where graph.scenario = 'narrow';
 insert into route_graph(scenario, body)
 select 'foreman-only', jsonb_set(jsonb_set(jsonb_set(jsonb_set(
@@ -246,7 +247,7 @@ cross join lateral public.register_factory_workflow_graph_revision(
   graph.body, encode(sha256(convert_to(graph.body, 'UTF8')), 'hex')) registered
 cross join lateral public.start_factory_workflow_graph_execution(root."sessionId", root.workspace_id, root.factory_id,
   registered.graph_revision_id, root.checkpoint_run_id) started;
-select is((select count(*) from root_owner where created and ownership_token is not null), 14::bigint,
+select is((select count(*) from root_owner where created and ownership_token is not null), 16::bigint,
   'all roots enroll their graph and exact historical target profile');
 select ok((select created and ownership_token is not null from root_owner where scenario = 'foreman-only'),
   'a foreman-only route enrolls with a bounded policy and empty child targets');
@@ -275,7 +276,7 @@ cross join lateral internal.factory_workflow_attempt_budget(root."sessionId", ex
 
 create temp table foreman_tickets as
 select scenario, pg_temp.begin_foreman(scenario) as ticket from root_owner;
-select is((select count(*) from foreman_tickets where ticket->>'status' = 'issued'), 13::bigint,
+select is((select count(*) from foreman_tickets where ticket->>'status' = 'issued'), 15::bigint,
   'fresh scoped routes issue one provider ticket under root accounting');
 select ok((select ticket->>'status' = 'issued' and ticket->'allowedDestinationIds' = '["policy.check"]'::jsonb
   from foreman_tickets where scenario = 'foreman-only'),
@@ -383,7 +384,8 @@ do $$
 begin
   update internal.factory_workflow_foreman_runs invocation set deadline_at = clock_timestamp() + interval '3 seconds'
   from root_owner root where root.scenario = 'deadline-during-lineage' and root."sessionId" = invocation.root_session_id;
-  insert into expired_foreman select pg_temp.settle_foreman('deadline-during-lineage', outcome) from planned;
+  insert into expired_foreman select pg_temp.settle_foreman('deadline-during-lineage',
+    jsonb_set(outcome, '{usage,outputTokens}', 'null')) from planned;
 end;
 $$;
 select ok((select current_setting('wallie.foreman_deadline_fixture_waited', true) = 'yes'
@@ -391,6 +393,48 @@ select ok((select current_setting('wallie.foreman_deadline_fixture_waited', true
   and result#>>'{usage,inputTokens}' = '12' and result->'commands' = '[]'::jsonb and not result ? 'planJson'
   from expired_foreman), 'the deadline is enforced after lineage waits while exact usage is retained');
 do $$ begin execute (select definition from original_foreman_lineage); end; $$;
+select ok((select budget.tokens = baseline.tokens + 50 and budget.spend_usd = baseline.spend_usd + 0.05
+  from root_owner root join baseline_budget baseline using (scenario)
+  join internal.factory_workflow_executions execution on execution.root_session_id = root."sessionId"
+  cross join lateral internal.factory_workflow_attempt_budget(root."sessionId", execution.workflow_json::jsonb->'delegationPolicy') budget
+  where root.scenario = 'deadline-during-lineage'),
+  'expired incomplete token measurement retains its reserve while measured spend replaces its hold');
+
+select is(pg_temp.settle_foreman('expired-accounting',
+  '{"status":"accounting","usage":{"inputTokens":12,"outputTokens":3,"costUsd":null},"providerReceiptId":"fixture-response"}')->>'status',
+  'issued', 'metering before the original deadline keeps the issue open');
+create function pg_temp.issued_budget_delta(p_scenario text)
+returns table(attempts bigint, tokens numeric, spend_usd numeric) language sql as $$
+  select budget.attempts-baseline.attempts, budget.tokens-baseline.tokens, budget.spend_usd-baseline.spend_usd
+  from root_owner root join baseline_budget baseline using (scenario)
+  join internal.factory_workflow_executions execution on execution.root_session_id = root."sessionId"
+  cross join lateral internal.factory_workflow_attempt_budget(root."sessionId", execution.workflow_json::jsonb->'delegationPolicy') budget
+  where root.scenario = p_scenario
+$$;
+select ok((select (attempts,tokens,spend_usd) = (1::bigint,50::numeric,0.20::numeric)
+  from pg_temp.issued_budget_delta('expired-accounting')),
+  'a live issue retains both conservative holds even with complete token measurement');
+update internal.factory_workflow_foreman_runs invocation
+set issued_at = clock_timestamp() - interval '1 minute', deadline_at = clock_timestamp() - interval '1 second'
+from root_owner root where root.scenario = 'expired-accounting' and root."sessionId" = invocation.root_session_id;
+select ok((select (attempts,tokens,spend_usd) = (1::bigint,15::numeric,0.20::numeric)
+  from pg_temp.issued_budget_delta('expired-accounting'))
+  and pg_temp.read_foreman('expired-accounting')->>'status' = 'issued',
+  'budget reads release a measured axis after its deadline even before the next settlement');
+create temp table expired_accounting as select pg_temp.settle_foreman('expired-accounting',
+  '{"status":"accounting","usage":{"inputTokens":null,"outputTokens":null,"costUsd":0.04},"providerReceiptId":"fixture-response"}') as result;
+select ok((select result->>'status' = 'stale' and result->>'code' = 'inference_deadline_elapsed'
+  and result#>>'{usage,inputTokens}' = '12' and result#>>'{usage,outputTokens}' = '3'
+  and result#>>'{usage,costUsd}' = '0.04' and result->'commands' = '[]'::jsonb and not result ? 'planJson'
+  from expired_accounting), 'accounting after expiry closes the same issue without installing commands');
+select ok((select (attempts,tokens,spend_usd) = (1::bigint,15::numeric,0.04::numeric)
+  from pg_temp.issued_budget_delta('expired-accounting')),
+  'final measured tokens and spend replace their separate holds without releasing the used attempt');
+select is(pg_temp.settle_foreman('expired-accounting',
+  '{"status":"accounting","usage":{"inputTokens":null,"outputTokens":null,"costUsd":0.04},"providerReceiptId":"fixture-response"}'),
+  (select result from expired_accounting), 'expired accounting is an exact idempotent replay');
+select is(pg_temp.settle_foreman('expired-accounting', jsonb_set(outcome, '{usage,costUsd}', '0.04')),
+  (select result from expired_accounting), 'a delayed accepted plan cannot reopen an expired issue') from planned;
 
 create temp table foreman_handoff as
 select owner.* from root_owner root
@@ -512,7 +556,7 @@ create temp table first_capped_child as
 select child.* from root_owner root cross join first_capped_route route
 cross join lateral public.admit_factory_workflow_delegated_session(root."sessionId", root.workspace_id, root.factory_id,
   root.execution_generation, root.ownership_token, root."sessionId", (route.receipt->>'targetOccurrenceId')::uuid,
-  root.checkpoint_run_id, 'Child', 'Inspect the checkpoint.') child
+  root.checkpoint_run_id, '  Child  ', '  Inspect the checkpoint.  ') child
 where root.scenario = 'child-limit';
 select is(pg_temp.dispatch_foreman(2, 'child-limit')->>'childSessionId',
   (select child_session_id::text from first_capped_child),
@@ -540,6 +584,27 @@ select ok((select route.receipt->>'status' = 'accepted' and denied.receipt->>'co
   'the total child limit durably blocks only the new delegate ordinal');
 select is(pg_temp.dispatch_foreman(2, 'child-limit'), (select receipt from second_capped_child),
   'a total-child denial replays its terminal receipt');
+
+select is(pg_temp.settle_foreman('conflicting-intent', outcome)->>'status', 'accepted',
+  'the foreman can settle before another caller seals different child work') from planned;
+create temp table conflicting_route as select pg_temp.dispatch_foreman(1, 'conflicting-intent') as receipt;
+create temp table original_child_intent as
+select child.* from root_owner root cross join conflicting_route route
+cross join lateral public.admit_factory_workflow_delegated_session(root."sessionId", root.workspace_id, root.factory_id,
+  root.execution_generation, root.ownership_token, root."sessionId", (route.receipt->>'targetOccurrenceId')::uuid,
+  root.checkpoint_run_id, 'Different sealed work', 'Inspect the checkpoint.') child
+where root.scenario = 'conflicting-intent';
+create temp table conflicting_child as select pg_temp.dispatch_foreman(2, 'conflicting-intent') as receipt;
+select ok((select denied.receipt = '{"ordinal":2,"kind":"delegate","status":"blocked","code":"child_intent_conflict"}'::jsonb
+  and marker.child_session_id = original.child_session_id and marker.title_sha256 =
+    encode(sha256(convert_to('Different sealed work', 'UTF8')), 'hex')
+  from conflicting_child denied cross join original_child_intent original
+  join internal.factory_workflow_delegations marker on marker.child_session_id = original.child_session_id),
+  'a differing sealed child intent produces a blocked receipt and preserves the original child');
+select is(pg_temp.dispatch_foreman(2, 'conflicting-intent'), (select receipt from conflicting_child),
+  'a sealed intent conflict replays the same blocked receipt');
+select is(pg_temp.dispatch_foreman(1, 'conflicting-intent'), (select receipt from conflicting_route),
+  'a sealed child conflict preserves the original route receipt');
 
 create temp table read_plans as
 select scenario, jsonb_build_object('status', 'accepted', 'planJson', raw.plan,

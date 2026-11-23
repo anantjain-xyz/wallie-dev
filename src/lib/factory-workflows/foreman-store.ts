@@ -89,6 +89,7 @@ const receiptSchema = z.union([
         "child_admission_denied",
         "checkpoint_stale",
         "child_limit_reached",
+        "child_intent_conflict",
       ]),
     })
     .strict(),
@@ -346,17 +347,12 @@ export async function executeFactoryWorkflowForeman(
       if (error) throw new Error("The factory foreman run could not be read.");
       if (data === null) return null;
       const initial = parseProjection(data, owner);
-      const recovered =
-        initial.status === "issued" ||
-        initial.usage.inputTokens === null ||
-        initial.usage.outputTokens === null
-          ? await recoverForemanUsage(
-              admin,
-              owner,
-              initial.foremanRunId,
-              initial.issuedGeneration,
-            ).catch(() => null)
-          : null;
+      const recovered = await recoverForemanUsage(
+        admin,
+        owner,
+        initial.foremanRunId,
+        initial.issuedGeneration,
+      ).catch(() => null);
       const parsed = recovered === null ? initial : parseProjection(recovered, owner);
       const snapshot = toSnapshot(parsed);
       state.projection = parsed;
