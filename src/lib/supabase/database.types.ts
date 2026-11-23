@@ -11109,6 +11109,15 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      cancel_factory_delivery_command: {
+        Args: {
+          p_actor_user_id: string
+          p_command_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       cancel_factory_diagnosis: {
         Args: {
           p_actor_user_id: string
@@ -11258,6 +11267,15 @@ export type Database = {
           repository_id: number
           status: string
         }[]
+      }
+      claim_factory_delivery_command: {
+        Args: {
+          p_command_id: string
+          p_factory_id: string
+          p_provider: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       claim_factory_diagnosis: { Args: never; Returns: Json }
       claim_factory_evaluation_job: {
@@ -12736,6 +12754,7 @@ export type Database = {
         }
         Returns: Json
       }
+      expire_factory_delivery_dispatches: { Args: never; Returns: number }
       expire_next_factory_workflow_exact_review: {
         Args: never
         Returns: boolean
@@ -14640,6 +14659,21 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      prepare_factory_delivery_command: {
+        Args: {
+          p_actor_user_id: string
+          p_approval_id: string
+          p_checkpoint_run_id: string
+          p_command_id: string
+          p_deployment_source_id: string
+          p_factory_id: string
+          p_merge_observation_id: string
+          p_policy_revision_id: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       prepare_factory_diagnosis: {
         Args: {
           p_attempt_id: string
@@ -15115,6 +15149,25 @@ export type Database = {
           status: string
           version: number
         }[]
+      }
+      read_factory_delivery_command: {
+        Args: {
+          p_actor_user_id: string
+          p_command_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      read_factory_delivery_command_candidate: {
+        Args: {
+          p_actor_user_id: string
+          p_deployment_source_id: string
+          p_factory_id: string
+          p_session_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       read_factory_evaluation_review: {
         Args: {
@@ -17284,6 +17337,16 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      settle_factory_delivery_dispatch: {
+        Args: {
+          p_command_id: string
+          p_dispatch_state: string
+          p_factory_id: string
+          p_lease_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       settle_factory_evaluation_attempt: {
         Args: {
