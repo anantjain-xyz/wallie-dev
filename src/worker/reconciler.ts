@@ -134,30 +134,17 @@ async function routeLinkedSessions(
       if (session.execution_exhausted_at && repairRequired) continue;
       const needsRun = repairRequired || classification.action === "land";
       const run = needsRun ? await resolveQueuedRunConfig(admin, session) : null;
-      const route = {
+      const { data, error } = await admin.rpc("apply_observed_linear_session_transition", {
         p_workspace_id: workspaceId,
+        p_observation: linearSpanPayload(session.id, session.linear_issue_id, observation),
         p_expected_session_updated_at: session.updated_at,
         p_expected_routing_updated_at: routing.updatedAt,
         p_status_name: observation.statusName,
+        p_retain_terminal_span: canArchiveLinearSession(classification.route),
         p_agent_model_provider: run?.modelProvider,
         p_agent_model_name: run?.modelName,
         p_run_type: run?.runType,
-      };
-      // A Done route can also archive when its configured stage does not resolve.
-      const { data, error } = canArchiveLinearSession(classification.route)
-        ? await admin.rpc("apply_terminal_linear_session_transition", {
-            ...route,
-            p_observation: linearSpanPayload(session.id, session.linear_issue_id, observation),
-          })
-        : await admin.rpc("apply_linear_session_transition", {
-            ...route,
-            p_session_id: session.id,
-            p_linear_issue_id: session.linear_issue_id,
-            p_source_span_id: observation.spanId,
-            p_source_started_at: observation.startedAt,
-            p_source_state_id: observation.stateId,
-            p_source_issue_updated_at: observation.issueUpdatedAt,
-          });
+      });
       if (error) throw error;
       const receipt = data?.[0];
       if (!receipt) throw new Error("Linear transition returned no receipt.");

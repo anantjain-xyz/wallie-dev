@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(40);
+select plan(47);
 \set op651_fixture_namespace 66310000
 \ir fixtures/factory_automation_dry_run.psql
 
@@ -124,23 +124,24 @@ select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651
   (rule->>'automationId')::uuid, (rule->>'draftRevisionId')::uuid)
 from draft;
 select ok(has_function_privilege('service_role',
-    'public.apply_terminal_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,text,text,text)', 'execute')
+    'public.apply_observed_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,boolean,text,text,text)', 'execute')
   and not has_function_privilege('authenticated',
-    'public.apply_terminal_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,text,text,text)', 'execute')
+    'public.apply_observed_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,boolean,text,text,text)', 'execute')
   and not has_function_privilege('anon',
-    'public.apply_terminal_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,text,text,text)', 'execute'),
-  'only the worker can retain and route a terminal observation atomically');
+    'public.apply_observed_linear_session_transition(uuid,jsonb,timestamptz,timestamptz,text,boolean,text,text,text)', 'execute'),
+  'only the worker can route an observed Linear span');
 
-create function pg_temp.route_terminal_issue(p_workspace_id uuid, p_observation jsonb) returns text
+create function pg_temp.route_observed_issue(p_workspace_id uuid, p_observation jsonb,
+  p_status text default 'Canceled', p_retain_terminal_span boolean default true) returns text
 language sql as $$
   select transition.outcome from public.sessions session
   join public.workspace_linear_routing config on config.workspace_id = session.workspace_id
-  cross join lateral public.apply_terminal_linear_session_transition(p_workspace_id, p_observation,
-    session.updated_at, config.updated_at, 'Canceled') transition
+  cross join lateral public.apply_observed_linear_session_transition(p_workspace_id, p_observation,
+    session.updated_at, config.updated_at, p_status, p_retain_terminal_span, 'codex', 'gpt-5.5') transition
   where session.id = (p_observation->>'sessionId')::uuid
 $$;
 
-select is(pg_temp.route_terminal_issue(pg_temp.op651_id(600), pg_temp.issue_span(
+select is(pg_temp.route_observed_issue(pg_temp.op651_id(600), pg_temp.issue_span(
   3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
   'stale', 'the terminal path cannot retain or route a span against another workspace');
 
@@ -154,13 +155,13 @@ select ok((select count(*) = 1 and bool_and(generation = 7 and occurrence_count 
   pg_temp.issue_span(2, 501, 'reopened-a', 'in-progress', '2026-11-22T15:00:00Z', '2026-11-22T15:00:00Z')
 ), pg_temp.op651_id(11))),
   'the UUID alias retains a newer open span for the same issue');
-select is(pg_temp.route_terminal_issue(pg_temp.op651_id(11), pg_temp.issue_span(
+select is(pg_temp.route_observed_issue(pg_temp.op651_id(11), pg_temp.issue_span(
   1, 501, 'closed-a', 'wont-fix', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
   'stale', 'the newer canonical issue watermark blocks the old terminal route on another alias');
 select ok((select archived_at is null from public.sessions where id = pg_temp.op651_id(1001)),
   'the stale terminal route preserves the active session link');
 
-select is(pg_temp.route_terminal_issue(pg_temp.op651_id(11), pg_temp.issue_span(
+select is(pg_temp.route_observed_issue(pg_temp.op651_id(11), pg_temp.issue_span(
   3, 502, 'closed-b', 'canceled', '2026-11-22T14:00:00Z', '2026-11-22T14:00:00Z')),
   'archived', 'the atomic terminal path retains the current span and archives the sole link');
 select ok((select archived_at is not null from public.sessions where id = pg_temp.op651_id(1003))
@@ -233,6 +234,51 @@ select lives_ok($$
 $$, 'an empty legacy link does not block the next exact automation page');
 select ok((select count(*) = 1 and bool_and(generation = 13 and after_session_id = pg_temp.op651_id(1051))
   from empty_link_receipt), 'the cursor advances across the healthy links and returns one receipt');
+
+select ok((select count(*) = 1 and bool_and(generation = 14 and after_session_id is null)
+  from public.commit_linear_automation_span_page(13, pg_temp.issue_page(52, 52), '[]', pg_temp.op651_id(11))),
+  'the canonical Rework regression starts from the next complete scan');
+select ok((select count(*) = 1 and bool_and(generation = 15 and occurrence_count = 0)
+  from public.commit_linear_automation_span_page(14, pg_temp.issue_page(1, 51), jsonb_build_array(
+    pg_temp.issue_span(2, 501, 'current-in-review', 'in-review', '2026-11-22T18:00:00Z', '2026-11-22T18:00:00Z')
+  ), pg_temp.op651_id(11))),
+  'an automation alias retains a newer canonical In Review span');
+
+insert into public.pipeline_stages(id, pipeline_id, workspace_id, position, slug, name)
+values (pg_temp.op651_id(930), pg_temp.op651_id(31), pg_temp.op651_id(11), 2, 'review-output', 'Review output');
+insert into public.session_selected_stages(session_id, workspace_id, stage_id)
+values (pg_temp.op651_id(1001), pg_temp.op651_id(11), pg_temp.op651_id(32)),
+  (pg_temp.op651_id(1001), pg_temp.op651_id(11), pg_temp.op651_id(930))
+on conflict do nothing;
+update public.workspace_linear_routing set rework_stage_slug = 'inspect-output', rework_stage_id = null
+where workspace_id = pg_temp.op651_id(11);
+update public.sessions set current_stage_id = pg_temp.op651_id(930), created_at = '2026-11-22T09:00:00Z'
+where id = pg_temp.op651_id(1001);
+update internal.session_linear_transition_receipts set baseline_at = '2026-11-22T09:00:00Z'
+where session_id = pg_temp.op651_id(1001);
+create temp table rework_active_job as
+select job_id from public.enqueue_session_job_with_run(pg_temp.op651_id(1001), pg_temp.op651_id(11),
+  pg_temp.op651_id(930), null, 'assignment', 'codex', 'gpt-5.5', 'project');
+update public.sessions set phase_status = 'awaiting_review' where id = pg_temp.op651_id(1001);
+
+select is(pg_temp.route_observed_issue(pg_temp.op651_id(11), pg_temp.issue_span(
+  1, 501, 'stale-rework', 'rework', '2026-11-22T17:30:00Z', '2026-11-22T17:30:00Z'), 'Rework', false),
+  'stale', 'the lifecycle alias cannot act on Rework superseded by the canonical In Review span');
+select ok((select current_stage_id = pg_temp.op651_id(930) and phase_status = 'awaiting_review'
+  from public.sessions where id = pg_temp.op651_id(1001))
+  and (select status = 'queued' from public.agent_jobs where id = (select job_id from rework_active_job)),
+  'stale Rework preserves the review stage and queued job');
+
+select is(pg_temp.route_observed_issue(pg_temp.op651_id(11), pg_temp.issue_span(
+  1, 501, 'fresh-rework', 'rework', '2026-11-22T18:30:00Z', '2026-11-22T18:30:00Z'), 'Rework', false),
+  'routed', 'a fresh Rework span still routes through the ordinary lifecycle transition');
+select ok((select current_stage_id = pg_temp.op651_id(32) and phase_status = 'rejected'
+  from public.sessions where id = pg_temp.op651_id(1001))
+  and (select status = 'canceled' from public.agent_jobs where id = (select job_id from rework_active_job)),
+  'fresh Rework moves the session and cancels the superseded job');
+select is((select count(*) from internal.issue_automation_state_spans
+  where workspace_id = pg_temp.op651_id(11) and source_span_id in ('stale-rework', 'fresh-rework')),
+  0::bigint, 'nonterminal lifecycle observations leave span retention to the automation page');
 
 select * from finish();
 rollback;

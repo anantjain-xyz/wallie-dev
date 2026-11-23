@@ -137,12 +137,12 @@ returns boolean language sql stable set search_path = '' as $$
   ) is true else false end
 $$;
 
--- Keep the canonical issue watermark locked until the terminal route commits.
--- Another link to the same issue cannot authorize a newer span between writes.
-create function public.apply_terminal_linear_session_transition(
+-- Hold the factory lock through the canonical watermark check and the route.
+-- Terminal observations also leave durable evidence before a link can disappear.
+create function public.apply_observed_linear_session_transition(
   p_workspace_id uuid, p_observation jsonb, p_expected_session_updated_at timestamptz,
-  p_expected_routing_updated_at timestamptz, p_status_name text, p_agent_model_provider text default null,
-  p_agent_model_name text default null, p_run_type text default 'project'
+  p_expected_routing_updated_at timestamptz, p_status_name text, p_retain_terminal_span boolean,
+  p_agent_model_provider text default null, p_agent_model_name text default null, p_run_type text default 'project'
 ) returns table(outcome text, job_ids uuid[], run_ids uuid[], job_id uuid, run_id uuid)
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -156,7 +156,7 @@ declare
   event jsonb;
 begin
   perform internal.assert_checkpoint_publication_service();
-  if not internal.valid_linked_linear_automation_observation(p_observation) then
+  if p_retain_terminal_span is null or not internal.valid_linked_linear_automation_observation(p_observation) then
     raise exception 'A valid linked Linear state span is required.' using errcode = '22023';
   end if;
   linked_session_id := (p_observation->>'sessionId')::uuid;
@@ -167,11 +167,6 @@ begin
   if observed_started_at > observed_updated_at or not isfinite(observed_started_at) or not isfinite(observed_updated_at) then
     raise exception 'A coherent linked Linear state span is required.' using errcode = '22023';
   end if;
-  event := internal.normalize_factory_automation_event(jsonb_build_object(
-    'kind', 'issue-state', 'stateId', p_observation->'stateId',
-    'teamId', p_observation->'teamId', 'projectId', p_observation->'projectId'
-  ));
-
   <<apply_if_current>>
   begin
     select session.factory_id, session.pipeline_id into linked_factory_id, linked_pipeline_id
@@ -199,14 +194,33 @@ begin
     for no key update;
     if not found then exit apply_if_current; end if;
 
-    perform internal.record_issue_automation_state_span(p_workspace_id, linked_factory_id, 'linear.issue-state',
-      canonical_issue_id, observed_span_id, observed_started_at, observed_updated_at, event, true);
-    if not exists (
+    if exists (
       select 1 from internal.issue_automation_span_watermarks watermark
-      where (watermark.workspace_id, watermark.factory_id, watermark.source_namespace, watermark.source_issue_id,
-        watermark.source_span_id, watermark.source_updated_at) = (p_workspace_id, linked_factory_id, 'linear.issue-state',
-        canonical_issue_id, observed_span_id, observed_updated_at)
+      join internal.issue_automation_state_spans span
+        using (workspace_id, factory_id, source_namespace, source_issue_id, source_span_id)
+      where (watermark.workspace_id, watermark.factory_id, watermark.source_namespace, watermark.source_issue_id) =
+        (p_workspace_id, linked_factory_id, 'linear.issue-state', canonical_issue_id)
+        and (observed_started_at < span.started_at or observed_updated_at < watermark.source_updated_at
+          or (observed_started_at = span.started_at and observed_updated_at = watermark.source_updated_at
+            and observed_span_id <> span.source_span_id)
+          or (observed_span_id = span.source_span_id and (observed_started_at, p_observation->>'stateId')
+            is distinct from (span.started_at, span.event->>'stateId')))
     ) then exit apply_if_current; end if;
+
+    if p_retain_terminal_span then
+      event := internal.normalize_factory_automation_event(jsonb_build_object(
+        'kind', 'issue-state', 'stateId', p_observation->'stateId',
+        'teamId', p_observation->'teamId', 'projectId', p_observation->'projectId'
+      ));
+      perform internal.record_issue_automation_state_span(p_workspace_id, linked_factory_id, 'linear.issue-state',
+        canonical_issue_id, observed_span_id, observed_started_at, observed_updated_at, event, true);
+      if not exists (
+        select 1 from internal.issue_automation_span_watermarks watermark
+        where (watermark.workspace_id, watermark.factory_id, watermark.source_namespace, watermark.source_issue_id,
+          watermark.source_span_id, watermark.source_updated_at) = (p_workspace_id, linked_factory_id, 'linear.issue-state',
+          canonical_issue_id, observed_span_id, observed_updated_at)
+      ) then exit apply_if_current; end if;
+    end if;
 
     return query select * from public.apply_linear_session_transition(linked_session_id, p_workspace_id,
       p_observation->>'linkedIssueId', p_expected_session_updated_at, p_expected_routing_updated_at, observed_span_id,
@@ -347,11 +361,11 @@ $$;
 
 revoke all on function
   internal.record_issue_automation_state_span(uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb, boolean),
-  internal.valid_linked_linear_automation_observation(jsonb), public.apply_terminal_linear_session_transition(uuid, jsonb,
-    timestamptz, timestamptz, text, text, text, text),
+  internal.valid_linked_linear_automation_observation(jsonb), public.apply_observed_linear_session_transition(uuid, jsonb,
+    timestamptz, timestamptz, text, boolean, text, text, text),
   public.read_linear_automation_span_cursor(uuid), public.commit_linear_automation_span_page(bigint, jsonb, jsonb, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function public.apply_terminal_linear_session_transition(uuid, jsonb,
-    timestamptz, timestamptz, text, text, text, text),
+grant execute on function public.apply_observed_linear_session_transition(uuid, jsonb,
+    timestamptz, timestamptz, text, boolean, text, text, text),
   public.read_linear_automation_span_cursor(uuid),
   public.commit_linear_automation_span_page(bigint, jsonb, jsonb, uuid) to service_role;

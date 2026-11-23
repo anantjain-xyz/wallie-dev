@@ -92,7 +92,8 @@ function adminFor(
     rpc(name: string, input: never) {
       if (name === "read_linear_automation_span_cursor") return readCursor(name, input);
       if (name === "commit_linear_automation_span_page") return commitPage(input);
-      if (name === "apply_terminal_linear_session_transition") return terminalRpc(name, input);
+      const route: { p_retain_terminal_span: boolean } = input;
+      if (route.p_retain_terminal_span) return terminalRpc(name, input);
       return rpc(name, input);
     },
     from(table: string) {
@@ -180,17 +181,22 @@ describe("reconcileLinearState", () => {
       canceled: 0,
       rateLimited: false,
     });
-    expect(rpc).toHaveBeenCalledExactlyOnceWith("apply_linear_session_transition", {
-      p_session_id: "session-1",
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("apply_observed_linear_session_transition", {
       p_workspace_id: "workspace-1",
-      p_linear_issue_id: "ISSUE-session-1",
+      p_observation: {
+        ...linked("session-1"),
+        issueId: observation.issueId,
+        spanId: "span-1",
+        startedAt: updatedAt,
+        issueUpdatedAt: updatedAt,
+        stateId: "state-1",
+        teamId: "team-1",
+        projectId: null,
+      },
       p_expected_session_updated_at: updatedAt,
       p_expected_routing_updated_at: updatedAt,
-      p_source_span_id: "span-1",
-      p_source_started_at: updatedAt,
-      p_source_state_id: "state-1",
-      p_source_issue_updated_at: updatedAt,
       p_status_name: "Rework",
+      p_retain_terminal_span: false,
       p_agent_model_provider: "codex",
       p_agent_model_name: "model",
       p_run_type: "project",
@@ -235,7 +241,7 @@ describe("reconcileLinearState", () => {
       const { admin, rpc } = adminFor();
       await reconcileLinearState(admin as never);
       expect(rpc).toHaveBeenCalledWith(
-        "apply_linear_session_transition",
+        "apply_observed_linear_session_transition",
         expect.objectContaining({ p_status_name: statusName }),
       );
       expect(mocks.runConfig).not.toHaveBeenCalled();
@@ -359,8 +365,10 @@ describe("reconcileLinearState", () => {
     });
     expect(mocks.observations).toHaveBeenCalledOnce();
     expect(rpc).toHaveBeenCalledWith(
-      "apply_linear_session_transition",
-      expect.objectContaining({ p_session_id: "session-1" }),
+      "apply_observed_linear_session_transition",
+      expect.objectContaining({
+        p_observation: expect.objectContaining({ sessionId: "session-1" }),
+      }),
     );
     expect(commitPage).toHaveBeenCalledExactlyOnceWith({
       p_expected_generation: 7,
@@ -381,8 +389,10 @@ describe("reconcileLinearState", () => {
       ],
     });
     expect(rpc).toHaveBeenCalledWith(
-      "apply_linear_session_transition",
-      expect.objectContaining({ p_session_id: "session-2" }),
+      "apply_observed_linear_session_transition",
+      expect.objectContaining({
+        p_observation: expect.objectContaining({ sessionId: "session-2" }),
+      }),
     );
   });
   it("routes the healthy prefix on every sweep while a later automation page keeps failing", async () => {
@@ -409,7 +419,9 @@ describe("reconcileLinearState", () => {
     prefixStatus = "In Review";
     await reconcileLinearState(admin as never);
 
-    const prefix = rpc.mock.calls.filter(([, args]) => args.p_session_id === "session-000");
+    const prefix = rpc.mock.calls.filter(
+      ([, args]) => args.p_observation.sessionId === "session-000",
+    );
     expect(prefix.map(([, args]) => args.p_status_name)).toEqual(["Todo", "In Review"]);
     expect(mocks.observations).toHaveBeenCalledTimes(6);
     expect(commitPage).toHaveBeenCalledTimes(2);
@@ -445,16 +457,19 @@ describe("reconcileLinearState", () => {
 
       expect((await reconcileLinearState(admin as never)).canceled).toBe(0);
       expect(rpc).toHaveBeenCalledExactlyOnceWith(
-        "apply_linear_session_transition",
-        expect.objectContaining({ p_session_id: "session-2" }),
+        "apply_observed_linear_session_transition",
+        expect.objectContaining({
+          p_observation: expect.objectContaining({ sessionId: "session-2" }),
+        }),
       );
       expect(terminalRpc).toHaveBeenCalledExactlyOnceWith(
-        "apply_terminal_linear_session_transition",
+        "apply_observed_linear_session_transition",
         expect.objectContaining({
           p_workspace_id: "workspace-1",
           p_expected_session_updated_at: updatedAt,
           p_expected_routing_updated_at: updatedAt,
           p_status_name: statusName,
+          p_retain_terminal_span: true,
           p_observation: {
             sessionId: "session-1",
             linkedIssueId: "ISSUE-session-1",
@@ -473,8 +488,10 @@ describe("reconcileLinearState", () => {
       expect((await reconcileLinearState(admin as never)).canceled).toBe(1);
       expect(terminalRpc).toHaveBeenCalledTimes(2);
       expect(rpc).toHaveBeenCalledExactlyOnceWith(
-        "apply_linear_session_transition",
-        expect.objectContaining({ p_session_id: "session-2" }),
+        "apply_observed_linear_session_transition",
+        expect.objectContaining({
+          p_observation: expect.objectContaining({ sessionId: "session-2" }),
+        }),
       );
     },
   );
@@ -537,13 +554,15 @@ describe("reconcileLinearState", () => {
           p_observations: [expect.objectContaining({ spanId: "earlier" })],
         }),
       );
-      const routed = rpc.mock.calls.filter(([, input]) => input.p_session_id === "session-050");
+      const routed = rpc.mock.calls.filter(
+        ([, input]) => input.p_observation.sessionId === "session-050",
+      );
       if (latestStatus !== null) {
         expect(routed).toEqual([
           [
-            "apply_linear_session_transition",
+            "apply_observed_linear_session_transition",
             expect.objectContaining({
-              p_source_span_id: "latest",
+              p_observation: expect.objectContaining({ spanId: "latest" }),
               p_status_name: latestStatus,
             }),
           ],
@@ -611,7 +630,7 @@ describe("reconcileLinearState", () => {
       "workspace-2",
       "workspace-2",
     ]);
-    expect(rpc.mock.calls.map(([, input]) => input.p_session_id)).toEqual([
+    expect(rpc.mock.calls.map(([, input]) => input.p_observation.sessionId)).toEqual([
       "session-2",
       "session-2",
     ]);
@@ -674,7 +693,7 @@ describe("reconcileLinearState", () => {
           "workspace-1",
           "workspace-3",
         ]);
-        expect(rpc.mock.calls.map(([, input]) => input.p_session_id).sort()).toEqual([
+        expect(rpc.mock.calls.map(([, input]) => input.p_observation.sessionId).sort()).toEqual([
           "session-1",
           "session-3",
         ]);
@@ -717,8 +736,10 @@ describe("reconcileLinearState", () => {
           "ISSUE-session-050",
         ]);
         expect(rpc).toHaveBeenCalledWith(
-          "apply_linear_session_transition",
-          expect.objectContaining({ p_session_id: "session-051" }),
+          "apply_observed_linear_session_transition",
+          expect.objectContaining({
+            p_observation: expect.objectContaining({ sessionId: "session-051" }),
+          }),
         );
         expect(commitPage).toHaveBeenCalledExactlyOnceWith(
           expect.objectContaining({ p_workspace_id: "workspace-2", p_expected_generation: 3 }),
@@ -817,8 +838,10 @@ describe("reconcileLinearState", () => {
       laterLifecyclePage.resolve();
       await vi.waitFor(() => {
         expect(rpc).toHaveBeenCalledWith(
-          "apply_linear_session_transition",
-          expect.objectContaining({ p_session_id: "session-051" }),
+          "apply_observed_linear_session_transition",
+          expect.objectContaining({
+            p_observation: expect.objectContaining({ sessionId: "session-051" }),
+          }),
         );
         expect(commitPage).toHaveBeenCalledExactlyOnceWith(
           expect.objectContaining({ p_workspace_id: "workspace-2", p_expected_generation: 3 }),
@@ -896,8 +919,10 @@ describe("reconcileLinearState", () => {
       "ISSUE-session-1",
     ]);
     expect(rpc).toHaveBeenCalledExactlyOnceWith(
-      "apply_linear_session_transition",
-      expect.objectContaining({ p_session_id: "session-1" }),
+      "apply_observed_linear_session_transition",
+      expect.objectContaining({
+        p_observation: expect.objectContaining({ sessionId: "session-1" }),
+      }),
     );
     expect(commitPage).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ p_session_links: [linked("session-1")] }),

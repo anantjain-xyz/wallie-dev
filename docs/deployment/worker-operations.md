@@ -429,9 +429,10 @@ receipt.
   cursor. Automation may reuse fresh observations for links on its current page.
   A nonterminal route outside that page does not retain an automation span.
   If the issue leaves before automation polls its link, that span may be missed.
-- Postgres retains the exact span and applies terminal routing together under
-  the current issue watermark. A failed or stale write keeps the link available
-  for another sweep.
+- Postgres checks the canonical issue watermark under lock before applying
+  any lifecycle route. A terminal route also retains its exact span in that
+  transaction. A failed or stale write keeps the link available for another
+  sweep.
 
 A Linear rate limit defers that workspace until the next sweep. The worker only
 reads existing links and only considers the current open span. Historical closed spans, issue discovery, and provider

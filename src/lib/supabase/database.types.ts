@@ -10597,13 +10597,14 @@ export type Database = {
           run_ids: string[]
         }[]
       }
-      apply_terminal_linear_session_transition: {
+      apply_observed_linear_session_transition: {
         Args: {
           p_agent_model_name?: string
           p_agent_model_provider?: string
           p_expected_routing_updated_at: string
           p_expected_session_updated_at: string
           p_observation: Json
+          p_retain_terminal_span: boolean
           p_run_type?: string
           p_status_name: string
           p_workspace_id: string
