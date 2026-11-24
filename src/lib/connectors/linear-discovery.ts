@@ -40,11 +40,14 @@ const discoveryTask = z.object({
   labelId: uuid.nullable(),
   serviceActorId: uuid.nullable(),
   encryptedApiKey: z.string().min(1),
+});
+type DiscoveryTask = z.output<typeof discoveryTask>;
+
+const discoveryFailureFence = z.object({
   credentialRef: uuid,
   credentialMaterialRevision: revision,
   claimExpiresAt: linearInstant,
 });
-type DiscoveryTask = z.output<typeof discoveryTask>;
 
 const nodeId = z.object({ id: uuid });
 const issueIdentifier = z
@@ -294,24 +297,27 @@ export async function reconcileLinearIssueDiscovery(
         }
       } else {
         const reason = error instanceof DiscoveryFailure ? error.reason : "provider_unavailable";
-        let recordingFailed: boolean;
+        const fence = discoveryFailureFence.safeParse(data);
+        let recordingFailed = false;
         try {
-          const { error: recordError } = await admin
-            .rpc("record_linear_issue_discovery_failure", {
-              p_workspace_id: task.workspaceId,
-              p_factory_id: task.factoryId,
-              p_resource_id: task.resourceId,
-              p_config_revision: task.configRevision,
-              p_installation_generation: task.installationGeneration,
-              p_mapping_revision: task.mappingRevision,
-              p_cursor_generation: task.cursorGeneration,
-              p_credential_ref: task.credentialRef,
-              p_credential_material_revision: task.credentialMaterialRevision,
-              p_claim_expires_at: task.claimExpiresAt,
-              p_reason: reason,
-            })
-            .abortSignal(AbortSignal.timeout(cooldownWriteTimeoutMs));
-          recordingFailed = recordError !== null;
+          if (fence.success) {
+            const { error: recordError } = await admin
+              .rpc("record_linear_issue_discovery_failure", {
+                p_workspace_id: task.workspaceId,
+                p_factory_id: task.factoryId,
+                p_resource_id: task.resourceId,
+                p_config_revision: task.configRevision,
+                p_installation_generation: task.installationGeneration,
+                p_mapping_revision: task.mappingRevision,
+                p_cursor_generation: task.cursorGeneration,
+                p_credential_ref: fence.data.credentialRef,
+                p_credential_material_revision: fence.data.credentialMaterialRevision,
+                p_claim_expires_at: fence.data.claimExpiresAt,
+                p_reason: reason,
+              })
+              .abortSignal(AbortSignal.timeout(cooldownWriteTimeoutMs));
+            recordingFailed = recordError !== null;
+          }
         } catch {
           recordingFailed = true;
         }

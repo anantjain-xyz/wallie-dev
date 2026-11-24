@@ -25,6 +25,9 @@ const task = {
   mappingRevision: 3,
   cursorGeneration: 5,
   cursorPosition: "page-one",
+};
+
+const failureFence = {
   credentialRef: id(18),
   credentialMaterialRevision: 7,
   claimExpiresAt: "2026-11-24T03:41:00.000Z",
@@ -81,8 +84,12 @@ function setup(rpcResults: unknown[]) {
   return { admin, database, provider };
 }
 
-function claimedTask() {
+function legacyClaimedTask() {
   return { ...task, encryptedApiKey: encryptSecretValue(fixtureKey) };
+}
+
+function claimedTask() {
+  return { ...legacyClaimedTask(), ...failureFence };
 }
 
 describe("Linear issue discovery sweep", () => {
@@ -187,6 +194,46 @@ describe("Linear issue discovery sweep", () => {
     expect(await commit.json()).not.toHaveProperty("p_next_position");
   });
 
+  it("commits a scoped page from an older discovery claim", async () => {
+    const { admin, database, provider } = setup([legacyClaimedTask(), 1, null]);
+    provider.mockResolvedValueOnce(Response.json({ data: page }));
+
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 1, rateLimited: false });
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(database).toHaveBeenCalledTimes(3);
+    const commit = new Request(...database.mock.calls[1]!);
+    expect(new URL(commit.url).pathname).toBe("/rest/v1/rpc/commit_linear_issue_discovery_page");
+    expect(await commit.json()).toMatchObject({
+      p_workspace_id: task.workspaceId,
+      p_factory_id: task.factoryId,
+      p_resource_id: task.resourceId,
+      p_config_revision: task.configRevision,
+      p_installation_generation: task.installationGeneration,
+      p_mapping_revision: task.mappingRevision,
+      p_cursor_generation: task.cursorGeneration,
+      p_next_position: "page-two",
+    });
+  });
+
+  it("continues after a failed older claim without calling the failure recorder", async () => {
+    const nextClaim = { ...legacyClaimedTask(), resourceId: id(19) };
+    const { admin, database, provider } = setup([legacyClaimedTask(), nextClaim, 1, null]);
+    provider
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ data: page }));
+
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 1, rateLimited: false });
+    expect(provider).toHaveBeenCalledTimes(2);
+    const requests = database.mock.calls.map((call) => new Request(...call));
+    expect(requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/rest/v1/rpc/claim_linear_issue_discovery",
+      "/rest/v1/rpc/claim_linear_issue_discovery",
+      "/rest/v1/rpc/commit_linear_issue_discovery_page",
+      "/rest/v1/rpc/claim_linear_issue_discovery",
+    ]);
+    expect(await requests[2]!.json()).toMatchObject({ p_resource_id: nextClaim.resourceId });
+  });
+
   it("records a bounded reason on the exact claim when Linear returns a different tenant", async () => {
     const { admin, database, provider } = setup([claimedTask(), true, null]);
     provider.mockResolvedValueOnce(
@@ -206,9 +253,9 @@ describe("Linear issue discovery sweep", () => {
       p_installation_generation: task.installationGeneration,
       p_mapping_revision: task.mappingRevision,
       p_cursor_generation: task.cursorGeneration,
-      p_credential_ref: task.credentialRef,
-      p_credential_material_revision: task.credentialMaterialRevision,
-      p_claim_expires_at: task.claimExpiresAt,
+      p_credential_ref: failureFence.credentialRef,
+      p_credential_material_revision: failureFence.credentialMaterialRevision,
+      p_claim_expires_at: failureFence.claimExpiresAt,
       p_reason: "scope_mismatch",
     });
   });
