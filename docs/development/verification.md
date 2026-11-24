@@ -131,6 +131,8 @@ pnpm check:factory-runtime --workdir /path/to/disposable-project
 pnpm check:db-tests --workdir /path/to/disposable-project
 ```
 
+For M12, follow the [automation qualification and safe-disable runbook](factory-automation-qualification.md) for the worker restart replay and isolated Actions and monitoring proof.
+
 - The runtime suite runs the Node worker and native Workflow in sequence. Each
   uses the real processor, credential fences, and attempt receipts. Synthetic
   Git, sandbox, and agent transport keep the run local.

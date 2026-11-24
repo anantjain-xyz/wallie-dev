@@ -1,0 +1,86 @@
+-- Inputs for one Worker runtime, on a disposable local project.
+\o /dev/null
+begin;
+set local time zone 'UTC';
+\ir ../../supabase/tests/fixtures/factory_automation_dry_run.psql
+
+-- The real local Auth API issues the factory owner's session during replay.
+update auth.users
+set instance_id = '00000000-0000-0000-0000-000000000000',
+  aud = 'authenticated', role = 'authenticated', email_confirmed_at = now(), created_at = now(), updated_at = now(),
+  encrypted_password = '', confirmation_token = '', recovery_token = '', email_change_token_new = '',
+  email_change_token_current = '', reauthentication_token = '', email_change = '',
+  raw_app_meta_data = '{"provider":"email","providers":["email"]}', raw_user_meta_data = '{}'
+where id = pg_temp.op651_id(1);
+insert into auth.identities(id, provider_id, user_id, identity_data, provider, created_at, updated_at)
+select gen_random_uuid(), id::text, id, jsonb_build_object('sub', id::text, 'email', email, 'email_verified', true),
+  'email', now(), now()
+from auth.users where id = pg_temp.op651_id(1);
+
+insert into public.workspace_secrets(workspace_id, key, encrypted_value)
+values (pg_temp.op651_id(11), 'LINEAR_API_KEY', :'automation_linear_ciphertext');
+
+-- Choose a daily UTC minute just behind the current clock so the Worker has
+-- exactly one due occurrence and the next scheduled time is beyond this replay.
+create temp table automation_input_clock as
+select date_trunc('minute', statement_timestamp()) - interval '1 minute' as scheduled_for;
+
+create temp table automation_input_rules as
+select scenario.label, scope.*, (draft.value->>'automationId')::uuid as automation_id,
+  (draft.value->>'draftRevisionId')::uuid as revision_id
+from op651_scope scope cross join automation_input_clock fixture_time
+cross join (values
+  ('schedule', 101, 'schedule', null),
+  ('github', 102, 'pull-request', 'main'),
+  ('linear', 103, 'issue-state', null),
+  ('paused', 104, 'pull-request', 'qualification-paused'),
+  ('revoked', 105, 'pull-request', 'qualification-revoked')
+) scenario(label, slot, kind, base_branch)
+cross join lateral (select pg_temp.create_dry_run_automation(scenario.slot,
+  case scenario.kind
+    when 'schedule' then jsonb_set(pg_temp.dry_run_definition(scenario.kind), '{trigger}',
+      jsonb_build_object('kind', 'schedule', 'cron',
+        format('%s %s * * *', extract(minute from fixture_time.scheduled_for)::int,
+          extract(hour from fixture_time.scheduled_for)::int), 'timeZone', 'Etc/UTC'))
+    when 'pull-request' then jsonb_set(pg_temp.dry_run_definition(scenario.kind), '{filters,baseBranches}',
+      jsonb_build_array(scenario.base_branch))
+    else pg_temp.dry_run_definition(scenario.kind)
+  end) as value) draft;
+
+select public.publish_factory_automation(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, revision_id)
+from automation_input_rules;
+update internal.factory_automation_schedule_cursors cursor_row
+set activated_at = fixture_time.scheduled_for - interval '1 second',
+  scanned_through = fixture_time.scheduled_for - interval '1 second', recheck_at = fixture_time.scheduled_for
+from automation_input_rules rule cross join automation_input_clock fixture_time
+where rule.label = 'schedule' and (cursor_row.automation_id, cursor_row.revision_id) = (rule.automation_id, rule.revision_id);
+select public.configure_factory_automation_admission(workspace_id, factory_id, pg_temp.op651_id(1), automation_id, 0, true, 1)
+from automation_input_rules where label = 'paused';
+
+-- The Linear reconciler sees one ordinary linked session in this factory.
+-- Awaiting review keeps the fixture session outside the claimable job queue.
+insert into public.sessions(id, workspace_id, factory_id, pipeline_id, current_stage_id, number, title, linear_issue_id, phase_status)
+select pg_temp.op651_id(201), workspace_id, factory_id, pg_temp.op651_id(31), pg_temp.op651_id(32),
+  2001, 'Linked Linear qualification issue', 'INPUT-' || current_setting('wallie.op651_fixture_namespace'), 'awaiting_review'
+from op651_scope;
+
+select public.set_git_continuity_release(true, revision, 'Isolated automation input qualification')
+from public.get_git_continuity_release_state() where not enabled;
+commit;
+\o
+select jsonb_build_object(
+  'workspaceId', scope.workspace_id, 'factoryId', scope.factory_id, 'ownerUserId', pg_temp.op651_id(1),
+  'repository', jsonb_build_object('id', repository.id, 'providerId', repository.repo_id,
+    'installationId', installation.installation_id, 'fullName', repository.full_name),
+  'grant', jsonb_build_object('id', approved.id, 'version', approved.version),
+  'rules', (select jsonb_object_agg(label, jsonb_build_object('automationId', automation_id, 'revisionId', revision_id))
+    from automation_input_rules),
+  'linear', jsonb_build_object('linkedSessionId', pg_temp.op651_id(201), 'issueId', pg_temp.op651_id(202),
+    'identifier', 'INPUT-' || current_setting('wallie.op651_fixture_namespace'), 'teamId', 'platform',
+    'baselineStateId', 'qualification-backlog', 'targetStateId', 'in-progress'),
+  'scheduledFor', fixture_time.scheduled_for
+)::text
+from op651_scope scope
+join public.github_repositories repository on repository.id = pg_temp.op651_id(34)
+join public.github_installations installation on installation.id = repository.github_installation_id
+cross join op651_grant approved cross join automation_input_clock fixture_time;

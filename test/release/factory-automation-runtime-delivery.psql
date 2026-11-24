@@ -1,0 +1,21 @@
+begin;
+\o /dev/null
+\ir ../../supabase/tests/fixtures/factory_guarded_delivery.psql
+
+select pg_temp.delivery_sync(session_id) from delivery_checkpoint;
+select pg_temp.delivery_ready(session_id) from delivery_checkpoint;
+select pg_temp.approve_branch(session_id) from delivery_checkpoint;
+select pg_temp.delivery_observe_merge(repeat('c', 40));
+
+select pg_temp.delivery_prepare(250, 'lease');
+select pg_temp.delivery_prepare(251, 'accepted');
+create temp table m12_failed_lease as select pg_temp.delivery_claim(251) as packet;
+select pg_temp.delivery_settle(251, (packet->>'leaseId')::uuid, 'accepted') from m12_failed_lease;
+select pg_temp.delivery_report(260, 251, 1, 'accepted', 'failed', repeat('c', 40));
+
+\o
+select jsonb_build_object(
+  'workspaceId', workspace_id, 'factoryId', factory_id, 'actorUserId', pg_temp.op651_id(1),
+  'commandId', pg_temp.op651_id(250), 'failedCommandId', pg_temp.op651_id(251)
+) from op651_scope;
+commit;
