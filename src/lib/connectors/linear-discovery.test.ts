@@ -31,12 +31,23 @@ const issue = {
   id: id(8),
   identifier: "DISC-8",
   previousIdentifiers: ["OLD-51"],
+  updatedAt: "2026-11-24T03:40:00.000Z",
   title: "Test issue",
   description: "Work description",
   url: "https://linear.app/fixture/issue/DISC-8/test-issue",
   team: { id: id(9) },
   project: { id: task.externalResourceId },
   state: { id: task.stateIds[0] },
+  stateHistory: {
+    nodes: [
+      {
+        id: id(16),
+        stateId: task.stateIds[0],
+        startedAt: "2026-11-24T03:30:00.000Z",
+        endedAt: null,
+      },
+    ],
+  },
   creator: { id: id(10) },
   labelIds: [task.labelId],
 };
@@ -91,6 +102,7 @@ describe("Linear issue discovery sweep", () => {
     expect(providerRequest.headers.get("authorization")).toBe(fixtureKey);
     expect(providerRequest.redirect).toBe("manual");
     expect(await providerRequest.json()).toMatchObject({
+      query: expect.stringContaining("stateHistory(last: 1)"),
       variables: {
         first: 20,
         after: "page-one",
@@ -127,9 +139,30 @@ describe("Linear issue discovery sweep", () => {
           state_id: issue.state.id,
           creator_id: issue.creator.id,
           label_ids: issue.labelIds,
+          origin_span_id: issue.stateHistory.nodes[0]!.id,
+          origin_span_started_at: issue.stateHistory.nodes[0]!.startedAt,
+          origin_issue_updated_at: issue.updatedAt,
         },
       ],
     });
+  });
+
+  it("admits an issue without claiming an originating span when its history no longer matches", async () => {
+    const { admin, database, provider } = setup([claimedTask(), 1, null]);
+    const otherState = { ...issue.stateHistory.nodes[0], stateId: id(17) };
+    provider.mockResolvedValueOnce(
+      Response.json({
+        data: {
+          ...page,
+          issues: { ...page.issues, nodes: [{ ...issue, stateHistory: { nodes: [otherState] } }] },
+        },
+      }),
+    );
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 1, rateLimited: false });
+    const commit = await new Request(...database.mock.calls[1]!).json();
+    expect(commit.p_issues[0]).not.toHaveProperty("origin_span_id");
+    expect(commit.p_issues[0]).not.toHaveProperty("origin_span_started_at");
+    expect(commit.p_issues[0]).not.toHaveProperty("origin_issue_updated_at");
   });
 
   it("clears the cursor at the end of a sweep so later changes can be seen", async () => {

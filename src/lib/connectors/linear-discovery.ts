@@ -3,7 +3,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod/v4";
 
-import { LINEAR_GRAPHQL_ENDPOINT } from "@/lib/linear/client";
+import { LINEAR_GRAPHQL_ENDPOINT, linearRetryAfterSeconds } from "@/lib/linear/client";
+import { currentLinearStateSpan, linearInstant, linearStateSpan } from "@/lib/linear/state-spans";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -49,12 +50,14 @@ const issueSchema = z.object({
   id: uuid,
   identifier: issueIdentifier,
   previousIdentifiers: z.array(issueIdentifier),
+  updatedAt: linearInstant,
   url: z.string().max(2048),
   title: z.string().min(1),
   description: z.string().nullable(),
   team: nodeId,
   project: nodeId.nullable(),
   state: nodeId,
+  stateHistory: z.object({ nodes: z.array(linearStateSpan).max(1) }),
   creator: nodeId.nullable(),
   labelIds: z.array(uuid),
 });
@@ -86,6 +89,7 @@ const discoveryQuery = /* GraphQL */ `
         id
         identifier
         previousIdentifiers
+        updatedAt
         url
         title
         description
@@ -97,6 +101,14 @@ const discoveryQuery = /* GraphQL */ `
         }
         state {
           id
+        }
+        stateHistory(last: 1) {
+          nodes {
+            id
+            stateId
+            startedAt
+            endedAt
+          }
         }
         creator {
           id
@@ -116,11 +128,7 @@ class DiscoveryRateLimit extends Error {
 
   constructor(response: Response) {
     super("Linear issue discovery reached a provider rate limit.");
-    const retryAfter = response.headers.get("retry-after");
-    this.retryAfterSeconds =
-      retryAfter !== null && /^\d{1,8}$/.test(retryAfter)
-        ? Math.min(3_600, Math.max(60, Number(retryAfter)))
-        : 60;
+    this.retryAfterSeconds = linearRetryAfterSeconds(response);
   }
 }
 
@@ -179,19 +187,32 @@ async function fetchDiscoveryPage(task: DiscoveryTask, signal: AbortSignal) {
   return {
     next,
     externalViewerId: viewer.id,
-    issues: issues.nodes.map((issue) => ({
-      id: issue.id,
-      identifier: issue.identifier,
-      previous_identifiers: issue.previousIdentifiers,
-      url: issue.url,
-      title: truncateIssueText(issue.title.trim(), 200),
-      description: issue.description === null ? null : truncateIssueText(issue.description, 19_500),
-      team_id: issue.team.id,
-      project_id: issue.project?.id ?? null,
-      state_id: issue.state.id,
-      creator_id: issue.creator?.id ?? null,
-      label_ids: issue.labelIds,
-    })),
+    issues: issues.nodes.map((issue) => {
+      const span = currentLinearStateSpan(
+        issue.stateHistory.nodes,
+        issue.state.id,
+        issue.updatedAt,
+      );
+      return {
+        id: issue.id,
+        identifier: issue.identifier,
+        previous_identifiers: issue.previousIdentifiers,
+        url: issue.url,
+        title: truncateIssueText(issue.title.trim(), 200),
+        description:
+          issue.description === null ? null : truncateIssueText(issue.description, 19_500),
+        team_id: issue.team.id,
+        project_id: issue.project?.id ?? null,
+        state_id: issue.state.id,
+        creator_id: issue.creator?.id ?? null,
+        label_ids: issue.labelIds,
+        ...(span && {
+          origin_span_id: span.id,
+          origin_span_started_at: span.startedAt,
+          origin_issue_updated_at: issue.updatedAt,
+        }),
+      };
+    }),
   };
 }
 

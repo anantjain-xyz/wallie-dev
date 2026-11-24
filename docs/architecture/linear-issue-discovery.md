@@ -78,3 +78,26 @@ JS
 5. Open the session in Wallie and verify its Linear origin link. After the next
    polling interval, run the same command again and verify that the session and
    its first queued job are unchanged.
+
+## Linked Linear outcomes
+
+A mapped Linear team or project can publish Wallie progress and outcomes to
+the issue that started the session. Each notice includes the signed-in Wallie
+session link. Review notices include the exact stage and artifact version.
+The outbox assigns each comment a stable Linear comment UUID. If a write has
+an unknown result, Wallie reads that exact comment before settling the
+delivery.
+
+An owner or admin configures the resource at
+`/api/workspaces/{workspaceId}/factories/{factoryId}/linear-outbound/{resourceId}`.
+Use `GET` to load the current policy and mapping revisions. A `PUT` includes
+`expectedRevision`, `mappingRevision`, `commentsEnabled`, and `statusMapping`.
+Set `statusMapping` to null to disable automatic transitions. A mapping pins
+the exact Linear `teamId`, `fromStateId`, and `toStateId`.
+
+An automatic transition requires final approval, a current configured
+mapping, and the original open Linear state span on the same issue. Wallie
+checks the span before sending. Linear applies the update through its normal
+issue mutation, which has no atomic compare-and-set argument. Wallie records
+the delivery separately from the session so a change in provider access
+preserves the conversation and review history.

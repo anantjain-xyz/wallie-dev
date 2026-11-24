@@ -191,7 +191,7 @@ The ownership check uses a short-lived GitHub user authorization solely during t
 These are entered through the app's **Settings** UI and stored encrypted in your database — they are intentionally **not** environment variables:
 
 - **Agent provider & model** — Codex, Claude Code, Cursor, or OpenCode, plus the provider credential (ChatGPT sign-in / Codex token / OpenAI key, an Anthropic API key, Cursor browser sign-in, or an OpenCode Zen / per-provider API key). Cursor sign-in is processed by the Wallie worker.
-- **Linear API key (optional)** — add one if you want to attach Linear issue context. You can start a session with a prompt alone.
+- **Linear API key (optional)** — add one to attach issue context or configure mapped Linear work. [Linked Linear outcomes](../architecture/linear-issue-discovery.md#linked-linear-outcomes) also require the corresponding write permissions on the key.
 - **GitHub installation** — install the App onto the repos a workspace should see.
 - **Sandbox provider** — connect Vercel, E2B, and/or Daytona, choose one active provider, then run its repository capability check. Connections are retained when switching.
 
