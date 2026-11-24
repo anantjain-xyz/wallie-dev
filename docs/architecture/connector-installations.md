@@ -52,3 +52,22 @@ The event resolver records the initiator separately from the service principal
 and budget payer. A service actor must match the principal on the grant.
 Intake and review commands recheck the actor link in the same transaction as
 the admission or decision so revocation can take effect before the write.
+
+## GitHub requests
+
+A GitHub request starts when a verified human applies a configured label to an
+open issue or pull request. The factory owner or admin saves the label ID for
+each item type on the mapped repository. The rule pins the current mapping,
+service execution grant, and active factory definition. Update the rule after
+changing the mapping or definition.
+
+The webhook records newer open, close, and label removal events for each source.
+It captures the exact base branch and same-repository head SHA for pull
+requests. The session prompt includes bounded GitHub title and body as external
+context. One transaction rechecks the actor and grant, creates the session and
+first job, and binds the issue or pull request to the conversation.
+
+The same pull request deliveries still wake verification refresh. Existing
+automation rules consume their existing event types independently. A pull
+request with an existing Wallie source or an active automation intake keeps
+that attribution when it receives the request label.

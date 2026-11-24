@@ -12000,6 +12000,21 @@ export type Database = {
           created: boolean
         }[]
       }
+      configure_github_connector_request: {
+        Args: {
+          p_actor_user_id: string
+          p_enabled: boolean
+          p_execution_grant_id: string
+          p_execution_grant_version: number
+          p_expected_revision: number
+          p_factory_id: string
+          p_label_id: number
+          p_resource_id: string
+          p_source_kind: string
+          p_workspace_id: string
+        }
+        Returns: number
+      }
       configure_linear_issue_discovery: {
         Args: {
           p_actor_user_id: string
@@ -13962,6 +13977,29 @@ export type Database = {
           p_provider_updated_at: string
           p_pull_request_id: number
           p_pull_request_number: number
+          p_state: string
+        }
+        Returns: Json
+      }
+      ingest_github_connector_work: {
+        Args: {
+          p_action: string
+          p_base_ref?: string
+          p_delivery_id: string
+          p_github_repository_id: number
+          p_head_ref?: string
+          p_head_sha?: string
+          p_installation_id: number
+          p_label_id?: number
+          p_owner_id: number
+          p_provider_updated_at: string
+          p_sender_id: number
+          p_sender_kind: Database["public"]["Enums"]["connector_actor_kind"]
+          p_source_body?: string
+          p_source_id: number
+          p_source_kind: string
+          p_source_number: number
+          p_source_title?: string
           p_state: string
         }
         Returns: Json

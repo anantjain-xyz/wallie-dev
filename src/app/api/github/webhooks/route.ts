@@ -9,6 +9,10 @@ import {
 } from "@/features/github/webhook-payloads";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
+import {
+  captureGitHubConnectorWork,
+  isGitHubConnectorWorkAction,
+} from "@/features/github/connector-work-intake";
 import { captureGitHubAutomationPullRequest } from "@/features/github/pr-automation";
 import {
   handleGitHubInstallationEvent,
@@ -76,6 +80,7 @@ export async function POST(request: Request) {
           handleGitHubPullRequestEvent(parsed.data),
         ),
         captureGitHubAutomationPullRequest(payload, delivery.data),
+        captureGitHubConnectorWork("pull_request", payload, delivery.data),
       ]);
       const failure = results.find((result) => result.status === "rejected");
       if (failure) throw failure.reason;
@@ -85,6 +90,17 @@ export async function POST(request: Request) {
   }
 
   switch (eventName) {
+    case "issues": {
+      if (!isGitHubConnectorWorkAction(payload)) break;
+      const delivery = githubDeliveryIdSchema.safeParse(request.headers.get("x-github-delivery"));
+      if (
+        !delivery.success ||
+        !(await captureGitHubConnectorWork("issues", payload, delivery.data))
+      ) {
+        return invalidPayload();
+      }
+      break;
+    }
     case "installation": {
       const parsed = installationEventSchema.safeParse(payload);
       if (!parsed.success) return invalidPayload();
