@@ -71,3 +71,29 @@ The same pull request deliveries still wake verification refresh. Existing
 automation rules consume their existing event types independently. A pull
 request with an existing Wallie source or an active automation intake keeps
 that attribution when it receives the request label.
+
+### GitHub conversation continuity
+
+The `issue_comment` webhook attaches comments from a verified human to the
+existing issue or pull request conversation. Wallie matches the repository and
+thread against its admission receipt. GitHub uses a separate numeric issue ID
+for the pull request timeline. The first qualified comment records that
+association. Edits preserve the original conversation entry and append the
+new version. Deletions record a tombstone and leave the conversation history
+available. Replays share the provider's comment identity. App and bot actors
+are ignored at the webhook boundary. A retryable database lock defers the
+exact signed delivery to the worker, which applies the same deduplication.
+Review decisions use the signed-in Review Workbench and its exact review target.
+
+Linked progress and outcomes use durable outbox receipts. Review-ready
+notices link to the exact stage and artifact version. Wallie resolves the
+current review revision for that artifact just before sending. Each notice
+has its own immutable identity. A retry observes the original
+GitHub thread before settling a write with an unknown result. The observation
+needs the exact delivery marker and the App's verified bot identity.
+
+The App needs **Issues** read access to receive issue comments. Replies on an
+issue require **Issues** write access. Replies on a pull request use **Pull
+requests** write access. Check the approved installation permissions and the
+`Issue comment` webhook subscription when enabling this flow.
+[GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)

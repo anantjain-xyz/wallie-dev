@@ -46,6 +46,9 @@ import {
   createBrowserVideoRuntime,
 } from "@/lib/validation-evidence/browser-runtime";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
+import { drainGitHubConnectorCommentRetries } from "@/features/github/connector-conversation";
+import { createGitHubConnectorOutboundAdapter } from "@/features/github/connector-outbound";
+import { drainConnectorOutboundDeliveries } from "@/lib/connectors/outbound";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
 import { parseWorkerConfig } from "./config";
@@ -200,6 +203,13 @@ async function main() {
           drainExactFactoryWorkflowReviewRepair(admin),
         );
         timerTasks.run("expired workflow review", () => expireExactFactoryWorkflowReview(admin));
+        timerTasks.run("GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin));
+        timerTasks.run("GitHub connector outbound", async () => {
+          await drainConnectorOutboundDeliveries(
+            admin,
+            createGitHubConnectorOutboundAdapter(admin),
+          );
+        });
         timerTasks.run("Linear issue discovery", async () => {
           await reconcileLinearIssueDiscovery(admin);
         });

@@ -87,6 +87,162 @@ describe("GitHub webhook boundary", () => {
     },
   };
 
+  const connectorComment = {
+    action: "created",
+    installation: { id: 123 },
+    repository: { id: 456, owner: { id: 789 } },
+    sender: { id: 234, type: "User" },
+    issue: {
+      id: 567,
+      number: 42,
+      pull_request: { url: "https://api.github.com/repos/fixture/repo/pulls/42" },
+    },
+    comment: {
+      id: 987,
+      body: "  Follow up on the linked work.  ",
+      user: { id: 234, type: "User" },
+      updated_at: "2026-11-01T00:00:00Z",
+    },
+  };
+
+  it("passes the exact signed pull request comment identity to the conversation command", async () => {
+    const response = await POST(request(connectorComment, "issue_comment"));
+
+    expect(response.status).toBe(200);
+    expect(mocked.automationRpc).toHaveBeenCalledExactlyOnceWith(
+      "ingest_github_connector_comment",
+      {
+        p_installation_id: 123,
+        p_github_repository_id: 456,
+        p_owner_id: 789,
+        p_delivery_id: deliveryId,
+        p_action: "created",
+        p_source_kind: "pull_request",
+        p_source_number: 42,
+        p_issue_id: 567,
+        p_comment_id: 987,
+        p_actor_id: 234,
+        p_provider_updated_at: "2026-11-01T00:00:00Z",
+        p_body: connectorComment.comment.body,
+      },
+    );
+    expect(mocked.pullRequest).not.toHaveBeenCalled();
+    expect(mocked.verification).not.toHaveBeenCalled();
+  });
+
+  it.each(["edited", "deleted"])(
+    "captures issue comment %s without confusing it with a PR",
+    async (action) => {
+      const issue = { id: 567, number: 42 };
+      const response = await POST(request({ ...connectorComment, action, issue }, "issue_comment"));
+
+      expect(response.status).toBe(200);
+      expect(mocked.automationRpc).toHaveBeenCalledWith(
+        "ingest_github_connector_comment",
+        expect.objectContaining({ p_action: action, p_source_kind: "issue", p_issue_id: 567 }),
+      );
+      if (action === "deleted")
+        expect(mocked.automationRpc.mock.calls[0]?.[1]).not.toHaveProperty("p_body");
+    },
+  );
+
+  it("uses the original author when a GitHub moderator deletes a comment", async () => {
+    const response = await POST(
+      request(
+        { ...connectorComment, action: "deleted", sender: { id: 1000, type: "User" } },
+        "issue_comment",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocked.automationRpc).toHaveBeenCalledWith(
+      "ingest_github_connector_comment",
+      expect.objectContaining({ p_action: "deleted", p_actor_id: 234 }),
+    );
+  });
+
+  it.each([
+    { id: 234, type: "Bot" },
+    { id: 1000, type: "User" },
+  ])(
+    "acknowledges a bot or mismatched actor without calling conversation commands",
+    async (sender) => {
+      const response = await POST(request({ ...connectorComment, sender }, "issue_comment"));
+
+      expect(response.status).toBe(200);
+      expect(mocked.automationRpc).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves Markdown indentation and acknowledges blank comments", async () => {
+    const body = "    first\n    second";
+    const comment = { ...connectorComment.comment, body };
+
+    expect((await POST(request({ ...connectorComment, comment }, "issue_comment"))).status).toBe(
+      200,
+    );
+    expect(mocked.automationRpc).toHaveBeenCalledWith(
+      "ingest_github_connector_comment",
+      expect.objectContaining({ p_body: body }),
+    );
+
+    mocked.automationRpc.mockClear();
+    const blank = { ...comment, body: "   \n   " };
+    expect(
+      (await POST(request({ ...connectorComment, comment: blank }, "issue_comment"))).status,
+    ).toBe(200);
+    expect(mocked.automationRpc).not.toHaveBeenCalled();
+  });
+
+  it("retains visible text beyond a whitespace-only bounded prefix", async () => {
+    const body = " ".repeat(8001) + "Keep this follow-up.";
+    const comment = { ...connectorComment.comment, body };
+
+    expect((await POST(request({ ...connectorComment, comment }, "issue_comment"))).status).toBe(
+      200,
+    );
+    expect(mocked.automationRpc).toHaveBeenCalledWith(
+      "ingest_github_connector_comment",
+      expect.objectContaining({ p_body: "Keep this follow-up." }),
+    );
+  });
+
+  it.each(["55P03", ""])(
+    "defers the exact delivery after an unknown or retryable result (%s)",
+    async (code) => {
+      mocked.automationResult.mockResolvedValueOnce({ data: null, error: { code } });
+
+      expect((await POST(request(connectorComment, "issue_comment"))).status).toBe(200);
+      expect(mocked.automationRpc).toHaveBeenCalledTimes(2);
+      expect(mocked.automationRpc).toHaveBeenNthCalledWith(
+        2,
+        "defer_github_connector_comment",
+        mocked.automationRpc.mock.calls[0]?.[1],
+      );
+    },
+  );
+
+  it("does not defer a rejected input or a conflicting delivery identity", async () => {
+    for (const code of ["22023", "PT409"]) {
+      mocked.automationResult.mockResolvedValueOnce({ data: null, error: { code } });
+      await expect(POST(request(connectorComment, "issue_comment"))).rejects.toThrow(
+        "Could not capture the GitHub connector comment.",
+      );
+    }
+    expect(mocked.automationRpc).not.toHaveBeenCalledWith(
+      "defer_github_connector_comment",
+      expect.anything(),
+    );
+  });
+
+  it("never processes a comment without a verified signature and delivery identity", async () => {
+    mocked.verify.mockResolvedValueOnce(false);
+
+    expect((await POST(request(connectorComment, "issue_comment"))).status).toBe(401);
+    expect((await POST(request(connectorComment, "issue_comment", null))).status).toBe(400);
+    expect(mocked.automationRpc).not.toHaveBeenCalled();
+  });
+
   const connectorIssue = {
     action: "labeled",
     installation: { id: 123 },

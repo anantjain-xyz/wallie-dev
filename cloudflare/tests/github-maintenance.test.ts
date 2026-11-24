@@ -277,6 +277,12 @@ it.each([
             ),
         };
       }
+      if (name === "drain_github_connector_comment_retries") {
+        return { abortSignal: () => Promise.resolve({ data: 0, error: null }) };
+      }
+      if (name === "claim_connector_outbound_delivery") {
+        return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
+      }
       return {
         abortSignal: () =>
           Promise.resolve(
@@ -460,6 +466,10 @@ it.each([
       expect(rpc).toHaveBeenCalledWith("list_factory_actions_dispatches");
       expect(rpc).toHaveBeenCalledWith("reserve_factory_actions_observations");
       expect(rpc).toHaveBeenCalledWith("admit_next_factory_monitoring_incident");
+      expect(rpc).toHaveBeenCalledWith("drain_github_connector_comment_retries");
+      expect(rpc).toHaveBeenCalledWith("claim_connector_outbound_delivery", {
+        p_provider: "github",
+      });
       expect(rpc).toHaveBeenCalledWith("claim_linear_issue_discovery", {});
       expect(reconcileLinearLinkedOutcomes).toHaveBeenCalledExactlyOnceWith(admin);
       if (linearOutcomesFailure) {

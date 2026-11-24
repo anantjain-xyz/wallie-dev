@@ -9,6 +9,7 @@ import {
 } from "@/features/github/webhook-payloads";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
+import { captureGitHubConnectorComment } from "@/features/github/connector-conversation";
 import {
   captureGitHubConnectorWork,
   isGitHubConnectorWorkAction,
@@ -90,6 +91,13 @@ export async function POST(request: Request) {
   }
 
   switch (eventName) {
+    case "issue_comment": {
+      const delivery = githubDeliveryIdSchema.safeParse(request.headers.get("x-github-delivery"));
+      if (!delivery.success || !(await captureGitHubConnectorComment(payload, delivery.data))) {
+        return invalidPayload();
+      }
+      break;
+    }
     case "issues": {
       if (!isGitHubConnectorWorkAction(payload)) break;
       const delivery = githubDeliveryIdSchema.safeParse(request.headers.get("x-github-delivery"));
