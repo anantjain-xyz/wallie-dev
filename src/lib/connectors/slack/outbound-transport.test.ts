@@ -259,6 +259,53 @@ it("settles the exact correlation on a later bounded thread page and never posts
   ).toBe(true);
 });
 
+const earlierReplies = Array.from({ length: 15 }, (_, index) =>
+  reply(slackTs(-100 + index), anotherCorrelationId),
+);
+
+it("continues after a full reply page with Slack's prepended root", async () => {
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(authorizationRead())
+    .mockResolvedValueOnce(page([root]))
+    .mockResolvedValueOnce(
+      page([root, ...earlierReplies], {
+        has_more: true,
+        response_metadata: { next_cursor: "page-two" },
+      }),
+    )
+    .mockResolvedValueOnce(page([root, reply(currentReplyTs)]));
+
+  await expect(observeSlackOutbound(input(fetcher), authorization())).resolves.toEqual({
+    kind: "found",
+    providerReplyId: currentReplyTs,
+  });
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(new URL(request(fetcher, 2).url).searchParams.get("limit")).toBe("15");
+  expect(new URL(request(fetcher, 3).url).searchParams.get("cursor")).toBe("page-two");
+});
+
+const fullPageWithMatch = [...earlierReplies.slice(1), reply(currentReplyTs)];
+
+it.each([
+  ["an extra reply", [...earlierReplies, reply(currentReplyTs)]],
+  ["a root from a different team", [{ ...root, team: "T676700097" }, ...fullPageWithMatch]],
+  ["the root twice", [root, root, ...fullPageWithMatch.slice(1)]],
+  ["an appended root", [...fullPageWithMatch, root]],
+  ["a root and too many replies", [root, ...earlierReplies, reply(currentReplyTs)]],
+])("does not recover a write from an over-limit page containing %s", async (_, messages) => {
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(authorizationRead())
+    .mockResolvedValueOnce(page([root]))
+    .mockResolvedValueOnce(page(messages));
+
+  await expect(observeSlackOutbound(input(fetcher), authorization())).resolves.toEqual({
+    kind: "inconclusive",
+  });
+  expect(fetcher).toHaveBeenCalledTimes(3);
+});
+
 it("keeps an uncertain create open even after a complete valid marker miss", async () => {
   const fetcher = vi
     .fn<typeof fetch>()
@@ -343,9 +390,6 @@ it.each([
 it.each([
   () => page([]),
   () => page([root]),
-  () => page([{ ...root, hidden: true }, reply(replyTs, previousCorrelationId)]),
-  () => page([root, reply(replyTs, previousCorrelationId), reply(replyTs, previousCorrelationId)]),
-  () => page([reply(slackTs(-900)), reply(replyTs, previousCorrelationId)]),
   () => page([root, reply(replyTs, previousCorrelationId, { user: "U676700002" })]),
   () => page([reply(replyTs, anotherCorrelationId)]),
   () => page([reply(replyTs, previousCorrelationId, { thread_ts: slackTs(-500) })]),
@@ -362,16 +406,20 @@ it.each([
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
-it("waits for complete proof when a root-prefixed response still has a cursor", async () => {
+it.each([
+  () => page([{ ...root, hidden: true }, reply(replyTs, previousCorrelationId)]),
+  () => page([root, reply(replyTs, previousCorrelationId), reply(replyTs, previousCorrelationId)]),
+  () => page([reply(slackTs(-900)), reply(replyTs, previousCorrelationId)]),
+  () =>
+    page([root, reply(replyTs, previousCorrelationId)], {
+      response_metadata: { next_cursor: "more-replies" },
+    }),
+])("waits for a complete bounded exact reply before editing", async (response) => {
   const fetcher = vi
     .fn<typeof fetch>()
     .mockResolvedValueOnce(authorizationRead())
     .mockResolvedValueOnce(page([root]))
-    .mockResolvedValueOnce(
-      page([root, reply(replyTs, previousCorrelationId)], {
-        response_metadata: { next_cursor: "more-replies" },
-      }),
-    );
+    .mockResolvedValueOnce(response());
   await expect(
     sendSlackOutbound(input(fetcher, { replyTs, previousCorrelationId }), authorization()),
   ).resolves.toEqual({ kind: "not_sent" });

@@ -93,7 +93,7 @@ const providerMessage = z.object({
 type ProviderMessage = z.output<typeof providerMessage>;
 
 const replyPage = z.object({
-  messages: z.array(providerMessage.extend({ ts: timestamp })).max(pageLimit),
+  messages: z.array(providerMessage.extend({ ts: timestamp })).max(pageLimit + 1),
   has_more: z.boolean(),
   is_limited: z.boolean().optional(),
   response_metadata: z
@@ -395,9 +395,18 @@ async function readReplies(
   });
   if (response.kind !== "read") return response;
   const page = replyPage.safeParse(response.value);
-  return page.success && !page.data.is_limited
-    ? { kind: "read", value: page.data }
-    : { kind: "ambiguous" };
+  if (!page.success || page.data.is_limited) return { kind: "ambiguous" };
+  // Slack can prepend the root without counting it toward the reply limit.
+  const { messages } = page.data;
+  const [first] = messages;
+  const hasRootPrefix = first !== undefined && isVisibleRoot(scope, first);
+  if (
+    messages.length > limit + (hasRootPrefix ? 1 : 0) ||
+    (hasRootPrefix && messages.some((message, index) => index > 0 && message.ts === scope.threadTs))
+  ) {
+    return { kind: "ambiguous" };
+  }
+  return { kind: "read", value: page.data };
 }
 
 function complete(page: ReplyPage): boolean {
@@ -439,18 +448,9 @@ async function readExactReply(scope: VerifiedScope, signal: AbortSignal, replyTs
   });
   if (page.kind !== "read") return page;
   if (!complete(page.value)) return { kind: "ambiguous" } as const;
-  // Slack can prepend the root without counting it toward the reply limit.
-  const { messages } = page.value;
-  const replies = messages.filter((message) => !isVisibleRoot(scope, message));
-  const [reply] = replies;
-  if (
-    !reply ||
-    messages.length > 2 ||
-    replies.length !== 1 ||
-    reply.ts !== replyTs ||
-    !inThread(scope, reply) ||
-    !isVerifiedBot(scope, reply)
-  )
+  const [first, second] = page.value.messages;
+  const reply = first && isVisibleRoot(scope, first) ? second : first;
+  if (!reply || reply.ts !== replyTs || !inThread(scope, reply) || !isVerifiedBot(scope, reply))
     return { kind: "refused", code: "message_not_found" } as const;
   return { kind: "read", value: reply } as const;
 }
