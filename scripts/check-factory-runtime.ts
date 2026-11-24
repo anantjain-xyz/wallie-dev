@@ -1,6 +1,6 @@
 /** Run both real worker entry points against a disposable local database. */
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { generateKeyPairSync, randomBytes, randomInt } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -68,7 +68,7 @@ async function runFactoryRuntime() {
   let appClosed: Promise<void> | undefined;
   let builder: ChildProcess | undefined;
   let runtime: ChildProcess | undefined;
-  let stopM12: ((signal: NodeJS.Signals) => void) | undefined;
+  let stopQualification: ((signal: NodeJS.Signals) => void) | undefined;
   let interrupted = false;
   try {
     const [flag, directory, ...extra] = process.argv.slice(2);
@@ -78,17 +78,19 @@ async function runFactoryRuntime() {
     const m08 = extra.length === 1 && extra[0] === "--m08";
     const m11 = extra.length === 1 && extra[0] === "--m11";
     const m12 = extra.length === 1 && extra[0] === "--m12";
+    const m13 = extra.length === 1 && extra[0] === "--m13";
+    const closedProviderTransport = m12 || m13;
     if (
       flag !== "--workdir" ||
       !directory ||
-      (extra.length > 0 && !m05 && !m06 && !m07 && !m08 && !m11 && !m12)
+      (extra.length > 0 && !m05 && !m06 && !m07 && !m08 && !m11 && !closedProviderTransport)
     ) {
       throw new FixtureConfigurationError(
-        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, --m07, --m08, --m11, or --m12.",
+        "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, --m07, --m08, --m11, --m12, or --m13.",
       );
     }
-    if (m12) {
-      stopM12 = (signal) => {
+    if (closedProviderTransport) {
+      stopQualification = (signal) => {
         if (interrupted) return;
         interrupted = true;
         process.exitCode = signal === "SIGINT" ? 130 : 143;
@@ -96,8 +98,8 @@ async function runFactoryRuntime() {
         app?.kill("SIGTERM");
         runtime?.kill("SIGTERM");
       };
-      process.on("SIGINT", stopM12);
-      process.on("SIGTERM", stopM12);
+      process.on("SIGINT", stopQualification);
+      process.on("SIGTERM", stopQualification);
     }
     const status = JSON.parse(
       execFileSync("supabase", ["status", "--workdir", resolve(directory), "--output", "json"], {
@@ -142,7 +144,7 @@ async function runFactoryRuntime() {
 
     const fixture = { url, serviceKey, publishableKey };
     const env: NodeJS.ProcessEnv = {
-      ...(m07 || m08 || m11 || m12
+      ...(m07 || m08 || m11 || closedProviderTransport
         ? {
             NODE_ENV: "test",
             PATH: process.env.PATH,
@@ -175,32 +177,38 @@ async function runFactoryRuntime() {
       );
     }
     if (
-      m12 &&
+      closedProviderTransport &&
       [".env", ".env.local", ".env.production", ".env.production.local"].some((file) =>
         existsSync(resolve(file)),
       )
     ) {
       throw new FixtureConfigurationError(
-        "Run M12 qualification in a worktree without local application credentials.",
+        "Run connector or automation qualification in a worktree without local application credentials.",
       );
     }
-    if (m05 || m07 || m08 || m12) {
+    if (m05 || m07 || m08 || closedProviderTransport) {
       const port = await loopbackPort();
       if (interrupted) return;
-      const host = m08 ? "localhost" : "127.0.0.1";
+      const host = m08 || m13 ? "localhost" : "127.0.0.1";
       const appUrl = `http://${host}:${port}`;
       const next = resolve("node_modules/next/dist/bin/next");
-      if (m07 || m08 || m12) env.NEXT_PUBLIC_APP_URL = appUrl;
-      if (m12) {
-        env.GITHUB_APP_ID = "1";
-        env.GITHUB_APP_PRIVATE_KEY = "fixture-no-github-app-private-key";
+      if (m07 || m08 || closedProviderTransport) env.NEXT_PUBLIC_APP_URL = appUrl;
+      if (closedProviderTransport) {
+        env.GITHUB_APP_ID = m13 ? String(randomInt(68100000, 68200000)) : "1";
+        env.GITHUB_APP_PRIVATE_KEY = m13
+          ? generateKeyPairSync("rsa", {
+              modulusLength: 2048,
+              privateKeyEncoding: { type: "pkcs8", format: "pem" },
+              publicKeyEncoding: { type: "spki", format: "pem" },
+            }).privateKey
+          : "fixture-no-github-app-private-key";
         env.GITHUB_WEBHOOK_SECRET = randomBytes(32).toString("hex");
       }
       const appEnv: NodeJS.ProcessEnv = {
         ...env,
         NEXT_PUBLIC_APP_URL: appUrl,
         NODE_ENV: "production",
-        ...(m12 && {
+        ...(closedProviderTransport && {
           NODE_OPTIONS: "--import ./test/release/factory-automation-runtime-fetch.mjs",
         }),
         ...(m08
@@ -217,7 +225,7 @@ async function runFactoryRuntime() {
         timeout: 240_000,
       };
       let buildStatus: number | null;
-      if (m12) {
+      if (closedProviderTransport) {
         builder = spawn(process.execPath, [next, "build"], buildOptions);
         buildStatus = await childExitCode(builder);
         builder = undefined;
@@ -237,7 +245,7 @@ async function runFactoryRuntime() {
         },
       );
       app = localApp;
-      if (m12) {
+      if (closedProviderTransport) {
         appClosed = new Promise<void>((finished) => localApp.once("close", () => finished()));
       }
       localApp.on("error", () => localApp.kill());
@@ -254,6 +262,36 @@ async function runFactoryRuntime() {
           process.env.WALLIE_FACTORY_MEDIA_PROOF_DIR ?? ".wallie/m05-qualification",
         );
       }
+    }
+
+    if (m13) {
+      const outputRoot = resolve(process.env.WALLIE_M13_PROOF_DIR ?? ".wallie/m13-qualification");
+      mkdirSync(outputRoot, { recursive: true, mode: 0o700 });
+      const proof = mkdtempSync(join(outputRoot, "run-"));
+      runtime = spawn(
+        process.execPath,
+        [
+          resolve("node_modules/vitest/vitest.mjs"),
+          "run",
+          "test/release/connector-conformance.node.fixture.ts",
+          "--config",
+          "vitest.factory-runtime.config.ts",
+        ],
+        {
+          env: {
+            ...env,
+            WALLIE_M13_DATABASE_URL: databaseUrl,
+            WALLIE_M13_PROOF_DIR: proof,
+            WALLIE_M13_BROWSER_EXECUTABLE_PATH: process.env.WALLIE_M13_BROWSER_EXECUTABLE_PATH,
+          },
+          stdio: "inherit",
+          timeout: 240_000,
+        },
+      );
+      const runtimeStatus = await childExitCode(runtime);
+      if (!interrupted) process.exitCode = runtimeStatus ?? 1;
+      if (runtimeStatus === 0) console.log(`M13 local qualification evidence is in ${proof}.`);
+      return;
     }
 
     if (m12) {
@@ -409,9 +447,9 @@ async function runFactoryRuntime() {
         await appClosed;
       }
     }
-    if (stopM12) {
-      process.off("SIGINT", stopM12);
-      process.off("SIGTERM", stopM12);
+    if (stopQualification) {
+      process.off("SIGINT", stopQualification);
+      process.off("SIGTERM", stopQualification);
     }
   }
 }

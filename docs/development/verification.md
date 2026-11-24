@@ -312,6 +312,12 @@ adapter, credential permit, citation validation, and settlement. Node saves brow
 `.wallie/m07-qualification`. Set `WALLIE_FACTORY_SCORER_PROOF_DIR` to change
 that directory. See [enrollment and rollback](../architecture/factory-scorer-evaluation.md#enrollment-and-rollback).
 
+### Connector conversation qualification
+
+Use the [connector qualification recipe](factory-connector-qualification.md)
+for the deterministic Linear and GitHub fixture, followed by the isolated
+real-account journeys.
+
 ### Benchmark replay qualification
 
 Use an isolated checkout without deployment environment files and an exclusive

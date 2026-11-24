@@ -1,0 +1,10 @@
+begin;
+\ir connector-conformance-scope.psql
+set local request.jwt.claim.role='service_role';
+\o
+select to_jsonb(public.revoke_connector_actor_link(fixture.workspace_id,fixture.owner_user_id,link.id))
+from connector_fixture_query fixture
+join internal.connector_actor_links link on (link.workspace_id,link.id)=(fixture.workspace_id,
+  case fixture.provider when 'github' then fixture.github_actor_link_id when 'linear' then fixture.linear_actor_link_id end)
+where link.member_id=fixture.owner_member_id and link.provider::text=fixture.provider;
+commit;
