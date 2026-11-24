@@ -12,6 +12,7 @@ const workAction = z.enum([
   "labeled",
   "unlabeled",
   "closed",
+  "deleted",
   "opened",
   "reopened",
   "edited",
@@ -102,7 +103,8 @@ function connectorWorkEvent(kind: "issues" | "pull_request", input: unknown, del
   }
 
   const parsed = pullRequestPayload.safeParse(input);
-  if (!parsed.success || !hasExpectedLabel(parsed.data)) return null;
+  if (!parsed.success || parsed.data.action === "deleted" || !hasExpectedLabel(parsed.data))
+    return null;
   const { pull_request: pr, repository } = parsed.data;
   if (pr.base.repo.id !== repository.id) return null;
   // Foreign or deleted heads can advance the source watermark but cannot start work.

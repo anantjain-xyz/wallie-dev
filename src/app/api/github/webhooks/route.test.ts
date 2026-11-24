@@ -182,7 +182,40 @@ describe("GitHub webhook boundary", () => {
       },
     };
     expect((await POST(request(fork))).status).toBe(200);
-    expect(mocked.automationRpc.mock.calls[0]?.[1]).not.toHaveProperty("p_head_sha");
+    expect(mocked.automationRpc).toHaveBeenCalledExactlyOnceWith(
+      "ingest_github_connector_work",
+      expect.objectContaining({ p_source_kind: "pull_request", p_source_id: 157 }),
+    );
+    const forkArgs = mocked.automationRpc.mock.calls[0]?.[1];
+    expect(forkArgs).not.toHaveProperty("p_head_ref");
+    expect(forkArgs).not.toHaveProperty("p_head_sha");
+    expect(forkArgs).not.toHaveProperty("p_base_ref");
+  });
+
+  it("records a signed issue deletion without treating it as a new request", async () => {
+    const secret = "synthetic-github-signing-key";
+    mocked.verify.mockImplementation((body: string, signature: string) =>
+      verify(secret, body, signature),
+    );
+    const bytes = JSON.stringify({ ...connectorIssue, action: "deleted", label: undefined });
+    const signature = "sha256=" + createHmac("sha256", secret).update(bytes).digest("hex");
+
+    expect((await POST(request(bytes, "issues", deliveryId, signature))).status).toBe(200);
+    expect(mocked.automationRpc).toHaveBeenCalledExactlyOnceWith("ingest_github_connector_work", {
+      p_installation_id: 123,
+      p_github_repository_id: 456,
+      p_owner_id: 789,
+      p_delivery_id: deliveryId,
+      p_action: "deleted",
+      p_sender_id: 234,
+      p_sender_kind: "human",
+      p_source_kind: "issue",
+      p_source_id: 567,
+      p_source_number: 43,
+      p_state: "open",
+      p_provider_updated_at: "2026-10-11T00:00:00Z",
+    });
+    expect(mocked.verification).not.toHaveBeenCalled();
   });
 
   it("ignores malformed connector data for PR refresh and rejects malformed issue requests", async () => {

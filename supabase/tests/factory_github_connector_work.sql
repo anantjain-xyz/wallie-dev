@@ -82,6 +82,19 @@ select is(pg_temp.deliver_request(207, 14, 20, p_action => 'closed', p_state => 
 select is(pg_temp.deliver_request(208, 14, 20)->>'status', 'stale',
   'an ambiguous same-second addition cannot supersede a close');
 
+select is(pg_temp.deliver_request(241, 16, 40, p_action => 'edited')->>'status', 'observed',
+  'an open issue snapshot can have a later updated_at than the deletion payload');
+select is(pg_temp.deliver_request(242, 16, 30, p_action => 'deleted')->>'status', 'deleted',
+  'a signed deletion records a terminal issue identity despite its older updated_at');
+select is(pg_temp.deliver_request(243, 16, 29)->>'status', 'stale',
+  'a late older label cannot admit a deleted issue');
+select is(pg_temp.deliver_request(244, 16, 30)->>'status', 'stale',
+  'a late label tied with the deletion cannot admit the issue');
+select is(pg_temp.deliver_request(245, 16, 41)->>'status', 'stale',
+  'a later-looking open snapshot cannot supersede a terminal deletion');
+select ok(pg_temp.deliver_request(242, 16, 30, p_action => 'deleted') @>
+  '{"status":"deleted","replayed":true}'::jsonb, 'the deletion receipt replays without changing the tombstone');
+
 select is(pg_temp.deliver_request(209, 15, 20, p_action => 'opened')->>'status', 'observed',
   'a normal issue opened delivery records state without creating work');
 create temp table admitted_issue as select pg_temp.deliver_request(210, 15, 20) as receipt;
@@ -139,6 +152,20 @@ select draft.value from op651_scope scope cross join lateral (select pg_temp.cre
 select public.publish_factory_automation(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
   (rule.value->>'automationId')::uuid, (rule.value->>'draftRevisionId')::uuid)
 from op651_scope scope cross join old_rule rule;
+
+select ok(not exists (
+  select 1 from public.session_pr_epochs epoch join admitted_pr admitted on epoch.session_id = (admitted.receipt->>'sessionId')::uuid
+) and not exists (
+  select 1 from public.session_pull_requests pr join admitted_pr admitted on pr.session_id = (admitted.receipt->>'sessionId')::uuid
+), 'the connector admitted the PR before any Wallie publication epoch or link existed');
+select ok(public.ingest_factory_github_automation_pr(67410033, 67410034, pg_temp.op651_id(246), 67000023,
+  23, 'opened', 'open', false, pg_temp.github_request_time(19), 'main', 'changes/fixture', repeat('a',40), 67410034)
+    @> '{"status":"accepted","occurrenceCount":1}'::jsonb,
+  'a delayed legacy open can still record its matching automation occurrence');
+select ok(public.admit_next_factory_automation_occurrence()
+  @> '{"status":"denied","reason":"recursive_event","sessionId":null}'::jsonb,
+  'legacy admission finds the connector-owned conversation before starting another session');
+
 select ok(public.ingest_factory_github_automation_pr(67410033, 67410034, pg_temp.op651_id(232), 67000025,
   25, 'opened', 'open', false, pg_temp.github_request_time(20), 'main', 'changes/fixture', repeat('a',40), 67410034)
     @> '{"status":"accepted","occurrenceCount":1}'::jsonb,

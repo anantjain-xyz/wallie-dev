@@ -27,7 +27,7 @@ create table internal.github_connector_work_deliveries (
   source_number integer not null,
   provider_updated_at timestamptz not null,
   snapshot jsonb not null,
-  disposition text not null check (disposition in ('observed', 'stale', 'linked', 'denied', 'admitted')),
+  disposition text not null check (disposition in ('observed', 'deleted', 'stale', 'linked', 'denied', 'admitted')),
   session_id uuid,
   actor_link_id uuid,
   service_principal_id uuid,
@@ -41,6 +41,9 @@ create table internal.github_connector_work_deliveries (
 create index github_connector_work_source_watermark_idx
   on internal.github_connector_work_deliveries(resource_id, source_kind, source_number, provider_updated_at desc, recorded_at desc)
   where disposition <> 'stale';
+create index github_connector_work_issue_tombstone_idx
+  on internal.github_connector_work_deliveries(resource_id, source_id)
+  where source_kind = 'issue' and disposition = 'deleted';
 
 alter table internal.github_connector_request_rules enable row level security;
 alter table internal.github_connector_work_deliveries enable row level security;
@@ -137,6 +140,25 @@ begin
 end;
 $$;
 
+create function internal.lock_github_connector_thread(
+  p_factory_id uuid, p_github_repository_id bigint, p_source_kind text, p_source_number integer,
+  p_wait boolean default true
+) returns void language plpgsql set search_path = '' as $$
+declare thread_lock bigint := pg_catalog.hashtextextended(
+  'github-connector-thread:' || p_factory_id::text || ':' || p_github_repository_id::text
+    || ':' || p_source_kind || ':' || p_source_number::text, 0);
+begin
+  if p_wait then
+    perform pg_catalog.pg_advisory_xact_lock(thread_lock);
+  elsif not pg_catalog.pg_try_advisory_xact_lock(thread_lock) then
+    raise exception 'GitHub conversation admission is in progress.' using errcode = '55P03';
+  end if;
+end;
+$$;
+
+revoke all on function internal.lock_github_connector_thread(uuid, bigint, text, integer, boolean)
+  from public, anon, authenticated, service_role;
+
 create function public.ingest_github_connector_work(
   p_installation_id bigint, p_github_repository_id bigint, p_owner_id bigint, p_delivery_id uuid,
   p_source_kind text, p_source_id bigint, p_source_number integer, p_action text, p_state text,
@@ -167,8 +189,9 @@ declare
 begin
   perform internal.assert_checkpoint_publication_service();
   if (p_source_kind in ('issue', 'pull_request')
-    and p_action in ('labeled', 'unlabeled', 'closed', 'opened', 'reopened', 'edited', 'synchronize',
+    and p_action in ('labeled', 'unlabeled', 'closed', 'deleted', 'opened', 'reopened', 'edited', 'synchronize',
                     'converted_to_draft', 'ready_for_review')
+    and (p_action <> 'deleted' or p_source_kind = 'issue')
     and p_state in ('open', 'closed')
     and p_source_id between 1 and 9007199254740991 and p_source_number > 0
     and p_installation_id between 1 and 9007199254740991
@@ -211,7 +234,9 @@ begin
   select mapped.* into resource from public.factory_connector_resources mapped where mapped.id = resource.id;
   select configured.* into rule from internal.github_connector_request_rules configured
   where (configured.resource_id, configured.source_kind) = (resource.id, p_source_kind);
-  if not found or not rule.enabled or rule.mapping_revision <> resource.current_revision then return null; end if;
+  if p_action <> 'deleted' and (not found or not rule.enabled or rule.mapping_revision <> resource.current_revision) then
+    return null;
+  end if;
   perform internal.lock_connector_authority(installation, resource.factory_id, resource.external_resource_id);
   if not exists (select 1 from public.read_connector_subscription(resource.workspace_id, resource.factory_id, resource.id))
   then return null; end if;
@@ -236,8 +261,7 @@ begin
     return jsonb_build_object('status', delivery.disposition, 'sessionId', delivery.session_id, 'replayed', true);
   end if;
 
-  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
-    'github-connector-thread:' || resource.id::text || ':' || p_source_kind || ':' || p_source_number::text, 0));
+  perform internal.lock_github_connector_thread(resource.factory_id, p_github_repository_id, p_source_kind, p_source_number);
   select logged.* into latest from internal.github_connector_work_deliveries logged
   where (logged.resource_id, logged.source_kind, logged.source_number) = (resource.id, p_source_kind, p_source_number)
     and logged.disposition <> 'stale'
@@ -247,7 +271,16 @@ begin
   selected_request := p_action = 'labeled' and p_state = 'open' and p_label_id = rule.label_id;
   -- GitHub timestamps have second precision. A same-second close or removal
   -- fences additions, while an ordinary open snapshot can precede a request.
-  if latest.source_id is not null and (latest.source_id <> p_source_id or latest.provider_updated_at > p_provider_updated_at
+  if p_source_kind = 'issue' and exists (
+    select 1 from internal.github_connector_work_deliveries tombstone
+    where (tombstone.resource_id, tombstone.source_kind, tombstone.source_id, tombstone.disposition) =
+      (resource.id, 'issue', p_source_id, 'deleted')
+  ) then
+    disposition := 'stale';
+  elsif p_action = 'deleted' then
+    -- GitHub can retain the issue's old updated_at in a deletion delivery.
+    disposition := 'deleted';
+  elsif latest.source_id is not null and (latest.source_id <> p_source_id or latest.provider_updated_at > p_provider_updated_at
       or (latest.provider_updated_at = p_provider_updated_at
         and p_state <> 'closed' and not (p_action = 'unlabeled' and p_label_id = rule.label_id)
         and not (selected_request and latest.snapshot->>'state' = 'open'
@@ -350,3 +383,87 @@ revoke all on function public.configure_github_connector_request(uuid, uuid, uui
 grant execute on function public.configure_github_connector_request(uuid, uuid, uuid, uuid, text, bigint, boolean, bigint, uuid, bigint),
   public.ingest_github_connector_work(bigint, bigint, bigint, uuid, text, bigint, integer, text, text, timestamptz,
     bigint, public.connector_actor_kind, bigint, text, text, text, text, text) to service_role;
+
+create or replace function internal.factory_automation_causal_blocker(p_occurrence internal.factory_automation_occurrences)
+returns text language plpgsql set search_path = '' as $$
+declare
+  github_delivery internal.github_automation_pr_deliveries;
+  causal_root_id uuid;
+  causal_root public.sessions;
+  workflow_status text;
+  delegation_policy jsonb;
+  root_requirements jsonb;
+  committed_budget record;
+begin
+  -- Keep the source fence through admission. The legacy webhook can queue a
+  -- delayed occurrence before the connector session has a PR publication.
+  if p_occurrence.source_namespace = 'github.pr' then
+    select receipt.* into github_delivery from internal.github_automation_pr_deliveries receipt
+    where (receipt.workspace_id, receipt.factory_id, receipt.repository_id::text, receipt.source_key, receipt.disposition) =
+      (p_occurrence.workspace_id, p_occurrence.factory_id, p_occurrence.event->>'repositoryId',
+        p_occurrence.source_key, 'accepted');
+    if found then
+      perform internal.lock_github_connector_thread(p_occurrence.factory_id, github_delivery.github_repository_id,
+        'pull_request', github_delivery.pull_request_number, p_wait => false);
+      if exists (
+        select 1 from public.factory_connector_resources resource
+        join public.session_conversation_sources source
+          on (source.workspace_id, source.factory_id, source.provider, source.source_namespace) =
+            (resource.workspace_id, resource.factory_id, 'github', resource.id::text)
+        where (resource.workspace_id, resource.factory_id, resource.provider, resource.resource_kind, resource.external_resource_id) =
+          (p_occurrence.workspace_id, p_occurrence.factory_id, 'github', 'repository', github_delivery.github_repository_id::text)
+          and source.external_thread_id = 'pull_request:' || github_delivery.pull_request_id::text
+      ) then
+        return 'recursive_event';
+      end if;
+    end if;
+  end if;
+  if p_occurrence.causal_session_id is null then return null; end if;
+  select coalesce(delegation.root_session_id, source.id) into causal_root_id
+  from public.sessions source
+  left join internal.factory_workflow_delegations delegation on
+    (delegation.workspace_id, delegation.factory_id, delegation.child_session_id) =
+    (source.workspace_id, source.factory_id, source.id)
+  where (source.workspace_id, source.factory_id, source.id) =
+    (p_occurrence.workspace_id, p_occurrence.factory_id, p_occurrence.causal_session_id)
+    and (p_occurrence.event->>'kind' <> 'pull-request'
+      or source.github_repository_id = (p_occurrence.event->>'repositoryId')::uuid);
+  if not found then return 'invalid_cause'; end if;
+
+  if exists (
+    select 1 from internal.factory_automation_occurrences origin
+    where origin.session_id in (causal_root_id, p_occurrence.causal_session_id)
+      and (origin.workspace_id, origin.factory_id) = (p_occurrence.workspace_id, p_occurrence.factory_id)
+  ) then
+    return 'recursive_event';
+  end if;
+
+  select * into causal_root from public.sessions root
+  where (root.workspace_id, root.factory_id, root.id) = (p_occurrence.workspace_id, p_occurrence.factory_id, causal_root_id)
+  for no key update nowait;
+  if not found or causal_root.phase_status = 'rejected' then return 'invalid_cause'; end if;
+  if internal.refresh_session_execution_exhaustion(causal_root_id, p_occurrence.workspace_id) is not null then
+    return 'budget_exhausted';
+  end if;
+
+  select execution.workflow_json::jsonb->'delegationPolicy', execution.lifecycle_status
+  into delegation_policy, workflow_status
+  from internal.factory_workflow_executions execution
+  where execution.root_session_id = causal_root_id
+    and (execution.workspace_id, execution.factory_id) = (p_occurrence.workspace_id, p_occurrence.factory_id);
+  if workflow_status = 'canceled' then return 'invalid_cause'; end if;
+  if delegation_policy is not null then
+    select requirements into root_requirements from public.execution_policy_revisions
+    where (workspace_id, id) = (p_occurrence.workspace_id, causal_root.execution_policy_revision_id);
+    select * into committed_budget from internal.factory_workflow_attempt_budget(causal_root_id, delegation_policy);
+    if committed_budget.attempts >= (delegation_policy->>'maxAttempts')::integer
+      or committed_budget.tokens >= least((root_requirements->>'maxTotalTokens')::bigint,
+        (delegation_policy->>'maxTotalTokens')::bigint)
+      or committed_budget.spend_usd >= least((root_requirements->>'maxCostUsd')::numeric,
+        (delegation_policy->>'maxCostUsd')::numeric) then
+      return 'budget_exhausted';
+    end if;
+  end if;
+  return null;
+end;
+$$;
