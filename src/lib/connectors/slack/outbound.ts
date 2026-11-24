@@ -60,6 +60,7 @@ const deliveryContext = z.object({
   review_revision: z.number().int().nonnegative().safe().nullable(),
   previous_correlation_id: z.uuid().nullable(),
   superseded: z.boolean(),
+  review_paused: z.boolean(),
 });
 type DeliveryContext = z.output<typeof deliveryContext>;
 
@@ -112,6 +113,7 @@ export function createSlackConnectorOutboundAdapter(admin: Client): ConnectorOut
     if (!content.success) return { kind: "invalid" } as const;
     const ctx = await readContext(admin, target, signal);
     if (!ctx || ctx.session_id !== content.data.sessionId) return { kind: "unavailable" } as const;
+    if (ctx.review_paused && sending) return { kind: "deferred" } as const;
     if (ctx.superseded && sending) return { kind: "invalid" } as const;
 
     const transport: SlackOutboundTransportInput = {
@@ -135,8 +137,13 @@ export function createSlackConnectorOutboundAdapter(admin: Client): ConnectorOut
         if (!current || current.encrypted_token !== ctx.encrypted_token) {
           return "unavailable";
         }
-        if (sending && (current.superseded || current.action_target_id !== ctx.action_target_id)) {
-          return "superseded";
+        if (
+          sending &&
+          (current.review_paused ||
+            current.superseded ||
+            current.action_target_id !== ctx.action_target_id)
+        ) {
+          return "deferred";
         }
         return "current";
       },
@@ -169,6 +176,7 @@ export function createSlackConnectorOutboundAdapter(admin: Client): ConnectorOut
         return { kind: "not_sent" };
       }
       if (attempt.kind === "invalid") return { kind: "rejected" };
+      if (attempt.kind === "deferred") return { kind: "not_sent" };
       if (attempt.kind === "unavailable") return { kind: "credential_unavailable" };
       const result = await sendSlackOutbound(attempt.transport, signal);
       if (
@@ -181,7 +189,8 @@ export function createSlackConnectorOutboundAdapter(admin: Client): ConnectorOut
     },
     async observe(target, signal) {
       const attempt = await prepare(target, signal, false);
-      if (attempt.kind === "invalid") return { kind: "inconclusive" };
+      if (attempt.kind === "invalid" || attempt.kind === "deferred")
+        return { kind: "inconclusive" };
       if (attempt.kind === "unavailable") return { kind: "credential_unavailable" };
       const result = await observeSlackOutbound(attempt.transport, signal);
       if (

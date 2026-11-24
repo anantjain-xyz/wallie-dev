@@ -185,6 +185,11 @@ receipts. When an artifact advances, Wallie closes a card it has confirmed in
 Slack. A stale card cannot change a later review, including when a previous
 write is confirmed after the review advances.
 
+Archiving a session pauses unsent review cards. Restoring the review before
+the original delivery deadline resumes the same notice. Wallie keeps any
+existing card and continues checking writes that may have reached Slack.
+Review actions need an active session.
+
 Slack send and edit work uses the shared outbox. Each attempt rechecks the
 current lease, installation generation, channel, bot, and linked thread.
 When a write result is unknown, the worker looks for the original marker and

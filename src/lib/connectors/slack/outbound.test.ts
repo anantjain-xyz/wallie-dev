@@ -42,7 +42,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function adapterFixture(onRead: (read: number) => "superseded" | "lost" | "busy" | undefined) {
+function adapterFixture(
+  onRead: (read: number) => "superseded" | "lost" | "busy" | "paused" | undefined,
+) {
   vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://wallie.example");
   vi.stubEnv("WALLIE_ENCRYPTION_KEY", "slack-outbound-local-test-key");
   let reads = 0;
@@ -74,7 +76,9 @@ function adapterFixture(onRead: (read: number) => "superseded" | "lost" | "busy"
       return Response.json({ code: "55P03", message: "Lock unavailable." }, { status: 409 });
     }
     if (status === "lost") return Response.json([]);
-    return Response.json([{ ...context, superseded: status === "superseded" }]);
+    return Response.json([
+      { ...context, superseded: status === "superseded", review_paused: status === "paused" },
+    ]);
   });
   const slackFetch = vi
     .fn<typeof fetch>()
@@ -104,6 +108,22 @@ function adapterFixture(onRead: (read: number) => "superseded" | "lost" | "busy"
 }
 
 describe("Slack review card revision fence", () => {
+  it.each([
+    [1, 0, "not_sent"],
+    [4, 1, "not_sent"],
+    [5, 2, "uncertain"],
+  ])(
+    "defers an archived review first seen on authority check %i",
+    async (readAt, slackCalls, kind) => {
+      const { adapter, slackFetch, registerCard } = adapterFixture((read) =>
+        read >= readAt ? "paused" : undefined,
+      );
+      await expect(adapter.send(target, new AbortController().signal)).resolves.toEqual({ kind });
+      expect(slackFetch).toHaveBeenCalledTimes(slackCalls);
+      expect(registerCard).not.toHaveBeenCalled();
+    },
+  );
+
   it("releases a definite no-write when the exact review changes during preflight", async () => {
     const { adapter, slackFetch } = adapterFixture((read) =>
       read >= 3 ? "superseded" : undefined,

@@ -17052,6 +17052,7 @@ export type Database = {
           encrypted_token: string
           original_write_authorized_at: string
           previous_correlation_id: string
+          review_paused: boolean
           review_revision: number
           session_id: string
           session_number: number

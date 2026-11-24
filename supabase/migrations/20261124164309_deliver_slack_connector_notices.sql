@@ -167,12 +167,124 @@ revoke all on function internal.queue_slack_connector_notice(public.sessions, te
   internal.capture_delivered_slack_review_card(), internal.capture_slack_connector_notice()
   from public, anon, authenticated, service_role;
 
+-- A reversible archive pauses unsent review cards. Keep their existing retry
+-- schedule and deadline, and keep reconciling any write that may have reached Slack.
+create or replace function public.claim_connector_outbound_delivery(p_provider public.connector_provider)
+returns table (
+  delivery_id uuid, lease_id uuid, lease_expires_at timestamptz, kind public.connector_outbound_status,
+  provider public.connector_provider, operation public.connector_outbound_operation,
+  external_resource_id text, external_thread_id text, edit_target text, content jsonb,
+  installation_id uuid, installation_generation bigint, mapping_revision bigint, credential_ref uuid,
+  credential_material_revision bigint
+) language plpgsql security definer set search_path = '' as $$
+declare
+  candidate internal.connector_outbound_deliveries;
+  expired_result public.connector_outbound_result;
+  authority record;
+  scan_at timestamptz := clock_timestamp();
+  now_at timestamptz;
+  cooldown timestamptz;
+begin
+  for candidate in
+    select pending.* from internal.connector_outbound_deliveries pending
+    where pending.provider = p_provider and pending.next_action_at <= scan_at
+      and case when p_provider = 'slack' and pending.status in ('queued', 'blocked') and not pending.uncertain
+        and pending.deadline_at > scan_at + interval '10 seconds'
+        and pending.content->>'kind' in ('review_ready', 'clarification')
+      then not exists (select 1 from public.sessions session
+        where (session.workspace_id, session.factory_id, session.id) =
+          (pending.workspace_id, pending.factory_id, pending.session_id) and session.archived_at is not null)
+      else true end
+    order by pending.next_action_at, pending.id limit 24 for update skip locked
+  loop
+    now_at := clock_timestamp();
+    if candidate.status in ('sending', 'observing') then
+      select case when candidate.status = 'observing' then 'inconclusive'
+        when attempt.authorized_at is null then 'not_sent' else 'uncertain' end
+      into strict expired_result from internal.connector_outbound_attempts attempt where attempt.lease_id = candidate.lease_id;
+      update internal.connector_outbound_attempts attempt set settled_at = now_at,
+        result = expired_result
+      where attempt.lease_id = candidate.lease_id;
+      update internal.connector_outbound_deliveries pending set
+        status = case when expired_result <> 'not_sent' then 'unknown'
+          when candidate.deadline_at > now_at then 'queued' else 'failed' end::public.connector_outbound_status,
+        uncertain = expired_result <> 'not_sent', lease_id = null, lease_expires_at = null,
+        next_action_at = case when candidate.deadline_at > now_at then now_at end, last_result = expired_result
+      where pending.id = candidate.id;
+      continue;
+    end if;
+    if candidate.deadline_at <= now_at + interval '10 seconds'
+      or (case when candidate.uncertain then candidate.observation_attempts >= 8 else candidate.send_attempts >= 6 end) then
+      update internal.connector_outbound_deliveries pending
+      set status = case when candidate.status = 'blocked' then 'blocked' when candidate.uncertain then 'unknown'
+          else 'failed' end::public.connector_outbound_status,
+        next_action_at = null
+      where pending.id = candidate.id;
+      continue;
+    end if;
+
+    begin
+      select * into authority from internal.lock_connector_outbound_authority(candidate);
+    exception when lock_not_available then
+      update internal.connector_outbound_deliveries pending
+      set next_action_at = least(candidate.deadline_at, now_at + interval '1 second') where pending.id = candidate.id;
+      continue;
+    end;
+    if not found or candidate.blocked_generation = authority.installation_generation then
+      update internal.connector_outbound_deliveries pending set status = 'blocked',
+        next_action_at = least(candidate.deadline_at, now_at + interval '30 seconds'), last_result = 'credential_unavailable'
+      where pending.id = candidate.id;
+      continue;
+    end if;
+    if exists (select 1 from internal.connector_outbound_deliveries active
+      where active.installation_id = candidate.installation_id and active.lease_expires_at > now_at) then
+      update internal.connector_outbound_deliveries pending set next_action_at = least(candidate.deadline_at, now_at + interval '1 second')
+      where pending.id = candidate.id;
+      continue;
+    end if;
+    select limit_record.retry_at into cooldown from internal.connector_outbound_cooldowns limit_record
+    where limit_record.installation_id = candidate.installation_id;
+    if cooldown > now_at then
+      update internal.connector_outbound_deliveries pending set next_action_at = least(candidate.deadline_at, cooldown)
+      where pending.id = candidate.id;
+      continue;
+    end if;
+
+    select source.external_thread_id into strict external_thread_id from public.session_conversation_sources source
+    where (source.session_id, source.id) = (candidate.session_id, candidate.source_id);
+    now_at := clock_timestamp();
+    delivery_id := candidate.id;
+    lease_id := gen_random_uuid();
+    lease_expires_at := least(now_at + interval '45 seconds', candidate.deadline_at);
+    kind := case when candidate.uncertain then 'observing' else 'sending' end;
+    provider := candidate.provider;
+    operation := candidate.operation;
+    external_resource_id := authority.external_resource_id;
+    edit_target := candidate.edit_target;
+    content := candidate.content;
+    installation_id := candidate.installation_id;
+    installation_generation := authority.installation_generation;
+    mapping_revision := authority.mapping_revision;
+    credential_ref := authority.credential_ref;
+    credential_material_revision := authority.credential_material_revision;
+    update internal.connector_outbound_deliveries pending set status = kind,
+      lease_id = claim_connector_outbound_delivery.lease_id, lease_expires_at = claim_connector_outbound_delivery.lease_expires_at,
+      next_action_at = claim_connector_outbound_delivery.lease_expires_at, blocked_generation = null
+    where pending.id = candidate.id;
+    insert into internal.connector_outbound_attempts (lease_id, delivery_id, operation, installation_generation, mapping_revision, started_at)
+    values (lease_id, delivery_id, kind, installation_generation, mapping_revision, now_at);
+    return next;
+    return;
+  end loop;
+end;
+$$;
+
 create function public.resolve_slack_connector_delivery(p_delivery_id uuid, p_lease_id uuid)
 returns table (
   session_id uuid, session_number integer, workspace_slug text, team_id text, app_id text, bot_user_id text,
   channel_id text, thread_ts text, encrypted_token text, original_write_authorized_at timestamptz,
   deadline_at timestamptz, action_target_id uuid, review_revision bigint, previous_correlation_id uuid,
-  superseded boolean
+  superseded boolean, review_paused boolean
 ) language plpgsql security definer set search_path = '' set lock_timeout = '100ms' as $$
 declare
   delivery internal.connector_outbound_deliveries;
@@ -190,6 +302,7 @@ declare
   previous_write timestamptz;
   notice_kind text;
   obsolete boolean := false;
+  paused boolean := false;
   can_reserve boolean := false;
 begin
   perform internal.assert_checkpoint_publication_service();
@@ -225,6 +338,7 @@ begin
 
   notice_kind := delivery.content->>'kind';
   if notice_kind in ('review_ready', 'clarification') then
+    paused := target.archived_at is not null;
     select notice.* into association from internal.slack_connector_notice_actions notice where notice.delivery_id = delivery.id;
     if found then
       select stored.* into strict action_target from internal.slack_review_targets stored where stored.id = association.target_id;
@@ -232,7 +346,7 @@ begin
     select question.id into pending_clarification_id from public.session_specification_clarifications question
     where (question.workspace_id, question.factory_id, question.session_id, question.artifact_id, question.status) =
       (target.workspace_id, target.factory_id, target.id, target.current_artifact_id, 'pending');
-    obsolete := target.archived_at is not null or target.phase_status <> 'awaiting_review'
+    obsolete := target.phase_status <> 'awaiting_review'
       or (target.current_artifact_id::text, target.current_stage_id::text, target.current_artifact_version::text) is distinct from
         (delivery.content#>>'{reviewTarget,artifactId}', delivery.content#>>'{reviewTarget,stageId}',
           delivery.content#>>'{reviewTarget,artifactVersion}')
@@ -243,7 +357,7 @@ begin
         (action_target.installation_generation, action_target.mapping_revision);
     end if;
 
-    if not obsolete and attempt.operation = 'sending' and not delivery.uncertain then
+    if not paused and not obsolete and attempt.operation = 'sending' and not delivery.uncertain then
       -- A safe new attempt must reserve its target even when the review revision stayed the same.
       -- Subsequent checks in that lease must keep the exact action already rendered for its write.
       can_reserve := action_target.id is null or (
@@ -284,7 +398,7 @@ begin
     installation.external_tenant_id, installation.external_installation_id, credential.bot_user_id,
     authority.external_resource_id, source.external_thread_id, credential.encrypted_token,
     previous_write, delivery.deadline_at, coalesce(new_action_target_id, action_target.id), current_revision,
-    delivery.edited_delivery_id, obsolete
+    delivery.edited_delivery_id, obsolete, paused
   from public.workspaces workspace where workspace.id = target.workspace_id;
 end;
 $$;

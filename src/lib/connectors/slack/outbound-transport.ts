@@ -46,7 +46,7 @@ const scopeSchema = z.object({
   originalWriteAuthorizedAt: instant,
   deadlineAt: instant,
 });
-type CheckAuthority = () => Promise<"current" | "unavailable" | "superseded">;
+type CheckAuthority = () => Promise<"current" | "unavailable" | "deferred">;
 export type SlackOutboundTransportInput = z.input<typeof scopeSchema> & {
   fetcher?: typeof fetch;
   checkAuthority?: CheckAuthority;
@@ -270,7 +270,7 @@ type SlackMethod = "auth.test" | "chat.postMessage" | "chat.update" | "conversat
 async function checkAuthority(scope: Scope, signal: AbortSignal) {
   try {
     const authority = await scope.checkAuthority?.();
-    if (signal.aborted || Date.now() >= scope.deadlineMs || authority === "superseded") {
+    if (signal.aborted || Date.now() >= scope.deadlineMs || authority === "deferred") {
       return "not_started";
     }
     return authority === "unavailable" ? "authority_unavailable" : "current";
