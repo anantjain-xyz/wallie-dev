@@ -15,6 +15,25 @@ mapping history in their own factory. The installation state lookup returns
 `connected`, `credential_unavailable`, or `disconnected` and omits credential
 material.
 
+## Connector settings
+
+Open **Settings → Integrations → Connector resources** and select a factory and
+provider. Workspace owners and admins can verify the existing GitHub App or
+Linear key, then map a repository, team, or project returned by that provider.
+A GitHub repository exposes separate intake labels for issues and pull requests.
+On a Linear mapping, **Linear routing and outcomes** lets admins choose which
+workflow state IDs trigger intake and whether to post progress or change an
+issue's status after final approval.
+
+Factory managers can inspect the selected resource's ingress and outbound
+history. The panel shows retained delivery state, a bounded reason, and retry
+timing. Linear discovery shows the next scan, a current provider cooldown, or a
+sanitized failure that still belongs to the current scan configuration.
+**Schedule retry** advances one eligible receipt within its original
+retry window. **Check provider status** schedules an observation for a delivery
+whose result remains unknown. Both actions preserve existing attempts, and the
+worker rechecks credential and mapping authority before processing the receipt.
+
 ## Rotation and disconnect
 
 - Rotation increments the installation generation and replaces the credential

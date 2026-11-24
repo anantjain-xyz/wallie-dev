@@ -1,5 +1,9 @@
 import { z } from "zod/v4";
 
+import {
+  configureLinearOutboundSchema,
+  linearOutboundConfigSchema,
+} from "@/lib/connectors/linear-policy-contracts";
 import { isFactoryExecutionAuthorityJsonRequest } from "@/lib/factory-execution-grants/contracts";
 import {
   factoryResponseHeaders as headers,
@@ -13,21 +17,6 @@ type RouteContext = {
 };
 
 const uuid = z.uuid().toLowerCase();
-const revision = z.number().int().nonnegative().safe();
-const statusMapping = z
-  .strictObject({
-    teamId: uuid,
-    fromStateId: uuid,
-    toStateId: uuid,
-  })
-  .refine((mapping) => mapping.fromStateId !== mapping.toStateId);
-const configuration = z.strictObject({
-  revision,
-  mappingRevision: revision.positive(),
-  commentsEnabled: z.boolean(),
-  statusMapping: statusMapping.nullable(),
-});
-const command = configuration.omit({ revision: true }).extend({ expectedRevision: revision });
 
 async function resolveScope(params: RouteContext["params"]) {
   const context = await resolveFactoryRouteContext(params);
@@ -67,7 +56,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
       { status: error ? factoryErrorStatus(error.code) : 404, headers },
     );
   }
-  const parsed = configuration.safeParse(data);
+  const parsed = linearOutboundConfigSchema.safeParse(data);
   if (!parsed.success) {
     return Response.json(
       { error: "Linear outbound configuration is unavailable." },
@@ -90,7 +79,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     );
   }
 
-  const parsed = command.safeParse(await request.json().catch(() => null));
+  const parsed = configureLinearOutboundSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return Response.json(
       { error: "Provide valid Linear outbound permissions and status mapping." },

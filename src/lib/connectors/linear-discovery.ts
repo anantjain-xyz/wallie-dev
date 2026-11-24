@@ -8,12 +8,14 @@ import { currentLinearStateSpan, linearInstant, linearStateSpan } from "@/lib/li
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database } from "@/lib/supabase/database.types";
 
+import type { LinearDiscoveryFailureReason } from "./diagnostics-contracts";
+
 type Admin = Pick<SupabaseClient<Database>, "rpc">;
 
 const pageSize = 20;
 const taskLimit = 4;
 const sweepTimeoutMs = 10_000;
-const cooldownWriteTimeoutMs = 4_000;
+const discoveryWriteTimeoutMs = 4_000;
 
 const uuid = z.uuid().toLowerCase();
 const revision = z.number().int().positive();
@@ -40,6 +42,12 @@ const discoveryTask = z.object({
   encryptedApiKey: z.string().min(1),
 });
 type DiscoveryTask = z.output<typeof discoveryTask>;
+
+const discoveryFailureFence = z.object({
+  credentialRef: uuid,
+  credentialMaterialRevision: revision,
+  claimExpiresAt: linearInstant,
+});
 
 const nodeId = z.object({ id: uuid });
 const issueIdentifier = z
@@ -132,6 +140,12 @@ class DiscoveryRateLimit extends Error {
   }
 }
 
+class DiscoveryFailure extends Error {
+  constructor(readonly reason: LinearDiscoveryFailureReason) {
+    super("Linear issue discovery could not finish.");
+  }
+}
+
 function truncateIssueText(value: string, limit: number) {
   const lastCodePoint = value.codePointAt(limit - 1) ?? 0;
   const end = lastCodePoint > 0xffff ? limit - 1 : limit;
@@ -162,27 +176,45 @@ async function fetchDiscoveryPage(task: DiscoveryTask, signal: AbortSignal) {
     signal,
   });
   if (response.status === 429) throw new DiscoveryRateLimit(response);
-  if (response.status >= 300 && response.status < 400) {
-    throw new Error("Linear issue discovery received a redirect.");
+  if (response.status >= 300 && response.status < 400)
+    throw new DiscoveryFailure("invalid_provider_response");
+  if (response.status === 401 || response.status === 403)
+    throw new DiscoveryFailure("provider_access_denied");
+  if (response.status >= 500) throw new DiscoveryFailure("provider_unavailable");
+
+  const body = await response.text();
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(body);
+  } catch {
+    throw new DiscoveryFailure("invalid_provider_response");
   }
-  const payload = responseSchema.parse(await response.json());
-  if (payload.errors?.some((error) => error.extensions?.code === "RATELIMITED")) {
+  const payload = responseSchema.safeParse(parsedBody);
+  if (!payload.success) throw new DiscoveryFailure("invalid_provider_response");
+  const errors = payload.data.errors;
+  if (errors?.some((error) => error.extensions?.code === "RATELIMITED"))
     throw new DiscoveryRateLimit(response);
-  }
-  if (!response.ok || payload.errors?.length) {
-    throw new Error("Linear issue discovery query failed.");
-  }
-  const { organization, viewer, issues } = pageSchema.parse(payload.data);
-  if (organization.id !== task.externalTenantId) {
-    throw new Error("Linear issue discovery returned a different tenant.");
-  }
-  if (task.serviceActorId !== null && viewer.id !== task.serviceActorId) {
-    throw new Error("Linear issue discovery returned a different service actor.");
-  }
+  if (
+    errors?.length &&
+    errors.every((error) => {
+      const code = error.extensions?.code;
+      return code === "AUTHENTICATION_ERROR" || code === "FORBIDDEN";
+    })
+  )
+    throw new DiscoveryFailure("provider_access_denied");
+  if (!response.ok || errors?.length) throw new DiscoveryFailure("invalid_provider_response");
+
+  const page = pageSchema.safeParse(payload.data.data);
+  if (!page.success) throw new DiscoveryFailure("invalid_provider_response");
+  const { organization, viewer, issues } = page.data;
+  if (
+    organization.id !== task.externalTenantId ||
+    (task.serviceActorId !== null && viewer.id !== task.serviceActorId)
+  )
+    throw new DiscoveryFailure("scope_mismatch");
   const next = issues.pageInfo.hasNextPage ? issues.pageInfo.endCursor : null;
-  if (issues.pageInfo.hasNextPage && (!next || next === task.cursorPosition)) {
-    throw new Error("Linear issue discovery cursor did not advance.");
-  }
+  if (issues.pageInfo.hasNextPage && (!next || next === task.cursorPosition))
+    throw new DiscoveryFailure("invalid_provider_response");
 
   return {
     next,
@@ -250,9 +282,10 @@ export async function reconcileLinearIssueDiscovery(
           p_issues: page.issues,
         })
         .abortSignal(signal);
-      if (commitError)
-        throw new Error("Could not commit Linear issue discovery.", { cause: commitError });
-      admitted += z.number().int().nonnegative().parse(count);
+      const committedCount = z.number().int().nonnegative().safeParse(count);
+      if (commitError || !committedCount.success)
+        throw new DiscoveryFailure("discovery_commit_failed");
+      admitted += committedCount.data;
     } catch (error) {
       if (error instanceof DiscoveryRateLimit) {
         rateLimited = true;
@@ -263,14 +296,47 @@ export async function reconcileLinearIssueDiscovery(
             p_installation_generation: task.installationGeneration,
             p_retry_after_seconds: error.retryAfterSeconds,
           })
-          .abortSignal(AbortSignal.timeout(cooldownWriteTimeoutMs));
+          .abortSignal(AbortSignal.timeout(discoveryWriteTimeoutMs));
         if (cooldownError) {
           throw new Error("Could not persist Linear issue discovery cooldown.", {
             cause: cooldownError,
           });
         }
       } else {
-        console.warn("[linear-discovery] page deferred", { resourceId: task.resourceId });
+        const reason = error instanceof DiscoveryFailure ? error.reason : "provider_unavailable";
+        const fence = discoveryFailureFence.safeParse(data);
+        let recordingFailed = false;
+        try {
+          if (fence.success && !signal.aborted) {
+            const { error: recordError } = await admin
+              .rpc("record_linear_issue_discovery_failure", {
+                p_workspace_id: task.workspaceId,
+                p_factory_id: task.factoryId,
+                p_resource_id: task.resourceId,
+                p_config_revision: task.configRevision,
+                p_installation_generation: task.installationGeneration,
+                p_mapping_revision: task.mappingRevision,
+                p_cursor_generation: task.cursorGeneration,
+                p_credential_ref: fence.data.credentialRef,
+                p_credential_material_revision: fence.data.credentialMaterialRevision,
+                p_claim_expires_at: fence.data.claimExpiresAt,
+                p_reason: reason,
+              })
+              .abortSignal(AbortSignal.any([signal, AbortSignal.timeout(discoveryWriteTimeoutMs)]));
+            recordingFailed = recordError !== null;
+          }
+        } catch {
+          recordingFailed = true;
+        }
+        console.warn(
+          recordingFailed
+            ? "[linear-discovery] failure record unavailable"
+            : "[linear-discovery] page deferred",
+          {
+            resourceId: task.resourceId,
+            reason,
+          },
+        );
       }
     }
   }
