@@ -1,5 +1,9 @@
 import { z } from "zod/v4";
 
+import {
+  configureLinearDiscoverySchema,
+  linearDiscoveryConfigSchema,
+} from "@/lib/connectors/linear-policy-contracts";
 import { isFactoryExecutionAuthorityJsonRequest } from "@/lib/factory-execution-grants/contracts";
 import {
   factoryResponseHeaders as headers,
@@ -12,14 +16,6 @@ type RouteContext = {
   params: Promise<{ workspaceId: string; factoryId: string; resourceId: string }>;
 };
 const uuid = z.uuid().toLowerCase();
-const command = z.strictObject({
-  expectedRevision: z.number().int().nonnegative(),
-  mappingRevision: z.number().int().positive(),
-  enabled: z.boolean(),
-  stateIds: z.array(uuid).min(1).max(20),
-  labelId: uuid.optional(),
-  serviceActorId: uuid.optional(),
-});
 
 export async function GET(_request: Request, { params }: RouteContext) {
   const context = await resolveFactoryRouteContext(params);
@@ -40,7 +36,11 @@ export async function GET(_request: Request, { params }: RouteContext) {
       { status: error ? factoryErrorStatus(error.code) : 404, headers },
     );
   }
-  return Response.json(data, { headers });
+  const parsed = linearDiscoveryConfigSchema.safeParse(data);
+  if (!parsed.success) {
+    return Response.json({ error: "Linear discovery is unavailable." }, { status: 500, headers });
+  }
+  return Response.json(parsed.data, { headers });
 }
 
 export async function PUT(request: Request, { params }: RouteContext) {
@@ -57,7 +57,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     );
   }
   const resourceId = uuid.safeParse((await params).resourceId);
-  const parsed = command.safeParse(await request.json().catch(() => null));
+  const parsed = configureLinearDiscoverySchema.safeParse(await request.json().catch(() => null));
   if (!resourceId.success || !parsed.success) {
     return Response.json(
       { error: "Invalid Linear discovery configuration." },

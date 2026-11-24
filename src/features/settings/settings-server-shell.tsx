@@ -34,6 +34,7 @@ import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts"
 type SettingsServerShellProps = {
   automationPreview?: ReactNode;
   category: SettingsCategory;
+  connectorSettings?: ReactNode;
   initialData: SettingsInitialData;
   personalConnections?: ReactNode;
   searchState: { codexStatus: string | null; githubStatus: string | null };
@@ -152,6 +153,7 @@ function IntegrationsCategory(props: SettingsServerShellProps) {
         githubStatus={props.searchState.githubStatus}
         workspaceId={props.initialData.workspace.id}
       />
+      {props.connectorSettings}
       {props.automationPreview}
       <Suspense
         fallback={<SettingsSectionFallback label="integration details" minHeight="min-h-96" />}

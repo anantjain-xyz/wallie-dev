@@ -25,6 +25,9 @@ const task = {
   mappingRevision: 3,
   cursorGeneration: 5,
   cursorPosition: "page-one",
+  credentialRef: id(18),
+  credentialMaterialRevision: 7,
+  claimExpiresAt: "2026-11-24T03:41:00.000Z",
 };
 
 const issue = {
@@ -65,7 +68,10 @@ const fixtureKey = "synthetic-linear-discovery-key";
 
 function setup(rpcResults: unknown[]) {
   const database = vi.fn<typeof globalThis.fetch>();
-  for (const result of rpcResults) database.mockResolvedValueOnce(Response.json(result));
+  for (const result of rpcResults) {
+    if (result instanceof Error) database.mockRejectedValueOnce(result);
+    else database.mockResolvedValueOnce(Response.json(result));
+  }
   const provider = vi.fn<typeof globalThis.fetch>();
   vi.stubGlobal("fetch", provider);
   const admin = createClient<Database>("https://database.example.test", "fixture-key", {
@@ -181,19 +187,34 @@ describe("Linear issue discovery sweep", () => {
     expect(await commit.json()).not.toHaveProperty("p_next_position");
   });
 
-  it("does not commit when Linear returns a different tenant", async () => {
-    const { admin, database, provider } = setup([claimedTask(), null]);
+  it("records a bounded reason on the exact claim when Linear returns a different tenant", async () => {
+    const { admin, database, provider } = setup([claimedTask(), true, null]);
     provider.mockResolvedValueOnce(
       Response.json({ data: { ...page, organization: { id: id(12) } } }),
     );
 
     expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
-    const rpcPaths = database.mock.calls.map((call) => new URL(new Request(...call).url).pathname);
-    expect(rpcPaths).toEqual(Array(2).fill("/rest/v1/rpc/claim_linear_issue_discovery"));
+    const failure = new Request(...database.mock.calls[1]!);
+    expect(new URL(failure.url).pathname).toBe(
+      "/rest/v1/rpc/record_linear_issue_discovery_failure",
+    );
+    expect(await failure.json()).toEqual({
+      p_workspace_id: task.workspaceId,
+      p_factory_id: task.factoryId,
+      p_resource_id: task.resourceId,
+      p_config_revision: task.configRevision,
+      p_installation_generation: task.installationGeneration,
+      p_mapping_revision: task.mappingRevision,
+      p_cursor_generation: task.cursorGeneration,
+      p_credential_ref: task.credentialRef,
+      p_credential_material_revision: task.credentialMaterialRevision,
+      p_claim_expires_at: task.claimExpiresAt,
+      p_reason: "scope_mismatch",
+    });
   });
 
-  it("does not commit when the next cursor repeats the current cursor", async () => {
-    const { admin, database, provider } = setup([claimedTask(), null]);
+  it("records an invalid continuation without committing a provider page", async () => {
+    const { admin, database, provider } = setup([claimedTask(), true, null]);
     provider.mockResolvedValueOnce(
       Response.json({
         data: {
@@ -207,13 +228,15 @@ describe("Linear issue discovery sweep", () => {
     );
 
     expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
-    expect(database.mock.calls.map((call) => new URL(new Request(...call).url).pathname)).toEqual(
-      Array(2).fill("/rest/v1/rpc/claim_linear_issue_discovery"),
+    const failure = new Request(...database.mock.calls[1]!);
+    expect(new URL(failure.url).pathname).toBe(
+      "/rest/v1/rpc/record_linear_issue_discovery_failure",
     );
+    expect(await failure.json()).toMatchObject({ p_reason: "invalid_provider_response" });
   });
 
-  it("leaves the page uncommitted when Linear responds with a redirect", async () => {
-    const { admin, database, provider } = setup([claimedTask(), null]);
+  it("never reads a redirected response body and emits a bounded failure reason", async () => {
+    const { admin, database, provider } = setup([claimedTask(), true, null]);
     const redirect = Response.redirect("https://different-host.example.test", 307);
     const readBody = vi.spyOn(redirect, "json");
     provider.mockResolvedValueOnce(redirect);
@@ -221,9 +244,59 @@ describe("Linear issue discovery sweep", () => {
     expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
     expect(readBody).not.toHaveBeenCalled();
     expect(provider).toHaveBeenCalledTimes(1);
-    expect(database.mock.calls.map((call) => new URL(new Request(...call).url).pathname)).toEqual(
-      Array(2).fill("/rest/v1/rpc/claim_linear_issue_discovery"),
+    expect(await new Request(...database.mock.calls[1]!).json()).toMatchObject({
+      p_reason: "invalid_provider_response",
+    });
+  });
+
+  it("records provider access denial without reading the provider error or exposing the key", async () => {
+    const { admin, database, provider } = setup([claimedTask(), true, null]);
+    const denied = new Response("Sensitive provider text", { status: 403 });
+    const readBody = vi.spyOn(denied, "json");
+    provider.mockResolvedValueOnce(denied);
+
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
+    expect(readBody).not.toHaveBeenCalled();
+    const failure = await new Request(...database.mock.calls[1]!).json();
+    expect(failure).toMatchObject({ p_reason: "provider_access_denied" });
+    expect(JSON.stringify(failure)).not.toContain(fixtureKey);
+    expect(JSON.stringify(failure)).not.toContain("Sensitive provider text");
+  });
+
+  it("classifies an invalid discovery commit count as a commit failure", async () => {
+    const { admin, database, provider } = setup([claimedTask(), null, true, null]);
+    provider.mockResolvedValueOnce(Response.json({ data: page }));
+
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
+    const failure = new Request(...database.mock.calls[2]!);
+    expect(new URL(failure.url).pathname).toBe(
+      "/rest/v1/rpc/record_linear_issue_discovery_failure",
     );
+    expect(await failure.json()).toMatchObject({ p_reason: "discovery_commit_failed" });
+  });
+
+  it("continues to another scoped scan if diagnostic recording fails", async () => {
+    const next = { ...claimedTask(), resourceId: id(19) };
+    const { admin, database, provider } = setup([
+      claimedTask(),
+      new Error("Recorder unavailable"),
+      next,
+      1,
+      null,
+    ]);
+    provider
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ data: page }));
+
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 1, rateLimited: false });
+    const failure = new Request(...database.mock.calls[1]!);
+    expect(new URL(failure.url).pathname).toBe(
+      "/rest/v1/rpc/record_linear_issue_discovery_failure",
+    );
+    expect(await failure.json()).toMatchObject({ p_reason: "provider_unavailable" });
+    expect(await new Request(...database.mock.calls[3]!).json()).toMatchObject({
+      p_resource_id: next.resourceId,
+    });
   });
 
   it("commits the page when title and description limits fall inside emoji", async () => {

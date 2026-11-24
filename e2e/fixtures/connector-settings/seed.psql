@@ -1,0 +1,170 @@
+-- Run on a disposable local stack with a fresh eight-digit op651_fixture_namespace.
+\o /dev/null
+begin;
+\ir ../../../supabase/tests/fixtures/factory_automation_dry_run.psql
+
+update public.workspaces set name = 'Connector Settings proof' where id = pg_temp.op651_id(11);
+insert into auth.users(id, email)
+values (pg_temp.op651_id(3), 'connector-manager-' || current_setting('wallie.op651_fixture_namespace') || '@example.test');
+insert into public.workspace_members(id, workspace_id, user_id, kind, role)
+values (pg_temp.op651_id(23), pg_temp.op651_id(11), pg_temp.op651_id(3), 'human', 'member');
+select public.grant_factory_membership(workspace_id, factory_id, pg_temp.op651_id(1), pg_temp.op651_id(21), 'manager')
+from op651_scope;
+select public.grant_factory_membership(workspace_id, factory_id, pg_temp.op651_id(1), pg_temp.op651_id(23), 'manager')
+from op651_scope;
+select public.grant_factory_membership(workspace_id, factory_id, pg_temp.op651_id(1), pg_temp.op651_id(22), 'member')
+from op651_scope;
+select public.create_factory(pg_temp.op651_id(11), pg_temp.op651_id(1), 'Audit-only factory', 'audit-only');
+
+update auth.users
+set instance_id = '00000000-0000-0000-0000-000000000000',
+  aud = 'authenticated', role = 'authenticated', email_confirmed_at = now(), created_at = now(), updated_at = now(),
+  encrypted_password = '', confirmation_token = '', recovery_token = '', email_change_token_new = '',
+  email_change_token_current = '', reauthentication_token = '', email_change = '',
+  raw_app_meta_data = '{"provider":"email","providers":["email"]}', raw_user_meta_data = '{}'
+where id in (pg_temp.op651_id(1), pg_temp.op651_id(2), pg_temp.op651_id(3));
+insert into auth.identities(id, provider_id, user_id, identity_data, provider, created_at, updated_at)
+select gen_random_uuid(), id::text, id, jsonb_build_object('sub', id::text, 'email', email, 'email_verified', true),
+  'email', now(), now()
+from auth.users where id in (pg_temp.op651_id(1), pg_temp.op651_id(2), pg_temp.op651_id(3));
+
+insert into public.workspace_onboarding(workspace_id, status, completed_at, selected_github_repository_id)
+values (pg_temp.op651_id(11), 'completed', now(), pg_temp.op651_id(34))
+on conflict (workspace_id) do update
+set status = excluded.status, completed_at = excluded.completed_at,
+  selected_github_repository_id = excluded.selected_github_repository_id;
+
+select public.set_git_continuity_release(true, revision, 'Isolated connector Settings browser proof')
+from public.get_git_continuity_release_state() where not enabled;
+
+create temp table github_settings_fixture as
+select scope.*, native.installation_id as app_installation_id, native.repo_id, installed.installation_id,
+  installed.generation, mapped.resource_id, granted.id as grant_id, granted.version as grant_version
+from op651_scope scope cross join op651_grant granted
+cross join lateral (
+  select github.installation_id, repository.repo_id
+  from public.github_installations github
+  join public.github_repositories repository on repository.github_installation_id = github.id
+  where github.id = pg_temp.op651_id(33) and repository.id = pg_temp.op651_id(34)
+) native
+cross join lateral public.configure_connector_installation(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  'github', current_setting('wallie.op651_fixture_namespace'), native.installation_id::text, 0) installed
+cross join lateral public.publish_connector_resource_mapping(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  installed.installation_id, installed.generation, 'repository', native.repo_id::text, 0, true) mapped;
+
+select public.link_connector_actor(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1), scope.installation_id,
+  scope.generation, 'github', current_setting('wallie.op651_fixture_namespace'),
+  (current_setting('wallie.op651_fixture_namespace')::bigint + 2)::text, 'human')
+from github_settings_fixture scope;
+select public.configure_github_connector_request(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1), scope.resource_id,
+  'issue', 0, true, current_setting('wallie.op651_fixture_namespace')::bigint + 3, scope.grant_id, scope.grant_version)
+from github_settings_fixture scope;
+select public.ingest_github_connector_work(scope.app_installation_id, scope.repo_id,
+  current_setting('wallie.op651_fixture_namespace')::bigint, pg_temp.op651_id(401), 'issue',
+  current_setting('wallie.op651_fixture_namespace')::bigint + 401, 101, 'labeled', 'open', clock_timestamp() + interval '1 second',
+  current_setting('wallie.op651_fixture_namespace')::bigint + 2, 'human',
+  current_setting('wallie.op651_fixture_namespace')::bigint + 3, null, null, null, 'GitHub connector proof issue',
+  'OP680_PRIVATE_GITHUB_INTAKE')
+from github_settings_fixture scope;
+select public.ingest_github_connector_work(scope.app_installation_id, scope.repo_id,
+  current_setting('wallie.op651_fixture_namespace')::bigint, pg_temp.op651_id(405), 'issue',
+  current_setting('wallie.op651_fixture_namespace')::bigint + 405, 102, 'labeled', 'open', clock_timestamp() + interval '1 second',
+  current_setting('wallie.op651_fixture_namespace')::bigint + 99, 'human',
+  current_setting('wallie.op651_fixture_namespace')::bigint + 3, null, null, null, 'Unlinked GitHub contributor',
+  'OP680_PRIVATE_GITHUB_INTAKE')
+from github_settings_fixture scope;
+select public.defer_github_connector_comment(scope.app_installation_id, scope.repo_id,
+  current_setting('wallie.op651_fixture_namespace')::bigint, pg_temp.op651_id(fixture.delivery_id), 'created', 'issue', 101,
+  current_setting('wallie.op651_fixture_namespace')::bigint + 401,
+  current_setting('wallie.op651_fixture_namespace')::bigint + fixture.delivery_id,
+  current_setting('wallie.op651_fixture_namespace')::bigint + 2, clock_timestamp() + interval '2 seconds',
+  'OP680_PRIVATE_GITHUB_COMMENT')
+from github_settings_fixture scope cross join (values (402), (403)) fixture(delivery_id);
+update internal.github_connector_comment_retries set next_attempt_at = clock_timestamp() + interval '1 hour'
+where delivery_id = pg_temp.op651_id(402);
+update internal.github_connector_comment_retries set status = 'failed', body = null, last_sqlstate = '55P03',
+  attempt_count = 8, next_attempt_at = null, settled_at = clock_timestamp()
+where delivery_id = pg_temp.op651_id(403);
+update internal.connector_outbound_deliveries set status = 'failed', next_action_at = null, last_result = 'rejected',
+  send_attempts = 1
+where resource_id = (select resource_id from github_settings_fixture) and logical_key = 'github:accepted';
+
+insert into public.workspace_secrets(id, workspace_id, key, encrypted_value)
+values (pg_temp.op651_id(51), pg_temp.op651_id(11), 'LINEAR_API_KEY', 'OP680_PRIVATE_LINEAR_CREDENTIAL');
+create temp table linear_settings_fixture as
+select scope.*, installed.installation_id, installed.generation, mapped.resource_id, mapped.revision as mapping_revision
+from op651_scope scope
+cross join lateral public.configure_connector_installation(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  'linear', pg_temp.op651_id(52)::text, pg_temp.op651_id(52)::text, 0, pg_temp.op651_id(51), 1) installed
+cross join lateral public.publish_connector_resource_mapping(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  installed.installation_id, installed.generation, 'team', pg_temp.op651_id(53)::text, 0, true) mapped;
+create temp table linear_empty_fixture as
+select mapping.resource_id from linear_settings_fixture scope
+cross join lateral public.publish_connector_resource_mapping(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  scope.installation_id, scope.generation, 'project', pg_temp.op651_id(57)::text, 0, true) mapping;
+select public.link_connector_actor(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1), scope.installation_id,
+  scope.generation, 'linear', pg_temp.op651_id(52)::text, pg_temp.op651_id(56)::text, 'human')
+from linear_settings_fixture scope;
+select public.configure_linear_issue_discovery(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  scope.resource_id, 0, scope.mapping_revision, array[pg_temp.op651_id(54)], true)
+from linear_settings_fixture scope;
+select public.configure_linear_connector_outbound(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  scope.resource_id, 0, scope.mapping_revision, true, null, null, null)
+from linear_settings_fixture scope;
+select public.commit_linear_issue_discovery_page(scope.workspace_id, scope.factory_id, scope.resource_id, 1,
+  scope.generation, scope.mapping_revision, 0, pg_temp.op651_id(52), pg_temp.op651_id(56),
+  jsonb_build_array(jsonb_build_object('id', pg_temp.op651_id(404), 'identifier', 'PROOF-404',
+    'title', 'Linear connector proof issue', 'description', 'OP680_PRIVATE_LINEAR_INTAKE',
+    'url', 'https://linear.app/fixture/issue/PROOF-404/proof-issue', 'team_id', pg_temp.op651_id(53),
+    'state_id', pg_temp.op651_id(54), 'creator_id', pg_temp.op651_id(56),
+    'label_ids', '[]'::jsonb, 'previous_identifiers', '[]'::jsonb)), null)
+from linear_settings_fixture scope;
+update internal.linear_issue_discovery_config set next_scan_at = clock_timestamp() + interval '1 hour'
+where resource_id = (select resource_id from linear_settings_fixture);
+create temp table linear_settings_failure as
+select public.record_linear_issue_discovery_failure(scope.workspace_id, scope.factory_id, scope.resource_id,
+  config.revision, subscription.installation_generation, subscription.mapping_revision, subscription.credential_ref,
+  subscription.credential_material_revision, subscription.cursor_generation, config.next_scan_at, 'provider_unavailable') as recorded
+from linear_settings_fixture scope
+join internal.linear_issue_discovery_config config on config.resource_id = scope.resource_id
+cross join lateral public.read_connector_subscription(scope.workspace_id, scope.factory_id, scope.resource_id, 'linear-discovery') subscription;
+update internal.connector_outbound_deliveries set status = 'unknown', uncertain = true,
+  send_attempts = 1, last_result = 'uncertain', next_action_at = clock_timestamp() + interval '1 hour'
+where resource_id = (select resource_id from linear_settings_fixture) and operation = 'reply';
+
+create temp table connector_settings_descriptor as
+select jsonb_build_object(
+  'workspaceId', scope.workspace_id, 'workspaceSlug', workspace.slug, 'factoryId', scope.factory_id,
+  'siblingFactoryId', sibling.id, 'githubResourceId', scope.resource_id,
+  'githubProviderRepositoryId', scope.repo_id::text,
+  'githubRetryId', pg_temp.op651_id(402), 'githubFailedId', pg_temp.op651_id(403),
+  'linearResourceId', linear.resource_id, 'linearEmptyResourceId', empty.resource_id,
+  'linearStateId', pg_temp.op651_id(54),
+  'linearRetryId', outbound.id, 'ownerUserId', pg_temp.op651_id(1),
+  'ownerEmail', owner_user.email, 'managerEmail', manager_user.email,
+  'viewerEmail', viewer_user.email, 'managerMemberId', pg_temp.op651_id(23)
+) descriptor
+from github_settings_fixture scope
+join public.workspaces workspace on workspace.id = scope.workspace_id
+join public.factories sibling on sibling.workspace_id = scope.workspace_id and sibling.slug = 'audit-only'
+cross join linear_settings_fixture linear cross join linear_empty_fixture empty
+join internal.connector_outbound_deliveries outbound on outbound.resource_id = linear.resource_id and outbound.status = 'unknown'
+join auth.users owner_user on owner_user.id = pg_temp.op651_id(1)
+join auth.users manager_user on manager_user.id = pg_temp.op651_id(3)
+join auth.users viewer_user on viewer_user.id = pg_temp.op651_id(2);
+
+do $$
+begin
+  if (select count(*) from connector_settings_descriptor) <> 1
+    or (select recorded from linear_settings_failure) is distinct from true
+    or (select count(*) from internal.github_connector_comment_retries
+      where delivery_id in (pg_temp.op651_id(402), pg_temp.op651_id(403))) <> 2
+    or not exists (select 1 from internal.github_connector_work_deliveries
+      where delivery_id = pg_temp.op651_id(405) and disposition = 'denied') then
+    raise exception 'The connector Settings proof did not create the intended scoped receipts.';
+  end if;
+end;
+$$;
+\o
+select descriptor::text from connector_settings_descriptor;
+commit;

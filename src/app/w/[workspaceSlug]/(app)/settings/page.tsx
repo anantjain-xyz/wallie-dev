@@ -2,10 +2,14 @@ import { Suspense } from "react";
 import { z } from "zod";
 
 import { AutomationPreviewLink } from "@/features/settings/automation-preview-link";
+import { ConnectorSettingsSection } from "@/features/settings/connector-settings/section";
 import { PersonalOAuthConnections } from "@/features/settings/personal-oauth-connections";
 import { loadSettingsPageData } from "@/features/settings/data";
 import { parseSettingsCategory } from "@/features/settings/settings-categories";
-import { SettingsServerShell } from "@/features/settings/settings-server-shell";
+import {
+  SettingsSectionFallback,
+  SettingsServerShell,
+} from "@/features/settings/settings-server-shell";
 
 type SettingsPageProps = {
   params: Promise<{
@@ -15,6 +19,7 @@ type SettingsPageProps = {
     github?: string;
     codex_connect?: string;
     category?: string | string[];
+    factory?: string | string[];
     afterOAuthGrant?: string | string[];
   }>;
 };
@@ -37,6 +42,17 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
         ) : undefined
       }
       category={category}
+      connectorSettings={
+        category === "integrations" ? (
+          <Suspense fallback={<SettingsSectionFallback label="connector resources" />}>
+            <ConnectorSettingsSection
+              requestedFactory={resolvedSearchParams.factory}
+              workspaceId={initialData.workspace.id}
+              workspaceSlug={workspaceSlug}
+            />
+          </Suspense>
+        ) : undefined
+      }
       initialData={initialData}
       personalConnections={
         category === "workspace" ? (

@@ -23,6 +23,7 @@ type SettingsHashRoute = {
 const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   "cloud-execution": { anchor: "verify", category: "integrations" },
   "connected-clients": { anchor: "connected-clients", category: "workspace" },
+  "connector-resources": { anchor: "connector-resources", category: "integrations" },
   "coding-agent": { anchor: "runtime", category: "integrations" },
   "danger-zone": { anchor: "danger-zone", category: "workspace" },
   github: { anchor: "github", category: "integrations" },
@@ -49,6 +50,7 @@ const SETTINGS_CATEGORY_SUBMENUS: Record<
 > = {
   integrations: [
     { id: "github", label: "GitHub" },
+    { id: "connector-resources", label: "Connector resources" },
     { id: "repository", label: "Repositories" },
     { id: "pipeline", label: "Pipeline" },
     { id: "linear", label: "Linear" },

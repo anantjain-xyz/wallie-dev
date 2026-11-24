@@ -14338,6 +14338,28 @@ export type Database = {
           key: string
         }[]
       }
+      list_factory_connector_deliveries: {
+        Args: {
+          p_actor_user_id: string
+          p_before_at?: string
+          p_before_id?: string
+          p_before_kind?: string
+          p_factory_id: string
+          p_lane?: string
+          p_limit?: number
+          p_resource_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      list_factory_connector_resources: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_context_repository_options: {
         Args: {
           target_after_grant_id?: string
@@ -16242,6 +16264,22 @@ export type Database = {
         }
         Returns: boolean
       }
+      record_linear_issue_discovery_failure: {
+        Args: {
+          p_claim_expires_at: string
+          p_config_revision: number
+          p_credential_material_revision: number
+          p_credential_ref: string
+          p_cursor_generation: number
+          p_factory_id: string
+          p_installation_generation: number
+          p_mapping_revision: number
+          p_reason: string
+          p_resource_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       record_pr_verification_observation: {
         Args: {
           p_artifact_review_revision: number
@@ -16857,6 +16895,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      retry_factory_connector_delivery: {
+        Args: {
+          p_actor_user_id: string
+          p_delivery_id: string
+          p_factory_id: string
+          p_kind: string
+          p_resource_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       retry_factory_event_delivery: {
         Args: {
