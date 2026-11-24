@@ -87,6 +87,116 @@ describe("GitHub webhook boundary", () => {
     },
   };
 
+  const connectorIssue = {
+    action: "labeled",
+    installation: { id: 123 },
+    repository: { id: 456, owner: { id: 789 } },
+    sender: { id: 234, type: "User" },
+    label: { id: 345, name: "not-an-identity" },
+    issue: {
+      id: 567,
+      number: 43,
+      state: "open",
+      updated_at: "2026-10-11T00:00:00Z",
+      title: "Private GitHub issue",
+      body: "b".repeat(8100),
+    },
+  };
+
+  it("admits only the verified GitHub issue envelope and stable label and actor IDs", async () => {
+    const secret = "synthetic-github-signing-key";
+    mocked.verify.mockImplementation((body: string, signature: string) =>
+      verify(secret, body, signature),
+    );
+    const bytes = JSON.stringify(connectorIssue);
+    const signature = "sha256=" + createHmac("sha256", secret).update(bytes).digest("hex");
+
+    expect((await POST(request(bytes, "issues", deliveryId, signature))).status).toBe(200);
+    expect(mocked.automationRpc).toHaveBeenCalledExactlyOnceWith("ingest_github_connector_work", {
+      p_installation_id: 123,
+      p_github_repository_id: 456,
+      p_owner_id: 789,
+      p_delivery_id: deliveryId,
+      p_action: "labeled",
+      p_sender_id: 234,
+      p_sender_kind: "human",
+      p_label_id: 345,
+      p_source_title: "Private GitHub issue",
+      p_source_body: "b".repeat(8000),
+      p_source_kind: "issue",
+      p_source_id: 567,
+      p_source_number: 43,
+      p_state: "open",
+      p_provider_updated_at: "2026-10-11T00:00:00Z",
+    });
+    expect(mocked.verification).not.toHaveBeenCalled();
+
+    mocked.automationRpc.mockClear();
+    expect(
+      (
+        await POST(
+          request(
+            { ...connectorIssue, sender: { id: 111, type: "User" } },
+            "issues",
+            deliveryId,
+            signature,
+          ),
+        )
+      ).status,
+    ).toBe(401);
+    expect(mocked.automationRpc).not.toHaveBeenCalled();
+  });
+
+  it("does not lose the existing refresh for a PR with a scoped connector request", async () => {
+    const event = {
+      ...automationPayload,
+      action: "labeled",
+      repository: connectorIssue.repository,
+      sender: { id: 234, type: "Bot" },
+      label: connectorIssue.label,
+    };
+    expect((await POST(request(event))).status).toBe(200);
+    expect(mocked.verification).toHaveBeenCalledWith(
+      { installationId: 123, repositoryId: 456, prNumbers: [42] },
+      deliveryId,
+    );
+    expect(mocked.pullRequest).toHaveBeenCalledOnce();
+    expect(mocked.automationRpc).toHaveBeenCalledExactlyOnceWith(
+      "ingest_github_connector_work",
+      expect.objectContaining({
+        p_source_kind: "pull_request",
+        p_source_id: 157,
+        p_sender_kind: "service",
+        p_head_ref: "wallie/build-1",
+        p_head_sha: "a".repeat(40),
+        p_base_ref: "main",
+      }),
+    );
+
+    mocked.automationRpc.mockClear();
+    const fork = {
+      ...event,
+      pull_request: {
+        ...event.pull_request,
+        head: { ...event.pull_request.head, repo: { id: 999 } },
+      },
+    };
+    expect((await POST(request(fork))).status).toBe(200);
+    expect(mocked.automationRpc.mock.calls[0]?.[1]).not.toHaveProperty("p_head_sha");
+  });
+
+  it("ignores malformed connector data for PR refresh and rejects malformed issue requests", async () => {
+    expect((await POST(request({ ...connectorIssue, label: null }, "issues"))).status).toBe(400);
+    expect((await POST(request(connectorIssue, "issues", null))).status).toBe(400);
+    expect(mocked.automationRpc).not.toHaveBeenCalled();
+    expect((await POST(request(automationPayload))).status).toBe(200);
+    expect(mocked.verification).toHaveBeenCalledOnce();
+    expect(mocked.automationRpc).toHaveBeenCalledExactlyOnceWith(
+      "ingest_factory_github_automation_pr",
+      expect.anything(),
+    );
+  });
+
   it("records only a scoped automation event from correctly signed GitHub bytes", async () => {
     const secret = "synthetic-github-signing-key";
     mocked.verify.mockImplementation((body: string, signature: string) =>

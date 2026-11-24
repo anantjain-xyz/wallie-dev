@@ -154,9 +154,10 @@ This mirrors the [README → Create a GitHub App](../../README.md#5-create-a-git
 - **Repository permissions:**
   - **Contents** → **Read and write** — repo onboarding creates branches, trees, and commits (`src/lib/repo-onboarding/server.ts`).
   - **Pull requests** → **Read and write** — onboarding opens a setup PR and session completion opens PRs (`src/lib/pipeline/pull-request.ts`); webhook ingestion also reads PR state.
+  - **Issues** → **Read-only** (receive issue requests for configured labels).
   - **Metadata** → **Read-only** (mandatory, set automatically).
 - **Organization permissions:** **Members** → **Read-only**, so Wallie can verify active organization ownership. Existing installations must approve the added permission.
-- **Subscribe to events:** `Pull request`
+- **Subscribe to events:** `Issues`, `Pull request`
 - **Where can this app be installed?** "Any account" if you want others to install it; "Only this account" for a private deployment.
 
 After creating it: copy the **App ID** → `GITHUB_APP_ID` and **Client ID** → `GITHUB_APP_CLIENT_ID`, generate a client secret → `GITHUB_APP_CLIENT_SECRET`, generate a private key and put its PEM contents in `GITHUB_APP_PRIVATE_KEY` (PKCS#1 and PKCS#8 are both accepted; escape newlines as `\n` if you inline it), and redeploy both services so the new env vars take effect.
