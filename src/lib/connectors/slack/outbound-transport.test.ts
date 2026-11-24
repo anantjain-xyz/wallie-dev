@@ -312,17 +312,26 @@ it("bounds repeated cursors and a continuous stream of incomplete recovery pages
   }
 });
 
-it("edits an exact scoped extant predecessor and accepts Slack's compact edit acknowledgement", async () => {
+it.each([
+  ["a single reply", [reply(replyTs, previousCorrelationId)]],
+  ["the root plus one reply", [root, reply(replyTs, previousCorrelationId)]],
+])("edits the exact predecessor when Slack returns %s", async (_, messages) => {
   const fetcher = vi
     .fn<typeof fetch>()
     .mockResolvedValueOnce(authorizationRead())
     .mockResolvedValueOnce(page([root]))
-    .mockResolvedValueOnce(page([reply(replyTs, previousCorrelationId)]))
+    .mockResolvedValueOnce(page(messages))
     .mockResolvedValueOnce(senderResponse(replyTs, { user: botUserId }));
   await expect(
     sendSlackOutbound(input(fetcher, { replyTs, previousCorrelationId }), authorization()),
   ).resolves.toEqual({ kind: "sent", providerReplyId: replyTs });
-  expect(new URL(request(fetcher, 2).url).searchParams.get("oldest")).toBe(replyTs);
+  const query = new URL(request(fetcher, 2).url).searchParams;
+  expect([
+    query.get("oldest"),
+    query.get("latest"),
+    query.get("inclusive"),
+    query.get("limit"),
+  ]).toEqual([replyTs, replyTs, "true", "1"]);
   expect(request(fetcher, 3).url).toBe("https://slack.com/api/chat.update");
   expect(await request(fetcher, 3).json()).toMatchObject({
     channel: channelId,
@@ -333,6 +342,11 @@ it("edits an exact scoped extant predecessor and accepts Slack's compact edit ac
 
 it.each([
   () => page([]),
+  () => page([root]),
+  () => page([{ ...root, hidden: true }, reply(replyTs, previousCorrelationId)]),
+  () => page([root, reply(replyTs, previousCorrelationId), reply(replyTs, previousCorrelationId)]),
+  () => page([reply(slackTs(-900)), reply(replyTs, previousCorrelationId)]),
+  () => page([root, reply(replyTs, previousCorrelationId, { user: "U676700002" })]),
   () => page([reply(replyTs, anotherCorrelationId)]),
   () => page([reply(replyTs, previousCorrelationId, { thread_ts: slackTs(-500) })]),
   () => page([reply(replyTs, previousCorrelationId, { edited: { ts: slackTs(1) } })]),
@@ -348,12 +362,28 @@ it.each([
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
+it("waits for complete proof when a root-prefixed response still has a cursor", async () => {
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(authorizationRead())
+    .mockResolvedValueOnce(page([root]))
+    .mockResolvedValueOnce(
+      page([root, reply(replyTs, previousCorrelationId)], {
+        response_metadata: { next_cursor: "more-replies" },
+      }),
+    );
+  await expect(
+    sendSlackOutbound(input(fetcher, { replyTs, previousCorrelationId }), authorization()),
+  ).resolves.toEqual({ kind: "not_sent" });
+  expect(fetcher).toHaveBeenCalledTimes(3);
+});
+
 it("finds an unknown edit on its exact reply ts even when the reply predates its write window", async () => {
   const fetcher = vi
     .fn<typeof fetch>()
     .mockResolvedValueOnce(authorizationRead())
     .mockResolvedValueOnce(page([root]))
-    .mockResolvedValueOnce(page([reply(replyTs)]));
+    .mockResolvedValueOnce(page([root, reply(replyTs)]));
   await expect(
     observeSlackOutbound(input(fetcher, { replyTs, previousCorrelationId }), authorization()),
   ).resolves.toEqual({ kind: "found", providerReplyId: replyTs });

@@ -404,6 +404,14 @@ function complete(page: ReplyPage): boolean {
   return !page.has_more && !page.response_metadata?.next_cursor;
 }
 
+function isVisibleRoot(scope: Scope, message: ProviderMessage): boolean {
+  return (
+    visibleHere(scope, message) &&
+    message.ts === scope.threadTs &&
+    (message.thread_ts === undefined || message.thread_ts === scope.threadTs)
+  );
+}
+
 async function readRoot(scope: Scope, signal: AbortSignal): Promise<Read<ProviderMessage>> {
   const page = await readReplies(scope, signal, {
     oldest: scope.threadTs,
@@ -416,9 +424,7 @@ async function readRoot(scope: Scope, signal: AbortSignal): Promise<Read<Provide
     root &&
     page.value.messages.length === 1 &&
     complete(page.value) &&
-    visibleHere(scope, root) &&
-    root.ts === scope.threadTs &&
-    (root.thread_ts === undefined || root.thread_ts === root.ts)
+    isVisibleRoot(scope, root)
   ) {
     return { kind: "read", value: root };
   }
@@ -433,10 +439,14 @@ async function readExactReply(scope: VerifiedScope, signal: AbortSignal, replyTs
   });
   if (page.kind !== "read") return page;
   if (!complete(page.value)) return { kind: "ambiguous" } as const;
-  const [reply] = page.value.messages;
+  // Slack can prepend the root without counting it toward the reply limit.
+  const { messages } = page.value;
+  const replies = messages.filter((message) => !isVisibleRoot(scope, message));
+  const [reply] = replies;
   if (
     !reply ||
-    page.value.messages.length !== 1 ||
+    messages.length > 2 ||
+    replies.length !== 1 ||
     reply.ts !== replyTs ||
     !inThread(scope, reply) ||
     !isVerifiedBot(scope, reply)
