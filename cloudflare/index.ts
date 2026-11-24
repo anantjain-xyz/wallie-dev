@@ -68,6 +68,7 @@ import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { drainGitHubConnectorCommentRetries } from "@/features/github/connector-conversation";
 import { createGitHubConnectorOutboundAdapter } from "@/features/github/connector-outbound";
 import { drainConnectorOutboundDeliveries } from "@/lib/connectors/outbound";
+import { drainSlackConnectorEvents } from "@/lib/connectors/slack/intake";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 
@@ -387,6 +388,15 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ],
       ["factory monitoring incidents", () => drainFactoryMonitoringIncidents(admin)],
       ["GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin)],
+      [
+        "Slack connector inbox",
+        async () => {
+          // Drain bursts through bounded batches so later maintenance steps still run.
+          for (let batch = 0; batch < 8; batch++) {
+            if (!(await drainSlackConnectorEvents(admin))) break;
+          }
+        },
+      ],
       [
         "GitHub connector outbound",
         () => drainConnectorOutboundDeliveries(admin, createGitHubConnectorOutboundAdapter(admin)),

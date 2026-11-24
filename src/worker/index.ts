@@ -49,6 +49,7 @@ import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
 import { drainGitHubConnectorCommentRetries } from "@/features/github/connector-conversation";
 import { createGitHubConnectorOutboundAdapter } from "@/features/github/connector-outbound";
 import { drainConnectorOutboundDeliveries } from "@/lib/connectors/outbound";
+import { drainSlackConnectorEvents } from "@/lib/connectors/slack/intake";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
 import { parseWorkerConfig } from "./config";
@@ -60,6 +61,7 @@ import { reconcileLinearLinkedOutcomes } from "@/lib/connectors/linear-outcomes"
 import { reconcileLinearState } from "./reconciler";
 import { reapOrphanSandboxes } from "./sandbox-reaper";
 import { createScheduler } from "./scheduler";
+import { createSlackInboxMaintenance } from "./slack-inbox";
 import { createTimerTaskTracker, finishWorkerShutdown } from "./shutdown";
 import { sweepStalledRuns } from "./stall-detector";
 
@@ -190,6 +192,11 @@ async function main() {
     );
 
     // --- Reconciliation interval ---
+    const drainSlackInbox = createSlackInboxMaintenance({
+      drainBatch: () => drainSlackConnectorEvents(admin, { isShuttingDown: () => draining }),
+      isShuttingDown: () => draining,
+      timerTasks,
+    });
     maintenanceTimers.push(
       setInterval(() => {
         timerTasks.run("accepted triage route", () => drainAcceptedTriageRoute(admin));
@@ -204,6 +211,7 @@ async function main() {
         );
         timerTasks.run("expired workflow review", () => expireExactFactoryWorkflowReview(admin));
         timerTasks.run("GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin));
+        drainSlackInbox();
         timerTasks.run("GitHub connector outbound", async () => {
           await drainConnectorOutboundDeliveries(
             admin,

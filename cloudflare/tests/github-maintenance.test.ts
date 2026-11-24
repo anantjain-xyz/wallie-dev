@@ -85,6 +85,8 @@ beforeEach(() => vi.resetAllMocks());
 
 it.each([
   { scenario: "all tasks succeed", automationScheduleDue: true },
+  { scenario: "the Slack inbox needs another batch", slackCleanupClaims: 4 },
+  { scenario: "the Slack inbox reaches the maintenance batch limit", slackCleanupClaims: 32 },
   { scenario: "the dispatcher cannot load pending jobs", dispatchFailure: true },
   { scenario: "accepted triage routing fails", triageFailure: true },
   { scenario: "exact workflow review fails", exactReviewFailure: true },
@@ -136,6 +138,7 @@ it.each([
     monitoringFailure,
     linearDiscoveryFailure,
     linearOutcomesFailure,
+    slackCleanupClaims = 0,
   }) => {
     const bindings = env as unknown as Env;
     const query = {
@@ -189,6 +192,7 @@ it.each([
           ? { data: null, error: { message: "Delivery dispatch expiry unavailable" } }
           : { data: 2, error: null },
       );
+    let slackClaims = 0;
     const rpc = vi.fn((name: string) => {
       if (name === "expire_factory_delivery_dispatches") return { abortSignal: expiry };
       if (
@@ -279,6 +283,10 @@ it.each([
       }
       if (name === "drain_github_connector_comment_retries") {
         return { abortSignal: () => Promise.resolve({ data: 0, error: null }) };
+      }
+      if (name === "claim_slack_connector_event") {
+        const data = slackClaims++ < slackCleanupClaims ? [{ kind: "cleanup" }] : [];
+        return { abortSignal: () => Promise.resolve({ data, error: null }) };
       }
       if (name === "claim_connector_outbound_delivery") {
         return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
@@ -385,6 +393,7 @@ it.each([
         await bindings.MAINTENANCE.create({ id, params: { tick: Date.now() } });
       }
       await inspection.waitForStatus("complete");
+      expect(slackClaims).toBe(Math.min(slackCleanupClaims + 1, 32));
       expect(drainAcceptedTriageRoute).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainAuthoredFactoryWorkflowBatch).toHaveBeenCalledExactlyOnceWith(admin);
       expect(reconcileGitHubPrVerification).toHaveBeenCalledExactlyOnceWith(admin);

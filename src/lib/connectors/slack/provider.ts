@@ -543,7 +543,7 @@ export async function readSlackChannelCatalog(
 }
 
 export async function verifySlackChannel(
-  input: BotScope & { channelId: string },
+  input: BotScope & { channelId: string; beforeMembershipLookup?: () => Promise<void> },
   fetcher: typeof fetch = fetch,
 ) {
   const id = parse(channelId, input.channelId, "invalid_request");
@@ -569,6 +569,7 @@ export async function verifySlackChannel(
   const seenCursors = new Set<string>();
   let member = channel.is_member === true;
   for (let page = 0; !member && page < membershipPageLimit; page++) {
+    await input.beforeMembershipLookup?.();
     const result = await client.api("users.conversations", botChannelsResponse, {
       token: input.botAccessToken,
       query,
