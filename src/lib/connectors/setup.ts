@@ -18,6 +18,12 @@ import {
   verifyGitHubCatalogRepository,
   verifyGitHubCatalogTenant,
 } from "@/lib/connectors/setup-providers";
+import { SlackProviderError } from "@/lib/connectors/slack/provider";
+import {
+  readMappedSlackChannelCatalog,
+  SlackSetupFailure,
+  verifyMappedSlackChannel,
+} from "@/lib/connectors/slack/setup";
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import {
   factoryResponseHeaders as headers,
@@ -68,9 +74,15 @@ export async function resolveConnectorSetupContext(params: Promise<unknown>) {
 }
 
 export function connectorSetupErrorResponse(error: unknown) {
-  if (error instanceof ConnectorSetupFailure || error instanceof ConnectorProviderUnavailable) {
-    const status = error instanceof ConnectorSetupFailure ? error.status : 502;
-    return Response.json({ error: error.message }, { status, headers });
+  if (
+    error instanceof ConnectorSetupFailure ||
+    error instanceof SlackSetupFailure ||
+    error instanceof SlackProviderError
+  ) {
+    return Response.json({ error: error.message }, { status: error.status, headers });
+  }
+  if (error instanceof ConnectorProviderUnavailable) {
+    return Response.json({ error: error.message }, { status: 502, headers });
   }
   const result = z.object({ code: z.string() }).safeParse(error);
   const status = factoryErrorStatus(result.success ? result.data.code : undefined);
@@ -196,6 +208,10 @@ export async function readConnectorCatalog(
   query: z.output<typeof connectorCatalogQuerySchema>,
 ): Promise<ConnectorCatalogResponse> {
   const signal = AbortSignal.timeout(connectorProviderTimeoutMs);
+  if (query.provider === "slack") {
+    const catalog = await readMappedSlackChannelCatalog(admin, scope, query);
+    return { provider: "slack", kind: "channel", ...catalog };
+  }
   if (query.provider === "linear") {
     const secret = await linearCredential(admin, scope);
     const catalog = await linearCatalogProvider(secret.encrypted_value, signal).catalog(
@@ -240,7 +256,7 @@ async function publishMapping(
     installationId: string;
     expectedGeneration: number;
     expectedMappingRevision: number;
-    kind: "repository" | "team" | "project";
+    kind: "repository" | "team" | "project" | "channel";
     externalId: string;
     enabled: boolean;
   },
@@ -410,7 +426,16 @@ export async function applyConnectorSetup(
     await verifyGitHubCatalogRepository(tenant, repository.repo_id, signal);
     return publishMapping(admin, scope, { ...mapping, externalId: String(repository.repo_id) });
   }
-  if (kind !== "repository" && installation.provider === "linear") {
+  if (kind === "channel" && installation.provider === "slack") {
+    const channel = await verifyMappedSlackChannel(admin, scope, {
+      installationId: command.installationId,
+      generation: command.expectedGeneration,
+      teamId: installation.external_tenant_id,
+      channelId: id,
+    });
+    return publishMapping(admin, scope, { ...mapping, externalId: channel.id });
+  }
+  if ((kind === "team" || kind === "project") && installation.provider === "linear") {
     const secret = await linearCredential(admin, scope);
     const verified = await linearCatalogProvider(secret.encrypted_value, signal).resource(kind, id);
     if (verified.tenantId !== installation.external_tenant_id || verified.resourceId !== id) {

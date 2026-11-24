@@ -10,7 +10,7 @@ type Client = Pick<SupabaseClient<Database>, "rpc">;
 const uuid = z.uuid().toLowerCase();
 const revision = z.number().int().positive();
 const providerIdentity = {
-  provider: z.enum(["github", "linear"]),
+  provider: z.enum(["github", "linear", "slack"]),
   externalTenantId: z
     .string()
     .min(1)

@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 
 const uuid = z.uuid().toLowerCase();
-const provider = z.enum(["github", "linear"]);
+const provider = z.enum(["github", "linear", "slack"]);
 const revision = z.number().int().positive().safe();
 const timestamp = z.iso.datetime({ offset: true });
 const connectionStatus = z.enum(["connected", "disconnected", "credential_unavailable"]);
@@ -23,7 +23,7 @@ export const connectorInventorySchema = z.strictObject({
       id: uuid,
       installationId: uuid,
       provider,
-      kind: z.enum(["repository", "team", "project"]),
+      kind: z.enum(["repository", "team", "project", "channel"]),
       externalId: z.string().min(1).max(256),
       label: z.string().nullable(),
       mappingRevision: revision,

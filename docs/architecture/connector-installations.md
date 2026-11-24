@@ -8,6 +8,7 @@ or admin publishes a mapping revision to enable or disable the resource.
 | -------- | --------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | GitHub   | Numeric repository ID | Existing GitHub App installation owned by the workspace. The repository must belong to that installation and factory. |
 | Linear   | Team or project ID    | The workspace's `LINEAR_API_KEY` at the secret ID and material revision used to verify the Linear organization.       |
+| Slack    | Channel ID            | The verified workspace and app install with an encrypted bot token pinned to the current generation.                  |
 
 Provider setup verifies the tenant, installation, and selected resources before
 calling the service-only configuration functions. Factory members can read
@@ -19,7 +20,7 @@ material.
 
 Open **Settings → Integrations → Connector resources** and select a factory and
 provider. Workspace owners and admins can verify the existing GitHub App or
-Linear key, then map a repository, team, or project returned by that provider.
+Linear key or install Slack. Select a resource returned by the provider to map it to the factory.
 A GitHub repository exposes separate intake labels for issues and pull requests.
 On a Linear mapping, **Linear routing and outcomes** lets admins choose which
 workflow state IDs trigger intake and whether to post progress or change an
@@ -33,6 +34,32 @@ sanitized failure that still belongs to the current scan configuration.
 retry window. **Check provider status** schedules an observation for a delivery
 whose result remains unknown. Both actions preserve existing attempts, and the
 worker rechecks credential and mapping authority before processing the receipt.
+
+## Slack installation
+
+1. Create an internal Slack app. Add the Wallie HTTPS `/api/slack/callback`
+   URL as an OAuth redirect. Set `SLACK_APP_ID`, `SLACK_CLIENT_ID`,
+   `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` on the Wallie server.
+2. Add bot scopes `app_mentions:read`, `chat:write`, `channels:read`,
+   `channels:history`, `groups:read`, and `groups:history`. Use a workspace
+   installation with token rotation disabled for this connector. Add `openid`
+   under **User Token Scopes** for the separate account-linking flow.
+3. In **Connector resources → Slack**, enter the exact workspace ID from the
+   `T…` segment of its Slack client URL and approve installation. Wallie
+   compares the returned team and app IDs and shows the actual grants.
+4. Invite the bot to a channel in Slack. Select the channel in Wallie and
+   map it to the factory. Wallie verifies bot membership and rejects shared,
+   archived, and direct-message conversations.
+5. Each participant uses **Link Slack account** while signed in to Wallie.
+   Wallie binds the signed Slack user and team IDs to the current Wallie
+   member. The participant can revoke that link in Settings.
+
+**Disconnect** removes Wallie's bot credential and advances the installation
+generation. It preserves mappings, actor history, and source references.
+Slack workspace administrators manage the app's installation in Slack.
+
+[Slack OAuth installation](https://docs.slack.dev/authentication/installing-with-oauth/) ·
+[Sign in with Slack](https://docs.slack.dev/authentication/sign-in-with-slack/)
 
 ## Rotation and disconnect
 

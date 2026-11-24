@@ -34,6 +34,10 @@ const subscriptionResult = z
         credential_material_revision: z.null(),
       }),
       subscriptionFields.extend({
+        credential_kind: z.literal("slack_bot"),
+        credential_material_revision: z.null(),
+      }),
+      subscriptionFields.extend({
         credential_kind: z.literal("workspace_secret"),
         credential_material_revision: z.number().int().positive(),
       }),

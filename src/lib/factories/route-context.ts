@@ -5,7 +5,10 @@ import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 const scopeSchema = z.object({ workspaceId: z.string().uuid(), factoryId: z.string().uuid() });
 export const factoryResponseHeaders = { "Cache-Control": "private, no-store" };
 
-export async function resolveFactoryRouteContext(params: Promise<unknown>) {
+export async function resolveFactoryRouteContext(
+  params: Promise<unknown>,
+  options?: { includeSessionId?: boolean },
+) {
   const scope = scopeSchema.safeParse(await params);
   if (!scope.success) {
     return {
@@ -16,7 +19,7 @@ export async function resolveFactoryRouteContext(params: Promise<unknown>) {
       ),
     };
   }
-  const access = await requireWorkspaceAccessById(scope.data.workspaceId);
+  const access = await requireWorkspaceAccessById(scope.data.workspaceId, options);
   if (!access.ok) {
     return {
       ok: false as const,

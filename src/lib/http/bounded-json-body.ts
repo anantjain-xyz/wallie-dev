@@ -7,6 +7,14 @@ export async function readBoundedJsonBytes(
   if (contentType !== "application/json") {
     return { ok: false, code: "unsupported_media_type" } as const;
   }
+  return readBoundedRequestBytes(request, maxBodyBytes, signal);
+}
+
+export async function readBoundedRequestBytes(
+  request: Request,
+  maxBodyBytes: number,
+  signal?: AbortSignal,
+) {
   const length = request.headers.get("Content-Length");
   if (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBodyBytes)) {
     return { ok: false, code: "request_too_large" } as const;
