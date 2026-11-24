@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(66);
+select plan(87);
 
 \set op651_fixture_namespace 67700000
 \ir fixtures/factory_automation_dry_run.psql
@@ -51,7 +51,7 @@ $$;
 select ok(has_function_privilege('service_role',
     'public.enqueue_slack_connector_event(text,text,text,text,text,text,text,text,text,text)','execute')
   and not has_function_privilege('authenticated','public.claim_slack_connector_event(uuid)','execute')
-  and not has_function_privilege('anon','public.settle_slack_connector_event(uuid,uuid,text,text,text,text,text,integer)','execute')
+  and not has_function_privilege('anon','public.settle_slack_connector_event(uuid,uuid,text,text,text,text,text,integer,text)','execute')
   and not has_table_privilege('service_role','internal.slack_connector_event_receipts','select'),
   'only the service entry points can route or claim Slack event receipts');
 select throws_ok($$select pg_temp.enqueue_slack('bad-ts', 'edited', 2, 1, 2)$$,
@@ -119,8 +119,14 @@ select is(pg_temp.enqueue_slack('root-edit-other-actor', 'edited', 20, 26, p_act
   'ignored', 'another linked human cannot defer an edit against the original author’s pending mention');
 select is(pg_temp.enqueue_slack('early-root-edit', 'edited', 20, 26, p_body => 'Use the corrected root request.'),
   'queued', 'the same human can edit the original root before the mention is admitted');
+reset role;
+update internal.slack_connector_event_receipts set recorded_at = clock_timestamp() - interval '3 seconds'
+where event_id = 'root-mention';
+update internal.slack_connector_event_receipts set wait_for_root_until = clock_timestamp() - interval '1 second',
+  next_attempt_at = clock_timestamp() - interval '1 second' where event_id in ('early-followup', 'early-root-edit');
+set local role service_role;
 select is((select count(*) from public.claim_slack_connector_event(pg_temp.op651_id(11))), 0::bigint,
-  'the deferred root edit cannot obtain provider access while the original mention still awaits settlement');
+  'an early reply can wait past its short window without obtaining provider access while its timely root is in flight');
 select is((select public.settle_slack_connector_event(queue_id, lease_id, 'verified', team_id, app_id, channel_id, bot_user_id)
   from slack_pending_root_claim),'admitted','live membership and exact factory authority admit one Slack request');
 select is(pg_temp.process_slack(),'appended','the early follow-up attaches to the admitted Slack thread');
@@ -192,6 +198,103 @@ update internal.slack_connector_event_receipts set next_attempt_at = clock_times
 where event_id = 'retryable-event';
 set local role service_role;
 select is(pg_temp.process_slack(),'appended','the retried receipt can settle once after live access is restored');
+
+-- Two channels on one Slack installation share the method cooldown, while a
+-- different team using the same Slack app can still make progress.
+select mapped.resource_id from slack_event_scope scope
+cross join lateral public.publish_connector_resource_mapping(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  scope.installation_id, scope.generation, 'channel', 'C67700002', 0, true) mapped;
+create temp table slack_other_team as
+select scope.workspace_id, scope.factory_id, installed.installation_id, installed.generation, mapped.resource_id
+from slack_event_scope scope
+cross join lateral public.configure_slack_connector_installation(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  'T67700002', 'Independent Slack team', 'A67700001', 'U67700004', 0, 'v2.AAAAAAAAAAAAAAAA.QQ.AAAAAAAAAAAAAAAAAAAAAA',
+  array['app_mentions:read','channels:read','channels:history']) installed
+cross join lateral public.publish_connector_resource_mapping(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  installed.installation_id, installed.generation, 'channel', 'C67700003', 0, true) mapped;
+select public.link_connector_actor(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1),
+  scope.installation_id, scope.generation, 'slack', 'T67700002', 'U67700002', 'human') from slack_other_team scope;
+
+select is(pg_temp.enqueue_slack('rate-limit-long', 'mention', 36, 36), 'queued', 'the first worker can claim a same-scope receipt');
+create temp table slack_rate_limit_long as select * from public.claim_slack_connector_event(pg_temp.op651_id(11));
+select is(pg_temp.enqueue_slack('rate-limit-short', 'mention', 37, 37), 'queued', 'a second attempt can already be in flight before Slack throttles');
+create temp table slack_rate_limit_short as select * from public.claim_slack_connector_event(pg_temp.op651_id(11));
+select is(pg_temp.enqueue_slack('rate-limit-sibling', 'mention', 38, 38, p_channel => 'C67700002'),
+  'queued', 'another channel can queue work within the throttled Slack scope');
+select is(pg_temp.enqueue_slack('rate-limit-other-team', 'mention', 39, 39,
+  p_body => '<@U67700004> Independent work', p_team => 'T67700002', p_channel => 'C67700003'),
+  'queued', 'the same Slack app queues independent work in a different team');
+select is((select public.settle_slack_connector_event(queue_id, lease_id, 'rate_limited',
+  p_retry_after_seconds => 120, p_rate_limited_method => 'conversations.info') from slack_rate_limit_long),
+  'retry', 'a provider throttle records the method cooldown and defers the original receipt');
+select is((select public.settle_slack_connector_event(queue_id, lease_id, 'rate_limited',
+  p_retry_after_seconds => 30, p_rate_limited_method => 'conversations.info') from slack_rate_limit_short),
+  'retry', 'an already-owned receipt can report a concurrent provider throttle');
+create temp table slack_independent_claim as select * from public.claim_slack_connector_event(pg_temp.op651_id(11));
+select is((select team_id from slack_independent_claim), 'T67700002',
+  'another team using the same app remains eligible during the cooldown');
+select is((select public.settle_slack_connector_event(queue_id, lease_id, 'unavailable') from slack_independent_claim),
+  'membership_denied', 'the independent receipt can settle while the original scope is throttled');
+reset role;
+select is((select attempt_count from internal.slack_connector_event_receipts where event_id = 'rate-limit-sibling'),
+  0, 'a newly due same-scope receipt has spent no attempts during the cooldown');
+select ok((select retry_at > clock_timestamp() + interval '90 seconds'
+  from internal.slack_connector_event_cooldowns where (team_id, app_id, method) = ('T67700001', 'A67700001', 'conversations.info')),
+  'an out-of-order shorter throttle cannot shorten the shared method cooldown');
+update internal.slack_connector_event_cooldowns set retry_at = clock_timestamp() - interval '1 second'
+where (team_id, app_id, method) = ('T67700001', 'A67700001', 'conversations.info');
+set local role service_role;
+create temp table slack_rate_limit_last as select * from public.claim_slack_connector_event(pg_temp.op651_id(11));
+select is((select channel_id from slack_rate_limit_last), 'C67700002', 'the unattempted sibling is eligible after cooldown');
+reset role;
+update internal.slack_connector_event_receipts set attempt_count = 6 where event_id = 'rate-limit-sibling';
+set local role service_role;
+select is((select public.settle_slack_connector_event(queue_id, lease_id, 'rate_limited',
+  p_retry_after_seconds => 60, p_rate_limited_method => 'users.conversations') from slack_rate_limit_last),
+  'attempt_limit', 'the last attempt can still report its own method throttle');
+reset role;
+select ok((select retry_at > clock_timestamp() from internal.slack_connector_event_cooldowns
+  where (team_id, app_id, method) = ('T67700001', 'A67700001', 'users.conversations')),
+  'the final attempt publishes its provider cooldown before scrubbing the receipt');
+update internal.slack_connector_event_cooldowns set retry_at = clock_timestamp() - interval '1 second'
+where (team_id, app_id, method) = ('T67700001', 'A67700001', 'users.conversations');
+set local role service_role;
+
+select pg_temp.enqueue_slack('cleanup-' || tick, 'deleted', tick, tick + 20, p_actor => null, p_body => null)
+from generate_series(41, 49) tick;
+select pg_temp.enqueue_slack('cleanup-next-valid', 'deleted', 50, 70, p_actor => null, p_body => null);
+reset role;
+update internal.slack_connector_event_receipts set deadline_at = clock_timestamp() - interval '1 second',
+  next_attempt_at = clock_timestamp() - interval '1 second' where event_id ~ '^cleanup-[0-9]+$';
+set local role service_role;
+select ok((select kind = 'cleanup' and queue_id is null and encrypted_token is null
+  from public.claim_slack_connector_event(pg_temp.op651_id(11))), 'scan-limit cleanup is distinguishable from an empty inbox');
+create temp table slack_valid_after_cleanup as select * from public.claim_slack_connector_event(pg_temp.op651_id(11));
+select is((select kind from slack_valid_after_cleanup), 'event', 'the next bounded claim reaches still-valid work');
+reset role;
+update internal.slack_connector_event_receipts set lease_expires_at = clock_timestamp() - interval '1 second'
+where event_id = 'cleanup-next-valid';
+set local role service_role;
+select is((select public.settle_slack_connector_event(queue_id, lease_id, 'unavailable') from slack_valid_after_cleanup),
+  'stale', 'an expired exact lease cannot record terminal denial');
+reset role;
+update internal.slack_connector_event_receipts set next_attempt_at = clock_timestamp()
+where event_id = 'cleanup-next-valid';
+set local role service_role;
+select is(pg_temp.process_slack('unavailable'), 'membership_denied', 'the same receipt can settle under its new lease');
+
+select is(pg_temp.enqueue_slack('reply-before-late-root', 'created', 52, 52, 51, p_body => 'This root arrives late.'),
+  'queued', 'a reply can wait while the root is still absent');
+reset role;
+update internal.slack_connector_event_receipts set wait_for_root_until = clock_timestamp() - interval '1 second',
+  next_attempt_at = clock_timestamp() - interval '1 second' where event_id = 'reply-before-late-root';
+set local role service_role;
+select is(pg_temp.enqueue_slack('root-after-cutoff', 'mention', 51, 51), 'queued', 'a later root still starts its own session');
+select is(pg_temp.process_slack(), 'admitted', 'a root received after the short wait can be admitted independently');
+reset role;
+select is((select result from internal.slack_connector_event_receipts where event_id = 'reply-before-late-root'),
+  'ignored', 'an early reply does not attach to a root whose receipt arrived outside the window');
+set local role service_role;
 
 select is(pg_temp.enqueue_slack('expired-event','created',32,32,20,p_body => 'Expired input.'),
   'queued','an authorized event has a bounded original deadline');

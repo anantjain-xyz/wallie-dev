@@ -205,7 +205,9 @@ async function main() {
         );
         timerTasks.run("expired workflow review", () => expireExactFactoryWorkflowReview(admin));
         timerTasks.run("GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin));
-        timerTasks.run("Slack connector inbox", () => drainSlackConnectorEvents(admin));
+        timerTasks.run("Slack connector inbox", () =>
+          drainSlackConnectorEvents(admin, { isShuttingDown: () => draining }),
+        );
         timerTasks.run("GitHub connector outbound", async () => {
           await drainConnectorOutboundDeliveries(
             admin,

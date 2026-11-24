@@ -11762,6 +11762,7 @@ export type Database = {
           factory_id: string
           installation_generation: number
           installation_id: string
+          kind: string
           lease_id: string
           mapping_revision: number
           queue_id: string
@@ -18262,6 +18263,7 @@ export type Database = {
           p_channel_id?: string
           p_lease_id: string
           p_queue_id: string
+          p_rate_limited_method?: string
           p_result: string
           p_retry_after_seconds?: number
           p_team_id?: string
