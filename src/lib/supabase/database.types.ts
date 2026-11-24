@@ -12015,6 +12015,21 @@ export type Database = {
         }
         Returns: number
       }
+      configure_linear_connector_outbound: {
+        Args: {
+          p_actor_user_id: string
+          p_comments_enabled: boolean
+          p_expected_mapping_revision: number
+          p_expected_revision: number
+          p_factory_id: string
+          p_resource_id: string
+          p_status_from_state_id?: string
+          p_status_team_id?: string
+          p_status_to_state_id?: string
+          p_workspace_id: string
+        }
+        Returns: number
+      }
       configure_linear_issue_discovery: {
         Args: {
           p_actor_user_id: string
@@ -15977,6 +15992,15 @@ export type Database = {
           generation: number
         }[]
       }
+      read_linear_connector_outbound_config: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_resource_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       read_linear_issue_discovery_config: {
         Args: {
           p_factory_id: string
@@ -16730,6 +16754,30 @@ export type Database = {
           source_id: number
           source_kind: string
           source_number: number
+        }[]
+      }
+      resolve_linear_connector_delivery: {
+        Args: {
+          p_credential_material_revision: number
+          p_credential_ref: string
+          p_delivery_id: string
+          p_lease_id: string
+        }
+        Returns: {
+          credential_material_revision: number
+          encrypted_api_key: string
+          external_tenant_id: string
+          from_state_id: string
+          issue_id: string
+          may_send: boolean
+          origin_project_id: string
+          origin_span_id: string
+          origin_span_started_at: string
+          origin_state_id: string
+          origin_team_id: string
+          resource_external_id: string
+          resource_kind: string
+          to_state_id: string
         }[]
       }
       resolve_session_conversation_source: {
@@ -18545,7 +18593,7 @@ export type Database = {
         | "recorded_fixtures"
         | "isolated_test"
       connector_actor_kind: "human" | "service"
-      connector_outbound_operation: "reply" | "edit"
+      connector_outbound_operation: "reply" | "edit" | "linear_status"
       connector_outbound_result:
         | "sent"
         | "not_sent"
@@ -18812,7 +18860,7 @@ export const Constants = {
         "isolated_test",
       ],
       connector_actor_kind: ["human", "service"],
-      connector_outbound_operation: ["reply", "edit"],
+      connector_outbound_operation: ["reply", "edit", "linear_status"],
       connector_outbound_result: [
         "sent",
         "not_sent",

@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { introspectWorkflowInstance, runInDurableObject } from "cloudflare:test";
 import { beforeEach, expect, it, vi } from "vitest";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { reconcileLinearLinkedOutcomes } from "@/lib/connectors/linear-outcomes";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 import { drainAcceptedTriageRoute } from "@/lib/factory-workflows/triage-dispatch";
 import { drainAuthoredFactoryWorkflowBatch } from "@/lib/factory-workflows/authoring-dispatch";
@@ -28,6 +29,7 @@ import { drainFactoryWorkflowSandboxStops } from "@/lib/factory-workflows/sandbo
 import { Dispatcher, type Env } from "../index";
 
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
+vi.mock("@/lib/connectors/linear-outcomes", () => ({ reconcileLinearLinkedOutcomes: vi.fn() }));
 vi.mock("@/features/github/pr-verification-service", () => ({
   reconcileGitHubPrVerification: vi.fn(),
 }));
@@ -108,6 +110,7 @@ it.each([
   { scenario: "delivery dispatch expiry fails", expiryFailure: true },
   { scenario: "monitoring incident admission fails", monitoringFailure: true },
   { scenario: "Linear issue discovery fails", linearDiscoveryFailure: true },
+  { scenario: "Linear linked outcome delivery fails", linearOutcomesFailure: true },
 ])(
   "runs independent maintenance when $scenario",
   async ({
@@ -132,6 +135,7 @@ it.each([
     expiryFailure,
     monitoringFailure,
     linearDiscoveryFailure,
+    linearOutcomesFailure,
   }) => {
     const bindings = env as unknown as Env;
     const query = {
@@ -305,6 +309,11 @@ it.each([
       rpc,
     };
     vi.mocked(createSupabaseAdminClient).mockReturnValue(admin as never);
+    if (linearOutcomesFailure) {
+      vi.mocked(reconcileLinearLinkedOutcomes).mockRejectedValue(
+        new Error("Linear outcome delivery unavailable."),
+      );
+    }
     if (triageFailure)
       vi.mocked(drainAcceptedTriageRoute).mockRejectedValue(
         new Error("Triage routing unavailable."),
@@ -462,6 +471,12 @@ it.each([
         p_provider: "github",
       });
       expect(rpc).toHaveBeenCalledWith("claim_linear_issue_discovery", {});
+      expect(reconcileLinearLinkedOutcomes).toHaveBeenCalledExactlyOnceWith(admin);
+      if (linearOutcomesFailure) {
+        expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
+          task: "Linear linked outcomes",
+        });
+      }
       if (linearDiscoveryFailure) {
         expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
           task: "Linear issue discovery",

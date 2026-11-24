@@ -188,6 +188,7 @@ it("passes the confirmed provider reply target to an edit", async () => {
   expect(provider.send).toHaveBeenCalledWith(
     expect.objectContaining({
       correlationId: id(1),
+      leaseId: id(10),
       message: { operation: "edit", providerReplyId: "reply", content: { purpose: "progress" } },
     }),
     expect.any(AbortSignal),

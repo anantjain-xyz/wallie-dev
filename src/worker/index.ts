@@ -56,6 +56,7 @@ import { startWorkerControlServer } from "./control";
 import { deregisterWorker, registerWorker, sendHeartbeat } from "./heartbeat";
 import { createWorkerLifecycle } from "./lifecycle";
 import { reconcileLinearIssueDiscovery } from "@/lib/connectors/linear-discovery";
+import { reconcileLinearLinkedOutcomes } from "@/lib/connectors/linear-outcomes";
 import { reconcileLinearState } from "./reconciler";
 import { reapOrphanSandboxes } from "./sandbox-reaper";
 import { createScheduler } from "./scheduler";
@@ -211,6 +212,9 @@ async function main() {
         });
         timerTasks.run("Linear issue discovery", async () => {
           await reconcileLinearIssueDiscovery(admin);
+        });
+        timerTasks.run("Linear linked outcomes", async () => {
+          await reconcileLinearLinkedOutcomes(admin);
         });
         timerTasks.run("reconciliation", async () => {
           await drainCheckpointPublications(admin);

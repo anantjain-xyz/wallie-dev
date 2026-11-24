@@ -19,7 +19,7 @@ type EnqueueInput = {
   logicalKey: string;
   actorLinkId?: string;
   content: Record<string, Json>;
-} & ({ operation: "reply" } | { operation: "edit"; editedDeliveryId: string });
+} & ({ operation: "reply" | "linear_status" } | { operation: "edit"; editedDeliveryId: string });
 
 export async function enqueueConnectorOutboundDelivery(admin: Admin, input: EnqueueInput) {
   const { data, error } = await admin
@@ -69,7 +69,9 @@ const claim = z
   .discriminatedUnion("operation", [
     claimFields.extend({ operation: z.literal("reply"), edit_target: z.null() }),
     claimFields.extend({ operation: z.literal("edit"), edit_target: providerId }),
+    claimFields.extend({ operation: z.literal("linear_status"), edit_target: z.null() }),
   ])
+  .refine((row) => row.operation !== "linear_status" || row.provider === "linear")
   .transform((row) => ({
     kind: row.kind,
     provider: row.provider,
@@ -92,7 +94,7 @@ const claim = z
     },
   }));
 
-type Target = z.output<typeof claim>["target"];
+export type ConnectorOutboundTarget = z.output<typeof claim>["target"];
 type Limited =
   | { kind: "rate_limited"; retryAfterSeconds?: number }
   | { kind: "credential_unavailable" };
@@ -107,8 +109,8 @@ type Observation =
 
 export type ConnectorOutboundAdapter = {
   provider: Provider;
-  send(target: Target, signal: AbortSignal): Promise<SendResult>;
-  observe(target: Target, signal: AbortSignal): Promise<Observation>;
+  send(target: ConnectorOutboundTarget, signal: AbortSignal): Promise<SendResult>;
+  observe(target: ConnectorOutboundTarget, signal: AbortSignal): Promise<Observation>;
 };
 
 async function runAttempt(
