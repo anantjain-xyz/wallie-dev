@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 
@@ -105,28 +107,69 @@ function readStack(directory: string) {
   };
 }
 
+const psqlArgs = ["-X", "-qAt", "-v", "ON_ERROR_STOP=1"];
+
+function pgEnvironment(database: string): NodeJS.ProcessEnv {
+  const connection = new URL(database);
+  return {
+    NODE_ENV: "test",
+    PATH: process.env.PATH,
+    TMPDIR: process.env.TMPDIR,
+    PGHOST: connection.hostname.replace(/^\[|\]$/g, ""),
+    PGPORT: connection.port || "5432",
+    PGDATABASE: decodeURIComponent(connection.pathname.slice(1)),
+    PGUSER: decodeURIComponent(connection.username),
+    PGPASSWORD: decodeURIComponent(connection.password),
+  };
+}
+
 function runSql(
   database: string,
   args: string[],
   variables: Record<`WALLIE_M12_${string}`, string> = {},
 ) {
-  const connection = new URL(database);
-  return execFileSync("psql", ["-X", "-qAt", "-v", "ON_ERROR_STOP=1", ...args], {
-    env: {
-      ...variables,
-      NODE_ENV: "test",
-      PATH: process.env.PATH,
-      TMPDIR: process.env.TMPDIR,
-      PGHOST: connection.hostname.replace(/^\[|\]$/g, ""),
-      PGPORT: connection.port || "5432",
-      PGDATABASE: decodeURIComponent(connection.pathname.slice(1)),
-      PGUSER: decodeURIComponent(connection.username),
-      PGPASSWORD: decodeURIComponent(connection.password),
-    },
+  return execFileSync("psql", [...psqlArgs, ...args], {
+    env: { ...variables, ...pgEnvironment(database) },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
     timeout: 30_000,
   }).trim();
+}
+
+async function withExclusiveDatabase(
+  database: string,
+  signal: AbortSignal,
+  replay: (signal: AbortSignal) => Promise<void>,
+) {
+  signal.throwIfAborted();
+  const session = spawn("psql", psqlArgs, {
+    env: pgEnvironment(database),
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  const lost = new AbortController();
+  const active = AbortSignal.any([signal, lost.signal]);
+  const lostConnection = () => lost.abort(new Error("The local fixture lock connection closed."));
+  const closed = new Promise<void>((done) => session.once("close", done));
+  session.once("exit", lostConnection);
+  session.once("error", lostConnection);
+  session.stdin.on("error", lostConnection);
+  const lines = createInterface({ input: session.stdout });
+  try {
+    const acquired = once(lines, "line", {
+      signal: AbortSignal.any([active, AbortSignal.timeout(10_000)]),
+    });
+    session.stdin.write("select pg_try_advisory_lock(668, 20261123);\n");
+    const [locked]: unknown[] = await acquired;
+    assert.equal(locked, "t", "Another live qualification owns this local database.");
+    active.throwIfAborted();
+    await replay(active);
+  } finally {
+    lines.close();
+    session.stdin.end();
+    const terminate = setTimeout(() => session.kill("SIGKILL"), 2_000);
+    await closed;
+    clearTimeout(terminate);
+  }
 }
 
 async function localPort() {
@@ -144,44 +187,73 @@ async function localPort() {
   });
 }
 
-function isRunning(child: ChildProcess) {
-  return child.pid !== undefined && child.exitCode === null && child.signalCode === null;
-}
-
-async function stop(child: ChildProcess | undefined) {
-  if (!child) return;
-  const pid = child.pid;
-  if (!pid || !isRunning(child)) return;
-  process.kill(-pid, "SIGTERM");
-  const limit = Date.now() + 10_000;
-  while (isRunning(child) && Date.now() < limit) await delay(100);
-  if (isRunning(child)) process.kill(-pid, "SIGKILL");
-}
-
-async function waitFor<T>(child: ChildProcess, timeout: number, read: () => Promise<T | null>) {
+async function waitFor<T>(
+  child: ReturnType<typeof start>,
+  timeout: number,
+  signal: AbortSignal,
+  read: () => Promise<T | null>,
+) {
   const until = Date.now() + timeout;
   while (Date.now() < until) {
-    assert(isRunning(child), "The local fixture runtime exited before producing evidence.");
+    signal.throwIfAborted();
+    assert(child.running(), "The local fixture runtime exited before producing evidence.");
     const result = await read();
     if (result !== null) return result;
-    await delay(500);
+    await delay(500, undefined, { signal });
   }
   throw new Error("The local fixture runtime did not reach its expected state.");
 }
 
-function start(command: string, args: string[], env: NodeJS.ProcessEnv, cwd?: string) {
-  const child = spawn(command, args, { cwd, env, detached: true, stdio: "inherit" });
+function start(args: string[], env: NodeJS.ProcessEnv, cwd?: string) {
+  const child = spawn(process.execPath, args, { cwd, env, detached: true, stdio: "inherit" });
   child.once("error", () => console.error("[m12-live] A local runtime could not start."));
-  return child;
+  const finished = new Promise<void>((done) => child.once("close", done));
+  const running = () =>
+    child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+  function send(signal: NodeJS.Signals) {
+    if (!running() || !child.pid) return;
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        (error.code !== "ESRCH" && error.code !== "EPERM")
+      ) {
+        throw error;
+      }
+      child.kill(signal);
+    }
+  }
+  return {
+    running,
+    async stop() {
+      send("SIGTERM");
+      const stopped = await Promise.race([
+        finished.then(() => true),
+        delay(12_000, false, { ref: false }),
+      ]);
+      if (stopped) return;
+      send("SIGKILL");
+      await finished;
+      throw new Error("A local fixture runtime did not finish shutting down.");
+    },
+  };
 }
 
-function post(app: string, path: string, bytes: string, headers: Record<string, string> = {}) {
+function post(
+  app: string,
+  path: string,
+  bytes: string,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+) {
   return fetch(app + path, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: bytes,
     redirect: "manual",
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
   });
 }
 
@@ -229,12 +301,13 @@ function readIncident(database: string, scope: Seed, incidentId: string) {
   return raw ? incidentSchema.parse(JSON.parse(raw)) : null;
 }
 
-async function run() {
+async function run(signal: AbortSignal) {
   const { values } = parseArgs({
     options: {
       workdir: { type: "string" },
       tag: { type: "string" },
       "app-dir": { type: "string" },
+      "effectless-smoke-tag": { type: "boolean", default: false },
     },
   });
   assert(
@@ -255,13 +328,40 @@ async function run() {
     "Build the production fixture app first.",
   );
   const stack = readStack(resolve(values.workdir));
+  await withExclusiveDatabase(stack.database, signal, (signal) =>
+    replay({
+      stack,
+      appDirectory,
+      rawTag: fixtureTagSchema.parse(values.tag),
+      effectlessSmokeTag: values["effectless-smoke-tag"],
+      signal,
+    }),
+  );
+}
+
+async function replay({
+  stack,
+  appDirectory,
+  rawTag,
+  effectlessSmokeTag,
+  signal,
+}: {
+  stack: ReturnType<typeof readStack>;
+  appDirectory: string;
+  rawTag: string;
+  effectlessSmokeTag: boolean;
+  signal: AbortSignal;
+}) {
   const admin = localOutcomeClient(stack.url, stack.key);
-  const before = await admin.from("workspaces").select("id", { count: "exact", head: true });
+  const before = await admin
+    .from("workspaces")
+    .select("id", { count: "exact", head: true })
+    .abortSignal(signal);
   assert(
     !before.error && before.count === 0,
     "Use an exclusive local database reset without demo data.",
   );
-  const github = await openLiveGitHubFixture(fixtureTagSchema.parse(values.tag));
+  const github = await openLiveGitHubFixture({ rawTag, signal, effectlessSmokeTag });
   const key = randomBytes(32).toString("hex");
   const signingSecret = randomBytes(24).toString("base64url");
   const token = issueFactoryMachineTokenSecret();
@@ -280,17 +380,17 @@ async function run() {
     WALLIE_SANDBOX_IMPL: "fake",
   };
 
-  let app: ChildProcess | undefined;
-  let worker: ChildProcess | undefined;
-  let seed: Seed | undefined;
+  let app: ReturnType<typeof start> | undefined;
+  let worker: ReturnType<typeof start> | undefined;
+  let seedCommitted = false;
   const releaseWasEnabled =
     runSql(stack.database, [
       "-c",
       "select enabled from public.get_git_continuity_release_state()",
     ]) === "t";
   try {
+    signal.throwIfAborted();
     app = start(
-      process.execPath,
       [
         resolve(appDirectory, "node_modules/next/dist/bin/next"),
         "start",
@@ -302,18 +402,20 @@ async function run() {
       env,
       appDirectory,
     );
-    await waitFor(app, 35_000, async () => {
+    await waitFor(app, 35_000, signal, async () => {
       try {
         const result = await fetch(appUrl, {
           redirect: "manual",
-          signal: AbortSignal.timeout(1_000),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(1_000)]),
         });
         await result.body?.cancel();
         return result.status < 500 ? true : null;
       } catch {
+        signal.throwIfAborted();
         return null;
       }
     });
+    signal.throwIfAborted();
     const seeded = runSql(
       stack.database,
       ["-f", resolve("test/release/factory-automation-live-seed.psql")],
@@ -327,7 +429,8 @@ async function run() {
         }),
       },
     );
-    seed = seedSchema.parse(JSON.parse(seeded.split("\n").at(-1) ?? ""));
+    seedCommitted = true;
+    const seed = seedSchema.parse(JSON.parse(seeded.split("\n").at(-1) ?? ""));
     assert.equal(seed.sourceRevision, github.sourceRevision);
     assert.notEqual(seed.sourceRevision, seed.approvedHead);
     const scope = {
@@ -339,44 +442,49 @@ async function run() {
     const readDelivery = async () =>
       factoryDeliveryCommandSchema.parse(
         rpcValue(
-          await admin.rpc("read_factory_delivery_command", {
-            ...scope,
-            p_actor_user_id: fixture.ownerId,
-          }),
+          await admin
+            .rpc("read_factory_delivery_command", { ...scope, p_actor_user_id: fixture.ownerId })
+            .abortSignal(signal),
         ),
       );
     assert.equal((await readDelivery()).dispatchState, "queued");
     const target = actionsDeliveryDispatch.parse(
-      rpcValue(await admin.rpc("claim_factory_actions_dispatch", scope)),
+      rpcValue(await admin.rpc("claim_factory_actions_dispatch", scope).abortSignal(signal)),
     );
+    signal.throwIfAborted();
     const transport = github.transport(target);
     const dispatched = await dispatchActionsDelivery({
       ...transport,
       target,
-      signal: AbortSignal.timeout(22_000),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(22_000)]),
     });
+    signal.throwIfAborted();
     assert.equal(dispatched.kind, "unknown");
     assert(
       rpcValue(
-        await admin.rpc("settle_factory_actions_dispatch", {
-          ...scope,
-          p_lease_id: target.leaseId,
-          p_dispatch_state: "unknown",
-          p_reason: "dispatch_unknown",
-        }),
+        await admin
+          .rpc("settle_factory_actions_dispatch", {
+            ...scope,
+            p_lease_id: target.leaseId,
+            p_dispatch_state: "unknown",
+            p_reason: "dispatch_unknown",
+          })
+          .abortSignal(signal),
       ),
     );
     const unknown = await readDelivery();
     assert.equal(unknown.dispatchState, "unknown");
     assert.equal(unknown.outcome, "unknown");
-    const duplicateClaim = await admin.rpc("claim_factory_actions_dispatch", scope);
+    const duplicateClaim = await admin
+      .rpc("claim_factory_actions_dispatch", scope)
+      .abortSignal(signal);
     assert.equal(duplicateClaim.error, null);
     assert.equal(duplicateClaim.data, null);
 
     const evidence = await github.waitForEvidence(target);
     const reservations = actionsDeliveryObservation
       .array()
-      .parse(rpcValue(await admin.rpc("reserve_factory_actions_observations")));
+      .parse(rpcValue(await admin.rpc("reserve_factory_actions_observations").abortSignal(signal)));
     assert.equal(reservations.length, 1);
     const reservation = reservations[0];
     assert(reservation);
@@ -389,7 +497,7 @@ async function run() {
     const observed = await observeActionsDelivery({
       ...transport,
       target: reservation,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
     });
     assert(observed.kind === "observed");
     assert.deepEqual(observed, {
@@ -400,14 +508,16 @@ async function run() {
     });
     assert(
       rpcValue(
-        await admin.rpc("settle_factory_actions_observation", {
-          ...scope,
-          p_observation_id: reservation.observationId,
-          p_reason: "run_verified",
-          p_run_id: observed.runId,
-          p_run_status: observed.status,
-          p_run_conclusion: "success",
-        }),
+        await admin
+          .rpc("settle_factory_actions_observation", {
+            ...scope,
+            p_observation_id: reservation.observationId,
+            p_reason: "run_verified",
+            p_run_id: observed.runId,
+            p_run_status: observed.status,
+            p_run_conclusion: "success",
+          })
+          .abortSignal(signal),
       ),
     );
     const runOnly = await readDelivery();
@@ -426,10 +536,16 @@ async function run() {
       return createHmac("sha256", signingSecret).update(bytes).digest("hex");
     }
     async function alert(bytes: string, status: number, signature = sign(bytes)) {
-      const response = await post(appUrl, sentryPath, bytes, {
-        "Sentry-Hook-Resource": "event_alert",
-        "Sentry-Hook-Signature": signature,
-      });
+      const response = await post(
+        appUrl,
+        sentryPath,
+        bytes,
+        {
+          "Sentry-Hook-Resource": "event_alert",
+          "Sentry-Hook-Signature": signature,
+        },
+        signal,
+      );
       assert.equal(response.status, status, "Unexpected Sentry-compatible alert status.");
       return response.json();
     }
@@ -448,9 +564,15 @@ async function run() {
         sourceRevision: fixture.sourceRevision,
         providerOccurredAt: evidence.completedAt,
       });
-      const response = await post(appUrl, deploymentPath, body, {
-        Authorization: `Bearer ${token.credential}`,
-      });
+      const response = await post(
+        appUrl,
+        deploymentPath,
+        body,
+        {
+          Authorization: `Bearer ${token.credential}`,
+        },
+        signal,
+      );
       assert.equal(
         response.status,
         expectedStatus,
@@ -508,11 +630,23 @@ async function run() {
       "[m12-live] Authenticated M06 report and Sentry scope, replay, suppression and rate limits passed.",
     );
 
-    worker = start("pnpm", ["worker"], env);
-    const incident = await waitFor(worker, 85_000, async () =>
+    signal.throwIfAborted();
+    worker = start(
+      [
+        "--import",
+        "./scripts/install-crash-handlers.mjs",
+        "--import",
+        "./scripts/register-server-only.mjs",
+        "--import",
+        "tsx",
+        "src/worker/index.ts",
+      ],
+      env,
+    );
+    const incident = await waitFor(worker, 85_000, signal, async () =>
       readIncident(stack.database, fixture, queued.incidentId),
     );
-    await stop(worker);
+    await worker.stop();
     worker = undefined;
     assert.equal(incident.sourceSessionId, seed.sourceSessionId);
     assert.equal(incident.commandId, seed.commandId);
@@ -539,6 +673,7 @@ async function run() {
       "1",
       "The incident's causal delivery did not originate in the scheduled occurrence.",
     );
+    signal.throwIfAborted();
     const recursiveCommandId = randomUUID();
     runSql(stack.database, ["-f", resolve("test/release/factory-automation-live-recursion.psql")], {
       WALLIE_M12_LIVE_COMMAND: seed.commandId,
@@ -594,25 +729,42 @@ async function run() {
       }),
     );
   } finally {
-    await stop(worker);
-    await stop(app);
-    const id = seed?.workspaceId ?? "66820000-0000-4000-8000-000000000011";
-    runSql(stack.database, [
-      "-c",
-      `
-      delete from public.workspaces where id = '${id}';
-      delete from auth.users where id in ('66820000-0000-4000-8000-000000000001', '66820000-0000-4000-8000-000000000002');
-      select public.set_git_continuity_release(false, revision, 'Restore isolated M12 fixture gate')
-      from public.get_git_continuity_release_state() where enabled and not ${releaseWasEnabled};
-    `,
-    ]);
+    const stopped = await Promise.allSettled([worker?.stop(), app?.stop()]);
+    if (seedCommitted) {
+      runSql(stack.database, [
+        "-c",
+        `
+        delete from public.workspaces where id = '66820000-0000-4000-8000-000000000011';
+        delete from auth.users where id in ('66820000-0000-4000-8000-000000000001', '66820000-0000-4000-8000-000000000002');
+        select public.set_git_continuity_release(false, revision, 'Restore isolated M12 fixture gate')
+        from public.get_git_continuity_release_state() where enabled and not ${releaseWasEnabled};
+        `,
+      ]);
+    }
+    for (const result of stopped) {
+      if (result.status === "rejected") throw result.reason;
+    }
   }
 }
 
-void run().catch((error: unknown) => {
-  console.error(
-    "[m12-live]",
-    error instanceof Error ? error.message : "Live qualification failed.",
-  );
-  process.exitCode = 1;
-});
+const cancellation = new AbortController();
+function interrupt(signal: NodeJS.Signals) {
+  if (cancellation.signal.aborted) return;
+  process.exitCode = signal === "SIGINT" ? 130 : 143;
+  cancellation.abort(new Error(`Live qualification interrupted by ${signal}.`));
+}
+
+process.on("SIGINT", interrupt);
+process.on("SIGTERM", interrupt);
+void run(cancellation.signal)
+  .catch((error: unknown) => {
+    console.error(
+      "[m12-live]",
+      error instanceof Error ? error.message : "Live qualification failed.",
+    );
+    process.exitCode ??= 1;
+  })
+  .finally(() => {
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
+  });

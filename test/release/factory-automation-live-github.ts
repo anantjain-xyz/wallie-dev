@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 
 import { z } from "zod/v4";
 
@@ -17,9 +18,13 @@ const fixtureRepositoryId = 1196742316;
 // Only the reviewed workflow blob is allowed to run. Its job records a marker
 // without checking out the tag's repository code or gaining write permissions.
 const fixtureWorkflowBlob = "f36edafa02b3d12b2f238a1f4d6900b74f3d7845";
+const auditedSmokeCommit = "097db97c1ddf078c682695be43875b979cbc8a39";
 export const fixtureEnvironment = "wallie-m12-fixture";
 export const fixtureTagSchema = z.string().regex(/^wallie-m12-fixture-[A-Za-z0-9-]{8,72}$/);
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
+const exec = promisify(execFile);
+
+class TemporaryGitHubReadError extends Error {}
 
 function githubHeaders(credential: string) {
   return {
@@ -30,7 +35,16 @@ function githubHeaders(credential: string) {
   };
 }
 
-export async function openLiveGitHubFixture(rawTag: string) {
+export async function openLiveGitHubFixture({
+  rawTag,
+  signal,
+  effectlessSmokeTag,
+}: {
+  rawTag: string;
+  signal: AbortSignal;
+  effectlessSmokeTag: boolean;
+}) {
+  signal.throwIfAborted();
   const tag = fixtureTagSchema.parse(rawTag);
   const credential = execFileSync("gh", ["auth", "token", "--hostname", "github.com"], {
     encoding: "utf8",
@@ -39,20 +53,45 @@ export async function openLiveGitHubFixture(rawTag: string) {
   }).trim();
   assert(credential, "Authenticate gh for the authorized smoke repository first.");
 
-  async function read<T>(path: string, schema: z.ZodType<T>) {
-    const response = await fetch(api + path, {
-      headers: githubHeaders(credential),
-      signal: AbortSignal.timeout(12_000),
-      redirect: "manual",
-    });
-    assert.equal(
-      response.status,
-      200,
-      `Unable to read the exact GitHub fixture (${response.status}).`,
+  async function read<T>(path: string, schema: z.ZodType<T>, deadline?: number) {
+    const timeout = AbortSignal.timeout(
+      deadline === undefined ? 12_000 : Math.max(1, Math.min(12_000, deadline - Date.now())),
     );
-    return schema.parse(await response.json());
+    let payload: unknown;
+    try {
+      const response = await fetch(api + path, {
+        headers: githubHeaders(credential),
+        signal: AbortSignal.any([signal, timeout]),
+        redirect: "manual",
+      });
+      if (response.status !== 200) {
+        const message = `Unable to read the exact GitHub fixture (${response.status}).`;
+        if (
+          deadline !== undefined &&
+          ([404, 408, 429].includes(response.status) || response.status >= 500)
+        ) {
+          throw new TemporaryGitHubReadError(message);
+        }
+        throw new Error(message);
+      }
+      payload = await response.json();
+    } catch (error) {
+      signal.throwIfAborted();
+      if (deadline !== undefined && (timeout.aborted || error instanceof TypeError)) {
+        throw new TemporaryGitHubReadError("The GitHub evidence read was interrupted.", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+    return schema.parse(payload);
   }
 
+  const tagPath = `${repoPath}/git/ref/tags/${tag}`;
+  const fixtureRef = z.object({
+    ref: z.literal(`refs/tags/${tag}`),
+    object: z.object({ type: z.literal("commit"), sha }),
+  });
   const [identity, workflow, reference, actor] = await Promise.all([
     read(repoPath, z.object({ id: z.literal(fixtureRepositoryId), full_name: z.literal(repo) })),
     read(
@@ -63,20 +102,20 @@ export async function openLiveGitHubFixture(rawTag: string) {
         state: z.literal("active"),
       }),
     ),
-    read(
-      `${repoPath}/git/ref/tags/${tag}`,
-      z.object({
-        ref: z.literal(`refs/tags/${tag}`),
-        object: z.object({ type: z.literal("commit"), sha }),
-      }),
-    ),
+    read(tagPath, fixtureRef),
     read("/user", z.object({ login: z.string().min(1) })),
   ]);
   const sourceRevision = reference.object.sha;
+  if (effectlessSmokeTag) {
+    assert.equal(
+      sourceRevision,
+      auditedSmokeCommit,
+      "The smoke tag must pin the audited fixture commit.",
+    );
+  }
   const dispatchPath = `${repoPath}/actions/workflows/${workflow.id}/dispatches`;
   const filePath = `${repoPath}/contents/${workflow.path}`;
   const lookupPath = `${repoPath}/actions/workflows/${workflow.id}/runs`;
-  const tagPath = `${repoPath}/git/ref/tags/${tag}`;
   const releasePath = `${repoPath}/releases/tags/${tag}`;
   const runUrl = (id: number) => `https://github.com/${repo}/actions/runs/${id}`;
   const [workflowFile, existingRuns] = await Promise.all([
@@ -92,6 +131,17 @@ export async function openLiveGitHubFixture(rawTag: string) {
     "The tagged workflow is not the smoke fixture.",
   );
   assert.equal(existingRuns.total_count, 0, "Use a fresh tag; this fixture tag already has a run.");
+  if (!effectlessSmokeTag) {
+    await read(
+      releasePath,
+      z.object({
+        tag_name: z.literal(tag),
+        immutable: z.literal(true),
+        draft: z.literal(false),
+        published_at: z.iso.datetime({ offset: true }),
+      }),
+    );
+  }
   let sent = 0;
   let droppedRunId: number | undefined;
 
@@ -112,6 +162,7 @@ export async function openLiveGitHubFixture(rawTag: string) {
         return { kind: "granted", token: credential, actorLogin: actor.login };
       },
       fetcher: async (input, init) => {
+        signal.throwIfAborted();
         const url = new URL(String(input));
         assert.equal(url.origin, api);
         assert.equal(init?.redirect, "manual");
@@ -134,6 +185,15 @@ export async function openLiveGitHubFixture(rawTag: string) {
             },
           });
           assert.equal(++sent, 1, "A lost response must never reissue the GitHub POST.");
+          if (effectlessSmokeTag) {
+            const current = await read(tagPath, fixtureRef);
+            assert.equal(
+              current.object.sha,
+              auditedSmokeCommit,
+              "The audited smoke tag moved before dispatch.",
+            );
+          }
+          signal.throwIfAborted();
           const response = await fetch(url, init);
           assert.equal(
             response.status,
@@ -149,7 +209,7 @@ export async function openLiveGitHubFixture(rawTag: string) {
           throw new Error("Fixture discarded the real GitHub dispatch response.");
         }
         assert.equal(init?.method, "GET");
-        if (url.pathname + url.search === releasePath) {
+        if (effectlessSmokeTag && url.pathname + url.search === releasePath) {
           // The smoke repository has immutable releases disabled. Only this read
           // is simulated. GitHub serves the exact tag, workflow, dispatch, and run.
           return Response.json({
@@ -168,6 +228,7 @@ export async function openLiveGitHubFixture(rawTag: string) {
         const fixedLookup = [
           repoPath,
           tagPath,
+          releasePath,
           `${repoPath}/actions/workflows/${workflow.id}`,
         ].includes(url.pathname + url.search);
         const exactRunRead =
@@ -208,8 +269,8 @@ export async function openLiveGitHubFixture(rawTag: string) {
       conclusion: z.string().nullable(),
     });
     const runPath = `${repoPath}/actions/runs/${runId}`;
-    while (Date.now() < until) {
-      const run = await read(runPath, runSchema);
+    async function readEvidence() {
+      const run = await read(runPath, runSchema, until);
       assert.equal(run.id, runId);
       assert.equal(run.repository.id, fixtureRepositoryId);
       assert.equal(run.workflow_id, fixtureWorkflowId);
@@ -219,13 +280,13 @@ export async function openLiveGitHubFixture(rawTag: string) {
       if (run.status === "completed") {
         assert.equal(run.display_title, `wallie:${target.runNonce}`);
         assert.equal(run.conclusion, "success", "The actual fixture run failed.");
-        const jobs = await read(`${runPath}/jobs`, jobSchema);
+        const jobs = await read(`${runPath}/jobs`, jobSchema, until);
         assert.equal(jobs.jobs.length, 1);
         const job = jobs.jobs[0];
         assert(job && job.name === "verify" && job.conclusion === "success" && job.completed_at);
         const marker = `wallie-delivery-fixture ${target.commandId} ${sourceRevision} ${fixtureEnvironment}`;
         try {
-          const log = execFileSync(
+          const { stdout: log } = await exec(
             "gh",
             ["run", "view", "--repo", `github.com/${repo}`, "--job", String(job.id), "--log"],
             {
@@ -236,8 +297,8 @@ export async function openLiveGitHubFixture(rawTag: string) {
                 TMPDIR: process.env.TMPDIR,
                 GH_TOKEN: credential,
               },
-              stdio: ["ignore", "pipe", "pipe"],
-              timeout: 15_000,
+              signal,
+              timeout: Math.max(1, Math.min(15_000, until - Date.now())),
               maxBuffer: 256 * 1024,
             },
           );
@@ -253,10 +314,21 @@ export async function openLiveGitHubFixture(rawTag: string) {
             };
           }
         } catch {
+          signal.throwIfAborted();
           // GitHub may publish the successful job before its logs are readable.
         }
       }
-      await delay(2_000);
+      return null;
+    }
+    while (Date.now() < until) {
+      signal.throwIfAborted();
+      try {
+        const evidence = await readEvidence();
+        if (evidence) return evidence;
+      } catch (error) {
+        if (!(error instanceof TemporaryGitHubReadError)) throw error;
+      }
+      await delay(Math.min(2_000, Math.max(0, until - Date.now())), undefined, { signal });
     }
     throw new Error("The exact GitHub fixture run and its log marker did not become available.");
   }
