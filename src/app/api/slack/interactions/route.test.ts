@@ -25,6 +25,7 @@ const channelId = "C6780TEST";
 const viewId = "V6780TEST";
 const targetId = "67800000-0000-4000-8000-000000000021";
 const modalContextId = "67800000-0000-4000-8000-000000000022";
+const bindingNonce = "67800000-0000-4000-8000-000000000023";
 const messageTs = "1764000001.000053";
 const threadTs = "1764000000.000051";
 const actionTs = "1764000002.000055";
@@ -47,7 +48,7 @@ function button(actionId: string) {
 }
 
 function answer(text: string) {
-  const modal = buildSlackClarificationModal(modalContextId);
+  const modal = buildSlackClarificationModal(modalContextId, bindingNonce);
   const [input] = modal.blocks;
   if (!input) throw new Error("Expected a clarification answer input.");
   return {
@@ -156,7 +157,13 @@ describe("Slack interactions POST", () => {
   });
 
   it("opens and registers the modal with a separately issued context and temporary trigger", async () => {
-    nextRpc([{ modal_context_id: modalContextId, encrypted_token: encryptSecretValue(token) }]);
+    nextRpc([
+      {
+        modal_context_id: modalContextId,
+        binding_nonce: bindingNonce,
+        encrypted_token: encryptSecretValue(token),
+      },
+    ]);
     nextRpc(true);
     fetcher.mockResolvedValueOnce(Response.json({ ok: true, view: { id: viewId } }));
 
@@ -174,7 +181,7 @@ describe("Slack interactions POST", () => {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         trigger_id: triggerId,
-        view: buildSlackClarificationModal(modalContextId),
+        view: buildSlackClarificationModal(modalContextId, bindingNonce),
       }),
       signal: expect.any(AbortSignal),
     });
@@ -194,7 +201,13 @@ describe("Slack interactions POST", () => {
   });
 
   it("reports a generic failure when the opened view could not be registered", async () => {
-    nextRpc([{ modal_context_id: modalContextId, encrypted_token: encryptSecretValue(token) }]);
+    nextRpc([
+      {
+        modal_context_id: modalContextId,
+        binding_nonce: bindingNonce,
+        encrypted_token: encryptSecretValue(token),
+      },
+    ]);
     nextRpc(false);
     fetcher.mockResolvedValueOnce(Response.json({ ok: true, view: { id: viewId } }));
     const response = await POST(request(form(button("wallie_answer"))));
@@ -202,8 +215,54 @@ describe("Slack interactions POST", () => {
     expect(await response.json()).toEqual({ error: "Slack interactions are unavailable." });
   });
 
+  it("acknowledges the opened view when its binding response is lost and accepts its signed proof", async () => {
+    nextRpc([
+      {
+        modal_context_id: modalContextId,
+        binding_nonce: bindingNonce,
+        encrypted_token: encryptSecretValue(token),
+      },
+    ]);
+    nextRpc(null, { message: "Binding response unavailable" });
+    fetcher.mockResolvedValueOnce(Response.json({ ok: true, view: { id: viewId } }));
+
+    expect((await POST(request(form(button("wallie_answer"))))).status).toBe(200);
+    nextRpc("queued");
+    expect((await POST(request(form(answer("Continue with this answer."))))).status).toBe(200);
+    expect(rpc).toHaveBeenNthCalledWith(3, "queue_slack_review_action", {
+      ...scopedRpcArgs,
+      p_action: "answer",
+      p_context_id: modalContextId,
+      p_delivery_key: `answer:${viewId}`,
+      p_view_id: viewId,
+      p_answer: "Continue with this answer.",
+      p_binding_nonce: bindingNonce,
+    });
+  });
+
+  it("keeps accepting a legacy view when the exact registration exists", async () => {
+    nextRpc("queued");
+    const body = answer("Legacy answer");
+    body.view.private_metadata = modalContextId;
+    expect((await POST(request(form(body)))).status).toBe(200);
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("queue_slack_review_action", {
+      ...scopedRpcArgs,
+      p_action: "answer",
+      p_context_id: modalContextId,
+      p_delivery_key: `answer:${viewId}`,
+      p_view_id: viewId,
+      p_answer: "Legacy answer",
+    });
+  });
+
   it("does not bind a view when Slack fails and keeps provider response details private", async () => {
-    nextRpc([{ modal_context_id: modalContextId, encrypted_token: encryptSecretValue(token) }]);
+    nextRpc([
+      {
+        modal_context_id: modalContextId,
+        binding_nonce: bindingNonce,
+        encrypted_token: encryptSecretValue(token),
+      },
+    ]);
     fetcher.mockResolvedValueOnce(
       Response.json({ ok: false, error: "fixture_private_provider_detail" }),
     );
@@ -224,6 +283,7 @@ describe("Slack interactions POST", () => {
       p_delivery_key: `answer:${viewId}`,
       p_view_id: viewId,
       p_answer: text,
+      p_binding_nonce: bindingNonce,
     });
     expect(fetcher).not.toHaveBeenCalled();
   });

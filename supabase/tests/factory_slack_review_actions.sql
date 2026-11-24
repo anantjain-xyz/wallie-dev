@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(66);
+select plan(70);
 
 \set op651_fixture_namespace 67800000
 \ir fixtures/factory_automation_dry_run.psql
@@ -109,20 +109,21 @@ create function pg_temp.slack_approve(
   from slack_cards card where card.scenario = p_scenario
 $$;
 create function pg_temp.slack_prepare(p_scenario text, p_actor text default 'U67800003', p_message_offset integer default 1)
-returns table(modal_context_id uuid, encrypted_token text) language sql as $$
+returns table(modal_context_id uuid, encrypted_token text, binding_nonce uuid) language sql as $$
   select context.* from slack_cards card
   cross join lateral public.prepare_slack_clarification_modal(card.target_id, 'T67800001', 'A67800001', p_actor,
     'C67800001', pg_temp.review_ts(card.thread_tick + p_message_offset)) context
   where card.scenario = p_scenario
 $$;
-create function pg_temp.slack_answer(p_context uuid, p_view text, p_answer text, p_actor text default 'U67800003')
+create function pg_temp.slack_answer(p_context uuid, p_view text, p_answer text,
+  p_actor text default 'U67800003', p_binding_nonce uuid default null)
 returns text language sql as $$
   select public.queue_slack_review_action('answer', p_context, 'T67800001', 'A67800001', p_actor,
-    'answer:' || p_view, p_view_id => p_view, p_answer => p_answer)
+    'answer:' || p_view, p_view_id => p_view, p_answer => p_answer, p_binding_nonce => p_binding_nonce)
 $$;
 
 select ok(has_function_privilege('service_role', 'public.claim_slack_review_action(uuid)', 'execute')
-  and not has_function_privilege('authenticated', 'public.queue_slack_review_action(text,uuid,text,text,text,text,text,text,text,text,text)', 'execute')
+  and not has_function_privilege('authenticated', 'public.queue_slack_review_action(text,uuid,text,text,text,text,text,text,text,text,text,uuid)', 'execute')
   and not has_function_privilege('anon', 'public.prepare_slack_clarification_modal(uuid,text,text,text,text,text,text)', 'execute')
   and not has_table_privilege('service_role', 'internal.slack_review_targets', 'select')
   and not has_table_privilege('service_role', 'internal.slack_review_actions', 'select')
@@ -197,13 +198,19 @@ select is((select count(*) from pg_temp.slack_prepare('clarification', p_message
 select is((select count(*) from pg_temp.slack_prepare('clarification', 'U67800009')), 0::bigint,
   'an unlinked Slack human cannot obtain a modal context or bot credential');
 create temp table clarification_modal as select * from pg_temp.slack_prepare('clarification');
-select ok((select count(*) = 1 and bool_and(modal_context_id is not null
+select ok((select count(*) = 1 and bool_and(modal_context_id is not null and binding_nonce is not null
     and encrypted_token = 'v2.AAAAAAAAAAAAAAAA.QQ.AAAAAAAAAAAAAAAAAAAAAA') from clarification_modal),
   'an authorized scoped member can open a question even when they are not a stage approver');
 select is((select pg_temp.slack_answer(modal_context_id, 'V67800001', 'Friday.') from clarification_modal), 'denied',
-  'a modal context cannot submit until the exact Slack view is registered');
+  'legacy metadata needs an existing exact view registration');
+select is((select pg_temp.slack_answer(modal_context_id, 'V67800001', 'Friday.', p_binding_nonce => gen_random_uuid())
+  from clarification_modal), 'denied', 'a signed submission cannot bind a view with a forged nonce');
+select is((select pg_temp.slack_answer(modal_context_id, 'V67800001', 'Friday.', 'U67800002', binding_nonce)
+  from clarification_modal), 'denied', 'a correct nonce cannot bind a view on behalf of a different actor');
+select is((select pg_temp.slack_answer(modal_context_id, 'V67800001', 'Friday.', p_binding_nonce => binding_nonce)
+  from clarification_modal), 'queued', 'the matching signed modal proof binds the view and queues its answer atomically');
 select is((select public.register_slack_clarification_view(modal_context_id, 'V67800001') from clarification_modal), true,
-  'the returned Slack view ID can be bound to the original modal context');
+  'delayed registration agrees with the view already bound by the submit');
 select is((select public.register_slack_clarification_view(modal_context_id, 'V67800001') from clarification_modal), true,
   're-registering the same view is idempotent');
 select is((select public.register_slack_clarification_view(modal_context_id, 'V67800002') from clarification_modal), false,
@@ -214,8 +221,8 @@ select is((select pg_temp.slack_answer(modal_context_id, 'V67800002', 'Friday.')
   'the intended actor still needs the exact registered view');
 select is((select pg_temp.slack_answer(modal_context_id, 'V67800001', repeat('x', 2001)) from clarification_modal), 'denied',
   'the queue enforces the canonical answer limit before retaining text');
-select is((select pg_temp.slack_answer(modal_context_id, 'V67800001', 'Friday.') from clarification_modal), 'queued',
-  'the exact actor and view queue one durable clarification answer');
+select is((select pg_temp.slack_answer(modal_context_id, 'V67800001', 'Friday.') from clarification_modal), 'replayed',
+  'a registered exact view keeps legacy interaction receipts replayable');
 select is((select pg_temp.slack_answer(modal_context_id, 'V67800001', 'Monday.') from clarification_modal), 'denied',
   'a reused view cannot change its signed answer');
 create temp table answer_claim as select * from public.claim_slack_review_action(pg_temp.op651_id(11));
@@ -239,11 +246,15 @@ select is((select pg_temp.slack_answer(modal_context_id, 'V67800003', 'Monday.')
 reset role;
 update internal.slack_review_actions set deadline_at = clock_timestamp() - interval '1 second'
 where delivery_key = 'answer:V67800003';
-update internal.slack_clarification_modal_contexts set expires_at = clock_timestamp() - interval '11 minutes'
-where view_id = 'V67800003';
 set local role service_role;
 select is((select count(*) from public.claim_slack_review_action(pg_temp.op651_id(11))), 0::bigint,
   'expired answer work never reaches a worker lease');
+select is((select pg_temp.slack_answer(modal_context_id, 'V67800003', 'Monday.') from expiring_modal), 'stale',
+  'a terminally failed answer cannot replay as a successful submission');
+reset role;
+update internal.slack_clarification_modal_contexts set expires_at = clock_timestamp() - interval '11 minutes'
+where view_id = 'V67800003';
+set local role service_role;
 
 select ok(pg_temp.slack_bind_card('revoked'), 'a review target remains available for revocation testing');
 select is(pg_temp.slack_approve('revoked', 240), 'queued', 'the worker must recheck queued actor authority');

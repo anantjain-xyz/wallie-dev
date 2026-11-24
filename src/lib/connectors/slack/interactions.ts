@@ -12,6 +12,16 @@ const answerActionId = "wallie_answer_text";
 const answerCallbackId = "wallie_clarification_answer";
 export const slackClarificationAnswerMaxLength = 2_000;
 const targetId = z.uuid().toLowerCase();
+const modalContext = z
+  .string()
+  .max(76)
+  .transform((value) => value.split(":"))
+  .pipe(z.union([z.tuple([targetId]), z.tuple([z.literal("v1"), targetId, targetId])]))
+  .transform((parts) =>
+    parts.length === 1
+      ? { contextId: parts[0], bindingNonce: undefined }
+      : { contextId: parts[1], bindingNonce: parts[2] },
+  );
 const slackTs = z.string().regex(/^[1-9][0-9]{0,11}\.[0-9]{6}$/);
 const triggerId = z.string().regex(/^[A-Za-z0-9_.-]{1,512}$/);
 const enterpriseId = z.string().regex(/^E[A-Z0-9]{2,31}$/);
@@ -60,7 +70,7 @@ const submission = identity.extend({
     id: z.string().regex(/^V[A-Z0-9]{2,63}$/),
     type: z.literal("modal"),
     callback_id: z.literal(answerCallbackId),
-    private_metadata: targetId,
+    private_metadata: modalContext,
     app_id: slackAppIdSchema.nullish(),
     team_id: slackTeamIdSchema.nullish(),
     app_installed_team_id: slackTeamIdSchema.nullish(),
@@ -107,6 +117,7 @@ export type SlackInteraction =
       kind: "submit_answer";
       targetId: string;
       viewId: string;
+      bindingNonce?: string;
       answer: string;
     })
   | { kind: "invalid_answer" };
@@ -188,8 +199,11 @@ function readAnswer(raw: unknown, expectedAppId: string): SlackInteraction | nul
   return {
     ...scope,
     kind: "submit_answer",
-    targetId: view.private_metadata,
+    targetId: view.private_metadata.contextId,
     viewId: view.id,
+    ...(view.private_metadata.bindingNonce
+      ? { bindingNonce: view.private_metadata.bindingNonce }
+      : {}),
     answer: answer.data.values[slackClarificationAnswerBlockId][answerActionId].value,
   };
 }
@@ -306,11 +320,11 @@ export function buildSlackActionBlocks({
   return [{ type: "actions", elements }];
 }
 
-export function buildSlackClarificationModal(clarificationTargetId: string) {
+export function buildSlackClarificationModal(clarificationTargetId: string, bindingNonce: string) {
   return {
     type: "modal",
     callback_id: answerCallbackId,
-    private_metadata: targetId.parse(clarificationTargetId),
+    private_metadata: `v1:${targetId.parse(clarificationTargetId)}:${targetId.parse(bindingNonce)}`,
     title: plainText("Answer clarification"),
     submit: plainText("Send answer"),
     close: plainText("Cancel"),

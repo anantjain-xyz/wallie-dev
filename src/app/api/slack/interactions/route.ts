@@ -18,7 +18,13 @@ export const preferredRegion = "home";
 
 const headers = { "Cache-Control": "no-store" };
 const modalContexts = z
-  .array(z.object({ modal_context_id: z.uuid(), encrypted_token: z.string().min(1) }))
+  .array(
+    z.object({
+      modal_context_id: z.uuid(),
+      binding_nonce: z.uuid(),
+      encrypted_token: z.string().min(1),
+    }),
+  )
   .max(1);
 const actionDecision = z.enum(["queued", "replayed", "denied", "stale"]);
 type Admin = ReturnType<typeof createSupabaseAdminClient>;
@@ -66,6 +72,7 @@ async function openAnswer(
   const viewId = await openSlackClarificationModal({
     botAccessToken: decryptSecretValue(context.encrypted_token),
     targetId: context.modal_context_id,
+    bindingNonce: context.binding_nonce,
     triggerId: action.triggerId,
     signal: deadline,
   });
@@ -76,7 +83,8 @@ async function openAnswer(
       p_view_id: viewId,
     })
     .abortSignal(AbortSignal.timeout(200));
-  return registration.error || registration.data !== true ? unavailable() : acknowledge();
+  // The app-issued modal proof lets a signed submission recover an unknown registration.
+  return registration.error || registration.data === true ? acknowledge() : unavailable();
 }
 
 async function queueAction(
@@ -103,6 +111,7 @@ async function queueAction(
             p_delivery_key: `answer:${action.viewId}`,
             p_view_id: action.viewId,
             p_answer: action.answer,
+            ...(action.bindingNonce ? { p_binding_nonce: action.bindingNonce } : {}),
           }),
     })
     .abortSignal(deadline);

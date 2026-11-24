@@ -15331,6 +15331,7 @@ export type Database = {
           p_thread_ts?: string
         }
         Returns: {
+          binding_nonce: string
           encrypted_token: string
           modal_context_id: string
         }[]
@@ -15603,6 +15604,7 @@ export type Database = {
           p_actor_id: string
           p_answer?: string
           p_app_id: string
+          p_binding_nonce?: string
           p_channel_id?: string
           p_context_id: string
           p_delivery_key: string

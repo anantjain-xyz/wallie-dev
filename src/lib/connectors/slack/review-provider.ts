@@ -14,6 +14,7 @@ export async function openSlackClarificationModal(
     botAccessToken: string;
     triggerId: string;
     targetId: string;
+    bindingNonce: string;
     signal?: AbortSignal;
   },
   fetcher: typeof fetch = fetch,
@@ -28,7 +29,7 @@ export async function openSlackClarificationModal(
     },
     body: JSON.stringify({
       trigger_id: input.triggerId,
-      view: buildSlackClarificationModal(input.targetId),
+      view: buildSlackClarificationModal(input.targetId, input.bindingNonce),
     }),
     redirect: "error",
     signal,

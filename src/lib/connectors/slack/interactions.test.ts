@@ -17,6 +17,7 @@ const messageTs = "1764000001.000053";
 const threadTs = "1764000000.000051";
 const targetId = "67800000-0000-4000-8000-000000000001";
 const answerTargetId = "67800000-0000-4000-8000-000000000002";
+const bindingNonce = "67800000-0000-4000-8000-000000000003";
 const triggerId = "12321423423.333649436676.d8c1bb837935619ccad0f624c448ffb3";
 const wallieOrigin = "https://wallie.dev";
 const wallieUrl = `${wallieOrigin}/w/wallie/sessions/17?reviewRevision=3&artifactVersion=2#review`;
@@ -64,7 +65,7 @@ function parse(payload: unknown) {
 }
 
 function submit(value: unknown) {
-  const modal = buildSlackClarificationModal(answerTargetId);
+  const modal = buildSlackClarificationModal(answerTargetId, bindingNonce);
   const [input] = modal.blocks;
   if (!input) throw new Error("Expected one clarification input.");
   return {
@@ -193,6 +194,7 @@ describe("Slack interaction payloads", () => {
       userId,
       targetId: answerTargetId,
       viewId,
+      bindingNonce,
       answer,
     });
   });
@@ -302,10 +304,10 @@ describe("Slack interaction rendering", () => {
   });
 
   it("renders a single bounded multiline modal input tied to the same opaque clarification", () => {
-    expect(buildSlackClarificationModal(answerTargetId)).toMatchObject({
+    expect(buildSlackClarificationModal(answerTargetId, bindingNonce)).toMatchObject({
       type: "modal",
       callback_id: "wallie_clarification_answer",
-      private_metadata: answerTargetId,
+      private_metadata: `v1:${answerTargetId}:${bindingNonce}`,
       blocks: [
         {
           type: "input",
