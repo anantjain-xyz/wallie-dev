@@ -13992,6 +13992,21 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      link_connector_actor: {
+        Args: {
+          p_actor_kind: Database["public"]["Enums"]["connector_actor_kind"]
+          p_actor_user_id: string
+          p_external_actor_id: string
+          p_external_tenant_id: string
+          p_factory_id: string
+          p_installation_generation: number
+          p_installation_id: string
+          p_provider: Database["public"]["Enums"]["connector_provider"]
+          p_service_principal_id?: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       list_artifact_review_comments: {
         Args: {
           p_after_created_at?: string
@@ -16448,6 +16463,45 @@ export type Database = {
         }
         Returns: string
       }
+      resolve_connector_event_authority: {
+        Args: {
+          p_actor_kind: Database["public"]["Enums"]["connector_actor_kind"]
+          p_execution_grant_id: string
+          p_execution_grant_version: number
+          p_external_actor_id: string
+          p_external_tenant_id: string
+          p_factory_id: string
+          p_installation_generation: number
+          p_mapping_revision: number
+          p_provider: Database["public"]["Enums"]["connector_provider"]
+          p_resource_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          actor_kind: Database["public"]["Enums"]["connector_actor_kind"]
+          actor_link_id: string
+          budget_payer_member_id: string
+          execution_grant_id: string
+          execution_grant_version: number
+          initiating_member_id: string
+          initiating_service_principal_id: string
+          service_principal_id: string
+        }[]
+      }
+      resolve_connector_review_actor: {
+        Args: {
+          p_actor_kind: Database["public"]["Enums"]["connector_actor_kind"]
+          p_external_actor_id: string
+          p_external_tenant_id: string
+          p_factory_id: string
+          p_installation_generation: number
+          p_mapping_revision: number
+          p_provider: Database["public"]["Enums"]["connector_provider"]
+          p_resource_id: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       resolve_factory_run_credential: {
         Args: {
           p_attempt_count: number
@@ -16612,6 +16666,14 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      revoke_connector_actor_link: {
+        Args: {
+          p_actor_user_id: string
+          p_link_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
       }
       revoke_factory_benchmark_inference_connection: {
         Args: {
@@ -18272,6 +18334,7 @@ export type Database = {
         | "blocked"
         | "recorded_fixtures"
         | "isolated_test"
+      connector_actor_kind: "human" | "service"
       connector_provider: "github" | "linear"
       connector_resource_kind: "repository" | "team" | "project"
       factory_command_admission_status:
@@ -18519,6 +18582,7 @@ export const Constants = {
         "recorded_fixtures",
         "isolated_test",
       ],
+      connector_actor_kind: ["human", "service"],
       connector_provider: ["github", "linear"],
       connector_resource_kind: ["repository", "team", "project"],
       factory_command_admission_status: [
