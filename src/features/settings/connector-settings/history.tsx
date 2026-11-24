@@ -22,6 +22,7 @@ const kindLabel: Record<ConnectorDeliveryRow["kind"], string> = {
   github_admission: "GitHub work intake",
   github_comment: "GitHub comment intake",
   linear_intake: "Linear issue intake",
+  slack_ingress: "Slack thread intake",
   outbound: "Outbound delivery",
 };
 
@@ -38,6 +39,7 @@ const reasonLabel: Partial<Record<ConnectorDeliveryRow["reason"], string>> = {
   credential_unavailable: "Provider access is unavailable.",
   expired: "The delivery’s retry window expired.",
   inconclusive: "The provider has not confirmed the prior result.",
+  membership_denied: "The Slack bot can no longer read this channel.",
   not_sent: "The delivery was not sent.",
   processing_failed: "Comment processing failed.",
   rate_limited: "The provider asked Wallie to wait.",

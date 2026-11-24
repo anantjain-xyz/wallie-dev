@@ -70,6 +70,7 @@ import { createGitHubConnectorOutboundAdapter } from "@/features/github/connecto
 import { drainConnectorOutboundDeliveries } from "@/lib/connectors/outbound";
 import { drainSlackConnectorEvents } from "@/lib/connectors/slack/intake";
 import { drainSlackReviewActionBatch } from "@/lib/connectors/slack/review-actions";
+import { createSlackConnectorOutboundAdapter } from "@/lib/connectors/slack/outbound";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 import { reconcilePrReadiness } from "@/lib/pipeline/pr-readiness";
 
@@ -405,6 +406,10 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
             if (!(await drainSlackReviewActionBatch(admin)).hasMore) break;
           }
         },
+      ],
+      [
+        "Slack connector outbox",
+        () => drainConnectorOutboundDeliveries(admin, createSlackConnectorOutboundAdapter(admin)),
       ],
       [
         "GitHub connector outbound",

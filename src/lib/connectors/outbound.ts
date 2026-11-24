@@ -133,9 +133,11 @@ const claimResponse = z.union([z.tuple([]), z.tuple([claim])]);
 export async function drainConnectorOutboundDeliveries(
   admin: Admin,
   adapter: ConnectorOutboundAdapter,
+  options: { isShuttingDown?: () => boolean } = {},
 ) {
   let settled = 0;
   for (let index = 0; index < 4; index++) {
+    if (options.isShuttingDown?.()) break;
     const { data, error } = await admin
       .rpc("claim_connector_outbound_delivery", { p_provider: adapter.provider })
       .abortSignal(AbortSignal.timeout(rpcTimeoutMs));

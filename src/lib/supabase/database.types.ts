@@ -17041,6 +17041,27 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      resolve_slack_connector_delivery: {
+        Args: { p_delivery_id: string; p_lease_id: string }
+        Returns: {
+          action_target_id: string
+          app_id: string
+          bot_user_id: string
+          channel_id: string
+          deadline_at: string
+          encrypted_token: string
+          original_write_authorized_at: string
+          previous_correlation_id: string
+          review_paused: boolean
+          review_revision: number
+          session_id: string
+          session_number: number
+          superseded: boolean
+          team_id: string
+          thread_ts: string
+          workspace_slug: string
+        }[]
+      }
       restart_session_once_with_first_job: {
         Args: {
           agent_model_name: string
