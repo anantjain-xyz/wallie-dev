@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(63);
+select plan(66);
 
 \set op651_fixture_namespace 67900000
 \ir fixtures/factory_automation_dry_run.psql
@@ -159,13 +159,32 @@ select ok((select observed.action_target_id = original.action_target_id
     (original.team_id, original.app_id, original.channel_id, original.thread_ts)
   from observed_card observed join refreshed_card original using (delivery_id)),
   'observation retains the original action ID and scope for the rendered card');
+select archived.* from observed_card card cross join lateral public.archive_session_job_attempts(
+  card.session_id, (select workspace_id from slack_outbound_scope), 'Archive while Slack delivery is uncertain') archived;
 select ok((select public.register_slack_review_card(action_target_id, team_id, app_id, channel_id, thread_ts, '1732400000.000052')
   from observed_card), 'a recovered exact provider message binds the original review card');
 select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'found', '1732400000.000052')
   from observed_card), 'the outbox retains the observed card as its exact delivered reply');
+reset role;
+select is((select count(*) from internal.connector_outbound_deliveries edit
+  where edit.edited_delivery_id = (select delivery_id from observed_card)), 0::bigint,
+  'settling a card while its unchanged review is archived leaves the card intact');
+update public.sessions set archived_at = null where id = (select session_id from observed_card);
+set local role service_role;
+select archived.* from observed_card card cross join lateral public.archive_session_job_attempts(
+  card.session_id, (select workspace_id from slack_outbound_scope), 'Archive after Slack delivery') archived;
+select is((select public.queue_slack_review_action('approve', action_target_id, team_id, app_id, 'U67900002',
+  'approve:1732400000.000056', channel_id, '1732400000.000052') from observed_card), 'stale',
+  'an archived review card cannot authorize a Slack approval');
+reset role;
+update public.sessions set archived_at = null where id = (select session_id from observed_card);
+select is((select count(*) from internal.connector_outbound_deliveries edit
+  where edit.edited_delivery_id = (select delivery_id from observed_card)), 0::bigint,
+  'archiving and restoring the unchanged review keeps the original Slack card intact');
+set local role service_role;
 select is((select public.queue_slack_review_action('approve', action_target_id, team_id, app_id, 'U67900002',
   'approve:1732400000.000053', channel_id, '1732400000.000052') from observed_card), 'queued',
-  'the original observed Slack review card can queue exact approval');
+  'the original observed Slack review card can queue exact approval after restore');
 select is((select public.complete_slack_review_action(action_id, lease_id, 'codex', 'gpt-5.5', 'code')
   from public.claim_slack_review_action(pg_temp.op651_id(11))), 'applied',
   'the outbound card reaches the authoritative Wallie stage decision as the linked human');

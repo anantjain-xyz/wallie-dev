@@ -77,7 +77,8 @@ begin
   select session.* into target from public.sessions session
   where (session.workspace_id, session.factory_id, session.id) =
     (new.workspace_id, new.factory_id, new.session_id);
-  if found and (target.phase_status <> 'awaiting_review' or target.archived_at is not null
+  -- Restoring an archived session can reactivate the same review and its card.
+  if found and (target.phase_status <> 'awaiting_review'
     or target.current_artifact_id is distinct from reviewed_artifact_id) then
     perform internal.queue_slack_closed_review_card(target, reviewed_artifact_id);
   end if;
@@ -116,8 +117,8 @@ begin
   end if;
 
   if old.phase_status = 'awaiting_review' and old.current_artifact_id is not null
-    and (new.phase_status, new.current_artifact_id, new.archived_at) is distinct from
-      (old.phase_status, old.current_artifact_id, old.archived_at)
+    and (new.phase_status, new.current_artifact_id) is distinct from
+      (old.phase_status, old.current_artifact_id)
     and exists (select 1 from public.session_conversation_sources source
       where (source.workspace_id, source.factory_id, source.session_id, source.provider) =
         (new.workspace_id, new.factory_id, new.id, 'slack')) then
@@ -155,10 +156,10 @@ create trigger capture_delivered_slack_review_card after update of status on int
     and new.content->>'kind' in ('review_ready', 'clarification'))
   execute function internal.capture_delivered_slack_review_card();
 create trigger capture_slack_connector_review_or_outcome after update of phase_status, current_artifact_id,
-  execution_exhaustion_code, archived_at on public.sessions
+  execution_exhaustion_code on public.sessions
   for each row when (
-    (new.phase_status, new.current_artifact_id, new.execution_exhaustion_code, new.archived_at) is distinct from
-      (old.phase_status, old.current_artifact_id, old.execution_exhaustion_code, old.archived_at)
+    (new.phase_status, new.current_artifact_id, new.execution_exhaustion_code) is distinct from
+      (old.phase_status, old.current_artifact_id, old.execution_exhaustion_code)
   ) execute function internal.capture_slack_connector_notice();
 
 revoke all on function internal.queue_slack_connector_notice(public.sessions, text, text, text, jsonb),
