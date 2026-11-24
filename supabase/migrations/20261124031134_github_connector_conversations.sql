@@ -151,8 +151,12 @@ begin
     select mapped.* into strict resource from public.factory_connector_resources mapped where mapped.id = resource.id;
     linked := internal.require_scoped_connector_actor(resource.workspace_id, resource.factory_id, resource.id,
       installation.generation, resource.current_revision, 'github', p_owner_id::text, p_actor_id::text, 'human');
-  exception when insufficient_privilege or sqlstate 'P0010' or sqlstate 'P0011' then
-    return null;
+  exception
+    when insufficient_privilege or sqlstate 'P0010' or sqlstate 'P0011' then
+      return null;
+    when sqlstate 'PT409' then
+      -- Authorization surfaces concurrent scope changes as conflicts.
+      raise exception 'GitHub comment authorization is changing.' using errcode = '55P03';
   end;
 
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
