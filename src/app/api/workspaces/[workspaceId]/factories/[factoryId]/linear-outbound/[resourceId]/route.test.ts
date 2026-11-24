@@ -6,8 +6,8 @@ const mock = vi.hoisted(() => ({
   context: vi.fn(),
   rpc: vi.fn(),
 }));
-vi.mock("@/lib/factories/route-context", () => ({
-  factoryResponseHeaders: { "Cache-Control": "private, no-store" },
+vi.mock("@/lib/factories/route-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/factories/route-context")>()),
   resolveFactoryRouteContext: mock.context,
 }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: () => ({ rpc: mock.rpc }) }));

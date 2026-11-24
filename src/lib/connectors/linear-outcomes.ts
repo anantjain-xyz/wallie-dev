@@ -246,7 +246,7 @@ function isExactIssue(
   target: Delivery,
 ): scope is z.output<typeof commentScope> & { issue: z.output<typeof issue> } {
   const found = scope.issue;
-  if (!found || found.archivedAt !== null || found.trashed) return false;
+  if (!found) return false;
   const resourceId = target.resource_kind === "team" ? found.team.id : found.project?.id;
   return (
     found.id === target.issue_id &&

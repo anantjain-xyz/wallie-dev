@@ -76,6 +76,10 @@ const scope = {
   issue,
   workflowState: { id: origin.to_state_id, team: issue.team, archivedAt: null },
 };
+const inactiveIssues = [
+  ["archived", { ...issue, archivedAt: nextStartedAt }],
+  ["trashed", { ...issue, trashed: true }],
+] as const;
 
 function graph(data: unknown) {
   return Response.json({ data });
@@ -154,34 +158,51 @@ describe("Linear linked outcomes", () => {
     });
   });
 
-  it("observes the exact written comment after losing the mutation response", async () => {
-    const { adapter, provider, updateDelivery } = fixture();
-    let body = "";
-    provider.mockResolvedValueOnce(graph(scope)).mockImplementationOnce(async (...args) => {
-      body = (await new Request(...args).json()).variables.input.body;
-      throw new Error("Provider wrote the comment but the connection closed");
-    });
-    await expect(adapter.send(target, AbortSignal.timeout(5_000))).resolves.toEqual({
-      kind: "uncertain",
-    });
+  it.each([["active", issue] as const, ...inactiveIssues])(
+    "observes the exact written comment after losing the mutation response on a readable %s issue",
+    async (_, observedIssue) => {
+      const { adapter, provider, updateDelivery } = fixture();
+      let body = "";
+      provider.mockResolvedValueOnce(graph(scope)).mockImplementationOnce(async (...args) => {
+        body = (await new Request(...args).json()).variables.input.body;
+        throw new Error("Provider wrote the comment but the connection closed");
+      });
+      await expect(adapter.send(target, AbortSignal.timeout(5_000))).resolves.toEqual({
+        kind: "uncertain",
+      });
 
-    updateDelivery({ may_send: false });
-    provider
-      .mockResolvedValueOnce(graph(scope))
-      .mockResolvedValueOnce(
-        graph({ comment: { id: target.correlationId, issue: { id: issue.id }, body } }),
-      );
-    await expect(adapter.observe(target, AbortSignal.timeout(5_000))).resolves.toEqual({
-      kind: "found",
-      providerReplyId: target.correlationId,
-    });
-    const lookup = new Request(...provider.mock.calls[3]!);
-    expect(await lookup.json()).toMatchObject({
-      query: expect.stringContaining("query WallieLinearReadComment"),
-      variables: { id: target.correlationId },
-    });
-    expect(provider).toHaveBeenCalledTimes(4);
-  });
+      updateDelivery({ may_send: false });
+      provider
+        .mockResolvedValueOnce(graph({ ...scope, issue: observedIssue }))
+        .mockResolvedValueOnce(
+          graph({ comment: { id: target.correlationId, issue: { id: issue.id }, body } }),
+        );
+      await expect(adapter.observe(target, AbortSignal.timeout(5_000))).resolves.toEqual({
+        kind: "found",
+        providerReplyId: target.correlationId,
+      });
+      const lookup = new Request(...provider.mock.calls[3]!);
+      expect(await lookup.json()).toMatchObject({
+        query: expect.stringContaining("query WallieLinearReadComment"),
+        variables: { id: target.correlationId },
+      });
+      expect(provider).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  it.each(inactiveIssues)(
+    "withholds comments and status writes for a %s issue",
+    async (_, inactive) => {
+      const { adapter, provider } = fixture();
+      provider
+        .mockResolvedValueOnce(graph({ ...scope, issue: inactive }))
+        .mockResolvedValueOnce(graph({ ...scope, issue: inactive }));
+      const signal = AbortSignal.timeout(5_000);
+      await expect(adapter.send(target, signal)).resolves.toEqual({ kind: "not_sent" });
+      await expect(adapter.send(statusTarget, signal)).resolves.toEqual({ kind: "not_sent" });
+      expect(provider).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("does not mutate after the lease becomes stale during eligibility preflight", async () => {
     const { adapter, provider, updateDelivery } = fixture();
@@ -291,7 +312,7 @@ describe("Linear linked outcomes", () => {
       startedAt: nextStartedAt,
       endedAt: null,
     };
-    const updated = { ...issue, state: { id: origin.to_state_id } };
+    const updated = { ...issue, archivedAt: nextStartedAt, state: { id: origin.to_state_id } };
     provider
       .mockResolvedValueOnce(
         graph({
