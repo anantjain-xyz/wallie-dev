@@ -54,7 +54,8 @@ export async function drainSlackReviewActionBatch(admin: Admin, input: DrainInpu
       try {
         await evaluateSessionPrReadiness(admin, action.session_id, { record: true });
       } catch {
-        // The authoritative approval command fails closed when readiness is missing.
+        // Keep the action eligible for its next lease when readiness could not be recorded.
+        continue;
       }
     }
 

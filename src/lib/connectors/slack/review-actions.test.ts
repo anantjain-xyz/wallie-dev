@@ -103,6 +103,38 @@ describe("Slack review action drain", () => {
     expect(mocks.wakeWorker).toHaveBeenCalledOnce();
   });
 
+  it("leaves the approval for a new lease when readiness recording fails", async () => {
+    const retry = { ...claim, lease_id: "67800000-0000-4000-8000-000000000105" };
+    const { client, outbound } = fakeAdmin([[claim], [], [retry], "applied", []]);
+    mocks.evaluateSessionPrReadiness.mockRejectedValueOnce(
+      new Error("Readiness write unavailable"),
+    );
+
+    await expect(drainSlackReviewActions(client)).resolves.toBe(0);
+    expect(outbound.map(({ path }) => path)).toEqual([claimRpc, claimRpc]);
+    expect(mocks.wakeWorker).not.toHaveBeenCalled();
+
+    await expect(drainSlackReviewActions(client)).resolves.toBe(1);
+    expect(outbound.find(({ path }) => path === completeRpc)?.args).toMatchObject({
+      p_action_id: claim.action_id,
+      p_lease_id: retry.lease_id,
+    });
+    expect(mocks.wakeWorker).toHaveBeenCalledOnce();
+  });
+
+  it("still completes the action when the readiness evaluation records a policy blocker", async () => {
+    const { client, outbound } = fakeAdmin([[claim], "blocked", []]);
+    mocks.evaluateSessionPrReadiness.mockResolvedValueOnce({
+      evaluation: { state: "blocked" },
+      recorded: true,
+    });
+
+    await expect(drainSlackReviewActions(client)).resolves.toBe(0);
+
+    expect(outbound.map(({ path }) => path)).toEqual([claimRpc, completeRpc, claimRpc]);
+    expect(mocks.wakeWorker).not.toHaveBeenCalled();
+  });
+
   it("continues past cleanup and stops at an empty queue", async () => {
     const { client, outbound } = fakeAdmin([cleanup, [claim], "applied", []]);
 
