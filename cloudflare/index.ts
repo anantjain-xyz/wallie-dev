@@ -388,7 +388,15 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
       ],
       ["factory monitoring incidents", () => drainFactoryMonitoringIncidents(admin)],
       ["GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin)],
-      ["Slack connector inbox", () => drainSlackConnectorEvents(admin)],
+      [
+        "Slack connector inbox",
+        async () => {
+          // Drain bursts through bounded batches so later maintenance steps still run.
+          for (let batch = 0; batch < 8; batch++) {
+            if (!(await drainSlackConnectorEvents(admin))) break;
+          }
+        },
+      ],
       [
         "GitHub connector outbound",
         () => drainConnectorOutboundDeliveries(admin, createGitHubConnectorOutboundAdapter(admin)),
