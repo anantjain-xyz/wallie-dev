@@ -11771,6 +11771,18 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      claim_slack_review_action: {
+        Args: { p_workspace_id?: string }
+        Returns: {
+          action: string
+          action_id: string
+          factory_id: string
+          kind: string
+          lease_id: string
+          session_id: string
+          workspace_id: string
+        }[]
+      }
       close_factory_benchmark_live_inference: {
         Args: {
           p_attempt_count: number
@@ -11854,6 +11866,16 @@ export type Database = {
       complete_session_job_attempt: {
         Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
         Returns: boolean
+      }
+      complete_slack_review_action: {
+        Args: {
+          p_action_id: string
+          p_agent_model_name: string
+          p_agent_model_provider: string
+          p_lease_id: string
+          p_run_type?: string
+        }
+        Returns: string
       }
       configure_connector_installation: {
         Args: {
@@ -12744,6 +12766,20 @@ export type Database = {
           session_number: number
           workspace_slug: string
         }[]
+      }
+      create_slack_review_target: {
+        Args: {
+          p_artifact_id: string
+          p_artifact_version: number
+          p_clarification_id?: string
+          p_factory_id: string
+          p_resource_id: string
+          p_review_revision: number
+          p_session_id: string
+          p_stage_id: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       create_workspace: {
         Args: {
@@ -15284,6 +15320,22 @@ export type Database = {
         }
         Returns: boolean
       }
+      prepare_slack_clarification_modal: {
+        Args: {
+          p_actor_id: string
+          p_app_id: string
+          p_channel_id: string
+          p_message_ts: string
+          p_target_id: string
+          p_team_id: string
+          p_thread_ts?: string
+        }
+        Returns: {
+          binding_nonce: string
+          encrypted_token: string
+          modal_context_id: string
+        }[]
+      }
       preview_factory_model_routing: {
         Args: {
           p_actor_user_id: string
@@ -15545,6 +15597,23 @@ export type Database = {
       purge_expired_run_transcripts: {
         Args: { p_entry_limit?: number; p_run_limit?: number }
         Returns: number
+      }
+      queue_slack_review_action: {
+        Args: {
+          p_action: string
+          p_actor_id: string
+          p_answer?: string
+          p_app_id: string
+          p_binding_nonce?: string
+          p_channel_id?: string
+          p_context_id: string
+          p_delivery_key: string
+          p_message_ts?: string
+          p_team_id: string
+          p_thread_ts?: string
+          p_view_id?: string
+        }
+        Returns: string
       }
       read_connector_installation_state: {
         Args: {
@@ -16701,6 +16770,21 @@ export type Database = {
           p_attempt_count: number
           p_operation_id: string
           p_run_id: string
+        }
+        Returns: boolean
+      }
+      register_slack_clarification_view: {
+        Args: { p_modal_context_id: string; p_view_id: string }
+        Returns: boolean
+      }
+      register_slack_review_card: {
+        Args: {
+          p_app_id: string
+          p_channel_id: string
+          p_message_ts: string
+          p_target_id: string
+          p_team_id: string
+          p_thread_ts: string
         }
         Returns: boolean
       }
