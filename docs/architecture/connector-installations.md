@@ -35,3 +35,20 @@ material.
   use. Cursor writes require the exact installation generation, mapping
   revision, and cursor generation from that read. A stale worker must reload
   before advancing a cursor.
+
+## External actors
+
+Provider adapters verify the installation, tenant, and immutable upstream
+actor ID before requesting a link. A human links their own Wallie account.
+A workspace owner or admin can link a service actor to an existing factory
+service principal. Revocation retires the link and preserves its history.
+
+| Decision    | Required authority                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------- |
+| Start work  | A current resource mapping, a verified actor link, and an exact execution grant with permission to create sessions. |
+| Review work | A verified human link and current factory access. The review command applies its own artifact and reviewer checks.  |
+
+The event resolver records the initiator separately from the service principal
+and budget payer. A service actor must match the principal on the grant.
+Intake and review commands recheck the actor link in the same transaction as
+the admission or decision so revocation can take effect before the write.
