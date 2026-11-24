@@ -123,7 +123,7 @@ describe("GitHub webhook boundary", () => {
         p_comment_id: 987,
         p_actor_id: 234,
         p_provider_updated_at: "2026-11-01T00:00:00Z",
-        p_body: "Follow up on the linked work.",
+        p_body: connectorComment.comment.body,
       },
     );
     expect(mocked.pullRequest).not.toHaveBeenCalled();
@@ -173,6 +173,38 @@ describe("GitHub webhook boundary", () => {
       expect(mocked.automationRpc).not.toHaveBeenCalled();
     },
   );
+
+  it("preserves Markdown indentation and acknowledges blank comments", async () => {
+    const body = "    first\n    second";
+    const comment = { ...connectorComment.comment, body };
+
+    expect((await POST(request({ ...connectorComment, comment }, "issue_comment"))).status).toBe(
+      200,
+    );
+    expect(mocked.automationRpc).toHaveBeenCalledWith(
+      "ingest_github_connector_comment",
+      expect.objectContaining({ p_body: body }),
+    );
+
+    mocked.automationRpc.mockClear();
+    const blank = { ...comment, body: "   \n   " };
+    expect(
+      (await POST(request({ ...connectorComment, comment: blank }, "issue_comment"))).status,
+    ).toBe(200);
+    expect(mocked.automationRpc).not.toHaveBeenCalled();
+  });
+
+  it("keeps the same delivery and input when a transient database lock defers ingestion", async () => {
+    mocked.automationResult.mockResolvedValueOnce({ data: null, error: { code: "55P03" } });
+
+    expect((await POST(request(connectorComment, "issue_comment"))).status).toBe(200);
+    expect(mocked.automationRpc).toHaveBeenCalledTimes(2);
+    expect(mocked.automationRpc).toHaveBeenNthCalledWith(
+      2,
+      "defer_github_connector_comment",
+      mocked.automationRpc.mock.calls[0]?.[1],
+    );
+  });
 
   it("never processes a comment without a verified signature and delivery identity", async () => {
     mocked.verify.mockResolvedValueOnce(false);

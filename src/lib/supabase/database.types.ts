@@ -12742,6 +12742,23 @@ export type Database = {
         }
         Returns: boolean
       }
+      defer_github_connector_comment: {
+        Args: {
+          p_action: string
+          p_actor_id: number
+          p_body?: string
+          p_comment_id: number
+          p_delivery_id: string
+          p_github_repository_id: number
+          p_installation_id: number
+          p_issue_id: number
+          p_owner_id: number
+          p_provider_updated_at: string
+          p_source_kind: string
+          p_source_number: number
+        }
+        Returns: boolean
+      }
       defer_linear_issue_discovery: {
         Args: {
           p_installation_generation: number
@@ -12835,6 +12852,7 @@ export type Database = {
         Args: never
         Returns: boolean
       }
+      drain_github_connector_comment_retries: { Args: never; Returns: number }
       dry_run_factory_automation: {
         Args: {
           p_automation_id: string
@@ -16704,6 +16722,7 @@ export type Database = {
       resolve_github_connector_delivery: {
         Args: { p_delivery_id: string; p_lease_id: string }
         Returns: {
+          current_review_revision: number
           github_installation_id: number
           github_repository_id: number
           repository_full_name: string

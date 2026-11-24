@@ -41,6 +41,70 @@ alter table internal.github_connector_comment_deliveries enable row level securi
 revoke all on internal.github_connector_pr_issue_ids, internal.github_connector_comments,
   internal.github_connector_comment_deliveries from public, anon, authenticated, service_role;
 
+-- Webhook delivery is not guaranteed to repeat after transient database contention.
+create table internal.github_connector_comment_retries (
+  workspace_id uuid not null,
+  factory_id uuid not null,
+  resource_id uuid not null,
+  delivery_id uuid not null,
+  input_hash text not null check (input_hash ~ '^[a-f0-9]{64}$'),
+  github_installation_id bigint not null,
+  github_repository_id bigint not null,
+  owner_id bigint not null,
+  action text not null check (action in ('created', 'edited', 'deleted')),
+  source_kind text not null check (source_kind in ('issue', 'pull_request')),
+  source_number integer not null,
+  issue_id bigint not null,
+  comment_id bigint not null,
+  actor_id bigint not null,
+  provider_updated_at timestamptz not null,
+  body text,
+  status text not null default 'pending' check (status in ('pending', 'settled', 'failed')),
+  result text check (result in ('appended', 'deleted', 'stale', 'ignored')),
+  attempt_count integer not null default 0 check (attempt_count between 0 and 8),
+  last_sqlstate text check (last_sqlstate ~ '^[A-Z0-9]{5}$'),
+  recorded_at timestamptz not null default clock_timestamp(),
+  deadline_at timestamptz not null default clock_timestamp() + interval '24 hours',
+  next_attempt_at timestamptz default clock_timestamp() + interval '5 seconds',
+  settled_at timestamptz,
+  primary key (resource_id, delivery_id),
+  foreign key (workspace_id, factory_id, resource_id)
+    references public.factory_connector_resources(workspace_id, factory_id, id) on delete cascade,
+  check ((status = 'pending') = (next_attempt_at is not null)),
+  check ((status = 'pending') = (settled_at is null)),
+  check (status = 'pending' or body is null)
+);
+create index github_connector_comment_retries_due_idx
+  on internal.github_connector_comment_retries(next_attempt_at, resource_id, delivery_id) where status = 'pending';
+create index github_connector_comment_retries_retention_idx
+  on internal.github_connector_comment_retries(recorded_at, resource_id, delivery_id);
+alter table internal.github_connector_comment_retries enable row level security;
+revoke all on internal.github_connector_comment_retries from public, anon, authenticated, service_role;
+
+create function internal.validate_github_connector_comment(
+  p_installation_id bigint, p_github_repository_id bigint, p_owner_id bigint, p_delivery_id uuid,
+  p_action text, p_source_kind text, p_source_number integer, p_issue_id bigint, p_comment_id bigint,
+  p_actor_id bigint, p_provider_updated_at timestamptz, p_body text
+) returns text language plpgsql set search_path = '' set timezone = 'UTC' as $$
+begin
+  if (p_installation_id between 1 and 9007199254740991
+    and p_github_repository_id between 1 and 9007199254740991 and p_owner_id between 1 and 9007199254740991
+    and p_delivery_id is not null and p_action in ('created', 'edited', 'deleted')
+    and p_source_kind in ('issue', 'pull_request') and p_source_number > 0
+    and p_issue_id between 1 and 9007199254740991 and p_comment_id between 1 and 9007199254740991
+    and p_actor_id between 1 and 9007199254740991 and isfinite(p_provider_updated_at)
+    and p_provider_updated_at <= clock_timestamp() + interval '5 minutes'
+    and ((p_action = 'deleted' and p_body is null)
+      or (p_action in ('created', 'edited') and length(p_body) <= 8000 and btrim(p_body, E' \t\r\n') <> ''))) is not true then
+    raise exception 'Invalid GitHub comment delivery.' using errcode = '22023';
+  end if;
+  return encode(sha256(convert_to(jsonb_build_array(p_action, p_source_kind, p_source_number, p_issue_id,
+    p_comment_id, p_actor_id, p_provider_updated_at, p_body)::text, 'UTF8')), 'hex');
+end;
+$$;
+revoke all on function internal.validate_github_connector_comment(bigint, bigint, bigint, uuid, text, text,
+  integer, bigint, bigint, bigint, timestamptz, text) from public, anon, authenticated, service_role;
+
 create function public.ingest_github_connector_comment(
   p_installation_id bigint, p_github_repository_id bigint, p_owner_id bigint, p_delivery_id uuid,
   p_action text, p_source_kind text, p_source_number integer, p_issue_id bigint, p_comment_id bigint,
@@ -56,23 +120,16 @@ declare
   target public.sessions;
   prior internal.github_connector_comments;
   receipt internal.github_connector_comment_deliveries;
+  queued internal.github_connector_comment_retries;
   message public.session_conversation_messages;
   input_hash text;
   result text;
   text_body text;
 begin
   perform internal.assert_checkpoint_publication_service();
-  if (p_installation_id between 1 and 9007199254740991
-    and p_github_repository_id between 1 and 9007199254740991 and p_owner_id between 1 and 9007199254740991
-    and p_delivery_id is not null and p_action in ('created', 'edited', 'deleted')
-    and p_source_kind in ('issue', 'pull_request') and p_source_number > 0
-    and p_issue_id between 1 and 9007199254740991 and p_comment_id between 1 and 9007199254740991
-    and p_actor_id between 1 and 9007199254740991 and isfinite(p_provider_updated_at)
-    and p_provider_updated_at <= clock_timestamp() + interval '5 minutes'
-    and ((p_action = 'deleted' and p_body is null)
-      or (p_action in ('created', 'edited') and length(p_body) <= 8000 and btrim(p_body, E' \t\r\n') <> ''))) is not true then
-    raise exception 'Invalid GitHub comment delivery.' using errcode = '22023';
-  end if;
+  input_hash := internal.validate_github_connector_comment(p_installation_id, p_github_repository_id,
+    p_owner_id, p_delivery_id, p_action, p_source_kind, p_source_number, p_issue_id, p_comment_id,
+    p_actor_id, p_provider_updated_at, p_body);
 
   select mapped.* into resource from public.factory_connector_resources mapped
   join internal.connector_installations connected
@@ -99,6 +156,11 @@ begin
 
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
     'github-connector-comment-delivery:' || resource.id::text || ':' || p_delivery_id::text, 0));
+  select pending.* into queued from internal.github_connector_comment_retries pending
+  where (pending.resource_id, pending.delivery_id) = (resource.id, p_delivery_id);
+  if found and (queued.input_hash, queued.github_installation_id) is distinct from (input_hash, p_installation_id) then
+    raise exception 'The GitHub comment delivery identifies different input.' using errcode = 'PT409';
+  end if;
   perform internal.lock_github_connector_thread(resource.factory_id, p_github_repository_id, p_source_kind, p_source_number);
 
   select admitted.* into admission from internal.github_connector_work_deliveries admitted
@@ -131,8 +193,6 @@ begin
     ) then return null; end if;
   end if;
 
-  input_hash := encode(sha256(convert_to(jsonb_build_array(p_action, p_source_kind, p_source_number, p_issue_id,
-    p_comment_id, p_actor_id, p_provider_updated_at, p_body)::text, 'UTF8')), 'hex');
   select logged.* into receipt from internal.github_connector_comment_deliveries logged
   where (logged.resource_id, logged.delivery_id) = (resource.id, p_delivery_id);
   if found then
@@ -196,6 +256,144 @@ revoke all on function public.ingest_github_connector_comment(bigint, bigint, bi
   bigint, bigint, bigint, timestamptz, text) from public, anon, authenticated;
 grant execute on function public.ingest_github_connector_comment(bigint, bigint, bigint, uuid, text, text, integer,
   bigint, bigint, bigint, timestamptz, text) to service_role;
+
+create function public.defer_github_connector_comment(
+  p_installation_id bigint, p_github_repository_id bigint, p_owner_id bigint, p_delivery_id uuid,
+  p_action text, p_source_kind text, p_source_number integer, p_issue_id bigint, p_comment_id bigint,
+  p_actor_id bigint, p_provider_updated_at timestamptz, p_body text default null
+) returns boolean language plpgsql security definer set search_path = '' set lock_timeout = '250ms' as $$
+declare
+  resource public.factory_connector_resources;
+  retry internal.github_connector_comment_retries;
+  received_hash text;
+  delivery_hash text;
+begin
+  perform internal.assert_checkpoint_publication_service();
+  delivery_hash := internal.validate_github_connector_comment(p_installation_id, p_github_repository_id,
+    p_owner_id, p_delivery_id, p_action, p_source_kind, p_source_number, p_issue_id, p_comment_id,
+    p_actor_id, p_provider_updated_at, p_body);
+
+  -- Read the last committed scope without taking the ingest path's processing
+  -- locks. Retain comment text only for a currently linked human and mapped repo.
+  select mapped.* into resource from public.factory_connector_resources mapped
+  join internal.connector_installations connected
+    on (connected.workspace_id, connected.id) = (mapped.workspace_id, mapped.installation_id)
+  join public.workspaces workspace on workspace.id = mapped.workspace_id
+  join public.factories factory on (factory.workspace_id, factory.id) = (mapped.workspace_id, mapped.factory_id)
+  join internal.connector_actor_links link on link.installation_id = connected.id
+    and link.actor_kind = 'human' and link.external_actor_id = p_actor_id::text and link.revoked_at is null
+  join public.workspace_members member on (member.workspace_id, member.id) = (mapped.workspace_id, link.member_id)
+    and member.kind = 'human' and member.is_active
+  where (mapped.provider, mapped.resource_kind, mapped.external_tenant_id, mapped.external_resource_id,
+    connected.external_installation_id) = ('github', 'repository', p_owner_id::text,
+    p_github_repository_id::text, p_installation_id::text)
+    and workspace.deletion_requested_at is null and factory.status = 'active'
+    and (member.role in ('owner', 'admin') or exists (
+      select 1 from public.factory_members membership
+      where (membership.workspace_id, membership.factory_id, membership.member_id) =
+        (mapped.workspace_id, mapped.factory_id, member.id) and membership.revoked_at is null
+    ))
+    and exists (select 1 from public.read_connector_subscription(mapped.workspace_id, mapped.factory_id, mapped.id));
+  if not found then return false; end if;
+
+  select receipt.input_hash into received_hash from internal.github_connector_comment_deliveries receipt
+  where (receipt.resource_id, receipt.delivery_id) = (resource.id, p_delivery_id);
+  if found then
+    if received_hash is distinct from delivery_hash then
+      raise exception 'The GitHub comment delivery identifies different input.' using errcode = 'PT409';
+    end if;
+    return true;
+  end if;
+
+  insert into internal.github_connector_comment_retries (
+    workspace_id, factory_id, resource_id, delivery_id, input_hash, github_installation_id,
+    github_repository_id, owner_id, action, source_kind, source_number, issue_id, comment_id,
+    actor_id, provider_updated_at, body
+  ) values (
+    resource.workspace_id, resource.factory_id, resource.id, p_delivery_id, delivery_hash, p_installation_id,
+    p_github_repository_id, p_owner_id, p_action, p_source_kind, p_source_number, p_issue_id, p_comment_id,
+    p_actor_id, p_provider_updated_at, p_body
+  ) on conflict (resource_id, delivery_id) do nothing;
+
+  select pending.* into retry from internal.github_connector_comment_retries pending
+  where (pending.resource_id, pending.delivery_id) = (resource.id, p_delivery_id);
+  if (retry.input_hash, retry.github_installation_id) is distinct from (delivery_hash, p_installation_id) then
+    raise exception 'The GitHub comment delivery identifies different input.' using errcode = 'PT409';
+  end if;
+  return true;
+end;
+$$;
+
+create function public.drain_github_connector_comment_retries()
+returns integer language plpgsql security definer set search_path = '' set lock_timeout = '250ms' as $$
+declare
+  retry internal.github_connector_comment_retries;
+  answer jsonb;
+  retry_error text;
+  scan_at timestamptz := clock_timestamp();
+  settled integer := 0;
+begin
+  perform internal.assert_checkpoint_publication_service();
+  -- A batch holds row locks until commit. Use one drainer across Node and
+  -- Workerd so independent batches cannot acquire factory locks in reverse order.
+  if not pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended('github-connector-comment-retries', 0)) then
+    return 0;
+  end if;
+  delete from internal.github_connector_comment_retries old
+  where (old.resource_id, old.delivery_id) in (
+    select expired.resource_id, expired.delivery_id from internal.github_connector_comment_retries expired
+    where expired.recorded_at <= scan_at - interval '7 days'
+    order by expired.recorded_at, expired.resource_id, expired.delivery_id limit 16 for update skip locked
+  );
+
+  for retry in
+    select pending.* from internal.github_connector_comment_retries pending
+    where pending.status = 'pending' and pending.next_attempt_at <= scan_at
+    order by pending.next_attempt_at, pending.resource_id, pending.delivery_id limit 4 for update skip locked
+  loop
+    if retry.deadline_at <= clock_timestamp() then
+      update internal.github_connector_comment_retries pending set status = 'failed', body = null,
+        next_attempt_at = null, settled_at = clock_timestamp()
+      where (pending.resource_id, pending.delivery_id) = (retry.resource_id, retry.delivery_id);
+      settled := settled + 1;
+      continue;
+    end if;
+
+    begin
+      answer := public.ingest_github_connector_comment(retry.github_installation_id, retry.github_repository_id,
+        retry.owner_id, retry.delivery_id, retry.action, retry.source_kind, retry.source_number, retry.issue_id,
+        retry.comment_id, retry.actor_id, retry.provider_updated_at, retry.body);
+      update internal.github_connector_comment_retries pending set status = 'settled', body = null,
+        result = coalesce(answer->>'status', 'ignored'), attempt_count = retry.attempt_count + 1,
+        next_attempt_at = null, settled_at = clock_timestamp(), last_sqlstate = null
+      where (pending.resource_id, pending.delivery_id) = (retry.resource_id, retry.delivery_id);
+      settled := settled + 1;
+    exception when others then
+      get stacked diagnostics retry_error = returned_sqlstate;
+      if retry_error in ('55P03', '40P01', '40001') and retry.attempt_count < 7
+        and retry.deadline_at > clock_timestamp() then
+        update internal.github_connector_comment_retries pending set last_sqlstate = retry_error,
+          attempt_count = retry.attempt_count + 1,
+          next_attempt_at = least(retry.deadline_at, clock_timestamp() + make_interval(secs => least(300, 5 * (1 << retry.attempt_count))))
+        where (pending.resource_id, pending.delivery_id) = (retry.resource_id, retry.delivery_id);
+      else
+        update internal.github_connector_comment_retries pending set status = 'failed', body = null,
+          last_sqlstate = retry_error, attempt_count = retry.attempt_count + 1, next_attempt_at = null,
+          settled_at = clock_timestamp()
+        where (pending.resource_id, pending.delivery_id) = (retry.resource_id, retry.delivery_id);
+        settled := settled + 1;
+      end if;
+    end;
+  end loop;
+  return settled;
+end;
+$$;
+
+revoke all on function public.defer_github_connector_comment(bigint, bigint, bigint, uuid, text, text, integer,
+  bigint, bigint, bigint, timestamptz, text), public.drain_github_connector_comment_retries()
+  from public, anon, authenticated;
+grant execute on function public.defer_github_connector_comment(bigint, bigint, bigint, uuid, text, text, integer,
+  bigint, bigint, bigint, timestamptz, text), public.drain_github_connector_comment_retries() to service_role;
 
 -- Capture lifecycle facts in their owning transaction and leave all provider
 -- writes to the scoped, recoverable connector outbox.
@@ -286,7 +484,7 @@ create trigger capture_github_connector_review_or_outcome after update of phase_
 create function public.resolve_github_connector_delivery(p_delivery_id uuid, p_lease_id uuid)
 returns table (
   github_installation_id bigint, github_repository_id bigint, repository_full_name text,
-  source_kind text, source_number integer, source_id bigint
+  source_kind text, source_number integer, source_id bigint, current_review_revision bigint
 ) language plpgsql security definer set search_path = '' set lock_timeout = '100ms' as $$
 declare
   target internal.connector_outbound_deliveries;
@@ -311,8 +509,16 @@ begin
 
   return query
     select github.installation_id, repository.repo_id, repository.full_name,
-      admitted.source_kind, admitted.source_number, admitted.source_id
+      admitted.source_kind, admitted.source_number, admitted.source_id,
+      case when target.content->>'kind' = 'review_ready' and session.phase_status = 'awaiting_review'
+        and session.archived_at is null and (session.current_stage_id::text,
+          session.current_artifact_id::text, session.current_artifact_version::text) =
+          (target.content#>>'{reviewTarget,stageId}', target.content#>>'{reviewTarget,artifactId}',
+            target.content#>>'{reviewTarget,artifactVersion}')
+        then session.artifact_review_revision end
     from public.session_conversation_sources source
+    join public.sessions session on (session.workspace_id, session.factory_id, session.id) =
+      (source.workspace_id, source.factory_id, source.session_id)
     join internal.github_connector_work_deliveries admitted
       on (admitted.session_id, admitted.workspace_id, admitted.factory_id, admitted.resource_id) =
         (source.session_id, source.workspace_id, source.factory_id, target.resource_id)

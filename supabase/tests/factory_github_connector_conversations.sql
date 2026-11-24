@@ -1,5 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
+create extension if not exists dblink with schema extensions;
 set local search_path = public, extensions;
 select no_plan();
 \set op651_fixture_namespace 67510000
@@ -127,6 +128,73 @@ select is((select count(*) from public.sessions where workspace_id = pg_temp.op6
 select is((select count(*) from public.agent_jobs join github_linked_conversations using (session_id)), 2::bigint,
   'follow-up delivery does not create additional jobs');
 
+create function pg_temp.defer_github_comment(
+  p_delivery integer, p_comment bigint, p_body text default 'Recovered after contention.',
+  p_actor bigint default 67510002, p_repository bigint default 67510034
+) returns boolean language sql as $$
+  select public.defer_github_connector_comment(67510033, p_repository, 67510001, pg_temp.op651_id(p_delivery),
+    'created', thread.kind, thread.number, thread.issue_id, p_comment, p_actor,
+    pg_temp.github_conversation_time(26), p_body)
+  from github_linked_conversations thread where thread.kind = 'issue'
+$$;
+
+select ok(has_function_privilege('service_role', 'public.drain_github_connector_comment_retries()', 'execute')
+  and not has_function_privilege('authenticated', 'public.drain_github_connector_comment_retries()', 'execute')
+  and not has_function_privilege('authenticated', 'public.defer_github_connector_comment(bigint,bigint,bigint,uuid,text,text,integer,bigint,bigint,bigint,timestamptz,text)', 'execute')
+  and not has_table_privilege('service_role', 'internal.github_connector_comment_retries', 'select'),
+  'only the service RPCs handle retries and the queued comment body is private');
+select is(pg_temp.defer_github_comment(240, 9200, p_repository => 99), false,
+  'the retry lane does not retain comments for another repository');
+select is(pg_temp.defer_github_comment(240, 9200, p_actor => 99), false,
+  'the retry lane does not retain text from unlinked actors');
+
+select extensions.dblink_connect('op675_comment_blocker', coalesce(nullif(current_setting('wallie.test_db_connection', true), ''),
+  'host=supabase_db_wallie-dev port=5432 dbname=postgres user=supabase_admin password=postgres'));
+select extensions.dblink_exec('op675_comment_blocker', 'begin');
+select count(*) from github_conversation_scope scope cross join lateral extensions.dblink('op675_comment_blocker',
+  format('select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(%L, 0))',
+    'github-connector-comment-delivery:' || scope.resource_id::text || ':' || pg_temp.op651_id(240)::text)) as held(lock_result text);
+select throws_ok($$select pg_temp.deliver_github_comment(240, 9200, 26, p_body => 'Recovered after contention.')$$,
+  '55P03', null, 'the real ingest transaction reaches a competing provider delivery lock');
+select ok(pg_temp.defer_github_comment(240, 9200) and pg_temp.defer_github_comment(240, 9200),
+  'an exact retry delivery is durably accepted even while its ingest lock is held');
+select throws_ok($$select pg_temp.defer_github_comment(240, 9200, 'Changed delivery.')$$,
+  'PT409', null, 'the same queued provider delivery cannot carry changed input');
+update internal.github_connector_comment_retries set next_attempt_at = clock_timestamp()
+where delivery_id = pg_temp.op651_id(240);
+select is(public.drain_github_connector_comment_retries(), 0, 'a still-busy delivery backs off instead of settling');
+select ok(exists (select 1 from internal.github_connector_comment_retries retry
+  where retry.delivery_id = pg_temp.op651_id(240) and retry.actor_id = 67510002 and retry.status = 'pending'
+    and retry.attempt_count = 1 and retry.last_sqlstate = '55P03' and retry.next_attempt_at > clock_timestamp()),
+  'retries retain scoped actor and transient SQLSTATE metadata with a future retry');
+select extensions.dblink_exec('op675_comment_blocker', 'commit');
+select extensions.dblink_disconnect('op675_comment_blocker');
+select throws_ok($$select pg_temp.deliver_github_comment(240, 9200, 26, p_body => 'Changed delivery.')$$,
+  'PT409', null, 'live redelivery cannot replace the queued input while it is pending');
+update internal.github_connector_comment_retries set next_attempt_at = clock_timestamp()
+where delivery_id = pg_temp.op651_id(240);
+select is(public.drain_github_connector_comment_retries(), 1, 'the worker settles the original delivery after contention clears');
+select ok(exists (select 1 from internal.github_connector_comment_retries retry
+  where retry.delivery_id = pg_temp.op651_id(240) and retry.status = 'settled' and retry.result = 'appended'
+    and retry.attempt_count = 2 and retry.body is null and retry.last_sqlstate is null),
+  'a settled retry keeps its safe receipt and erases the retained text');
+select ok(pg_temp.deliver_github_comment(240, 9200, 26, p_body => 'Recovered after contention.')
+  @> '{"status":"appended","replayed":true}'::jsonb, 'the original ingest path recognizes the recovered delivery');
+select is((select count(*) from public.session_conversation_messages message join github_linked_conversations linked
+  using (session_id) where linked.kind = 'issue' and message.external_message_id like 'github-comment:9200:%'),
+  1::bigint, 'recovery appends exactly one message to the original conversation');
+select ok(pg_temp.defer_github_comment(241, 9201), 'another current-scoped delivery can enter the bounded retry lane');
+update internal.github_connector_comment_retries set deadline_at = clock_timestamp() - interval '1 second',
+  next_attempt_at = clock_timestamp() where delivery_id = pg_temp.op651_id(241);
+select is(public.drain_github_connector_comment_retries(), 1, 'a pending retry reaches terminal expiry without ingest');
+select ok(exists (select 1 from internal.github_connector_comment_retries retry where retry.delivery_id = pg_temp.op651_id(241)
+  and retry.status = 'failed' and retry.attempt_count = 0 and retry.body is null), 'expiry clears the body and keeps diagnostic state');
+update internal.github_connector_comment_retries set recorded_at = clock_timestamp() - interval '8 days'
+where delivery_id = pg_temp.op651_id(241);
+select public.drain_github_connector_comment_retries();
+select is((select count(*) from internal.github_connector_comment_retries retry where retry.delivery_id = pg_temp.op651_id(241)),
+  0::bigint, 'bounded maintenance prunes historical retry metadata after retention');
+
 insert into public.session_artifacts(id, workspace_id, session_id, stage_id, stage_slug, version, artifact_json)
 select pg_temp.op651_id(301), session.workspace_id, session.id, session.current_stage_id, stage.slug, 1,
   to_jsonb('Private review content'::text)
@@ -154,12 +222,6 @@ select ok(exists (select 1 from public.sessions session join github_linked_conve
   and not exists (select 1 from public.session_stage_approval_receipts approval
     join github_linked_conversations linked using (session_id)),
   'provider comments cannot approve, reopen, or change the exact review');
-update public.sessions session set phase_status = 'approved' from github_linked_conversations linked
-where linked.kind = 'pull_request' and linked.session_id = session.id;
-select is((select count(*) from internal.connector_outbound_deliveries delivery join github_linked_conversations linked using (session_id)
-  where linked.kind = 'pull_request' and delivery.content->>'kind' = 'outcome' and delivery.operation = 'reply'),
-  1::bigint, 'final approval produces a separate immutable outcome reply');
-
 -- Select one deterministic claim independently of the other retained statuses.
 update internal.connector_outbound_deliveries delivery set next_action_at = clock_timestamp() + interval '1 hour'
 where delivery.session_id in (select session_id from github_linked_conversations)
@@ -180,6 +242,26 @@ select ok(exists (select 1 from github_review_claim claim
     resolved.source_kind, resolved.source_number, resolved.source_id) =
     (67510033::bigint, 67510034::bigint, 'fixture/workflow-fixture', 'pull_request', 102, 67000102::bigint)),
   'only the authorized current lease resolves the exact native provider thread and canonical PR ID');
+select is((select resolved.current_review_revision from github_review_claim claim
+  cross join lateral public.resolve_github_connector_delivery(claim.delivery_id, claim.lease_id) resolved),
+  3::bigint, 'the authorized resolver reads the review revision while its exact artifact is current');
+update public.sessions session set artifact_review_revision = 4 from github_linked_conversations linked
+where linked.kind = 'pull_request' and linked.session_id = session.id;
+select is((select resolved.current_review_revision from github_review_claim claim
+  cross join lateral public.resolve_github_connector_delivery(claim.delivery_id, claim.lease_id) resolved),
+  4::bigint, 'an active review keeps its exact artifact while resolver follows a newer review revision');
+update public.sessions session set phase_status = 'approved' from github_linked_conversations linked
+where linked.kind = 'pull_request' and linked.session_id = session.id;
+select is((select count(*) from internal.connector_outbound_deliveries delivery join github_linked_conversations linked using (session_id)
+  where linked.kind = 'pull_request' and delivery.content->>'kind' = 'outcome' and delivery.operation = 'reply'),
+  1::bigint, 'final approval produces a separate immutable outcome reply');
+update internal.connector_outbound_deliveries delivery set next_action_at = clock_timestamp() + interval '1 hour'
+from github_linked_conversations linked where linked.kind = 'pull_request' and linked.session_id = delivery.session_id
+  and delivery.logical_key = 'github:approved';
+
+select ok(exists (select 1 from github_review_claim claim
+  cross join lateral public.resolve_github_connector_delivery(claim.delivery_id, claim.lease_id) resolved
+  where resolved.current_review_revision is null), 'finished review has no current revision for a new send');
 select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'uncertain') from github_review_claim),
   'lost output can enter common outbox recovery without touching the review');
 update internal.connector_outbound_deliveries set next_action_at = clock_timestamp()
@@ -190,10 +272,13 @@ select ok((select observation.kind = 'observing' and observation.delivery_id = i
   'unknown outcome is retried as observation of the same logical reply');
 select ok((select public.confirm_connector_outbound_authority(delivery_id, lease_id) from github_review_observation),
   'observation acquires its own authority while review remains finalized');
+select ok(exists (select 1 from github_review_observation observation
+  cross join lateral public.resolve_github_connector_delivery(observation.delivery_id, observation.lease_id) resolved
+  where resolved.current_review_revision is null), 'an observing lease still resolves a finished review thread');
 select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'found', '9910')
   from github_review_observation), 'recovery confirms the existing provider comment ID without rewriting it');
 select ok(exists (select 1 from public.sessions session join github_linked_conversations linked on linked.session_id = session.id
-  where linked.kind = 'pull_request' and session.phase_status = 'approved' and session.artifact_review_revision = 3),
+  where linked.kind = 'pull_request' and session.phase_status = 'approved' and session.artifact_review_revision = 4),
   'reply delivery and recovery preserve the newer review decision');
 
 update public.sessions session set phase_status = 'rejected', execution_exhaustion_code = 'elapsed_execution',

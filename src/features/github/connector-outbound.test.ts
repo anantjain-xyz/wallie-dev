@@ -39,6 +39,26 @@ const target = {
     },
   },
 } satisfies Target;
+const review = {
+  ...target,
+  externalThreadId: "pull_request:69",
+  message: {
+    operation: "reply",
+    content: {
+      ...target.message.content,
+      kind: "review_ready",
+      body: "Ready for review.",
+      reviewTarget: {
+        stageId,
+        stageSlug: "plan",
+        artifactId,
+        artifactVersion: 3,
+        reviewRevision: 4,
+        clarificationId: null,
+      },
+    },
+  },
+} satisfies Target;
 const authority = {
   github_installation_id: 62,
   github_repository_id: 32,
@@ -46,6 +66,7 @@ const authority = {
   source_kind: "issue",
   source_number: 14,
   source_id: 42,
+  current_review_revision: null as number | null,
 };
 const installation = {
   id: 62,
@@ -108,8 +129,14 @@ beforeEach(() => {
 
 describe("GitHub connector reply adapter", () => {
   it("pins the repository, type-specific permission, App author and exact review link on a PR", async () => {
+    const source = {
+      ...authority,
+      source_kind: "pull_request",
+      source_id: 69,
+      current_review_revision: 4,
+    };
     const { adapter, rpc } = makeAdapter({
-      rows: [{ ...authority, source_kind: "pull_request", source_id: 69 }],
+      rows: [source],
       github: async (url, request) => {
         expect(url.pathname).toBe(`${issuePath}/comments`);
         expect(request?.method).toBe("POST");
@@ -117,35 +144,15 @@ describe("GitHub connector reply adapter", () => {
         expect(body).toContain(`artifactId=${artifactId}`);
         expect(body).toContain("artifactVersion=3");
         expect(body).toContain(`reviewStageId=${stageId}`);
-        expect(body).toContain("reviewRevision=4");
+        expect(body).toContain("reviewRevision=5");
         return Response.json({ ...appComment, body }, { status: 201 });
       },
     });
-    await expect(
-      adapter.send(
-        {
-          ...target,
-          externalThreadId: "pull_request:69",
-          message: {
-            operation: "reply",
-            content: {
-              ...target.message.content,
-              kind: "review_ready",
-              body: "Ready for review.",
-              reviewTarget: {
-                stageId,
-                stageSlug: "plan",
-                artifactId,
-                artifactVersion: 3,
-                reviewRevision: 4,
-                clarificationId: null,
-              },
-            },
-          },
-        },
-        signal,
-      ),
-    ).resolves.toEqual({ kind: "sent", providerReplyId: "72" });
+    rpc.mockResolvedValueOnce(Response.json([{ ...source, current_review_revision: 5 }]));
+    await expect(adapter.send(review, signal)).resolves.toEqual({
+      kind: "sent",
+      providerReplyId: "72",
+    });
     expect(rpc).toHaveBeenCalledWith(
       expect.stringContaining("/rpc/resolve_github_connector_delivery"),
       expect.objectContaining({
@@ -162,6 +169,17 @@ describe("GitHub connector reply adapter", () => {
         request: { redirect: "manual", signal },
       }),
     );
+  });
+
+  it("skips a queued review notice whose artifact is no longer actionable", async () => {
+    const github = vi.fn(() => new Response(null, { status: 500 }));
+    const { adapter } = makeAdapter({
+      rows: [{ ...authority, source_kind: "pull_request", source_id: 69 }],
+      github,
+    });
+
+    await expect(adapter.send(review, signal)).resolves.toEqual({ kind: "rejected" });
+    expect(github).not.toHaveBeenCalled();
   });
 
   it("recovers a committed create after a lost response without issuing another write", async () => {

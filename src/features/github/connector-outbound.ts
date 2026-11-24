@@ -32,6 +32,7 @@ const sourceIdentity = z.object({
   source_kind: z.enum(["issue", "pull_request"]),
   source_number: positiveId,
   source_id: positiveId,
+  current_review_revision: z.number().int().nonnegative().safe().nullable(),
 });
 const payloadFields = z.object({
   sessionId: z.uuid(),
@@ -139,18 +140,23 @@ function commentMarker(deliveryId: string) {
   return `<!-- wallie-connector-delivery:${deliveryId} -->`;
 }
 
-function replyBody(target: Target) {
-  const parsed = payload.safeParse(target.message.content);
-  if (!parsed.success) return null;
-  const message = parsed.data;
+function replyBody(
+  message: z.output<typeof payload>,
+  correlationId: string,
+  reviewRevision: number | null,
+) {
+  if (message.kind === "review_ready" && reviewRevision === null) return null;
   const href =
     message.kind === "review_ready"
-      ? exactSessionReviewHref(message.workspaceSlug, message.sessionNumber, message.reviewTarget)
+      ? exactSessionReviewHref(message.workspaceSlug, message.sessionNumber, {
+          ...message.reviewTarget,
+          reviewRevision: reviewRevision ?? message.reviewTarget.reviewRevision,
+        })
       : workspaceSessionDetailPath(message.workspaceSlug, message.sessionNumber);
   const url = buildAppUrl(href);
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   const label = message.kind === "review_ready" ? "Review in Wallie" : "Open in Wallie";
-  return `${message.body}\n\n[${label}](${url.href})\n\n${commentMarker(target.correlationId)}`;
+  return `${message.body}\n\n[${label}](${url.href})\n\n${commentMarker(correlationId)}`;
 }
 
 function createGitHubRequest(fetcher: typeof fetch, accessToken: string, signal: AbortSignal) {
@@ -287,6 +293,7 @@ export function createGitHubConnectorOutboundAdapter(
           current.source_number !== source.source_number
         )
           throw new ConnectorScopeUnavailable();
+        return current.current_review_revision;
       },
       threadComments: `${issuePath}/comments`,
       commentPath: (replyId: number) => `${repositoryPath}/issues/comments/${replyId}`,
@@ -304,8 +311,8 @@ export function createGitHubConnectorOutboundAdapter(
     async send(target, signal) {
       let writeStarted = false;
       try {
-        const body = replyBody(target);
-        if (!body) return { kind: "rejected" };
+        const message = payload.safeParse(target.message.content);
+        if (!message.success) return { kind: "rejected" };
         const scope = await prepare(target, "send", signal);
         let path = scope.threadComments;
         const operation = target.message.operation;
@@ -321,7 +328,9 @@ export function createGitHubConnectorOutboundAdapter(
           if (reply.id !== replyId || !scope.matchesAuthorAndThread(reply))
             return { kind: "rejected" };
         }
-        await scope.assertCurrent();
+        const reviewRevision = await scope.assertCurrent();
+        const body = replyBody(message.data, target.correlationId, reviewRevision);
+        if (!body) return { kind: "rejected" };
         signal.throwIfAborted();
         writeStarted = true;
         const reply = comment.parse(

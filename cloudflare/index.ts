@@ -64,6 +64,7 @@ import { processFactoryRoutingCanaryAlerts } from "@/lib/model-routing/canary-al
 import { pruneFactoryEventOutbox } from "@/lib/factory-event-subscriptions/maintenance";
 import { requestFactoryEventDispatch } from "@/lib/factory-event-subscriptions/relay";
 import { resumePendingWorkspaceDeletions } from "@/lib/workspaces/deletion";
+import { drainGitHubConnectorCommentRetries } from "@/features/github/connector-conversation";
 import { createGitHubConnectorOutboundAdapter } from "@/features/github/connector-outbound";
 import { drainConnectorOutboundDeliveries } from "@/lib/connectors/outbound";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
@@ -384,6 +385,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
         },
       ],
       ["factory monitoring incidents", () => drainFactoryMonitoringIncidents(admin)],
+      ["GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin)],
       [
         "GitHub connector outbound",
         () => drainConnectorOutboundDeliveries(admin, createGitHubConnectorOutboundAdapter(admin)),
