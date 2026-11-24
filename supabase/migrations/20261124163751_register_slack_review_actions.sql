@@ -357,7 +357,7 @@ create function internal.finish_slack_review_action(
 $$;
 
 create function public.claim_slack_review_action(p_workspace_id uuid default null)
-returns table(action_id uuid, lease_id uuid, workspace_id uuid, factory_id uuid, session_id uuid, action text)
+returns table(kind text, action_id uuid, lease_id uuid, workspace_id uuid, factory_id uuid, session_id uuid, action text)
 language plpgsql security definer set search_path = '' as $$
 declare
   scan_cutoff timestamptz := clock_timestamp();
@@ -401,9 +401,10 @@ begin
     update internal.slack_review_actions receipt
     set lease_id = next_lease, lease_expires_at = claim_deadline, next_attempt_at = claim_deadline,
       attempt_count = receipt.attempt_count + 1 where receipt.id = pending.id;
-    return query select pending.id, next_lease, target.workspace_id, target.factory_id, target.session_id, pending.action;
+    return query select 'action'::text, pending.id, next_lease, target.workspace_id, target.factory_id, target.session_id, pending.action;
     return;
   end loop;
+  return query select 'cleanup'::text, null::uuid, null::uuid, null::uuid, null::uuid, null::uuid, null::text;
 end;
 $$;
 
@@ -448,20 +449,19 @@ begin
   select receipt.* into pending from internal.slack_review_actions receipt
   where (receipt.id, receipt.lease_id) = (p_action_id, p_lease_id) and receipt.result is null
     and receipt.lease_expires_at > clock_timestamp() for update;
-  if not found then return 'stale'; end if;
+  if not found or pending.lease_expires_at <= clock_timestamp() then return 'stale'; end if;
   if verdict is not null then return internal.finish_slack_review_action(pending.id, verdict); end if;
 
   perform 1 from public.sessions session
   where (session.workspace_id, session.factory_id, session.id) = (target.workspace_id, target.factory_id, target.session_id)
   for no key update;
+  if pending.lease_expires_at <= clock_timestamp() then return 'stale'; end if;
   if not found or not internal.slack_review_target_is_current(target) then
     return internal.finish_slack_review_action(pending.id, 'stale');
   end if;
   if pending.deadline_at <= clock_timestamp() then
     return internal.finish_slack_review_action(pending.id, 'expired');
   end if;
-  if pending.lease_expires_at <= clock_timestamp() then return 'stale'; end if;
-
   begin
     if pending.action = 'approve' then
       select * into decision from public.approve_session_stage(

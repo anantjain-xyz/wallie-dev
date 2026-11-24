@@ -214,7 +214,7 @@ async function main() {
         timerTasks.run("GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin));
         drainSlackInbox();
         timerTasks.run("Slack review actions", async () => {
-          await drainSlackReviewActions(admin);
+          await drainSlackReviewActions(admin, { isShuttingDown: () => draining });
         });
         timerTasks.run("GitHub connector outbound", async () => {
           await drainConnectorOutboundDeliveries(

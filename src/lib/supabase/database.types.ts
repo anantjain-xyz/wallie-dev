@@ -11777,6 +11777,7 @@ export type Database = {
           action: string
           action_id: string
           factory_id: string
+          kind: string
           lease_id: string
           session_id: string
           workspace_id: string

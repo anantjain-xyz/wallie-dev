@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(63);
+select plan(66);
 
 \set op651_fixture_namespace 67800000
 \ir fixtures/factory_automation_dry_run.psql
@@ -247,7 +247,23 @@ select is((select count(*) from public.claim_slack_review_action(pg_temp.op651_i
 
 select ok(pg_temp.slack_bind_card('revoked'), 'a review target remains available for revocation testing');
 select is(pg_temp.slack_approve('revoked', 240), 'queued', 'the worker must recheck queued actor authority');
+reset role;
+insert into internal.slack_review_actions(
+  target_id, workspace_id, team_id, app_id, actor_id, actor_link_id, member_id, action, delivery_key, input_hash,
+  deadline_at, next_attempt_at
+)
+select action.target_id, action.workspace_id, action.team_id, action.app_id, action.actor_id,
+  action.actor_link_id, action.member_id, action.action, 'approve:' || pg_temp.review_ts(300 + slot),
+  action.input_hash, clock_timestamp() - interval '1 second', clock_timestamp() - interval '2 seconds'
+from internal.slack_review_actions action cross join generate_series(1, 8) as slots(slot)
+where action.delivery_key = 'approve:' || pg_temp.review_ts(240);
+set local role service_role;
+create temp table cleanup_claim as select * from public.claim_slack_review_action(pg_temp.op651_id(11));
+select ok((select count(*) = 1 and bool_and(to_jsonb(claim)->>'kind' = 'cleanup' and action_id is null and lease_id is null)
+  from cleanup_claim claim), 'a full expired-actions batch reports cleanup without exposing a lease');
 create temp table revoked_claim as select * from public.claim_slack_review_action(pg_temp.op651_id(11));
+select ok((select count(*) = 1 and bool_and(to_jsonb(claim)->>'kind' = 'action' and action_id is not null and lease_id is not null)
+  from revoked_claim claim), 'a fresh claim continues to the live action behind the cleanup batch');
 select ok((select public.revoke_connector_actor_link(pg_temp.op651_id(11), pg_temp.op651_id(1), actor_link_id)
   from slack_review_links where actor_id = 'U67800002'), 'identity revocation succeeds after Slack queues the action');
 select is((select public.complete_slack_review_action(action_id, lease_id, 'codex', 'gpt-5.5', 'code') from revoked_claim),
@@ -256,6 +272,10 @@ select is((select count(*) from public.session_stage_approval_receipts receipt j
   where card.scenario = 'revoked'), 0::bigint, 'current linked identity remains a hard prerequisite for the Wallie receipt');
 
 reset role;
+select is((select count(*) from internal.slack_review_actions receipt
+  where receipt.delivery_key between 'approve:' || pg_temp.review_ts(301) and 'approve:' || pg_temp.review_ts(308)
+    and receipt.result = 'expired' and receipt.attempt_count = 0), 8::bigint,
+  'cleanup retires expired actions without spending their attempts');
 select is((select count(*) from internal.slack_clarification_modal_contexts where view_id = 'V67800003'), 0::bigint,
   'the worker prunes expired modal binding metadata after the replay window');
 select is((select count(*) from internal.slack_review_actions receipt

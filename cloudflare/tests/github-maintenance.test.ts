@@ -289,7 +289,7 @@ it.each([
         return { abortSignal: () => Promise.resolve({ data, error: null }) };
       }
       if (name === "claim_slack_review_action") {
-        return Promise.resolve({ data: [], error: null });
+        return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
       }
       if (name === "claim_connector_outbound_delivery") {
         return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
@@ -397,6 +397,10 @@ it.each([
       }
       await inspection.waitForStatus("complete");
       expect(slackClaims).toBe(Math.min(slackCleanupClaims + 1, 32));
+      expect(rpc).toHaveBeenCalledWith("claim_slack_review_action", {});
+      expect(warn).not.toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
+        task: "Slack review actions",
+      });
       expect(drainAcceptedTriageRoute).toHaveBeenCalledExactlyOnceWith(admin);
       expect(drainAuthoredFactoryWorkflowBatch).toHaveBeenCalledExactlyOnceWith(admin);
       expect(reconcileGitHubPrVerification).toHaveBeenCalledExactlyOnceWith(admin);
