@@ -31,6 +31,7 @@ material.
   ID, the current installation must be disconnected or unavailable. Enabled
   mappings can resume their saved cursors. Disabled mappings require a new
   enabled revision.
-- Workers resolve live subscriptions before use. Cursor writes require the
-  exact installation generation, mapping revision, and cursor generation from
-  that read. A stale worker must reload before it can advance a cursor.
+- Workers resolve live subscriptions with `readConnectorSubscription` before
+  use. Cursor writes require the exact installation generation, mapping
+  revision, and cursor generation from that read. A stale worker must reload
+  before advancing a cursor.
