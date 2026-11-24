@@ -54,34 +54,54 @@ create function internal.queue_slack_connector_notice(
   on conflict (workspace_id, factory_id, resource_id, source_id, logical_key) do nothing;
 $$;
 
-create function internal.queue_slack_closed_review_card(p_session public.sessions, p_artifact_id uuid)
+create function internal.queue_slack_review_card_edit(p_session public.sessions, p_artifact_id uuid)
 returns void language sql security definer set search_path = '' as $$
+  with candidates as (
+    select prior.*, card.review_revision,
+      (p_session.phase_status = 'awaiting_review'
+        and (p_session.current_stage_id, p_session.current_artifact_id, p_session.current_artifact_version) =
+          (card.stage_id, card.artifact_id, card.artifact_version)
+        and card.clarification_id is not distinct from (
+          select question.id from public.session_specification_clarifications question
+          where (question.workspace_id, question.factory_id, question.session_id, question.artifact_id, question.status) =
+            (card.workspace_id, card.factory_id, card.session_id, card.artifact_id, 'pending'))) is true as current_review
+    from internal.connector_outbound_deliveries prior
+    join internal.slack_connector_notice_actions notice on notice.delivery_id = prior.id
+    join internal.slack_review_targets card on card.id = notice.target_id
+    where (prior.workspace_id, prior.factory_id, prior.session_id, prior.provider, prior.status) =
+      (p_session.workspace_id, p_session.factory_id, p_session.id, 'slack', 'delivered')
+      and card.artifact_id = p_artifact_id
+      and not exists (select 1 from internal.connector_outbound_deliveries successor
+        where successor.edited_delivery_id = prior.id and successor.status <> 'failed')
+  )
   insert into internal.connector_outbound_deliveries (
     workspace_id, factory_id, resource_id, installation_id, session_id, source_id,
     provider, logical_key, operation, edited_delivery_id, edit_target, content, deadline_at, next_action_at
   )
   select prior.workspace_id, prior.factory_id, prior.resource_id, prior.installation_id, prior.session_id,
-    prior.source_id, prior.provider, 'slack:close-card:' || prior.id::text, 'edit', prior.id, prior.provider_reply_id,
-    jsonb_build_object('kind', 'card_closed', 'body', 'This Wallie review is no longer active.',
-      'sessionId', p_session.id, 'workspaceSlug', prior.content->>'workspaceSlug', 'sessionNumber', p_session.number),
+    prior.source_id, prior.provider,
+    case when prior.current_review then 'slack:refresh-card:' || prior.id::text || ':' || p_session.artifact_review_revision::text
+      else 'slack:close-card:' || prior.id::text end, 'edit', prior.id, prior.provider_reply_id,
+    case when prior.current_review
+      then jsonb_set(prior.content, '{reviewTarget,reviewRevision}', to_jsonb(p_session.artifact_review_revision))
+      else jsonb_build_object('kind', 'card_closed', 'body', 'This Wallie review is no longer active.',
+        'sessionId', p_session.id, 'workspaceSlug', prior.content->>'workspaceSlug', 'sessionNumber', p_session.number)
+    end,
     clock_timestamp() + interval '24 hours', clock_timestamp()
-  from internal.connector_outbound_deliveries prior
-  where (prior.workspace_id, prior.factory_id, prior.session_id, prior.provider, prior.status) =
-    (p_session.workspace_id, p_session.factory_id, p_session.id, 'slack', 'delivered')
-    and prior.content->>'kind' in ('review_ready', 'clarification')
-    and prior.content#>>'{reviewTarget,artifactId}' = p_artifact_id::text
+  from candidates prior
+  where not prior.current_review or prior.review_revision <> p_session.artifact_review_revision
   on conflict do nothing;
 $$;
 
 -- Whichever transaction finishes second observes the other's committed change.
 -- Neither path needs to lock the session row and outbox row in reverse order.
-create function internal.lock_slack_review_card_closure(p_session_id uuid)
+create function internal.lock_slack_review_card_edit(p_session_id uuid)
 returns void language sql set search_path = '' as $$
   select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
-    'slack-review-card-closure:' || p_session_id::text, 0));
+    'slack-review-card-edit:' || p_session_id::text, 0));
 $$;
 
-create function internal.capture_delivered_slack_review_card()
+create function internal.capture_settled_slack_review_card()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare
   target public.sessions;
@@ -90,17 +110,15 @@ begin
   select card.artifact_id into reviewed_artifact_id
   from internal.slack_connector_notice_actions notice
   join internal.slack_review_targets card on card.id = notice.target_id
-  where notice.delivery_id = new.id;
+  where notice.delivery_id = case when new.status = 'delivered' then new.id else new.edited_delivery_id end;
   if not found then return new; end if;
 
-  perform internal.lock_slack_review_card_closure(new.session_id);
+  perform internal.lock_slack_review_card_edit(new.session_id);
   select session.* into target from public.sessions session
   where (session.workspace_id, session.factory_id, session.id) =
     (new.workspace_id, new.factory_id, new.session_id);
-  -- Restoring an archived session can reactivate the same review and its card.
-  if found and (target.phase_status <> 'awaiting_review'
-    or target.current_artifact_id is distinct from reviewed_artifact_id) then
-    perform internal.queue_slack_closed_review_card(target, reviewed_artifact_id);
+  if found then
+    perform internal.queue_slack_review_card_edit(target, reviewed_artifact_id);
   end if;
   return new;
 end;
@@ -137,15 +155,17 @@ begin
   end if;
 
   if old.phase_status = 'awaiting_review' and old.current_artifact_id is not null
-    and (new.phase_status, new.current_artifact_id) is distinct from
-      (old.phase_status, old.current_artifact_id)
+    and (new.phase_status, new.current_artifact_id, new.artifact_review_revision) is distinct from
+      (old.phase_status, old.current_artifact_id, old.artifact_review_revision)
     and exists (select 1 from public.session_conversation_sources source
       where (source.workspace_id, source.factory_id, source.session_id, source.provider) =
         (new.workspace_id, new.factory_id, new.id, 'slack')) then
-    perform internal.lock_slack_review_card_closure(new.id);
-    perform internal.queue_slack_closed_review_card(new, old.current_artifact_id);
+    perform internal.lock_slack_review_card_edit(new.id);
+    perform internal.queue_slack_review_card_edit(new, old.current_artifact_id);
   end if;
-  if new.phase_status = 'awaiting_review' and new.archived_at is null then
+  if new.phase_status = 'awaiting_review' and new.archived_at is null
+    and (new.phase_status, new.current_artifact_id) is distinct from
+      (old.phase_status, old.current_artifact_id) then
     select current_artifact.* into artifact from public.session_artifacts current_artifact
     where (current_artifact.id, current_artifact.session_id, current_artifact.stage_id, current_artifact.version) =
       (new.current_artifact_id, new.id, new.current_stage_id, new.current_artifact_version);
@@ -171,20 +191,21 @@ create trigger capture_slack_connector_acceptance after insert on public.session
   for each row when (new.provider = 'slack') execute function internal.capture_slack_connector_notice();
 create trigger capture_slack_connector_clarification after insert on public.session_specification_clarifications
   for each row when (new.status = 'pending') execute function internal.capture_slack_connector_notice();
-create trigger capture_delivered_slack_review_card after update of status on internal.connector_outbound_deliveries
-  for each row when (new.provider = 'slack' and new.status = 'delivered' and old.status <> 'delivered'
-    and new.content->>'kind' in ('review_ready', 'clarification'))
-  execute function internal.capture_delivered_slack_review_card();
+create trigger capture_settled_slack_review_card after update of status on internal.connector_outbound_deliveries
+  for each row when (new.provider = 'slack' and old.status is distinct from new.status
+    and new.content->>'kind' in ('review_ready', 'clarification')
+    and (new.status = 'delivered' or (new.status = 'failed' and new.operation = 'edit')))
+  execute function internal.capture_settled_slack_review_card();
 create trigger capture_slack_connector_review_or_outcome after update of phase_status, current_artifact_id,
-  execution_exhaustion_code on public.sessions
+  execution_exhaustion_code, artifact_review_revision on public.sessions
   for each row when (
-    (new.phase_status, new.current_artifact_id, new.execution_exhaustion_code) is distinct from
-      (old.phase_status, old.current_artifact_id, old.execution_exhaustion_code)
+    (new.phase_status, new.current_artifact_id, new.execution_exhaustion_code, new.artifact_review_revision) is distinct from
+      (old.phase_status, old.current_artifact_id, old.execution_exhaustion_code, old.artifact_review_revision)
   ) execute function internal.capture_slack_connector_notice();
 
 revoke all on function internal.queue_slack_connector_notice(public.sessions, text, text, text, jsonb),
-  internal.queue_slack_closed_review_card(public.sessions, uuid), internal.lock_slack_review_card_closure(uuid),
-  internal.capture_delivered_slack_review_card(), internal.capture_slack_connector_notice(),
+  internal.queue_slack_review_card_edit(public.sessions, uuid), internal.lock_slack_review_card_edit(uuid),
+  internal.capture_settled_slack_review_card(), internal.capture_slack_connector_notice(),
   internal.refund_paused_slack_review_send()
   from public, anon, authenticated, service_role;
 
@@ -214,7 +235,9 @@ begin
         and pending.content->>'kind' in ('review_ready', 'clarification')
       then not exists (select 1 from public.sessions session
         where (session.workspace_id, session.factory_id, session.id) =
-          (pending.workspace_id, pending.factory_id, pending.session_id) and session.archived_at is not null)
+          (pending.workspace_id, pending.factory_id, pending.session_id) and session.archived_at is not null
+          and session.phase_status = 'awaiting_review'
+          and session.current_artifact_id::text = pending.content#>>'{reviewTarget,artifactId}')
       else true end
     order by pending.next_action_at, pending.id limit 24 for update skip locked
   loop
@@ -359,13 +382,6 @@ begin
 
   notice_kind := delivery.content->>'kind';
   if notice_kind in ('review_ready', 'clarification') then
-    paused := target.archived_at is not null;
-    if paused and attempt.operation = 'sending' and not attempt.slack_review_paused then
-      -- Retain the pause on the exact lease even if the user restores the review
-      -- before a definite no-write result returns.
-      update internal.connector_outbound_attempts recorded set slack_review_paused = true
-      where (recorded.lease_id, recorded.delivery_id) = (attempt.lease_id, delivery.id);
-    end if;
     select notice.* into association from internal.slack_connector_notice_actions notice where notice.delivery_id = delivery.id;
     if found then
       select stored.* into strict action_target from internal.slack_review_targets stored where stored.id = association.target_id;
@@ -378,6 +394,13 @@ begin
         (delivery.content#>>'{reviewTarget,artifactId}', delivery.content#>>'{reviewTarget,stageId}',
           delivery.content#>>'{reviewTarget,artifactVersion}')
       or pending_clarification_id::text is distinct from (delivery.content#>>'{reviewTarget,clarificationId}');
+    paused := target.archived_at is not null and not obsolete;
+    if paused and attempt.operation = 'sending' and not attempt.slack_review_paused then
+      -- Retain the pause on the exact lease even if the user restores the review
+      -- before a definite no-write result returns.
+      update internal.connector_outbound_attempts recorded set slack_review_paused = true
+      where (recorded.lease_id, recorded.delivery_id) = (attempt.lease_id, delivery.id);
+    end if;
     if action_target.id is not null then
       current_revision := action_target.review_revision;
       obsolete := obsolete or (authority.installation_generation, authority.mapping_revision) is distinct from

@@ -181,9 +181,11 @@ Open the exact Workbench link to see the current result.
 
 Wallie posts acceptance, review, clarification, and final notices to the
 original Slack thread. Connector Settings shows redacted intake and delivery
-receipts. When an artifact advances, Wallie closes a card it has confirmed in
-Slack. A stale card cannot change a later review, including when a previous
-write is confirmed after the review advances.
+receipts. Changes to the review discussion refresh the existing card at the
+same Slack timestamp with an action for the current revision. Wallie checks a
+pending write before editing that card again. Once the artifact advances,
+Wallie closes the last confirmed card. A stale card cannot change a later
+review.
 
 Archiving a session pauses unsent review cards. After restoration, the same
 notice resumes when due if the worker can claim it with more than ten seconds

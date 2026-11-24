@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(77);
+select plan(93);
 
 \set op651_fixture_namespace 67900000
 \ir fixtures/factory_automation_dry_run.psql
@@ -239,10 +239,123 @@ update public.sessions set archived_at = null where id = (select session_id from
 select is((select count(*) from internal.connector_outbound_deliveries edit
   where edit.edited_delivery_id = (select delivery_id from observed_card)), 0::bigint,
   'archiving and restoring the unchanged review keeps the original Slack card intact');
+create temp table slack_inline_review_fixture as
+select session.workspace_id, session.id as session_id, artifact.id as artifact_id, artifact.stage_id,
+  artifact.version, artifact.artifact_json #>> '{}' as source
+from public.sessions session join public.session_artifacts artifact on artifact.id = session.current_artifact_id
+where session.id = (select session_id from observed_card);
+grant select on slack_inline_review_fixture to authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local role authenticated;
+create temp table slack_inline_thread as
+select fixture.workspace_id, thread.id from slack_inline_review_fixture fixture
+cross join lateral public.create_artifact_review_thread_once(pg_temp.op651_id(116), fixture.workspace_id, fixture.session_id,
+  fixture.stage_id, fixture.artifact_id, fixture.version,
+  jsonb_build_object('coordinateSystem', 'unicode_code_points', 'start', 0, 'end', 1,
+    'quote', left(fixture.source, 1), 'prefix', '', 'suffix', substring(fixture.source from 2 for 32)),
+  'discussion', 'Discuss this artifact without blocking approval.') thread;
+select public.write_artifact_review_comment_once(pg_temp.op651_id(117), workspace_id, id, 'Add more context.')
+from slack_inline_thread;
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select is((select count(*) from internal.connector_outbound_deliveries edit join observed_card original
+  on edit.edited_delivery_id = original.delivery_id where edit.operation = 'edit' and edit.content->>'kind' = 'review_ready'),
+  1::bigint, 'two ordinary inline review changes coalesce into one edit of the delivered card');
 set local role service_role;
 select is((select public.queue_slack_review_action('approve', action_target_id, team_id, app_id, 'U67900002',
-  'approve:1732400000.000053', channel_id, '1732400000.000052') from observed_card), 'queued',
-  'the original observed Slack review card can queue exact approval after restore');
+  'approve:1732400000.000057', channel_id, '1732400000.000052') from observed_card), 'stale',
+  'the original card target does not authorize approval after the revision changes');
+savepoint review_advances_before_refresh;
+select coalesce((select approved.phase_status = 'approved'
+  from observed_card original join public.sessions session on session.id = original.session_id
+  cross join lateral public.approve_session_stage(session.id, session.workspace_id, session.current_stage_id,
+    session.current_artifact_id, session.current_artifact_version, pg_temp.op651_id(21), 'codex', 'gpt-5.5', 'code',
+    session.artifact_review_revision) approved), false) as slack_refresh_web_approved \gset
+create temp table obsolete_refresh_claim as
+select * from public.claim_connector_outbound_delivery('slack');
+select coalesce((select content->>'kind' = 'review_ready' and operation = 'edit'
+  and public.confirm_connector_outbound_authority(delivery_id, lease_id) from obsolete_refresh_claim), false)
+  as slack_refresh_obsolete_claim \gset
+select coalesce((select resolved.superseded from obsolete_refresh_claim claim
+  cross join lateral public.resolve_slack_connector_delivery(claim.delivery_id, claim.lease_id) resolved), false)
+  as slack_refresh_obsolete \gset
+select coalesce((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'rejected')
+  from obsolete_refresh_claim where :'slack_refresh_obsolete'::boolean), false) as slack_refresh_rejected \gset
+reset role;
+select count(*) = 1 and bool_and(edit.edited_delivery_id = original.delivery_id and edit.edit_target = '1732400000.000052')
+  is true as slack_refresh_closed_original
+from observed_card original join internal.connector_outbound_deliveries edit on edit.session_id = original.session_id
+where edit.operation = 'edit' and edit.content->>'kind' = 'card_closed' \gset
+rollback to review_advances_before_refresh;
+select ok(:'slack_refresh_web_approved'::boolean, 'in-app approval can advance the review before its Slack refresh starts');
+select ok(:'slack_refresh_obsolete_claim'::boolean and :'slack_refresh_obsolete'::boolean and :'slack_refresh_rejected'::boolean,
+  'the overtaken refresh is rejected without changing the provider message');
+select ok(:'slack_refresh_closed_original'::boolean, 'the rejected refresh releases one close on the last confirmed marker');
+create temp table first_refresh_claim as select * from public.claim_connector_outbound_delivery('slack');
+select ok((select operation = 'edit' and edit_target = '1732400000.000052'
+  and content->>'kind' = 'review_ready' and public.confirm_connector_outbound_authority(delivery_id, lease_id)
+  from first_refresh_claim), 'the first refresh edits the original Slack reply in place');
+create temp table first_refresh as
+select claim.delivery_id, claim.lease_id, resolved.* from first_refresh_claim claim
+cross join lateral public.resolve_slack_connector_delivery(claim.delivery_id, claim.lease_id) resolved;
+select ok((select refresh.previous_correlation_id = original.delivery_id
+  and refresh.action_target_id <> original.action_target_id
+  and refresh.review_revision = original.review_revision + 2 and not refresh.superseded
+  from first_refresh refresh cross join observed_card original),
+  'the queued edit reserves a new target for the latest coalesced revision and the original marker');
+select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'uncertain') from first_refresh),
+  'a sent refresh can lose its write response');
+reset role;
+set local request.jwt.claim.role = 'authenticated';
+set local role authenticated;
+select public.write_artifact_review_comment_once(pg_temp.op651_id(118), workspace_id, id, 'Review wording changed again.')
+from slack_inline_thread;
+reset role;
+set local request.jwt.claim.role = 'service_role';
+select is((select count(*) from internal.connector_outbound_deliveries edit join observed_card original
+  on edit.session_id = original.session_id where edit.operation = 'edit' and edit.content->>'kind' = 'review_ready'),
+  1::bigint, 'another revision does not overtake an edit with an unknown provider result');
+update internal.connector_outbound_deliveries set next_action_at = clock_timestamp()
+where id = (select delivery_id from first_refresh);
+set local role service_role;
+create temp table observed_refresh_claim as select * from public.claim_connector_outbound_delivery('slack');
+select ok((select claim.delivery_id = original.delivery_id and claim.kind = 'observing'
+  and public.confirm_connector_outbound_authority(claim.delivery_id, claim.lease_id)
+  from observed_refresh_claim claim cross join first_refresh original), 'the uncertain edit is observed before another send');
+create temp table observed_refresh as
+select claim.delivery_id, claim.lease_id, resolved.* from observed_refresh_claim claim
+cross join lateral public.resolve_slack_connector_delivery(claim.delivery_id, claim.lease_id) resolved;
+select ok((select recovered.action_target_id = original.action_target_id
+  and recovered.previous_correlation_id = original.previous_correlation_id
+  and recovered.review_revision = original.review_revision
+  and public.register_slack_review_card(recovered.action_target_id, recovered.team_id, recovered.app_id,
+    recovered.channel_id, recovered.thread_ts, '1732400000.000052')
+  from observed_refresh recovered cross join first_refresh original),
+  'observation registers the exact rendered target on the original Slack reply');
+select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'found', '1732400000.000052')
+  from observed_refresh), 'the observed refresh becomes the confirmed predecessor');
+reset role;
+select is((select count(*) from internal.connector_outbound_deliveries edit join observed_refresh prior
+  on edit.edited_delivery_id = prior.delivery_id where edit.operation = 'edit' and edit.content->>'kind' = 'review_ready'),
+  1::bigint, 'observing the first edit queues exactly one follow-up for the newer revision');
+set local role service_role;
+create temp table newest_refresh_claim as select * from public.claim_connector_outbound_delivery('slack');
+select ok((select operation = 'edit' and edit_target = '1732400000.000052'
+  and content->>'kind' = 'review_ready' and public.confirm_connector_outbound_authority(delivery_id, lease_id)
+  from newest_refresh_claim), 'the follow-up edit still targets the original Slack reply');
+create temp table newest_refresh as
+select claim.delivery_id, claim.lease_id, resolved.* from newest_refresh_claim claim
+cross join lateral public.resolve_slack_connector_delivery(claim.delivery_id, claim.lease_id) resolved;
+select ok((select latest.previous_correlation_id = prior.delivery_id
+  and latest.action_target_id <> prior.action_target_id and latest.review_revision = prior.review_revision + 1
+  and not latest.superseded and public.register_slack_review_card(latest.action_target_id, latest.team_id, latest.app_id,
+    latest.channel_id, latest.thread_ts, '1732400000.000052')
+  from newest_refresh latest cross join observed_refresh prior), 'the latest card uses the last confirmed edit marker');
+select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'sent', '1732400000.000052')
+  from newest_refresh), 'the newest card settles without a new provider reply');
+select is((select public.queue_slack_review_action('approve', action_target_id, team_id, app_id, 'U67900002',
+  'approve:1732400000.000053', channel_id, '1732400000.000052') from newest_refresh), 'queued',
+  'the refreshed action target can approve from the same original Slack message');
 select is((select public.complete_slack_review_action(action_id, lease_id, 'codex', 'gpt-5.5', 'code')
   from public.claim_slack_review_action(pg_temp.op651_id(11))), 'applied',
   'the outbound card reaches the authoritative Wallie stage decision as the linked human');
@@ -252,7 +365,7 @@ select ok((select content->>'kind' = 'card_closed' and operation = 'edit' and ed
   'the canonical approval queues an edit for the exact delivered card');
 select ok((select resolved.previous_correlation_id = original.delivery_id
   from closed_card_claim claim cross join lateral public.resolve_slack_connector_delivery(claim.delivery_id, claim.lease_id) resolved
-  cross join observed_card original), 'the edit can verify the original provider message correlation');
+  cross join newest_refresh original), 'closure verifies the latest refresh marker on the original provider message');
 select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'sent', '1732400000.000052')
   from closed_card_claim), 'closing the original provider card settles the edit');
 create temp table approved_notice_claim as select * from public.claim_connector_outbound_delivery('slack');
