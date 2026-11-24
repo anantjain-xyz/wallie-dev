@@ -2,6 +2,13 @@ import "server-only";
 
 export const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
 
+export function linearRetryAfterSeconds(response: Response) {
+  const retryAfter = response.headers.get("retry-after");
+  return retryAfter !== null && /^\d{1,8}$/.test(retryAfter)
+    ? Math.min(3_600, Math.max(60, Number(retryAfter)))
+    : 60;
+}
+
 export type LinearIssue = {
   description: string;
   id: string;

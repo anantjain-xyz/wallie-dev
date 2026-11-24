@@ -510,10 +510,11 @@ Wallie verifies ownership before saving a connection. The browser-bound flow is 
 
 ### 6. Linear API key (optional)
 
-Linear is pull-only -- no webhook, no OAuth.
+Wallie discovers Linear work by polling the mapped project or team.
 
 1. Generate a personal API key at <https://linear.app/settings/api>.
 2. After you create a workspace in Wallie, paste the key into **Settings -> Integrations -> Linear**. Saving the key automatically calls `POST /api/linear/test-connection`.
+3. To publish comments or configured status transitions, grant the key the required write access and enable those actions on the mapped resource. See [linked Linear outcomes](docs/architecture/linear-issue-discovery.md#linked-linear-outcomes).
 
 ### 7. Start the dev server
 
