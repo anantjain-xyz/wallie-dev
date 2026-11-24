@@ -2562,6 +2562,103 @@ export type Database = {
           },
         ]
       }
+      factory_connector_mapping_revisions: {
+        Row: {
+          created_at: string
+          created_by_member_id: string
+          enabled: boolean
+          factory_id: string
+          resource_id: string
+          revision: number
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_member_id: string
+          enabled: boolean
+          factory_id: string
+          resource_id: string
+          revision: number
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by_member_id?: string
+          enabled?: boolean
+          factory_id?: string
+          resource_id?: string
+          revision?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_connector_mapping_rev_workspace_id_factory_id_reso_fkey"
+            columns: ["workspace_id", "factory_id", "resource_id"]
+            isOneToOne: false
+            referencedRelation: "factory_connector_resources"
+            referencedColumns: ["workspace_id", "factory_id", "id"]
+          },
+        ]
+      }
+      factory_connector_resources: {
+        Row: {
+          created_at: string
+          current_revision: number
+          external_resource_id: string
+          external_tenant_id: string
+          factory_id: string
+          id: string
+          installation_id: string
+          provider: Database["public"]["Enums"]["connector_provider"]
+          resource_kind: Database["public"]["Enums"]["connector_resource_kind"]
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_revision: number
+          external_resource_id: string
+          external_tenant_id: string
+          factory_id: string
+          id?: string
+          installation_id: string
+          provider: Database["public"]["Enums"]["connector_provider"]
+          resource_kind: Database["public"]["Enums"]["connector_resource_kind"]
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          current_revision?: number
+          external_resource_id?: string
+          external_tenant_id?: string
+          factory_id?: string
+          id?: string
+          installation_id?: string
+          provider?: Database["public"]["Enums"]["connector_provider"]
+          resource_kind?: Database["public"]["Enums"]["connector_resource_kind"]
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "factory_connector_current_revision_fk"
+            columns: ["workspace_id", "factory_id", "id", "current_revision"]
+            isOneToOne: false
+            referencedRelation: "factory_connector_mapping_revisions"
+            referencedColumns: [
+              "workspace_id",
+              "factory_id",
+              "resource_id",
+              "revision",
+            ]
+          },
+          {
+            foreignKeyName: "factory_connector_resources_workspace_id_factory_id_fkey"
+            columns: ["workspace_id", "factory_id"]
+            isOneToOne: false
+            referencedRelation: "factories"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       factory_context_source_revisions: {
         Row: {
           content: string | null
@@ -10469,6 +10566,19 @@ export type Database = {
         }
         Returns: boolean
       }
+      advance_connector_subscription_cursor: {
+        Args: {
+          p_expected_generation: number
+          p_factory_id: string
+          p_installation_generation: number
+          p_mapping_revision: number
+          p_position: string
+          p_resource_id: string
+          p_stream: string
+          p_workspace_id: string
+        }
+        Returns: number
+      }
       advance_factory_improvement_publication: {
         Args: {
           p_action: string
@@ -11685,6 +11795,23 @@ export type Database = {
         Args: { p_attempt_count: number; p_job_id: string; p_run_id: string }
         Returns: boolean
       }
+      configure_connector_installation: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_generation: number
+          p_external_installation_id: string
+          p_external_tenant_id: string
+          p_factory_id: string
+          p_linear_material_revision?: number
+          p_linear_secret_id?: string
+          p_provider: Database["public"]["Enums"]["connector_provider"]
+          p_workspace_id: string
+        }
+        Returns: {
+          generation: number
+          installation_id: string
+        }[]
+      }
       configure_factory_automation_admission: {
         Args: {
           p_actor_user_id: string
@@ -12588,6 +12715,16 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      disconnect_connector_installation: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_installation_id: string
+          p_workspace_id: string
+        }
+        Returns: number
       }
       dispatch_factory_workflow_foreman_command: {
         Args: {
@@ -14952,6 +15089,23 @@ export type Database = {
           token_pairs_deleted: number
         }[]
       }
+      publish_connector_resource_mapping: {
+        Args: {
+          p_actor_user_id: string
+          p_enabled: boolean
+          p_expected_installation_generation: number
+          p_expected_revision: number
+          p_external_resource_id: string
+          p_factory_id: string
+          p_installation_id: string
+          p_resource_kind: Database["public"]["Enums"]["connector_resource_kind"]
+          p_workspace_id: string
+        }
+        Returns: {
+          resource_id: string
+          revision: number
+        }[]
+      }
       publish_factory_automation: {
         Args: {
           p_actor_user_id: string
@@ -15104,6 +15258,40 @@ export type Database = {
       purge_expired_run_transcripts: {
         Args: { p_entry_limit?: number; p_run_limit?: number }
         Returns: number
+      }
+      read_connector_installation_state: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_installation_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          external_installation_id: string
+          external_tenant_id: string
+          generation: number
+          installation_id: string
+          provider: Database["public"]["Enums"]["connector_provider"]
+          status: string
+        }[]
+      }
+      read_connector_subscription: {
+        Args: {
+          p_factory_id: string
+          p_resource_id: string
+          p_stream?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          credential_kind: string
+          credential_material_revision: number
+          credential_ref: string
+          cursor_generation: number
+          cursor_position: string
+          installation_generation: number
+          installation_id: string
+          mapping_revision: number
+        }[]
       }
       read_factory_analytics_export: {
         Args: {
@@ -18084,6 +18272,8 @@ export type Database = {
         | "blocked"
         | "recorded_fixtures"
         | "isolated_test"
+      connector_provider: "github" | "linear"
+      connector_resource_kind: "repository" | "team" | "project"
       factory_command_admission_status:
         | "admitted"
         | "unauthorized"
@@ -18329,6 +18519,8 @@ export const Constants = {
         "recorded_fixtures",
         "isolated_test",
       ],
+      connector_provider: ["github", "linear"],
+      connector_resource_kind: ["repository", "team", "project"],
       factory_command_admission_status: [
         "admitted",
         "unauthorized",
