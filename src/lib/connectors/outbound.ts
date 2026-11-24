@@ -8,6 +8,7 @@ import { Constants, type Database, type Json } from "@/lib/supabase/database.typ
 type Admin = Pick<SupabaseClient<Database>, "rpc">;
 type Provider = Database["public"]["Enums"]["connector_provider"];
 type Settlement = Database["public"]["Functions"]["settle_connector_outbound_delivery"]["Args"];
+const rpcTimeoutMs = 5_000;
 
 type EnqueueInput = {
   workspaceId: string;
@@ -34,7 +35,7 @@ export async function enqueueConnectorOutboundDelivery(admin: Admin, input: Enqu
       ...(input.actorLinkId ? { p_actor_link_id: input.actorLinkId } : {}),
       ...(input.operation === "edit" ? { p_edited_delivery_id: input.editedDeliveryId } : {}),
     })
-    .abortSignal(AbortSignal.timeout(5_000));
+    .abortSignal(AbortSignal.timeout(rpcTimeoutMs));
   if (error) throw error;
   return z.uuid().parse(data);
 }
@@ -44,6 +45,10 @@ const providerId = z
   .min(1)
   .max(256)
   .regex(/^[^\s\p{Cc}]+$/u);
+const jsonObject = z.record(z.string(), z.json());
+const storedContent = z.custom<Record<string, Json>>(
+  (value) => jsonObject.safeParse(value).success,
+);
 const claimFields = z.object({
   delivery_id: z.uuid(),
   lease_id: z.uuid(),
@@ -52,7 +57,7 @@ const claimFields = z.object({
   provider: z.enum(Constants.public.Enums.connector_provider),
   external_resource_id: providerId,
   external_thread_id: providerId,
-  content: z.record(z.string(), z.json()),
+  content: storedContent,
   installation_id: z.uuid(),
   installation_generation: z.number().int().positive(),
   mapping_revision: z.number().int().positive(),
@@ -130,26 +135,35 @@ export async function drainConnectorOutboundDeliveries(
   for (let index = 0; index < 4; index++) {
     const { data, error } = await admin
       .rpc("claim_connector_outbound_delivery", { p_provider: adapter.provider })
-      .abortSignal(AbortSignal.timeout(5_000));
+      .abortSignal(AbortSignal.timeout(rpcTimeoutMs));
     if (error) throw new Error("Could not claim a connector delivery.", { cause: error });
     const [attempt] = claimResponse.parse(data);
     if (!attempt) break;
     if (attempt.provider !== adapter.provider) throw new Error("Connector provider scope changed.");
 
+    const leaseEndsAt = Date.parse(attempt.leaseExpiresAt);
+    const beforeAuthorization = leaseEndsAt - Date.now() - rpcTimeoutMs;
+    if (beforeAuthorization <= 0) continue;
     const authority = await admin
       .rpc("confirm_connector_outbound_authority", {
         p_delivery_id: attempt.target.correlationId,
         p_lease_id: attempt.leaseId,
       })
-      .abortSignal(AbortSignal.timeout(5_000));
+      .abortSignal(AbortSignal.timeout(Math.min(beforeAuthorization, rpcTimeoutMs)));
     if (authority.error)
       throw new Error("Could not confirm connector delivery authority.", {
         cause: authority.error,
       });
     if (!authority.data) continue;
-    const remaining = Date.parse(attempt.leaseExpiresAt) - Date.now() - 5_000;
-    if (remaining <= 0) continue;
-    const outcome = await runAttempt(adapter, attempt, Math.min(remaining, 15_000));
+    const leaseRemaining = leaseEndsAt - Date.now();
+    if (leaseRemaining <= 0) continue;
+    const transportTime = leaseRemaining - rpcTimeoutMs;
+    const outcome: SendResult | Observation =
+      transportTime > 0
+        ? await runAttempt(adapter, attempt, Math.min(transportTime, 15_000))
+        : attempt.kind === "sending"
+          ? { kind: "not_sent" }
+          : { kind: "inconclusive" };
     const args: Settlement = {
       p_delivery_id: attempt.target.correlationId,
       p_lease_id: attempt.leaseId,
@@ -161,7 +175,7 @@ export async function drainConnectorOutboundDeliveries(
     };
     const resolution = await admin
       .rpc("settle_connector_outbound_delivery", args)
-      .abortSignal(AbortSignal.timeout(5_000));
+      .abortSignal(AbortSignal.timeout(rpcTimeoutMs));
     if (resolution.error)
       throw new Error("Could not settle a connector delivery.", { cause: resolution.error });
     if (resolution.data) settled += 1;

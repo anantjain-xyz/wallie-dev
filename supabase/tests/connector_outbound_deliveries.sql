@@ -2,7 +2,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 set local request.jwt.claim.role = 'service_role';
-select plan(44);
+select plan(48);
 
 create function pg_temp.connector_delivery_fixture_id(slot integer) returns uuid
 language sql immutable as $$
@@ -89,10 +89,14 @@ create temp table first_send as select * from public.claim_connector_outbound_de
 select ok((select delivery_id = primary_delivery.id and kind = 'sending' and external_thread_id = 'issue-1'
   and credential_ref = pg_temp.connector_delivery_fixture_id(31) and credential_material_revision = 1
   from first_send cross join primary_delivery), 'the first send permit ties the stable receipt to the exact source and credential');
+select ok((select pg_temp.read_outbound(id) @> '{"send_attempts":0}' from primary_delivery),
+  'reserving the send lease does not consume the send attempt budget');
 select ok((select public.confirm_connector_outbound_authority(delivery_id, lease_id) from first_send),
   'the exact live send permit passes the pre-transport authority fence');
 select is((select public.confirm_connector_outbound_authority(delivery_id, lease_id) from first_send),
   false, 'the same permit cannot authorize transport a second time');
+select ok((select pg_temp.read_outbound(id) @> '{"send_attempts":1}' from primary_delivery),
+  'successful authorization charges exactly one send attempt');
 create temp table competing_delivery as select pg_temp.enqueue_outbound('competing:1', p_slot => 2) as id;
 select is((select count(*) from public.claim_connector_outbound_delivery('linear')), 0::bigint,
   'a second worker cannot claim another resource while the same installation is in flight');
@@ -112,6 +116,8 @@ select ok((select pg_temp.read_outbound(id) @> '{"status":"unknown","uncertain":
   'the uncertain write remains eligible for observation only');
 update internal.connector_outbound_deliveries set next_action_at = clock_timestamp() where id = (select id from primary_delivery);
 create temp table first_observation as select * from public.claim_connector_outbound_delivery('linear');
+select ok((select pg_temp.read_outbound(id) @> '{"observation_attempts":0,"uncertain":true}' from primary_delivery),
+  'reserving an observation keeps the prior uncertainty without charging its budget');
 select public.confirm_connector_outbound_authority(delivery_id, lease_id) from first_observation;
 select ok((select observation.delivery_id = sent.delivery_id and observation.kind = 'observing'
   from first_observation observation cross join second_send sent), 'the recovery worker can only observe the original correlation ID');
@@ -142,12 +148,16 @@ select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_i
   'the edit retains the provider reply identity without opening a new reply');
 
 create temp table never_scheduled as select pg_temp.enqueue_outbound('reply:never-authorized') as id;
+update internal.connector_outbound_deliveries set send_attempts = 5 where id = (select id from never_scheduled);
 create temp table expired_reservation as select * from public.claim_connector_outbound_delivery('linear');
 update internal.connector_outbound_deliveries set lease_expires_at = clock_timestamp() - interval '1 second',
   next_action_at = clock_timestamp() where id = (select id from never_scheduled);
 select count(*) from public.claim_connector_outbound_delivery('linear');
-select ok((select pg_temp.read_outbound(id) @> '{"status":"queued","uncertain":false,"last_result":"not_sent"}'
+select ok((select pg_temp.read_outbound(id) @> '{"status":"queued","uncertain":false,"last_result":"not_sent","send_attempts":5}'
   from never_scheduled), 'an expired reservation that never got transport authority is known to have made no write');
+select ok((select delivery_id = never_scheduled.id and kind = 'sending'
+  from public.claim_connector_outbound_delivery('linear') cross join never_scheduled),
+  'an expired unstarted reservation cannot consume the last authorized send attempt');
 delete from internal.connector_outbound_deliveries where id = (select id from never_scheduled);
 
 create temp table lost_delivery as select pg_temp.enqueue_outbound('reply:lost') as id;

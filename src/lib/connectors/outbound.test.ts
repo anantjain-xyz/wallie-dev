@@ -31,7 +31,7 @@ function permit(kind: "sending" | "observing", lease: number) {
   };
 }
 
-function fixture(permits: object[], authorized: boolean[] = []) {
+function fixture(permits: object[], authorized: Array<boolean | (() => boolean)> = []) {
   const rpc = vi.fn().mockImplementation((name: string) => {
     let data: unknown;
     switch (name) {
@@ -43,9 +43,11 @@ function fixture(permits: object[], authorized: boolean[] = []) {
         data = active ? [active] : [];
         break;
       }
-      case "confirm_connector_outbound_authority":
-        data = authorized.shift() ?? true;
+      case "confirm_connector_outbound_authority": {
+        const permission = authorized.shift() ?? true;
+        data = typeof permission === "function" ? permission() : permission;
         break;
+      }
       case "settle_connector_outbound_delivery":
         data = true;
         break;
@@ -191,3 +193,61 @@ it("passes the confirmed provider reply target to an edit", async () => {
     expect.any(AbortSignal),
   );
 });
+
+it("validates and preserves an outbox payload with owned prototype keys", async () => {
+  const serialized = '{"__proto__":{"nested":true},"items":[{"__proto__":{"body":"exact"}}]}';
+  const content: unknown = JSON.parse(serialized);
+  const { admin } = fixture([{ ...permit("sending", 10), content }]);
+  const provider = adapter();
+
+  await expect(drainConnectorOutboundDeliveries(admin, provider)).resolves.toBe(1);
+  expect(JSON.stringify(provider.send.mock.calls[0]?.[0].message.content)).toBe(serialized);
+});
+
+it("does not authorize a lease with only the settlement reserve remaining", async () => {
+  const { admin, calls } = fixture([
+    { ...permit("sending", 10), lease_expires_at: new Date(Date.now() + 4_000).toISOString() },
+  ]);
+  const provider = adapter();
+
+  await expect(drainConnectorOutboundDeliveries(admin, provider)).resolves.toBe(0);
+  expect(calls("confirm_connector_outbound_authority")).toEqual([]);
+  expect(calls("settle_connector_outbound_delivery")).toEqual([]);
+  expect(provider.send).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["sending", "not_sent"],
+  ["observing", "inconclusive"],
+] as const)(
+  "settles the unused %s lease when authorization consumes its remaining transport budget",
+  async (kind, result) => {
+    const start = Date.now();
+    const attempt = {
+      ...permit(kind, 10),
+      lease_expires_at: new Date(start + 45_000).toISOString(),
+    };
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+    const { admin, calls } = fixture(
+      [attempt],
+      [
+        () => {
+          clock.mockReturnValue(start + 42_000);
+          return true;
+        },
+      ],
+    );
+    const provider = adapter();
+
+    try {
+      await expect(drainConnectorOutboundDeliveries(admin, provider)).resolves.toBe(1);
+      expect(provider.send).not.toHaveBeenCalled();
+      expect(provider.observe).not.toHaveBeenCalled();
+      expect(calls("settle_connector_outbound_delivery")).toEqual([
+        { p_delivery_id: id(1), p_lease_id: id(10), p_result: result },
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  },
+);

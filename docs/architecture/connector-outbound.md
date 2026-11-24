@@ -24,8 +24,9 @@ source, and session must belong to the same factory.
 | Blocked             | Wait for the mapping or credential to recover. A provider credential rejection requires a new installation generation. Resume observation when an earlier write remains uncertain. |
 | Delivered or failed | Retain the final receipt. A confirmed reply ID can serve as the next edit target.                                                                                                  |
 
-A permit authorizes transport once. Expiry before authorization is a known
-pre-write failure. An authorized send with no settlement becomes unknown.
+A permit authorizes transport once. Only successful authorization counts toward
+the attempt limits. Expiry before authorization is a known pre-write failure.
+An authorized send with no settlement becomes unknown.
 Observation has its own bounded attempts. Its lease, a provider rate limit, or
 credential repair cannot convert uncertainty to a write. An inconclusive
 provider lookup should stay unknown, including an eventually consistent miss.

@@ -199,12 +199,13 @@ declare
   candidate internal.connector_outbound_deliveries;
   expired_result public.connector_outbound_result;
   authority record;
+  scan_at timestamptz := clock_timestamp();
   now_at timestamptz;
   cooldown timestamptz;
 begin
   for candidate in
     select pending.* from internal.connector_outbound_deliveries pending
-    where pending.provider = p_provider and pending.next_action_at <= clock_timestamp()
+    where pending.provider = p_provider and pending.next_action_at <= scan_at
     order by pending.next_action_at, pending.id limit 24 for update skip locked
   loop
     now_at := clock_timestamp();
@@ -279,9 +280,7 @@ begin
     credential_material_revision := authority.credential_material_revision;
     update internal.connector_outbound_deliveries pending set status = kind,
       lease_id = claim_connector_outbound_delivery.lease_id, lease_expires_at = claim_connector_outbound_delivery.lease_expires_at,
-      next_action_at = claim_connector_outbound_delivery.lease_expires_at, blocked_generation = null,
-      send_attempts = pending.send_attempts + (kind = 'sending')::integer,
-      observation_attempts = pending.observation_attempts + (kind = 'observing')::integer
+      next_action_at = claim_connector_outbound_delivery.lease_expires_at, blocked_generation = null
     where pending.id = candidate.id;
     insert into internal.connector_outbound_attempts (lease_id, delivery_id, operation, installation_generation, mapping_revision, started_at)
     values (lease_id, delivery_id, kind, installation_generation, mapping_revision, now_at);
@@ -326,6 +325,10 @@ begin
     end if;
     update internal.connector_outbound_attempts recorded set authorized_at = now_at
     where recorded.lease_id = p_lease_id;
+    update internal.connector_outbound_deliveries delivery set
+      send_attempts = delivery.send_attempts + (target.status = 'sending')::integer,
+      observation_attempts = delivery.observation_attempts + (target.status = 'observing')::integer
+    where delivery.id = target.id;
     return true;
   end if;
   now_at := clock_timestamp();
