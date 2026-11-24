@@ -1,6 +1,5 @@
 import "server-only";
 
-import { App } from "@octokit/app";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod/v4";
 
@@ -209,6 +208,7 @@ export function createGitHubConnectorOutboundAdapter(
       throw new ConnectorScopeUnavailable();
     }
     signal.throwIfAborted();
+    const { App } = await import("@octokit/app");
     const app = new App(config);
     const request = { signal, redirect: "manual" as const };
     const headers = { "x-github-api-version": apiVersion };
