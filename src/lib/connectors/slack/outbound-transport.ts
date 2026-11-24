@@ -46,9 +46,10 @@ const scopeSchema = z.object({
   originalWriteAuthorizedAt: instant,
   deadlineAt: instant,
 });
+type CheckAuthority = () => Promise<"current" | "unavailable" | "superseded">;
 export type SlackOutboundTransportInput = z.input<typeof scopeSchema> & {
   fetcher?: typeof fetch;
-  assertCurrent?: () => Promise<void>;
+  checkAuthority?: CheckAuthority;
 };
 
 type Limited =
@@ -67,7 +68,7 @@ type Scope = z.output<typeof scopeSchema> & {
   deadlineMs: number;
   authorizedMs: number;
   fetcher: typeof fetch;
-  assertCurrent?: () => Promise<void>;
+  checkAuthority?: CheckAuthority;
 };
 type VerifiedScope = Scope & { botId: string };
 
@@ -158,7 +159,7 @@ const rejectedWrites = new Set([
 type Failure =
   | Limited
   | {
-      kind: "ambiguous" | "not_started" | "authority_unavailable" | "authority_changed";
+      kind: "ambiguous" | "not_started" | "authority_unavailable";
     }
   | { kind: "refused"; code: string };
 type Read<T> = { kind: "read"; value: T } | Failure;
@@ -198,7 +199,7 @@ function parseScope(input: SlackOutboundTransportInput): Scope | null {
     authorizedMs,
     deadlineMs,
     fetcher: input.fetcher ?? fetch,
-    assertCurrent: input.assertCurrent,
+    checkAuthority: input.checkAuthority,
   };
 }
 
@@ -266,12 +267,15 @@ async function readJson(response: Response): Promise<unknown> {
 
 type SlackMethod = "auth.test" | "chat.postMessage" | "chat.update" | "conversations.replies";
 
-async function current(scope: Scope, signal: AbortSignal): Promise<boolean> {
+async function checkAuthority(scope: Scope, signal: AbortSignal) {
   try {
-    await scope.assertCurrent?.();
-    return !signal.aborted && Date.now() < scope.deadlineMs;
+    const authority = await scope.checkAuthority?.();
+    if (signal.aborted || Date.now() >= scope.deadlineMs || authority === "superseded") {
+      return "not_started";
+    }
+    return authority === "unavailable" ? "authority_unavailable" : "current";
   } catch {
-    return false;
+    return "not_started";
   }
 }
 
@@ -295,7 +299,8 @@ async function slackCall(
   request: { body: string } | { query: URLSearchParams },
 ): Promise<Read<Record<string, unknown>>> {
   if (signal.aborted || Date.now() >= scope.deadlineMs) return { kind: "not_started" };
-  if (!(await current(scope, signal))) return { kind: "authority_unavailable" };
+  const before = await checkAuthority(scope, signal);
+  if (before !== "current") return { kind: before };
   const timeout = Math.min(requestTimeoutMs, scope.deadlineMs - Date.now());
   if (signal.aborted || timeout <= 0) return { kind: "not_started" };
   const url = new URL(`/api/${method}`, slackOrigin);
@@ -312,7 +317,10 @@ async function slackCall(
       signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]),
     });
     const result = await readSlackResponse(response);
-    return (await current(scope, signal)) ? result : { kind: "authority_changed" };
+    const after = await checkAuthority(scope, signal);
+    if (after === "current") return result;
+    if (method === "chat.postMessage" || method === "chat.update") return { kind: "ambiguous" };
+    return { kind: after };
   } catch {
     return { kind: "ambiguous" };
   }
@@ -457,8 +465,7 @@ async function readExactReply(scope: VerifiedScope, signal: AbortSignal, replyTs
 
 function beforeWrite(failure: Failure): SlackOutboundSendResult {
   if (failure.kind === "rate_limited" || failure.kind === "credential_unavailable") return failure;
-  if (failure.kind === "authority_unavailable" || failure.kind === "authority_changed")
-    return { kind: "credential_unavailable" };
+  if (failure.kind === "authority_unavailable") return { kind: "credential_unavailable" };
   if (failure.kind === "refused") {
     if (unavailableDestinations.has(failure.code)) return { kind: "credential_unavailable" };
     if (rejectedWrites.has(failure.code)) return { kind: "rejected" };
@@ -467,7 +474,6 @@ function beforeWrite(failure: Failure): SlackOutboundSendResult {
 }
 
 function afterWrite(failure: Failure): SlackOutboundSendResult {
-  if (failure.kind === "authority_changed") return { kind: "uncertain" };
   if (failure.kind === "not_started") return { kind: "not_sent" };
   const result = beforeWrite(failure);
   return result.kind === "not_sent" ? { kind: "uncertain" } : result;

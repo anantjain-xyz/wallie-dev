@@ -491,12 +491,12 @@ it("reports unavailable authority before dispatch and uncertainty after dispatch
       .mockResolvedValueOnce(authorizationRead())
       .mockResolvedValueOnce(senderResponse(currentReplyTs, reply(currentReplyTs)));
     let checks = 0;
-    const assertCurrent = async () => {
-      if (++checks === guardAt) throw new Error("revoked");
-    };
-    await expect(
-      sendSlackOutbound(input(fetcher, { assertCurrent }), authorization()),
-    ).resolves.toEqual({
+    const guarded = input(fetcher, {
+      async checkAuthority() {
+        return ++checks === guardAt ? "unavailable" : "current";
+      },
+    });
+    await expect(sendSlackOutbound(guarded, authorization())).resolves.toEqual({
       kind: guardAt === 3 ? "credential_unavailable" : "uncertain",
     });
     expect(fetcher).toHaveBeenCalledTimes(guardAt === 3 ? 1 : 2);
@@ -510,12 +510,14 @@ it("rejects a read result when exact lease or mapping authority changed during o
     .mockResolvedValueOnce(page([root]))
     .mockResolvedValueOnce(page([reply(currentReplyTs)]));
   let checks = 0;
-  const assertCurrent = async () => {
-    if (++checks === 6) throw new Error("mapping changed");
-  };
-  await expect(
-    observeSlackOutbound(input(fetcher, { assertCurrent }), authorization()),
-  ).resolves.toEqual({ kind: "inconclusive" });
+  const guarded = input(fetcher, {
+    async checkAuthority() {
+      return ++checks === 6 ? "unavailable" : "current";
+    },
+  });
+  await expect(observeSlackOutbound(guarded, authorization())).resolves.toEqual({
+    kind: "inconclusive",
+  });
 });
 
 it("makes no provider request after expiry or an already aborted transport", async () => {

@@ -114,7 +114,6 @@ export function createSlackConnectorOutboundAdapter(admin: Client): ConnectorOut
     if (!ctx || ctx.session_id !== content.data.sessionId) return { kind: "unavailable" } as const;
     if (ctx.superseded && sending) return { kind: "invalid" } as const;
 
-    let reviewChanged = false;
     const transport: SlackOutboundTransportInput = {
       botToken: decryptSecretValue(ctx.encrypted_token),
       botUserId: ctx.bot_user_id,
@@ -131,18 +130,18 @@ export function createSlackConnectorOutboundAdapter(admin: Client): ConnectorOut
       ...(ctx.previous_correlation_id
         ? { previousCorrelationId: ctx.previous_correlation_id }
         : {}),
-      async assertCurrent() {
+      async checkAuthority() {
         const current = await readContext(admin, target, signal);
         if (!current || current.encrypted_token !== ctx.encrypted_token) {
-          throw new Error("The Slack delivery authority changed.");
+          return "unavailable";
         }
         if (sending && (current.superseded || current.action_target_id !== ctx.action_target_id)) {
-          reviewChanged = true;
-          throw new Error("The Slack review changed.");
+          return "superseded";
         }
+        return "current";
       },
     };
-    return { kind: "ready", transport, context: ctx, reviewChanged: () => reviewChanged } as const;
+    return { kind: "ready", transport, context: ctx } as const;
   }
 
   async function registerCard(context: DeliveryContext, messageTs: string, signal: AbortSignal) {
@@ -163,13 +162,15 @@ export function createSlackConnectorOutboundAdapter(admin: Client): ConnectorOut
   return {
     provider: "slack",
     async send(target, signal) {
-      const attempt = await prepare(target, signal, true);
+      let attempt;
+      try {
+        attempt = await prepare(target, signal, true);
+      } catch {
+        return { kind: "not_sent" };
+      }
       if (attempt.kind === "invalid") return { kind: "rejected" };
       if (attempt.kind === "unavailable") return { kind: "credential_unavailable" };
       const result = await sendSlackOutbound(attempt.transport, signal);
-      if (result.kind === "credential_unavailable" && attempt.reviewChanged()) {
-        return { kind: "not_sent" };
-      }
       if (
         result.kind === "sent" &&
         !(await registerCard(attempt.context, result.providerReplyId, signal))

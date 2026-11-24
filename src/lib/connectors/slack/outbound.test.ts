@@ -41,7 +41,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function revisionChangeOnRead(firstStaleRead: number) {
+function adapterFixture(onRead: (read: number) => "superseded" | "busy" | undefined) {
   vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://wallie.example");
   vi.stubEnv("WALLIE_ENCRYPTION_KEY", "slack-outbound-local-test-key");
   let reads = 0;
@@ -63,7 +63,11 @@ function revisionChangeOnRead(firstStaleRead: number) {
   };
   const databaseFetch = vi.fn<typeof fetch>().mockImplementation(async (input) => {
     expect(String(input)).toContain("/rpc/resolve_slack_connector_delivery");
-    return Response.json([{ ...context, superseded: ++reads >= firstStaleRead }]);
+    const status = onRead(++reads);
+    if (status === "busy") {
+      return Response.json({ code: "55P03", message: "Lock unavailable." }, { status: 409 });
+    }
+    return Response.json([{ ...context, superseded: status === "superseded" }]);
   });
   const slackFetch = vi
     .fn<typeof fetch>()
@@ -80,15 +84,50 @@ function revisionChangeOnRead(firstStaleRead: number) {
 
 describe("Slack review card revision fence", () => {
   it("releases a definite no-write when the exact review changes during preflight", async () => {
-    const { adapter, slackFetch } = revisionChangeOnRead(3);
+    const { adapter, slackFetch } = adapterFixture((read) =>
+      read >= 3 ? "superseded" : undefined,
+    );
     expect(await adapter.send(target, new AbortController().signal)).toEqual({ kind: "not_sent" });
     expect(slackFetch).toHaveBeenCalledTimes(1);
     expect(String(slackFetch.mock.calls[0]?.[0])).toContain("/api/auth.test");
   });
 
   it("preserves uncertainty when the exact review changes after the provider request", async () => {
-    const { adapter, slackFetch } = revisionChangeOnRead(5);
+    const { adapter, slackFetch } = adapterFixture((read) =>
+      read >= 5 ? "superseded" : undefined,
+    );
     expect(await adapter.send(target, new AbortController().signal)).toEqual({ kind: "uncertain" });
+    expect(slackFetch).toHaveBeenCalledTimes(2);
+    expect(String(slackFetch.mock.calls[1]?.[0])).toContain("/api/chat.postMessage");
+  });
+});
+
+describe("Slack delivery authority lookup", () => {
+  it.each([
+    [1, 0],
+    [3, 1],
+    [4, 1],
+  ])(
+    "can retry a write when preflight lookup %i encounters a busy database",
+    async (readAt, reads) => {
+      const { adapter, slackFetch } = adapterFixture((read) =>
+        read === readAt ? "busy" : undefined,
+      );
+      await expect(adapter.send(target, new AbortController().signal)).resolves.toEqual({
+        kind: "not_sent",
+      });
+      expect(slackFetch).toHaveBeenCalledTimes(reads);
+      expect(
+        slackFetch.mock.calls.every(([input]) => String(input).endsWith("/api/auth.test")),
+      ).toBe(true);
+    },
+  );
+
+  it("preserves uncertainty if delivery authority cannot be read after the write", async () => {
+    const { adapter, slackFetch } = adapterFixture((read) => (read === 5 ? "busy" : undefined));
+    await expect(adapter.send(target, new AbortController().signal)).resolves.toEqual({
+      kind: "uncertain",
+    });
     expect(slackFetch).toHaveBeenCalledTimes(2);
     expect(String(slackFetch.mock.calls[1]?.[0])).toContain("/api/chat.postMessage");
   });
