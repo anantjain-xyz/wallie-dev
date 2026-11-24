@@ -22,7 +22,7 @@ The replay builds the production app, sends signed GitHub events to its loopback
 
 ## Isolated Actions and monitoring
 
-Use a second disposable local project. Reset it with `--no-seed` and run `pnpm build` with its loopback `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. The qualification script starts the compiled app with local credentials. Pass `--app-dir` if that build is in a separate checkout.
+Use a second disposable local project and keep other workers disconnected. Reset it with `--no-seed` and run `pnpm build` with its loopback `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. The qualification script starts the compiled app with local credentials. Pass `--app-dir` if that build is in a separate checkout.
 
 The live command normally requires a GitHub immutable release. For the existing smoke repository, create a new `wallie-m12-fixture-*` tag in `anantjain-xyz/wallie-dev` at the reviewed fixture commit `097db97c1ddf078c682695be43875b979cbc8a39`. Set `fixture_tag` to that tag, keep the ref fixed while qualification runs, and preserve the tag and run as evidence. [GitHub immutable releases](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/using-immutable-releases-and-tags-to-manage-your-actions-releases)
 

@@ -56,8 +56,20 @@ async function waitForWallie(app: ChildProcess, url: string) {
   throw new FixtureConfigurationError("The production Wallie fixture did not become ready.");
 }
 
+function childExitCode(child: ChildProcess) {
+  return new Promise<number | null>((finished, failed) => {
+    child.once("error", failed);
+    child.once("close", finished);
+  });
+}
+
 async function runFactoryRuntime() {
   let app: ChildProcess | undefined;
+  let appClosed: Promise<void> | undefined;
+  let builder: ChildProcess | undefined;
+  let runtime: ChildProcess | undefined;
+  let stopM12: ((signal: NodeJS.Signals) => void) | undefined;
+  let interrupted = false;
   try {
     const [flag, directory, ...extra] = process.argv.slice(2);
     const m05 = extra.length === 1 && extra[0] === "--m05";
@@ -74,6 +86,18 @@ async function runFactoryRuntime() {
       throw new FixtureConfigurationError(
         "Pass --workdir with a disposable local Supabase project and optionally --m05, --m06, --m07, --m08, --m11, or --m12.",
       );
+    }
+    if (m12) {
+      stopM12 = (signal) => {
+        if (interrupted) return;
+        interrupted = true;
+        process.exitCode = signal === "SIGINT" ? 130 : 143;
+        builder?.kill("SIGTERM");
+        app?.kill("SIGTERM");
+        runtime?.kill("SIGTERM");
+      };
+      process.on("SIGINT", stopM12);
+      process.on("SIGTERM", stopM12);
     }
     const status = JSON.parse(
       execFileSync("supabase", ["status", "--workdir", resolve(directory), "--output", "json"], {
@@ -162,6 +186,7 @@ async function runFactoryRuntime() {
     }
     if (m05 || m07 || m08 || m12) {
       const port = await loopbackPort();
+      if (interrupted) return;
       const host = m08 ? "localhost" : "127.0.0.1";
       const appUrl = `http://${host}:${port}`;
       const next = resolve("node_modules/next/dist/bin/next");
@@ -186,12 +211,21 @@ async function runFactoryRuntime() {
             }
           : {}),
       };
-      const build = spawnSync(process.execPath, [next, "build"], {
+      const buildOptions = {
         env: appEnv,
-        stdio: "inherit",
+        stdio: "inherit" as const,
         timeout: 240_000,
-      });
-      if (build.status !== 0) {
+      };
+      let buildStatus: number | null;
+      if (m12) {
+        builder = spawn(process.execPath, [next, "build"], buildOptions);
+        buildStatus = await childExitCode(builder);
+        builder = undefined;
+      } else {
+        buildStatus = spawnSync(process.execPath, [next, "build"], buildOptions).status;
+      }
+      if (interrupted) return;
+      if (buildStatus !== 0) {
         throw new FixtureConfigurationError("The production Wallie fixture build failed.");
       }
       const localApp = spawn(
@@ -203,8 +237,12 @@ async function runFactoryRuntime() {
         },
       );
       app = localApp;
+      if (m12) {
+        appClosed = new Promise<void>((finished) => localApp.once("close", () => finished()));
+      }
       localApp.on("error", () => localApp.kill());
       await waitForWallie(localApp, appUrl);
+      if (interrupted) return;
       if (m07) {
         env.WALLIE_FACTORY_SCORER_BROWSER_URL = appUrl;
         env.WALLIE_FACTORY_SCORER_PROOF_DIR = resolve(
@@ -219,7 +257,7 @@ async function runFactoryRuntime() {
     }
 
     if (m12) {
-      const runtime = spawn(
+      runtime = spawn(
         process.execPath,
         [
           "--import",
@@ -234,18 +272,8 @@ async function runFactoryRuntime() {
           timeout: 720_000,
         },
       );
-      const stopRuntime = () => runtime.kill("SIGTERM");
-      process.on("SIGINT", stopRuntime);
-      process.on("SIGTERM", stopRuntime);
-      try {
-        process.exitCode = await new Promise<number>((finished, failed) => {
-          runtime.once("error", failed);
-          runtime.once("exit", (code) => finished(code ?? 1));
-        });
-      } finally {
-        process.off("SIGINT", stopRuntime);
-        process.off("SIGTERM", stopRuntime);
-      }
+      const runtimeStatus = await childExitCode(runtime);
+      if (!interrupted) process.exitCode = runtimeStatus ?? 1;
       return;
     }
 
@@ -361,6 +389,7 @@ async function runFactoryRuntime() {
       }
     }
   } catch (error) {
+    if (interrupted) return;
     // Supabase status errors may include local connection credentials.
     console.error(
       error instanceof FixtureConfigurationError
@@ -370,6 +399,20 @@ async function runFactoryRuntime() {
     process.exitCode = 1;
   } finally {
     app?.kill();
+    if (app && appClosed) {
+      const stopped = await Promise.race([
+        appClosed.then(() => true),
+        delay(10_000, false, { ref: false }),
+      ]);
+      if (!stopped) {
+        app.kill("SIGKILL");
+        await appClosed;
+      }
+    }
+    if (stopM12) {
+      process.off("SIGINT", stopM12);
+      process.off("SIGTERM", stopM12);
+    }
   }
 }
 
