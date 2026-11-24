@@ -11548,6 +11548,10 @@ export type Database = {
         Args: { p_workspace_id?: string }
         Returns: Json
       }
+      claim_linear_issue_discovery: {
+        Args: { p_workspace_id?: string }
+        Returns: Json
+      }
       claim_next_agent_job:
         | {
             Args: {
@@ -11781,6 +11785,22 @@ export type Database = {
           occurrence_count: number
         }[]
       }
+      commit_linear_issue_discovery_page: {
+        Args: {
+          p_config_revision: number
+          p_cursor_generation: number
+          p_external_tenant_id: string
+          p_external_viewer_id: string
+          p_factory_id: string
+          p_installation_generation: number
+          p_issues: Json
+          p_mapping_revision: number
+          p_next_position?: string
+          p_resource_id: string
+          p_workspace_id: string
+        }
+        Returns: number
+      }
       commit_run_export_page: {
         Args: {
           p_entries: Json
@@ -11991,6 +12011,21 @@ export type Database = {
           p_label_id: number
           p_resource_id: string
           p_source_kind: string
+          p_workspace_id: string
+        }
+        Returns: number
+      }
+      configure_linear_issue_discovery: {
+        Args: {
+          p_actor_user_id: string
+          p_enabled: boolean
+          p_expected_mapping_revision: number
+          p_expected_revision: number
+          p_factory_id: string
+          p_label_id?: string
+          p_resource_id: string
+          p_service_actor_id?: string
+          p_state_ids: string[]
           p_workspace_id: string
         }
         Returns: number
@@ -12703,6 +12738,15 @@ export type Database = {
           p_expected_cursor_version: number
           p_factory_id: string
           p_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      defer_linear_issue_discovery: {
+        Args: {
+          p_installation_generation: number
+          p_resource_id: string
+          p_retry_after_seconds?: number
           p_workspace_id: string
         }
         Returns: boolean
@@ -15914,6 +15958,14 @@ export type Database = {
           after_session_id: string
           generation: number
         }[]
+      }
+      read_linear_issue_discovery_config: {
+        Args: {
+          p_factory_id: string
+          p_resource_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       read_run_export_page: {
         Args: { p_export_id: string; p_lease_token: string; p_limit?: number }
