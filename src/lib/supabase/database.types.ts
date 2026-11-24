@@ -11370,6 +11370,26 @@ export type Database = {
         }
         Returns: string
       }
+      claim_connector_outbound_delivery: {
+        Args: { p_provider: Database["public"]["Enums"]["connector_provider"] }
+        Returns: {
+          content: Json
+          credential_material_revision: number
+          credential_ref: string
+          delivery_id: string
+          edit_target: string
+          external_resource_id: string
+          external_thread_id: string
+          installation_generation: number
+          installation_id: string
+          kind: Database["public"]["Enums"]["connector_outbound_status"]
+          lease_expires_at: string
+          lease_id: string
+          mapping_revision: number
+          operation: Database["public"]["Enums"]["connector_outbound_operation"]
+          provider: Database["public"]["Enums"]["connector_provider"]
+        }[]
+      }
       claim_expired_session_attachments: {
         Args: { max_count?: number }
         Returns: {
@@ -11974,6 +11994,10 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: number
+      }
+      confirm_connector_outbound_authority: {
+        Args: { p_delivery_id: string; p_lease_id: string }
+        Returns: boolean
       }
       confirm_factory_event_subscription: {
         Args: {
@@ -12789,6 +12813,21 @@ export type Database = {
           p_trial_id: string
         }
         Returns: boolean
+      }
+      enqueue_connector_outbound_delivery: {
+        Args: {
+          p_actor_link_id?: string
+          p_content: Json
+          p_edited_delivery_id?: string
+          p_factory_id: string
+          p_logical_key: string
+          p_operation: Database["public"]["Enums"]["connector_outbound_operation"]
+          p_resource_id: string
+          p_session_id: string
+          p_source_id: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       enqueue_due_github_pr_refreshes: {
         Args: { p_limit?: number; p_workspace_id?: string }
@@ -15328,6 +15367,29 @@ export type Database = {
           status: string
         }[]
       }
+      read_connector_outbound_delivery: {
+        Args: {
+          p_delivery_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          actor_kind: Database["public"]["Enums"]["connector_actor_kind"]
+          actor_link_id: string
+          edited_delivery_id: string
+          id: string
+          initiating_member_id: string
+          initiating_service_principal_id: string
+          last_result: Database["public"]["Enums"]["connector_outbound_result"]
+          next_action_at: string
+          observation_attempts: number
+          operation: Database["public"]["Enums"]["connector_outbound_operation"]
+          provider_reply_id: string
+          send_attempts: number
+          status: Database["public"]["Enums"]["connector_outbound_status"]
+          uncertain: boolean
+        }[]
+      }
       read_connector_subscription: {
         Args: {
           p_factory_id: string
@@ -17722,6 +17784,16 @@ export type Database = {
           updated_at: string
         }[]
       }
+      settle_connector_outbound_delivery: {
+        Args: {
+          p_delivery_id: string
+          p_lease_id: string
+          p_provider_reply_id?: string
+          p_result: Database["public"]["Enums"]["connector_outbound_result"]
+          p_retry_after_seconds?: number
+        }
+        Returns: boolean
+      }
       settle_factory_actions_dispatch: {
         Args: {
           p_command_id: string
@@ -18373,6 +18445,25 @@ export type Database = {
         | "recorded_fixtures"
         | "isolated_test"
       connector_actor_kind: "human" | "service"
+      connector_outbound_operation: "reply" | "edit"
+      connector_outbound_result:
+        | "sent"
+        | "not_sent"
+        | "uncertain"
+        | "rate_limited"
+        | "credential_unavailable"
+        | "rejected"
+        | "found"
+        | "absent"
+        | "inconclusive"
+      connector_outbound_status:
+        | "queued"
+        | "sending"
+        | "unknown"
+        | "observing"
+        | "blocked"
+        | "delivered"
+        | "failed"
       connector_provider: "github" | "linear"
       connector_resource_kind: "repository" | "team" | "project"
       factory_command_admission_status:
@@ -18621,6 +18712,27 @@ export const Constants = {
         "isolated_test",
       ],
       connector_actor_kind: ["human", "service"],
+      connector_outbound_operation: ["reply", "edit"],
+      connector_outbound_result: [
+        "sent",
+        "not_sent",
+        "uncertain",
+        "rate_limited",
+        "credential_unavailable",
+        "rejected",
+        "found",
+        "absent",
+        "inconclusive",
+      ],
+      connector_outbound_status: [
+        "queued",
+        "sending",
+        "unknown",
+        "observing",
+        "blocked",
+        "delivered",
+        "failed",
+      ],
       connector_provider: ["github", "linear"],
       connector_resource_kind: ["repository", "team", "project"],
       factory_command_admission_status: [
