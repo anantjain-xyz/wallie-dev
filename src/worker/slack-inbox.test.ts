@@ -29,7 +29,39 @@ describe("Slack inbox maintenance", () => {
     expect(drainBatch).toHaveBeenCalledTimes(2);
   });
 
-  it("waits for an active batch during shutdown and skips the next claim", async () => {
+  it("lets independent intake and review tasks drain without overlapping their own batches", async () => {
+    const activeReview = Promise.withResolvers<boolean>();
+    const intake = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+    const review = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+    review.mockReturnValueOnce(activeReview.promise);
+    const timerTasks = createTimerTaskTracker();
+    const drainIntake = createSlackInboxMaintenance({
+      drainBatch: intake,
+      isShuttingDown: () => false,
+      timerTasks,
+    });
+    const drainReviews = createSlackInboxMaintenance({
+      label: "Slack review actions",
+      drainBatch: review,
+      isShuttingDown: () => false,
+      timerTasks,
+    });
+
+    drainReviews();
+    drainReviews();
+    drainIntake();
+    await Promise.resolve();
+
+    expect(intake).toHaveBeenCalledOnce();
+    expect(review).toHaveBeenCalledOnce();
+
+    activeReview.resolve(true);
+    await timerTasks.waitForIdle();
+    expect(intake).toHaveBeenCalledOnce();
+    expect(review).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for an active review batch during shutdown and skips the next claim", async () => {
     const started = Promise.withResolvers<void>();
     const activeBatch = Promise.withResolvers<boolean>();
     const drainBatch = vi.fn(() => {
@@ -39,6 +71,7 @@ describe("Slack inbox maintenance", () => {
     let shuttingDown = false;
     const timerTasks = createTimerTaskTracker();
     const drain = createSlackInboxMaintenance({
+      label: "Slack review actions",
       drainBatch,
       isShuttingDown: () => shuttingDown,
       timerTasks,

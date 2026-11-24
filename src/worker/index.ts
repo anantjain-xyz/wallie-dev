@@ -50,7 +50,7 @@ import { drainGitHubConnectorCommentRetries } from "@/features/github/connector-
 import { createGitHubConnectorOutboundAdapter } from "@/features/github/connector-outbound";
 import { drainConnectorOutboundDeliveries } from "@/lib/connectors/outbound";
 import { drainSlackConnectorEvents } from "@/lib/connectors/slack/intake";
-import { drainSlackReviewActions } from "@/lib/connectors/slack/review-actions";
+import { drainSlackReviewActionBatch } from "@/lib/connectors/slack/review-actions";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
 import { parseWorkerConfig } from "./config";
@@ -198,6 +198,13 @@ async function main() {
       isShuttingDown: () => draining,
       timerTasks,
     });
+    const drainSlackReviews = createSlackInboxMaintenance({
+      label: "Slack review actions",
+      drainBatch: async () =>
+        (await drainSlackReviewActionBatch(admin, { isShuttingDown: () => draining })).hasMore,
+      isShuttingDown: () => draining,
+      timerTasks,
+    });
     maintenanceTimers.push(
       setInterval(() => {
         timerTasks.run("accepted triage route", () => drainAcceptedTriageRoute(admin));
@@ -213,9 +220,7 @@ async function main() {
         timerTasks.run("expired workflow review", () => expireExactFactoryWorkflowReview(admin));
         timerTasks.run("GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin));
         drainSlackInbox();
-        timerTasks.run("Slack review actions", async () => {
-          await drainSlackReviewActions(admin, { isShuttingDown: () => draining });
-        });
+        drainSlackReviews();
         timerTasks.run("GitHub connector outbound", async () => {
           await drainConnectorOutboundDeliveries(
             admin,

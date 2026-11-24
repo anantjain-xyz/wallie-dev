@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Database } from "@/lib/supabase/database.types";
 
-import { drainSlackReviewActions } from "./review-actions";
+import { drainSlackReviewActionBatch, drainSlackReviewActions } from "./review-actions";
 
 const mocks = vi.hoisted(() => ({
   resolveQueuedRunConfig: vi.fn(),
@@ -110,6 +110,39 @@ describe("Slack review action drain", () => {
 
     expect(outbound.map(({ path }) => path)).toEqual([claimRpc, claimRpc, completeRpc, claimRpc]);
     expect(mocks.resolveQueuedRunConfig).toHaveBeenCalledOnce();
+  });
+
+  it("reports a full batch so the fifth approval can be drained without another tick", async () => {
+    const { client, outbound } = fakeAdmin([
+      ...Array.from({ length: 5 }, () => [[claim], "applied"]).flat(),
+      [],
+    ]);
+
+    await expect(drainSlackReviewActionBatch(client)).resolves.toEqual({
+      applied: 4,
+      hasMore: true,
+    });
+    await expect(drainSlackReviewActionBatch(client)).resolves.toEqual({
+      applied: 1,
+      hasMore: false,
+    });
+
+    expect(outbound.filter(({ path }) => path === completeRpc)).toHaveLength(5);
+    expect(mocks.wakeWorker).toHaveBeenCalledTimes(2);
+  });
+
+  it("suppresses continuation when shutdown begins during the last full-batch action", async () => {
+    const { client, outbound } = fakeAdmin(
+      Array.from({ length: 4 }, () => [[claim], "applied"]).flat(),
+    );
+    const isShuttingDown = () => mocks.evaluateSessionPrReadiness.mock.calls.length === 4;
+
+    await expect(drainSlackReviewActionBatch(client, { isShuttingDown })).resolves.toEqual({
+      applied: 4,
+      hasMore: false,
+    });
+    expect(outbound.at(-1)?.path).toBe(completeRpc);
+    expect(mocks.wakeWorker).toHaveBeenCalledOnce();
   });
 
   it("bounds the number of cleanup-only claims", async () => {

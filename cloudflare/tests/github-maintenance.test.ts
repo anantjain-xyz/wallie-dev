@@ -87,6 +87,8 @@ it.each([
   { scenario: "all tasks succeed", automationScheduleDue: true },
   { scenario: "the Slack inbox needs another batch", slackCleanupClaims: 4 },
   { scenario: "the Slack inbox reaches the maintenance batch limit", slackCleanupClaims: 32 },
+  { scenario: "Slack reviews need another batch", slackReviewCleanupClaims: 4 },
+  { scenario: "Slack reviews reach the maintenance batch limit", slackReviewCleanupClaims: 40 },
   { scenario: "the dispatcher cannot load pending jobs", dispatchFailure: true },
   { scenario: "accepted triage routing fails", triageFailure: true },
   { scenario: "exact workflow review fails", exactReviewFailure: true },
@@ -139,6 +141,7 @@ it.each([
     linearDiscoveryFailure,
     linearOutcomesFailure,
     slackCleanupClaims = 0,
+    slackReviewCleanupClaims = 0,
   }) => {
     const bindings = env as unknown as Env;
     const query = {
@@ -193,6 +196,7 @@ it.each([
           : { data: 2, error: null },
       );
     let slackClaims = 0;
+    let slackReviewClaims = 0;
     const rpc = vi.fn((name: string) => {
       if (name === "expire_factory_delivery_dispatches") return { abortSignal: expiry };
       if (
@@ -289,7 +293,8 @@ it.each([
         return { abortSignal: () => Promise.resolve({ data, error: null }) };
       }
       if (name === "claim_slack_review_action") {
-        return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
+        const data = slackReviewClaims++ < slackReviewCleanupClaims ? [{ kind: "cleanup" }] : [];
+        return { abortSignal: () => Promise.resolve({ data, error: null }) };
       }
       if (name === "claim_connector_outbound_delivery") {
         return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
@@ -398,6 +403,7 @@ it.each([
       await inspection.waitForStatus("complete");
       expect(slackClaims).toBe(Math.min(slackCleanupClaims + 1, 32));
       expect(rpc).toHaveBeenCalledWith("claim_slack_review_action", {});
+      expect(slackReviewClaims).toBe(Math.min(slackReviewCleanupClaims + 1, 32));
       expect(warn).not.toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
         task: "Slack review actions",
       });

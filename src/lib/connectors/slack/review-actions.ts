@@ -23,13 +23,17 @@ const claimResult = z.discriminatedUnion("kind", [
 const rpcTimeoutMs = 5_000;
 
 type Admin = SupabaseClient<Database>;
+type DrainInput = { workspaceId?: string; isShuttingDown?: () => boolean };
+const batchSize = 4;
 
-export async function drainSlackReviewActions(
-  admin: Admin,
-  input: { workspaceId?: string; isShuttingDown?: () => boolean } = {},
-) {
+export async function drainSlackReviewActions(admin: Admin, input: DrainInput = {}) {
+  return (await drainSlackReviewActionBatch(admin, input)).applied;
+}
+
+export async function drainSlackReviewActionBatch(admin: Admin, input: DrainInput = {}) {
   let applied = 0;
-  for (let count = 0; count < 4; count++) {
+  let claims = 0;
+  for (; claims < batchSize; claims++) {
     if (input.isShuttingDown?.()) break;
     const claimed = await admin
       .rpc(
@@ -68,5 +72,5 @@ export async function drainSlackReviewActions(
     if (completed.data === "applied") applied++;
   }
   if (applied > 0) await wakeWorker();
-  return applied;
+  return { applied, hasMore: claims === batchSize && !input.isShuttingDown?.() };
 }
