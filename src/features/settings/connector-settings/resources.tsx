@@ -143,6 +143,7 @@ function ProviderResources({
     installations.find(({ status }) => status === "connected") ??
     (installations.length === 1 ? installations[0] : undefined);
   const status = resource?.connectionStatus ?? installation?.status;
+  const canUseProvider = resource?.enabled === true && status === "connected";
 
   return (
     <div className="space-y-5">
@@ -201,23 +202,25 @@ function ProviderResources({
           resources={resources}
         />
       ) : null}
-      {resource?.enabled && resource.connectionStatus === "connected" && inventory.canConfigure ? (
-        provider === "github" ? (
-          <GitHubRequestRule
-            disabled={refreshing}
-            endpoint={endpoint}
-            key={resource.id}
-            onChanged={onChanged}
-            resource={resource}
-          />
-        ) : (
-          <LinearConnectorPolicies
-            factoryEndpoint={factoryEndpoint}
-            onChanged={() => setPolicyRevision((value) => value + 1)}
-            key={`${resource.id}:${resource.mappingRevision}`}
-            resource={resource}
-          />
-        )
+      {inventory.canConfigure &&
+      resource?.provider === "github" &&
+      (canUseProvider || resource.githubRequests.some((rule) => rule.enabled)) ? (
+        <GitHubRequestRule
+          canManageLabels={canUseProvider}
+          disabled={refreshing}
+          endpoint={endpoint}
+          key={resource.id}
+          onChanged={onChanged}
+          resource={resource}
+        />
+      ) : null}
+      {inventory.canConfigure && resource?.provider === "linear" && canUseProvider ? (
+        <LinearConnectorPolicies
+          factoryEndpoint={factoryEndpoint}
+          onChanged={() => setPolicyRevision((value) => value + 1)}
+          key={`${resource.id}:${resource.mappingRevision}`}
+          resource={resource}
+        />
       ) : null}
     </div>
   );

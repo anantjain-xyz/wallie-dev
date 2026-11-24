@@ -81,6 +81,12 @@ export const connectorSetupCommandSchema = z.discriminatedUnion("action", [
     labelId: generation,
     labelName: label.regex(/^[^\p{Cc}]+$/u),
   }),
+  z.strictObject({
+    action: z.literal("disable_github_request"),
+    resourceId: uuid,
+    sourceKind: z.enum(["issue", "pull_request"]),
+    expectedRevision: revision.positive(),
+  }),
 ]);
 
 export const connectorSetupResponseSchema = z.union([

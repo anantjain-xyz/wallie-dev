@@ -12831,6 +12831,17 @@ export type Database = {
         }
         Returns: Json
       }
+      disable_github_connector_request: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_revision: number
+          p_factory_id: string
+          p_resource_id: string
+          p_source_kind: string
+          p_workspace_id: string
+        }
+        Returns: number
+      }
       disconnect_connector_installation: {
         Args: {
           p_actor_user_id: string
@@ -16902,6 +16913,7 @@ export type Database = {
           p_delivery_id: string
           p_factory_id: string
           p_kind: string
+          p_mode: string
           p_resource_id: string
           p_workspace_id: string
         }

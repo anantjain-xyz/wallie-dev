@@ -145,25 +145,46 @@ describe("factory connector diagnostics", () => {
       .mockResolvedValueOnce({ data: true, error: null })
       .mockResolvedValueOnce({ data: false, error: null });
 
-    const command = { kind: "outbound", id: deliveryId };
+    const command = { kind: "outbound", id: deliveryId, mode: "observe" };
     const accepted = await retryDelivery(write(command), context);
     expect(await accepted.json()).toEqual({ scheduled: true });
     expect(mock.rpc).toHaveBeenNthCalledWith(1, "retry_factory_connector_delivery", {
       ...deliveryScope,
       p_kind: command.kind,
       p_delivery_id: deliveryId,
+      p_mode: command.mode,
     });
     expect((await retryDelivery(write(command), context)).status).toBe(409);
     expect(mock.rpc).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects an unrecognized lane, caller-supplied actor and non-JSON retries", async () => {
+  it("rejects unsupported modes and lanes, caller-supplied actors and non-JSON retries", async () => {
     expect(
-      (await retryDelivery(write({ kind: "github_admission", id: deliveryId }), context)).status,
+      (
+        await retryDelivery(
+          write({ kind: "github_admission", id: deliveryId, mode: "retry" }),
+          context,
+        )
+      ).status,
     ).toBe(400);
     expect(
-      (await retryDelivery(write({ kind: "outbound", id: deliveryId, actor: userId }), context))
-        .status,
+      (
+        await retryDelivery(
+          write({ kind: "outbound", id: deliveryId, mode: "retry", actor: userId }),
+          context,
+        )
+      ).status,
+    ).toBe(400);
+    expect((await retryDelivery(write({ kind: "outbound", id: deliveryId }), context)).status).toBe(
+      400,
+    );
+    expect(
+      (
+        await retryDelivery(
+          write({ kind: "github_comment", id: deliveryId, mode: "observe" }),
+          context,
+        )
+      ).status,
     ).toBe(400);
     expect(
       (await retryDelivery(new Request(origin, { method: "POST", body: "not JSON" }), context))

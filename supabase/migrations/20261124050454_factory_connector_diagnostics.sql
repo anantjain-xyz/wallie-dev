@@ -214,6 +214,11 @@ create function internal.can_retry_github_connector_comment(
   select (p_retry.status = 'pending' and p_retry.next_attempt_at is not null
     and p_retry.deadline_at > p_now and p_retry.attempt_count < 8
     and (p_retry.body is not null or p_retry.action = 'deleted')
+    and (p_retry.source_kind <> 'issue' or not exists (
+      select 1 from internal.github_connector_work_deliveries tombstone
+      where (tombstone.resource_id, tombstone.source_kind, tombstone.source_id, tombstone.disposition) =
+        (p_retry.resource_id, 'issue', p_retry.issue_id, 'deleted')
+    ))
     and exists (
       select 1 from public.factory_connector_resources resource
       join internal.connector_installations installation
@@ -389,7 +394,7 @@ $$;
 
 create function public.retry_factory_connector_delivery(
   p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_resource_id uuid,
-  p_kind text, p_delivery_id uuid
+  p_kind text, p_delivery_id uuid, p_mode text
 ) returns boolean language plpgsql security definer set search_path = '' set lock_timeout = '2s' as $$
 declare
   deferred internal.github_connector_comment_retries;
@@ -397,7 +402,9 @@ declare
   now_at timestamptz;
 begin
   perform internal.assert_factory_manager(p_workspace_id, p_factory_id, p_actor_user_id);
-  if p_kind is null or p_kind not in ('github_comment','outbound') or p_delivery_id is null then
+  if p_kind is null or p_kind not in ('github_comment','outbound') or p_delivery_id is null
+    or p_mode is null or p_mode not in ('retry','observe')
+    or (p_kind = 'github_comment' and p_mode <> 'retry') then
     raise exception 'An exact retry delivery is required.' using errcode = '22023';
   end if;
   perform 1 from public.factory_connector_resources resource
@@ -422,6 +429,7 @@ begin
     for update nowait;
     if not found then return false; end if;
     now_at := clock_timestamp();
+    if outbound.uncertain is distinct from (p_mode = 'observe') then return false; end if;
     if not internal.can_retry_connector_outbound_delivery(outbound, now_at) then return false; end if;
     update internal.connector_outbound_deliveries delivery set next_action_at = least(delivery.next_action_at, now_at)
     where delivery.id = outbound.id and delivery.next_action_at > now_at;
@@ -433,9 +441,32 @@ exception when lock_not_available then
 end;
 $$;
 
+create function public.disable_github_connector_request(
+  p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_resource_id uuid,
+  p_source_kind text, p_expected_revision bigint
+) returns bigint language plpgsql security definer set search_path = '' as $$
+declare
+  label_id bigint;
+begin
+  perform internal.assert_factory_secret_binding_owner(p_workspace_id, p_factory_id, p_actor_user_id);
+  if p_source_kind is null or p_source_kind not in ('issue', 'pull_request') then
+    raise exception 'A valid GitHub request kind is required.' using errcode = '22023';
+  end if;
+  select rule.label_id into label_id from internal.github_connector_request_rules rule
+  where (rule.workspace_id, rule.factory_id, rule.resource_id, rule.source_kind) =
+    (p_workspace_id, p_factory_id, p_resource_id, p_source_kind);
+  if not found then raise exception 'GitHub request rule is unavailable.' using errcode = 'P0002'; end if;
+
+  return public.configure_github_connector_request(p_workspace_id, p_factory_id, p_actor_user_id, p_resource_id,
+    p_source_kind, p_expected_revision, false, label_id, null, null);
+end;
+$$;
+
 revoke all on function public.list_factory_connector_resources(uuid,uuid,uuid),
   public.list_factory_connector_deliveries(uuid,uuid,uuid,uuid,text,integer,timestamptz,text,uuid),
-  public.retry_factory_connector_delivery(uuid,uuid,uuid,uuid,text,uuid) from public, anon, authenticated;
+  public.retry_factory_connector_delivery(uuid,uuid,uuid,uuid,text,uuid,text),
+  public.disable_github_connector_request(uuid,uuid,uuid,uuid,text,bigint) from public, anon, authenticated;
 grant execute on function public.list_factory_connector_resources(uuid,uuid,uuid),
   public.list_factory_connector_deliveries(uuid,uuid,uuid,uuid,text,integer,timestamptz,text,uuid),
-  public.retry_factory_connector_delivery(uuid,uuid,uuid,uuid,text,uuid) to service_role;
+  public.retry_factory_connector_delivery(uuid,uuid,uuid,uuid,text,uuid,text),
+  public.disable_github_connector_request(uuid,uuid,uuid,uuid,text,bigint) to service_role;

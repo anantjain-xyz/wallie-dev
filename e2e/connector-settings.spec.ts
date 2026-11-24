@@ -1,13 +1,14 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page, type Route } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod/v4";
 
 import {
   connectorDeliveryPageSchema,
   type ConnectorDeliveryPage,
+  type ConnectorRetryCommand,
 } from "../src/lib/connectors/diagnostics-contracts";
 import type { Database } from "../src/lib/supabase/database.types";
 import { signInViaMagicLink } from "./helpers/auth";
@@ -101,6 +102,7 @@ async function screenshot(page: Page, name: string) {
     path: resolve(proofDirectory, `op680-${name}.png`),
     animations: "disabled",
     caret: "hide",
+    style: "[data-shell-header], [data-shell-rail], .ui-skip-link { visibility: hidden; }",
   });
 }
 
@@ -108,18 +110,102 @@ async function retryFromPanel(
   page: Page,
   panel: Locator,
   endpoint: string,
-  expected: { kind: "github_comment" | "outbound"; id: string },
+  expected: ConnectorRetryCommand,
 ) {
   const response = page.waitForResponse(
     (candidate) =>
       new URL(candidate.url()).pathname === endpoint && candidate.request().method() === "POST",
   );
-  const action = expected.kind === "github_comment" ? "Schedule retry" : "Check provider status";
+  const action = expected.mode === "observe" ? "Check provider status" : "Schedule retry";
   await panel.getByRole("button", { name: action, exact: true }).click();
   const result = await response;
   expect(result.request().postDataJSON()).toEqual(expected);
   expect(result.ok()).toBe(true);
   expect(await result.text()).not.toContain(privateFixtureText);
+}
+
+async function provePaginationRecovers(page: Page, panel: Locator, endpoint: string) {
+  const matches = (url: URL) =>
+    url.pathname === endpoint && url.searchParams.get("lane") === "ingress";
+  const failure = "Delivery page unavailable.";
+  let pageAttempts = 0;
+  let releaseRetry: () => void = () => {};
+  const heldRetry = new Promise<void>((resolve) => {
+    releaseRetry = resolve;
+  });
+  async function handlePage(route: Route) {
+    const url = new URL(route.request().url());
+    if (!url.searchParams.has("cursor")) {
+      url.searchParams.set("limit", "3");
+      return route.continue({ url: url.toString() });
+    }
+    if (pageAttempts++ === 0) return route.fulfill({ status: 503, json: { error: failure } });
+    await heldRetry;
+    return route.continue();
+  }
+
+  await page.route(matches, handlePage);
+  const history = panel.getByRole("region", { name: "Delivery history", exact: true });
+  const loadOlder = history.getByRole("button", { name: "Load older deliveries", exact: true });
+  try {
+    await history.getByRole("button", { name: "Refresh history", exact: true }).click();
+    await expect(history.getByRole("listitem")).toHaveCount(3);
+    await loadOlder.click();
+    await expect(history.getByRole("alert").filter({ hasText: failure })).toBeVisible();
+    await loadOlder.click();
+    await expect(history.getByRole("button", { name: "Loading…", exact: true })).toBeDisabled();
+    await expect(history.getByText(failure, { exact: true })).toHaveCount(0);
+    releaseRetry();
+    await expect(history.getByRole("listitem")).toHaveCount(4);
+    await expect(loadOlder).toHaveCount(0);
+  } finally {
+    releaseRetry();
+    await page.unroute(matches, handlePage);
+  }
+}
+
+async function proveStaleModeRefreshes(
+  page: Page,
+  panel: Locator,
+  historyEndpoint: string,
+  expected: Extract<ConnectorRetryCommand, { kind: "outbound" }>,
+) {
+  const retryEndpoint = `${historyEndpoint}/retry`;
+  await page.route(
+    `**${retryEndpoint}`,
+    (route) => route.continue({ postData: JSON.stringify({ ...expected, mode: "retry" }) }),
+    { times: 1 },
+  );
+  const refreshed = page.waitForResponse(
+    (result) =>
+      new URL(result.url()).pathname === historyEndpoint && result.request().method() === "GET",
+  );
+  const response = page.waitForResponse(
+    (result) =>
+      new URL(result.url()).pathname === retryEndpoint && result.request().method() === "POST",
+  );
+  await panel.getByRole("button", { name: "Check provider status", exact: true }).click();
+  expect((await response).status()).toBe(409);
+  expect((await refreshed).ok()).toBe(true);
+  await expect(
+    panel.getByRole("alert").filter({ hasText: "This delivery changed." }),
+  ).toBeVisible();
+  await expect(panel.getByText("Provider status check scheduled.")).toHaveCount(0);
+}
+
+async function expectFocusRestored(page: Page, button: Locator, title: string) {
+  await button.press("Enter");
+  const dialog = page.getByRole("alertdialog", { name: title, exact: true });
+  await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(button).toBeFocused();
+}
+
+function expectAdvancedRetryTime(previous: string | null, current: string | null) {
+  expect(previous).not.toBeNull();
+  expect(current).not.toBeNull();
+  expect(Date.parse(previous ?? "") - Date.parse(current ?? "")).toBeGreaterThan(45 * 60 * 1000);
 }
 
 async function readHistory(page: Page, endpoint: string) {
@@ -166,8 +252,16 @@ test("qualified operators can inspect and retry exact connector receipts from Se
   const connectors = `${factoryApi}/${fixture.factoryId}/connectors`;
   const githubHistory = `${connectors}/${fixture.githubResourceId}/deliveries`;
   const linearHistory = `${connectors}/${fixture.linearResourceId}/deliveries`;
-  const githubRetry = { kind: "github_comment", id: fixture.githubRetryId } as const;
-  const linearRetry = { kind: "outbound", id: fixture.linearRetryId } as const;
+  const githubRetry = {
+    kind: "github_comment",
+    id: fixture.githubRetryId,
+    mode: "retry",
+  } satisfies ConnectorRetryCommand;
+  const linearRetry = {
+    kind: "outbound",
+    id: fixture.linearRetryId,
+    mode: "observe",
+  } satisfies ConnectorRetryCommand;
   await mkdir(proofDirectory, { recursive: true });
 
   for (const variant of variants) {
@@ -255,6 +349,17 @@ test("qualified operators can inspect and retry exact connector receipts from Se
 
   const owner = await openSettings(browser, destinations, fixture.ownerEmail, variants[0]);
   try {
+    await selectProviderResource(owner.panel, "GitHub", fixture.githubResourceId);
+    await expectFocusRestored(
+      owner.page,
+      owner.panel.getByRole("button", { name: "Disable mapping", exact: true }),
+      "Disable this resource mapping?",
+    );
+    await expectFocusRestored(
+      owner.page,
+      owner.panel.getByRole("button", { name: "Disconnect connector", exact: true }),
+      "Disconnect this connector?",
+    );
     const wrongScope = await owner.page.request.post(
       `${factoryApi}/${fixture.siblingFactoryId}/connectors/${fixture.githubResourceId}/deliveries/retry`,
       { data: githubRetry },
@@ -320,13 +425,14 @@ test("qualified operators can inspect and retry exact connector receipts from Se
       .selectOption("ingress");
     await expect(manager.panel.getByText("Rejected", { exact: true })).toBeVisible();
     await expect(manager.panel.getByText(/^Outbound delivery/)).toHaveCount(0);
+    await provePaginationRecovers(manager.page, manager.panel, githubHistory);
     await retryFromPanel(manager.page, manager.panel, `${githubHistory}/retry`, githubRetry);
     await expect(manager.panel.getByText("Retry scheduled for this delivery.")).toBeVisible();
     const retriedComment = findDelivery(
       await readHistory(manager.page, githubHistory),
       fixture.githubRetryId,
     );
-    expect(retriedComment.nextAttemptAt).not.toBe(pendingComment.nextAttemptAt);
+    expectAdvancedRetryTime(pendingComment.nextAttemptAt, retriedComment.nextAttemptAt);
     expect(
       findDelivery(await readHistory(manager.page, linearHistory), fixture.linearRetryId),
     ).toEqual(linearBefore);
@@ -338,6 +444,10 @@ test("qualified operators can inspect and retry exact connector receipts from Se
     await manager.panel
       .getByRole("combobox", { name: "Direction", exact: true })
       .selectOption("outbound");
+    await proveStaleModeRefreshes(manager.page, manager.panel, linearHistory, linearRetry);
+    expect(
+      findDelivery(await readHistory(manager.page, linearHistory), fixture.linearRetryId),
+    ).toEqual(linearBefore);
     await retryFromPanel(manager.page, manager.panel, `${linearHistory}/retry`, linearRetry);
     await expect(manager.panel.getByText("Provider status check scheduled.")).toBeVisible();
     const observingDelivery = findDelivery(
@@ -349,7 +459,7 @@ test("qualified operators can inspect and retry exact connector receipts from Se
       uncertain: true,
       attempts: linearBefore.attempts,
     });
-    expect(observingDelivery.nextAttemptAt).not.toBe(linearBefore.nextAttemptAt);
+    expectAdvancedRetryTime(linearBefore.nextAttemptAt, observingDelivery.nextAttemptAt);
     await screenshot(manager.page, "retry-mobile-dark");
 
     const admin = createClient<Database>(supabase, serviceKey, {
@@ -384,5 +494,49 @@ test("qualified operators can inspect and retry exact connector receipts from Se
     await screenshot(manager.page, "revoked-mobile-dark");
   } finally {
     await manager.context.close();
+  }
+
+  const ruleOwner = await openSettings(browser, destinations, fixture.ownerEmail, variants[0]);
+  try {
+    await selectProviderResource(ruleOwner.panel, "GitHub", fixture.githubResourceId);
+    const source = ruleOwner.panel.getByRole("combobox", { name: "Request source", exact: true });
+    const disableIssue = ruleOwner.panel.getByRole("button", { name: "Disable issue intake" });
+    await expect(disableIssue).toBeVisible();
+    await source.selectOption("pull_request");
+    const disablePullRequest = ruleOwner.panel.getByRole("button", {
+      name: "Disable pull request intake",
+      exact: true,
+    });
+    await expectFocusRestored(ruleOwner.page, disablePullRequest, "Disable pull request intake?");
+    await disablePullRequest.press("Enter");
+    const disabled = ruleOwner.page.waitForResponse(
+      (result) =>
+        new URL(result.url()).pathname === `${connectors}/setup` &&
+        result.request().method() === "POST",
+    );
+    await ruleOwner.page
+      .getByRole("alertdialog", { name: "Disable pull request intake?", exact: true })
+      .getByRole("button", { name: "Disable pull request intake", exact: true })
+      .click();
+    const result = await disabled;
+    expect(result.ok()).toBe(true);
+    expect(result.request().postDataJSON()).toEqual({
+      action: "disable_github_request",
+      resourceId: fixture.githubResourceId,
+      sourceKind: "pull_request",
+      expectedRevision: 1,
+    });
+    await expect(
+      ruleOwner.panel.getByText("Intake is disabled for this request source."),
+    ).toBeVisible();
+    await expect(source).toBeEnabled();
+    await expect(disablePullRequest).toHaveCount(0);
+    await screenshot(ruleOwner.page, "github-pull-request-intake-disabled");
+    await source.selectOption("issue");
+    await expect(disableIssue).toBeVisible();
+    await expect(ruleOwner.panel.getByText("Connected", { exact: true })).toBeVisible();
+    await expect(ruleOwner.panel.getByText("Pending", { exact: true })).toBeVisible();
+  } finally {
+    await ruleOwner.context.close();
   }
 });

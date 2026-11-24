@@ -184,7 +184,7 @@ async function githubLabels(admin: Admin, scope: Scope, resourceId: string, sign
   ) {
     throw new ConnectorSetupFailure(409, "GitHub connector ownership changed.");
   }
-  const labels = await verifyGitHubCatalogRepository(verified, repository, signal, {
+  const labels = await verifyGitHubCatalogRepository(verified, repository.repo_id, signal, {
     readLabels: true,
   });
   return { tenant: { id: verified.id, label: verified.label }, labels };
@@ -316,13 +316,25 @@ export async function applyConnectorSetup(
       enabled: false,
     });
   }
+  if (command.action === "disable_github_request") {
+    const { data, error } = await admin.rpc("disable_github_connector_request", {
+      ...scope,
+      p_resource_id: command.resourceId,
+      p_source_kind: command.sourceKind,
+      p_expected_revision: command.expectedRevision,
+    });
+    if (error) throw error;
+    return { revision: z.number().int().positive().parse(data) };
+  }
 
   const signal = AbortSignal.timeout(connectorProviderTimeoutMs);
   if (command.action === "github_request") {
     const grant = await publishedGitHubGrant(admin, scope);
     const { labels } = await githubLabels(admin, scope, command.resourceId, signal);
     const label = await labels.readLabel(command.labelName);
-    if (label.id !== command.labelId) throw new ConnectorSetupFailure(409, "GitHub label changed.");
+    if (label.id !== command.labelId || label.archived_at !== null) {
+      throw new ConnectorSetupFailure(409, "GitHub label changed or is archived.");
+    }
     const { data, error } = await admin.rpc("configure_github_connector_request", {
       ...scope,
       p_resource_id: command.resourceId,
@@ -395,7 +407,7 @@ export async function applyConnectorSetup(
     ) {
       throw new ConnectorSetupFailure(409, "GitHub connector ownership changed.");
     }
-    await verifyGitHubCatalogRepository(tenant, repository, signal);
+    await verifyGitHubCatalogRepository(tenant, repository.repo_id, signal);
     return publishMapping(admin, scope, { ...mapping, externalId: String(repository.repo_id) });
   }
   if (kind !== "repository" && installation.provider === "linear") {

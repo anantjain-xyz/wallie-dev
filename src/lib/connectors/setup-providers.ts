@@ -27,9 +27,21 @@ const githubInstallation = z.object({
 const githubRepository = z.object({
   id: numericId,
   archived: z.boolean(),
+  full_name: z
+    .string()
+    .max(256)
+    .regex(/^[\w-]+\/[\w.-]+$/),
   owner: z.object({ id: numericId }),
 });
-const githubLabel = z.object({ id: numericId, name });
+const githubScopedRepositories = z.object({
+  total_count: z.literal(1),
+  repositories: z.tuple([githubRepository]),
+});
+const githubLabel = z.object({
+  id: numericId,
+  name,
+  archived_at: z.iso.datetime({ offset: true }).nullable(),
+});
 const githubToken = z.object({ token: z.string().min(1) });
 const linearNode = z.object({ id: z.uuid().toLowerCase(), name });
 const linearPage = z.object({
@@ -81,19 +93,14 @@ export async function verifyGitHubCatalogTenant(
 }
 
 type GitHubTenant = Awaited<ReturnType<typeof verifyGitHubCatalogTenant>>;
-type Repository = { repo_id: number; full_name: string };
 
 export async function verifyGitHubCatalogRepository(
   tenant: GitHubTenant,
-  repository: Repository,
+  repositoryId: number,
   signal: AbortSignal,
   options: { readLabels?: boolean } = {},
 ) {
   return guardedProviderRead("github", async () => {
-    const [owner, repo, ...rest] = repository.full_name.split("/");
-    if (!owner || !repo || rest.length) throw new Error("Invalid native GitHub repository.");
-    const repositoryPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-
     // GitHub only issues this credential if the selected numeric repository
     // belongs to the installation. Read only the metadata needed here.
     const permissions: { metadata: "read"; issues?: "read"; pull_requests?: "read" } = {
@@ -110,35 +117,48 @@ export async function verifyGitHubCatalogRepository(
       "POST /app/installations/{installation_id}/access_tokens",
       {
         installation_id: tenant.installationId,
-        repository_ids: [repository.repo_id],
+        repository_ids: [repositoryId],
         permissions,
         request: { signal, redirect: "error" },
       },
     );
     const { token } = githubToken.parse(data);
-    const read = async (suffix = "") => {
-      const response = await fetch(`https://api.github.com${repositoryPath}${suffix}`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+    const read = async (path: string) => {
+      const response = await fetch(`https://api.github.com${path}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2026-03-10",
+        },
         redirect: "error",
         signal,
       });
       if (!response.ok) throw new ConnectorProviderUnavailable("github");
       return response;
     };
-    const live = githubRepository.parse(await (await read()).json());
-    if (live.id !== repository.repo_id || live.archived || String(live.owner.id) !== tenant.id) {
+    const {
+      repositories: [live],
+    } = githubScopedRepositories.parse(
+      await (await read("/installation/repositories?per_page=1")).json(),
+    );
+    if (live.id !== repositoryId || live.archived || String(live.owner.id) !== tenant.id) {
       throw new Error("GitHub repository changed.");
     }
+    const repositoryPath = `/repos/${live.full_name}`;
     return {
       async listLabels(page: number) {
         return guardedProviderRead("github", async () => {
-          const response = await read(`/labels?per_page=${connectorCatalogPageSize}&page=${page}`);
+          const response = await read(
+            `${repositoryPath}/labels?per_page=${connectorCatalogPageSize}&page=${page}`,
+          );
           const labels = z
             .array(githubLabel)
             .max(connectorCatalogPageSize)
             .parse(await response.json());
           return {
-            resources: labels.map((label) => ({ id: String(label.id), label: label.name })),
+            resources: labels
+              .filter((label) => label.archived_at === null)
+              .map((label) => ({ id: String(label.id), label: label.name })),
             nextCursor: response.headers.get("link")?.includes('rel="next"')
               ? String(page + 1)
               : null,
@@ -147,7 +167,9 @@ export async function verifyGitHubCatalogRepository(
       },
       async readLabel(labelName: string) {
         return guardedProviderRead("github", async () =>
-          githubLabel.parse(await (await read(`/labels/${encodeURIComponent(labelName)}`)).json()),
+          githubLabel.parse(
+            await (await read(`${repositoryPath}/labels/${encodeURIComponent(labelName)}`)).json(),
+          ),
         );
       },
     };

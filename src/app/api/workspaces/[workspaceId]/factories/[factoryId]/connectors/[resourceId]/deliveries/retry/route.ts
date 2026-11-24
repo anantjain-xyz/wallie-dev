@@ -24,6 +24,7 @@ export async function POST(request: Request, { params }: ConnectorDeliveriesCont
       ...context.scope,
       p_kind: command.data.kind,
       p_delivery_id: command.data.id,
+      p_mode: command.data.mode,
     },
   );
   if (error) {

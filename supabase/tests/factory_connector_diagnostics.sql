@@ -31,9 +31,11 @@ create function pg_temp.op680_inventory(p_user integer) returns jsonb language s
   select public.list_factory_connector_resources(workspace_id,factory_id,pg_temp.op651_id(p_user)) from op651_scope
 $$;
 select ok(not has_function_privilege('authenticated','public.list_factory_connector_resources(uuid,uuid,uuid)','execute')
-  and not has_function_privilege('authenticated','public.retry_factory_connector_delivery(uuid,uuid,uuid,uuid,text,uuid)','execute')
+  and not has_function_privilege('authenticated','public.retry_factory_connector_delivery(uuid,uuid,uuid,uuid,text,uuid,text)','execute')
+  and not has_function_privilege('authenticated','public.disable_github_connector_request(uuid,uuid,uuid,uuid,text,bigint)','execute')
+  and has_function_privilege('service_role','public.disable_github_connector_request(uuid,uuid,uuid,uuid,text,bigint)','execute')
   and has_function_privilege('service_role','public.list_factory_connector_deliveries(uuid,uuid,uuid,uuid,text,integer,timestamptz,text,uuid)','execute'),
-  'diagnostics and retry are service routes with an explicit authenticated actor');
+  'diagnostics, retry and disable are service routes with an explicit authenticated actor');
 select is(jsonb_array_length(pg_temp.op680_inventory(1)->'installations'),2,
   'a workspace owner can see a verified unmapped installation in setup');
 select is((pg_temp.op680_inventory(1)->>'canConfigure')::boolean,true,'only workspace administration can configure');
@@ -97,8 +99,9 @@ insert into internal.linear_issue_discovery_cooldowns(workspace_id,credential_re
 values (pg_temp.op651_id(11),pg_temp.op651_id(71),1,clock_timestamp()+interval '1 hour');
 
 select public.defer_github_connector_comment(68010033,68010034,68010001,pg_temp.op651_id(slot),'created',
-  'issue',17,68010004,68010100+slot,68010002,clock_timestamp(),'Private signed pending body')
-from (values (201),(202),(203),(204)) fixtures(slot);
+  'issue',issue_number,issue_id,68010100+slot,68010002,clock_timestamp(),'Private signed pending body')
+from (values (201,17,68010004),(202,18,68010005),(203,17,68010004),(204,17,68010004))
+  fixtures(slot,issue_number,issue_id);
 update internal.github_connector_comment_retries retry set
   recorded_at = timestamptz '2026-11-24T00:00:00Z', next_attempt_at = clock_timestamp()+interval '1 hour'
 from op680_github scope where retry.resource_id=scope.resource_id;
@@ -131,9 +134,10 @@ create function pg_temp.op680_history(p_provider text, p_lane text default 'all'
     source.resource_id,p_lane,p_limit,(p_cursor->>'recordedAt')::timestamptz,p_cursor->>'kind',(p_cursor->>'id')::uuid)
   from op680_sources source where source.provider=p_provider
 $$;
-create function pg_temp.op680_retry(p_provider text,p_kind text,p_id uuid,p_user integer default 2) returns boolean language sql as $$
+create function pg_temp.op680_retry(p_provider text,p_kind text,p_id uuid,p_user integer default 2,
+  p_mode text default 'retry') returns boolean language sql as $$
   select public.retry_factory_connector_delivery(source.workspace_id,source.factory_id,pg_temp.op651_id(p_user),
-    source.resource_id,p_kind,p_id)
+    source.resource_id,p_kind,p_id,p_mode)
   from op680_sources source where source.provider=p_provider
 $$;
 
@@ -222,10 +226,10 @@ select ok(pg_temp.op680_history('linear') @>
 
 create temp table op680_first_page as select pg_temp.op680_history('github','ingress',p_limit=>1) as page;
 select is(jsonb_array_length(page->'deliveries'),1,'history enforces the requested page size') from op680_first_page;
-select ok(page->'nextCursor' is distinct from 'null'::jsonb
-  and pg_temp.op680_history('github','ingress',p_limit=>1,p_cursor=>page->'nextCursor')->'deliveries'
-    is distinct from page->'deliveries',
-  'the continuation cursor advances through tied timestamps and delivery IDs') from op680_first_page;
+select is((page#>>'{deliveries,0,id}')::uuid,pg_temp.op651_id(204),
+  'the first tied page selects the highest GitHub comment delivery ID') from op680_first_page;
+select is((pg_temp.op680_history('github','ingress',p_limit=>1,p_cursor=>page->'nextCursor')#>>'{deliveries,0,id}')::uuid,
+  pg_temp.op651_id(203),'the continuation selects the exact next delivery at the same timestamp') from op680_first_page;
 select throws_ok($$select pg_temp.op680_history('github',p_limit=>51)$$,'22023',null,
   'history rejects page sizes outside the hard bound');
 select throws_ok($$select pg_temp.op680_history('github',p_user=>3)$$,'42501',null,
@@ -250,16 +254,57 @@ select ok(exists(select 1 from internal.github_connector_comment_retries retry w
   'selecting one GitHub delivery does not accelerate its neighbor');
 select is(pg_temp.op680_retry('github','github_comment',pg_temp.op651_id(203)),false,
   'a permanently failed GitHub row without a body cannot be rescheduled');
+select throws_ok($$select pg_temp.op680_retry('github','github_comment',pg_temp.op651_id(201),p_mode=>'observe')$$,
+  '22023',null,'a GitHub comment retry cannot be scheduled as provider observation');
+
+update internal.github_connector_comment_retries set next_attempt_at=clock_timestamp()+interval '1 hour'
+where delivery_id=pg_temp.op651_id(201);
+insert into internal.github_connector_work_deliveries(workspace_id,factory_id,resource_id,delivery_id,source_kind,source_id,
+  source_number,provider_updated_at,snapshot,disposition)
+select workspace_id,factory_id,resource_id,pg_temp.op651_id(205),'issue',68010004,17,clock_timestamp(),'{}','deleted'
+from op680_github;
+select ok(pg_temp.op680_history('github','ingress')->'deliveries' @>
+  jsonb_build_array(jsonb_build_object('id',pg_temp.op651_id(201),'status','pending','canRetry',false))
+  and pg_temp.op680_history('github','ingress')->'deliveries' @>
+  jsonb_build_array(jsonb_build_object('id',pg_temp.op651_id(202),'status','pending','canRetry',true)),
+  'an issue tombstone removes retry eligibility only for its own pending comment');
+select is(pg_temp.op680_retry('github','github_comment',pg_temp.op651_id(201)),false,
+  'the scheduler refuses the exact deleted issue comment even though its retry is still pending');
+select ok(exists(select 1 from internal.github_connector_comment_retries where delivery_id=pg_temp.op651_id(201)
+  and next_attempt_at > clock_timestamp()+interval '45 minutes'),
+  'the deleted issue retry preserves its existing attempt time');
 
 create temp table op680_unknown_before as select delivery.* from internal.connector_outbound_deliveries delivery
 where delivery.id=(select id from op680_outbox where name='unknown-write');
-select ok(pg_temp.op680_retry('github','outbound',(select id from op680_unknown_before)),
+select is(pg_temp.op680_retry('github','outbound',(select id from op680_unknown_before)),false,
+  'a sending retry cannot accelerate an unknown delivery');
+select ok(pg_temp.op680_retry('github','outbound',(select id from op680_unknown_before),p_mode=>'observe'),
   'an uncertain reply may be accelerated for observation');
 select ok(exists(select 1 from internal.connector_outbound_deliveries delivery join op680_unknown_before prior using(id)
   where delivery.next_action_at < prior.next_action_at and delivery.uncertain and
     (delivery.status,delivery.deadline_at,delivery.send_attempts,delivery.observation_attempts,delivery.logical_key,delivery.content) =
     (prior.status,prior.deadline_at,prior.send_attempts,prior.observation_attempts,prior.logical_key,prior.content)),
   'retry never clears uncertainty or restores a write permit');
+
+-- Install the authorized observation lease for only this fixture. Claiming a
+-- provider queue here could touch unrelated ready rows in the local stack.
+update internal.connector_outbound_deliveries set status='observing',lease_id=pg_temp.op651_id(501),
+  lease_expires_at=clock_timestamp()+interval '1 minute',observation_attempts=1
+where id=(select id from op680_unknown_before);
+insert into internal.connector_outbound_attempts(lease_id,delivery_id,operation,installation_generation,mapping_revision,
+  started_at,authorized_at)
+select pg_temp.op651_id(501),id,'observing',1,1,clock_timestamp(),clock_timestamp() from op680_unknown_before;
+select ok(public.settle_connector_outbound_delivery((select id from op680_unknown_before),pg_temp.op651_id(501),'absent'),
+  'a worker observation authoritatively confirms absence on the exact delivery');
+create temp table op680_after_absence as select delivery.* from internal.connector_outbound_deliveries delivery
+where delivery.id=(select id from op680_unknown_before);
+select is(pg_temp.op680_retry('github','outbound',(select id from op680_after_absence),p_mode=>'observe'),false,
+  'a stale observation command cannot accelerate the subsequent sending attempt');
+select ok(exists(select 1 from internal.connector_outbound_deliveries delivery join op680_after_absence prior using(id)
+  where delivery.status='queued' and not delivery.uncertain and delivery.next_action_at=prior.next_action_at),
+  'the stale observation leaves the scheduled retry undisturbed');
+select ok(pg_temp.op680_retry('github','outbound',(select id from op680_after_absence)),
+  'an exact sending retry can accelerate the confirmed-absent delivery');
 select is(pg_temp.op680_retry('github','outbound',(select id from op680_outbox where name='initial-block')),
   false,'unchanged blocked credential generation does not become retryable');
 
@@ -279,6 +324,22 @@ select is(pg_temp.op680_retry('github','github_comment',pg_temp.op651_id(202)),f
   'a revoked mapping cannot reschedule an otherwise pending inbound delivery');
 select ok(pg_temp.op680_history('github','ingress')->'deliveries' @>
   '[{"kind":"github_admission","status":"denied"}]'::jsonb,'revoked mappings retain historical diagnostics');
+
+create function pg_temp.op680_disable(p_user integer,p_expected_revision bigint) returns bigint language sql as $$
+  select public.disable_github_connector_request(scope.workspace_id,scope.factory_id,pg_temp.op651_id(p_user),
+    scope.resource_id,'issue',p_expected_revision) from op680_github scope
+$$;
+select throws_ok($$select pg_temp.op680_disable(2,1)$$,'42501',null,
+  'a factory manager cannot disable workspace-owned GitHub intake');
+select throws_ok($$select pg_temp.op680_disable(1,0)$$,'PT409',null,
+  'disabling GitHub intake still requires the exact current revision');
+select public.revoke_factory_execution_grant(workspace_id,factory_id,pg_temp.op651_id(1),id,version,
+  'Fixture revoked grant') from op651_grant;
+select is(pg_temp.op680_disable(1,1),2::bigint,
+  'the owner can disable GitHub intake after its subscription and grant are revoked');
+select ok((pg_temp.op680_inventory(1)->'resources'->0->'githubRequests') @>
+  '[{"sourceKind":"issue","revision":2,"enabled":false,"labelId":68010003}]'::jsonb,
+  'disabling retains the exact selector in history at its next revision');
 
 select * from finish();
 rollback;

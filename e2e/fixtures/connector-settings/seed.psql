@@ -57,8 +57,9 @@ select public.link_connector_actor(scope.workspace_id, scope.factory_id, pg_temp
   (current_setting('wallie.op651_fixture_namespace')::bigint + 2)::text, 'human')
 from github_settings_fixture scope;
 select public.configure_github_connector_request(scope.workspace_id, scope.factory_id, pg_temp.op651_id(1), scope.resource_id,
-  'issue', 0, true, current_setting('wallie.op651_fixture_namespace')::bigint + 3, scope.grant_id, scope.grant_version)
-from github_settings_fixture scope;
+  rule.source_kind, 0, true, current_setting('wallie.op651_fixture_namespace')::bigint + rule.label_offset,
+  scope.grant_id, scope.grant_version)
+from github_settings_fixture scope cross join (values ('issue', 3), ('pull_request', 4)) rule(source_kind, label_offset);
 select public.ingest_github_connector_work(scope.app_installation_id, scope.repo_id,
   current_setting('wallie.op651_fixture_namespace')::bigint, pg_temp.op651_id(401), 'issue',
   current_setting('wallie.op651_fixture_namespace')::bigint + 401, 101, 'labeled', 'open', clock_timestamp() + interval '1 second',

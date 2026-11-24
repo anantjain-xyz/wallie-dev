@@ -15,7 +15,7 @@ type Admin = Pick<SupabaseClient<Database>, "rpc">;
 const pageSize = 20;
 const taskLimit = 4;
 const sweepTimeoutMs = 10_000;
-const cooldownWriteTimeoutMs = 4_000;
+const discoveryWriteTimeoutMs = 4_000;
 
 const uuid = z.uuid().toLowerCase();
 const revision = z.number().int().positive();
@@ -182,7 +182,14 @@ async function fetchDiscoveryPage(task: DiscoveryTask, signal: AbortSignal) {
     throw new DiscoveryFailure("provider_access_denied");
   if (response.status >= 500) throw new DiscoveryFailure("provider_unavailable");
 
-  const payload = responseSchema.safeParse(await response.json().catch(() => null));
+  const body = await response.text();
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(body);
+  } catch {
+    throw new DiscoveryFailure("invalid_provider_response");
+  }
+  const payload = responseSchema.safeParse(parsedBody);
   if (!payload.success) throw new DiscoveryFailure("invalid_provider_response");
   const errors = payload.data.errors;
   if (errors?.some((error) => error.extensions?.code === "RATELIMITED"))
@@ -289,7 +296,7 @@ export async function reconcileLinearIssueDiscovery(
             p_installation_generation: task.installationGeneration,
             p_retry_after_seconds: error.retryAfterSeconds,
           })
-          .abortSignal(AbortSignal.timeout(cooldownWriteTimeoutMs));
+          .abortSignal(AbortSignal.timeout(discoveryWriteTimeoutMs));
         if (cooldownError) {
           throw new Error("Could not persist Linear issue discovery cooldown.", {
             cause: cooldownError,
@@ -300,7 +307,7 @@ export async function reconcileLinearIssueDiscovery(
         const fence = discoveryFailureFence.safeParse(data);
         let recordingFailed = false;
         try {
-          if (fence.success) {
+          if (fence.success && !signal.aborted) {
             const { error: recordError } = await admin
               .rpc("record_linear_issue_discovery_failure", {
                 p_workspace_id: task.workspaceId,
@@ -315,7 +322,7 @@ export async function reconcileLinearIssueDiscovery(
                 p_claim_expires_at: fence.data.claimExpiresAt,
                 p_reason: reason,
               })
-              .abortSignal(AbortSignal.timeout(cooldownWriteTimeoutMs));
+              .abortSignal(AbortSignal.any([signal, AbortSignal.timeout(discoveryWriteTimeoutMs)]));
             recordingFailed = recordError !== null;
           }
         } catch {

@@ -143,16 +143,25 @@ function DeliveryPage({
     setFlashMessage: setMessage,
   });
 
-  const retry = useApiAction<{ scheduled: true }, [ConnectorRetryCommand, boolean]>({
-    call: (command) => fetch(`${endpoint}/deliveries/retry`, connectorCommand(command)),
+  const retry = useApiAction<{ scheduled: true }, [ConnectorRetryCommand]>({
+    call: async (command) => {
+      const response = await fetch(`${endpoint}/deliveries/retry`, connectorCommand(command));
+      if (response.status === 409) {
+        refresh();
+        throw new Error("This delivery changed. Review its current status before trying again.");
+      }
+      return response;
+    },
     errorText: "Could not schedule this delivery.",
     onSuccess: async () => {
       setData(null);
       setReload((value) => value + 1);
     },
     setFlashMessage: setMessage,
-    successText: (_payload, [, uncertain]) =>
-      uncertain ? "Provider status check scheduled." : "Retry scheduled for this delivery.",
+    successText: (_payload, [command]) =>
+      command.mode === "observe"
+        ? "Provider status check scheduled."
+        : "Retry scheduled for this delivery.",
   });
 
   function refresh() {
@@ -163,10 +172,14 @@ function DeliveryPage({
   }
 
   async function schedule(row: ConnectorDeliveryRow) {
-    if (row.kind !== "github_comment" && row.kind !== "outbound") return;
+    if (!row.canRetry || (row.kind !== "github_comment" && row.kind !== "outbound")) return;
+    const command: ConnectorRetryCommand =
+      row.kind === "github_comment"
+        ? { kind: row.kind, id: row.id, mode: "retry" }
+        : { kind: row.kind, id: row.id, mode: row.uncertain ? "observe" : "retry" };
     setMessage(null);
     setRetrying(row.id);
-    await retry.run({ kind: row.kind, id: row.id }, row.uncertain);
+    await retry.run(command);
     setRetrying(null);
   }
 
@@ -220,7 +233,9 @@ function DeliveryPage({
               className="ui-button"
               disabled={retry.isBusy || loadMore.isBusy}
               onClick={() => {
-                if (data.nextCursor) void loadMore.run(data.nextCursor);
+                if (!data.nextCursor) return;
+                setMessage(null);
+                void loadMore.run(data.nextCursor);
               }}
               type="button"
             >

@@ -285,7 +285,7 @@ describe("Linear issue discovery sweep", () => {
   it("never reads a redirected response body and emits a bounded failure reason", async () => {
     const { admin, database, provider } = setup([claimedTask(), true, null]);
     const redirect = Response.redirect("https://different-host.example.test", 307);
-    const readBody = vi.spyOn(redirect, "json");
+    const readBody = vi.spyOn(redirect, "text");
     provider.mockResolvedValueOnce(redirect);
 
     expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
@@ -299,7 +299,7 @@ describe("Linear issue discovery sweep", () => {
   it("records provider access denial without reading the provider error or exposing the key", async () => {
     const { admin, database, provider } = setup([claimedTask(), true, null]);
     const denied = new Response("Sensitive provider text", { status: 403 });
-    const readBody = vi.spyOn(denied, "json");
+    const readBody = vi.spyOn(denied, "text");
     provider.mockResolvedValueOnce(denied);
 
     expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
@@ -320,6 +320,55 @@ describe("Linear issue discovery sweep", () => {
       "/rest/v1/rpc/record_linear_issue_discovery_failure",
     );
     expect(await failure.json()).toMatchObject({ p_reason: "discovery_commit_failed" });
+  });
+
+  it("distinguishes an interrupted Linear response from a complete invalid body", async () => {
+    const next = { ...claimedTask(), resourceId: id(19) };
+    const { admin, database, provider } = setup([claimedTask(), true, next, true, null]);
+    const interrupted = new ReadableStream({
+      start(controller) {
+        controller.error(new DOMException("Connection interrupted", "AbortError"));
+      },
+    });
+    provider
+      .mockResolvedValueOnce(new Response(interrupted))
+      .mockResolvedValueOnce(new Response("not JSON"));
+
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
+    expect(await new Request(...database.mock.calls[1]!).json()).toMatchObject({
+      p_resource_id: task.resourceId,
+      p_reason: "provider_unavailable",
+    });
+    expect(await new Request(...database.mock.calls[3]!).json()).toMatchObject({
+      p_resource_id: next.resourceId,
+      p_reason: "invalid_provider_response",
+    });
+  });
+
+  it("cancels a pending diagnostic write when the sweep expires", async () => {
+    const sweep = new AbortController();
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) =>
+      milliseconds === 10_000 ? sweep.signal : timeout(milliseconds),
+    );
+    const { admin, database, provider } = setup([claimedTask()]);
+    provider.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    const recording: { signal?: AbortSignal } = {};
+    database.mockImplementationOnce((_input, init) => {
+      recording.signal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        recording.signal?.addEventListener("abort", () => reject(recording.signal?.reason), {
+          once: true,
+        });
+      });
+    });
+
+    const result = reconcileLinearIssueDiscovery(admin);
+    await vi.waitFor(() => expect(recording.signal).toBeDefined());
+    sweep.abort();
+    expect(recording.signal?.aborted).toBe(true);
+    expect(await result).toEqual({ admitted: 0, rateLimited: false });
+    expect(database).toHaveBeenCalledTimes(2);
   });
 
   it("continues to another scoped scan if diagnostic recording fails", async () => {

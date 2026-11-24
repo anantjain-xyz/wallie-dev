@@ -137,8 +137,8 @@ export const connectorDeliveryProjectionSchema = connectorDeliveryPageSchema.ext
   nextCursor: connectorDeliveryCursorSchema.nullable(),
 });
 
-export const connectorRetryCommandSchema = z.strictObject({
-  kind: z.enum(["github_comment", "outbound"]),
-  id: uuid,
-});
+export const connectorRetryCommandSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("github_comment"), id: uuid, mode: z.literal("retry") }),
+  z.strictObject({ kind: z.literal("outbound"), id: uuid, mode: z.enum(["retry", "observe"]) }),
+]);
 export type ConnectorRetryCommand = z.output<typeof connectorRetryCommandSchema>;

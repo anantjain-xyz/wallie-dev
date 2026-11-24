@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -19,6 +19,8 @@ import type { ConnectorInstallation, ConnectorProvider, ConnectorResource } from
 import { ConnectorSelect } from "./select";
 
 type ResourceKind = ConnectorResource["kind"];
+type MappingConfirmation = Extract<ConnectorSetupCommand, { action: "disconnect" | "disable" }>;
+type IntakeConfirmation = Extract<ConnectorSetupCommand, { action: "disable_github_request" }>;
 
 const setupMessage: Record<ConnectorSetupCommand["action"], string> = {
   connect: "Connector connected.",
@@ -26,6 +28,7 @@ const setupMessage: Record<ConnectorSetupCommand["action"], string> = {
   disable: "Resource mapping disabled.",
   disconnect: "Connector disconnected.",
   github_request: "GitHub intake label saved.",
+  disable_github_request: "GitHub intake disabled for this request source.",
 };
 
 function useConnectorSetup(
@@ -154,35 +157,34 @@ export function ConnectorSetup({
   resources: ConnectorResource[];
 }) {
   const [kind, setKind] = useState<ResourceKind>(provider === "github" ? "repository" : "team");
-  const [confirm, setConfirm] = useState<"disconnect" | "disable" | null>(null);
+  const [confirm, setConfirm] = useState<MappingConfirmation | null>(null);
   const [message, setMessage] = useState<FlashMessage | null>(null);
+  const setupHeadingRef = useRef<HTMLHeadingElement>(null);
+  const restoreFocusRef = useRef<HTMLElement>(null);
   const action = useConnectorSetup(endpoint, setMessage, onChanged);
   const inactive = disabled || action.isBusy;
+  const disconnecting = confirm?.action === "disconnect";
+
+  function openConfirmation(command: MappingConfirmation, opener: HTMLButtonElement) {
+    restoreFocusRef.current = opener;
+    setMessage(null);
+    setConfirm(command);
+  }
 
   async function confirmChange() {
-    if (!installation) return;
+    if (!confirm) return;
     setMessage(null);
-    const command =
-      confirm === "disconnect"
-        ? {
-            action: "disconnect" as const,
-            installationId: installation.id,
-            expectedGeneration: installation.generation,
-          }
-        : resource
-          ? {
-              action: "disable" as const,
-              resourceId: resource.id,
-              expectedGeneration: installation.generation,
-              expectedMappingRevision: resource.mappingRevision,
-            }
-          : null;
-    if (command && (await action.run(command))) setConfirm(null);
+    if (await action.run(confirm)) {
+      restoreFocusRef.current = setupHeadingRef.current;
+      setConfirm(null);
+    }
   }
 
   return (
     <div className="space-y-3 border-t border-border pt-4">
-      <h3 className="text-sm font-semibold text-foreground">Connector setup</h3>
+      <h3 className="text-sm font-semibold text-foreground" ref={setupHeadingRef} tabIndex={-1}>
+        Connector setup
+      </h3>
       <p className="text-sm text-muted">
         {provider === "github" ? (
           <>
@@ -230,10 +232,17 @@ export function ConnectorSetup({
             <button
               className="ui-button"
               disabled={inactive}
-              onClick={() => {
-                setMessage(null);
-                setConfirm("disable");
-              }}
+              onClick={(event) =>
+                openConfirmation(
+                  {
+                    action: "disable",
+                    resourceId: resource.id,
+                    expectedGeneration: installation.generation,
+                    expectedMappingRevision: resource.mappingRevision,
+                  },
+                  event.currentTarget,
+                )
+              }
               type="button"
             >
               Disable mapping
@@ -243,10 +252,16 @@ export function ConnectorSetup({
             <button
               className="ui-button"
               disabled={inactive}
-              onClick={() => {
-                setMessage(null);
-                setConfirm("disconnect");
-              }}
+              onClick={(event) =>
+                openConfirmation(
+                  {
+                    action: "disconnect",
+                    installationId: installation.id,
+                    expectedGeneration: installation.generation,
+                  },
+                  event.currentTarget,
+                )
+              }
               type="button"
             >
               Disconnect connector
@@ -255,9 +270,9 @@ export function ConnectorSetup({
         </div>
       ) : null}
       <DestructiveConfirmationDialog
-        actionLabel={confirm === "disconnect" ? "Disconnect connector" : "Disable mapping"}
+        actionLabel={disconnecting ? "Disconnect connector" : "Disable mapping"}
         description={
-          confirm === "disconnect"
+          disconnecting
             ? "This disconnects the provider installation for every factory that uses it in this workspace. Delivery history stays available."
             : "Wallie will stop accepting new work or sending replies through this resource mapping. Delivery history stays available."
         }
@@ -269,9 +284,8 @@ export function ConnectorSetup({
         open={confirm !== null}
         pending={action.isBusy}
         pendingLabel="Saving…"
-        title={
-          confirm === "disconnect" ? "Disconnect this connector?" : "Disable this resource mapping?"
-        }
+        restoreFocusRef={restoreFocusRef}
+        title={disconnecting ? "Disconnect this connector?" : "Disable this resource mapping?"}
       />
       {confirm === null ? <InlineActionMessage message={message} /> : null}
     </div>
@@ -398,18 +412,23 @@ function MapResource({
 }
 
 export function GitHubRequestRule({
+  canManageLabels,
   disabled,
   endpoint,
   onChanged,
   resource,
 }: {
+  canManageLabels: boolean;
   disabled: boolean;
   endpoint: string;
   onChanged: () => void;
   resource: ConnectorResource;
 }) {
   const [sourceKind, setSourceKind] = useState<"issue" | "pull_request">("issue");
+  const [confirm, setConfirm] = useState<IntakeConfirmation | null>(null);
   const [message, setMessage] = useState<FlashMessage | null>(null);
+  const ruleHeadingRef = useRef<HTMLHeadingElement>(null);
+  const restoreFocusRef = useRef<HTMLElement>(null);
   const { catalog, selected, option, setSelected, load, busy } = useCatalog(
     endpoint,
     new URLSearchParams({ provider: "github", kind: "label", resourceId: resource.id }).toString(),
@@ -418,10 +437,22 @@ export function GitHubRequestRule({
   const action = useConnectorSetup(endpoint, setMessage, onChanged);
   const current = resource.githubRequests.find((rule) => rule.sourceKind === sourceKind);
   const inactive = disabled || action.isBusy;
+  const sourceLabel = sourceKind === "issue" ? "issue" : "pull request";
+
+  async function disableIntake() {
+    if (!confirm) return;
+    setMessage(null);
+    if (await action.run(confirm)) {
+      restoreFocusRef.current = ruleHeadingRef.current;
+      setConfirm(null);
+    }
+  }
 
   return (
     <div className="space-y-3 border-t border-border pt-4">
-      <h3 className="text-sm font-semibold text-foreground">GitHub work intake</h3>
+      <h3 className="text-sm font-semibold text-foreground" ref={ruleHeadingRef} tabIndex={-1}>
+        GitHub work intake
+      </h3>
       <ConnectorSelect
         label="Request source"
         disabled={inactive}
@@ -439,18 +470,41 @@ export function GitHubRequestRule({
           ? `Intake enabled for label ID ${current.labelId}.`
           : "Intake is disabled for this request source."}
       </p>
-      <button
-        className="ui-button"
-        disabled={inactive || busy}
-        onClick={() => {
-          setMessage(null);
-          void load();
-        }}
-        type="button"
-      >
-        {busy && !catalog ? "Loading labels…" : "Find repository labels"}
-      </button>
-      {catalog ? (
+      <div className="flex flex-wrap gap-2">
+        {canManageLabels ? (
+          <button
+            className="ui-button"
+            disabled={inactive || busy}
+            onClick={() => {
+              setMessage(null);
+              void load();
+            }}
+            type="button"
+          >
+            {busy && !catalog ? "Loading labels…" : "Find repository labels"}
+          </button>
+        ) : null}
+        {current?.enabled ? (
+          <button
+            className="ui-button"
+            disabled={inactive || busy}
+            onClick={(event) => {
+              restoreFocusRef.current = event.currentTarget;
+              setMessage(null);
+              setConfirm({
+                action: "disable_github_request",
+                resourceId: resource.id,
+                sourceKind,
+                expectedRevision: current.revision,
+              });
+            }}
+            type="button"
+          >
+            Disable {sourceLabel} intake
+          </button>
+        ) : null}
+      </div>
+      {canManageLabels && catalog ? (
         <div className="space-y-3">
           <CatalogChoices
             busy={busy}
@@ -482,7 +536,21 @@ export function GitHubRequestRule({
           </button>
         </div>
       ) : null}
-      <InlineActionMessage message={message} />
+      <DestructiveConfirmationDialog
+        actionLabel={`Disable ${sourceLabel} intake`}
+        description="Wallie will stop starting new sessions for this request source. Existing sessions and their delivery history stay available."
+        errorMessage={message?.kind === "error" ? message.text : null}
+        onConfirm={() => void disableIntake()}
+        onOpenChange={(open) => {
+          if (!open) setConfirm(null);
+        }}
+        open={confirm !== null}
+        pending={action.isBusy}
+        pendingLabel="Saving…"
+        restoreFocusRef={restoreFocusRef}
+        title={`Disable ${sourceLabel} intake?`}
+      />
+      {confirm === null ? <InlineActionMessage message={message} /> : null}
     </div>
   );
 }

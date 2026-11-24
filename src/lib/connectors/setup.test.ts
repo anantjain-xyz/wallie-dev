@@ -42,6 +42,14 @@ const activationId = id(11);
 const grantId = id(12);
 const key = "synthetic-linear-catalog-key";
 const githubToken = "synthetic-github-repository-reader";
+const canonicalGithubRepository = {
+  id: 84,
+  owner: { id: 83 },
+  full_name: "fixture-org/renamed",
+  archived: false,
+};
+const githubLabel = { id: 85, name: "Wallie issue", archived_at: null };
+const archivedAt = "2026-11-20T00:00:00Z";
 const scope = {
   p_workspace_id: workspaceId,
   p_factory_id: factoryId,
@@ -135,6 +143,7 @@ function fixture(role = "owner", provider: "github" | "linear" = "linear") {
     configure_connector_installation: [{ installation_id: connectorId, generation: 8 }],
     publish_connector_resource_mapping: [{ resource_id: resourceId, revision: 3 }],
     configure_github_connector_request: 2,
+    disable_github_connector_request: 3,
     disconnect_connector_installation: 8,
   };
   const requests: Array<{ name: string; query: URLSearchParams; body: unknown }> = [];
@@ -167,6 +176,13 @@ function fixture(role = "owner", provider: "github" | "linear" = "linear") {
     called: (name: string) =>
       requests.filter((request) => request.name === `rpc/${name}`).map(({ body }) => body),
   };
+}
+
+function githubRepositoryResponse(overrides: Partial<typeof canonicalGithubRepository> = {}) {
+  return Response.json({
+    total_count: 1,
+    repositories: [{ ...canonicalGithubRepository, ...overrides }],
+  });
 }
 
 describe("factory connector setup", () => {
@@ -310,8 +326,9 @@ describe("factory connector setup", () => {
   it("verifies GitHub’s exact selected repository and owner before publishing the numeric ID", async () => {
     const { upstream, called } = fixture("owner", "github");
     upstream
-      .mockResolvedValueOnce(Response.json({ id: 84, owner: { id: 99 }, archived: false }))
-      .mockResolvedValueOnce(Response.json({ id: 84, owner: { id: 83 }, archived: false }));
+      .mockResolvedValueOnce(githubRepositoryResponse({ owner: { id: 99 } }))
+      .mockResolvedValueOnce(githubRepositoryResponse({ id: 99 }))
+      .mockResolvedValueOnce(githubRepositoryResponse());
     const command = {
       action: "map",
       installationId: connectorId,
@@ -322,6 +339,7 @@ describe("factory connector setup", () => {
     const wrongTenant = await setup(command);
     expect(wrongTenant.status).toBe(502);
     expect(JSON.stringify(await wrongTenant.json())).not.toContain(githubToken);
+    expect((await setup(command)).status).toBe(502);
     expect(called("publish_connector_resource_mapping")).toEqual([]);
     const response = await setup(command);
     expect(response.status).toBe(200);
@@ -343,14 +361,17 @@ describe("factory connector setup", () => {
     );
   });
 
-  it("lists scoped GitHub labels and saves a verified request with the selected factory’s current grant", async () => {
+  it("lists active labels at the repository’s current name and verifies the label again when saving", async () => {
     const { upstream, read, called } = fixture("owner", "github");
     upstream
-      .mockResolvedValueOnce(Response.json({ id: 84, owner: { id: 83 }, archived: false }))
-      .mockResolvedValueOnce(Response.json([{ id: 85, name: "Wallie issue" }]))
-      .mockResolvedValueOnce(Response.json({ id: 84, owner: { id: 83 }, archived: false }))
-      .mockResolvedValueOnce(Response.json({ id: 85, name: "Wallie issue" }));
+      .mockResolvedValueOnce(githubRepositoryResponse())
+      .mockResolvedValueOnce(
+        Response.json([githubLabel, { id: 86, name: "Archived issue", archived_at: archivedAt }]),
+      )
+      .mockResolvedValueOnce(githubRepositoryResponse())
+      .mockResolvedValueOnce(Response.json(githubLabel));
     const options = await catalog(`provider=github&kind=label&resourceId=${resourceId}`);
+    expect(options.status).toBe(200);
     expect((await options.json()).resources).toEqual([{ id: "85", label: "Wallie issue" }]);
     const response = await setup({
       action: "github_request",
@@ -375,11 +396,72 @@ describe("factory connector setup", () => {
         p_execution_grant_version: 4,
       },
     ]);
-    const labelRequest = new Request(...upstream.mock.calls[3]!);
-    expect(labelRequest.url).toBe(
-      "https://api.github.com/repos/fixture-org/work/labels/Wallie%20issue",
-    );
-    expect(labelRequest.headers.get("Authorization")).toBe(`Bearer ${githubToken}`);
+    const requests = upstream.mock.calls.map((args) => new Request(...args));
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/installation/repositories",
+      "/repos/fixture-org/renamed/labels",
+      "/installation/repositories",
+      "/repos/fixture-org/renamed/labels/Wallie%20issue",
+    ]);
+    for (const request of requests) {
+      expect(request.headers.get("Authorization")).toBe(`Bearer ${githubToken}`);
+      expect(request.headers.get("X-GitHub-Api-Version")).toBe("2026-03-10");
+      expect(request.redirect).toBe("error");
+    }
+  });
+
+  it("continues paginating after an archived-only page and rejects a label archived after selection", async () => {
+    const { upstream, called } = fixture("owner", "github");
+    const archived = { ...githubLabel, archived_at: archivedAt };
+    upstream
+      .mockResolvedValueOnce(githubRepositoryResponse())
+      .mockResolvedValueOnce(
+        Response.json([archived], {
+          headers: {
+            Link: '<https://api.github.com/repos/fixture-org/renamed/labels?page=2>; rel="next"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(githubRepositoryResponse())
+      .mockResolvedValueOnce(Response.json(archived));
+    const page = await catalog(`provider=github&kind=label&resourceId=${resourceId}`);
+    expect(await page.json()).toMatchObject({ resources: [], nextCursor: "2" });
+    const response = await setup({
+      action: "github_request",
+      resourceId,
+      sourceKind: "issue",
+      expectedRevision: 1,
+      labelId: 85,
+      labelName: "Wallie issue",
+    });
+    expect(response.status).toBe(409);
+    expect(called("configure_github_connector_request")).toEqual([]);
+  });
+
+  it("disables only the selected GitHub rule revision without provider access or a published grant", async () => {
+    const { upstream, called, read } = fixture("owner", "github");
+    mock.definition.mockReturnValue(null);
+    const response = await setup({
+      action: "disable_github_request",
+      resourceId,
+      sourceKind: "pull_request",
+      expectedRevision: 2,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ revision: 3 });
+    expect(called("disable_github_connector_request")).toEqual([
+      {
+        ...scope,
+        p_resource_id: resourceId,
+        p_source_kind: "pull_request",
+        p_expected_revision: 2,
+      },
+    ]);
+    expect(called("publish_connector_resource_mapping")).toEqual([]);
+    expect(called("disconnect_connector_installation")).toEqual([]);
+    expect(read("factory_definition_activations")).toBeUndefined();
+    expect(mock.github).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it("uses the retained scoped mapping when disabling or disconnecting without provider access", async () => {
