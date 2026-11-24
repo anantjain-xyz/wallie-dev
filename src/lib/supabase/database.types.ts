@@ -13937,6 +13937,23 @@ export type Database = {
         }
         Returns: Json
       }
+      ingest_github_connector_comment: {
+        Args: {
+          p_action: string
+          p_actor_id: number
+          p_body?: string
+          p_comment_id: number
+          p_delivery_id: string
+          p_github_repository_id: number
+          p_installation_id: number
+          p_issue_id: number
+          p_owner_id: number
+          p_provider_updated_at: string
+          p_source_kind: string
+          p_source_number: number
+        }
+        Returns: Json
+      }
       ingest_github_connector_work: {
         Args: {
           p_action: string
@@ -16630,6 +16647,17 @@ export type Database = {
           encrypted_value: string
           material_revision: number
           tool_revision_id: string
+        }[]
+      }
+      resolve_github_connector_delivery: {
+        Args: { p_delivery_id: string; p_lease_id: string }
+        Returns: {
+          github_installation_id: number
+          github_repository_id: number
+          repository_full_name: string
+          source_id: number
+          source_kind: string
+          source_number: number
         }[]
       }
       resolve_session_conversation_source: {

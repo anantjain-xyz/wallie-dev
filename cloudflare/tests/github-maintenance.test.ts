@@ -262,6 +262,9 @@ it.each([
             ),
         };
       }
+      if (name === "claim_connector_outbound_delivery") {
+        return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
+      }
       return {
         abortSignal: () =>
           Promise.resolve(
@@ -440,6 +443,9 @@ it.each([
       expect(rpc).toHaveBeenCalledWith("list_factory_actions_dispatches");
       expect(rpc).toHaveBeenCalledWith("reserve_factory_actions_observations");
       expect(rpc).toHaveBeenCalledWith("admit_next_factory_monitoring_incident");
+      expect(rpc).toHaveBeenCalledWith("claim_connector_outbound_delivery", {
+        p_provider: "github",
+      });
       if (monitoringFailure) {
         expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
           task: "factory monitoring incidents",

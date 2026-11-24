@@ -77,6 +77,7 @@ const claim = z
     leaseExpiresAt: row.lease_expires_at,
     target: {
       correlationId: row.delivery_id,
+      leaseId: row.lease_id,
       externalResourceId: row.external_resource_id,
       externalThreadId: row.external_thread_id,
       installationId: row.installation_id,
