@@ -107,6 +107,7 @@ it.each([
   { scenario: "automation schedule reconciliation fails", automationScheduleFailure: true },
   { scenario: "delivery dispatch expiry fails", expiryFailure: true },
   { scenario: "monitoring incident admission fails", monitoringFailure: true },
+  { scenario: "Linear issue discovery fails", linearDiscoveryFailure: true },
 ])(
   "runs independent maintenance when $scenario",
   async ({
@@ -130,6 +131,7 @@ it.each([
     automationScheduleDue,
     expiryFailure,
     monitoringFailure,
+    linearDiscoveryFailure,
   }) => {
     const bindings = env as unknown as Env;
     const query = {
@@ -236,6 +238,15 @@ it.each([
             Promise.resolve({
               data: null,
               error: monitoringFailure ? { message: "Monitoring temporarily unavailable" } : null,
+            }),
+        };
+      }
+      if (name === "claim_linear_issue_discovery") {
+        return {
+          abortSignal: () =>
+            Promise.resolve({
+              data: null,
+              error: linearDiscoveryFailure ? { message: "Linear discovery unavailable" } : null,
             }),
         };
       }
@@ -440,6 +451,14 @@ it.each([
       expect(rpc).toHaveBeenCalledWith("list_factory_actions_dispatches");
       expect(rpc).toHaveBeenCalledWith("reserve_factory_actions_observations");
       expect(rpc).toHaveBeenCalledWith("admit_next_factory_monitoring_incident");
+      expect(rpc).toHaveBeenCalledWith("claim_linear_issue_discovery", {
+        p_skip_workspace_ids: [],
+      });
+      if (linearDiscoveryFailure) {
+        expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
+          task: "Linear issue discovery",
+        });
+      }
       if (monitoringFailure) {
         expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
           task: "factory monitoring incidents",
