@@ -1,0 +1,91 @@
+begin;
+\ir connector-conformance-scope.psql
+
+create temp view connector_fixture_sessions as
+select admission.provider, jsonb_build_object(
+  'sessionId',session.id,'sessionNumber',session.number,'sourceId',admission.source_id,
+  'threadId',admission.thread_id,'actorLinkId',admission.actor_link_id,'phaseStatus',session.phase_status,
+  'artifactId',session.current_artifact_id,'artifactVersion',session.current_artifact_version,
+  'reviewRevision',session.artifact_review_revision,
+  'jobs',coalesce((select jsonb_agg(jsonb_build_object('id',job.id,'status',job.status) order by job.created_at,job.id)
+    from public.agent_jobs job where (job.workspace_id,job.session_id)=(session.workspace_id,session.id)),'[]'),
+  'checkpoints',coalesce((select jsonb_agg(jsonb_build_object('jobId',checkpoint.job_id,'runId',checkpoint.run_id,
+    'artifactId',checkpoint.artifact_id) order by checkpoint.created_at,checkpoint.run_id)
+    from public.session_git_checkpoints checkpoint
+    where (checkpoint.workspace_id,checkpoint.session_id)=(session.workspace_id,session.id)),'[]'),
+  'mutations',coalesce((select jsonb_agg(jsonb_build_object('id',mutation.id,'operation',mutation.operation,
+    'memberId',mutation.actor_member_id,'jobId',mutation.result->>'jobId','runId',mutation.result->>'runId',
+    'feedbackBatchId',mutation.result->>'feedbackBatchId') order by mutation.created_at,mutation.id)
+    from internal.session_mutation_receipts mutation
+    where (mutation.workspace_id,mutation.factory_id,mutation.session_id)=(session.workspace_id,session.factory_id,session.id)),'[]'),
+  'approvals',coalesce((select jsonb_agg(jsonb_build_object('id',approval.id,'memberId',approval.approved_by_member_id,
+    'artifactId',approval.artifact_id,'artifactVersion',approval.artifact_version) order by approval.approval_number)
+    from public.session_stage_approval_receipts approval
+    where (approval.workspace_id,approval.session_id)=(session.workspace_id,session.id)),'[]'),
+  'threads',coalesce((select jsonb_agg(jsonb_build_object('id',thread.id,'artifactId',thread.artifact_id,
+    'authorMemberId',thread.author_member_id,'comments',coalesce((select jsonb_agg(jsonb_build_object('id',comment.id,
+      'authorMemberId',comment.author_member_id) order by comment.created_at,comment.id)
+      from public.artifact_review_comments comment
+      where (comment.workspace_id,comment.thread_id)=(session.workspace_id,thread.id)),'[]')) order by thread.created_at,thread.id)
+    from public.artifact_review_threads thread where (thread.workspace_id,thread.session_id)=(session.workspace_id,session.id)),'[]')
+) as witness
+from connector_fixture_admissions admission
+join public.sessions session on session.id=admission.session_id;
+
+create temp view connector_fixture_outbox as
+select jsonb_build_object('id',delivery.id,'provider',delivery.provider,'logicalKey',delivery.logical_key,
+  'status',delivery.status,'attempts',delivery.send_attempts,'observationAttempts',delivery.observation_attempts,
+  'uncertain',delivery.uncertain,'providerReplyId',delivery.provider_reply_id,'operation',delivery.operation,
+  'deadlineAt',delivery.deadline_at,'nextActionAt',delivery.next_action_at,'reviewTarget',delivery.content->'reviewTarget',
+  'attemptReceipts',coalesce((select jsonb_agg(jsonb_build_object('id',attempt.lease_id,'mode',attempt.operation,
+    'result',attempt.result,'authorizedAt',attempt.authorized_at,'settledAt',attempt.settled_at)
+    order by attempt.started_at,attempt.lease_id) from internal.connector_outbound_attempts attempt
+    where attempt.delivery_id=delivery.id),'[]')) as witness, delivery.created_at, delivery.id
+from connector_fixture_query fixture
+join connector_fixture_admissions admission on true
+join internal.connector_outbound_deliveries delivery
+  on (delivery.workspace_id,delivery.factory_id,delivery.session_id,delivery.source_id) =
+    (fixture.workspace_id,fixture.factory_id,admission.session_id,admission.source_id)
+where (delivery.provider,delivery.resource_id) in (('github',fixture.github_resource_id),('linear',fixture.linear_resource_id));
+
+\o
+select jsonb_build_object(
+  'totalSessions',(select count(*) from public.sessions session
+    where (session.workspace_id,session.factory_id)=(fixture.workspace_id,fixture.factory_id)),
+  'github',jsonb_build_object(
+    'session',(select witness from connector_fixture_sessions where provider='github'),
+    'admissionCount',(select count(*) from connector_fixture_admissions where provider='github'),
+    'actorRevoked',(select revoked_at is not null from internal.connector_actor_links
+      where (workspace_id,id)=(fixture.workspace_id,fixture.github_actor_link_id)),
+    'receipts',coalesce((select jsonb_agg(jsonb_build_object('id',receipt.delivery_id,'disposition',receipt.disposition,
+      'sessionId',receipt.session_id,'actorLinkId',receipt.actor_link_id) order by receipt.recorded_at,receipt.delivery_id)
+      from internal.github_connector_work_deliveries receipt
+      where (receipt.workspace_id,receipt.factory_id,receipt.resource_id)=
+        (fixture.workspace_id,fixture.factory_id,fixture.github_resource_id)),'[]'),
+    'commentReceipts',coalesce((select jsonb_agg(jsonb_build_object('id',receipt.delivery_id,'result',receipt.result)
+      order by receipt.delivery_id) from internal.github_connector_comment_deliveries receipt
+      where receipt.resource_id=fixture.github_resource_id),'[]'),
+    'messages',coalesce((select jsonb_agg(jsonb_build_object('sequence',message.sequence,'memberId',message.originating_member_id,
+      'actorId',message.external_actor_id,'externalMessageId',message.external_message_id,
+      'bodyHash',encode(sha256(convert_to(message.body_md,'UTF8')),'hex')) order by message.sequence)
+      from public.session_conversation_messages message
+      join connector_fixture_admissions admission on (admission.session_id,admission.source_id)=(message.session_id,message.source_id)
+      where (message.workspace_id,message.factory_id,admission.provider)=(fixture.workspace_id,fixture.factory_id,'github')),'[]')),
+  'linear',jsonb_build_object(
+    'session',(select witness from connector_fixture_sessions where provider='linear'),
+    'admissionCount',(select count(*) from connector_fixture_admissions where provider='linear'),
+    'actorRevoked',(select revoked_at is not null from internal.connector_actor_links
+      where (workspace_id,id)=(fixture.workspace_id,fixture.linear_actor_link_id)),
+    'origin',(select jsonb_build_object('spanId',receipt.origin_span_id,'startedAt',receipt.origin_span_started_at,
+      'issueUpdatedAt',receipt.origin_issue_updated_at,'stateId',receipt.source_event->>'stateId',
+      'teamId',receipt.source_event->>'teamId','projectId',receipt.source_event->>'projectId')
+      from internal.linear_issue_discovery_receipts receipt
+      join connector_fixture_admissions admission on (admission.session_id,admission.source_id)=(receipt.session_id,receipt.source_id)
+      where (receipt.workspace_id,receipt.factory_id,receipt.resource_id,admission.provider)=
+        (fixture.workspace_id,fixture.factory_id,fixture.linear_resource_id,'linear')),
+    'cursor',(select jsonb_build_object('generation',cursor_generation,'position',cursor_position) from
+      public.read_connector_subscription(fixture.workspace_id,fixture.factory_id,fixture.linear_resource_id,'linear-discovery'))),
+  'outbox',(select coalesce(jsonb_agg(witness order by created_at,id),'[]') from connector_fixture_outbox)
+)
+from connector_fixture_query fixture;
+rollback;

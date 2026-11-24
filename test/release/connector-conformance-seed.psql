@@ -1,0 +1,114 @@
+\getenv fixture_input WALLIE_M13_FIXTURE_INPUT
+\getenv op651_fixture_namespace WALLIE_M13_NAMESPACE
+
+begin;
+-- The production outbox claim scans every workspace for its provider.
+lock table public.factory_connector_resources in share row exclusive mode nowait;
+do $$ begin
+  if exists (select 1 from public.factory_connector_resources) then
+    raise exception 'Connector qualification requires an empty connector database because the outbox worker claims across workspaces.';
+  end if;
+end $$;
+\o /dev/null
+create temp table connector_fixture_input as
+select github, linear from jsonb_to_record(:'fixture_input'::jsonb) fields(github jsonb, linear jsonb);
+select github->>'installationId' as op651_github_installation_id from connector_fixture_input \gset
+\ir ../../supabase/tests/fixtures/factory_automation_dry_run.psql
+
+select public.set_git_continuity_release(true, revision, 'Isolated M13 connector qualification')
+from public.get_git_continuity_release_state() where not enabled;
+
+insert into auth.users(id,email) values
+  (pg_temp.op651_id(3),'connector-outsider-' || :'op651_fixture_namespace' || '@example.test');
+insert into public.workspaces(id,slug,name) values
+  (pg_temp.op651_id(12),'connector-outsider-' || :'op651_fixture_namespace','Connector fixture outsider');
+insert into public.workspace_members(id,workspace_id,user_id,kind,role) values
+  (pg_temp.op651_id(23),pg_temp.op651_id(12),pg_temp.op651_id(3),'human','owner');
+select public.grant_factory_membership(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  pg_temp.op651_id(22),'member') from op651_scope scope;
+
+-- GoTrue must resolve these fixture users as existing email identities.
+update auth.users
+set instance_id='00000000-0000-0000-0000-000000000000', aud='authenticated', role='authenticated',
+  email_confirmed_at=now(), created_at=coalesce(created_at,now()), updated_at=now(),
+  encrypted_password='', confirmation_token='', recovery_token='', email_change_token_new='',
+  email_change_token_current='', reauthentication_token='', email_change='',
+  raw_app_meta_data='{"provider":"email","providers":["email"]}', raw_user_meta_data='{}'
+where id in (pg_temp.op651_id(1),pg_temp.op651_id(2),pg_temp.op651_id(3));
+insert into auth.identities(id,provider_id,user_id,identity_data,provider,created_at,updated_at)
+select gen_random_uuid(),id::text,id,jsonb_build_object('sub',id::text,'email',email,'email_verified',true),
+  'email',now(),now()
+from auth.users where id in (pg_temp.op651_id(1),pg_temp.op651_id(2),pg_temp.op651_id(3))
+on conflict (provider_id,provider) do nothing;
+
+insert into public.workspace_onboarding(workspace_id,status,completed_at,selected_github_repository_id)
+values (pg_temp.op651_id(11),'completed',now(),pg_temp.op651_id(34)),
+  (pg_temp.op651_id(12),'completed',now(),null)
+on conflict (workspace_id) do update set status=excluded.status, completed_at=excluded.completed_at,
+  selected_github_repository_id=excluded.selected_github_repository_id;
+
+update public.github_installations installation set installation_url='https://github.com/settings/installations/' || (fixture.github->>'installationId'),
+  target_name=split_part(fixture.github->>'repositoryName','/',1)
+from connector_fixture_input fixture where installation.id=pg_temp.op651_id(33);
+update public.github_repositories repository set repo_id=(fixture.github->>'repositoryId')::bigint,
+  name=split_part(fixture.github->>'repositoryName','/',2), full_name=fixture.github->>'repositoryName',
+  html_url='https://github.com/' || (fixture.github->>'repositoryName')
+from connector_fixture_input fixture where repository.id=pg_temp.op651_id(34);
+
+create temp table connector_github_scope as
+select scope.*, installation.installation_id, installation.generation, mapping.resource_id,
+  coalesce(fixture.github->>'sourceKind','issue') as source_kind,
+  (fixture.github->>'labelId')::bigint as label_id, fixture.github
+from op651_scope scope cross join connector_fixture_input fixture
+cross join lateral public.configure_connector_installation(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  'github',fixture.github->>'tenantId',fixture.github->>'installationId',0) installation
+cross join lateral public.publish_connector_resource_mapping(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  installation.installation_id,installation.generation,'repository',fixture.github->>'repositoryId',0,true) mapping;
+create temp table connector_github_actor as
+select public.link_connector_actor(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),scope.installation_id,
+  scope.generation,'github',scope.github->>'tenantId',scope.github->>'actorId','human') as link_id
+from connector_github_scope scope;
+select public.configure_github_connector_request(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  scope.resource_id,scope.source_kind,0,true,scope.label_id,grant_row.id,grant_row.version)
+from connector_github_scope scope cross join op651_grant grant_row;
+
+insert into public.workspace_secrets(id,workspace_id,key,encrypted_value)
+select pg_temp.op651_id(71),pg_temp.op651_id(11),'LINEAR_API_KEY',linear->>'encryptedApiKey'
+from connector_fixture_input;
+create temp table connector_linear_scope as
+select scope.*, installation.installation_id, installation.generation, mapping.resource_id, mapping.revision,
+  fixture.linear - 'encryptedApiKey' as linear
+from op651_scope scope cross join connector_fixture_input fixture
+cross join lateral public.configure_connector_installation(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  'linear',fixture.linear->>'tenantId',fixture.linear->>'tenantId',0,pg_temp.op651_id(71),1) installation
+cross join lateral public.publish_connector_resource_mapping(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  installation.installation_id,installation.generation,'team',fixture.linear->>'teamId',0,true) mapping;
+create temp table connector_linear_actor as
+select public.link_connector_actor(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),scope.installation_id,
+  scope.generation,'linear',scope.linear->>'tenantId',scope.linear->>'creatorId','human') as link_id
+from connector_linear_scope scope;
+select public.configure_linear_issue_discovery(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  scope.resource_id,0,scope.revision,array[(scope.linear->>'stateId')::uuid],true,(scope.linear->>'labelId')::uuid)
+from connector_linear_scope scope;
+select public.configure_linear_connector_outbound(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  scope.resource_id,0,scope.revision,true,(scope.linear->>'teamId')::uuid,(scope.linear->>'stateId')::uuid,
+  (scope.linear->>'toStateId')::uuid)
+from connector_linear_scope scope;
+
+\o
+select jsonb_build_object(
+  'namespace',:'op651_fixture_namespace','workspaceId',github.workspace_id,'workspaceSlug',workspace.slug,
+  'factoryId',github.factory_id,'ownerUserId',pg_temp.op651_id(1),'ownerMemberId',pg_temp.op651_id(21),
+  'outsiderWorkspaceSlug','connector-outsider-' || :'op651_fixture_namespace',
+  'humans',(select jsonb_object_agg(human.kind,jsonb_build_object('userId',user_row.id,'email',user_row.email,
+    'memberId',pg_temp.op651_id(human.slot+20))) from (values ('owner',1),('reviewer',2),('outsider',3)) human(kind,slot)
+    join auth.users user_row on user_row.id=pg_temp.op651_id(human.slot)),
+  'github',github.github || jsonb_build_object('sourceKind',github.source_kind,'resourceId',github.resource_id,
+    'installationLocalId',github.installation_id,'repositoryLocalId',pg_temp.op651_id(34),'actorLinkId',github_actor.link_id),
+  'linear',linear.linear || jsonb_build_object('installationId',linear.installation_id,'resourceId',linear.resource_id,
+    'actorLinkId',linear_actor.link_id)
+)
+from connector_github_scope github join public.workspaces workspace on workspace.id=github.workspace_id
+cross join connector_linear_scope linear cross join connector_github_actor github_actor
+cross join connector_linear_actor linear_actor;
+commit;

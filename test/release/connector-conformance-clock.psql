@@ -1,0 +1,22 @@
+begin;
+\ir connector-conformance-scope.psql
+\o
+with discovery as (
+  update internal.linear_issue_discovery_config config set next_scan_at=clock_timestamp()
+  from connector_fixture_query fixture
+  where fixture.clock_kind='linear-discovery' and config.enabled
+    and (config.workspace_id,config.factory_id,config.resource_id)=
+      (fixture.workspace_id,fixture.factory_id,fixture.linear_resource_id)
+  returning config.resource_id
+), outbox as (
+  update internal.connector_outbound_deliveries delivery set next_action_at=clock_timestamp()
+  from connector_fixture_query fixture
+  where fixture.clock_kind='outbox' and (delivery.workspace_id,delivery.factory_id,delivery.id)=
+    (fixture.workspace_id,fixture.factory_id,fixture.delivery_id)
+    and delivery.resource_id in (fixture.github_resource_id,fixture.linear_resource_id)
+    and delivery.status in ('queued','unknown','blocked') and delivery.lease_id is null
+    and delivery.next_action_at is not null and delivery.deadline_at > clock_timestamp()+interval '10 seconds'
+  returning delivery.id
+)
+select to_jsonb((select count(*) from discovery)+(select count(*) from outbox)=1);
+commit;

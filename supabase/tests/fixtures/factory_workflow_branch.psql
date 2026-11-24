@@ -26,9 +26,13 @@ insert into public.pipelines(id, workspace_id, factory_id, name, is_default)
 select pg_temp.op651_id(31), workspace_id, factory_id, 'Workflow receipt pipeline', true from op651_scope;
 insert into public.pipeline_stages(id, pipeline_id, workspace_id, position, slug, name)
 values (pg_temp.op651_id(32), pg_temp.op651_id(31), pg_temp.op651_id(11), 1, 'inspect-output', 'Inspect output');
+\if :{?op651_github_installation_id}
+\else
+select current_setting('wallie.op651_fixture_namespace')::bigint + 33 as op651_github_installation_id \gset
+\endif
 insert into public.github_installations(id, workspace_id, installation_id, installation_url, app_id, target_type, target_name, permissions)
-values (pg_temp.op651_id(33), pg_temp.op651_id(11), current_setting('wallie.op651_fixture_namespace')::bigint + 33,
-  'https://github.test/installations/' || (current_setting('wallie.op651_fixture_namespace')::bigint + 33),
+values (pg_temp.op651_id(33), pg_temp.op651_id(11), :'op651_github_installation_id'::bigint,
+  'https://github.test/installations/' || :'op651_github_installation_id',
   current_setting('wallie.op651_fixture_namespace')::bigint, 'Organization', 'Fixture', '{"contents":"write","pull_requests":"write"}');
 insert into public.github_repositories(id, workspace_id, factory_id, github_installation_id, repo_id, name, full_name, private, html_url, default_branch)
 select pg_temp.op651_id(34), workspace_id, factory_id, pg_temp.op651_id(33), current_setting('wallie.op651_fixture_namespace')::bigint + 34,

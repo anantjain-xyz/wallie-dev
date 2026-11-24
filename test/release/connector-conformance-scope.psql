@@ -1,0 +1,32 @@
+\getenv fixture_query WALLIE_M13_FIXTURE_QUERY
+\o /dev/null
+create temp table connector_fixture_query as
+select * from jsonb_to_record(:'fixture_query'::jsonb) query(
+  namespace text, workspace_id uuid, factory_id uuid, owner_user_id uuid, owner_member_id uuid,
+  github_resource_id uuid, github_actor_link_id uuid, github_source_kind text, github_source_id bigint,
+  linear_resource_id uuid, linear_actor_link_id uuid, linear_tenant_id uuid, linear_issue_id uuid,
+  provider text, job_id uuid, artifact_version integer, clock_kind text, delivery_id uuid
+);
+
+create temp view connector_fixture_admissions as
+select 'github'::text as provider, admission.session_id, source.id as source_id, admission.actor_link_id,
+  admission.delivery_id as provider_event_id, admission.source_kind || ':' || admission.source_id as thread_id
+from connector_fixture_query fixture
+join internal.github_connector_work_deliveries admission
+  on (admission.workspace_id,admission.factory_id,admission.resource_id,admission.source_kind,admission.source_id) =
+    (fixture.workspace_id,fixture.factory_id,fixture.github_resource_id,fixture.github_source_kind,fixture.github_source_id)
+join public.session_conversation_sources source
+  on (source.workspace_id,source.factory_id,source.session_id,source.provider,source.source_namespace,source.external_thread_id) =
+    (admission.workspace_id,admission.factory_id,admission.session_id,'github',admission.resource_id::text,
+      admission.source_kind || ':' || admission.source_id)
+where admission.disposition='admitted'
+union all
+select 'linear', admission.session_id, source.id, admission.actor_link_id, admission.issue_id, admission.issue_id::text
+from connector_fixture_query fixture
+join internal.linear_issue_discovery_receipts admission
+  on (admission.workspace_id,admission.factory_id,admission.resource_id,admission.external_tenant_id,admission.issue_id) =
+    (fixture.workspace_id,fixture.factory_id,fixture.linear_resource_id,fixture.linear_tenant_id,fixture.linear_issue_id)
+join public.session_conversation_sources source
+  on (source.workspace_id,source.factory_id,source.session_id,source.id,source.provider,source.source_namespace,source.external_thread_id) =
+    (admission.workspace_id,admission.factory_id,admission.session_id,admission.source_id,'linear',admission.resource_id::text,
+      admission.issue_id::text);

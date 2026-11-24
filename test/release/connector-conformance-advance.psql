@@ -1,0 +1,52 @@
+begin;
+\ir connector-conformance-scope.psql
+set local request.jwt.claim.role='service_role';
+select set_config('wallie.op651_fixture_namespace',namespace,true),
+  set_config('request.jwt.claim.sub',owner_user_id::text,true) from connector_fixture_query;
+create function pg_temp.op651_id(slot integer) returns uuid language sql stable as $$
+  select (current_setting('wallie.op651_fixture_namespace') || '-0000-4000-8000-' || lpad(slot::text,12,'0'))::uuid
+$$;
+\ir ../../supabase/tests/fixtures/factory_workflow_checkpoint_evidence.psql
+
+-- The provider already admitted this exact work and the browser owns any rerun.
+-- Only observations of the sandbox and immutable Git input are synthetic here.
+create temp table connector_fixture_checkpoint as
+select admission.*, job.id as job_id, fixture.artifact_version,
+  pg_temp.adopt_source_checkpoint(admission.session_id,job.id,fixture.artifact_version-1) as run_id
+from connector_fixture_query fixture
+join connector_fixture_admissions admission on admission.provider=fixture.provider
+join public.sessions session
+  on (session.workspace_id,session.factory_id,session.id)=(fixture.workspace_id,fixture.factory_id,admission.session_id)
+join public.agent_jobs job on (job.workspace_id,job.session_id,job.id)=(fixture.workspace_id,admission.session_id,fixture.job_id)
+join internal.session_mutation_receipts mutation
+  on (mutation.workspace_id,mutation.factory_id,mutation.session_id,mutation.actor_member_id) =
+    (fixture.workspace_id,fixture.factory_id,session.id,fixture.owner_member_id)
+  and mutation.result->>'jobId'=job.id::text
+  and mutation.operation=case fixture.artifact_version when 1 then 'create' else 'follow_up' end::public.factory_session_mutation_operation
+where fixture.artifact_version in (1,2) and job.status='queued'
+  and coalesce(session.current_artifact_version,0)=fixture.artifact_version-1
+  and (fixture.artifact_version=1 or fixture.provider='linear');
+
+do $$ begin
+  if (select count(*) from connector_fixture_checkpoint) <> 1 then
+    raise exception 'The exact linked connector job was not eligible for checkpoint adoption.';
+  end if;
+  if not exists (
+    select 1 from connector_fixture_checkpoint checkpoint
+    join public.sessions session on session.id=checkpoint.session_id
+    join public.session_git_checkpoints accepted
+      on (accepted.session_id,accepted.job_id,accepted.run_id,accepted.artifact_id) =
+        (session.id,checkpoint.job_id,checkpoint.run_id,session.current_artifact_id)
+    where session.phase_status='awaiting_review' and session.current_artifact_version=checkpoint.artifact_version
+  ) then
+    raise exception 'The accepted checkpoint did not publish the requested current artifact.';
+  end if;
+end $$;
+
+\o
+select jsonb_build_object('sessionId',session.id,'sessionNumber',session.number,'sourceId',checkpoint.source_id,
+  'stageId',artifact.stage_id,'stageSlug',artifact.stage_slug,'artifactId',artifact.id,'artifactVersion',artifact.version,
+  'reviewRevision',session.artifact_review_revision,'jobId',checkpoint.job_id,'runId',checkpoint.run_id)
+from connector_fixture_checkpoint checkpoint join public.sessions session on session.id=checkpoint.session_id
+join public.session_artifacts artifact on (artifact.session_id,artifact.id)=(session.id,session.current_artifact_id);
+commit;
