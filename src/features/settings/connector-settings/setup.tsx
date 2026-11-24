@@ -8,6 +8,7 @@ import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import {
   connectorCatalogResponseSchema,
+  connectorSetupCommandSchema,
   connectorSetupResponseSchema,
   type ConnectorCatalogResponse,
   type ConnectorSetupCommand,
@@ -156,7 +157,8 @@ export function ConnectorSetup({
   resource?: ConnectorResource;
   resources: ConnectorResource[];
 }) {
-  const [kind, setKind] = useState<ResourceKind>(provider === "github" ? "repository" : "team");
+  const [linearKind, setLinearKind] = useState<"team" | "project">("team");
+  const kind = provider === "github" ? "repository" : provider === "slack" ? "channel" : linearKind;
   const [confirm, setConfirm] = useState<MappingConfirmation | null>(null);
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const setupHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -194,7 +196,7 @@ export function ConnectorSetup({
             </a>{" "}
             to find repositories assigned to this factory.
           </>
-        ) : (
+        ) : provider === "linear" ? (
           <>
             Save a key in{" "}
             <a className="font-medium text-accent hover:underline" href="#linear">
@@ -202,30 +204,37 @@ export function ConnectorSetup({
             </a>{" "}
             to find teams and projects.
           </>
+        ) : (
+          "Invite the Wallie app to a Slack channel before mapping it to this factory."
         )}
       </p>
       {provider === "linear" ? (
         <ConnectorSelect
           label="Resource type"
           disabled={inactive}
-          onChange={(event) => setKind(event.target.value === "project" ? "project" : "team")}
-          value={kind}
+          onChange={(event) => setLinearKind(event.target.value === "project" ? "project" : "team")}
+          value={linearKind}
         >
           <option value="team">Team</option>
           <option value="project">Project</option>
         </ConnectorSelect>
       ) : null}
-      <MapResource
-        disabled={inactive}
-        endpoint={endpoint}
-        installations={installations}
-        key={kind}
-        kind={kind}
-        provider={provider}
-        resources={resources}
-        run={action.run}
-        setMessage={setMessage}
-      />
+      {provider !== "slack" || installation?.status === "connected" ? (
+        <MapResource
+          disabled={inactive}
+          endpoint={endpoint}
+          installation={provider === "slack" ? installation : undefined}
+          installations={installations}
+          key={
+            provider === "slack" ? `${kind}:${installation?.id}:${installation?.generation}` : kind
+          }
+          kind={kind}
+          provider={provider}
+          resources={resources}
+          run={action.run}
+          setMessage={setMessage}
+        />
+      ) : null}
       {installation && (resource?.enabled || installation.status !== "disconnected") ? (
         <div className="flex flex-wrap gap-2">
           {resource?.enabled ? (
@@ -295,6 +304,7 @@ export function ConnectorSetup({
 function MapResource({
   disabled,
   endpoint,
+  installation,
   installations,
   kind,
   provider,
@@ -304,6 +314,7 @@ function MapResource({
 }: {
   disabled: boolean;
   endpoint: string;
+  installation?: ConnectorInstallation;
   installations: ConnectorInstallation[];
   kind: ResourceKind;
   provider: ConnectorProvider;
@@ -311,12 +322,14 @@ function MapResource({
   run: (command: ConnectorSetupCommand) => Promise<true | undefined>;
   setMessage: (message: FlashMessage | null) => void;
 }) {
+  const query = new URLSearchParams({ provider, kind });
+  if (installation) query.set("installationId", installation.id);
   const { catalog, selected, setSelected, option, load, busy } = useCatalog(
     endpoint,
-    new URLSearchParams({ provider, kind }).toString(),
+    query.toString(),
     setMessage,
   );
-  const authority = installations.find(
+  const authority = (installation ? [installation] : installations).find(
     ({ externalTenantId }) => externalTenantId === catalog?.tenant.id,
   );
   const mapping =
@@ -334,7 +347,7 @@ function MapResource({
   }
 
   function connect() {
-    if (!catalog) return;
+    if (!catalog || provider === "slack") return;
     setMessage(null);
     void run({
       action: "connect",
@@ -346,14 +359,19 @@ function MapResource({
 
   function map() {
     if (!option || !authority) return;
-    setMessage(null);
-    void run({
+    const command = connectorSetupCommandSchema.safeParse({
       action: "map",
       installationId: authority.id,
       expectedGeneration: authority.generation,
       expectedMappingRevision: mapping?.mappingRevision ?? 0,
       resource: { kind, id: option.id },
     });
+    if (!command.success) {
+      setMessage({ kind: "error", text: "Could not verify that resource. Reload your options." });
+      return;
+    }
+    setMessage(null);
+    void run(command.data);
   }
 
   return (
@@ -364,14 +382,22 @@ function MapResource({
         onClick={() => getOptions()}
         type="button"
       >
-        {busy && !catalog ? "Checking access…" : "Find provider resources"}
+        {busy && !catalog
+          ? "Checking access…"
+          : provider === "slack"
+            ? "Find Slack channels"
+            : "Find provider resources"}
       </button>
       {catalog ? (
         <div className="space-y-3 rounded-md border border-border p-3">
           <p className="text-sm text-muted">
             Verified <strong className="font-medium text-foreground">{catalog.tenant.label}</strong>
           </p>
-          {authority?.status !== "connected" ? (
+          {authority?.status !== "connected" && provider === "slack" ? (
+            <p className="text-sm text-muted">
+              Slack workspace access changed. Reload its channels.
+            </p>
+          ) : authority?.status !== "connected" ? (
             <button
               className="ui-button-primary"
               disabled={disabled || busy}
@@ -386,7 +412,7 @@ function MapResource({
                 busy={busy}
                 catalog={catalog}
                 disabled={disabled}
-                label="Resource to map"
+                label={provider === "slack" ? "Slack channel to map" : "Resource to map"}
                 loadOlder={getOptions}
                 onSelect={setSelected}
                 selected={selected}

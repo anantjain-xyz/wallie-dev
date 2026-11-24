@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
@@ -12,13 +13,19 @@ import { LinearConnectorPolicies } from "./linear-policies";
 import { readConnectorResponse } from "./request";
 import { ConnectorSelect } from "./select";
 import { ConnectorSetup, GitHubRequestRule } from "./setup";
+import { SlackConnectorAccess } from "./slack-access";
 
 export type ConnectorInstallation = ConnectorInventory["installations"][number];
 export type ConnectorResource = ConnectorInventory["resources"][number];
 export type ConnectorProvider = ConnectorResource["provider"];
 
-const providerLabel = { github: "GitHub", linear: "Linear" };
-const kindLabel = { repository: "Repository", team: "Team", project: "Project" };
+const providerLabel = { github: "GitHub", linear: "Linear", slack: "Slack" };
+const kindLabel = {
+  repository: "Repository",
+  team: "Team",
+  project: "Project",
+  channel: "Channel",
+};
 
 export const connectionStatusLabel: Record<ConnectorResource["connectionStatus"], string> = {
   connected: "Connected",
@@ -34,15 +41,21 @@ export function resourceLabel(resource: ConnectorResource) {
 }
 
 export function ConnectorResources({
+  canManage,
   factoryId,
   workspaceId,
   workspaceSlug,
 }: {
+  canManage: boolean;
   factoryId: string;
   workspaceId: string;
   workspaceSlug: string;
 }) {
-  const [provider, setProvider] = useState<ConnectorProvider>("github");
+  const search = useSearchParams();
+  const [selectedProvider, setProvider] = useState<ConnectorProvider>();
+  const fromSlack = search.get("connector") === "slack";
+  const provider = selectedProvider ?? (fromSlack ? "slack" : "github");
+  const slackResult = fromSlack ? search.get("slackResult") : null;
   const [inventory, setInventory] = useState<ConnectorInventory | null>(null);
   const [error, setError] = useState(false);
   const [reload, setReload] = useState(0);
@@ -51,6 +64,7 @@ export function ConnectorResources({
   const endpoint = `${factoryEndpoint}/connectors`;
 
   useEffect(() => {
+    if (!canManage) return;
     const abort = new AbortController();
     void fetch(endpoint, { signal: abort.signal })
       .then((response) => readConnectorResponse(response, connectorInventorySchema))
@@ -68,7 +82,7 @@ export function ConnectorResources({
         if (!abort.signal.aborted) setRefreshing(false);
       });
     return () => abort.abort();
-  }, [endpoint, reload]);
+  }, [canManage, endpoint, reload]);
 
   function refresh() {
     setRefreshing(true);
@@ -76,16 +90,28 @@ export function ConnectorResources({
     setReload((value) => value + 1);
   }
 
+  if (!canManage) {
+    return (
+      <div className="rounded-md border border-border bg-sheet p-4 sm:p-5">
+        <SlackConnectorAccess endpoint={endpoint} result={slackResult} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5 rounded-md border border-border bg-sheet p-4 sm:p-5">
       <ConnectorSelect
         label="Provider"
         disabled={!inventory}
-        onChange={(event) => setProvider(event.target.value === "linear" ? "linear" : "github")}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (next === "github" || next === "linear" || next === "slack") setProvider(next);
+        }}
         value={provider}
       >
         <option value="github">GitHub</option>
         <option value="linear">Linear</option>
+        <option value="slack">Slack</option>
       </ConnectorSelect>
       {error ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -104,6 +130,7 @@ export function ConnectorResources({
           onChanged={refresh}
           provider={provider}
           refreshing={refreshing}
+          slackResult={slackResult}
           workspaceSlug={workspaceSlug}
         />
       ) : (
@@ -121,6 +148,7 @@ function ProviderResources({
   onChanged,
   provider,
   refreshing,
+  slackResult,
   workspaceSlug,
 }: {
   factoryEndpoint: string;
@@ -128,26 +156,51 @@ function ProviderResources({
   onChanged: () => void;
   provider: ConnectorProvider;
   refreshing: boolean;
+  slackResult: string | null;
   workspaceSlug: string;
 }) {
   const [selected, setSelected] = useState("");
+  const [selectedInstallation, setSelectedInstallation] = useState("");
   const [policyRevision, setPolicyRevision] = useState(0);
   const endpoint = `${factoryEndpoint}/connectors`;
-  const resources = inventory.resources.filter((resource) => resource.provider === provider);
+  const providerResources = inventory.resources.filter(
+    (resource) => resource.provider === provider,
+  );
   const installations = inventory.installations.filter(
     (installation) => installation.provider === provider,
   );
-  const resource = resources.find(({ id }) => id === selected) ?? resources[0];
+  const selectedResource =
+    providerResources.find(({ id }) => id === selected) ?? providerResources[0];
   const installation =
-    installations.find(({ id }) => id === resource?.installationId) ??
+    installations.find(({ id }) => id === selectedInstallation) ??
+    installations.find(({ id }) => id === selectedResource?.installationId) ??
     installations.find(({ status }) => status === "connected") ??
     (installations.length === 1 ? installations[0] : undefined);
+  const resources =
+    provider === "slack" && installation
+      ? providerResources.filter(({ installationId }) => installationId === installation.id)
+      : providerResources;
+  const resource = resources.find(({ id }) => id === selected) ?? resources[0];
   const status = resource?.connectionStatus ?? installation?.status;
   const canUseProvider = resource?.enabled === true && status === "connected";
 
   return (
     <div className="space-y-5">
       <div className="space-y-2">
+        {provider === "slack" && installations.length > 1 ? (
+          <ConnectorSelect
+            label="Slack workspace"
+            onChange={(event) => setSelectedInstallation(event.target.value)}
+            value={installation?.id ?? ""}
+          >
+            {!installation ? <option value="">Choose a workspace</option> : null}
+            {installations.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.externalTenantId} · {connectionStatusLabel[item.status]}
+              </option>
+            ))}
+          </ConnectorSelect>
+        ) : null}
         {resource ? (
           <ConnectorSelect
             className="block max-w-xl space-y-1.5 text-sm font-medium text-foreground"
@@ -185,6 +238,15 @@ function ProviderResources({
           endpoint={`${endpoint}/${resource.id}`}
           key={`${resource.id}:${resource.mappingRevision}:${status}:${policyRevision}`}
           workspaceSlug={workspaceSlug}
+        />
+      ) : null}
+      {provider === "slack" ? (
+        <SlackConnectorAccess
+          canManage
+          endpoint={endpoint}
+          installationId={installation?.id}
+          key={`${installation?.id}:${installation?.generation}:${installation?.status}`}
+          result={slackResult}
         />
       ) : null}
       {inventory.canConfigure ? (

@@ -1,7 +1,9 @@
 import { z } from "zod/v4";
 
+import { slackChannelIdSchema } from "@/lib/connectors/slack/contracts";
+
 const uuid = z.uuid().toLowerCase();
-const provider = z.enum(["github", "linear"]);
+const provider = z.enum(["github", "linear", "slack"]);
 const revision = z.number().int().nonnegative().safe();
 const generation = revision.positive();
 const externalId = z
@@ -18,6 +20,12 @@ const label = z.string().min(1).max(256);
 const option = z.strictObject({ id: externalId, label });
 
 export const connectorCatalogQuerySchema = z.union([
+  z.strictObject({
+    provider: z.literal("slack"),
+    kind: z.literal("channel"),
+    installationId: uuid,
+    cursor: cursor.optional(),
+  }),
   z.strictObject({
     provider: z.literal("github"),
     kind: z.literal("repository").default("repository"),
@@ -42,7 +50,7 @@ export const connectorCatalogQuerySchema = z.union([
 
 export const connectorCatalogResponseSchema = z.strictObject({
   provider,
-  kind: z.enum(["repository", "label", "team", "project"]),
+  kind: z.enum(["repository", "label", "team", "project", "channel"]),
   tenant: option,
   resources: z.array(option.extend({ externalId: externalId.optional() })),
   nextCursor: cursor.nullable(),
@@ -51,7 +59,7 @@ export const connectorCatalogResponseSchema = z.strictObject({
 export const connectorSetupCommandSchema = z.discriminatedUnion("action", [
   z.strictObject({
     action: z.literal("connect"),
-    provider,
+    provider: z.enum(["github", "linear"]),
     expectedTenantId: externalId,
     expectedGeneration: revision,
   }),
@@ -60,7 +68,10 @@ export const connectorSetupCommandSchema = z.discriminatedUnion("action", [
     installationId: uuid,
     expectedGeneration: generation,
     expectedMappingRevision: revision,
-    resource: z.strictObject({ kind: z.enum(["repository", "team", "project"]), id: uuid }),
+    resource: z.union([
+      z.strictObject({ kind: z.enum(["repository", "team", "project"]), id: uuid }),
+      z.strictObject({ kind: z.literal("channel"), id: slackChannelIdSchema }),
+    ]),
   }),
   z.strictObject({
     action: z.literal("disable"),

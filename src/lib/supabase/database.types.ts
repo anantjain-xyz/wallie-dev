@@ -12045,6 +12045,24 @@ export type Database = {
         }
         Returns: number
       }
+      configure_slack_connector_installation: {
+        Args: {
+          p_actor_user_id: string
+          p_app_id: string
+          p_bot_user_id: string
+          p_encrypted_token: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_granted_scopes: string[]
+          p_team_id: string
+          p_team_name: string
+          p_workspace_id: string
+        }
+        Returns: {
+          generation: number
+          installation_id: string
+        }[]
+      }
       confirm_connector_outbound_authority: {
         Args: { p_delivery_id: string; p_lease_id: string }
         Returns: boolean
@@ -12067,6 +12085,17 @@ export type Database = {
           p_team_id: string
         }
         Returns: boolean
+      }
+      consume_slack_connector_oauth: {
+        Args: { p_actor_user_id: string; p_state_digest: string }
+        Returns: {
+          expected_generation: number
+          factory_id: string
+          installation_id: string
+          purpose: string
+          team_id: string
+          workspace_id: string
+        }[]
       }
       control_factory_benchmark_schedule: {
         Args: {
@@ -16055,6 +16084,40 @@ export type Database = {
           source_asset_id: string
         }[]
       }
+      read_slack_connector_credential: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_installation_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          app_id: string
+          bot_user_id: string
+          encrypted_token: string
+          granted_scopes: string[]
+          team_id: string
+        }[]
+      }
+      read_slack_connector_setup: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          actor_link_id: string
+          actor_user_id: string
+          app_id: string
+          generation: number
+          granted_scopes: string[]
+          installation_id: string
+          status: string
+          team_id: string
+          team_name: string
+        }[]
+      }
       reconcile_factory_benchmark_evaluations: {
         Args: { p_limit?: number }
         Returns: number
@@ -18414,6 +18477,19 @@ export type Database = {
         }
         Returns: string
       }
+      start_slack_connector_oauth: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_generation: number
+          p_factory_id: string
+          p_installation_id?: string
+          p_purpose: string
+          p_state_digest: string
+          p_team_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
       submit_artifact_feedback_batch: {
         Args: {
           p_agent_model_name?: string
@@ -18673,8 +18749,8 @@ export type Database = {
         | "blocked"
         | "delivered"
         | "failed"
-      connector_provider: "github" | "linear"
-      connector_resource_kind: "repository" | "team" | "project"
+      connector_provider: "github" | "linear" | "slack"
+      connector_resource_kind: "repository" | "team" | "project" | "channel"
       factory_command_admission_status:
         | "admitted"
         | "unauthorized"
@@ -18942,8 +19018,8 @@ export const Constants = {
         "delivered",
         "failed",
       ],
-      connector_provider: ["github", "linear"],
-      connector_resource_kind: ["repository", "team", "project"],
+      connector_provider: ["github", "linear", "slack"],
+      connector_resource_kind: ["repository", "team", "project", "channel"],
       factory_command_admission_status: [
         "admitted",
         "unauthorized",
