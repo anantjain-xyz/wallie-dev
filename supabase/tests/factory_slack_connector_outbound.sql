@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(72);
+select plan(77);
 
 \set op651_fixture_namespace 67900000
 \ir fixtures/factory_automation_dry_run.psql
@@ -100,34 +100,45 @@ select ok((select delivery.status = 'queued' and delivery.send_attempts = 0
   join internal.connector_outbound_deliveries delivery on delivery.id = card.id),
   'pausing a queued review preserves its exact deadline and all send attempts');
 update public.sessions set archived_at = null where id = (select session_id from queued_slack_review);
+update internal.connector_outbound_deliveries set send_attempts = 5
+where id = (select id from queued_slack_review);
 set local role service_role;
 create temp table archiving_card_claim as select * from public.claim_connector_outbound_delivery('slack');
 select ok((select claim.delivery_id = card.id and public.confirm_connector_outbound_authority(claim.delivery_id, claim.lease_id)
   from archiving_card_claim claim cross join queued_slack_review card),
   'restoring the review makes the same Slack card eligible again');
+reset role;
+select is((select send_attempts from internal.connector_outbound_deliveries
+  where id = (select id from queued_slack_review)), 6, 'the held send uses the last available attempt');
+set local role service_role;
 select archived.* from queued_slack_review card cross join lateral public.archive_session_job_attempts(
   card.session_id, (select workspace_id from slack_outbound_scope), 'Archive after claiming Slack delivery') archived;
 select ok((select resolved.review_paused and not resolved.superseded and resolved.action_target_id is null
   from archiving_card_claim claim
   cross join lateral public.resolve_slack_connector_delivery(claim.delivery_id, claim.lease_id) resolved),
   'a lease held at archive time resolves as paused without reserving a card');
-select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'not_sent')
-  from archiving_card_claim), 'an owned Slack lease can settle definitively without writing while archived');
-reset role;
-update internal.connector_outbound_deliveries set next_action_at = clock_timestamp()
-where id = (select id from queued_slack_review);
-set local role service_role;
-select is((select count(*) from public.claim_connector_outbound_delivery('slack')),
-  0::bigint, 'the archived review does not consume a second attempt');
 reset role;
 update public.sessions set archived_at = null where id = (select session_id from queued_slack_review);
 set local role service_role;
-
+select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'not_sent')
+  from archiving_card_claim), 'a paused Slack lease settles without writing after the review is restored');
+reset role;
+select ok((select delivery.status = 'queued' and delivery.send_attempts = 5 and delivery.deadline_at = card.deadline_at
+  from queued_slack_review card join internal.connector_outbound_deliveries delivery on delivery.id = card.id),
+  'restoration before settlement still refunds the paused send and preserves its deadline');
+set local role service_role;
 create temp table live_card_claim as select * from public.claim_connector_outbound_delivery('slack');
-select ok((select claim.delivery_id = card.id and claim.content->>'kind' = 'review_ready'
-  and public.confirm_connector_outbound_authority(claim.delivery_id, claim.lease_id)
-  from live_card_claim claim cross join queued_slack_review card),
-  'the original Slack delivery remains eligible after restoring the review again');
+select ok((select retry.delivery_id = paused.delivery_id and retry.lease_id <> paused.lease_id
+  and retry.kind = 'sending' and retry.content->>'kind' = 'review_ready'
+  from live_card_claim retry cross join archiving_card_claim paused),
+  'the refunded final attempt makes the same Slack delivery immediately claimable');
+reset role;
+-- Remove the five simulated sends before continuing the ordinary review lifecycle.
+update internal.connector_outbound_deliveries set send_attempts = 0
+where id = (select id from queued_slack_review);
+set local role service_role;
+select ok((select public.confirm_connector_outbound_authority(delivery_id, lease_id) from live_card_claim),
+  'the original Slack delivery receives a fresh confirmed send lease');
 create temp table live_card as
 select claim.delivery_id, claim.lease_id, resolved.* from live_card_claim claim
 cross join lateral public.resolve_slack_connector_delivery(claim.delivery_id, claim.lease_id) resolved;
@@ -137,6 +148,8 @@ select ok((select card.action_target_id is not null and not card.superseded and 
 select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'not_sent') from live_card),
   'the original card target remains when its send definitively did not start');
 reset role;
+select is((select send_attempts from internal.connector_outbound_deliveries
+  where id = (select delivery_id from live_card)), 1, 'an ordinary no-write result retains its counted send');
 update internal.connector_outbound_deliveries set next_action_at = clock_timestamp()
 where id = (select delivery_id from live_card);
 set local role service_role;
@@ -180,14 +193,21 @@ select ok((select refreshed.action_target_id <> original.action_target_id and no
     (original.channel_id, original.thread_ts, original.session_id, original.deadline_at)
   from refreshed_card refreshed cross join live_card original),
   'the safe new lease refreshes the same-artifact card without changing its destination or deadline');
+select archived.* from queued_slack_review card cross join lateral public.archive_session_job_attempts(
+  card.session_id, (select workspace_id from slack_outbound_scope), 'Archive during a Slack send with unknown result') archived;
+select ok((select resolved.review_paused and resolved.action_target_id = notice.action_target_id
+  from refreshed_card notice
+  cross join lateral public.resolve_slack_connector_delivery(notice.delivery_id, notice.lease_id) resolved),
+  'the pause retains the exact action target for a previously authorized write');
 select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'uncertain') from refreshed_card),
   'a lost Slack review send response recovers by observation');
 reset role;
+select ok((select status = 'unknown' and uncertain and send_attempts = 3
+  from internal.connector_outbound_deliveries where id = (select delivery_id from refreshed_card)),
+  'a paused send with an unknown result retains its counted send for observation');
 update internal.connector_outbound_deliveries set next_action_at = clock_timestamp()
 where id = (select delivery_id from refreshed_card);
 set local role service_role;
-select archived.* from queued_slack_review card cross join lateral public.archive_session_job_attempts(
-  card.session_id, (select workspace_id from slack_outbound_scope), 'Archive while Slack delivery is uncertain') archived;
 create temp table observed_card_claim as select * from public.claim_connector_outbound_delivery('slack');
 select ok((select kind = 'observing' and public.confirm_connector_outbound_authority(delivery_id, lease_id)
   from observed_card_claim), 'the uncertain review card still receives an observation lease while archived');

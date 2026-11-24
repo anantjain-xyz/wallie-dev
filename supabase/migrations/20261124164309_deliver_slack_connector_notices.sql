@@ -6,6 +6,26 @@ create table internal.slack_connector_notice_actions (
 alter table internal.slack_connector_notice_actions enable row level security;
 revoke all on internal.slack_connector_notice_actions from public, anon, authenticated, service_role;
 
+alter table internal.connector_outbound_attempts add column slack_review_paused boolean not null default false;
+
+create function internal.refund_paused_slack_review_send()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if exists (select 1 from internal.connector_outbound_attempts attempt
+    where (attempt.lease_id, attempt.delivery_id, attempt.operation, attempt.result) =
+      (old.lease_id, old.id, 'sending', 'not_sent') and attempt.slack_review_paused) then
+    new.send_attempts := old.send_attempts - 1;
+    new.next_action_at := least(new.deadline_at, clock_timestamp());
+  end if;
+  return new;
+end;
+$$;
+
+create trigger refund_paused_slack_review_send before update of status on internal.connector_outbound_deliveries
+  for each row when (old.provider = 'slack' and old.status = 'sending' and old.send_attempts > 0
+    and new.status = 'queued' and new.last_result = 'not_sent')
+  execute function internal.refund_paused_slack_review_send();
+
 -- The lifecycle transaction already owns the session row. Capture the notice
 -- without acquiring installation locks. The outbox claim rechecks them.
 create function internal.queue_slack_connector_notice(
@@ -164,7 +184,8 @@ create trigger capture_slack_connector_review_or_outcome after update of phase_s
 
 revoke all on function internal.queue_slack_connector_notice(public.sessions, text, text, text, jsonb),
   internal.queue_slack_closed_review_card(public.sessions, uuid), internal.lock_slack_review_card_closure(uuid),
-  internal.capture_delivered_slack_review_card(), internal.capture_slack_connector_notice()
+  internal.capture_delivered_slack_review_card(), internal.capture_slack_connector_notice(),
+  internal.refund_paused_slack_review_send()
   from public, anon, authenticated, service_role;
 
 -- A reversible archive pauses unsent review cards. Keep their existing retry
@@ -339,6 +360,12 @@ begin
   notice_kind := delivery.content->>'kind';
   if notice_kind in ('review_ready', 'clarification') then
     paused := target.archived_at is not null;
+    if paused and attempt.operation = 'sending' and not attempt.slack_review_paused then
+      -- Retain the pause on the exact lease even if the user restores the review
+      -- before a definite no-write result returns.
+      update internal.connector_outbound_attempts recorded set slack_review_paused = true
+      where (recorded.lease_id, recorded.delivery_id) = (attempt.lease_id, delivery.id);
+    end if;
     select notice.* into association from internal.slack_connector_notice_actions notice where notice.delivery_id = delivery.id;
     if found then
       select stored.* into strict action_target from internal.slack_review_targets stored where stored.id = association.target_id;
