@@ -205,17 +205,27 @@ it.each([
   await expect(sendSlackOutbound(input(fetcher), authorization())).resolves.toEqual({ kind });
 });
 
-it("uses Slack Retry-After without retrying the request inline", async () => {
-  const fetcher = vi
-    .fn<typeof fetch>()
-    .mockResolvedValueOnce(authorizationRead())
-    .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "Retry-After": "27" } }));
-  await expect(sendSlackOutbound(input(fetcher), authorization())).resolves.toEqual({
-    kind: "rate_limited",
-    retryAfterSeconds: 27,
-  });
-  expect(fetcher).toHaveBeenCalledTimes(2);
-});
+it.each(["current", "deferred"] as const)(
+  "preserves Slack Retry-After when post-write authority is %s",
+  async (authority) => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(authorizationRead())
+      .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "Retry-After": "27" } }));
+    let checks = 0;
+    const guarded = input(fetcher, {
+      async checkAuthority() {
+        return ++checks < 4 ? "current" : authority;
+      },
+    });
+    await expect(sendSlackOutbound(guarded, authorization())).resolves.toEqual({
+      kind: "rate_limited",
+      retryAfterSeconds: 27,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(request(fetcher, 1).url).toBe("https://slack.com/api/chat.postMessage");
+  },
+);
 
 it("settles the exact correlation on a later bounded thread page and never posts during observation", async () => {
   const fetcher = vi

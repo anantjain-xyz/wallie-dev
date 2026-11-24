@@ -319,7 +319,9 @@ async function slackCall(
     const result = await readSlackResponse(response);
     const after = await checkAuthority(scope, signal);
     if (after === "current") return result;
-    if (method === "chat.postMessage" || method === "chat.update") return { kind: "ambiguous" };
+    if (method === "chat.postMessage" || method === "chat.update") {
+      return result.kind === "rate_limited" ? result : { kind: "ambiguous" };
+    }
     return { kind: after };
   } catch {
     return { kind: "ambiguous" };
