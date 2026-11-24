@@ -12836,6 +12836,10 @@ export type Database = {
         Args: { p_attempt_count: number; p_job_id: string }
         Returns: boolean
       }
+      defer_slack_connector_membership_lookup: {
+        Args: { p_lease_id: string; p_queue_id: string }
+        Returns: string
+      }
       delete_factory_context_source: {
         Args: {
           p_actor_user_id: string

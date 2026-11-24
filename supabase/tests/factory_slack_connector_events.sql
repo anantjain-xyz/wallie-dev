@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(87);
+select plan(96);
 
 \set op651_fixture_namespace 67700000
 \ir fixtures/factory_automation_dry_run.psql
@@ -52,6 +52,7 @@ select ok(has_function_privilege('service_role',
     'public.enqueue_slack_connector_event(text,text,text,text,text,text,text,text,text,text)','execute')
   and not has_function_privilege('authenticated','public.claim_slack_connector_event(uuid)','execute')
   and not has_function_privilege('anon','public.settle_slack_connector_event(uuid,uuid,text,text,text,text,text,integer,text)','execute')
+  and not has_function_privilege('authenticated','public.defer_slack_connector_membership_lookup(uuid,uuid)','execute')
   and not has_table_privilege('service_role','internal.slack_connector_event_receipts','select'),
   'only the service entry points can route or claim Slack event receipts');
 select throws_ok($$select pg_temp.enqueue_slack('bad-ts', 'edited', 2, 1, 2)$$,
@@ -124,9 +125,15 @@ update internal.slack_connector_event_receipts set recorded_at = clock_timestamp
 where event_id = 'root-mention';
 update internal.slack_connector_event_receipts set wait_for_root_until = clock_timestamp() - interval '1 second',
   next_attempt_at = clock_timestamp() - interval '1 second' where event_id in ('early-followup', 'early-root-edit');
+update internal.slack_connector_event_receipts set attempt_count = 6, lease_expires_at = clock_timestamp() - interval '1 second'
+where event_id = 'root-mention';
 set local role service_role;
 select is((select count(*) from public.claim_slack_connector_event(pg_temp.op651_id(11))), 0::bigint,
-  'an early reply can wait past its short window without obtaining provider access while its timely root is in flight');
+  'an early reply waits past the cutoff while the final root attempt may still settle');
+reset role;
+update internal.slack_connector_event_receipts set lease_expires_at = clock_timestamp() + interval '30 seconds'
+where event_id = 'root-mention';
+set local role service_role;
 select is((select public.settle_slack_connector_event(queue_id, lease_id, 'verified', team_id, app_id, channel_id, bot_user_id)
   from slack_pending_root_claim),'admitted','live membership and exact factory authority admit one Slack request');
 select is(pg_temp.process_slack(),'appended','the early follow-up attaches to the admitted Slack thread');
@@ -256,9 +263,38 @@ reset role;
 select ok((select retry_at > clock_timestamp() from internal.slack_connector_event_cooldowns
   where (team_id, app_id, method) = ('T67700001', 'A67700001', 'users.conversations')),
   'the final attempt publishes its provider cooldown before scrubbing the receipt');
+set local role service_role;
+select is(pg_temp.enqueue_slack('direct-membership-while-throttled', 'mention', 40, 40),
+  'queued', 'a receipt can arrive while the optional membership method is throttled');
+create temp table slack_direct_membership_claim as select * from public.claim_slack_connector_event(pg_temp.op651_id(11));
+select is((select kind from slack_direct_membership_claim), 'event',
+  'a fallback-only throttle does not block channels with direct membership proof');
+select is((select public.settle_slack_connector_event(queue_id, lease_id, 'unavailable') from slack_direct_membership_claim),
+  'membership_denied', 'a direct membership decision can settle without the optional method');
+select is(pg_temp.enqueue_slack('fallback-membership-while-throttled', 'mention', 60, 60),
+  'queued', 'a fallback receipt can obtain a claim before Slack reports whether it needs a lookup');
+create temp table slack_fallback_membership_claim as select * from public.claim_slack_connector_event(pg_temp.op651_id(11));
+select is((select public.defer_slack_connector_membership_lookup(queue_id, gen_random_uuid()) from slack_fallback_membership_claim),
+  'stale', 'the optional method guard cannot act on a different lease');
+select is((select public.defer_slack_connector_membership_lookup(queue_id, lease_id) from slack_fallback_membership_claim),
+  'deferred', 'a receipt that reaches the fallback respects the active provider cooldown');
+reset role;
+select ok((select receipt.attempt_count = 0 and receipt.lease_id is null and receipt.result is null
+    and receipt.next_attempt_at = least(receipt.deadline_at, cooldown.retry_at)
+  from internal.slack_connector_event_receipts receipt join internal.slack_connector_event_cooldowns cooldown
+    on (cooldown.team_id, cooldown.app_id, cooldown.method) = (receipt.team_id, receipt.app_id, 'users.conversations')
+  where receipt.event_id = 'fallback-membership-while-throttled'),
+  'deferring before the optional provider call refunds the attempt and releases the lease');
 update internal.slack_connector_event_cooldowns set retry_at = clock_timestamp() - interval '1 second'
 where (team_id, app_id, method) = ('T67700001', 'A67700001', 'users.conversations');
+update internal.slack_connector_event_receipts set next_attempt_at = clock_timestamp()
+where event_id = 'fallback-membership-while-throttled';
 set local role service_role;
+create temp table slack_fallback_ready_claim as select * from public.claim_slack_connector_event(pg_temp.op651_id(11));
+select is((select public.defer_slack_connector_membership_lookup(queue_id, lease_id) from slack_fallback_ready_claim),
+  'ready', 'the exact fallback lease can use its provider method once cooldown expires');
+select is((select public.settle_slack_connector_event(queue_id, lease_id, 'unavailable') from slack_fallback_ready_claim),
+  'membership_denied', 'the claimed receipt settles through the usual path when fallback can run');
 
 select pg_temp.enqueue_slack('cleanup-' || tick, 'deleted', tick, tick + 20, p_actor => null, p_body => null)
 from generate_series(41, 49) tick;

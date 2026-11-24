@@ -36,7 +36,7 @@ const rpcTimeoutMs = 5_000;
 type Claim = z.output<typeof claimSchema>;
 type Client = Pick<SupabaseClient<Database>, "rpc">;
 type MembershipResult =
-  | { result: "verified" | "unavailable" }
+  | { result: "verified" | "unavailable" | "deferred" }
   | { result: "retry"; retryAfterSeconds: number }
   | {
       result: "rate_limited";
@@ -45,6 +45,12 @@ type MembershipResult =
     };
 const defaultRetryAfterSeconds = 15;
 
+class SlackMembershipCooldownError extends Error {
+  constructor(readonly deferred: boolean) {
+    super("Could not check the Slack membership cooldown.");
+  }
+}
+
 function providerRetryAfterSeconds(response: Response): number {
   const delay = response.headers.get("Retry-After");
   return delay && /^\d+$/.test(delay)
@@ -52,7 +58,11 @@ function providerRetryAfterSeconds(response: Response): number {
     : defaultRetryAfterSeconds;
 }
 
-async function verifyClaimChannel(claim: Claim, fetcher: typeof fetch): Promise<MembershipResult> {
+async function verifyClaimChannel(
+  admin: Client,
+  claim: Claim,
+  fetcher: typeof fetch,
+): Promise<MembershipResult> {
   const remainingMs = Date.parse(claim.deadline_at) - Date.now();
   if (remainingMs <= 0) return { result: "unavailable" };
 
@@ -72,6 +82,18 @@ async function verifyClaimChannel(claim: Claim, fetcher: typeof fetch): Promise<
         botUserId: claim.bot_user_id,
         channelId: claim.channel_id,
         teamId: claim.team_id,
+        async beforeMembershipLookup() {
+          const { data, error } = await admin
+            .rpc("defer_slack_connector_membership_lookup", {
+              p_queue_id: claim.queue_id,
+              p_lease_id: claim.lease_id,
+            })
+            .abortSignal(AbortSignal.any([deadline, AbortSignal.timeout(rpcTimeoutMs)]));
+          if (error) throw new SlackMembershipCooldownError(false);
+          if (data !== "ready") {
+            throw new SlackMembershipCooldownError(data === "deferred" || data === "stale");
+          }
+        },
       },
       async (input, init) => {
         const parsedMethod = verificationMethod.safeParse(
@@ -88,6 +110,10 @@ async function verifyClaimChannel(claim: Claim, fetcher: typeof fetch): Promise<
     );
     return { result: "verified" };
   } catch (error) {
+    if (error instanceof SlackMembershipCooldownError) {
+      if (error.deferred) return { result: "deferred" };
+      throw error;
+    }
     if (error instanceof SlackProviderError && error.reason === "rate_limited" && lastMethod) {
       return { result: "rate_limited", retryAfterSeconds, method: lastMethod };
     }
@@ -110,7 +136,7 @@ export async function drainSlackConnectorEvents(
   input: { workspaceId?: string; fetcher?: typeof fetch; isShuttingDown?: () => boolean } = {},
 ) {
   for (let count = 0; count < 4; count++) {
-    if (input.isShuttingDown?.()) return;
+    if (input.isShuttingDown?.()) return false;
     const { data, error } = await admin
       .rpc("claim_slack_connector_event", {
         ...(input.workspaceId ? { p_workspace_id: input.workspaceId } : {}),
@@ -118,10 +144,11 @@ export async function drainSlackConnectorEvents(
       .abortSignal(AbortSignal.timeout(rpcTimeoutMs));
     if (error) throw new Error("Could not claim a Slack connector event.");
     const candidate = data[0];
-    if (!candidate) return;
+    if (!candidate) return false;
     const claim = claimResult.parse(candidate);
     if (claim.kind === "cleanup") continue;
-    const outcome = await verifyClaimChannel(claim, input.fetcher ?? fetch);
+    const outcome = await verifyClaimChannel(admin, claim, input.fetcher ?? fetch);
+    if (outcome.result === "deferred") continue;
     const settled = await admin
       .rpc("settle_slack_connector_event", {
         p_queue_id: claim.queue_id,
@@ -144,4 +171,5 @@ export async function drainSlackConnectorEvents(
     // A timed-out settlement may have committed. Let the exact lease and receipt recover it.
     if (settled.error) throw new Error("Could not settle a Slack connector event.");
   }
+  return true;
 }

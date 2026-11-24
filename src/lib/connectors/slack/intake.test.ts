@@ -16,26 +16,53 @@ const botUserId = "UTEST01";
 const verifiedBot = () =>
   Response.json({ ok: true, team_id: teamId, user_id: botUserId, bot_id: "BTEST01" });
 
-function setup(responses: Response[]) {
-  const database = vi.fn<typeof fetch>();
-  database
-    .mockResolvedValueOnce(
-      Response.json([
-        {
-          kind: "event",
-          queue_id: queueId,
-          lease_id: leaseId,
-          team_id: teamId,
-          app_id: "ATEST01",
-          channel_id: channelId,
-          bot_user_id: botUserId,
-          encrypted_token: encryptSecretValue(token),
-          deadline_at: new Date(Date.now() + 60_000).toISOString(),
-        },
-      ]),
-    )
-    .mockResolvedValueOnce(Response.json("retry"))
-    .mockResolvedValueOnce(Response.json([]));
+function channelInfo(isMember?: boolean) {
+  return Response.json({
+    ok: true,
+    channel: {
+      id: channelId,
+      name: "wallie",
+      is_private: false,
+      is_channel: true,
+      is_im: false,
+      is_mpim: false,
+      is_archived: false,
+      is_shared: false,
+      is_member: isMember,
+    },
+  });
+}
+
+function claimResponse() {
+  return Response.json([
+    {
+      kind: "event",
+      queue_id: queueId,
+      lease_id: leaseId,
+      team_id: teamId,
+      app_id: "ATEST01",
+      channel_id: channelId,
+      bot_user_id: botUserId,
+      encrypted_token: encryptSecretValue(token),
+      deadline_at: new Date(Date.now() + 60_000).toISOString(),
+    },
+  ]);
+}
+
+function setup(responses: Response[], membershipGate = "ready") {
+  let claimed = false;
+  const database = vi.fn<typeof fetch>(async (input, init) => {
+    const path = new URL(new Request(input, init).url).pathname;
+    if (path.endsWith("/claim_slack_connector_event")) {
+      if (claimed) return Response.json([]);
+      claimed = true;
+      return claimResponse();
+    }
+    if (path.endsWith("/defer_slack_connector_membership_lookup")) {
+      return Response.json(membershipGate);
+    }
+    return Response.json("retry");
+  });
   const admin = createClient<Database>("https://database.example.test", "fixture-key", {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: database },
@@ -49,7 +76,9 @@ async function expectRetry(responses: Response[], delay: number, rateLimitedMeth
   const { admin, database, fetcher } = setup(responses);
   await drainSlackConnectorEvents(admin, { fetcher });
   expect(fetcher).toHaveBeenCalledTimes(responses.length);
-  const settlement = database.mock.calls[1];
+  const settlement = database.mock.calls.find((call) =>
+    new URL(new Request(...call).url).pathname.endsWith("/settle_slack_connector_event"),
+  );
   if (!settlement) throw new Error("Expected a Slack event settlement.");
   const request = new Request(...settlement);
   expect(new URL(request.url).pathname).toBe("/rest/v1/rpc/settle_slack_connector_event");
@@ -97,19 +126,7 @@ describe("Slack intake membership retry", () => {
     await expectRetry(
       [
         verifiedBot(),
-        Response.json({
-          ok: true,
-          channel: {
-            id: channelId,
-            name: "wallie",
-            is_private: false,
-            is_channel: true,
-            is_im: false,
-            is_mpim: false,
-            is_archived: false,
-            is_shared: false,
-          },
-        }),
+        channelInfo(),
         ...[1, 2, 3, 4].map((page) =>
           Response.json({
             ok: true,
@@ -120,6 +137,53 @@ describe("Slack intake membership retry", () => {
       ],
       15,
     );
+  });
+
+  it("records a real membership fallback throttle against its own method", async () => {
+    await expectRetry(
+      [verifiedBot(), channelInfo(), Response.json({}, { status: 429 })],
+      15,
+      "users.conversations",
+    );
+  });
+
+  it("defers a blocked fallback without calling Slack again or settling it twice", async () => {
+    const { admin, database, fetcher } = setup([verifiedBot(), channelInfo()], "deferred");
+
+    await expect(drainSlackConnectorEvents(admin, { fetcher })).resolves.toBe(false);
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(database.mock.calls.map((call) => new URL(new Request(...call).url).pathname)).toEqual([
+      "/rest/v1/rpc/claim_slack_connector_event",
+      "/rest/v1/rpc/defer_slack_connector_membership_lookup",
+      "/rest/v1/rpc/claim_slack_connector_event",
+    ]);
+  });
+
+  it("verifies direct channel membership without invoking the optional cooldown gate", async () => {
+    const { admin, database, fetcher } = setup([verifiedBot(), channelInfo(true)], "deferred");
+
+    await drainSlackConnectorEvents(admin, { fetcher });
+
+    const paths = database.mock.calls.map((call) => new URL(new Request(...call).url).pathname);
+    expect(paths).toEqual([
+      "/rest/v1/rpc/claim_slack_connector_event",
+      "/rest/v1/rpc/settle_slack_connector_event",
+      "/rest/v1/rpc/claim_slack_connector_event",
+    ]);
+    const settlement = database.mock.calls[1];
+    if (!settlement) throw new Error("Expected a Slack event settlement.");
+    expect(await new Request(...settlement).json()).toMatchObject({ p_result: "verified" });
+  });
+
+  it("signals a prompt continuation after exhausting the four-claim budget", async () => {
+    const { admin, database, fetcher } = setup([]);
+    database.mockReset().mockImplementation(async () => Response.json([{ kind: "cleanup" }]));
+
+    await expect(drainSlackConnectorEvents(admin, { fetcher })).resolves.toBe(true);
+
+    expect(database).toHaveBeenCalledTimes(4);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("continues past bounded cleanup without provider access and stops on a truly empty queue", async () => {
@@ -157,10 +221,9 @@ describe("Slack intake membership retry", () => {
 
   it("leaves recovery to the exact lease after an ambiguous settlement error", async () => {
     const { admin, database, fetcher } = setup([Response.json({}, { status: 429 })]);
-    const claim = await database("https://database.example.test/fixture-claim");
     database
       .mockReset()
-      .mockResolvedValueOnce(claim)
+      .mockResolvedValueOnce(claimResponse())
       .mockRejectedValueOnce(new Error("fetch aborted"));
 
     await expect(drainSlackConnectorEvents(admin, { fetcher })).rejects.toThrow(

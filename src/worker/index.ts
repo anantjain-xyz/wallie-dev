@@ -61,6 +61,7 @@ import { reconcileLinearLinkedOutcomes } from "@/lib/connectors/linear-outcomes"
 import { reconcileLinearState } from "./reconciler";
 import { reapOrphanSandboxes } from "./sandbox-reaper";
 import { createScheduler } from "./scheduler";
+import { createSlackInboxMaintenance } from "./slack-inbox";
 import { createTimerTaskTracker, finishWorkerShutdown } from "./shutdown";
 import { sweepStalledRuns } from "./stall-detector";
 
@@ -191,6 +192,11 @@ async function main() {
     );
 
     // --- Reconciliation interval ---
+    const drainSlackInbox = createSlackInboxMaintenance({
+      drainBatch: () => drainSlackConnectorEvents(admin, { isShuttingDown: () => draining }),
+      isShuttingDown: () => draining,
+      timerTasks,
+    });
     maintenanceTimers.push(
       setInterval(() => {
         timerTasks.run("accepted triage route", () => drainAcceptedTriageRoute(admin));
@@ -205,9 +211,7 @@ async function main() {
         );
         timerTasks.run("expired workflow review", () => expireExactFactoryWorkflowReview(admin));
         timerTasks.run("GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin));
-        timerTasks.run("Slack connector inbox", () =>
-          drainSlackConnectorEvents(admin, { isShuttingDown: () => draining }),
-        );
+        drainSlackInbox();
         timerTasks.run("GitHub connector outbound", async () => {
           await drainConnectorOutboundDeliveries(
             admin,
