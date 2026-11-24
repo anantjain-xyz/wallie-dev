@@ -297,6 +297,18 @@ describe("GitHub connector reply adapter", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("classifies an Octokit secondary rate limit without a headers object", async () => {
+    mocks.appRequest.mockRejectedValue({
+      status: 403,
+      response: { data: { message: "You have exceeded a secondary rate limit." } },
+    });
+    const { adapter } = makeAdapter({ github: () => new Response(null, { status: 500 }) });
+    await expect(adapter.send(target, signal)).resolves.toEqual({
+      kind: "rate_limited",
+      retryAfterSeconds: 60,
+    });
+  });
+
   it("waits at least a minute for a secondary rate limit with a shorter hint", async () => {
     const { adapter } = makeAdapter({
       github: () =>

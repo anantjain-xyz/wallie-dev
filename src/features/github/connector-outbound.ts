@@ -128,7 +128,7 @@ function providerError(error: unknown) {
   if (!failure.success) return null;
   const headers = new Headers();
   for (const name of ["retry-after", "x-ratelimit-remaining", "x-ratelimit-reset"]) {
-    const value = failure.data.response?.headers[name];
+    const value = failure.data.response?.headers?.[name];
     if (value !== undefined) headers.set(name, String(value));
   }
   return new GitHubHttpError(
