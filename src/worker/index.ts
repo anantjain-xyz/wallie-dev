@@ -223,7 +223,13 @@ async function main() {
         drainSlackInbox();
         drainSlackReviews();
         timerTasks.run("Slack connector outbox", async () => {
-          await drainConnectorOutboundDeliveries(admin, createSlackConnectorOutboundAdapter(admin));
+          await drainConnectorOutboundDeliveries(
+            admin,
+            createSlackConnectorOutboundAdapter(admin),
+            {
+              isShuttingDown: () => draining,
+            },
+          );
         });
         timerTasks.run("GitHub connector outbound", async () => {
           await drainConnectorOutboundDeliveries(

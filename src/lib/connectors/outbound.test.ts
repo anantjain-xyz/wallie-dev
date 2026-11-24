@@ -120,6 +120,30 @@ it("retries a proven pre-write failure with the same provider correlation ID", a
   ]);
 });
 
+it("settles the Slack delivery already held when shutdown starts without claiming another", async () => {
+  let shuttingDown = false;
+  const { admin, calls } = fixture(
+    [10, 11].map((lease) => ({ ...permit("sending", lease), provider: "slack" })),
+    [
+      () => {
+        shuttingDown = true;
+        return true;
+      },
+    ],
+  );
+  const provider = { ...adapter(), provider: "slack" } satisfies ConnectorOutboundAdapter;
+
+  await expect(
+    drainConnectorOutboundDeliveries(admin, provider, { isShuttingDown: () => shuttingDown }),
+  ).resolves.toBe(1);
+
+  expect(provider.send).toHaveBeenCalledOnce();
+  expect(calls("claim_connector_outbound_delivery")).toEqual([{ p_provider: "slack" }]);
+  expect(calls("settle_connector_outbound_delivery")).toEqual([
+    { p_delivery_id: id(1), p_lease_id: id(10), p_result: "sent", p_provider_reply_id: "reply" },
+  ]);
+});
+
 it("observes the original provider message after a successful write loses its response", async () => {
   const { admin, calls } = fixture([permit("sending", 10), permit("observing", 11)]);
   const provider = adapter();
