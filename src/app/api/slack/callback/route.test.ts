@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  appId: "ATEST01",
   admin: vi.fn(),
   authorizeWorkspace: vi.fn(),
   identity: vi.fn(),
@@ -14,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/env/server", () => ({
   parseServerEnv: () => ({
     NEXT_PUBLIC_APP_URL: "https://wallie.example",
-    SLACK_APP_ID: "ATEST01",
+    SLACK_APP_ID: mocks.appId,
     SLACK_CLIENT_ID: "123.456",
     SLACK_CLIENT_SECRET: "test-client-secret",
     SLACK_SIGNING_SECRET: "test-signing-secret",
@@ -31,6 +32,8 @@ vi.mock("@/lib/connectors/slack/provider", async (importOriginal) => ({
   exchangeSlackInstallCode: mocks.install,
   exchangeSlackIdentityCode: mocks.link,
 }));
+
+import { startSlackConnectorAuthorization } from "@/lib/connectors/slack/setup";
 
 import { GET, POST } from "./route";
 
@@ -58,6 +61,7 @@ function requestWithCode() {
 describe("Slack OAuth callback", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.appId = "ATEST01";
     vi.stubEnv("WALLIE_ENCRYPTION_KEY", "connector-callback-test-encryption");
     mocks.admin.mockReturnValue({ rpc: mocks.rpc });
     mocks.identity.mockResolvedValue({ id: userId, sessionId });
@@ -119,6 +123,30 @@ describe("Slack OAuth callback", () => {
     expect(mocks.rpc.mock.calls[0]?.[1].p_state_digest).not.toBe(
       mocks.rpc.mock.calls[1]?.[1].p_state_digest,
     );
+    expect(mocks.install).not.toHaveBeenCalled();
+  });
+
+  it("requires a fresh authorization after the configured Slack app changes", async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: true, error: null });
+    const oauth = await startSlackConnectorAuthorization(
+      mocks.admin(),
+      { p_workspace_id: workspaceId, p_factory_id: factoryId, p_actor_user_id: userId },
+      sessionId,
+      { action: "install", teamId: "TTEST01", expectedGeneration: 0 },
+    );
+    const startedState = new URL(oauth.authorizationUrl).searchParams.get("state");
+    const originalDigest = mocks.rpc.mock.calls[0]?.[1].p_state_digest;
+    mocks.rpc.mockImplementation(async (_rpc, args) => ({
+      data: args.p_state_digest === originalDigest ? [expectedFlow] : [],
+      error: null,
+    }));
+
+    mocks.appId = "ATEST02";
+    const response = await GET(
+      new NextRequest(`${callback}?state=${startedState}&code=another-app-code`),
+    );
+    expect(response.headers.get("location")).toBe(`${appUrl}/?slackResult=error`);
+    expect(mocks.rpc.mock.calls[1]?.[1].p_state_digest).not.toBe(originalDigest);
     expect(mocks.install).not.toHaveBeenCalled();
   });
 

@@ -42,7 +42,8 @@ worker rechecks credential and mapping authority before processing the receipt.
    `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` on the Wallie server.
 2. Add bot scopes `app_mentions:read`, `chat:write`, `channels:read`,
    `channels:history`, `groups:read`, and `groups:history`. Use a workspace
-   installation with token rotation disabled for this connector.
+   installation with token rotation disabled for this connector. Add `openid`
+   under **User Token Scopes** for the separate account-linking flow.
 3. In **Connector resources → Slack**, enter the exact workspace ID from the
    `T…` segment of its Slack client URL and approve installation. Wallie
    compares the returned team and app IDs and shows the actual grants.

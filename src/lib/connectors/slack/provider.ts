@@ -31,6 +31,10 @@ const errors = {
   access_denied: { status: 403, message: "Slack did not authorize this request." },
   scope_mismatch: { status: 409, message: "Slack returned a different workspace or app." },
   channel_unavailable: { status: 404, message: "The selected Slack channel is unavailable." },
+  membership_incomplete: {
+    status: 503,
+    message: "Could not finish verifying Slack channel membership.",
+  },
   unsupported_installation: { status: 422, message: "This Slack installation is unsupported." },
   invalid_identity: { status: 403, message: "Could not verify your Slack identity." },
   rate_limited: { status: 429, message: "Slack is rate limiting requests." },
@@ -110,13 +114,13 @@ const channelResponse = z.object({
   context_team_id: teamId.optional(),
   shared_team_ids: z.array(teamId).max(64).optional(),
 });
-const responseMetadata = z.object({ next_cursor: cursorValue.optional() }).optional();
+const responseMetadata = z.object({ next_cursor: cursorValue.nullish() }).optional();
 const channelCatalogResponse = z.object({
   channels: z.array(z.unknown()).max(catalogPageSize),
   response_metadata: responseMetadata,
 });
-const channelMembersResponse = z.object({
-  members: z.array(userId).max(membershipPageSize),
+const botChannelsResponse = z.object({
+  channels: z.array(z.object({ id: channelId })).max(membershipPageSize),
   response_metadata: responseMetadata,
 });
 const identityTokenResponse = z.object({
@@ -264,7 +268,7 @@ type SlackMethod =
   | "auth.test"
   | "conversations.list"
   | "conversations.info"
-  | "conversations.members"
+  | "users.conversations"
   | "openid.connect.token"
   | "openid.connect.userInfo";
 
@@ -336,7 +340,6 @@ async function verifyBot(
   if (actual.team_id !== expected || (expectedBot !== null && actual.user_id !== expectedBot)) {
     throw new SlackProviderError("scope_mismatch");
   }
-  return actual.user_id;
 }
 
 export async function exchangeSlackInstallCode(
@@ -545,7 +548,7 @@ export async function verifySlackChannel(
 ) {
   const id = parse(channelId, input.channelId, "invalid_request");
   const client = slackClient(fetcher, input.assertCurrent);
-  const bot = await verifyBot(client, input);
+  await verifyBot(client, input);
   const { channel } = await client.api(
     "conversations.info",
     z.object({ channel: channelResponse }),
@@ -557,21 +560,28 @@ export async function verifySlackChannel(
   const option = channel.id === id && channelOption(channel, input.teamId);
   if (!option || channel.is_member === false) throw new SlackProviderError("channel_unavailable");
 
-  // Slack can omit is_member from conversations.info. Check the precise bot ID in that case.
-  const query = new URLSearchParams({ channel: id, limit: String(membershipPageSize) });
+  // Without is_member, users.conversations lists the verified bot token's own channels.
+  const query = new URLSearchParams({
+    types: channel.is_private ? "private_channel" : "public_channel",
+    exclude_archived: "true",
+    limit: String(membershipPageSize),
+  });
+  const seenCursors = new Set<string>();
   let member = channel.is_member === true;
   for (let page = 0; !member && page < membershipPageLimit; page++) {
-    const result = await client.api("conversations.members", channelMembersResponse, {
+    const result = await client.api("users.conversations", botChannelsResponse, {
       token: input.botAccessToken,
       query,
     });
-    member = result.members.includes(bot);
+    member = result.channels.some((item) => item.id === id);
     if (member) break;
     const cursor = result.response_metadata?.next_cursor;
-    if (!cursor || cursor === query.get("cursor")) break;
+    if (!cursor) throw new SlackProviderError("channel_unavailable");
+    if (seenCursors.has(cursor)) throw new SlackProviderError("membership_incomplete");
+    seenCursors.add(cursor);
     query.set("cursor", cursor);
   }
-  if (!member) throw new SlackProviderError("channel_unavailable");
+  if (!member) throw new SlackProviderError("membership_incomplete");
   await input.assertCurrent?.();
   return option;
 }

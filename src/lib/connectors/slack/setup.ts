@@ -94,8 +94,8 @@ function requireSlackConnectorConfig() {
   return config;
 }
 
-function stateDigest(state: string, sessionId: string) {
-  return createHash("sha256").update(`slack-state:${sessionId}:${state}`).digest("hex");
+function stateDigest(state: string, sessionId: string, appId: string) {
+  return createHash("sha256").update(`slack-state:${appId}:${sessionId}:${state}`).digest("hex");
 }
 
 function identityNonce(state: string) {
@@ -181,7 +181,7 @@ export async function startSlackConnectorAuthorization(
     p_purpose: flow.purpose,
     p_team_id: flow.teamId,
     p_expected_generation: flow.expectedGeneration,
-    p_state_digest: stateDigest(state, sessionId),
+    p_state_digest: stateDigest(state, sessionId, config.appId),
     ...(flow.installationId ? { p_installation_id: flow.installationId } : {}),
   });
   if (error) throw error;
@@ -193,8 +193,9 @@ export async function consumeSlackConnectorAuthorization(
   admin: Admin,
   input: { state: string; userId: string; sessionId: string },
 ) {
+  const config = requireSlackConnectorConfig();
   const { data, error } = await admin.rpc("consume_slack_connector_oauth", {
-    p_state_digest: stateDigest(input.state, input.sessionId),
+    p_state_digest: stateDigest(input.state, input.sessionId, config.appId),
     p_actor_user_id: input.userId,
   });
   if (error) throw error;

@@ -314,26 +314,82 @@ describe("Slack channel authority", () => {
     },
   );
 
-  it("verifies exact channel membership even if conversations.info omits the membership flag", async () => {
+  it("finds the exact channel in the verified bot's own inventory when channel info omits membership", async () => {
     const assertCurrent = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const fetcher = slackFetch(
       auth,
       { ok: true, channel: { ...conversation, is_member: undefined, name: "wallie-renamed" } },
-      { ok: true, members: ["UOTHER01"], response_metadata: { next_cursor: "next-members=" } },
-      { ok: true, members: [bot], response_metadata: { next_cursor: "" } },
+      {
+        ok: true,
+        channels: [{ id: "COTHER01" }],
+        response_metadata: { next_cursor: "next-channels=" },
+      },
+      { ok: true, channels: [{ id: channel }], response_metadata: { next_cursor: "" } },
     );
     await expect(
       verifySlackChannel({ ...botScope, channelId: channel, assertCurrent }, fetcher),
     ).resolves.toEqual({ id: channel, name: "wallie-renamed", isPrivate: false });
     expect(assertCurrent).toHaveBeenCalledTimes(5);
     expect(new URL(requestAt(fetcher, 1).url).searchParams.get("channel")).toBe(channel);
-    const members = new URL(requestAt(fetcher, 3).url);
-    expect(members.origin + members.pathname).toBe("https://slack.com/api/conversations.members");
-    expect(Object.fromEntries(members.searchParams)).toEqual({
-      channel,
+    const inventoryRequest = requestAt(fetcher, 3);
+    const inventory = new URL(inventoryRequest.url);
+    expect(inventory.origin + inventory.pathname).toBe("https://slack.com/api/users.conversations");
+    expect(inventoryRequest.headers.get("Authorization")).toBe(`Bearer ${botAccessToken}`);
+    expect(Object.fromEntries(inventory.searchParams)).toEqual({
+      types: "public_channel",
+      exclude_archived: "true",
       limit: "200",
-      cursor: "next-members=",
+      cursor: "next-channels=",
     });
+  });
+
+  it("limits a private channel check to the bot's private inventory", async () => {
+    const fetcher = slackFetch(
+      auth,
+      {
+        ok: true,
+        channel: { ...conversation, id: privateChannel, is_private: true, is_member: undefined },
+      },
+      { ok: true, channels: [{ id: privateChannel }] },
+    );
+    await expect(
+      verifySlackChannel({ ...botScope, channelId: privateChannel }, fetcher),
+    ).resolves.toMatchObject({ id: privateChannel, isPrivate: true });
+    expect(new URL(requestAt(fetcher, 2).url).searchParams.get("types")).toBe("private_channel");
+  });
+
+  it.each([undefined, null, ""])(
+    "returns 404 only after a completed bot inventory omits the channel (%j cursor)",
+    async (cursor) => {
+      const fetcher = slackFetch(
+        auth,
+        { ok: true, channel: { ...conversation, is_member: undefined } },
+        { ok: true, channels: [{ id: "COTHER01" }], response_metadata: { next_cursor: cursor } },
+      );
+      await expect(
+        verifySlackChannel({ ...botScope, channelId: channel }, fetcher),
+      ).rejects.toMatchObject({ reason: "channel_unavailable", status: 404 });
+      expect(fetcher).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it.each([
+    { label: "cursor cycle", cursors: ["one=", "two=", "one="] },
+    { label: "four-page budget", cursors: ["one=", "two=", "three=", "four="] },
+  ])("returns 503 when a $label prevents proving bot membership", async ({ cursors }) => {
+    const fetcher = slackFetch(
+      auth,
+      { ok: true, channel: { ...conversation, is_member: undefined } },
+      ...cursors.map((cursor) => ({
+        ok: true,
+        channels: [],
+        response_metadata: { next_cursor: cursor },
+      })),
+    );
+    await expect(
+      verifySlackChannel({ ...botScope, channelId: channel }, fetcher),
+    ).rejects.toMatchObject({ reason: "membership_incomplete", status: 503 });
+    expect(fetcher).toHaveBeenCalledTimes(cursors.length + 2);
   });
 
   it.each([
