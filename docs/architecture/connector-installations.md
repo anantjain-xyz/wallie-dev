@@ -161,3 +161,18 @@ record that fences later delivery. A follow-up from a linked actor can wait
 briefly for its exact root when Slack delivers events out of order.
 
 [Slack HTTP events](https://docs.slack.dev/apis/events-api/using-http-request-urls/)
+
+## Slack review and clarification actions
+
+Enable Interactivity and set its HTTPS Request URL to
+`/api/slack/interactions`. Each card points to an exact session, artifact,
+version, and review revision. Wallie checks the signed Slack actor against
+the active linked Wallie account and applies the same review and
+clarification commands used by the Workbench.
+
+A Slack button is valid only on its registered message in the linked thread.
+Clarification answers also require the same person and the registered Slack
+modal. A revoked actor or an older review cannot change the current decision.
+Open the exact Workbench link to see the current result.
+
+[Slack interactivity](https://docs.slack.dev/interactivity/handling-user-interaction/)

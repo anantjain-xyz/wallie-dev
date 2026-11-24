@@ -50,6 +50,7 @@ import { drainGitHubConnectorCommentRetries } from "@/features/github/connector-
 import { createGitHubConnectorOutboundAdapter } from "@/features/github/connector-outbound";
 import { drainConnectorOutboundDeliveries } from "@/lib/connectors/outbound";
 import { drainSlackConnectorEvents } from "@/lib/connectors/slack/intake";
+import { drainSlackReviewActions } from "@/lib/connectors/slack/review-actions";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
 import { parseWorkerConfig } from "./config";
@@ -212,6 +213,9 @@ async function main() {
         timerTasks.run("expired workflow review", () => expireExactFactoryWorkflowReview(admin));
         timerTasks.run("GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin));
         drainSlackInbox();
+        timerTasks.run("Slack review actions", async () => {
+          await drainSlackReviewActions(admin);
+        });
         timerTasks.run("GitHub connector outbound", async () => {
           await drainConnectorOutboundDeliveries(
             admin,

@@ -288,6 +288,9 @@ it.each([
         const data = slackClaims++ < slackCleanupClaims ? [{ kind: "cleanup" }] : [];
         return { abortSignal: () => Promise.resolve({ data, error: null }) };
       }
+      if (name === "claim_slack_review_action") {
+        return Promise.resolve({ data: [], error: null });
+      }
       if (name === "claim_connector_outbound_delivery") {
         return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
       }
