@@ -45,6 +45,7 @@ const replyReceipt = z.object({ comment: z.object({ id: z.uuid() }) });
 const question = "Should the revised plan retain the original provider source?";
 const answer = "Yes. Keep this work on the same Linear issue and Wallie session.";
 const feedback = "Revise the plan to preserve the original Linear source and its review history.";
+const negativeProbe = { maxRedirects: 0 };
 
 type Admin = SupabaseClient<Database>;
 type Provider = "github" | "linear";
@@ -56,6 +57,23 @@ function loopbackOrigin(value: string) {
   assert(["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
   assert.equal(url.href, `${url.origin}/`, "Use bare loopback qualification origins.");
   return url.origin;
+}
+
+export async function guardConnectorBrowserRequests(page: Page, app: string, auth: string) {
+  const origins = new Set([loopbackOrigin(app), loopbackOrigin(auth)]);
+  const cdp = await page.context().newCDPSession(page);
+  cdp.on("Fetch.requestPaused", ({ requestId, request }) => {
+    const url = URL.parse(request.url);
+    const action =
+      url && origins.has(url.origin) && !url.username && !url.password
+        ? cdp.send("Fetch.continueRequest", { requestId })
+        : cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
+    void action.catch(() =>
+      page.close({ reason: "Loopback browser interception failed." }).catch(() => {}),
+    );
+  });
+  // Playwright routing only visits the first URL in a redirect chain.
+  await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
 }
 
 async function readRow<T>(operation: PromiseLike<{ data: T; error: unknown }>) {
@@ -132,10 +150,7 @@ export async function openConnectorConversationBrowser({
       serviceWorkers: "block",
       viewport: { width: 1440, height: 960 },
     });
-    await page.context().route("**/*", (route) => {
-      const { origin } = new URL(route.request().url());
-      return origin === app || origin === supabase ? route.continue() : route.abort();
-    });
+    await guardConnectorBrowserRequests(page, app, supabase);
     await signInViaMagicLink(page, `/w/${workspace}/sessions`, {
       baseURL: app,
       email: actor.email,
@@ -312,10 +327,15 @@ export async function openConnectorConversationBrowser({
         assert.equal(threadLink.pathname, target.url.pathname);
         assert.equal(threadLink.searchParams.get("reviewThread"), thread.id);
         assert.equal(threadLink.searchParams.get("artifactId"), target.artifactId);
-        // The discussion advances review authority. A thread link can still
-        // open its exact artifact through the ordinary workbench.
-        threadLink.searchParams.delete("reviewStageId");
-        threadLink.searchParams.delete("reviewRevision");
+        assert.equal(threadLink.searchParams.get("artifactStage"), target.stageSlug);
+        assert.equal(
+          threadLink.searchParams.get("artifactVersion"),
+          String(target.artifactVersion),
+        );
+        assert.equal(
+          parseSessionReviewTarget(Object.fromEntries(threadLink.searchParams)).kind,
+          "ordinary",
+        );
         await reviewer.goto(threadLink.href);
         const discussion = reviewer.getByRole("region", { name: "Selected review thread" });
         await expect(discussion.getByText(question, { exact: true })).toBeVisible();
@@ -413,11 +433,12 @@ export async function openConnectorConversationBrowser({
         const phasePath = `/api/sessions/${target.sessionId}/phase-action`;
         const body = approvalBody(target);
         const [missingConversation, missingReview, foreignApproval] = await Promise.all([
-          outsider.request.get(`/api/sessions/${target.sessionId}/conversation`),
+          outsider.request.get(`/api/sessions/${target.sessionId}/conversation`, negativeProbe),
           outsider.request.get(
             `/api/sessions/${target.sessionId}/reviews?artifactId=${target.artifactId}`,
+            negativeProbe,
           ),
-          outsider.request.post(phasePath, { data: body }),
+          outsider.request.post(phasePath, { ...negativeProbe, data: body }),
         ]);
         assert.equal(
           missingConversation.status(),
@@ -442,7 +463,10 @@ export async function openConnectorConversationBrowser({
           await expect(
             owner.getByRole("button", { name: "Approve stage", exact: true }),
           ).toHaveCount(0);
-          const denied = await owner.request.post(phasePath, { data: approvalBody(stale) });
+          const denied = await owner.request.post(phasePath, {
+            ...negativeProbe,
+            data: approvalBody(stale),
+          });
           assert.equal(denied.status(), 409, "The superseded review target could be approved.");
           await capture(owner, "linear-stale-provider-link");
         }

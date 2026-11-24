@@ -6,6 +6,8 @@ import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { exactSessionReviewHref, parseSessionReviewTarget } from "@/lib/sessions/review-link";
+
 import { createArtifactSourceAnchor } from "./source-anchor";
 import { publishArtifactFeedbackSubmission } from "./submission-events";
 import type { ArtifactReviewComment, ArtifactReviewThread, ReviewThreadListPayload } from "./types";
@@ -558,6 +560,44 @@ describe("artifact threaded review", () => {
     await user.click(screen.getAllByRole("button", { name: /Discussion · open/ })[0]!);
     expect(screen.getByLabelText("Reply to thread")).toHaveValue("Draft for the original thread");
   });
+
+  it.each([null, "57200000-0000-4000-8000-000000000003"])(
+    "links to the exact artifact discussion from a stale decision page (%s)",
+    async (clarificationId) => {
+      const user = userEvent.setup();
+      const target = {
+        stageId: "57200000-0000-4000-8000-000000000001",
+        stageSlug: "plan",
+        artifactId: "57200000-0000-4000-8000-000000000002",
+        artifactVersion: 1,
+        reviewRevision: snapshot.reviewRevision - 1,
+        clarificationId,
+      };
+      const exactHref = exactSessionReviewHref("acme", 1, target);
+      window.history.replaceState({}, "", `${exactHref}&artifactView=source`);
+      snapshot.threads = [
+        makeThread("thread-1", { artifact_id: target.artifactId, stage_id: target.stageId }),
+      ];
+      render(panel({ artifactId: target.artifactId, historical: true }));
+      await selectThread(user);
+
+      const threadLink = screen.getByRole("link", { name: "Thread link" });
+      const threadQuery = Object.fromEntries(
+        new URL(threadLink.getAttribute("href")!, window.location.href).searchParams,
+      );
+      expect(threadQuery).toEqual({
+        artifactId: target.artifactId,
+        artifactStage: target.stageSlug,
+        artifactVersion: String(target.artifactVersion),
+        artifactView: "source",
+        reviewThread: "thread-1",
+      });
+      expect(parseSessionReviewTarget(threadQuery)).toEqual({ kind: "ordinary" });
+      expect(
+        parseSessionReviewTarget(Object.fromEntries(new URLSearchParams(window.location.search))),
+      ).toEqual({ kind: "exact", target });
+    },
+  );
 
   it("makes archived historical artifacts readable without any write controls", async () => {
     const user = userEvent.setup();

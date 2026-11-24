@@ -5,6 +5,7 @@ import { TimeDisplay } from "@/components/shared/time-display";
 import { timestampMs } from "@/components/shared/time-format";
 import { SelectField } from "@/components/ui/select";
 import type { SessionArtifactMetadata } from "@/features/sessions/types";
+import { reviewArtifactLink } from "./artifact-review-link";
 import { compareRevisionSources, summarizeRevisionChanges } from "./revision";
 import type { FeedbackBatchDetail, FeedbackHistoryPage, ReviewRun } from "./feedback-history";
 import type { ReviewCursor, ReviewThreadListPayload } from "./types";
@@ -19,21 +20,6 @@ async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
   const result = await response.json();
   if (!response.ok) throw new Error(result?.error ?? "Could not load revision review.");
   return result as T;
-}
-
-export function reviewArtifactLink(
-  artifactId: string,
-  version: number,
-  stage: string,
-  threadId?: string,
-) {
-  const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
-  params.set("artifactId", artifactId);
-  params.set("artifactVersion", String(version));
-  params.set("artifactStage", stage);
-  if (threadId) params.set("reviewThread", threadId);
-  else params.delete("reviewThread");
-  return `?${params}`;
 }
 
 function RunIdentity({ run, label }: { run: ReviewRun; label: string }) {

@@ -16,6 +16,7 @@ type ProviderScope = Pick<ConnectorConformanceSeed, "github" | "linear">;
 type DiscoveryPage = "foreign-actor" | "original" | "reordered";
 type Provider = "github" | "linear";
 type Comment = { id: string; body: string };
+type GitHubComment = Comment & { updatedAt: string };
 
 export function githubIssueId(scope: ProviderScope) {
   return scope.github.repositoryId * 100 + githubIssueNumber;
@@ -77,7 +78,10 @@ function readJson(response: ServerResponse, body: unknown, status = 200) {
 }
 
 const githubAppSlug = "wallie-m13-fixture";
-const githubToken = "wallie-m13-installation-reader";
+const githubTokens = {
+  read: "wallie-m13-installation-reader",
+  write: "wallie-m13-installation-writer",
+};
 const bot = { id: 68100002, login: `${githubAppSlug}[bot]`, type: "Bot" };
 const githubOrigin = "https://api.github.com";
 const linearOrigin = "https://api.linear.app";
@@ -100,7 +104,7 @@ export async function openConnectorConformanceTransport(input: {
   );
   const repoPath = `/repos/${github.repositoryName}`;
   const issuePath = `${repoPath}/issues/${githubIssueNumber}`;
-  const githubComments: Comment[] = [];
+  const githubComments: GitHubComment[] = [];
   const linearComments: Comment[] = [];
   const writes: Array<{ provider: Provider; intentId: string }> = [];
   const observed: Record<Provider, number> = { github: 0, linear: 0 };
@@ -124,10 +128,11 @@ export async function openConnectorConformanceTransport(input: {
     return loseNextReply.delete(provider);
   }
 
-  function githubComment(row: Comment) {
+  function githubComment(row: GitHubComment) {
     return {
       id: Number(row.id),
       body: row.body,
+      updated_at: row.updatedAt,
       issue_url: githubOrigin + issuePath,
       user: bot,
       performed_via_github_app: { id: appId },
@@ -159,9 +164,14 @@ export async function openConnectorConformanceTransport(input: {
           permissions: z.object({ issues: z.enum(["read", "write"]) }).strict(),
         })
         .parse(await jsonBody(request));
-      return readJson(response, { token: githubToken, permissions: body.permissions }, 201);
+      return readJson(
+        response,
+        { token: githubTokens[body.permissions.issues], permissions: body.permissions },
+        201,
+      );
     }
-    assert.equal(authorization, `Bearer ${githubToken}`);
+    const canWrite = authorization === `Bearer ${githubTokens.write}`;
+    assert(canWrite || authorization === `Bearer ${githubTokens.read}`);
     if (method === "GET" && path === repoPath) {
       return readJson(response, {
         id: github.repositoryId,
@@ -177,23 +187,30 @@ export async function openConnectorConformanceTransport(input: {
     }
     assert.equal(path, issuePath + "/comments", "GitHub replies must target the admitted issue.");
     if (method === "GET") {
-      assert(
-        route.searchParams.has("since"),
-        "GitHub recovery must use the bounded comment window.",
+      const since = Date.parse(
+        z.iso.datetime({ offset: true }).parse(route.searchParams.get("since")),
       );
       observed.github++;
-      return readJson(response, githubComments.map(githubComment));
+      return readJson(
+        response,
+        githubComments.filter(({ updatedAt }) => Date.parse(updatedAt) > since).map(githubComment),
+      );
     }
     assert.equal(method, "POST");
+    if (!canWrite) {
+      return readJson(response, { message: "Issue write permission is required." }, 403);
+    }
     const { body } = z.object({ body: z.string() }).parse(await jsonBody(request));
     const intentId = marker.exec(body)?.[1];
     assert(intentId, "The GitHub reply must carry the durable correlation marker.");
     const lost = recordWrite("github", intentId);
-    const comment = { id: String(github.repositoryId * 100 + 80 + githubComments.length), body };
+    const comment = {
+      id: String(github.repositoryId * 100 + 80 + githubComments.length),
+      body,
+      updatedAt: new Date().toISOString().replace(/\.\d{3}Z$/u, "Z"),
+    };
     githubComments.push(comment);
-    return lost
-      ? readJson(response, { message: "Fixture lost the write response." }, 503)
-      : readJson(response, githubComment(comment), 201);
+    return lost ? response.destroy() : readJson(response, githubComment(comment), 201);
   }
 
   function linearIssue() {
@@ -278,7 +295,7 @@ export async function openConnectorConformanceTransport(input: {
         const lost = recordWrite("linear", id);
         linearComments.push({ id, body });
         return lost
-          ? readJson(response, { errors: [{ message: "Fixture lost the write response." }] }, 503)
+          ? response.destroy()
           : readJson(response, {
               data: {
                 commentCreate: { success: true, comment: { id, body, issue: node(issueId) } },
@@ -358,24 +375,20 @@ export async function openConnectorConformanceTransport(input: {
   const fixtureFetch: typeof fetch = async (request, init) => {
     const url = new URL(request instanceof Request ? request.url : request);
     if (localOrigins.has(url.origin)) return originalFetch(request, { ...init, redirect: "error" });
-    try {
-      const provider = url.origin === githubOrigin ? "github" : "linear";
-      assert(
-        url.origin === githubOrigin || (url.origin === linearOrigin && url.pathname === "/graphql"),
-        "Connector fixture blocked an unexpected outbound destination.",
-      );
-      const forwarded = new Request(request, init);
-      return await originalFetch(`${origin}/${provider}${url.pathname}${url.search}`, {
-        method: forwarded.method,
-        headers: forwarded.headers,
-        signal: forwarded.signal,
-        redirect: "error",
-        body: forwarded.body === null ? undefined : await forwarded.arrayBuffer(),
-      });
-    } catch (error) {
-      failure = error instanceof Error ? error : new Error("Connector fixture egress failed.");
-      throw error;
+    const githubRequest = url.origin === githubOrigin;
+    if (!githubRequest && (url.origin !== linearOrigin || url.pathname !== "/graphql")) {
+      failure = new Error("Connector fixture blocked an unexpected outbound destination.");
+      throw failure;
     }
+    const provider = githubRequest ? "github" : "linear";
+    const forwarded = new Request(request, init);
+    return originalFetch(`${origin}/${provider}${url.pathname}${url.search}`, {
+      method: forwarded.method,
+      headers: forwarded.headers,
+      signal: forwarded.signal,
+      redirect: "error",
+      body: forwarded.body === null ? undefined : await forwarded.arrayBuffer(),
+    });
   };
 
   return {

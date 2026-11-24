@@ -19,6 +19,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { cn } from "@/lib/utils";
 
+import { reviewArtifactLink } from "./artifact-review-link";
 import type { ArtifactSourceAnchor } from "./source-anchor";
 import {
   reviewReadOnlyMessage,
@@ -951,7 +952,12 @@ export function ArtifactReviewPanel({
             ) : null}
             <a
               className={inline ? inlineLinkClass : cn(buttonClass, "inline-flex items-center")}
-              href={`?${new URLSearchParams({ ...(typeof window === "undefined" ? {} : Object.fromEntries(new URLSearchParams(window.location.search))), artifactId, artifactStage: selectedThread.stage_slug, artifactVersion: String(artifactVersion), reviewThread: selectedThread.id })}`}
+              href={reviewArtifactLink(
+                artifactId,
+                artifactVersion,
+                selectedThread.stage_slug,
+                selectedThread.id,
+              )}
             >
               Thread link
             </a>

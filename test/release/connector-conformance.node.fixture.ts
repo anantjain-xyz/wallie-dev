@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 
+import { chromium } from "playwright-core";
 import { it, vi } from "vitest";
 import { z } from "zod/v4";
 
@@ -31,7 +34,10 @@ import {
   openConnectorConformanceTransport,
   sendSignedGitHubFixture,
 } from "./connector-conformance-transport";
-import { openConnectorConversationBrowser } from "./factory-connector-conversation-browser";
+import {
+  guardConnectorBrowserRequests,
+  openConnectorConversationBrowser,
+} from "./factory-connector-conversation-browser";
 
 const environment = z.object({
   NEXT_PUBLIC_APP_URL: z.url(),
@@ -96,6 +102,54 @@ function reviewHref(
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
+
+async function bindLoopback(server: Server) {
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const address = server.address();
+  assert(address && typeof address !== "string");
+  return `http://127.0.0.1:${address.port}`;
+}
+
+it("blocks the next browser redirect hop before it contacts another loopback origin", async () => {
+  let unallowedRequests = 0;
+  let allowedRedirects = 0;
+  const unallowed = createServer((_request, response) => {
+    unallowedRequests += 1;
+    response.end("Unallowed origin");
+  });
+  let app: Server | undefined;
+  try {
+    const outside = await bindLoopback(unallowed);
+    app = createServer((request, response) => {
+      if (request.url === "/start") response.writeHead(302, { Location: "/decision" }).end();
+      else if (request.url === "/decision") {
+        allowedRedirects += 1;
+        response.writeHead(307, { Location: outside }).end();
+      } else if (request.url === "/allowed") response.writeHead(302, { Location: "/ready" }).end();
+      else response.end("Ready");
+    });
+    const allowed = await bindLoopback(app);
+    const browser = await chromium.launch({
+      executablePath: process.env.WALLIE_M13_BROWSER_EXECUTABLE_PATH,
+    });
+    try {
+      const page = await browser.newPage({ baseURL: allowed, serviceWorkers: "block" });
+      await guardConnectorBrowserRequests(page, allowed, allowed);
+      const ready = await page.goto("/allowed");
+      assert.equal(ready?.url(), `${allowed}/ready`);
+      await assert.rejects(page.goto("/start"), /net::ERR_BLOCKED_BY_CLIENT/u);
+      assert.equal(allowedRedirects, 1);
+      const stoppedApiProbe = await page.request.post("/decision", { maxRedirects: 0 });
+      assert.equal(stoppedApiProbe.status(), 307);
+      assert.equal(unallowedRequests, 0);
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    app?.close();
+    unallowed.close();
+  }
+});
 
 it("qualifies signed GitHub and scoped Linear conversation continuity through Wallie", async () => {
   const env = environment.parse(process.env);
@@ -290,6 +344,11 @@ it("qualifies signed GitHub and scoped Linear conversation continuity through Wa
       assert.equal(uncertain.attempts, 1);
       assert.equal(uncertain.observationAttempts, 0);
       assert.equal(uncertain.uncertain, true);
+      assert.equal(uncertain.attemptReceipts.length, 1);
+      const [originalSend] = uncertain.attemptReceipts;
+      assert(originalSend?.authorizedAt && originalSend.settledAt);
+      assert.equal(originalSend.mode, "sending");
+      assert.equal(originalSend.result, "uncertain");
       assert.equal(transport.writes.filter(({ intentId }) => intentId === uncertain.id).length, 1);
 
       const scopedResource = {
@@ -360,16 +419,14 @@ it("qualifies signed GitHub and scoped Linear conversation continuity through Wa
       assert.equal(recovered.observationAttempts, 1);
       assert.equal(recovered.uncertain, false);
       assert.equal(recovered.deadlineAt, uncertain.deadlineAt);
-      assert.deepEqual(
-        recovered.attemptReceipts.map(({ mode, result }) => ({ mode, result })),
-        [
-          { mode: "sending", result: "uncertain" },
-          { mode: "observing", result: "found" },
-        ],
-      );
-      assert(
-        recovered.attemptReceipts.every(({ authorizedAt, settledAt }) => authorizedAt && settledAt),
-      );
+      assert.equal(recovered.attemptReceipts.length, 2);
+      const [retainedSend, observation] = recovered.attemptReceipts;
+      assert.deepEqual(retainedSend, originalSend);
+      assert(observation?.authorizedAt && observation.settledAt);
+      assert.notEqual(observation.id, originalSend.id);
+      assert.equal(observation.mode, "observing");
+      assert.equal(observation.result, "found");
+      assert(Date.parse(observation.authorizedAt) >= Date.parse(originalSend.settledAt));
       assert.equal(
         recovered.providerReplyId,
         (provider === "github" ? transport.githubComments : transport.linearComments)[0]?.id,
