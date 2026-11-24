@@ -6,7 +6,10 @@ import { z } from "zod/v4";
 
 import { factoryDeliveryCommandSchema } from "@/lib/factory-delivery-commands/contracts";
 
-import type { AutomationInputScope } from "./factory-automation-input";
+import type {
+  AutomationFixtureGitHubBranch,
+  AutomationInputScope,
+} from "./factory-automation-input";
 
 export function fixtureSql(
   databaseUrl: string,
@@ -78,7 +81,7 @@ const outcome = z.strictObject({
   ),
   github: z.array(
     z.object({
-      id,
+      deliveryId: id,
       number: z.number(),
       sourceKey: z.string(),
       disposition: z.string(),
@@ -95,6 +98,12 @@ const outcome = z.strictObject({
   ),
 });
 export type IntakeWitness = z.infer<typeof outcome>;
+export type GitHubIntakeDeliveries = Partial<
+  Record<
+    AutomationFixtureGitHubBranch,
+    readonly [original: string, exactReplay: string, semanticReplay: string]
+  >
+>;
 
 const readIntakeSql = `
 with occurrence_rows as (
@@ -115,8 +124,8 @@ with occurrence_rows as (
     and r.operation = 'create'
   where (o.workspace_id, o.factory_id) = (:'workspace'::uuid, :'factory'::uuid)
 ), github_rows as (
-  select jsonb_build_object('id', g.id, 'number', g.pull_request_number, 'sourceKey', g.source_key,
-    'disposition', g.disposition, 'occurrences', g.occurrence_count) as witness, g.recorded_at
+  select jsonb_build_object('deliveryId', g.delivery_id, 'number', g.pull_request_number,
+    'sourceKey', g.source_key, 'disposition', g.disposition, 'occurrences', g.occurrence_count) as witness, g.delivery_id
   from internal.github_automation_pr_deliveries g
   where (g.workspace_id, g.factory_id) = (:'workspace'::uuid, :'factory'::uuid)
 ), linear_rows as (
@@ -129,7 +138,7 @@ with occurrence_rows as (
 )
 select jsonb_build_object(
   'occurrences', (select coalesce(jsonb_agg(witness order by automation_id), '[]') from occurrence_rows),
-  'github', (select coalesce(jsonb_agg(witness order by recorded_at), '[]') from github_rows),
+  'github', (select coalesce(jsonb_agg(witness order by delivery_id), '[]') from github_rows),
   'linear', (select coalesce(jsonb_agg(witness order by started_at), '[]') from linear_rows)
 );`;
 
@@ -148,6 +157,7 @@ export function assertIntake(
   state: IntakeWitness,
   scope: AutomationInputScope,
   mode: "baseline" | "admitted" | "revoked",
+  sentGitHubDeliveries: GitHubIntakeDeliveries,
 ) {
   const received = new Map(state.occurrences.map((row) => [row.automationId, row]));
   const expectedCount = mode === "baseline" ? 3 : mode === "admitted" ? 4 : 5;
@@ -175,22 +185,44 @@ export function assertIntake(
       assert.equal(row.event.stateId, scope.linear.targetStateId);
       assert.equal(row.event.teamId, scope.linear.teamId);
     } else {
-      const [number, branch] =
+      const [number, branch]: readonly [number, AutomationFixtureGitHubBranch] =
         name === "github"
           ? [41, "main"]
           : name === "paused"
             ? [42, "qualification-paused"]
             : [43, "qualification-revoked"];
-      const deliveries = state.github.filter((receipt) => receipt.number === number);
-      assert.deepEqual(
-        deliveries.map(({ disposition, occurrences }) => [disposition, occurrences]),
-        [
-          ["accepted", 1],
-          ["duplicate", 0],
-        ],
+      const [original, exactReplay, semanticReplay] = z
+        .tuple([id, id, id])
+        .parse(sentGitHubDeliveries[branch]);
+      assert.equal(
+        exactReplay,
+        original,
+        `The exact replay for ${branch} must reuse its delivery ID.`,
       );
+      assert.notEqual(
+        semanticReplay,
+        original,
+        `The semantic replay for ${branch} must have a new delivery ID.`,
+      );
+      const deliveries = state.github.filter((receipt) => receipt.number === number);
+      assert.equal(deliveries.length, 2, `Unexpected GitHub delivery count for ${branch}.`);
+      const receiptFor = (deliveryId: string) =>
+        deliveries.find((receipt) => receipt.deliveryId === deliveryId);
+      assert.deepEqual(receiptFor(original), {
+        deliveryId: original,
+        number,
+        sourceKey: row.sourceKey,
+        disposition: "accepted",
+        occurrences: 1,
+      });
+      assert.deepEqual(receiptFor(semanticReplay), {
+        deliveryId: semanticReplay,
+        number,
+        sourceKey: row.sourceKey,
+        disposition: "duplicate",
+        occurrences: 0,
+      });
       assert.equal(row.namespace, "github.pr");
-      assert(deliveries.every(({ sourceKey }) => sourceKey === row.sourceKey));
       assert.deepEqual(row.event, {
         kind: "pull-request",
         repositoryId: scope.repository.id,

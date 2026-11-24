@@ -24,15 +24,17 @@ The replay builds the production app, sends signed GitHub events to its loopback
 
 Use a second disposable local project. Reset it with `--no-seed` and run `pnpm build` with its loopback `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. The qualification script starts the compiled app with local credentials. Pass `--app-dir` if that build is in a separate checkout.
 
-Create a new `wallie-m12-fixture-*` tag at a verified commit containing `.github/workflows/wallie-delivery-fixture.yml` in `anantjain-xyz/wallie-dev`. Use the existing effectless workflow and preserve the tag and run as evidence.
+The live command normally requires a GitHub immutable release. For the existing smoke repository, create a new `wallie-m12-fixture-*` tag in `anantjain-xyz/wallie-dev` at the reviewed fixture commit `097db97c1ddf078c682695be43875b979cbc8a39`. Set `fixture_tag` to that tag, keep the ref fixed while qualification runs, and preserve the tag and run as evidence. [GitHub immutable releases](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/using-immutable-releases-and-tags-to-manage-your-actions-releases)
 
 ```bash
 node --import ./scripts/register-server-only.mjs --import tsx \
   test/release/factory-automation-live.ts \
-  --workdir /path/to/delivery-fixture --tag wallie-m12-fixture-<unique-tag>
+  --workdir /path/to/delivery-fixture --tag "$fixture_tag" --effectless-smoke-tag
 ```
 
-The provider run must match the command, commit, and workflow before the separate authenticated M06 observation can establish success. The matching signed monitoring event and its replays must produce one incident with the original approval and deployment identities. The isolated GitHub transport supplies fixture credentials and immutable-release metadata. The monitor sends Sentry-compatible signed requests from the fixture.
+The effectless smoke option supplies fixture credentials and simulated immutable-release metadata for the reviewed commit and workflow. It rereads the exact ref immediately before dispatch. The provider run must match the command, commit, and workflow before the separate authenticated M06 observation can establish success. The signed Sentry-compatible event and its replays must produce one incident with the original approval and deployment identities.
+
+If the process is forcibly stopped, reset the disposable database before replaying with a fresh smoke tag.
 
 ## Safely disable a rule
 

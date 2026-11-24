@@ -153,7 +153,7 @@ const linearRequest = z.object({
 
 type LinearState = {
   matched: boolean;
-  observations: { baseline: number; matching: number };
+  replayUpdatedAt?: string;
   scope: AutomationInputScope;
 };
 
@@ -183,7 +183,6 @@ async function respondToLinear(
     response.writeHead(404).end('{"errors":[{"message":"Unknown fixture issue."}]}');
     return;
   }
-  state.observations[matched ? "matching" : "baseline"]++;
   const targetStartedAt = new Date(scope.scheduledFor).toISOString();
   const baselineStartedAt = new Date(Date.parse(scope.scheduledFor) - 60_000).toISOString();
   const baseline = {
@@ -203,7 +202,7 @@ async function respondToLinear(
       data: {
         issue0: {
           id: issueId,
-          updatedAt: matched ? targetStartedAt : baselineStartedAt,
+          updatedAt: matched ? (state.replayUpdatedAt ?? targetStartedAt) : baselineStartedAt,
           state: matched
             ? { id: targetStateId, name: "Qualification ready" }
             : { id: baselineStateId, name: "Backlog" },
@@ -220,11 +219,8 @@ async function respondToLinear(
 }
 
 export async function startLinearFixture(scopes: readonly AutomationInputScope[]) {
-  const states = new Map(
-    scopes.map((scope) => [
-      scope.linear.apiKey,
-      { scope, matched: false, observations: { baseline: 0, matching: 0 } },
-    ]),
+  const states = new Map<string, LinearState>(
+    scopes.map((scope) => [scope.linear.apiKey, { scope, matched: false }]),
   );
   const stateForWorkspace = (workspaceId: string) => {
     const state = [...states.values()].find(({ scope }) => scope.workspaceId === workspaceId);
@@ -250,8 +246,12 @@ export async function startLinearFixture(scopes: readonly AutomationInputScope[]
     advance(workspaceId: string) {
       stateForWorkspace(workspaceId).matched = true;
     },
-    observations(workspaceId: string) {
-      return { ...stateForWorkspace(workspaceId).observations };
+    replayMatching(workspaceId: string) {
+      const state = stateForWorkspace(workspaceId);
+      if (!state.matched) throw new Error("A matching span must exist before replay.");
+      const newerInstant = Date.parse(state.scope.scheduledFor) + 1_000;
+      state.replayUpdatedAt = new Date(newerInstant).toISOString();
+      return newerInstant;
     },
     close() {
       return new Promise<void>((resolve, reject) => {

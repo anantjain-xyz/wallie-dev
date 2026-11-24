@@ -26,6 +26,7 @@ import {
   readIntake,
   seedDelivery,
   type DeliveryScope,
+  type GitHubIntakeDeliveries,
   type IntakeWitness,
 } from "./factory-automation-runtime-oracle";
 import { localOutcomeClient, rpcValue } from "./factory-outcome-runtime-oracle";
@@ -82,14 +83,18 @@ const revoked: NativeCounts = { ...admitted, revoked: { "denied:invalid_assignme
 
 async function replayGitHub(scope: AutomationInputScope, branch: AutomationFixtureGitHubBranch) {
   const deliveryId = randomUUID();
-  for (const identity of [deliveryId, deliveryId, randomUUID()]) {
+  const deliveries = [deliveryId, deliveryId, randomUUID()] as const;
+  for (const identity of deliveries) {
     await sendGitHubFixture(appUrl, webhookSecret, scope, branch, identity);
   }
+  return deliveries;
 }
 
-async function queueIntake(scope: AutomationInputScope) {
-  await replayGitHub(scope, "main");
-  await replayGitHub(scope, "qualification-paused");
+async function queueIntake(scope: AutomationInputScope): Promise<GitHubIntakeDeliveries> {
+  return {
+    main: await replayGitHub(scope, "main"),
+    "qualification-paused": await replayGitHub(scope, "qualification-paused"),
+  };
 }
 
 async function revokeAndReplay(scope: AutomationInputScope) {
@@ -104,7 +109,27 @@ async function revokeAndReplay(scope: AutomationInputScope) {
     }),
   );
   assert(grant.revoked_at);
-  await replayGitHub(scope, "qualification-revoked");
+  return replayGitHub(scope, "qualification-revoked");
+}
+
+function matchingLinearWatermark(scope: AutomationInputScope) {
+  return Date.parse(
+    fixtureSql(
+      databaseUrl,
+      `
+    select source_updated_at
+    from internal.issue_automation_span_watermarks
+    where (workspace_id, factory_id, source_namespace, source_issue_id, source_span_id) =
+      (:'workspace', :'factory', 'linear.issue-state', :'issue', :'span');
+  `,
+      {
+        workspace: scope.workspaceId,
+        factory: scope.factoryId,
+        issue: scope.linear.issueId,
+        span: `${scope.linear.issueId}:matching`,
+      },
+    ),
+  );
 }
 
 function deliveryArgs(scope: DeliveryScope, commandId = scope.commandId) {
@@ -286,7 +311,7 @@ async function withNodeDaemon<T>(broker: Broker, run: (isRunning: () => boolean)
 }
 
 async function qualifyNode(scope: AutomationInputScope, delivery: DeliveryScope, broker: Broker) {
-  await queueIntake(scope);
+  const github = await queueIntake(scope);
   const firstPhase = await withNodeDaemon(broker, async (running) => {
     await waitForNode(running, () => {
       const state = readIntake(databaseUrl, scope);
@@ -297,7 +322,7 @@ async function qualifyNode(scope: AutomationInputScope, delivery: DeliveryScope,
         state.occurrences.filter(({ status }) => status === "admitted").length >= 2
       );
     });
-    assertIntake(readIntake(databaseUrl, scope), scope, "baseline");
+    assertIntake(readIntake(databaseUrl, scope), scope, "baseline", github);
     broker.advance(scope.workspaceId);
     await waitForNode(running, () =>
       readIntake(databaseUrl, scope).occurrences.some(
@@ -305,12 +330,12 @@ async function qualifyNode(scope: AutomationInputScope, delivery: DeliveryScope,
       ),
     );
     const intake = readIntake(databaseUrl, scope);
-    assertIntake(intake, scope, "admitted");
+    assertIntake(intake, scope, "admitted", github);
     return { intake, held: await armDelivery(delivery) };
   });
 
-  await revokeAndReplay(scope);
-  const previousPolls = broker.observations(scope.workspaceId).matching;
+  github["qualification-revoked"] = await revokeAndReplay(scope);
+  const replayedThrough = broker.replayMatching(scope.workspaceId);
   await withNodeDaemon(broker, (running) =>
     waitForNode(running, async () => {
       const command = await readCommand(delivery);
@@ -318,12 +343,12 @@ async function qualifyNode(scope: AutomationInputScope, delivery: DeliveryScope,
       return (
         command.dispatchState === "unknown" &&
         state.occurrences.some((row) => row.status === "denied") &&
-        broker.observations(scope.workspaceId).matching > previousPolls
+        matchingLinearWatermark(scope) === replayedThrough
       );
     }),
   );
   const afterRestart = readIntake(databaseUrl, scope);
-  assertIntake(afterRestart, scope, "revoked");
+  assertIntake(afterRestart, scope, "revoked", github);
   assertStableAdmissions(firstPhase.intake, afterRestart);
   await checkRecovery(delivery, firstPhase.held);
   console.log("[m12] Node daemon restart preserved exact occurrence and delivery ownership.");
@@ -408,18 +433,19 @@ async function runNative(
 
 async function qualifyNative(scope: AutomationInputScope, delivery: DeliveryScope, broker: Broker) {
   const manager = await ownerToken(scope);
-  await queueIntake(scope);
+  const github = await queueIntake(scope);
   await runNative(scope, broker, manager, received, baseline);
-  assertIntake(readIntake(databaseUrl, scope), scope, "baseline");
+  assertIntake(readIntake(databaseUrl, scope), scope, "baseline", github);
   broker.advance(scope.workspaceId);
 
   const held = await armDelivery(delivery);
   await runNative(scope, broker, manager, baseline, admitted);
   const intake = readIntake(databaseUrl, scope);
-  assertIntake(intake, scope, "admitted");
+  assertIntake(intake, scope, "admitted", github);
   assert.equal((await readCommand(delivery)).dispatchState, "dispatching");
 
-  await revokeAndReplay(scope);
+  github["qualification-revoked"] = await revokeAndReplay(scope);
+  const replayedThrough = broker.replayMatching(scope.workspaceId);
   await delay(Math.max(0, Date.parse(held.leaseExpiresAt) - Date.now() + 1_000), undefined, {
     signal: shutdown.signal,
   });
@@ -432,7 +458,8 @@ async function qualifyNative(scope: AutomationInputScope, delivery: DeliveryScop
     delivery,
   );
   const afterRestart = readIntake(databaseUrl, scope);
-  assertIntake(afterRestart, scope, "revoked");
+  assert.equal(matchingLinearWatermark(scope), replayedThrough);
+  assertIntake(afterRestart, scope, "revoked", github);
   assertStableAdmissions(intake, afterRestart);
   await checkRecovery(delivery, held);
   console.log("[m12] Fresh Workerd maintenance preserved exact occurrence and delivery ownership.");
