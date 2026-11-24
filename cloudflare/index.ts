@@ -21,6 +21,7 @@ import {
 } from "@/worker/cloudflare/dispatch";
 import { sweepStalledRuns } from "@/worker/stall-detector";
 import { reapOrphanSandboxes } from "@/worker/sandbox-reaper";
+import { reconcileLinearIssueDiscovery } from "@/lib/connectors/linear-discovery";
 import { reconcileLinearState } from "@/worker/reconciler";
 import { drainSourceDeliveries } from "@/lib/pipeline/source-delivery";
 import { drainCanonicalPullRequests } from "@/lib/pipeline/canonical-pr-publisher";
@@ -381,6 +382,7 @@ export class MaintenanceWorkflow extends WorkflowEntrypoint<Env, { tick: number 
         },
       ],
       ["factory monitoring incidents", () => drainFactoryMonitoringIncidents(admin)],
+      ["Linear issue discovery", () => reconcileLinearIssueDiscovery(admin)],
     ] as const;
     for (const [name, task] of tasks) {
       try {

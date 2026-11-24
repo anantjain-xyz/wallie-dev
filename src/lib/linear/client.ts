@@ -1,6 +1,6 @@
 import "server-only";
 
-const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
+export const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
 
 export type LinearIssue = {
   description: string;
