@@ -22,9 +22,15 @@ The worker fetches at most one 20-issue page per due resource during a sweep,
 using Linear's issue filters and Relay cursor. Each page and its cursor advance
 commit together under the current installation, mapping and configuration
 revisions. A workspace/tenant/issue UUID receipt deduplicates replays and moves
-between resources and retains the normalized issue-state event. Session origin links retain the human-readable issue
-identifier and URL. The conversation source uses the mapped resource UUID as its
-namespace and the canonical issue UUID as its thread ID.
+between resources and retains the normalized issue-state event. Linear's
+previous issue identifiers also protect legacy links after a team move. Session
+origin links retain the human-readable issue identifier and URL. The
+conversation source uses the mapped resource UUID as its namespace and the
+canonical issue UUID as its thread ID.
+
+A provider rate limit defers polling for every mapping that uses the same
+workspace credential and material revision. The next worker sweep respects the
+recorded deadline. Newly verified credential material can poll immediately.
 
 Discovery uses its own cursor. The linked-session reconciler still records the
 first coherent state span as a baseline and applies later transitions through

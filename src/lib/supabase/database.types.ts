@@ -11549,7 +11549,7 @@ export type Database = {
         Returns: Json
       }
       claim_linear_issue_discovery: {
-        Args: { p_skip_workspace_ids?: string[]; p_workspace_id?: string }
+        Args: { p_workspace_id?: string }
         Returns: Json
       }
       claim_next_agent_job:
@@ -12723,6 +12723,15 @@ export type Database = {
           p_expected_cursor_version: number
           p_factory_id: string
           p_revision_id: string
+          p_workspace_id: string
+        }
+        Returns: boolean
+      }
+      defer_linear_issue_discovery: {
+        Args: {
+          p_installation_generation: number
+          p_resource_id: string
+          p_retry_after_seconds?: number
           p_workspace_id: string
         }
         Returns: boolean

@@ -83,7 +83,12 @@ export async function PUT(request: Request, { params }: RouteContext) {
   );
   if (error || data === null) {
     return Response.json(
-      { error: "Could not save Linear discovery configuration." },
+      {
+        error:
+          error?.code === "PT422"
+            ? "Publish a service-backed factory definition before enabling Linear discovery."
+            : "Could not save Linear discovery configuration.",
+      },
       { status: error ? factoryErrorStatus(error.code) : 500, headers },
     );
   }

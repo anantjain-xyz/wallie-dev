@@ -15,6 +15,14 @@ create table internal.linear_issue_discovery_config (
 create index linear_issue_discovery_due_idx
   on internal.linear_issue_discovery_config(next_scan_at, resource_id) where enabled;
 
+create table internal.linear_issue_discovery_cooldowns (
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  credential_ref uuid not null references public.workspace_secrets(id) on delete cascade,
+  credential_material_revision bigint not null check (credential_material_revision > 0),
+  retry_at timestamptz not null,
+  primary key (workspace_id, credential_ref)
+);
+
 create table internal.linear_issue_discovery_receipts (
   workspace_id uuid not null,
   external_tenant_id uuid not null,
@@ -38,8 +46,10 @@ create index linear_issue_discovery_receipts_resource_idx
   on internal.linear_issue_discovery_receipts(workspace_id, factory_id, resource_id);
 
 alter table internal.linear_issue_discovery_config enable row level security;
+alter table internal.linear_issue_discovery_cooldowns enable row level security;
 alter table internal.linear_issue_discovery_receipts enable row level security;
-revoke all on internal.linear_issue_discovery_config, internal.linear_issue_discovery_receipts
+revoke all on internal.linear_issue_discovery_config, internal.linear_issue_discovery_cooldowns,
+  internal.linear_issue_discovery_receipts
   from public, anon, authenticated, service_role;
 
 -- Only an admitted discovery transaction may create on behalf of a linked
@@ -133,12 +143,18 @@ begin
     or cardinality(p_state_ids) <> (select count(distinct state_id) from unnest(p_state_ids) state_id) then
     raise exception 'Select one to twenty exact Linear states.' using errcode = '22023';
   end if;
-  select target.* into resource from public.factory_connector_resources target
-  where (target.workspace_id, target.factory_id, target.id, target.provider) =
-    (p_workspace_id, p_factory_id, p_resource_id, 'linear'::public.connector_provider);
+  select target.* into installation from public.factory_connector_resources mapped
+  join internal.connector_installations target
+    on (target.workspace_id, target.id) = (mapped.workspace_id, mapped.installation_id)
+  where (mapped.workspace_id, mapped.factory_id, mapped.id, mapped.provider) =
+    (p_workspace_id, p_factory_id, p_resource_id, 'linear'::public.connector_provider)
+  for update of target;
   if not found then raise exception 'Linear resource is unavailable.' using errcode = 'P0002'; end if;
-  select * into strict installation from internal.connector_installations target
-  where (target.workspace_id, target.id) = (p_workspace_id, resource.installation_id) for update;
+  -- Publishing a mapping takes the same installation lock. Compare its
+  -- current revision in a new statement after acquiring that lock.
+  select mapped.* into strict resource from public.factory_connector_resources mapped
+  where (mapped.workspace_id, mapped.factory_id, mapped.id, mapped.provider) =
+    (p_workspace_id, p_factory_id, p_resource_id, 'linear'::public.connector_provider);
   if resource.current_revision is distinct from p_expected_mapping_revision then
     raise exception 'Linear resource mapping changed.' using errcode = 'PT409';
   end if;
@@ -212,14 +228,12 @@ revoke all on function public.read_linear_issue_discovery_config(uuid, uuid, uui
   from public, anon, authenticated, service_role;
 grant execute on function public.read_linear_issue_discovery_config(uuid, uuid, uuid) to authenticated;
 
-create function public.claim_linear_issue_discovery(
-  p_workspace_id uuid default null, p_skip_workspace_ids uuid[] default '{}'
-) returns jsonb language plpgsql security definer set search_path = '' as $$
-declare task record;
+create function public.claim_linear_issue_discovery(p_workspace_id uuid default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  task record;
+  scan_at timestamptz := clock_timestamp();
 begin
-  if cardinality(p_skip_workspace_ids) > 4 then
-    raise exception 'Linear discovery skip list is too large.' using errcode = '22023';
-  end if;
   select config.workspace_id, config.factory_id, config.resource_id, config.revision, config.state_ids, config.label_id, config.service_actor_id,
     resource.resource_kind, resource.external_resource_id, resource.external_tenant_id, subscription.*,
     secret.encrypted_value into task
@@ -231,10 +245,15 @@ begin
   join public.workspace_secrets secret on (secret.workspace_id, secret.id, secret.material_revision) =
     (config.workspace_id, subscription.credential_ref, subscription.credential_material_revision)
     and secret.key = 'LINEAR_API_KEY'
-  where config.enabled and config.next_scan_at <= clock_timestamp()
+  where config.enabled and config.next_scan_at <= scan_at
     and (p_workspace_id is null or config.workspace_id = p_workspace_id)
-    and not (config.workspace_id = any(coalesce(p_skip_workspace_ids, '{}')))
     and subscription.credential_kind = 'workspace_secret'
+    and not exists (
+      select 1 from internal.linear_issue_discovery_cooldowns cooldown
+      where (cooldown.workspace_id, cooldown.credential_ref, cooldown.credential_material_revision) =
+        (secret.workspace_id, secret.id, secret.material_revision)
+        and cooldown.retry_at > scan_at
+    )
   order by config.next_scan_at, config.resource_id
   limit 1 for update of config skip locked;
   if not found then return null; end if;
@@ -250,6 +269,43 @@ begin
     'mappingRevision', task.mapping_revision, 'cursorGeneration', task.cursor_generation,
     'cursorPosition', task.cursor_position, 'encryptedApiKey', task.encrypted_value
   );
+end;
+$$;
+
+create function public.defer_linear_issue_discovery(
+  p_workspace_id uuid, p_resource_id uuid, p_installation_generation bigint,
+  p_retry_after_seconds integer default 60
+) returns boolean language plpgsql security definer set search_path = '' as $$
+declare
+  installation internal.connector_installations;
+  credential record;
+begin
+  select target.* into installation from public.factory_connector_resources mapped
+  join internal.connector_installations target
+    on (target.workspace_id, target.id) = (mapped.workspace_id, mapped.installation_id)
+  where (mapped.workspace_id, mapped.id, mapped.provider) =
+    (p_workspace_id, p_resource_id, 'linear'::public.connector_provider)
+  for update of target;
+  if not found or installation.generation is distinct from p_installation_generation
+    or installation.disconnected_at is not null then return false; end if;
+
+  select secret.id, secret.material_revision into credential from public.workspace_secrets secret
+  where (secret.workspace_id, secret.id, secret.material_revision) =
+    (p_workspace_id, installation.legacy_credential_id, installation.linear_material_revision)
+    and secret.key = 'LINEAR_API_KEY'
+  for share;
+  if not found then return false; end if;
+
+  insert into internal.linear_issue_discovery_cooldowns as cooldown (
+    workspace_id, credential_ref, credential_material_revision, retry_at
+  ) values (
+    p_workspace_id, credential.id, credential.material_revision,
+    clock_timestamp() + make_interval(secs => least(3600, greatest(60, coalesce(p_retry_after_seconds, 60))))
+  ) on conflict (workspace_id, credential_ref) do update
+    set credential_material_revision = excluded.credential_material_revision,
+      retry_at = case when cooldown.credential_material_revision = excluded.credential_material_revision
+        then greatest(cooldown.retry_at, excluded.retry_at) else excluded.retry_at end;
+  return true;
 end;
 $$;
 
@@ -319,11 +375,15 @@ begin
   for issue in
     select * from jsonb_to_recordset(p_issues) observation(
       id uuid, identifier text, title text, description text, url text, team_id uuid, project_id uuid,
-      state_id uuid, label_ids uuid[], creator_id uuid
+      state_id uuid, label_ids uuid[], creator_id uuid, previous_identifiers text[]
     ) order by observation.id
   loop
     if issue.id is null or coalesce(configuration.service_actor_id, issue.creator_id) is null or issue.identifier is null
       or issue.identifier !~ '^[A-Z][A-Z0-9]*-[0-9]+$' or length(issue.identifier) > 80
+      or issue.previous_identifiers is null or exists (
+        select 1 from unnest(issue.previous_identifiers) prior(identifier)
+        where (prior.identifier ~ '^[A-Z][A-Z0-9]*-[0-9]+$' and length(prior.identifier) <= 80) is not true
+      )
       or length(coalesce(btrim(issue.title), '')) not between 1 and 200
       or length(coalesce(issue.description, '')) > 19500 or length(coalesce(issue.url, '')) > 2048
       or issue.url is null or issue.url !~ '^https://([A-Za-z0-9-]+[.])*linear[.]app/[^[:space:][:cntrl:]]+$'
@@ -352,7 +412,7 @@ begin
         (p_workspace_id, p_external_tenant_id, issue.id)
     ) or exists (
       select 1 from public.sessions session where session.workspace_id = p_workspace_id
-        and session.linear_issue_id in (issue.identifier, issue.id::text)
+        and session.linear_issue_id = any(array[issue.identifier, issue.id::text] || issue.previous_identifiers)
     ) or exists (
       select 1 from internal.issue_automation_span_watermarks watermark
       where (watermark.workspace_id, watermark.source_namespace, watermark.source_issue_id) =
@@ -422,10 +482,12 @@ end;
 $$;
 
 revoke all on function public.configure_linear_issue_discovery(uuid, uuid, uuid, uuid, bigint, bigint, uuid[], boolean, uuid, uuid),
-  public.claim_linear_issue_discovery(uuid, uuid[]),
+  public.claim_linear_issue_discovery(uuid),
+  public.defer_linear_issue_discovery(uuid, uuid, bigint, integer),
   public.commit_linear_issue_discovery_page(uuid, uuid, uuid, bigint, bigint, bigint, bigint, uuid, uuid, jsonb, text)
   from public, anon, authenticated, service_role;
 grant execute on function public.configure_linear_issue_discovery(uuid, uuid, uuid, uuid, bigint, bigint, uuid[], boolean, uuid, uuid),
-  public.claim_linear_issue_discovery(uuid, uuid[]),
+  public.claim_linear_issue_discovery(uuid),
+  public.defer_linear_issue_discovery(uuid, uuid, bigint, integer),
   public.commit_linear_issue_discovery_page(uuid, uuid, uuid, bigint, bigint, bigint, bigint, uuid, uuid, jsonb, text)
   to service_role;

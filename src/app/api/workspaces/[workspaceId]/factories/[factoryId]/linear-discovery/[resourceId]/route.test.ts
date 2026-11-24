@@ -65,6 +65,23 @@ describe("Linear discovery configuration", () => {
     });
   });
 
+  it.each([
+    ["PT422", 422],
+    ["PT409", 409],
+    ["XX000", 500],
+  ])("maps configuration error %s to HTTP %d", async (code, status) => {
+    mock.write.mockResolvedValue({ data: null, error: { code } });
+
+    const response = await PUT(writeRequest(), path);
+
+    expect(response.status).toBe(status);
+    if (code === "PT422") {
+      expect(await response.json()).toEqual({
+        error: "Publish a service-backed factory definition before enabling Linear discovery.",
+      });
+    }
+  });
+
   it("rejects a non-operator before a privileged configuration call", async () => {
     mock.context.mockResolvedValue({
       ok: true,

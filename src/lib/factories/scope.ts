@@ -212,6 +212,7 @@ export function factoryErrorStatus(code: string | undefined) {
       return 409;
     case "22023":
     case "23514":
+    case "PT422":
       return 422;
     default:
       return 500;

@@ -12,6 +12,7 @@ type Admin = Pick<SupabaseClient<Database>, "rpc">;
 const pageSize = 20;
 const taskLimit = 4;
 const sweepTimeoutMs = 10_000;
+const cooldownWriteTimeoutMs = 4_000;
 
 const uuid = z.uuid().toLowerCase();
 const revision = z.number().int().positive();
@@ -40,12 +41,14 @@ const discoveryTask = z.object({
 type DiscoveryTask = z.output<typeof discoveryTask>;
 
 const nodeId = z.object({ id: uuid });
+const issueIdentifier = z
+  .string()
+  .regex(/^[A-Z][A-Z0-9]*-\d+$/)
+  .max(80);
 const issueSchema = z.object({
   id: uuid,
-  identifier: z
-    .string()
-    .regex(/^[A-Z][A-Z0-9]*-\d+$/)
-    .max(80),
+  identifier: issueIdentifier,
+  previousIdentifiers: z.array(issueIdentifier),
   url: z.string().max(2048),
   title: z.string().min(1),
   description: z.string().nullable(),
@@ -82,6 +85,7 @@ const discoveryQuery = /* GraphQL */ `
       nodes {
         id
         identifier
+        previousIdentifiers
         url
         title
         description
@@ -107,7 +111,24 @@ const discoveryQuery = /* GraphQL */ `
   }
 `;
 
-class DiscoveryRateLimit extends Error {}
+class DiscoveryRateLimit extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(response: Response) {
+    super("Linear issue discovery reached a provider rate limit.");
+    const retryAfter = response.headers.get("retry-after");
+    this.retryAfterSeconds =
+      retryAfter !== null && /^\d{1,8}$/.test(retryAfter)
+        ? Math.min(3_600, Math.max(60, Number(retryAfter)))
+        : 60;
+  }
+}
+
+function truncateIssueText(value: string, limit: number) {
+  const lastCodePoint = value.codePointAt(limit - 1) ?? 0;
+  const end = lastCodePoint > 0xffff ? limit - 1 : limit;
+  return value.slice(0, end).replace(/[\u0000\uD800-\uDFFF]/gu, "�");
+}
 
 async function fetchDiscoveryPage(task: DiscoveryTask, signal: AbortSignal) {
   const labelFilter = task.labelId ? { id: { eq: task.labelId } } : null;
@@ -129,12 +150,16 @@ async function fetchDiscoveryPage(task: DiscoveryTask, signal: AbortSignal) {
         },
       },
     }),
+    redirect: "manual",
     signal,
   });
-  if (response.status === 429) throw new DiscoveryRateLimit();
+  if (response.status === 429) throw new DiscoveryRateLimit(response);
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error("Linear issue discovery received a redirect.");
+  }
   const payload = responseSchema.parse(await response.json());
   if (payload.errors?.some((error) => error.extensions?.code === "RATELIMITED")) {
-    throw new DiscoveryRateLimit();
+    throw new DiscoveryRateLimit(response);
   }
   if (!response.ok || payload.errors?.length) {
     throw new Error("Linear issue discovery query failed.");
@@ -157,9 +182,10 @@ async function fetchDiscoveryPage(task: DiscoveryTask, signal: AbortSignal) {
     issues: issues.nodes.map((issue) => ({
       id: issue.id,
       identifier: issue.identifier,
+      previous_identifiers: issue.previousIdentifiers,
       url: issue.url,
-      title: issue.title.trim().slice(0, 200),
-      description: issue.description?.slice(0, 19500) ?? null,
+      title: truncateIssueText(issue.title.trim(), 200),
+      description: issue.description === null ? null : truncateIssueText(issue.description, 19_500),
       team_id: issue.team.id,
       project_id: issue.project?.id ?? null,
       state_id: issue.state.id,
@@ -174,13 +200,12 @@ export async function reconcileLinearIssueDiscovery(
   options: { workspaceId?: string } = {},
 ) {
   const signal = AbortSignal.timeout(sweepTimeoutMs);
-  const throttled = new Set<string>();
+  let rateLimited = false;
   let admitted = 0;
   for (let index = 0; index < taskLimit && !signal.aborted; index++) {
     const { data, error } = await admin
       .rpc("claim_linear_issue_discovery", {
         ...(options.workspaceId === undefined ? {} : { p_workspace_id: options.workspaceId }),
-        p_skip_workspace_ids: [...throttled],
       })
       .abortSignal(signal);
     if (error) throw new Error("Could not claim Linear issue discovery.", { cause: error });
@@ -209,12 +234,25 @@ export async function reconcileLinearIssueDiscovery(
       admitted += z.number().int().nonnegative().parse(count);
     } catch (error) {
       if (error instanceof DiscoveryRateLimit) {
-        throttled.add(task.workspaceId);
+        rateLimited = true;
+        const { error: cooldownError } = await admin
+          .rpc("defer_linear_issue_discovery", {
+            p_workspace_id: task.workspaceId,
+            p_resource_id: task.resourceId,
+            p_installation_generation: task.installationGeneration,
+            p_retry_after_seconds: error.retryAfterSeconds,
+          })
+          .abortSignal(AbortSignal.timeout(cooldownWriteTimeoutMs));
+        if (cooldownError) {
+          throw new Error("Could not persist Linear issue discovery cooldown.", {
+            cause: cooldownError,
+          });
+        }
       } else {
         console.warn("[linear-discovery] page deferred", { resourceId: task.resourceId });
       }
     }
   }
 
-  return { admitted, rateLimited: throttled.size > 0 };
+  return { admitted, rateLimited };
 }

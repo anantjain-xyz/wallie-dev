@@ -30,6 +30,7 @@ const task = {
 const issue = {
   id: id(8),
   identifier: "DISC-8",
+  previousIdentifiers: ["OLD-51"],
   title: "Test issue",
   description: "Work description",
   url: "https://linear.app/fixture/issue/DISC-8/test-issue",
@@ -88,6 +89,7 @@ describe("Linear issue discovery sweep", () => {
     expect(result).toEqual({ admitted: 1, rateLimited: false });
     const providerRequest = new Request(...provider.mock.calls[0]!);
     expect(providerRequest.headers.get("authorization")).toBe(fixtureKey);
+    expect(providerRequest.redirect).toBe("manual");
     expect(await providerRequest.json()).toMatchObject({
       variables: {
         first: 20,
@@ -116,6 +118,7 @@ describe("Linear issue discovery sweep", () => {
         {
           id: issue.id,
           identifier: issue.identifier,
+          previous_identifiers: issue.previousIdentifiers,
           url: issue.url,
           title: issue.title,
           description: issue.description,
@@ -176,17 +179,59 @@ describe("Linear issue discovery sweep", () => {
     );
   });
 
+  it("leaves the page uncommitted when Linear responds with a redirect", async () => {
+    const { admin, database, provider } = setup([claimedTask(), null]);
+    const redirect = Response.redirect("https://different-host.example.test", 307);
+    const readBody = vi.spyOn(redirect, "json");
+    provider.mockResolvedValueOnce(redirect);
+
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 0, rateLimited: false });
+    expect(readBody).not.toHaveBeenCalled();
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(database.mock.calls.map((call) => new URL(new Request(...call).url).pathname)).toEqual(
+      Array(2).fill("/rest/v1/rpc/claim_linear_issue_discovery"),
+    );
+  });
+
+  it("commits the page when title and description limits fall inside emoji", async () => {
+    const { admin, database, provider } = setup([claimedTask(), 2, null]);
+    const title = "x".repeat(199);
+    const description = "y".repeat(19_499);
+    const following = { ...issue, id: id(15), identifier: "DISC-15", previousIdentifiers: [] };
+    provider.mockResolvedValueOnce(
+      Response.json({
+        data: {
+          ...page,
+          issues: {
+            ...page.issues,
+            nodes: [{ ...issue, title: title + "😃", description: description + "😃" }, following],
+          },
+        },
+      }),
+    );
+
+    expect(await reconcileLinearIssueDiscovery(admin)).toEqual({ admitted: 2, rateLimited: false });
+    const commit = new Request(...database.mock.calls[1]!);
+    expect(await commit.json()).toMatchObject({
+      p_issues: [
+        { id: issue.id, title, description },
+        { id: following.id, title: following.title, description: following.description },
+      ],
+    });
+  });
+
   it.each([
-    ["HTTP", () => new Response(null, { status: 429 })],
+    ["HTTP", () => new Response(null, { status: 429, headers: { "Retry-After": "120" } }), 120],
     [
       "GraphQL",
       () => Response.json({ data: null, errors: [{ extensions: { code: "RATELIMITED" } }] }),
+      60,
     ],
   ])(
-    "defers a workspace after %s rate limiting while another workspace advances",
-    async (_, throttled) => {
+    "persists a credential cooldown after %s rate limiting before claiming another mapping",
+    async (_, throttled, retryAfterSeconds) => {
       const next = { ...claimedTask(), workspaceId: id(13), resourceId: id(14) };
-      const { admin, database, provider } = setup([claimedTask(), next, 1, null]);
+      const { admin, database, provider } = setup([claimedTask(), true, next, 1, null]);
       provider
         .mockResolvedValueOnce(throttled())
         .mockResolvedValueOnce(Response.json({ data: page }));
@@ -195,9 +240,15 @@ describe("Linear issue discovery sweep", () => {
         admitted: 1,
         rateLimited: true,
       });
-      const secondClaim = new Request(...database.mock.calls[1]!);
-      expect(await secondClaim.json()).toEqual({ p_skip_workspace_ids: [task.workspaceId] });
-      const nextCommit = new Request(...database.mock.calls[2]!);
+      const cooldown = new Request(...database.mock.calls[1]!);
+      expect(new URL(cooldown.url).pathname).toBe("/rest/v1/rpc/defer_linear_issue_discovery");
+      expect(await cooldown.json()).toEqual({
+        p_workspace_id: task.workspaceId,
+        p_resource_id: task.resourceId,
+        p_installation_generation: task.installationGeneration,
+        p_retry_after_seconds: retryAfterSeconds,
+      });
+      const nextCommit = new Request(...database.mock.calls[3]!);
       expect(await nextCommit.json()).toMatchObject({ p_workspace_id: next.workspaceId });
     },
   );

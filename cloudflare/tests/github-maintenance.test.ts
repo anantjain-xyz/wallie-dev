@@ -451,9 +451,7 @@ it.each([
       expect(rpc).toHaveBeenCalledWith("list_factory_actions_dispatches");
       expect(rpc).toHaveBeenCalledWith("reserve_factory_actions_observations");
       expect(rpc).toHaveBeenCalledWith("admit_next_factory_monitoring_incident");
-      expect(rpc).toHaveBeenCalledWith("claim_linear_issue_discovery", {
-        p_skip_workspace_ids: [],
-      });
+      expect(rpc).toHaveBeenCalledWith("claim_linear_issue_discovery", {});
       if (linearDiscoveryFailure) {
         expect(warn).toHaveBeenCalledWith("[cloudflare-maintenance] task will retry next cycle", {
           task: "Linear issue discovery",

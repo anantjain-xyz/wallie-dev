@@ -117,13 +117,15 @@ create function pg_temp.configure_discovery(p_kind public.connector_resource_kin
 $$;
 
 create function pg_temp.discovery_issue(p_slot integer, p_project integer default 43, p_state integer default 46,
-  p_creator integer default 44, p_label integer default 47, p_identifier text default null) returns jsonb language sql as $$
+  p_creator integer default 44, p_label integer default 47, p_identifier text default null,
+  p_previous_identifiers text[] default '{}') returns jsonb language sql as $$
   select jsonb_build_object(
     'id',pg_temp.creation_id(p_slot),'identifier',coalesce(p_identifier,'DISC-' || p_slot),'title','Discover issue ' || p_slot,
     'description','The issue body is the task context.',
     'url','https://linear.app/fixture/issue/' || coalesce(p_identifier,'DISC-' || p_slot) || '/test-issue',
     'team_id',pg_temp.creation_id(42),'project_id',pg_temp.creation_id(p_project),'state_id',pg_temp.creation_id(p_state),
-    'creator_id',pg_temp.creation_id(p_creator),'label_ids',jsonb_build_array(pg_temp.creation_id(p_label))
+    'creator_id',pg_temp.creation_id(p_creator),'label_ids',jsonb_build_array(pg_temp.creation_id(p_label)),
+    'previous_identifiers',p_previous_identifiers
   )
 $$;
 
@@ -137,10 +139,15 @@ create function pg_temp.commit_discovery(p_kind public.connector_resource_kind, 
 $$;
 
 select ok(not has_function_privilege('authenticated',
-    'public.claim_linear_issue_discovery(uuid,uuid[])', 'execute')
-  and has_function_privilege('service_role','public.claim_linear_issue_discovery(uuid,uuid[])','execute')
+    'public.claim_linear_issue_discovery(uuid)', 'execute')
+  and has_function_privilege('service_role','public.claim_linear_issue_discovery(uuid)','execute')
+  and not has_function_privilege('authenticated',
+    'public.defer_linear_issue_discovery(uuid,uuid,bigint,integer)','execute')
+  and has_function_privilege('service_role',
+    'public.defer_linear_issue_discovery(uuid,uuid,bigint,integer)','execute')
+  and not has_table_privilege('authenticated','internal.linear_issue_discovery_cooldowns','select')
   and not has_table_privilege('authenticated','internal.linear_issue_discovery_receipts','select'),
-  'the worker scan and raw receipts are inaccessible to authenticated browser users');
+  'worker polling, deferral and raw receipts are inaccessible to authenticated browser users');
 
 select is(pg_temp.configure_discovery('project',0), 1::bigint, 'a workspace owner enables an exact project filter');
 select is(pg_temp.configure_discovery('team',0), 1::bigint, 'the team scope can independently discover work');
@@ -153,6 +160,28 @@ select is((select count(distinct task->>'resourceId') from discovery_tasks), 2::
   'claiming due work rotates over configured scopes');
 select is(public.claim_linear_issue_discovery(pg_temp.creation_id(2)), null::jsonb,
   'a second worker cannot immediately claim either leased polling interval');
+
+update internal.linear_issue_discovery_config set next_scan_at = clock_timestamp()
+where workspace_id = pg_temp.creation_id(2);
+select is(public.defer_linear_issue_discovery(pg_temp.creation_id(2),resource_id,2,300),false,
+  'a stale provider generation cannot defer polling for a different credential generation')
+from discovery_resources where kind = 'project';
+select is(public.defer_linear_issue_discovery(pg_temp.creation_id(2),resource_id,1,300),true,
+  'a rate limit records a durable cooldown for the current Linear credential')
+from discovery_resources where kind = 'project';
+create temp table discovery_retry_deadline as
+select retry_at from internal.linear_issue_discovery_cooldowns where workspace_id = pg_temp.creation_id(2);
+select is(public.defer_linear_issue_discovery(pg_temp.creation_id(2),resource_id,1,1),true,
+  'another resource can report a rate limit for the shared credential')
+from discovery_resources where kind = 'team';
+select is((select retry_at from internal.linear_issue_discovery_cooldowns where workspace_id = pg_temp.creation_id(2)),
+  (select retry_at from discovery_retry_deadline), 'a shorter retry hint cannot reduce the existing cooldown');
+select is(public.claim_linear_issue_discovery(pg_temp.creation_id(2)),null::jsonb,
+  'a different worker skips both otherwise-due resources during the cooldown');
+update internal.linear_issue_discovery_cooldowns set retry_at = clock_timestamp()
+where workspace_id = pg_temp.creation_id(2);
+select ok(public.claim_linear_issue_discovery(pg_temp.creation_id(2)) is not null,
+  'a new worker can claim the same credential when its cooldown expires');
 
 select is(pg_temp.commit_discovery('project',0,'[]',p_next=>'page-two'),0,
   'an empty first page persists paging position without creating work');
@@ -196,9 +225,15 @@ select is((select count(*) from public.agent_jobs job join internal.linear_issue
 
 insert into public.sessions(id,workspace_id,factory_id,pipeline_id,current_stage_id,number,title,linear_issue_id,phase_status)
 values (pg_temp.creation_id(75),pg_temp.creation_id(2),pg_temp.creation_factory_id(),pg_temp.creation_id(10),
-  pg_temp.creation_id(11),999,'Older reviewed request','DISC-56','approved');
-select is(pg_temp.commit_discovery('project',3,jsonb_build_array(pg_temp.discovery_issue(56))),0,
-  'a reviewed session linked by the legacy path is left alone');
+  pg_temp.creation_id(11),999,'Older reviewed request','DISC-56','approved'),
+  (pg_temp.creation_id(76),pg_temp.creation_id(2),pg_temp.creation_factory_id(),pg_temp.creation_id(10),
+  pg_temp.creation_id(11),1000,'Request linked before moving teams','OLD-58','approved');
+select is(pg_temp.commit_discovery('project',3,jsonb_build_array(
+  pg_temp.discovery_issue(56),
+  pg_temp.discovery_issue(58,p_identifier=>'MOVED-58',p_previous_identifiers=>array['FIRST-58','OLD-58'])
+)),0,'discovery leaves exact and previous legacy identifiers linked before any state-span scan');
+select is((select count(*) from internal.linear_issue_discovery_receipts where issue_id = pg_temp.creation_id(58)),
+  0::bigint,'a prior team identifier prevents a second session on the same canonical issue');
 select is((select phase_status::text from public.sessions where id = pg_temp.creation_id(75)), 'approved',
   'discovery leaves the reviewed lifecycle phase untouched');
 
@@ -212,6 +247,8 @@ select is(pg_temp.commit_discovery('project',5,jsonb_build_array(pg_temp.discove
   p_config_revision=>2,p_viewer=>45),1,'verified service admission works without a borrowed human author');
 select ok((select session.creator_member_id is null and session.creator_service_principal_id = principal.id
     and admission.invoking_actor_service_principal_id = principal.id
+    and admission.credential_owner_service_principal_id = principal.id
+    and admission.credential_owner_member_id is null
     and admission.budget_payer_member_id = pg_temp.creation_id(3)
   from internal.linear_issue_discovery_receipts receipt
   join public.sessions session on session.id = receipt.session_id
@@ -221,12 +258,33 @@ select ok((select session.creator_member_id is null and session.creator_service_
 select is((select count(*) from internal.linear_issue_discovery_permits),0::bigint,
   'service authority is retired within the same transaction');
 
+select is(pg_temp.commit_discovery('team',2,jsonb_build_array(pg_temp.discovery_issue(59,p_project=>null))),1,
+  'the same team independently admits a qualifying issue outside any configured project');
+
+update internal.linear_issue_discovery_config set next_scan_at = clock_timestamp()
+where workspace_id = pg_temp.creation_id(2);
+select ok(public.claim_linear_issue_discovery(pg_temp.creation_id(2)) is not null,
+  'a due resource is eligible before the credential is rotated');
+update internal.linear_issue_discovery_config set next_scan_at = clock_timestamp()
+where workspace_id = pg_temp.creation_id(2);
 update public.workspace_secrets set encrypted_value = 'fixture-linear-key-rotate' where id = pg_temp.creation_id(40);
 select throws_ok($$select pg_temp.commit_discovery('project',6,'[]',p_config_revision=>2,p_viewer=>45)$$,
   'P0002', null, 'credential rotation fences a page fetched with the old authority');
+select is(public.claim_linear_issue_discovery(pg_temp.creation_id(2)),null::jsonb,
+  'otherwise-due enabled resources cannot poll with the rotated, unconfirmed credential');
+select is(public.defer_linear_issue_discovery(pg_temp.creation_id(2),resource_id,1,300),false,
+  'a late rate limit cannot defer polling after the fetched credential is rotated')
+from discovery_resources where kind = 'project';
 select is(pg_temp.configure_discovery('project',2,false),3::bigint,
   'a stale provider connection can be disabled by an authorized operator');
-select is(public.claim_linear_issue_discovery(pg_temp.creation_id(2)),null::jsonb,'a rotated credential is no longer polled');
+
+update internal.linear_issue_discovery_cooldowns set retry_at = clock_timestamp() + interval '5 minutes'
+where workspace_id = pg_temp.creation_id(2);
+select is(installation.generation,2::bigint,'the operator confirms the new credential material')
+from public.configure_connector_installation(pg_temp.creation_id(2),pg_temp.creation_factory_id(),
+  pg_temp.creation_id(1),'linear',pg_temp.creation_id(41)::text,pg_temp.creation_id(41)::text,1,pg_temp.creation_id(40),2) installation;
+select is(public.claim_linear_issue_discovery(pg_temp.creation_id(2))->>'installationGeneration','2',
+  'the previous credential cooldown does not block polling with the newly verified material');
 
 select * from finish();
 rollback;
