@@ -51,6 +51,7 @@ import { createGitHubConnectorOutboundAdapter } from "@/features/github/connecto
 import { drainConnectorOutboundDeliveries } from "@/lib/connectors/outbound";
 import { drainSlackConnectorEvents } from "@/lib/connectors/slack/intake";
 import { drainSlackReviewActionBatch } from "@/lib/connectors/slack/review-actions";
+import { createSlackConnectorOutboundAdapter } from "@/lib/connectors/slack/outbound";
 import { reconcileGitHubPrVerification } from "@/features/github/pr-verification-service";
 
 import { parseWorkerConfig } from "./config";
@@ -221,6 +222,9 @@ async function main() {
         timerTasks.run("GitHub deferred comments", () => drainGitHubConnectorCommentRetries(admin));
         drainSlackInbox();
         drainSlackReviews();
+        timerTasks.run("Slack connector outbox", async () => {
+          await drainConnectorOutboundDeliveries(admin, createSlackConnectorOutboundAdapter(admin));
+        });
         timerTasks.run("GitHub connector outbound", async () => {
           await drainConnectorOutboundDeliveries(
             admin,

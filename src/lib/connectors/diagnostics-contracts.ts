@@ -45,7 +45,13 @@ export type ConnectorInventory = z.output<typeof connectorInventorySchema>;
 export const connectorDeliveryLaneSchema = z.enum(["all", "ingress", "outbound"]);
 export type ConnectorDeliveryLane = z.output<typeof connectorDeliveryLaneSchema>;
 
-const deliveryKind = z.enum(["github_admission", "github_comment", "linear_intake", "outbound"]);
+const deliveryKind = z.enum([
+  "github_admission",
+  "github_comment",
+  "linear_intake",
+  "slack_ingress",
+  "outbound",
+]);
 const statuses = [
   "observed",
   "deleted",
@@ -72,6 +78,7 @@ export const connectorDeliveryRowSchema = z.strictObject({
     ...statuses,
     "actor_not_allowed",
     "admission_denied",
+    "membership_denied",
     "expired",
     "attempt_limit",
     "processing_failed",

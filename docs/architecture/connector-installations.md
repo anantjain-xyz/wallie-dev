@@ -176,3 +176,21 @@ modal. A revoked actor or an older review cannot change the current decision.
 Open the exact Workbench link to see the current result.
 
 [Slack interactivity](https://docs.slack.dev/interactivity/handling-user-interaction/)
+
+## Slack delivery and recovery
+
+Wallie posts acceptance, review, clarification, and final notices to the
+original Slack thread. Connector Settings shows redacted intake and delivery
+receipts. When an artifact advances, Wallie closes a card it has confirmed in
+Slack. A stale card cannot change a later review, including when a previous
+write is confirmed after the review advances.
+
+Slack send and edit work uses the shared outbox. Each attempt rechecks the
+current lease, installation generation, channel, bot, and linked thread.
+When a write result is unknown, the worker looks for the original marker and
+bot identity on the exact thread. A lookup that finds no marker leaves the
+receipt open for observation. This allows for a reply that Slack accepted and
+someone later removed. A deleted thread or lost channel access appears as a
+blocked delivery without undoing Wallie work.
+
+[Slack thread reads](https://docs.slack.dev/reference/methods/conversations.replies/)
