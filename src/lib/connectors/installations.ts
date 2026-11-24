@@ -3,16 +3,14 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod/v4";
 
-import { encryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database } from "@/lib/supabase/database.types";
 
 type VerifiedConnectorInstallation = {
   externalInstallationId: string;
   externalTenantId: string;
 } & (
-  | { provider: "github"; credential?: never }
-  | { provider: "linear"; secretId: string; materialRevision: number; credential?: never }
-  | { provider: "slack"; credential: string }
+  | { provider: "github"; secretId?: never; materialRevision?: never }
+  | { provider: "linear"; secretId: string; materialRevision: number }
 );
 
 const configuredInstallation = z.tuple([
@@ -38,9 +36,6 @@ export async function configureConnectorInstallation(
     p_external_tenant_id: installation.externalTenantId,
     p_external_installation_id: installation.externalInstallationId,
     p_expected_generation: input.expectedGeneration,
-    ...(installation.provider === "slack"
-      ? { p_encrypted_credential: encryptSecretValue(installation.credential) }
-      : {}),
     ...(installation.provider === "linear"
       ? {
           p_linear_secret_id: installation.secretId,

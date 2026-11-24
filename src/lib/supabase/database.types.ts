@@ -11798,7 +11798,6 @@ export type Database = {
       configure_connector_installation: {
         Args: {
           p_actor_user_id: string
-          p_encrypted_credential?: string
           p_expected_generation: number
           p_external_installation_id: string
           p_external_tenant_id: string
@@ -15289,7 +15288,6 @@ export type Database = {
           credential_ref: string
           cursor_generation: number
           cursor_position: string
-          encrypted_credential: string
           installation_generation: number
           installation_id: string
           mapping_revision: number
@@ -18274,8 +18272,8 @@ export type Database = {
         | "blocked"
         | "recorded_fixtures"
         | "isolated_test"
-      connector_provider: "github" | "linear" | "slack"
-      connector_resource_kind: "repository" | "team" | "project" | "channel"
+      connector_provider: "github" | "linear"
+      connector_resource_kind: "repository" | "team" | "project"
       factory_command_admission_status:
         | "admitted"
         | "unauthorized"
@@ -18521,8 +18519,8 @@ export const Constants = {
         "recorded_fixtures",
         "isolated_test",
       ],
-      connector_provider: ["github", "linear", "slack"],
-      connector_resource_kind: ["repository", "team", "project", "channel"],
+      connector_provider: ["github", "linear"],
+      connector_resource_kind: ["repository", "team", "project"],
       factory_command_admission_status: [
         "admitted",
         "unauthorized",

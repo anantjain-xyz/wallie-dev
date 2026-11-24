@@ -1,5 +1,5 @@
-create type public.connector_provider as enum ('github', 'linear', 'slack');
-create type public.connector_resource_kind as enum ('repository', 'team', 'project', 'channel');
+create type public.connector_provider as enum ('github', 'linear');
+create type public.connector_resource_kind as enum ('repository', 'team', 'project');
 
 create table internal.connector_installations (
   id uuid primary key default gen_random_uuid(),
@@ -14,23 +14,15 @@ create table internal.connector_installations (
   generation bigint not null check (generation between 1 and 9007199254740991),
   legacy_credential_id uuid,
   linear_material_revision bigint,
-  encrypted_credential text,
   disconnected_at timestamptz,
   updated_at timestamptz not null default clock_timestamp(),
   unique (workspace_id, provider, external_tenant_id),
   unique (provider, external_tenant_id, external_installation_id),
   unique (workspace_id, id, provider, external_tenant_id),
   check (
-    (disconnected_at is not null and num_nonnulls(legacy_credential_id, linear_material_revision, encrypted_credential) = 0)
-    or (disconnected_at is null and (
-      (provider = 'github' and legacy_credential_id is not null
-        and linear_material_revision is null and encrypted_credential is null)
-      or (provider = 'linear' and legacy_credential_id is not null
-        and linear_material_revision is not null and encrypted_credential is null)
-      or (provider = 'slack' and legacy_credential_id is null and linear_material_revision is null
-        and encrypted_credential is not null
-        and encrypted_credential ~ '^v[12]\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{22}$')
-    ))
+    (disconnected_at is not null and legacy_credential_id is null and linear_material_revision is null)
+    or (disconnected_at is null and legacy_credential_id is not null
+      and ((provider = 'linear') = (linear_material_revision is not null)))
   )
 );
 
@@ -56,8 +48,7 @@ create table public.factory_connector_resources (
   foreign key (workspace_id, installation_id, provider, external_tenant_id)
     references internal.connector_installations(workspace_id, id, provider, external_tenant_id) on delete cascade,
   check ((provider = 'github' and resource_kind = 'repository')
-    or (provider = 'linear' and resource_kind in ('team', 'project'))
-    or (provider = 'slack' and resource_kind = 'channel'))
+    or (provider = 'linear' and resource_kind in ('team', 'project')))
 );
 
 create index factory_connector_resources_installation_idx
@@ -121,8 +112,7 @@ create policy factory_connector_mapping_revisions_read on public.factory_connect
 create function public.configure_connector_installation(
   p_workspace_id uuid, p_factory_id uuid, p_actor_user_id uuid, p_provider public.connector_provider,
   p_external_tenant_id text, p_external_installation_id text, p_expected_generation bigint,
-  p_encrypted_credential text default null, p_linear_secret_id uuid default null,
-  p_linear_material_revision bigint default null
+  p_linear_secret_id uuid default null, p_linear_material_revision bigint default null
 ) returns table (installation_id uuid, generation bigint)
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -154,7 +144,6 @@ begin
   end if;
 
   if p_provider is null
-    or (p_provider = 'slack') <> (p_encrypted_credential is not null)
     or num_nonnulls(p_linear_secret_id, p_linear_material_revision) <>
       (case when p_provider = 'linear' then 2 else 0 end) then
     raise exception 'Connector credential does not match its provider.' using errcode = '22023';
@@ -181,16 +170,16 @@ begin
   if installation.id is null then
     insert into internal.connector_installations as target (
       workspace_id, provider, external_tenant_id, external_installation_id, generation,
-      legacy_credential_id, linear_material_revision, encrypted_credential
+      legacy_credential_id, linear_material_revision
     ) values (
       p_workspace_id, p_provider, p_external_tenant_id, p_external_installation_id, 1,
-      credential_id, material_revision, p_encrypted_credential
+      credential_id, material_revision
     ) returning target.id, target.generation into installation_id, generation;
   else
     update internal.connector_installations target set generation = target.generation + 1,
       external_installation_id = p_external_installation_id,
       legacy_credential_id = credential_id, linear_material_revision = material_revision,
-      encrypted_credential = p_encrypted_credential, disconnected_at = null, updated_at = clock_timestamp()
+      disconnected_at = null, updated_at = clock_timestamp()
     where target.id = installation.id returning target.id, target.generation into installation_id, generation;
   end if;
   return next;
@@ -220,7 +209,7 @@ begin
   if installation.disconnected_at is null then
     update internal.connector_installations target
     set generation = target.generation + 1, legacy_credential_id = null, linear_material_revision = null,
-      encrypted_credential = null, disconnected_at = clock_timestamp(), updated_at = clock_timestamp()
+      disconnected_at = clock_timestamp(), updated_at = clock_timestamp()
     where target.id = installation.id returning target.generation into installation.generation;
   end if;
   return installation.generation;
@@ -241,7 +230,6 @@ returns boolean language sql stable set search_path = '' as $$
         (p_installation.workspace_id, p_installation.legacy_credential_id, p_installation.linear_material_revision)
         and secret.key = 'LINEAR_API_KEY'
     )
-    when 'slack' then p_installation.encrypted_credential is not null
   end
 $$;
 
@@ -372,16 +360,14 @@ create function public.read_connector_subscription(
 ) returns table (
   installation_id uuid, installation_generation bigint, mapping_revision bigint,
   cursor_generation bigint, cursor_position text, credential_kind text, credential_ref uuid,
-  credential_material_revision bigint, encrypted_credential text
+  credential_material_revision bigint
 ) language sql stable security definer set search_path = '' as $$
   select installation.id, installation.generation, mapping.revision, coalesce(cursor_state.generation, 0),
     cursor_state.position, case installation.provider
       when 'github' then 'github_installation'
       when 'linear' then 'workspace_secret'
-      when 'slack' then 'connector_secret'
     end,
-    coalesce(installation.legacy_credential_id, installation.id),
-    installation.linear_material_revision, installation.encrypted_credential
+    installation.legacy_credential_id, installation.linear_material_revision
   from public.factory_connector_resources resource
   join public.factory_connector_mapping_revisions mapping
     on (mapping.workspace_id, mapping.factory_id, mapping.resource_id, mapping.revision) =
@@ -458,7 +444,7 @@ revoke all on function internal.connector_installation_is_available(internal.con
   internal.lock_connector_authority(internal.connector_installations, uuid, text)
   from public, anon, authenticated, service_role;
 
-revoke all on function public.configure_connector_installation(uuid, uuid, uuid, public.connector_provider, text, text, bigint, text, uuid, bigint),
+revoke all on function public.configure_connector_installation(uuid, uuid, uuid, public.connector_provider, text, text, bigint, uuid, bigint),
   public.disconnect_connector_installation(uuid, uuid, uuid, uuid, bigint),
   public.read_connector_installation_state(uuid, uuid, uuid, uuid),
   public.publish_connector_resource_mapping(uuid, uuid, uuid, uuid, bigint, public.connector_resource_kind, text, bigint, boolean),
@@ -466,7 +452,7 @@ revoke all on function public.configure_connector_installation(uuid, uuid, uuid,
   public.advance_connector_subscription_cursor(uuid, uuid, uuid, bigint, bigint, text, bigint, text)
   from public, anon, authenticated, service_role;
 
-grant execute on function public.configure_connector_installation(uuid, uuid, uuid, public.connector_provider, text, text, bigint, text, uuid, bigint),
+grant execute on function public.configure_connector_installation(uuid, uuid, uuid, public.connector_provider, text, text, bigint, uuid, bigint),
   public.disconnect_connector_installation(uuid, uuid, uuid, uuid, bigint),
   public.read_connector_installation_state(uuid, uuid, uuid, uuid),
   public.publish_connector_resource_mapping(uuid, uuid, uuid, uuid, bigint, public.connector_resource_kind, text, bigint, boolean),
