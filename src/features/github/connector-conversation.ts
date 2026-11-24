@@ -28,7 +28,9 @@ const commentPayload = z.object({
 
 function conversationBody(value: string) {
   const safeText = value.replace(/[\u0000\uD800-\uDFFF]/gu, "�");
-  return Array.from(safeText).slice(0, 8000).join("");
+  const excerpt = Array.from(safeText).slice(0, 8000).join("");
+  if (excerpt.trim() !== "") return excerpt;
+  return Array.from(safeText.trimStart()).slice(0, 8000).join("");
 }
 
 /** The webhook route verifies the signature on the original bytes before calling this. */
@@ -67,7 +69,7 @@ export async function captureGitHubConnectorComment(input: unknown, deliveryId: 
     .rpc("ingest_github_connector_comment", delivery)
     .abortSignal(AbortSignal.timeout(8_000));
   if (!error) return true;
-  if (!retryableTransactionCodes.has(error.code)) {
+  if (error.code && !retryableTransactionCodes.has(error.code)) {
     throw new Error("Could not capture the GitHub connector comment.", { cause: error });
   }
 

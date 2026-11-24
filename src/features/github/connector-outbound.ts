@@ -19,6 +19,7 @@ const apiOrigin = "https://api.github.com";
 const apiVersion = "2026-03-10";
 const commentsPerPage = 30;
 const maxCommentPages = 5;
+const providerClockSkewMs = 60_000;
 const positiveId = z.number().int().positive().safe();
 const slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u);
 const fullName = z
@@ -33,6 +34,7 @@ const sourceIdentity = z.object({
   source_number: positiveId,
   source_id: positiveId,
   current_review_revision: z.number().int().nonnegative().safe().nullable(),
+  original_write_authorized_at: z.iso.datetime({ offset: true }),
 });
 const payloadFields = z.object({
   sessionId: z.uuid(),
@@ -86,6 +88,7 @@ const comment = z.object({
   performed_via_github_app: z.object({ id: positiveId }).nullish(),
 });
 const commentList = z.array(comment).max(commentsPerPage);
+const providerMessage = z.object({ message: z.string() });
 
 class ConnectorScopeUnavailable extends Error {}
 
@@ -93,9 +96,19 @@ class GitHubHttpError extends Error {
   constructor(
     readonly status: number,
     readonly headers: Headers,
+    readonly secondaryRateLimited: boolean,
   ) {
     super("GitHub could not complete a connector request.");
   }
+}
+
+function isSecondaryRateLimitMessage(value: unknown) {
+  const message =
+    typeof value === "string" ? value : providerMessage.safeParse(value).data?.message;
+  return (
+    message !== undefined &&
+    /\b(?:secondary rate limit|abuse detection mechanism)\b/iu.test(message)
+  );
 }
 
 function providerError(error: unknown) {
@@ -103,8 +116,12 @@ function providerError(error: unknown) {
   const failure = z
     .object({
       status: z.number(),
+      message: z.unknown(),
       response: z
-        .object({ headers: z.record(z.string(), z.union([z.string(), z.number()])) })
+        .object({
+          headers: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+          data: z.unknown(),
+        })
         .optional(),
     })
     .safeParse(error);
@@ -114,14 +131,22 @@ function providerError(error: unknown) {
     const value = failure.data.response?.headers[name];
     if (value !== undefined) headers.set(name, String(value));
   }
-  return new GitHubHttpError(failure.data.status, headers);
+  return new GitHubHttpError(
+    failure.data.status,
+    headers,
+    isSecondaryRateLimitMessage(failure.data.response?.data) ||
+      isSecondaryRateLimitMessage(failure.data.message),
+  );
 }
 
 function rateLimit(error: GitHubHttpError | null) {
   if (!error) return null;
   const retryAfter = error.headers.get("retry-after");
   const exhausted = error.headers.get("x-ratelimit-remaining") === "0";
-  if (error.status !== 429 && !(error.status === 403 && (retryAfter !== null || exhausted)))
+  if (
+    error.status !== 429 &&
+    !(error.status === 403 && (retryAfter !== null || exhausted || error.secondaryRateLimited))
+  )
     return null;
   const reset = error.headers.get("x-ratelimit-reset");
   const seconds =
@@ -132,7 +157,7 @@ function rateLimit(error: GitHubHttpError | null) {
         : 60;
   return {
     kind: "rate_limited" as const,
-    retryAfterSeconds: Math.max(1, Math.min(3_600, seconds)),
+    retryAfterSeconds: Math.max(error.secondaryRateLimited ? 60 : 1, Math.min(3_600, seconds)),
   };
 }
 
@@ -176,7 +201,17 @@ function createGitHubRequest(fetcher: typeof fetch, accessToken: string, signal:
       signal,
       ...(body === undefined ? {} : { body: JSON.stringify({ body }) }),
     });
-    if (!response.ok) throw new GitHubHttpError(response.status, response.headers);
+    if (!response.ok) {
+      const errorBody: unknown =
+        response.status === 403 || response.status === 429
+          ? await response.json().catch(() => undefined)
+          : undefined;
+      throw new GitHubHttpError(
+        response.status,
+        response.headers,
+        isSecondaryRateLimitMessage(errorBody),
+      );
+    }
     const data: unknown = await response.json();
     return { data, headers: response.headers };
   };
@@ -285,6 +320,7 @@ export function createGitHubConnectorOutboundAdapter(
     if (bot.login !== login) throw new ConnectorScopeUnavailable();
     return {
       github,
+      originalWriteAuthorizedAt: source.original_write_authorized_at,
       async assertCurrent() {
         const current = await readScope(target, signal);
         if (
@@ -375,10 +411,18 @@ export function createGitHubConnectorOutboundAdapter(
             : { kind: "inconclusive" };
         }
 
+        // GitHub lists oldest comments first. Its `since` filter uses the last
+        // update time and accepts a UTC timestamp at second precision.
+        const since = new Date(Date.parse(scope.originalWriteAuthorizedAt) - providerClockSkewMs)
+          .toISOString()
+          .replace(/\.\d{3}Z$/u, "Z");
         for (let page = 1; page <= maxCommentPages; page++) {
-          const response = await scope.github(
-            `${scope.threadComments}?per_page=${commentsPerPage}&page=${page}`,
-          );
+          const query = new URLSearchParams({
+            per_page: String(commentsPerPage),
+            page: String(page),
+            since,
+          });
+          const response = await scope.github(`${scope.threadComments}?${query}`);
           const replies = commentList.parse(response.data);
           const reply = replies.find(matches);
           if (reply) return { kind: "found", providerReplyId: String(reply.id) };

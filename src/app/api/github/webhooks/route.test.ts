@@ -194,15 +194,44 @@ describe("GitHub webhook boundary", () => {
     expect(mocked.automationRpc).not.toHaveBeenCalled();
   });
 
-  it("keeps the same delivery and input when a transient database lock defers ingestion", async () => {
-    mocked.automationResult.mockResolvedValueOnce({ data: null, error: { code: "55P03" } });
+  it("retains visible text beyond a whitespace-only bounded prefix", async () => {
+    const body = " ".repeat(8001) + "Keep this follow-up.";
+    const comment = { ...connectorComment.comment, body };
 
-    expect((await POST(request(connectorComment, "issue_comment"))).status).toBe(200);
-    expect(mocked.automationRpc).toHaveBeenCalledTimes(2);
-    expect(mocked.automationRpc).toHaveBeenNthCalledWith(
-      2,
+    expect((await POST(request({ ...connectorComment, comment }, "issue_comment"))).status).toBe(
+      200,
+    );
+    expect(mocked.automationRpc).toHaveBeenCalledWith(
+      "ingest_github_connector_comment",
+      expect.objectContaining({ p_body: "Keep this follow-up." }),
+    );
+  });
+
+  it.each(["55P03", ""])(
+    "defers the exact delivery after an unknown or retryable result (%s)",
+    async (code) => {
+      mocked.automationResult.mockResolvedValueOnce({ data: null, error: { code } });
+
+      expect((await POST(request(connectorComment, "issue_comment"))).status).toBe(200);
+      expect(mocked.automationRpc).toHaveBeenCalledTimes(2);
+      expect(mocked.automationRpc).toHaveBeenNthCalledWith(
+        2,
+        "defer_github_connector_comment",
+        mocked.automationRpc.mock.calls[0]?.[1],
+      );
+    },
+  );
+
+  it("does not defer a rejected input or a conflicting delivery identity", async () => {
+    for (const code of ["22023", "PT409"]) {
+      mocked.automationResult.mockResolvedValueOnce({ data: null, error: { code } });
+      await expect(POST(request(connectorComment, "issue_comment"))).rejects.toThrow(
+        "Could not capture the GitHub connector comment.",
+      );
+    }
+    expect(mocked.automationRpc).not.toHaveBeenCalledWith(
       "defer_github_connector_comment",
-      mocked.automationRpc.mock.calls[0]?.[1],
+      expect.anything(),
     );
   });
 

@@ -95,7 +95,7 @@ begin
     and p_actor_id between 1 and 9007199254740991 and isfinite(p_provider_updated_at)
     and p_provider_updated_at <= clock_timestamp() + interval '5 minutes'
     and ((p_action = 'deleted' and p_body is null)
-      or (p_action in ('created', 'edited') and length(p_body) <= 8000 and btrim(p_body, E' \t\r\n') <> ''))) is not true then
+      or (p_action in ('created', 'edited') and length(p_body) <= 8000 and p_body ~ '[^[:space:]]'))) is not true then
     raise exception 'Invalid GitHub comment delivery.' using errcode = '22023';
   end if;
   return encode(sha256(convert_to(jsonb_build_array(p_action, p_source_kind, p_source_number, p_issue_id,
@@ -125,6 +125,7 @@ declare
   input_hash text;
   result text;
   text_body text;
+  text_prefix text;
 begin
   perform internal.assert_checkpoint_publication_service();
   input_hash := internal.validate_github_connector_comment(p_installation_id, p_github_repository_id,
@@ -218,7 +219,11 @@ begin
   elsif p_action = 'deleted' then
     result := 'deleted';
   else
-    text_body := case p_action when 'edited' then E'GitHub comment edited:\n\n' || p_body else p_body end;
+    text_prefix := case p_action when 'edited' then E'GitHub comment edited:\n\n' else '' end;
+    text_body := p_body;
+    if left(text_body, 4000 - length(text_prefix)) !~ '[^[:space:]]' then
+      text_body := regexp_replace(text_body, '^[[:space:]]+', '');
+    end if;
     message.kind := 'message';
     message.author_kind := 'user';
     message.author_label := 'GitHub contributor';
@@ -227,8 +232,8 @@ begin
     message.external_actor_id := p_actor_id::text;
     message.external_message_id := 'github-comment:' || p_comment_id::text || ':' || p_action || ':'
       || extract(epoch from p_provider_updated_at)::text;
-    message.body_md := left(text_body, 4000);
-    message.body_truncated := length(text_body) > 4000;
+    message.body_md := left(text_prefix || text_body, 4000);
+    message.body_truncated := length(text_prefix) + length(p_body) > 4000;
     perform internal.append_session_conversation_message(target, message, message.external_message_id);
     result := 'appended';
   end if;
@@ -484,12 +489,14 @@ create trigger capture_github_connector_review_or_outcome after update of phase_
 create function public.resolve_github_connector_delivery(p_delivery_id uuid, p_lease_id uuid)
 returns table (
   github_installation_id bigint, github_repository_id bigint, repository_full_name text,
-  source_kind text, source_number integer, source_id bigint, current_review_revision bigint
+  source_kind text, source_number integer, source_id bigint, current_review_revision bigint,
+  original_write_authorized_at timestamptz
 ) language plpgsql security definer set search_path = '' set lock_timeout = '100ms' as $$
 declare
   target internal.connector_outbound_deliveries;
   attempt internal.connector_outbound_attempts;
   authority record;
+  write_authorized_at timestamptz;
 begin
   perform internal.assert_checkpoint_publication_service();
   select delivery.* into target from internal.connector_outbound_deliveries delivery
@@ -507,6 +514,15 @@ begin
     (attempt.installation_generation, attempt.mapping_revision) or target.lease_expires_at <= clock_timestamp()
   then return; end if;
 
+  if attempt.operation = 'observing' then
+    -- Authorized expired send leases settle to uncertain before observation.
+    select max(recorded.authorized_at) into write_authorized_at
+    from internal.connector_outbound_attempts recorded
+    where recorded.delivery_id = target.id and recorded.operation = 'sending' and recorded.result = 'uncertain';
+  else
+    write_authorized_at := attempt.authorized_at;
+  end if;
+
   return query
     select github.installation_id, repository.repo_id, repository.full_name,
       admitted.source_kind, admitted.source_number, admitted.source_id,
@@ -515,7 +531,7 @@ begin
           session.current_artifact_id::text, session.current_artifact_version::text) =
           (target.content#>>'{reviewTarget,stageId}', target.content#>>'{reviewTarget,artifactId}',
             target.content#>>'{reviewTarget,artifactVersion}')
-        then session.artifact_review_revision end
+        then session.artifact_review_revision end, coalesce(write_authorized_at, target.created_at)
     from public.session_conversation_sources source
     join public.sessions session on (session.workspace_id, session.factory_id, session.id) =
       (source.workspace_id, source.factory_id, source.session_id)

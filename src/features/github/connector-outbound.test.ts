@@ -67,6 +67,7 @@ const authority = {
   source_number: 14,
   source_id: 42,
   current_review_revision: null as number | null,
+  original_write_authorized_at: "2026-11-23T19:15:31.123+00:00",
 };
 const installation = {
   id: 62,
@@ -182,24 +183,39 @@ describe("GitHub connector reply adapter", () => {
     expect(github).not.toHaveBeenCalled();
   });
 
-  it("recovers a committed create after a lost response without issuing another write", async () => {
-    let stored: unknown;
-    const provider = vi.fn(async (_url: URL, request: RequestInit | undefined) => {
+  it("recovers a committed create beyond 150 old comments without issuing another write", async () => {
+    const comments = Array.from({ length: 150 }, (_, index) => ({
+      ...appComment,
+      id: 100 + index,
+      body: "An older reply.",
+      updated_at: "2026-11-20T09:01:00Z",
+    }));
+    const provider = vi.fn(async (url: URL, request: RequestInit | undefined) => {
       if (request?.method === "POST") {
         const { body } = await new Response(request.body).json();
         expect(body).toContain(marker);
-        stored = { ...appComment, body };
+        // The provider's clock is 32 seconds behind the write authorization.
+        comments.push({ ...appComment, id: 250, body, updated_at: "2026-11-23T19:14:59Z" });
         throw new TypeError("connection closed after write");
       }
-      return Response.json(stored ? [stored] : []);
+      const since = url.searchParams.get("since");
+      const limit = Number(url.searchParams.get("per_page"));
+      const end = Number(url.searchParams.get("page")) * limit;
+      const window = comments.filter(
+        (entry) => since === null || Date.parse(entry.updated_at) > Date.parse(since),
+      );
+      return Response.json(window.slice(end - limit, end), {
+        headers: end < window.length ? { link: '<https://api.github.com/>; rel="next"' } : {},
+      });
     });
     const { adapter } = makeAdapter({ github: provider });
     await expect(adapter.send(target, signal)).resolves.toEqual({ kind: "uncertain" });
     await expect(adapter.observe(target, signal)).resolves.toEqual({
       kind: "found",
-      providerReplyId: "72",
+      providerReplyId: "250",
     });
     expect(provider.mock.calls.map(([, request]) => request?.method)).toEqual(["POST", "GET"]);
+    expect(provider.mock.calls[1]?.[0].searchParams.get("since")).toBe("2026-11-23T19:14:31Z");
     expect(mocks.appRequest).toHaveBeenNthCalledWith(
       2,
       "POST /app/installations/{installation_id}/access_tokens",
@@ -252,6 +268,46 @@ describe("GitHub connector reply adapter", () => {
     await expect(adapter.observe(target, signal)).resolves.toEqual({
       kind: "rate_limited",
       retryAfterSeconds: 120,
+    });
+  });
+
+  it.each([
+    ["You have exceeded a secondary rate limit.", { kind: "rate_limited", retryAfterSeconds: 60 }],
+    ["Resource not accessible by integration", { kind: "credential_unavailable" }],
+  ])("classifies a provider 403 with primary quota remaining: %s", async (message, result) => {
+    const { adapter } = makeAdapter({
+      github: () =>
+        Response.json({ message }, { status: 403, headers: { "x-ratelimit-remaining": "49" } }),
+    });
+    await expect(adapter.send(target, signal)).resolves.toEqual(result);
+    await expect(adapter.observe(target, signal)).resolves.toEqual(result);
+  });
+
+  it.each([
+    ["You have exceeded a secondary rate limit.", { kind: "rate_limited", retryAfterSeconds: 60 }],
+    ["Resource not accessible by integration", { kind: "credential_unavailable" }],
+  ])("classifies an Octokit 403 with primary quota remaining: %s", async (message, result) => {
+    mocks.appRequest.mockRejectedValue({
+      status: 403,
+      response: { headers: { "x-ratelimit-remaining": "49" }, data: { message } },
+    });
+    const { adapter, fetcher } = makeAdapter({ github: () => new Response(null, { status: 500 }) });
+    await expect(adapter.send(target, signal)).resolves.toEqual(result);
+    await expect(adapter.observe(target, signal)).resolves.toEqual(result);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("waits at least a minute for a secondary rate limit with a shorter hint", async () => {
+    const { adapter } = makeAdapter({
+      github: () =>
+        Response.json(
+          { message: "You have exceeded a secondary rate limit." },
+          { status: 403, headers: { "retry-after": "10" } },
+        ),
+    });
+    await expect(adapter.send(target, signal)).resolves.toEqual({
+      kind: "rate_limited",
+      retryAfterSeconds: 60,
     });
   });
 

@@ -16725,6 +16725,7 @@ export type Database = {
           current_review_revision: number
           github_installation_id: number
           github_repository_id: number
+          original_write_authorized_at: string
           repository_full_name: string
           source_id: number
           source_kind: string

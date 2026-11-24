@@ -117,6 +117,24 @@ select ok(exists (select 1 from public.session_conversation_messages message joi
     and message.body_md like '%Correction.'),
   'the edit records its own provider revision and leaves historical text in place');
 
+select is(pg_temp.deliver_github_comment(245, 9250, 21, p_body => repeat(' ', 4001) || 'Useful text.')->>'status',
+  'appended', 'a long whitespace prefix does not hide the first meaningful comment text');
+select is(pg_temp.deliver_github_comment(246, 9250, 22, p_action => 'edited',
+  p_body => repeat(E'\t', 3999) || 'Useful edit.')->>'status',
+  'appended', 'the edit label does not consume the entire meaningful comment slice');
+select is(pg_temp.deliver_github_comment(247, 9251, 21, p_body => '    Preserve indentation.')->>'status',
+  'appended', 'an ordinary indented comment still appends unchanged');
+select ok(exists (select 1 from public.session_conversation_messages message
+  where message.external_message_id like 'github-comment:9250:created:%'
+    and message.body_md = 'Useful text.' and message.body_truncated)
+  and exists (select 1 from public.session_conversation_messages message
+    where message.external_message_id like 'github-comment:9250:edited:%'
+      and message.body_md = E'GitHub comment edited:\n\nUseful edit.' and message.body_truncated)
+  and exists (select 1 from public.session_conversation_messages message
+    where message.external_message_id like 'github-comment:9251:created:%'
+      and message.body_md = '    Preserve indentation.' and not message.body_truncated),
+  'only the otherwise empty slice loses leading whitespace and truncation provenance remains true');
+
 select is(pg_temp.deliver_github_comment(221, 9101, 20, 'pull_request')->>'status', 'appended',
   'the PR issue envelope binds its numeric issue ID to the separately admitted canonical PR');
 select is(pg_temp.deliver_github_comment(222, 9102, 21, 'pull_request', p_override_id => 67000102), null::jsonb,
@@ -275,6 +293,14 @@ select ok((select public.confirm_connector_outbound_authority(delivery_id, lease
 select ok(exists (select 1 from github_review_observation observation
   cross join lateral public.resolve_github_connector_delivery(observation.delivery_id, observation.lease_id) resolved
   where resolved.current_review_revision is null), 'an observing lease still resolves a finished review thread');
+select ok(exists (select 1 from github_review_observation observation
+  join github_review_claim original using (delivery_id)
+  join internal.connector_outbound_attempts sent on sent.lease_id = original.lease_id
+  join internal.connector_outbound_attempts observed on observed.lease_id = observation.lease_id
+  cross join lateral public.resolve_github_connector_delivery(observation.delivery_id, observation.lease_id) resolved
+  where resolved.original_write_authorized_at = sent.authorized_at and sent.result = 'uncertain'
+    and resolved.original_write_authorized_at < observed.authorized_at),
+  'the observer searches from the original possible write rather than the recovery lease');
 select ok((select public.settle_connector_outbound_delivery(delivery_id, lease_id, 'found', '9910')
   from github_review_observation), 'recovery confirms the existing provider comment ID without rewriting it');
 select ok(exists (select 1 from public.sessions session join github_linked_conversations linked on linked.session_id = session.id
