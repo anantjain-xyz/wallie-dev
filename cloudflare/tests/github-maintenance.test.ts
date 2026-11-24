@@ -280,6 +280,9 @@ it.each([
       if (name === "drain_github_connector_comment_retries") {
         return { abortSignal: () => Promise.resolve({ data: 0, error: null }) };
       }
+      if (name === "claim_slack_connector_event") {
+        return Promise.resolve({ data: [], error: null });
+      }
       if (name === "claim_connector_outbound_delivery") {
         return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
       }

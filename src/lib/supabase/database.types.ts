@@ -11751,6 +11751,25 @@ export type Database = {
         Returns: string
       }
       claim_session_source_delivery: { Args: never; Returns: string }
+      claim_slack_connector_event: {
+        Args: { p_workspace_id?: string }
+        Returns: {
+          app_id: string
+          bot_user_id: string
+          channel_id: string
+          deadline_at: string
+          encrypted_token: string
+          factory_id: string
+          installation_generation: number
+          installation_id: string
+          lease_id: string
+          mapping_revision: number
+          queue_id: string
+          resource_id: string
+          team_id: string
+          workspace_id: string
+        }[]
+      }
       close_factory_benchmark_live_inference: {
         Args: {
           p_attempt_count: number
@@ -13021,6 +13040,21 @@ export type Database = {
           job_id: string
           run_id: string
         }[]
+      }
+      enqueue_slack_connector_event: {
+        Args: {
+          p_action: string
+          p_actor_id?: string
+          p_app_id: string
+          p_body?: string
+          p_channel_id: string
+          p_event_id: string
+          p_message_ts: string
+          p_team_id: string
+          p_thread_ts?: string
+          p_version_ts: string
+        }
+        Returns: string
       }
       ensure_own_profile: {
         Args: {
@@ -18220,6 +18254,19 @@ export type Database = {
           p_obligation_id: string
         }
         Returns: boolean
+      }
+      settle_slack_connector_event: {
+        Args: {
+          p_app_id?: string
+          p_bot_user_id?: string
+          p_channel_id?: string
+          p_lease_id: string
+          p_queue_id: string
+          p_result: string
+          p_retry_after_seconds?: number
+          p_team_id?: string
+        }
+        Returns: string
       }
       settle_workspace_resource_operation: {
         Args: { p_operation_id: string; p_transferred: boolean }

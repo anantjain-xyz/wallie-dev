@@ -143,3 +143,21 @@ issue require **Issues** write access. Replies on a pull request use **Pull
 requests** write access. Check the approved installation permissions and the
 `Issue comment` webhook subscription when enabling this flow.
 [GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)
+
+## Slack thread intake
+
+Enable Slack bot events `app_mention`, `message.channels`, and `message.groups`
+with the HTTPS Request URL `/api/slack/events`. Slack signs the raw request
+before Wallie accepts it. The app must already belong to a mapped channel.
+A factory needs a published definition with an active session-creation grant.
+Each person who sends a request or follow-up links their Slack identity in
+Wallie.
+
+Start a linked session by mentioning the installed bot at the root of a
+thread. Follow-ups continue the existing conversation. Wallie checks the
+current channel and actor before using the signed event. Duplicates do not
+create another session. Edits append a new version and deletion retains a
+record that fences later delivery. A follow-up from a linked actor can wait
+briefly for its exact root when Slack delivers events out of order.
+
+[Slack HTTP events](https://docs.slack.dev/apis/events-api/using-http-request-urls/)
