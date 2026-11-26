@@ -11,6 +11,8 @@ import { isProviderStatusStale } from "@/features/settings/provider-status-cache
 import { OPENCODE_ZEN_PROVIDER_ID, parseOpenCodeModelId } from "@/lib/agent-config/contracts";
 
 const namedProviders: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
   "opencode-go": "OpenCode Go",
   openrouter: "OpenRouter",
 };
@@ -30,12 +32,14 @@ export interface OpenCodeConnectionStatus {
 interface OpenCodeConnectionPanelProps {
   initialStatus?: OpenCodeConnectionStatus;
   selectedModel?: string;
+  onDraftStateChange?: (state: { dirty: boolean; pending: boolean }) => void;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: OpenCodeConnectionStatus) => void;
 }
 
 export function OpenCodeConnectionPanel({
   initialStatus,
+  onDraftStateChange,
   onStatusChange,
   selectedModel,
 }: OpenCodeConnectionPanelProps = {}) {
@@ -63,6 +67,11 @@ export function OpenCodeConnectionPanel({
     isBusy || trimmedProviderId.length === 0 || providerCredential.trim().length === 0;
   const { pushToast } = useOptionalToast();
   const onStatusChangeRef = useRef(onStatusChange);
+  const dirty = Boolean(credential || providerCredential || providerOverride !== null);
+
+  useEffect(() => {
+    onDraftStateChange?.({ dirty, pending: isBusy });
+  }, [dirty, isBusy, onDraftStateChange]);
 
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;

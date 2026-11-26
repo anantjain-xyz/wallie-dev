@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField } from "@/components/ui/select";
@@ -18,6 +18,7 @@ import {
 type LinearRoutingEditorProps = {
   canManage: boolean;
   factoryRevisionId?: string | null;
+  onDraftStateChange?: (state: { dirty: boolean; pending: boolean }) => void;
   onSaved?: (routing: LinearRoutingConfig) => Promise<void> | void;
   routing: LinearRoutingConfig;
   stages: Pick<PipelineStage, "id" | "name" | "slug">[];
@@ -100,16 +101,21 @@ function buildRoutingPayload(draft: LinearRoutingDraft) {
   };
 }
 
-function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
+function actionLabelForRoute(
+  key: LinearRouteKey,
+  draft: LinearRoutingDraft,
+  stageLabels: ReadonlyMap<string, string>,
+) {
+  const land = stageLabels.get(draft.landStageSlug);
+  const rework = stageLabels.get(draft.reworkStageSlug);
+  const landAction = land ? `Route to ${land}` : "Landing stage unavailable";
   switch (key) {
     case "merging":
-      return draft.landStageSlug
-        ? `Route to ${draft.landStageSlug} stage`
-        : "Pause for manual merge";
+      return draft.landStageSlug ? landAction : "Pause for manual merge";
     case "done":
-      return draft.landStageSlug ? `Route to ${draft.landStageSlug} stage` : "Archive session";
+      return draft.landStageSlug ? landAction : "Archive session";
     case "rework":
-      return `Restart at ${draft.reworkStageSlug} stage`;
+      return rework ? `Restart at ${rework}` : "Rework stage unavailable";
     default:
       return LINEAR_ROUTE_ACTIONS[key];
   }
@@ -118,6 +124,7 @@ function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
 export function LinearRoutingEditor({
   canManage,
   factoryRevisionId,
+  onDraftStateChange,
   onSaved,
   routing,
   stages,
@@ -127,6 +134,7 @@ export function LinearRoutingEditor({
     <LinearRoutingControls
       canManage={canManage}
       factoryRevisionId={factoryRevisionId}
+      onDraftStateChange={onDraftStateChange}
       onSaved={onSaved}
       routing={routing}
       stages={stages}
@@ -138,6 +146,7 @@ export function LinearRoutingEditor({
 export function LinearRoutingControls({
   canManage,
   factoryRevisionId,
+  onDraftStateChange,
   onSaved,
   routing,
   stages,
@@ -150,12 +159,18 @@ export function LinearRoutingControls({
   const draft = edits?.draft ?? routingDraftFromConfig(routing);
   const pipelineChanged = edits !== null && edits.factoryRevisionId !== factoryRevisionId;
   const [feedbackMessage, setFeedbackMessage] = useState<FlashMessage | null>(null);
+  const fieldId = useId();
 
   const stageOptions = useMemo(() => stages.map((stage) => stage.slug), [stages]);
-  const stageSelectOptions = useMemo(
-    () => stageOptions.map((option) => ({ label: option, value: option })),
-    [stageOptions],
-  );
+  const stageSelectOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const { name } of stages) counts.set(name, (counts.get(name) ?? 0) + 1);
+    return stages.map((stage, index) => ({
+      label: counts.get(stage.name) === 1 ? stage.name : `${stage.name} · Stage ${index + 1}`,
+      value: stage.slug,
+    }));
+  }, [stages]);
+  const stageLabels = new Map(stageSelectOptions.map(({ label, value }) => [value, label]));
 
   const saveRouting = useApiAction<LinearRoutingResponse>({
     call: () => {
@@ -181,6 +196,12 @@ export function LinearRoutingControls({
     setFlashMessage: setFeedbackMessage,
     successText: "Linear routing saved.",
   });
+  const dirty =
+    edits !== null && JSON.stringify(draft) !== JSON.stringify(routingDraftFromConfig(routing));
+  const pending = saveRouting.isBusy;
+  useEffect(() => {
+    onDraftStateChange?.({ dirty, pending });
+  }, [dirty, onDraftStateChange, pending]);
 
   function updateDraft(updater: (current: LinearRoutingDraft) => LinearRoutingDraft) {
     setFeedbackMessage(null);
@@ -255,7 +276,7 @@ export function LinearRoutingControls({
                     →
                   </span>
                   <p className="text-sm font-medium text-foreground">
-                    {actionLabelForRoute(key, draft)}
+                    {actionLabelForRoute(key, draft, stageLabels)}
                   </p>
                 </div>
               </div>
@@ -275,25 +296,43 @@ export function LinearRoutingControls({
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <SelectField
-            disabled={!canManage}
-            label="Rework stage"
-            onValueChange={(value) =>
-              updateDraft((current) => ({ ...current, reworkStageSlug: value }))
-            }
-            options={stageSelectOptions}
-            value={draft.reworkStageSlug}
-          />
-          <SelectField
-            disabled={!canManage}
-            emptyOption={{ label: "Manual merge (no agent stage)", value: "" }}
-            label="Automated land stage"
-            onValueChange={(value) =>
-              updateDraft((current) => ({ ...current, landStageSlug: value }))
-            }
-            options={stageSelectOptions}
-            value={draft.landStageSlug}
-          />
+          {(
+            [
+              { key: "reworkStageSlug", label: "Rework stage", optional: false },
+              { key: "landStageSlug", label: "Automated land stage", optional: true },
+            ] as const
+          ).map(({ key, label, optional }) => {
+            const value = draft[key];
+            const missing = (!optional || value !== "") && !stageLabels.has(value);
+            const hintId = `${fieldId}-${key}-hint`;
+            return (
+              <div className="space-y-2" key={key}>
+                <SelectField
+                  aria-describedby={missing ? hintId : undefined}
+                  disabled={!canManage || pending}
+                  emptyOption={
+                    optional ? { label: "Manual merge (no agent stage)", value: "" } : undefined
+                  }
+                  label={label}
+                  onValueChange={(next) => updateDraft((current) => ({ ...current, [key]: next }))}
+                  options={
+                    missing
+                      ? [
+                          { disabled: true, label: "Saved stage unavailable", value },
+                          ...stageSelectOptions,
+                        ]
+                      : stageSelectOptions
+                  }
+                  value={value}
+                />
+                {missing ? (
+                  <p className="text-xs leading-5 text-muted" id={hintId}>
+                    Choose a replacement from the current pipeline before saving.
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </section>
 

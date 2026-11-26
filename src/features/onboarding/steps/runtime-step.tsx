@@ -42,8 +42,10 @@ import {
   STALL_TIMEOUT_MINUTE_LIMITS,
   agentProviderSupportsEffort,
   getRecommendedAgentConfigDefault,
+  getRecommendedAgentModel,
   normalizeAgentProviderName,
   stallTimeoutMinutesToMs,
+  type AgentProvider,
 } from "@/lib/agent-config/contracts";
 import {
   type AgentConfigDrafts,
@@ -58,7 +60,7 @@ import type {
   WorkspaceSecretPreview,
 } from "@/lib/secrets/contracts";
 
-import type { OnboardingStepProps } from "./types";
+import type { OnboardingStepDraftState, OnboardingStepProps } from "./types";
 
 type FieldType = "number" | "select" | "text";
 
@@ -433,6 +435,7 @@ export default function RuntimeStep({
   data,
   isSaving,
   onDataChange,
+  onDraftStateChange,
   onRuntimeStateChange,
   onSelectStep,
 }: OnboardingStepProps) {
@@ -445,6 +448,7 @@ export default function RuntimeStep({
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [serverFieldErrors, setServerFieldErrors] = useState<AgentConfigFieldErrors>({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [openCodeDraft, setOpenCodeDraft] = useState<OnboardingStepDraftState | null>(null);
   const nextNewSecretRowId = useRef(1);
   const handleCodexStatusChange = useCallback(
     (status: CodexConnectionStatus) =>
@@ -488,14 +492,8 @@ export default function RuntimeStep({
       AGENT_CONFIG_FIELDS.filter(
         (field) =>
           field.configKey !== "agent_effort" || agentProviderSupportsEffort(selectedDraftProvider),
-      ).map((field) =>
-        field.configKey === "agent_model" &&
-        selectedDraftProvider === "cursor" &&
-        cursorModels.length > 0
-          ? ({ ...field, options: cursorModels, type: "select" } satisfies FieldDescriptor)
-          : field,
       ),
-    [cursorModels, selectedDraftProvider],
+    [selectedDraftProvider],
   );
   const savedDrafts = buildAgentConfigDrafts(data.agentConfig);
   const fieldStatuses = fields.map((field) => {
@@ -588,6 +586,17 @@ export default function RuntimeStep({
   useEffect(() => {
     onRuntimeStateChange({ hasInvalidDrafts, hasUnsavedDrafts, readiness });
   }, [hasInvalidDrafts, hasUnsavedDrafts, onRuntimeStateChange, readiness, readinessSignature]);
+
+  const dirty =
+    hasUnsavedDrafts ||
+    Object.values(secretValueDrafts).some(Boolean) ||
+    newSecretRows.some((row) => Boolean(row.key || row.value)) ||
+    (selectedProvider === "opencode" && openCodeDraft?.dirty === true);
+  const pending =
+    busyAction !== null || (selectedProvider === "opencode" && openCodeDraft?.pending === true);
+  useEffect(() => {
+    onDraftStateChange?.({ dirty, pending });
+  }, [dirty, onDraftStateChange, pending]);
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
@@ -829,7 +838,16 @@ export default function RuntimeStep({
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {providerFieldStatuses.map((status) => (
             <div className="block space-y-1.5" key={status.field.configKey}>
-              {status.field.type === "select" && status.field.options ? (
+              {status.field.configKey === "agent_model" ? (
+                <RuntimeModelField
+                  key={selectedDraftProvider}
+                  disabled={!data.canManage || busyAction !== null || isSaving}
+                  discoveredModels={selectedDraftProvider === "cursor" ? cursorModels : []}
+                  onChange={(value) => handleFieldChange("agent_model", value)}
+                  provider={selectedDraftProvider}
+                  value={status.draft}
+                />
+              ) : status.field.type === "select" && status.field.options ? (
                 <SelectField
                   disabled={busyAction !== null}
                   label={status.field.label}
@@ -966,10 +984,12 @@ export default function RuntimeStep({
             onCodexStatusChange={handleCodexStatusChange}
             onCursorStatusChange={handleCursorStatusChange}
             onOpenCodeStatusChange={handleOpenCodeStatusChange}
+            onOpenCodeDraftStateChange={setOpenCodeDraft}
             onSandboxConnectionSelect={() => onSelectStep("sandbox")}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
             sandboxConnectionHref={sandboxConnectionHref}
+            selectedModel={drafts.agent_model}
             sandboxConnectionLabel={
               data.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
             }
@@ -1112,6 +1132,57 @@ export default function RuntimeStep({
           <RuntimeRequirementList requirements={readiness.requirements} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function RuntimeModelField({
+  disabled,
+  discoveredModels,
+  onChange,
+  provider,
+  value,
+}: {
+  disabled: boolean;
+  discoveredModels: SelectOption[];
+  onChange: (value: string) => void;
+  provider: AgentProvider;
+  value: string;
+}) {
+  const [custom, setCustom] = useState(false);
+  const recommended = getRecommendedAgentModel(provider);
+  const options = [
+    { label: `Recommended · ${recommended}`, value: recommended },
+    ...discoveredModels.filter((option) => option.value !== recommended),
+  ];
+  const showCustom = custom || !options.some((option) => option.value === value);
+  return (
+    <div className="space-y-2">
+      <SelectField
+        disabled={disabled}
+        label="Model"
+        onValueChange={(next) => {
+          setCustom(next === "__custom");
+          if (next !== "__custom") onChange(next);
+        }}
+        options={[...options, { label: "Custom model", value: "__custom" }]}
+        value={showCustom ? "__custom" : value}
+      />
+      {showCustom ? (
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium text-muted">Custom model</span>
+          <input
+            autoComplete="off"
+            className="ui-input"
+            disabled={disabled}
+            name="agent-model"
+            onChange={(event) => onChange(event.target.value)}
+            spellCheck={false}
+            type="text"
+            value={value}
+          />
+        </label>
+      ) : null}
     </div>
   );
 }

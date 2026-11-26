@@ -107,6 +107,7 @@ describe("OpenCodeConnectionPanel", () => {
   });
 
   it("saves a custom provider key without echoing the secret", async () => {
+    const onDraftStateChange = vi.fn();
     const onStatusChange = vi.fn();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -136,17 +137,25 @@ describe("OpenCodeConnectionPanel", () => {
     render(
       <OpenCodeConnectionPanel
         initialStatus={{ checkedAt: "2099-08-30T00:00:00.000Z", connected: false, providers: [] }}
+        onDraftStateChange={onDraftStateChange}
         onStatusChange={onStatusChange}
       />,
     );
 
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false });
     fireEvent.change(screen.getByLabelText("Provider id"), { target: { value: "opencode-go" } });
     fireEvent.change(screen.getByLabelText("Provider API key"), {
       target: { value: "go-key-12345678901234567890" },
     });
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: true, pending: false });
     fireEvent.click(screen.getByRole("button", { name: "Save provider key" }));
 
-    await waitFor(() => expect(screen.getByText("opencode-go")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false }),
+    );
+    expect(onDraftStateChange).toHaveBeenCalledWith({ dirty: true, pending: true });
+    expect(screen.getByText("opencode-go")).toBeInTheDocument();
+    expect(screen.getByText("OpenCode Go")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/opencode/providers/opencode-go", {
       body: JSON.stringify({ credential: "go-key-12345678901234567890" }),
       headers: { "Content-Type": "application/json" },

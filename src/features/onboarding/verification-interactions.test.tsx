@@ -10,7 +10,7 @@ import { OnboardingPageClient } from "@/features/onboarding/onboarding-page-clie
 import VerifyStep from "@/features/onboarding/steps/verify-step";
 import type { OnboardingStepProps } from "@/features/onboarding/steps/types";
 
-const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("@/features/onboarding/steps/active-step", () => ({
   ActiveOnboardingStep: (props: OnboardingStepProps & { step: string }) =>
@@ -204,7 +204,7 @@ describe("onboarding verification", () => {
         body: JSON.stringify({ expectedUpdatedAt: data.onboarding.updatedAt }),
       }),
     );
-    expect(router.push).toHaveBeenCalledWith("/w/northwind?create=1");
+    expect(router.replace).toHaveBeenCalledWith("/w/northwind?create=1");
   });
 
   it("keeps the retry action available after verification cannot start", async () => {
@@ -283,7 +283,7 @@ describe("onboarding verification", () => {
       render(<OnboardingPageClient initialData={data} />);
       expect(footerButton("Create your first task")).toBeEnabled();
       fireEvent.click(footerButton("Create your first task"));
-      expect(router.push).toHaveBeenCalledWith("/w/northwind?create=1");
+      expect(router.replace).toHaveBeenCalledWith("/w/northwind?create=1");
       expect(fetchMock).not.toHaveBeenCalled();
       expect(
         screen.queryByText("A workspace owner or admin can verify and complete setup."),
@@ -299,7 +299,7 @@ describe("onboarding verification", () => {
     render(<OnboardingPageClient initialData={data} />);
     expect(footerButton("Create your first task")).toBeDisabled();
     fireEvent.click(footerButton("Create your first task"));
-    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -315,7 +315,7 @@ describe("onboarding verification", () => {
     render(<OnboardingPageClient initialData={data} />);
     expect(footerButton("Verify setup")).toBeDisabled();
     fireEvent.submit(document.getElementById("onboarding-verification")!);
-    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
       screen.getByText("A workspace owner or admin can verify and complete setup."),
@@ -367,7 +367,7 @@ describe("onboarding verification", () => {
           expect(action).toBeEnabled();
           expect(action).toHaveAttribute("form", "onboarding-verification");
         }
-        expect(router.push).not.toHaveBeenCalled();
+        expect(router.replace).not.toHaveBeenCalled();
         expect(fetchMock).not.toHaveBeenCalled();
       },
     );
@@ -385,7 +385,7 @@ describe("onboarding verification", () => {
       );
       expect(footerButton("Create your first task")).toBeEnabled();
       fireEvent.click(footerButton("Create your first task"));
-      expect(router.push).toHaveBeenCalledWith("/w/northwind?create=1");
+      expect(router.replace).toHaveBeenCalledWith("/w/northwind?create=1");
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
+import { VercelTargetPicker } from "@/features/settings/vercel-target-picker";
 import type {
   DaytonaSandboxConnectionPreview,
   E2BSandboxConnectionPreview,
@@ -14,7 +15,10 @@ import type {
   SandboxSettingsResponse,
 } from "@/lib/sandbox-connections/contracts";
 import type { SandboxProvider } from "@/lib/sandbox";
-import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
+import type {
+  VercelSandboxConnectionPreview,
+  VercelSandboxCredentials,
+} from "@/lib/vercel-sandbox/contracts";
 
 const connectionUpdatedAtFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
@@ -43,6 +47,7 @@ const PROVIDERS: Array<{ description: string; id: SandboxProvider; label: string
 
 type Props = {
   canManage: boolean;
+  onDraftStateChange?: (state: { dirty: boolean; pending: boolean }) => void;
   onSettingsChange: (settings: SandboxSettingsResponse) => void;
   setFlashMessage: (message: FlashMessage) => void;
   settings: SandboxSettingsResponse;
@@ -53,6 +58,7 @@ type Props = {
 
 export function SandboxProviderSection({
   canManage,
+  onDraftStateChange,
   onSettingsChange,
   setFlashMessage,
   settings,
@@ -64,11 +70,10 @@ export function SandboxProviderSection({
     daytona: "",
     e2b: "",
   });
-  const [vercelToken, setVercelToken] = useState("");
-  const [vercelTeamId, setVercelTeamId] = useState(vercelConnection?.teamId ?? "");
-  const [vercelProjectId, setVercelProjectId] = useState(vercelConnection?.projectId ?? "");
-  const [daytonaApiUrl, setDaytonaApiUrl] = useState(settings.connections.daytona?.apiUrl ?? "");
-  const [daytonaTarget, setDaytonaTarget] = useState(settings.connections.daytona?.target ?? "");
+  const [vercelDirty, setVercelDirty] = useState(false);
+  const [daytonaDraft, setDaytonaDraft] = useState<{ apiUrl?: string; target?: string } | null>(
+    null,
+  );
   const [selectedProvider, setSelectedProvider] = useState<SandboxProvider | null>(() => {
     if (variant === "onboarding") {
       return settings.connections[settings.activeProvider] ? settings.activeProvider : null;
@@ -82,6 +87,20 @@ export function SandboxProviderSection({
   const [pending, setPending] = useState<string | null>(null);
   const [disconnectProvider, setDisconnectProvider] = useState<SandboxProvider | null>(null);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const savedDaytonaApiUrl = settings.connections.daytona?.apiUrl ?? "";
+  const savedDaytonaTarget = settings.connections.daytona?.target ?? "";
+  const daytonaApiUrl = daytonaDraft?.apiUrl ?? savedDaytonaApiUrl;
+  const daytonaTarget = daytonaDraft?.target ?? savedDaytonaTarget;
+  const dirty =
+    (selectedProvider === "vercel" && vercelDirty) ||
+    apiKeys.e2b.length > 0 ||
+    apiKeys.daytona.length > 0 ||
+    daytonaApiUrl !== savedDaytonaApiUrl ||
+    daytonaTarget !== savedDaytonaTarget;
+  const isPending = pending !== null;
+  useEffect(() => {
+    onDraftStateChange?.({ dirty, pending: isPending });
+  }, [dirty, isPending, onDraftStateChange]);
 
   async function request<T>(url: string, init: RequestInit): Promise<T> {
     const response = await fetch(url, {
@@ -94,45 +113,24 @@ export function SandboxProviderSection({
   }
 
   function clearSecretDraft(provider: SandboxProvider) {
-    if (provider === "vercel") setVercelToken("");
-    else setApiKeys((current) => ({ ...current, [provider]: "" }));
-  }
-
-  function restoreNonSecretFields(provider: SandboxProvider) {
-    if (provider === "vercel") {
-      setVercelTeamId(settings.connections.vercel?.teamId ?? "");
-      setVercelProjectId(settings.connections.vercel?.projectId ?? "");
-      return;
-    }
-    if (provider === "daytona") {
-      setDaytonaApiUrl(settings.connections.daytona?.apiUrl ?? "");
-      setDaytonaTarget(settings.connections.daytona?.target ?? "");
-    }
+    if (provider !== "vercel") setApiKeys((current) => ({ ...current, [provider]: "" }));
   }
 
   function startReplace(provider: SandboxProvider) {
-    restoreNonSecretFields(provider);
     clearSecretDraft(provider);
     setReplacingProvider(provider);
   }
 
   function cancelReplace(provider: SandboxProvider) {
     clearSecretDraft(provider);
-    restoreNonSecretFields(provider);
+    if (provider === "daytona") setDaytonaDraft(null);
     setReplacingProvider(null);
   }
 
-  async function save(provider: SandboxProvider) {
-    const body =
-      provider === "vercel"
-        ? { projectId: vercelProjectId, teamId: vercelTeamId, token: vercelToken }
-        : provider === "e2b"
-          ? { apiKey: apiKeys.e2b }
-          : {
-              apiKey: apiKeys.daytona,
-              apiUrl: daytonaApiUrl || undefined,
-              target: daytonaTarget || undefined,
-            };
+  async function save(
+    provider: SandboxProvider,
+    body: VercelSandboxCredentials | { apiKey: string; apiUrl?: string; target?: string },
+  ) {
     if (Object.values(body).some((value) => typeof value === "string" && !value.trim())) {
       setFlashMessage({ kind: "error", text: `Complete the ${providerLabel(provider)} fields.` });
       return;
@@ -148,6 +146,7 @@ export function SandboxProviderSection({
         connections: { ...settings.connections, [provider]: result.connection },
       });
       clearSecretDraft(provider);
+      if (provider === "daytona") setDaytonaDraft(null);
       setReplacingProvider(null);
       setFlashMessage({ kind: "success", text: `${providerLabel(provider)} connection saved.` });
     } catch (error) {
@@ -172,6 +171,7 @@ export function SandboxProviderSection({
         ...settings,
         connections: { ...settings.connections, [provider]: null },
       });
+      if (provider === "daytona") setDaytonaDraft(null);
       setReplacingProvider((current) => (current === provider ? null : current));
       setDisconnectProvider(null);
       setFlashMessage({ kind: "success", text: `${providerLabel(provider)} disconnected.` });
@@ -235,16 +235,15 @@ export function SandboxProviderSection({
   function providerForm(provider: SandboxProvider, cancellable: boolean) {
     const onCancel = cancellable ? () => cancelReplace(provider) : undefined;
     return provider === "vercel" ? (
-      <ProviderForm title="Vercel Sandbox">
-        <SecretInput label="Token" onChange={setVercelToken} value={vercelToken} />
-        <TextInput label="Team id" onChange={setVercelTeamId} value={vercelTeamId} />
-        <TextInput label="Project id" onChange={setVercelProjectId} value={vercelProjectId} />
-        <FormActions
-          disabled={pending !== null}
-          onCancel={onCancel}
-          onSave={() => void save("vercel")}
-        />
-      </ProviderForm>
+      <VercelTargetPicker
+        connection={settings.connections.vercel ?? vercelConnection}
+        disabled={isPending}
+        isSaving={pending === "save:vercel"}
+        onCancel={onCancel}
+        onDirtyChange={onDraftStateChange ? setVercelDirty : undefined}
+        onSave={(credentials) => void save("vercel", credentials)}
+        workspaceId={workspaceId}
+      />
     ) : provider === "e2b" ? (
       <ProviderForm title="E2B">
         <SecretInput
@@ -255,22 +254,39 @@ export function SandboxProviderSection({
         <FormActions
           disabled={pending !== null}
           onCancel={onCancel}
-          onSave={() => void save("e2b")}
+          onSave={() => void save("e2b", { apiKey: apiKeys.e2b })}
         />
       </ProviderForm>
     ) : (
       <ProviderForm title="Daytona">
         <SecretInput
+          disabled={isPending}
           label="API key"
           onChange={(value) => setApiKeys((current) => ({ ...current, daytona: value }))}
           value={apiKeys.daytona}
         />
-        <TextInput label="API URL (optional)" onChange={setDaytonaApiUrl} value={daytonaApiUrl} />
-        <TextInput label="Target (optional)" onChange={setDaytonaTarget} value={daytonaTarget} />
+        <TextInput
+          disabled={isPending}
+          label="API URL (optional)"
+          onChange={(apiUrl) => setDaytonaDraft((current) => ({ ...current, apiUrl }))}
+          value={daytonaApiUrl}
+        />
+        <TextInput
+          disabled={isPending}
+          label="Target (optional)"
+          onChange={(target) => setDaytonaDraft((current) => ({ ...current, target }))}
+          value={daytonaTarget}
+        />
         <FormActions
           disabled={pending !== null}
           onCancel={onCancel}
-          onSave={() => void save("daytona")}
+          onSave={() =>
+            void save("daytona", {
+              apiKey: apiKeys.daytona,
+              apiUrl: daytonaApiUrl || undefined,
+              target: daytonaTarget || undefined,
+            })
+          }
         />
       </ProviderForm>
     );
@@ -302,6 +318,7 @@ export function SandboxProviderSection({
                     <input
                       checked={selectedProvider === provider.id}
                       className="peer sr-only"
+                      disabled={isPending}
                       name="sandbox-provider"
                       onChange={() => selectProvider(provider.id)}
                       type="radio"
@@ -353,6 +370,7 @@ export function SandboxProviderSection({
                   onReplace={() => startReplace(selectedProvider)}
                   provider={selectedProvider}
                   activeProvider={settings.activeProvider}
+                  showCapabilityLink={variant === "settings"}
                   status={selectedStatus}
                 />
               ) : (
@@ -380,6 +398,7 @@ export function SandboxProviderSection({
                       onDisconnect={() => void disconnect(selectedProvider)}
                       provider={selectedProvider}
                       activeProvider={settings.activeProvider}
+                      showCapabilityLink={false}
                       status={selectedStatus}
                     />
                   </div>
@@ -413,6 +432,7 @@ function SavedConnectionSummary({
   onDisconnectOpenChange,
   onReplace,
   provider,
+  showCapabilityLink,
   status,
 }: {
   activeProvider: SandboxProvider;
@@ -426,6 +446,7 @@ function SavedConnectionSummary({
   onDisconnectOpenChange: (open: boolean) => void;
   onReplace: () => void;
   provider: SandboxProvider;
+  showCapabilityLink: boolean;
   status: {
     active: boolean;
     connected: boolean;
@@ -459,6 +480,7 @@ function SavedConnectionSummary({
           onDisconnectOpenChange={onDisconnectOpenChange}
           onReplace={canManage ? onReplace : undefined}
           provider={provider}
+          showCapabilityLink={showCapabilityLink}
           status={status}
         />
       </div>
@@ -478,10 +500,20 @@ function ConnectionMetadata({
   if (provider === "vercel") {
     const vercel = connection as VercelSandboxConnectionPreview;
     return (
-      <dl className="grid gap-1 text-xs">
-        <MetadataRow label="Team ID" value={vercel.teamId} />
-        <MetadataRow label="Project ID" value={vercel.projectId} />
-      </dl>
+      <div className="space-y-2">
+        <p className="break-words text-xs text-muted">
+          {vercel.projectName
+            ? `Project: ${vercel.projectName}`
+            : "Connected project · name unavailable"}
+        </p>
+        <details className="text-xs">
+          <summary className="w-fit cursor-pointer text-muted">Connection details</summary>
+          <dl className="mt-2 grid gap-1 break-all select-text">
+            <MetadataRow label="Team ID" value={vercel.teamId} />
+            <MetadataRow label="Project ID" value={vercel.projectId} />
+          </dl>
+        </details>
+      </div>
     );
   }
   if (provider === "daytona") {
@@ -523,6 +555,7 @@ function ProviderActions({
   onDisconnectOpenChange,
   onReplace,
   provider,
+  showCapabilityLink,
   status,
 }: {
   activeProvider: SandboxProvider;
@@ -536,6 +569,7 @@ function ProviderActions({
   onDisconnectOpenChange: (open: boolean) => void;
   onReplace?: () => void;
   provider: SandboxProvider;
+  showCapabilityLink: boolean;
   status: {
     active: boolean;
     connected: boolean;
@@ -577,7 +611,7 @@ function ProviderActions({
           }
         />
       ) : null}
-      {status.active && status.connected ? (
+      {showCapabilityLink && status.active && status.connected ? (
         <a className="ui-button" href="#verify">
           Test capabilities
         </a>
@@ -611,11 +645,13 @@ function ProviderForm({ children, title }: { children: ReactNode; title: string 
 }
 
 function TextInput({
+  disabled,
   label,
   onChange,
   type = "text",
   value,
 }: {
+  disabled?: boolean;
   label: string;
   onChange: (value: string) => void;
   type?: "password" | "text";
@@ -627,6 +663,7 @@ function TextInput({
       <input
         autoComplete="off"
         className="ui-input"
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         spellCheck={false}
         type={type}
@@ -703,7 +740,7 @@ export function applySandboxSettingsToData(
         connectionRevision: active ? String(active.connectionRevision) : null,
         displayName:
           settings.activeProvider === "vercel"
-            ? (vercel?.projectName ?? vercel?.projectId ?? null)
+            ? (vercel?.projectName ?? (vercel ? "Connected project · name unavailable" : null))
             : settings.activeProvider === "e2b"
               ? (settings.connections.e2b?.apiKeyPreview ?? null)
               : (settings.connections.daytona?.target ??

@@ -4,7 +4,12 @@ import { OnboardingLinearStep } from "@/features/onboarding/onboarding-linear-st
 
 import type { OnboardingStepProps } from "./types";
 
-export default function LinearStep({ data, onCompleteStep, onRefresh }: OnboardingStepProps) {
+export default function LinearStep({
+  data,
+  onCompleteStep,
+  onDraftStateChange,
+  onRefresh,
+}: OnboardingStepProps) {
   return (
     <OnboardingLinearStep
       canManage={data.canManage}
@@ -12,6 +17,7 @@ export default function LinearStep({ data, onCompleteStep, onRefresh }: Onboardi
       linearRouting={data.linearRouting}
       linearSecret={data.linearSecret}
       onCompleted={onCompleteStep}
+      onDraftStateChange={onDraftStateChange}
       onRefresh={onRefresh}
       pipeline={data.pipeline}
       workspaceId={data.workspace.id}

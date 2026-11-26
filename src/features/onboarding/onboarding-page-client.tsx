@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { TimeDisplay } from "@/components/shared/time-display";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
@@ -36,6 +37,7 @@ import {
   type RuntimeReadiness,
 } from "@/features/onboarding/runtime-readiness";
 import { ActiveOnboardingStep } from "@/features/onboarding/steps/active-step";
+import type { OnboardingStepDraftState } from "@/features/onboarding/steps/types";
 import { SetupCheck } from "@/features/onboarding/setup-check";
 import {
   mergeRepositoryOnboardingState,
@@ -253,7 +255,7 @@ export function setupHealthItems(
   const sandboxConnection = health.sandboxConnection ?? {
     connected: health.vercelSandboxConnection.connected,
     displayName:
-      health.vercelSandboxConnection.projectName ?? health.vercelSandboxConnection.projectId,
+      health.vercelSandboxConnection.projectName ?? "Connected project · name unavailable",
     lastValidationError: health.vercelSandboxConnection.lastValidationError,
     providerLabel: "Vercel Sandbox",
     status: health.vercelSandboxConnection.status,
@@ -700,7 +702,13 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     },
   );
   const [savingAction, setSavingAction] = useState<string | null>(null);
+  const [stepDraft, setStepDraft] = useState<
+    (OnboardingStepDraftState & { step: WorkspaceOnboardingStep }) | null
+  >(null);
+  const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
   const [isStartingVerification, setIsStartingVerification] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const leaveFocusRef = useRef<HTMLElement | null>(null);
   const saveInFlightRef = useRef(false);
   const latestDataRef = useRef(data);
   const previousStepRef = useRef(initialData.onboarding.currentStep);
@@ -718,6 +726,13 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
   const isCompleted = onboarding.status === "completed";
   const isSaving = savingAction !== null || isStartingVerification;
+  const dirtyStep = data.canManage && stepDraft?.step === activeStep.id && stepDraft.dirty;
+  const savingStep = stepDraft?.step === activeStep.id && stepDraft.pending;
+  const navigationDisabled = isSaving || savingStep;
+  const onStepDraftStateChange = useCallback(
+    (draft: OnboardingStepDraftState) => setStepDraft({ ...draft, step: onboarding.currentStep }),
+    [onboarding.currentStep],
+  );
   const isVerifyingStep = activeStep.id === "verify";
   const activeStepAlreadyResolved =
     onboarding.completedSteps.includes(activeStep.id) ||
@@ -772,7 +787,34 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     if (previousStepRef.current === onboarding.currentStep) return;
     previousStepRef.current = onboarding.currentStep;
     scrollOnboardingSetupToTop();
+    headingRef.current?.focus();
   }, [onboarding.currentStep]);
+
+  useEffect(() => {
+    if (!dirtyStep && !savingStep) return;
+    function beforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirtyStep, savingStep]);
+
+  function requestLeave(action: () => void) {
+    if (navigationDisabled || saveInFlightRef.current || leaveAction) return;
+    if (dirtyStep) {
+      const focused = document.activeElement;
+      leaveFocusRef.current =
+        focused?.getAttribute("role") === "option"
+          ? document.getElementById("onboarding-step-picker")
+          : focused instanceof HTMLElement
+            ? focused
+            : headingRef.current;
+      setLeaveAction(() => action);
+    } else {
+      action();
+    }
+  }
 
   async function persistOnboarding(
     changes: WorkspaceOnboardingUpdatePayload,
@@ -960,7 +1002,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       setData(nextData);
       const destination = firstTaskDestination;
       startNavigation(destination);
-      router.push(destination);
+      router.replace(destination);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Failed to complete onboarding.";
       setError(message);
@@ -1012,6 +1054,10 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       savingAction: `rail:${step}`,
       step,
     });
+  }
+
+  function requestStep(step: WorkspaceOnboardingStep) {
+    if (step !== onboarding.currentStep) requestLeave(() => void selectStep(step));
   }
 
   async function exitSetup() {
@@ -1083,6 +1129,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         )}
       >
         <div className="min-w-0 space-y-2">
+          <p className="type-label text-muted">Phase 2 of 2 · Set up workspace</p>
           <h1 className="type-page-title">Set up {data.workspace.name}</h1>
           <p className="max-w-2xl text-[14px] leading-6 text-muted">
             Connect a repository and execution access, then verify your setup and start a task.
@@ -1093,8 +1140,9 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
           <button
             type="button"
             className="ui-button"
-            disabled={isSaving}
-            onClick={() => void exitSetup()}
+            aria-describedby={!isCompleted ? "onboarding-exit-hint" : undefined}
+            disabled={navigationDisabled}
+            onClick={() => requestLeave(() => void exitSetup())}
           >
             <ActionButtonLabel
               idle="Exit setup"
@@ -1102,6 +1150,11 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               pendingLabel="Exiting…"
             />
           </button>
+          {!isCompleted ? (
+            <p className="max-w-40 text-xs leading-4 text-muted" id="onboarding-exit-hint">
+              You can resume saved progress later.
+            </p>
+          ) : null}
         </div>
       </header>
 
@@ -1114,12 +1167,22 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
             : "max-w-[1180px] lg:grid-cols-[180px_minmax(0,1fr)_260px]",
         )}
       >
-        <StepNavigation canSelect={!isSaving} items={railItems} onSelect={selectStep} />
+        <StepNavigation canSelect={!navigationDisabled} items={railItems} onSelect={requestStep} />
 
         <section className="min-w-0">
           <div className="settings-section-header mb-6">
             <div className="min-w-0">
-              <h2 className="type-section-title">{activeStep.title}</h2>
+              <p className="mb-1 type-label text-muted" id="onboarding-step-position">
+                Setup step {onboardingStepIndex(activeStep.id) + 1} of {ONBOARDING_STEPS.length}
+              </p>
+              <h2
+                aria-describedby="onboarding-step-position"
+                className="type-section-title scroll-mt-4"
+                ref={headingRef}
+                tabIndex={-1}
+              >
+                {activeStep.title}
+              </h2>
               <p className="mt-1 max-w-2xl text-[13px] leading-5 text-muted">
                 {activeStep.description}
               </p>
@@ -1127,7 +1190,10 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
           </div>
 
           {error ? (
-            <div className="mt-5 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger">
+            <div
+              className="mt-5 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+              role="alert"
+            >
               {error}
             </div>
           ) : null}
@@ -1140,6 +1206,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               onCompleteStep={completeCurrentStep}
               onPipelineCompleted={completePipelineStep}
               onDataChange={updateData}
+              onDraftStateChange={onStepDraftStateChange}
               onRefresh={async (action) => {
                 const nextData = await refreshOnboarding(action);
                 if (!nextData) {
@@ -1150,7 +1217,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               onRepositorySetupMessage={handleRepositorySetupMessage}
               onRuntimeStateChange={setRuntimeCompletionState}
               onVerificationPendingChange={setIsStartingVerification}
-              onSelectStep={(step) => void selectStep(step)}
+              onSelectStep={requestStep}
               onSelectGithubRepository={selectGithubRepository}
               step={activeStep.id}
             />
@@ -1159,8 +1226,8 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
 
         {!isVerifyingStep ? (
           <SetupHealthSummary
-            canSelect={!isSaving}
-            onSelect={(step) => void selectStep(step)}
+            canSelect={!navigationDisabled}
+            onSelect={requestStep}
             health={data.setupHealth}
             initialNow={renderNow}
             pipelineReviewed={isCompleted || onboarding.completedSteps.includes("pipeline")}
@@ -1179,8 +1246,8 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
             <button
               type="button"
               className="ui-button"
-              disabled={!data.canManage || !canGoBack || isSaving || isCompleted}
-              onClick={() => void goBack()}
+              disabled={!data.canManage || !canGoBack || navigationDisabled || isCompleted}
+              onClick={() => requestLeave(() => void goBack())}
             >
               <ActionButtonLabel
                 idle="Back"
@@ -1192,11 +1259,11 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               <button
                 type="button"
                 className="ui-button"
-                disabled={!data.canManage || isSaving}
-                onClick={() => void skipStep()}
+                disabled={!data.canManage || navigationDisabled}
+                onClick={() => requestLeave(() => void skipStep())}
               >
                 <ActionButtonLabel
-                  idle="Skip"
+                  idle={activeStep.id === "linear" ? "Skip Linear" : "Skip agent settings"}
                   pending={savingAction === "skip"}
                   pendingLabel="Saving…"
                 />
@@ -1207,7 +1274,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               className="ui-button-primary"
               form={submitVerification ? "onboarding-verification" : undefined}
               disabled={
-                isSaving ||
+                navigationDisabled ||
                 (!reviewVerification &&
                   ((!data.canManage && (!isCompleted || needsVerification)) ||
                     (!isCompleted &&
@@ -1225,13 +1292,15 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
                   : (event) => {
                       if (reviewVerification) {
                         event.preventDefault();
-                        void selectStep("verify");
+                        requestStep("verify");
                       } else if (isCompleted) {
                         if (verifyCompletionBlocked) return;
-                        startNavigation(firstTaskDestination);
-                        router.push(firstTaskDestination);
+                        requestLeave(() => {
+                          startNavigation(firstTaskDestination);
+                          router.replace(firstTaskDestination);
+                        });
                       } else {
-                        void continueSetup();
+                        requestLeave(() => void continueSetup());
                       }
                     }
               }
@@ -1266,6 +1335,24 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
           </div>
         </div>
       </footer>
+      <DestructiveConfirmationDialog
+        actionLabel="Discard changes"
+        cancelLabel="Keep editing"
+        description="Your unsaved changes on this step will be lost. Saved setup progress will be kept."
+        onConfirm={() => {
+          leaveFocusRef.current = null;
+          setLeaveAction(null);
+          leaveAction?.();
+        }}
+        onOpenChange={(open) => {
+          if (!open) setLeaveAction(null);
+        }}
+        open={leaveAction !== null}
+        pending={false}
+        pendingLabel="Discarding…"
+        restoreFocusRef={leaveFocusRef}
+        title="Discard unsaved changes?"
+      />
     </div>
   );
 }
