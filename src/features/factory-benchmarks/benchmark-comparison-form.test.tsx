@@ -69,7 +69,7 @@ function choose(picker: HTMLElement, label: string | RegExp) {
 function choosePair() {
   for (const side of ["Baseline", "Candidate"]) {
     const fields = within(screen.getByRole("group", { name: side }));
-    choose(fields.getByRole("combobox", { name: "Model", exact: true }), modelKey);
+    choose(fields.getByRole("combobox", { name: /^Model$/ }), modelKey);
     choose(fields.getByRole("combobox", { name: "Harness" }), "Codex");
     choose(fields.getByRole("combobox", { name: "Worker runtime" }), "Cloudflare Workers");
     if (side === "Baseline") {
