@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { SelectField } from "@/components/ui/select";
 import {
@@ -14,6 +14,8 @@ import {
 } from "@/lib/factory-automations/operator-contracts";
 
 import { automationPullRequestActionOptions, automationTriggerLabels } from "./automation-labels";
+import { linearKinds, useAutomationLinearCatalog } from "./automation-linear-catalog";
+import { AutomationLinearFilter, AutomationRepositoryField } from "./automation-resource-fields";
 
 const triggerOptions = automationTriggerKindSchema.options.map((value) => ({
   value,
@@ -243,26 +245,29 @@ export function readAutomationDraft(
 export function AutomationEditorFields({
   initial,
   setup,
+  savedRepositoryName,
   disabled,
   changed,
 }: {
   initial?: FactoryAutomationDefinition;
   setup: AutomationSetupOptions | null;
+  savedRepositoryName?: string | null;
   disabled: boolean;
   changed: () => void;
 }) {
   const [kind, setKind] = useState<AutomationTriggerKind>(initial?.trigger.kind ?? "schedule");
-  const repositories =
-    setup?.repositories.map(({ id, name }) => ({ value: id, label: name })) ?? [];
+  const { canDiscover, setEditorEnabled } = useAutomationLinearCatalog();
+  useEffect(() => {
+    if (kind !== "issue-state") return;
+    setEditorEnabled(true);
+    return () => setEditorEnabled(false);
+  }, [kind, setEditorEnabled]);
   const trigger = initial?.trigger;
   const filters = initial?.filters;
   const schedule = trigger?.kind === "schedule" ? trigger : undefined;
   const pullRequest = filters && "actions" in filters ? filters : undefined;
   const linear = filters && "stateIds" in filters ? filters : undefined;
   const savedRepository = trigger?.kind === "pull-request" ? trigger.repositoryId : undefined;
-  if (savedRepository && !repositories.some(({ value }) => value === savedRepository)) {
-    repositories.push({ value: savedRepository, label: "Previously selected repository" });
-  }
   const selectedAssignment = setup?.assignment;
   const activeTarget =
     initial?.target.kind === "workflow"
@@ -311,7 +316,10 @@ export function AutomationEditorFields({
         label="Trigger"
         required
         disabled={disabled}
-        options={triggerOptions}
+        options={triggerOptions.map((option) => ({
+          ...option,
+          disabled: option.value === "issue-state" && !canDiscover && !linear,
+        }))}
         value={kind}
         onValueChange={(value) => {
           setKind(automationTriggerKindSchema.parse(value));
@@ -319,21 +327,23 @@ export function AutomationEditorFields({
         }}
         wrap
       />
+      {!canDiscover && !linear ? (
+        <p className="text-xs text-muted sm:col-span-2">
+          Ask a workspace owner or admin to set up a Linear issue-state rule.
+        </p>
+      ) : null}
       {kind === "schedule" ? (
         <ScheduleFields initial={schedule} changed={changed} disabled={disabled} />
       ) : null}
       {kind === "pull-request" ? (
         <>
-          <SelectField
-            name="repositoryId"
+          <AutomationRepositoryField
             label="Trigger repository"
-            required
             disabled={disabled}
-            options={repositories}
-            defaultValue={savedRepository}
-            fallbackLabel="No repositories available"
-            onValueChange={changed}
-            wrap
+            repositories={setup?.repositories ?? []}
+            initial={savedRepository}
+            savedName={savedRepositoryName}
+            changed={changed}
           />
           <LineField
             name="baseBranches"
@@ -359,13 +369,17 @@ export function AutomationEditorFields({
           </fieldset>
         </>
       ) : null}
-      {kind === "issue-state" ? (
-        <>
-          <LineField name="stateIds" label="Linear state IDs" initial={linear?.stateIds} required />
-          <LineField name="teamIds" label="Linear team IDs" initial={linear?.teamIds} />
-          <LineField name="projectIds" label="Linear project IDs" initial={linear?.projectIds} />
-        </>
-      ) : null}
+      {kind === "issue-state"
+        ? linearKinds.map((kind) => (
+            <AutomationLinearFilter
+              key={kind}
+              kind={kind}
+              initial={linear?.[`${kind}Ids`]}
+              disabled={disabled}
+              changed={changed}
+            />
+          ))
+        : null}
       <SelectField
         name="assignment"
         label="Assigned target"

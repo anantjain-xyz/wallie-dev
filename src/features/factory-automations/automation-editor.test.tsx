@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -12,6 +12,7 @@ import {
 import type { AutomationSetupOptions } from "@/lib/factory-automations/operator-contracts";
 
 import { AutomationEditor } from "./automation-editor";
+import { AutomationLinearCatalog } from "./automation-linear-catalog";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), replace: vi.fn() }),
@@ -57,6 +58,113 @@ function snapshot(revision: number, name: string, cron = "0 9 * * *") {
       createdByMemberId: fixtureId("007"),
     },
   });
+}
+
+const linearEndpoint = "/api/example/connectors";
+const linearMappingId = fixtureId("101");
+const savedStateId = fixtureId("102");
+
+async function rebaseToLinear(canDiscover: boolean) {
+  const latest = snapshot(2, "Saved fixture");
+  const installationId = fixtureId("103");
+  const tenantId = fixtureId("104");
+  const teamId = fixtureId("105");
+  const fetch = vi
+    .fn<typeof globalThis.fetch>(async (input) => {
+      const url = new URL(String(input), "https://wallie.test");
+      if (url.pathname === linearEndpoint)
+        return Response.json({
+          canConfigure: true,
+          installations: [
+            {
+              id: installationId,
+              provider: "linear",
+              generation: 1,
+              status: "connected",
+              externalTenantId: tenantId,
+              externalInstallationId: tenantId,
+            },
+          ],
+          resources: [
+            {
+              id: linearMappingId,
+              provider: "linear",
+              kind: "team",
+              installationId,
+              externalId: teamId,
+              label: null,
+              mappingRevision: 1,
+              enabled: true,
+              connectionStatus: "connected",
+              githubRequests: [],
+            },
+          ],
+        });
+      if (url.pathname !== `${linearEndpoint}/catalog`) throw new Error("Unexpected request");
+      const kind = url.searchParams.get("kind");
+      return Response.json({
+        provider: "linear",
+        kind,
+        tenant: { id: tenantId, label: "Example workspace" },
+        resources:
+          kind === "state"
+            ? [
+                { id: savedStateId, label: "In review", teamId },
+                { id: fixtureId("106"), label: "Done", teamId },
+              ]
+            : [],
+        nextCursor: null,
+      });
+    })
+    .mockResolvedValueOnce(Response.json({}, { status: 409 }))
+    .mockResolvedValueOnce(
+      Response.json({
+        automation: {
+          ...latest,
+          revision: {
+            ...latest.revision,
+            definition: {
+              ...latest.revision.definition,
+              trigger: { kind: "issue-state" },
+              filters: { stateIds: [savedStateId], teamIds: [], projectIds: [] },
+            },
+          },
+        },
+      }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const user = userEvent.setup();
+  render(
+    <AutomationLinearCatalog
+      canDiscover={canDiscover}
+      endpoint={linearEndpoint}
+      integrationsHref="/settings?category=integrations"
+      revisionUsesLinear={false}
+      savedIds={{ state: [], team: [], project: [] }}
+    >
+      <AutomationEditor
+        workspaceId={fixtureId("009")}
+        workspaceSlug="fixture"
+        factoryId={fixtureId("008")}
+        revisionSelected={false}
+        initial={snapshot(1, "Saved fixture")}
+        setup={setup}
+        setupFailed={false}
+      />
+    </AutomationLinearCatalog>,
+  );
+  expect(fetch).not.toHaveBeenCalled();
+  const name = screen.getByRole("textbox", { name: "Rule name" });
+  await user.clear(name);
+  await user.type(name, "My retained edit");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Use latest revision and keep edits" }),
+  );
+  expect(await screen.findByText(/Revision 2 is current/)).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Rule name" })).toHaveValue("My retained edit");
+  expect(screen.getByRole("combobox", { name: "Trigger" })).toHaveTextContent("Linear issue state");
+  return { user, fetch };
 }
 
 afterEach(() => {
@@ -127,6 +235,30 @@ it("retains a stale edit and uses the current revision only after explicit rebas
     expectedRevisionId: fixtureId("012"),
     definition: { name: "My retained edit", trigger: { cron: "0 14 * * *" } },
   });
+});
+
+it("loads named Linear choices for an owner or admin after a rebase changes the trigger", async () => {
+  const { user, fetch } = await rebaseToLinear(true);
+  const state = screen.getByRole("combobox", { name: "Add Linear state" });
+  await waitFor(() => expect(state).toBeEnabled());
+  await user.click(state);
+  expect(screen.getByRole("option", { name: "Done" })).toBeVisible();
+  expect(screen.getByText("In review")).toBeVisible();
+  const urls = fetch.mock.calls.map(([url]) => String(url));
+  expect(urls).toContain(linearEndpoint);
+  expect(urls).toContain(
+    `${linearEndpoint}/catalog?provider=linear&kind=state&resourceId=${linearMappingId}`,
+  );
+});
+
+it("keeps rebased Linear filters read-only for a factory-only manager without a lookup", async () => {
+  const { fetch } = await rebaseToLinear(false);
+  expect(screen.getByText(/Only workspace owners and admins can look up/)).toBeVisible();
+  expect(screen.getByText("Saved Linear state · Unavailable in lookup")).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Add Linear state" })).toBeDisabled();
+  const form = screen.getByRole("textbox", { name: "Rule name" }).closest("form");
+  expect(new FormData(form ?? undefined).get("stateIds")).toBe(savedStateId);
+  expect(fetch).toHaveBeenCalledTimes(2);
 });
 
 it("saves retained edits to the rule created before its response was lost", async () => {

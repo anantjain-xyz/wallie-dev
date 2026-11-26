@@ -45,11 +45,13 @@ function OccurrenceTime({ value }: { value: string }) {
 export function AutomationOccurrenceHistory({
   history,
   workspaceSlug,
+  revisionHref,
   firstHref,
   nextHref,
 }: {
   history: AutomationHistory | null;
   workspaceSlug: string;
+  revisionHref: (revisionId: string) => string;
   firstHref?: string;
   nextHref?: string;
 }) {
@@ -74,7 +76,16 @@ export function AutomationOccurrenceHistory({
                     <span className="font-medium">
                       {automationTriggerLabels[occurrence.triggerKind]}
                     </span>
-                    <span className="text-muted">Revision {occurrence.revisionNumber}</span>
+                    {occurrence.revisionId ? (
+                      <Link
+                        className="font-medium text-accent underline underline-offset-4"
+                        href={revisionHref(occurrence.revisionId)}
+                      >
+                        Revision {occurrence.revisionNumber}
+                      </Link>
+                    ) : (
+                      <span className="text-muted">Revision {occurrence.revisionNumber}</span>
+                    )}
                     {occurrence.sessionNumber !== null ? (
                       <Link
                         className="font-medium text-accent underline underline-offset-4"

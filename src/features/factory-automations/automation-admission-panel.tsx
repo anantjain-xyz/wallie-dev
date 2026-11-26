@@ -18,10 +18,16 @@ export function AutomationAdmissionPanel({
   initial,
   endpoint,
   activeRevision,
+  publishedRevision,
+  scheduleTimeZone,
+  catchUp,
 }: {
   initial: Control | null;
   endpoint: string;
   activeRevision: boolean;
+  publishedRevision?: number;
+  scheduleTimeZone?: string;
+  catchUp?: { through: string; occurrenceAt: string | null } | null;
 }) {
   const router = useRouter();
   const [control, setControl] = useState(initial);
@@ -74,17 +80,26 @@ export function AutomationAdmissionPanel({
   }
 
   if (!activeRevision) return null;
+  const revisionLabel = publishedRevision
+    ? `Published revision ${publishedRevision}`
+    : "Published revision";
+  const format = (date: string) =>
+    new Intl.DateTimeFormat("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: scheduleTimeZone,
+    }).format(new Date(date));
   if (!control)
     return (
       <p className="text-sm text-danger" role="alert">
-        Could not load automation status. Refresh this page to try again.
+        {revisionLabel}: Could not load automation status. Refresh this page to try again.
       </p>
     );
   return (
     <div className="space-y-2 border-t border-border pt-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium" role="status">
-          {control.paused ? "Paused" : "Enabled"}
+          {revisionLabel} · {control.paused ? "Paused" : "Enabled"}
         </span>
         <button
           type="button"
@@ -99,6 +114,24 @@ export function AutomationAdmissionPanel({
           />
         </button>
       </div>
+      <p className="text-xs text-muted">
+        Live concurrency limit: {control.maxConcurrentSessions}{" "}
+        {control.maxConcurrentSessions === 1 ? "session" : "sessions"}.
+      </p>
+      {control.paused ? (
+        <div className="text-sm text-muted">
+          <p>Resuming can retry pending occurrences.</p>
+          {scheduleTimeZone ? (
+            <p>
+              {catchUp
+                ? catchUp.occurrenceAt
+                  ? `One missed tick would be queued for ${format(catchUp.occurrenceAt)} (${scheduleTimeZone}), based on the preview through ${format(catchUp.through)}.`
+                  : `No missed tick would be queued based on the preview through ${format(catchUp.through)} (${scheduleTimeZone}).`
+                : "A scheduled rule can queue one missed tick on resume."}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {feedback ? (
         <p className="text-sm text-danger" role="alert">
           {feedback}

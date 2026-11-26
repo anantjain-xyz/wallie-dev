@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { automationDryRunNamesHeader } from "@/lib/factory-automations/dry-run-contracts";
 import type { Database } from "@/lib/supabase/database.types";
 
 const mocked = vi.hoisted(() => ({ workspaceAccess: vi.fn(), adminClient: vi.fn() }));
@@ -71,16 +72,22 @@ function fixture({
   readable = true,
   errorCode,
   dryRunResult = preview,
+  namesAvailable = true,
 }: {
   visible?: boolean;
   readable?: boolean;
   errorCode?: string;
   dryRunResult?: unknown;
+  namesAvailable?: boolean;
 } = {}) {
   const signedInFetch = vi.fn<typeof fetch>(async (input) => {
     const name = new URL(String(input)).pathname.split("/").at(-1);
     if (name === "factories") return Response.json(visible ? [{ id: scope.factoryId }] : []);
     if (!readable) return Response.json(null);
+    if (name === "workspace_members")
+      return Response.json(namesAvailable ? [{ full_name: "Avery Chen" }] : []);
+    if (name === "execution_policy_revisions")
+      return Response.json(namesAvailable ? [{ revision: 3 }] : []);
     if (name === "dry_run_factory_automation") return Response.json(dryRunResult);
     if (name === "read_factory_automation_admission_control")
       return Response.json(admissionControl);
@@ -274,10 +281,42 @@ describe("factory automation dry run", () => {
     expect(mocked.adminClient).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    "labels only scoped authority for an opted-in client (visible: %s)",
+    async (namesAvailable) => {
+      const { signedInFetch } = fixture({ namesAvailable });
+      const request = command({ revisionId, event });
+      request.headers.set(automationDryRunNamesHeader, "1");
+      const result = await dryRun(request, { params: detailParams });
+      expect(result.status).toBe(200);
+      expect(await result.json()).toEqual({
+        ...preview,
+        names: {
+          budgetPayer: namesAvailable ? "Avery Chen" : null,
+          executionPolicyRevision: namesAvailable ? 3 : null,
+        },
+      });
+      const urls = signedInFetch.mock.calls.map(([url]) => new URL(String(url)));
+      for (const [table, id, columns] of [
+        ["workspace_members", preview.budgetPayerMemberId, "full_name"],
+        ["execution_policy_revisions", preview.assignment.executionPolicyRevisionId, "revision"],
+      ]) {
+        const params = urls.find((url) => url.pathname.endsWith(`/${table}`))?.searchParams;
+        expect(params?.get("workspace_id")).toBe(`eq.${scope.workspaceId}`);
+        expect(params?.get("id")).toBe(`eq.${id}`);
+        expect(params?.get("select")).toBe(columns);
+      }
+      expect(mocked.adminClient).not.toHaveBeenCalled();
+    },
+  );
+
   it("masks an inaccessible or unknown revision", async () => {
-    fixture({ readable: false });
-    const result = await dryRun(command({ revisionId, event }), { params: detailParams });
+    const { signedInFetch } = fixture({ readable: false });
+    const request = command({ revisionId, event });
+    request.headers.set(automationDryRunNamesHeader, "1");
+    const result = await dryRun(request, { params: detailParams });
     expect(result.status).toBe(404);
+    expect(signedInFetch).toHaveBeenCalledTimes(2);
     expect(mocked.adminClient).not.toHaveBeenCalled();
   });
 
