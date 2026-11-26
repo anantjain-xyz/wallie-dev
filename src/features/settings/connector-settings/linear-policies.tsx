@@ -471,12 +471,14 @@ function OutboundForm({
           ) : null}
           <PolicyChoice
             catalog={states}
+            custom
             disabled={!validTeam}
             empty="Choose a state"
             error={errors.from}
             id={`${id}-from`}
             label="From state"
             onChange={(value) => {
+              if (value === fromStateId) return;
               setFromStateId(value);
               setErrors((current) => ({ ...current, from: undefined, to: undefined }));
             }}
