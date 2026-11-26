@@ -88,6 +88,33 @@ describe("list run-status payload compatibility", () => {
     mocked.getCookie.mockReturnValue(undefined);
   });
 
+  it("sends display status and the cursor together to the bounded SQL query", async () => {
+    mocked.rpc.mockResolvedValue({ data: { sessions: [] }, error: null });
+    const id = "11111111-1111-4111-8111-111111111111";
+    const updatedAt = "2026-11-25T00:00:00.000Z";
+    const cursor = Buffer.from(
+      JSON.stringify({ id, updatedAt, number: 51, sort: "number" }),
+    ).toString("base64url");
+    const data = await loadSessionListPageData("acme", {
+      cursor,
+      q: "#42",
+      sort: "number",
+      status: "failed",
+    });
+
+    expect(mocked.rpc).toHaveBeenCalledExactlyOnceWith(
+      "get_session_list_page",
+      expect.objectContaining({
+        cursor_id: id,
+        cursor_number: 51,
+        page_limit: 50,
+        search_query: "#42",
+        status_filter: "failed",
+      }),
+    );
+    expect(data.queryState).toMatchObject({ cursor, stageSlug: null, status: "failed" });
+  });
+
   it("normalizes older payloads and preserves latest run states", async () => {
     mocked.rpc.mockResolvedValue({
       data: {

@@ -115,9 +115,9 @@ insert into public.pipeline_stages(id, workspace_id, pipeline_id, slug, name, po
 insert into public.sessions(id, workspace_id, number, title, pipeline_id, current_stage_id) values
   ('55200000-5000-4000-8000-000000000001', '55200000-1000-4000-8000-000000000001', 1, 'Custom execution',
     '55200000-3000-4000-8000-000000000001', '55200000-4000-4000-8000-000000000001');
-insert into public.agent_runs(id, workspace_id, session_id, stage_id, run_type, model_provider, model_name) values
+insert into public.agent_runs(id, workspace_id, session_id, stage_id, run_type, model_provider, model_name, created_at) values
   ('55200000-6000-4000-8000-000000000001', '55200000-1000-4000-8000-000000000001',
-    '55200000-5000-4000-8000-000000000001', '55200000-4000-4000-8000-000000000001', 'research', 'codex', 'gpt-5.5');
+    '55200000-5000-4000-8000-000000000001', '55200000-4000-4000-8000-000000000001', 'research', 'codex', 'gpt-5.5', clock_timestamp());
 select is((select agent_id from public.agent_runs where id = '55200000-6000-4000-8000-000000000001'),
   (select id from agent_fixture where key = 'implementation'), 'a custom stage executes through the default implementation identity');
 select is((select agent_prompt_revision_id from public.agent_runs where id = '55200000-6000-4000-8000-000000000001'),
@@ -148,9 +148,9 @@ insert into public.sessions(id, workspace_id, number, title, pipeline_id, curren
     '55200000-3000-4000-8000-000000000001', '55200000-4000-4000-8000-000000000001',
     'pinned', '55200000-7000-4000-8000-000000000001', true);
 set local role service_role;
-select lives_ok($sql$insert into public.agent_runs(id, workspace_id, session_id, stage_id, run_type, model_provider, model_name)
+select lives_ok($sql$insert into public.agent_runs(id, workspace_id, session_id, stage_id, run_type, model_provider, model_name, created_at)
   values ('55200000-6000-4000-8000-000000000002', '55200000-1000-4000-8000-000000000001',
-    '55200000-5000-4000-8000-000000000002', '55200000-4000-4000-8000-000000000001', 'research', 'codex', 'gpt-5.5')$sql$,
+    '55200000-5000-4000-8000-000000000002', '55200000-4000-4000-8000-000000000001', 'research', 'codex', 'gpt-5.5', clock_timestamp())$sql$,
   'service-role execution can insert a run with the exact compiled agent snapshot');
 select is((select agent_prompt_revision_id from public.agent_runs
   where id = '55200000-6000-4000-8000-000000000002'),
@@ -166,6 +166,27 @@ select is((select count(*) from public.factory_agents), 2::bigint,
   'a factory member reads only its default and named agent identities');
 select is((select count(*) from public.factory_agent_prompt_revisions), 3::bigint,
   'prompt history hides restricted and foreign factories');
+select is((
+  select catalog.run_id from public.factory_agent_prompt_revisions prompt
+  cross join lateral public.list_workspace_run_catalog(prompt.workspace_id,
+    p_factory_id => prompt.factory_id, p_agent_id => prompt.agent_id,
+    p_agent_prompt_revision_id => prompt.id, p_limit => 1) catalog
+  where prompt.prompt_md = 'Check repository conventions.'
+), '55200000-6000-4000-8000-000000000002'::uuid,
+  'a factory member can inspect the exact pinned named prompt revision');
+select is((
+  select count(*) from public.factory_agent_prompt_revisions prompt
+  join public.factory_agents agent on agent.factory_id = prompt.factory_id and agent.is_default
+  cross join lateral public.list_workspace_run_catalog(prompt.workspace_id,
+    p_agent_id => agent.id, p_agent_prompt_revision_id => prompt.id) catalog
+  where prompt.prompt_md = 'Check repository conventions.'
+), 0::bigint, 'a prompt revision from a different agent does not match a run');
+select is((
+  select count(*) from public.factory_agent_prompt_revisions prompt
+  cross join lateral public.list_workspace_run_catalog(prompt.workspace_id,
+    p_agent_id => prompt.agent_id, p_agent_prompt_revision_id => prompt.id) catalog
+  where prompt.revision_number = 1 and prompt.prompt_md = ''
+), 0::bigint, 'legacy default pins do not appear as actual prompt revision usage');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 select public.archive_factory('55200000-1000-4000-8000-000000000001',

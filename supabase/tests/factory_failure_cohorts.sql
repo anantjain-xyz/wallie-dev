@@ -357,6 +357,38 @@ select ok((select page @> '{"cohorts":[{"symptom_kind":"validation","failure_cou
   from (select public.list_factory_failure_cohorts(workspace_id, factory_id, 1,
     p_symptom_kind => 'validation', p_definition_revision_id => pg_temp.cohort_fixture_id(52)) as page from failure_scope) query),
   'symptom and exact producing definition filters run before list pagination and scope counts');
+select is(pg_temp.list_failures(1)#>>'{cohorts,0,failure_count}', '4',
+  'the most failed runs rank first across the full result before pagination');
+select is(pg_temp.list_failures(1, (pg_temp.list_failures(1)->>'next_cohort_id')::uuid)#>>'{cohorts,0,failure_count}', '3',
+  'the next page follows the run-count rank rather than filtering by UUID first');
+select ok((select page @> '{"cursor_unavailable":true,"next_cohort_id":null,"cohorts":[]}'
+  from (select public.list_factory_failure_cohorts(workspace_id, factory_id, 1,
+    p_after_cohort_id => pg_temp.cohort_fixture_id(900)) as page from failure_scope) query),
+  'an anchor outside the scoped results gets first-page recovery');
+select ok((select detail#>>'{members,0,session_title}' = 'First failed run'
+    and (detail#>>'{members,0,session_number}')::integer > 0
+    and jsonb_array_length(detail->'members') = 1
+    and detail->>'membership_digest' = pg_temp.failure_detail('validation')->>'membership_digest'
+  from (select public.get_factory_failure_cohort(workspace_id, factory_id,
+    (pg_temp.failure_summary('validation')->>'id')::uuid, 1,
+    p_run_search => 'FIRST failed', p_observed_on => (
+      select ((member->>'observed_at')::timestamptz at time zone 'UTC')::date
+      from jsonb_array_elements(pg_temp.failure_detail('validation')->'members') member
+      where member->>'session_title' = 'First failed run'
+    )) as detail from failure_scope) query),
+  'session and date filters apply before paging without replacing the review snapshot');
+select ok((select detail#>>'{members,0,id}' = member->>'id' and jsonb_array_length(detail->'members') = 1
+  from failure_scope
+  cross join lateral (select pg_temp.failure_detail('validation')->'members'->0 as member) observed
+  cross join lateral (select public.get_factory_failure_cohort(workspace_id, factory_id,
+    (pg_temp.failure_summary('validation')->>'id')::uuid, 1, p_member_id => (member->>'id')::uuid) as detail) exact),
+  'a scoped evidence deep link loads the exact observation');
+select ok((select detail->'members' = '[]'::jsonb
+  from failure_scope
+  cross join lateral (select pg_temp.failure_detail('scorer')->'members'->0 as member) observed
+  cross join lateral (select public.get_factory_failure_cohort(workspace_id, factory_id,
+    (pg_temp.failure_summary('validation')->>'id')::uuid, 1, p_member_id => (member->>'id')::uuid) as detail) exact),
+  'an evidence observation is not visible via an unrelated group');
 select ok((select detail @> '{"cohort":{"failure_count":3,"support_count":3,"version_count":1,"qualification":"qualified"}}'
     and jsonb_array_length(detail->'members') = 2 and detail->>'next_member_id' is not null
     and detail->>'membership_digest' = pg_temp.failure_detail('validation')->>'membership_digest'

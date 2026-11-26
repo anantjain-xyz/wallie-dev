@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/app-shell/app-shell";
+import { loadWorkspaceSwitcherOptions } from "@/components/app-shell/workspace-switcher-data";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { isWorkspaceOperator } from "@/features/workspaces/authenticated-context";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
@@ -17,9 +18,11 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
   const [
     { currentMember, onboarding, user, viewerAvatarUrl, workspace, workspaceAvatarUrl },
     factories,
+    workspaceOptions,
   ] = await Promise.all([
     loadWorkspaceLayoutContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
+    loadWorkspaceSwitcherOptions(workspaceSlug),
   ]);
   const defaultFactory = factories.find(
     (factory) => factory.isDefault && factory.status === "active",
@@ -30,15 +33,14 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
       canManageFactoryDefinition={isWorkspaceOperator(currentMember)}
       canManageGovernance={factories.some(({ canManage }) => canManage)}
       creationFactory={defaultFactory ? { id: defaultFactory.id, name: defaultFactory.name } : null}
+      factories={factories}
       onboarding={onboarding}
       viewerAvatarUrl={viewerAvatarUrl}
       viewerEmail={user.email ?? null}
       viewerId={user.id}
-      workflowFactoryIds={factories
-        .filter(({ canManage, status }) => canManage && status === "active")
-        .map(({ id }) => id)}
       workspace={workspace}
       workspaceAvatarUrl={workspaceAvatarUrl}
+      workspaceOptions={workspaceOptions}
     >
       {children}
     </AppShell>

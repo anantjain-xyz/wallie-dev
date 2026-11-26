@@ -439,7 +439,13 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await page.goto(`${activityPath}?factory=${restrictedFactory.id}`);
     await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
     await page.goto(`${governancePath}?factory=${visibleFactory.id}`);
-    await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Factory manager access required" }),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Manage your connected clients" })).toHaveAttribute(
+      "href",
+      /\/settings\?category=workspace#connected-clients$/,
+    );
 
     await write(
       admin.rpc("grant_factory_membership", {
@@ -480,7 +486,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
           html_url: "https://github.test/factory-demo/agent-control",
           default_branch: "main",
         })
-        .select("id")
+        .select("id, full_name")
         .single(),
     );
     const budget = await read(
@@ -508,7 +514,9 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await expect(page.getByRole("link", { name: "Governance", exact: true })).toBeVisible();
 
     await page.getByRole("textbox", { name: "Principal name", exact: true }).fill("Release runner");
-    await page.getByRole("textbox", { name: "Identifier", exact: true }).fill("release-runner");
+    await expect(page.getByRole("textbox", { name: "Identifier", exact: true })).toHaveValue(
+      "release-runner",
+    );
     const principalCreated = page.waitForResponse(
       (response) =>
         response.url().endsWith("/service-principals") && response.request().method() === "POST",
@@ -547,6 +555,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     );
     await page.getByRole("button", { name: "Approve grant", exact: true }).click();
     expect((await grantApproved).status()).toBe(201);
+    await expect(main.getByText("Machine command scopes", { exact: true })).toBeVisible();
     const grant = await read(
       admin
         .from("factory_execution_grants")
@@ -607,6 +616,9 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await capture(page, info, "08-governance-desktop-light");
     await page.getByRole("button", { name: "Revoke grant", exact: true }).click();
     const confirm = page.getByRole("alertdialog", { name: "Revoke this execution grant?" });
+    await expect(confirm).toContainText(
+      `v${grant.version} for Release runner · ${repository.full_name}`,
+    );
     await confirm
       .getByRole("textbox", { name: "Reason (optional)" })
       .fill("Rotate the release policy");

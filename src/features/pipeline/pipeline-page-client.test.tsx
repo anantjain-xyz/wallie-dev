@@ -102,7 +102,6 @@ vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
 }));
 
 import {
-  cardMatchesPipelineFilters,
   formatLaneStateSummary,
   pipelineDashboardCardStatus,
   PipelinePageClient,
@@ -276,20 +275,6 @@ function deferredResponse() {
 }
 
 describe("pipeline filter helpers", () => {
-  it("matches search across title, session number, and Linear id", () => {
-    const sample = card(12, PLAN_STAGE_ID, {
-      linearIssueId: "OP-353",
-      title: "Adaptive board",
-    });
-    expect(cardMatchesPipelineFilters(sample, "adaptive", "all")).toBe(true);
-    expect(cardMatchesPipelineFilters(sample, "#12", "all")).toBe(true);
-    expect(cardMatchesPipelineFilters(sample, "op-353", "all")).toBe(true);
-    expect(cardMatchesPipelineFilters(sample, "  OP-353 ", "all")).toBe(true);
-    expect(cardMatchesPipelineFilters(sample, "op-353", "all", { normalized: true })).toBe(true);
-    expect(cardMatchesPipelineFilters(sample, "missing", "all")).toBe(false);
-    expect(cardMatchesPipelineFilters(sample, "", "awaiting_review")).toBe(false);
-  });
-
   it("summarizes lane status with shared grammar labels", () => {
     expect(
       formatLaneStateSummary([
@@ -314,8 +299,6 @@ describe("pipeline filter helpers", () => {
 
     expect(pipelineDashboardCardStatus(failed)).toBe("failed");
     expect(formatLaneStateSummary([failed])).toBe("1 failed");
-    expect(cardMatchesPipelineFilters(failed, "", "failed")).toBe(true);
-    expect(cardMatchesPipelineFilters(failed, "", "rejected")).toBe(false);
   });
 });
 
@@ -1112,47 +1095,76 @@ describe("PipelinePageClient", () => {
     expect(screen.queryByRole("link", { name: "Review session Needs review" })).toBeNull();
   });
 
-  it("describes filter misses against loaded pages when more results exist", async () => {
+  it("describes an authoritative filter miss without suggesting more unfiltered pages", async () => {
     installSupabaseMock();
-    render(
-      <PipelinePageClient
-        initialData={initialData([
-          card(1, PLAN_STAGE_ID, { phaseStatus: "in_progress", title: "Still generating" }),
-        ])}
-      />,
+    const data = initialData([
+      card(1, PLAN_STAGE_ID, { phaseStatus: "in_progress", title: "Still generating" }),
+    ]);
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        lanes: data.lanes.map((lane) => ({ ...lane, cards: [], cursor: null, totalCount: 0 })),
+      }),
     );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient enableRealtime={false} initialData={data} />);
 
     await userEvent.click(screen.getByRole("combobox", { name: "Filter by status" }));
     await userEvent.click(screen.getByRole("option", { name: "Awaiting review" }));
-    const planLane = screen.getByRole("heading", { name: "Plan" }).closest("section")!;
-    expect(within(planLane).getByText("No matching sessions in loaded results")).toBeTruthy();
-    expect(
-      within(planLane).getByText(
-        "Filters apply to loaded sessions in Plan. Load more to search further, or adjust filters.",
-      ),
-    ).toBeTruthy();
-    expect(within(planLane).getByRole("button", { name: "Load more Plan sessions" })).toBeTruthy();
+    const planLane = (await screen.findByRole("heading", { name: "Plan" })).closest("section")!;
+    expect(within(planLane).getByText("No matching sessions in this stage")).toBeTruthy();
+    expect(within(planLane).queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Plan, 0 matching sessions" })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      `/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard?status=awaiting_review`,
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 
   it("filters cards by search and status without duplicating card DOM", async () => {
     installSupabaseMock();
-    render(
-      <PipelinePageClient
-        initialData={initialData(
-          [
-            card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review", title: "Needs review" }),
-            card(2, PLAN_STAGE_ID, { phaseStatus: "in_progress", title: "Still generating" }),
-          ],
-          [card(3, BUILD_STAGE_ID, { phaseStatus: "rejected", title: "Needs changes" })],
-        )}
-      />,
+    const review = card(11, PLAN_STAGE_ID, {
+      phaseStatus: "awaiting_review",
+      title: "Needs review",
+    });
+    const generating = card(2, PLAN_STAGE_ID, {
+      phaseStatus: "in_progress",
+      title: "Still generating",
+    });
+    const changes = card(3, BUILD_STAGE_ID, { phaseStatus: "rejected", title: "Needs changes" });
+    const data = initialData(
+      [card(1, PLAN_STAGE_ID, { title: "First page only" }), generating],
+      [changes],
     );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (href: string) => {
+        const { searchParams } = new URL(href, "http://localhost");
+        const status = searchParams.get("status");
+        const query = searchParams.get("q");
+        const cards =
+          status === "awaiting_review"
+            ? [review]
+            : query && status
+              ? []
+              : query
+                ? [changes]
+                : [generating];
+        return Response.json({
+          lanes: data.lanes.map((lane) => {
+            const matches = cards.filter((candidate) => candidate.currentStageId === lane.id);
+            return { ...lane, cards: matches, cursor: null, totalCount: matches.length };
+          }),
+        });
+      }),
+    );
+    render(<PipelinePageClient enableRealtime={false} initialData={data} />);
 
-    expect(screen.getByRole("link", { name: "Review session Needs review" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Review session Needs review" })).toBeNull();
     expect(screen.getAllByRole("article")).toHaveLength(3);
 
     await userEvent.click(screen.getByRole("combobox", { name: "Filter by status" }));
     await userEvent.click(screen.getByRole("option", { name: "Awaiting review" }));
+    expect(await screen.findByRole("link", { name: "Review session Needs review" })).toBeTruthy();
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByText("Needs review")).toBeTruthy();
     expect(screen.queryByText("Still generating")).toBeNull();
@@ -1161,18 +1173,22 @@ describe("PipelinePageClient", () => {
     expect(status.textContent).toBe("Awaiting review");
     await userEvent.click(status);
     await userEvent.keyboard("{ArrowDown}{Enter}");
+    expect(await screen.findByText("Still generating")).toBeTruthy();
     expect(screen.getAllByRole("article")).toHaveLength(1);
-    expect(screen.getByText("Still generating")).toBeTruthy();
     expect(status.textContent).toBe("In progress");
 
     await userEvent.click(status);
     await userEvent.click(screen.getByRole("option", { name: "All statuses" }));
     const search = screen.getByRole("searchbox", { name: "Search pipeline sessions" });
     await userEvent.type(search, "changes");
+    expect(await screen.findByText("Needs changes")).toBeTruthy();
     expect(screen.getAllByRole("article")).toHaveLength(1);
-    expect(screen.getByText("Needs changes")).toBeTruthy();
+    expect(
+      screen.getByRole("tab", { name: "Build, 1 matching session" }).getAttribute("aria-selected"),
+    ).toBe("true");
     await userEvent.click(status);
     await userEvent.click(screen.getByRole("option", { name: "In progress" }));
+    expect(await screen.findByText("0 matching sessions")).toBeTruthy();
     expect(screen.queryAllByRole("article")).toHaveLength(0);
     await userEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.getAllByRole("article")).toHaveLength(3);
@@ -1251,6 +1267,243 @@ describe("PipelinePageClient", () => {
       stageId: PLAN_STAGE_ID,
     });
     expect(screen.queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
+  });
+
+  it("starts search and publishes refreshed results while realtime events keep arriving", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const session = card(1, PLAN_STAGE_ID);
+    const data = initialData([session], []);
+    const lane = data.lanes[0]!;
+    const firstSearch = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(() => firstSearch.promise)
+      .mockResolvedValueOnce(
+        Response.json({ lanes: [{ ...lane, cards: [{ ...session, title: "Ticket refreshed" }] }] }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient initialData={data} />);
+    await act(async () => vi.dynamicImportSettled());
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: "Ticket" },
+    });
+    const emitRunChange = () =>
+      act(() => {
+        supabase.getAgentRunsHandler()!({
+          eventType: "UPDATE",
+          new: { id: "run-1", session_id: session.id, status: "running" },
+        });
+      });
+
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    emitRunChange();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    emitRunChange();
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    emitRunChange();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+    await act(async () => {
+      firstSearch.resolve(
+        Response.json({ lanes: [{ ...lane, cards: [{ ...session, title: "Ticket found" }] }] }),
+      );
+    });
+    expect(screen.getByText("Ticket found")).toBeTruthy();
+
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    emitRunChange();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(50));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Ticket refreshed")).toBeTruthy();
+    expect(screen.queryByText("Ticket found")).toBeNull();
+  });
+
+  it("keeps a failed filtered refresh visible but only pages from a successful retry", async () => {
+    vi.useFakeTimers();
+    const oldCard = card(1, PLAN_STAGE_ID, { title: "Ticket before refresh" });
+    const freshCard = card(2, PLAN_STAGE_ID, { title: "Ticket refreshed" });
+    const nextCard = card(3, PLAN_STAGE_ID, { title: "Ticket continuation" });
+    const data = initialData([oldCard], []);
+    const lane = data.lanes[0]!;
+    const freshLane = { ...lane, cards: [freshCard], cursor: "fresh-cursor" };
+    const retry = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ lanes: [lane] }))
+      .mockResolvedValueOnce(Response.json({ error: "Temporary failure" }, { status: 500 }))
+      .mockImplementationOnce(() => retry.promise)
+      .mockResolvedValueOnce(
+        Response.json({ lane: { ...freshLane, cards: [nextCard], cursor: null } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<PipelinePageClient enableRealtime={false} initialData={data} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: "Ticket" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    view.rerender(
+      <PipelinePageClient enableRealtime={false} initialData={initialData([freshCard], [])} />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    const loadMore = () =>
+      screen.getByRole<HTMLButtonElement>("button", { name: "Load more Plan sessions" });
+
+    expect(screen.getByText("Ticket before refresh")).toBeTruthy();
+    expect(
+      screen.getByText("Couldn’t refresh matching sessions.", { selector: '[role="alert"]' }),
+    ).toBeTruthy();
+    expect(loadMore().disabled).toBe(true);
+    expect(loadMore().textContent).toBe("Load more (1 of 2)");
+    fireEvent.click(loadMore());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(loadMore().disabled).toBe(true);
+    expect(screen.getByText("Ticket before refresh")).toBeTruthy();
+    await act(async () => {
+      retry.resolve(Response.json({ lanes: [freshLane] }));
+    });
+    expect(screen.queryByText("Couldn’t refresh matching sessions.")).toBeNull();
+    expect(screen.queryByText("Ticket before refresh")).toBeNull();
+    expect(screen.getByText("Ticket refreshed")).toBeTruthy();
+    expect(loadMore().disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(loadMore());
+    });
+    expect(screen.getByText("Ticket continuation")).toBeTruthy();
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
+      cursor: "fresh-cursor",
+      pipelineId: PIPELINE_ID,
+      seenIds: [freshCard.id],
+      stageId: PLAN_STAGE_ID,
+    });
+  });
+
+  it("rebuilds the loaded filtered window from fresh scoped pages after a realtime change", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const factoryId = "60000000-0000-4000-8000-000000000001";
+    const first = card(3, PLAN_STAGE_ID, { title: "Ticket A" });
+    const renamed = card(2, PLAN_STAGE_ID, { title: "Ticket B" });
+    const replacement = card(1, PLAN_STAGE_ID, { title: "Ticket C" });
+    const data = { ...initialData([first, renamed, replacement], []), factoryId };
+    const lane = data.lanes[0]!;
+    const continuation = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ lanes: [{ ...lane, cards: [first] }] }))
+      .mockResolvedValueOnce(Response.json({ lane: { ...lane, cards: [renamed] } }))
+      .mockResolvedValueOnce(
+        Response.json({
+          lanes: [{ ...lane, cards: [first], cursor: "fresh-cursor", totalCount: 2 }],
+        }),
+      )
+      .mockImplementationOnce(() => continuation.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient initialData={data} />);
+    await act(async () => vi.dynamicImportSettled());
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: "Ticket" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    const loadMore = () =>
+      screen.getByRole<HTMLButtonElement>("button", { name: "Load more Plan sessions" });
+    await act(async () => {
+      fireEvent.click(loadMore());
+    });
+    expect(screen.getByText("Ticket B")).toBeTruthy();
+    expect(screen.queryByText("Ticket C")).toBeNull();
+
+    act(() => {
+      supabase.getSessionsHandler()!({
+        eventType: "UPDATE",
+        new: {
+          ...sessionRow({
+            ...renamed,
+            title: "No longer matches",
+            updatedAt: "2026-07-18T06:00:00Z",
+          }),
+          factory_id: factoryId,
+        },
+      });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(screen.getByText("Ticket B")).toBeTruthy();
+    expect(loadMore().disabled).toBe(true);
+    fireEvent.click(loadMore());
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const href = `/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard?factory=${factoryId}&q=Ticket`;
+    expect(fetchMock.mock.calls.map(([url, options]) => [url, options?.method ?? "GET"])).toEqual([
+      [href, "GET"],
+      [href, "POST"],
+      [href, "GET"],
+      [href, "POST"],
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
+      cursor: "fresh-cursor",
+      pipelineId: PIPELINE_ID,
+      seenIds: [first.id],
+      stageId: PLAN_STAGE_ID,
+    });
+
+    await act(async () => {
+      continuation.resolve(
+        Response.json({ lane: { ...lane, cards: [replacement], cursor: null, totalCount: 2 } }),
+      );
+    });
+    expect(screen.getByText("Ticket A")).toBeTruthy();
+    expect(screen.queryByText("Ticket B")).toBeNull();
+    expect(screen.getByText("Ticket C")).toBeTruthy();
+    expect(screen.getByText("2 matching sessions")).toBeTruthy();
+  });
+
+  it("waits for active paging before refreshing a filtered board from new server props", async () => {
+    vi.useFakeTimers();
+    const first = card(2, PLAN_STAGE_ID);
+    const second = card(1, PLAN_STAGE_ID);
+    const data = initialData([first], []);
+    const lane = data.lanes[0]!;
+    const pendingPage = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ lanes: [lane] }))
+      .mockImplementationOnce(() => pendingPage.promise)
+      .mockResolvedValueOnce(
+        Response.json({ lanes: [{ ...lane, cards: [{ ...first, title: "Updated session" }] }] }),
+      )
+      .mockResolvedValueOnce(Response.json({ lane: { ...lane, cards: [second], cursor: null } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<PipelinePageClient enableRealtime={false} initialData={data} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: "Session" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    fireEvent.click(screen.getByRole("button", { name: "Load more Plan sessions" }));
+    view.rerender(<PipelinePageClient enableRealtime={false} initialData={initialData()} />);
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Session 1")).toBeNull();
+
+    await act(async () => {
+      pendingPage.resolve(Response.json({ lane: { ...lane, cards: [second], cursor: null } }));
+    });
+    expect(screen.getByText("Session 1")).toBeTruthy();
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(screen.getByText("Updated session")).toBeTruthy();
+    expect(screen.getByText("Session 1")).toBeTruthy();
   });
 
   it("exposes a realtime insert after an exhausted full lane through lane-local pagination", async () => {
@@ -1528,55 +1781,80 @@ describe("PipelinePageClient", () => {
     expect(mocked.laneStatusRenders).toEqual(["awaiting_review"]);
   });
 
-  it("defers search filtering while keeping the search input and Clear button immediately responsive", async () => {
+  it("discards superseded search responses and keeps the input and Clear responsive", async () => {
     installSupabaseMock();
-    render(
-      <Suspense fallback={<p>Loading board</p>}>
-        <PipelinePageClient
-          enableRealtime={false}
-          initialData={initialData(
-            [
-              card(1, PLAN_STAGE_ID, { linearIssueId: "OP-353", title: "Alpha board" }),
-              card(2, PLAN_STAGE_ID, { title: "Beta item" }),
-            ],
-            [card(3, BUILD_STAGE_ID, { title: "Gamma task" })],
-          )}
-        />
-      </Suspense>,
+    const data = initialData(
+      [
+        card(1, PLAN_STAGE_ID, { linearIssueId: "OP-353", title: "Alpha board" }),
+        card(2, PLAN_STAGE_ID, { title: "Beta item" }),
+      ],
+      [card(3, BUILD_STAGE_ID, { title: "Gamma task" })],
     );
+    const response = (index: number) =>
+      Response.json({
+        lanes: data.lanes.map((lane, position) => ({
+          ...lane,
+          cards: position === 0 ? [lane.cards[index]] : [],
+          totalCount: position === 0 ? 1 : 0,
+          cursor: null,
+        })),
+      });
+    const superseded = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(() => superseded.promise)
+      .mockResolvedValueOnce(response(1));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient enableRealtime={false} initialData={data} />);
 
     expect(screen.getAllByRole("article")).toHaveLength(3);
     expect(screen.getByText("Alpha board")).toBeTruthy();
     expect(screen.getByText("Beta item")).toBeTruthy();
     expect(screen.getByText("Gamma task")).toBeTruthy();
 
-    let releaseSearchRender!: () => void;
-    mocked.suspendLaneStatusRender = new Promise<void>((resolve) => {
-      releaseSearchRender = resolve;
-    });
-    mocked.suspendedRenders = 0;
-
     const search = screen.getByRole("searchbox", { name: "Search pipeline sessions" });
     await userEvent.type(search, "  OP-353 ");
 
-    expect(mocked.suspendedRenders).toBeGreaterThan(0);
     expect((search as HTMLInputElement).value).toBe("  OP-353 ");
     expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
-    expect(screen.getAllByRole("article")).toHaveLength(3);
-
+    expect(
+      screen.getByText("Filtering sessions…", { selector: '[aria-hidden="true"]' }),
+    ).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("?q=OP-353");
+    fireEvent.change(search, { target: { value: "Beta" } });
+    expect(await screen.findByText("Beta item")).toBeTruthy();
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
     await act(async () => {
-      mocked.suspendLaneStatusRender = null;
-      releaseSearchRender();
+      superseded.resolve(response(0));
     });
 
     expect(screen.getAllByRole("article")).toHaveLength(1);
-    expect(screen.getByText("Alpha board")).toBeTruthy();
-    expect(screen.queryByText("Beta item")).toBeNull();
+    expect(screen.queryByText("Alpha board")).toBeNull();
+    expect(screen.getByText("Beta item")).toBeTruthy();
     expect(screen.queryByText("Gamma task")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect((search as HTMLInputElement).value).toBe("");
     expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
     await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(3));
+  });
+
+  it("sends a maximum-length Unicode query without expanding it through client case folding", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ lanes: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient enableRealtime={false} initialData={initialData()} />);
+
+    const query = `${"A".repeat(199)}İ`;
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: query },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost").searchParams.get("q"),
+    ).toBe(query);
   });
 });
