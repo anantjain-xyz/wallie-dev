@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { SelectField } from "@/components/ui/select";
 import {
+  namedReferencePinBatchSize,
   namedReferencesResponseSchema,
   referenceKind,
   type NamedReference,
@@ -26,14 +27,49 @@ function mergeOptions(...pages: readonly (readonly NamedReference[])[]) {
   return [...new Map(pages.flat().map((choice) => [choice.id, choice] as const)).values()];
 }
 
+async function requestPins(
+  url: string,
+  ids: Extract<NamedReferencesRequest, { mode: "pins" }>["ids"],
+  signal: AbortSignal,
+) {
+  const batches: (typeof ids)[] = [];
+  for (const kind of referenceKind.options) {
+    const pins = ids[kind] ?? [];
+    for (let i = 0; i < pins.length; i += namedReferencePinBatchSize) {
+      const batch = (batches[i / namedReferencePinBatchSize] ??= {});
+      batch[kind] = pins.slice(i, i + namedReferencePinBatchSize);
+    }
+  }
+  const groups: Groups = {};
+  let failed = false;
+  for (const batch of batches) {
+    if (signal.aborted) break;
+    try {
+      const response = await requestReferences(url, { mode: "pins", ids: batch }, signal);
+      for (const kind of referenceKind.options) {
+        const result = response.groups[kind];
+        if (result)
+          groups[kind] = { options: mergeOptions(groups[kind]?.options ?? [], result.options) };
+      }
+    } catch {
+      failed = true;
+    }
+  }
+  return { groups, failed };
+}
+
 export function useNamedReferences(url: string | null, pinKey: string) {
-  const [pages, setPages] = useState<Groups>({});
+  const [catalog, setCatalog] = useState<{ url: string; generation: number; pages: Groups } | null>(
+    null,
+  );
   const [pins, setPins] = useState<Groups>({});
   const [failed, setFailed] = useState(false);
   const [pinsFailed, setPinsFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [more, setMore] = useState<ReferenceKind | null>(null);
   const paging = useRef<AbortController | null>(null);
+  const pages = catalog?.url === url ? catalog?.pages : undefined;
+  const canPage = catalog?.url === url && catalog?.generation === retry;
 
   useEffect(() => {
     if (!url) return;
@@ -41,7 +77,7 @@ export function useNamedReferences(url: string | null, pinKey: string) {
     void requestReferences(url, { mode: "initial" }, controller.signal).then(
       ({ groups }) => {
         if (!controller.signal.aborted) {
-          setPages(groups);
+          setCatalog({ url, generation: retry, pages: groups });
           setFailed(false);
         }
       },
@@ -59,23 +95,18 @@ export function useNamedReferences(url: string | null, pinKey: string) {
     if (!url || pinKey === "{}") return;
     const controller = new AbortController();
     const ids = JSON.parse(pinKey) as Extract<NamedReferencesRequest, { mode: "pins" }>["ids"];
-    void requestReferences(url, { mode: "pins", ids }, controller.signal).then(
-      ({ groups }) => {
-        if (!controller.signal.aborted) {
-          setPins(groups);
-          setPinsFailed(false);
-        }
-      },
-      () => {
-        if (!controller.signal.aborted) setPinsFailed(true);
-      },
-    );
+    void requestPins(url, ids, controller.signal).then(({ groups, failed }) => {
+      if (!controller.signal.aborted) {
+        setPins(groups);
+        setPinsFailed(failed);
+      }
+    });
     return () => controller.abort();
   }, [url, pinKey, retry]);
 
   function loadMore(kind: ReferenceKind) {
-    const offset = pages[kind]?.next;
-    if (!url || !offset || paging.current) return;
+    const offset = pages?.[kind]?.next;
+    if (!url || !canPage || !offset || paging.current) return;
     const controller = new AbortController();
     paging.current = controller;
     setMore(kind);
@@ -84,13 +115,20 @@ export function useNamedReferences(url: string | null, pinKey: string) {
         ({ groups }) => {
           const group = groups[kind];
           if (!controller.signal.aborted && group) {
-            setPages((current) => ({
-              ...current,
-              [kind]: {
-                ...group,
-                options: mergeOptions(current[kind]?.options ?? [], group.options),
-              },
-            }));
+            setCatalog((current) =>
+              current?.url === url && current.generation === retry
+                ? {
+                    ...current,
+                    pages: {
+                      ...current.pages,
+                      [kind]: {
+                        ...group,
+                        options: mergeOptions(current.pages[kind]?.options ?? [], group.options),
+                      },
+                    },
+                  }
+                : current,
+            );
             setFailed(false);
           }
         },
@@ -108,17 +146,21 @@ export function useNamedReferences(url: string | null, pinKey: string) {
 
   const options: Partial<Record<ReferenceKind, NamedReference[]>> = {};
   for (const kind of referenceKind.options) {
-    if (pages[kind] || pins[kind])
-      options[kind] = mergeOptions(pages[kind]?.options ?? [], pins[kind]?.options ?? []);
+    if (pages?.[kind] || pins[kind])
+      options[kind] = mergeOptions(pages?.[kind]?.options ?? [], pins[kind]?.options ?? []);
   }
   return {
     options,
     loadMore,
-    hasMore: (kind: ReferenceKind) => Boolean(pages[kind]?.next),
+    hasMore: (kind: ReferenceKind) => canPage && Boolean(pages?.[kind]?.next),
     pending: more,
-    loading: Boolean(url && !failed && !pages.pipeline),
+    loading: Boolean(url && !failed && !canPage),
     failed: failed || pinsFailed,
-    retry: () => setRetry((value) => value + 1),
+    retry: () => {
+      paging.current?.abort();
+      setFailed(false);
+      setRetry((value) => value + 1);
+    },
   };
 }
 
@@ -169,6 +211,7 @@ export function ReferencePicker({
   const choices = options.filter(
     (option) =>
       !option.unavailable &&
+      !option.labelOnly &&
       (option.id !== value || selectedAllowed) &&
       option.label.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()),
   );

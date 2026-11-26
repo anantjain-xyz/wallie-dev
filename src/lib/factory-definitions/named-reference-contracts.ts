@@ -28,6 +28,7 @@ const optionSchema = z.object({
   id: z.string(),
   label: z.string(),
   unavailable: z.boolean().optional(),
+  labelOnly: z.boolean().optional(),
   aliases: z.array(z.string()).optional(),
   pipelineId: uuid.optional(),
   agentId: uuid.optional(),
@@ -51,6 +52,7 @@ export const namedReferencesResponseSchema = z.object({
     }),
   ),
 });
+export const namedReferencePinBatchSize = 1600;
 export const namedReferencesRequestSchema = z.discriminatedUnion("mode", [
   z.strictObject({ mode: z.literal("initial") }),
   z.strictObject({
@@ -60,7 +62,7 @@ export const namedReferencesRequestSchema = z.discriminatedUnion("mode", [
   }),
   z.strictObject({
     mode: z.literal("pins"),
-    ids: z.record(referenceKind, z.array(uuid).max(1600)),
+    ids: z.record(referenceKind, z.array(uuid).max(namedReferencePinBatchSize)),
   }),
 ]);
 export type NamedReferencesRequest = z.infer<typeof namedReferencesRequestSchema>;

@@ -6,6 +6,9 @@ import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confi
 import type { CandidateSmokeTest } from "@/lib/factory-definitions/candidate-smoke-contracts";
 import type { FactoryEditorDocument } from "@/lib/factory-definitions/editor-contracts";
 
+import { FactoryEditorRequestError } from "./editor-requests";
+import { validationField } from "./validation-fields";
+
 export type PublishTarget = {
   draftId: string;
   digest: string;
@@ -35,7 +38,7 @@ export function PublishReview({
   onPublish: (target: PublishTarget) => Promise<void>;
 }) {
   const [confirmation, setConfirmation] = useState<PublishTarget | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
   const shadow = Boolean(draft.source.modelRouting);
   const effect = shadow
@@ -92,13 +95,13 @@ export function PublishReview({
         actionDisabled={!ready || !matches}
         actionLabel={shadow ? "Publish in shadow mode" : "Publish draft"}
         description={effect}
-        errorMessage={error}
+        errorMessage={error?.message}
         onConfirm={() => {
           if (!ready || !matches || !confirmation) return;
           void onPublish(confirmation).then(
             () => setConfirmation(null),
             (cause: unknown) =>
-              setError(cause instanceof Error ? cause.message : "Could not publish this draft."),
+              setError(cause instanceof Error ? cause : new Error("Could not publish this draft.")),
           );
         }}
         onOpenChange={(open) => {
@@ -124,6 +127,18 @@ export function PublishReview({
           </button>
         }
       >
+        {error instanceof FactoryEditorRequestError && error.diagnostics.length ? (
+          <ul
+            aria-label="Publish validation diagnostics"
+            className="list-disc space-y-1 break-words pl-5 text-sm text-danger"
+          >
+            {error.diagnostics.map(({ path, message }, index) => (
+              <li key={index}>
+                {validationField(path, draft.source).label}: {message}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {confirmation ? (
           <dl className="mt-4 space-y-2 text-xs">
             <div>

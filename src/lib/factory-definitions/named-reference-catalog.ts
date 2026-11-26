@@ -25,6 +25,8 @@ type Query<T> = PromiseLike<{ data: T[] | null; error: unknown }> & {
 type Group = { options: NamedReference[]; next?: number };
 type Client = SupabaseClient<Database>;
 const pageSize = 40;
+const joinedPageSize = 250;
+const maxJoinedRows = 10_000;
 
 async function rows<T>(query: PromiseLike<{ data: T[] | null; error: unknown }>) {
   const { data, error } = await query;
@@ -32,11 +34,28 @@ async function rows<T>(query: PromiseLike<{ data: T[] | null; error: unknown }>)
   return data ?? [];
 }
 
-async function byIds<T>(query: () => Query<T>, ids: readonly string[], column = "id") {
+async function byIds<T>(query: () => Query<T>, ids: readonly string[], joinedRowKey?: string) {
   const unique = [...new Set(ids)];
   const results: T[] = [];
   for (let i = 0; i < unique.length; i += pageSize) {
-    results.push(...(await rows(query().in(column, unique.slice(i, i + pageSize)))));
+    const batch = unique.slice(i, i + pageSize);
+    if (!joinedRowKey) {
+      results.push(...(await rows(query().in("id", batch))));
+      continue;
+    }
+    for (let offset = 0; ; offset += joinedPageSize) {
+      const page = await rows(
+        query()
+          .in("experiment_id", batch)
+          .order("experiment_id")
+          .order(joinedRowKey)
+          .range(offset, offset + joinedPageSize - 1),
+      );
+      if (offset + page.length > maxJoinedRows)
+        throw new Error("The benchmark reference lookup exceeded its row limit.");
+      results.push(...page);
+      if (page.length < joinedPageSize) break;
+    }
   }
   return results;
 }
@@ -374,7 +393,7 @@ export async function loadNamedFactoryReferences(
                 .match(scope)
                 .not("qualification_id", "is", null),
             experimentIds,
-            "experiment_id",
+            "candidate_key",
           ),
           byIds(
             () =>
@@ -393,7 +412,7 @@ export async function loadNamedFactoryReferences(
                 )
                 .match(scope),
             experimentIds,
-            "experiment_id",
+            "scorer_revision_id",
           ),
         ]);
         const revisions = await byIds(
@@ -451,6 +470,7 @@ export async function loadNamedFactoryReferences(
             choices.set(id, {
               id,
               configuration,
+              labelOnly: !scorer,
               label: `${agent?.name ?? "Agent unavailable"} · ${configuration.modelKey} · ${suite?.name ?? "Suite unavailable"}${suite ? ` v${suite.revision_number}` : ""} · ${day(comparison.created_at)} · ${frozen ? `${frozen.factory_scorers.name} v${frozen.revision_number}` : "Scorer unavailable"}${!scorer ? " (implicit)" : ""} · ${configuration.harness} / ${configuration.workerRuntime} · ${candidate.candidate_key} · ${comparison.eligible_trial_count}/${comparison.materialized_trial_count} eligible trials`,
               unavailable: !agent || !suite || !frozen || comparison.eligible_trial_count === 0,
             });

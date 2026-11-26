@@ -242,8 +242,13 @@ export function FactoryDefinitionEditor({
   const [pending, setPending] = useState<Operation | null>(null);
   const [loading, setLoading] = useState(true);
   const [conflict, setConflict] = useState(false);
-  const [feedback, setFeedback] = useState<FlashMessage | null>(null);
-  const [feedbackAtDraft, setFeedbackAtDraft] = useState(false);
+  const [{ message: feedback, atDraft: feedbackAtDraft }, setFeedbackState] = useState<{
+    message: FlashMessage | null;
+    atDraft: boolean;
+  }>({ message: null, atDraft: false });
+  const setFeedback = useCallback((message: FlashMessage | null, atDraft = false) => {
+    setFeedbackState({ message, atDraft });
+  }, []);
   const draftFeedbackRef = useRef<HTMLDivElement>(null);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const [profileRefresh, setProfileRefresh] = useState(0);
@@ -497,6 +502,7 @@ export function FactoryDefinitionEditor({
     initialScorerRevisionId,
     loadWorkspace,
     recoveryKey,
+    setFeedback,
   ]);
 
   useEffect(() => {
@@ -508,14 +514,13 @@ export function FactoryDefinitionEditor({
     void loadSelection(target).catch((error: unknown) =>
       setFeedback({ kind: "error", text: errorText(error) }),
     );
-  }, [loadSelection, requestedActivation, requestedDraft, requestedRevision]);
+  }, [loadSelection, requestedActivation, requestedDraft, requestedRevision, setFeedback]);
 
   async function run(operation: Operation, task: () => Promise<void>) {
     if (inFlight.current || loading) return;
     inFlight.current = true;
     setPending(operation);
     setFeedback(null);
-    setFeedbackAtDraft(operation === "preview" || operation === "save");
     setDiagnostics([]);
     try {
       await task();
@@ -527,7 +532,10 @@ export function FactoryDefinitionEditor({
         }
         setDiagnostics(error.diagnostics);
       }
-      setFeedback({ kind: "error", text: errorText(error) });
+      setFeedback(
+        { kind: "error", text: errorText(error) },
+        operation === "preview" || operation === "save",
+      );
       return error;
     } finally {
       inFlight.current = false;
@@ -599,7 +607,10 @@ export function FactoryDefinitionEditor({
     if (!edit || locked) return;
     await run("preview", async () => {
       setPreview(await compile(edit));
-      setFeedback({ kind: "success", text: "Definition is valid. Review its semantic changes." });
+      setFeedback(
+        { kind: "success", text: "Definition is valid. Review its semantic changes." },
+        true,
+      );
     });
   }
 
@@ -617,7 +628,7 @@ export function FactoryDefinitionEditor({
       setSnapshot(next);
       setEdit(editFrom(next, edit.input.kind));
       setPreview(null);
-      setFeedback({ kind: "success", text: "Draft saved." });
+      setFeedback({ kind: "success", text: "Draft saved." }, true);
     });
   }
 

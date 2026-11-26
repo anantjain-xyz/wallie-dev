@@ -151,7 +151,12 @@ describe("structured factory definition editor", () => {
     const agentId = namedId(13);
     const implementationAgent = namedId(14);
     const { current } = renderEditor(
-      { ...initialDefinition, implementationAgent, executionGrant: { id: grantId, version: 3 } },
+      {
+        ...initialDefinition,
+        implementationAgent,
+        executionGrant: { id: grantId, version: 3 },
+        credentialBindingId: namedId(15),
+      },
       undefined,
       {
         implementationAgent: [
@@ -208,8 +213,52 @@ describe("structured factory definition editor", () => {
     expect(current().mcpBindings).toEqual([
       { toolRevisionId, operations: ["read_item", "list_items"], secretBindingId },
     ]);
+    choose("Tool revision 1", "Issue reader · Revision 2");
+    choose("Execution grant", "Release bot · Grant v3");
+    expect(current().credentialBindingId).toBe(namedId(15));
+    expect(current().mcpBindings).toEqual([
+      { toolRevisionId, operations: ["read_item", "list_items"], secretBindingId },
+    ]);
     fireEvent.click(screen.getByRole("button", { name: "Remove tool binding 1" }));
     expect(current().mcpBindings).toBeUndefined();
+  });
+
+  it("keeps revoked tool operations removable without offering new operations", () => {
+    const toolRevisionId = namedId(34);
+    const grantId = namedId(35);
+    const { current } = renderEditor(
+      {
+        ...initialDefinition,
+        executionGrant: { id: grantId, version: 1 },
+        mcpBindings: [{ toolRevisionId, operations: ["read"] }],
+      },
+      undefined,
+      {
+        tools: [
+          {
+            id: toolRevisionId,
+            label: "Older tool · Revision 1",
+            operations: ["read", "write"],
+            unavailable: true,
+          },
+        ],
+        grants: [
+          {
+            id: grantReferenceKey(grantId, 1),
+            grantId,
+            version: 1,
+            label: "Release bot · Grant v1",
+            toolIds: ["read", "write"].map((name) => mcpOperationScopeId(toolRevisionId, name)),
+          },
+        ],
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Allowed operations/ }));
+    expect(screen.queryByRole("checkbox", { name: "write" })).toBeNull();
+    const saved = screen.getByRole("checkbox", { name: "read · Unavailable" });
+    expect(saved).toBeChecked();
+    fireEvent.click(saved);
+    expect(current().mcpBindings).toEqual([{ toolRevisionId, operations: [] }]);
   });
 
   it("emits editable compiler input for references, runtime, and operating rules", () => {
@@ -281,8 +330,17 @@ describe("structured factory definition editor", () => {
       workerRuntime: "node",
     } as const;
     const label = "Planner · openai/gpt-5.6 · Readiness v2";
+    const historical = { ...configuration, scorerRevisionId: undefined };
     const { current } = renderEditor(initialDefinition, undefined, {
-      routing: [{ id: routingConfigurationKey(configuration), configuration, label }],
+      routing: [
+        { id: routingConfigurationKey(configuration), configuration, label },
+        {
+          id: routingConfigurationKey(historical),
+          configuration: historical,
+          label: "Planner · Historical implicit scorer",
+          labelOnly: true,
+        },
+      ],
     });
     fireEvent.click(screen.getByRole("button", { name: "Add routing policy" }));
     fireEvent.click(screen.getByRole("button", { name: "Add task class" }));
@@ -290,7 +348,12 @@ describe("structured factory definition editor", () => {
       target: { value: "Plan" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Add routing rule" }));
-    choose("Primary configuration", label);
+    fireEvent.click(screen.getByRole("combobox", { name: "Primary configuration" }));
+    const choices = within(screen.getByRole("listbox", { name: "Primary configuration" }));
+    expect(
+      choices.queryByRole("option", { name: "Planner · Historical implicit scorer" }),
+    ).toBeNull();
+    fireEvent.click(choices.getByRole("option", { name: label }));
     expect(current().modelRouting?.rules[0]).toMatchObject({
       configuration,
       onUnavailable: { kind: "escalate" },

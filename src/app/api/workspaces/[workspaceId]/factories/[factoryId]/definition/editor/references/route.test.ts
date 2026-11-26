@@ -19,7 +19,11 @@ const context = { params: Promise.resolve({ workspaceId, factoryId }) };
 const supabase = {};
 
 function request(body: unknown) {
-  return new Request("http://localhost/references", { method: "POST", body: JSON.stringify(body) });
+  return new Request("http://localhost/references", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 beforeEach(() => {
@@ -59,4 +63,14 @@ it("does not query for mismatched or malformed reference inputs", async () => {
   const response = await POST(request({ mode: "pins", ids: { context: ["unscoped"] } }), context);
   expect(response.status).toBe(400);
   expect(lookup).not.toHaveBeenCalled();
+});
+
+it("returns only allowlisted picker metadata", async () => {
+  const option = { id: factoryId, label: "Read issues · tools.example.test" };
+  lookup.mockResolvedValue({
+    groups: { tools: { options: [{ ...option, endpoint: "https://tools.example.test/path" }] } },
+  });
+  const response = await POST(request({ mode: "initial" }), context);
+  expect(response.ok).toBe(true);
+  expect(await response.json()).toEqual({ groups: { tools: { options: [option] } } });
 });

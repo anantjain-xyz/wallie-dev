@@ -334,6 +334,7 @@ function setup({
   routingPreview,
   editorProps,
   readSelection,
+  rejectPublish,
 }: {
   selection?: Parameters<typeof FactoryDefinitionEditor>[0]["selection"];
   initialActivationNumber?: number;
@@ -348,6 +349,7 @@ function setup({
     query: URLSearchParams,
     signal: RequestInit["signal"],
   ) => Promise<Response> | undefined;
+  rejectPublish?: Response;
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
     activationNumber: initialActivationNumber,
@@ -499,6 +501,7 @@ function setup({
       if (body.draftId !== snapshot.draft?.id || !snapshot.draft) {
         return Response.json({ error: "The draft changed." }, { status: 409 });
       }
+      if (body.action === "publish" && rejectPublish) return rejectPublish;
       const next = { ...snapshot.draft, id: id(11), kind: "revision" as const };
       records.set(next.id, next);
       snapshot = {
@@ -721,6 +724,28 @@ it("round-trips source edits with scorer pins and publishes the exact saved draf
     path: `${endpoint}/settings`,
     body: { action: "publish", expectedActivationNumber: 2, draftId: id(8) },
   });
+});
+
+it("shows saved-draft validation diagnostics inside a rejected publish review", async () => {
+  setup({
+    rejectPublish: Response.json(
+      {
+        error: "The saved definition no longer validates.",
+        diagnostics: [{ path: ["executionGrant"], message: "The grant is revoked." }],
+      },
+      { status: 422 },
+    ),
+  });
+  const publish = await screen.findByRole("button", { name: "Review and publish saved draft" });
+  await waitFor(() => expect(publish).toBeEnabled());
+  fireEvent.click(publish);
+  const dialog = within(
+    await screen.findByRole("alertdialog", { name: "Publish this saved draft?" }),
+  );
+  fireEvent.click(dialog.getByRole("button", { name: "Publish draft" }));
+  expect(
+    await dialog.findByRole("list", { name: "Publish validation diagnostics" }),
+  ).toHaveTextContent("Execution grant: The grant is revoked.");
 });
 
 it("preserves both operators' edits when they change different fields", async () => {
