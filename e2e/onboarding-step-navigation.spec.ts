@@ -73,11 +73,24 @@ for (const { width, height, colorScheme } of [
     await page.getByRole("button", { name: "Replace connection" }).click();
     await page.getByLabel("Token", { exact: true }).fill("synthetic-vercel-token");
     await page.getByRole("button", { name: "Find teams" }).press("Enter");
-    await expect(page.getByRole("combobox", { name: "Team" })).toHaveValue("team_123");
+    await expect(page.getByRole("combobox", { name: "Team" })).toHaveAttribute(
+      "data-value",
+      "team_123",
+    );
     const project = page.getByRole("combobox", { name: "Project" });
-    await expect(project).toHaveValue("prj_123");
-    await project.focus();
+    await expect(project).toHaveAttribute("data-value", "prj_123");
+    await expect(project).toHaveText("Northwind runner · northwind");
+    await project.press("Enter");
+    const projects = page.getByRole("listbox", { name: "Project" });
+    await expect(
+      projects.getByRole("option", { name: "Northwind runner · northwind" }),
+    ).toHaveAttribute("aria-selected", "true");
     await page.screenshot({ path: info.outputPath("named-targets.png") });
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Escape");
+    await expect(project).toBeFocused();
+    await expect(projects).not.toBeVisible();
+    await expect(project).toHaveAttribute("data-value", "prj_123");
     await expect(page.getByRole("button", { name: "Save connection" })).toBeEnabled();
     await page.getByRole("button", { name: "Enter IDs manually" }).click();
     await expect(page.getByLabel("Project ID")).toHaveValue("prj_123");

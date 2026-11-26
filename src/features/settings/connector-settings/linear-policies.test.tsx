@@ -502,6 +502,11 @@ it("keeps the unavailable starting ID and clears both errors only when From chan
   for (const choice of [from, to]) expect(choice).not.toHaveAttribute("aria-invalid");
   expect(to).toHaveAttribute("data-value", "");
 
+  await user.click(save);
+  expect(to).toHaveFocus();
+  expect(to).toHaveAccessibleDescription("Choose an available destination state.");
+  expect(writes).toEqual([]);
+
   await user.click(to);
   await user.click(screen.getByRole("option", { name: "In progress · Platform (PLAT) · started" }));
   await user.click(save);
