@@ -61,6 +61,7 @@ export default async function ScorerDetailPage({
   const { scorer, latest, selected, activePins, revisions, nextBeforeRevisionNumber } = data;
   const factoryQuery = { factory: factory.id };
   const historical = selected.id !== latest.id;
+  const EditLink = historical ? ScorerDraftLink : Link;
   const active = activePins.includes(selected.id);
   const published = query.published === selected.id && revision.data === selected.id;
   const factoryLabel = scorerFactoryLabel(factory, factories ?? [factory]);
@@ -84,12 +85,12 @@ export default async function ScorerDetailPage({
         <PageHeader
           actions={
             canEdit ? (
-              <Link
+              <EditLink
                 className="ui-button ui-button-primary"
                 href={historical ? `${latestHref}#draft-rubric` : "#draft-rubric"}
               >
                 Edit latest rubric
-              </Link>
+              </EditLink>
             ) : undefined
           }
           description={`${factoryLabel} · ${scorer.slug}${factory.status === "archived" ? " · Read only — archived factory" : !canEdit ? " · Only factory managers can publish" : ""}`}
@@ -178,26 +179,21 @@ export default async function ScorerDetailPage({
               revision: selected.id,
             })}
           />
-          {canEdit && !historical ? (
-            <PageSection
-              anchorId="draft-rubric"
-              statusBadge={<Status label="Draft" value="not_started" />}
-              title="Draft rubric"
-            >
-              <ScorerForm
-                draft={{
-                  kind: "revise",
-                  scorerId: scorer.id,
-                  expectedRevisionNumber: latest.revision_number,
-                  definition: selected.definition,
-                }}
-                factoryId={factory.id}
-                factoryLabel={factoryLabel}
-                key={latest.id}
-                workspaceId={workspaceId}
-                workspaceSlug={workspaceSlug}
-              />
-            </PageSection>
+          {canEdit ? (
+            <ScorerForm
+              draft={{
+                kind: "revise",
+                scorerId: scorer.id,
+                expectedRevisionNumber: selected.revision_number,
+                definition: selected.definition,
+              }}
+              factoryId={factory.id}
+              factoryLabel={factoryLabel}
+              historical={historical}
+              key={selected.id}
+              workspaceId={workspaceId}
+              workspaceSlug={workspaceSlug}
+            />
           ) : null}
           <PageSection title="Revision history">
             {revisions.length ? (

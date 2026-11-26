@@ -16,6 +16,7 @@ import { InlineActionMessage } from "@/features/settings/settings-ui";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
 import {
+  CALIBRATION_NAME_MAX_CODE_POINTS,
   calibrationCandidatePageSchema,
   type CalibrationCandidatePage,
   type CalibrationRevision,
@@ -118,10 +119,13 @@ export function CalibrationForm({
 }) {
   const newSet = useRef<string | null>(null);
   const descriptionId = useId();
+  const [calibrationName, setCalibrationName] = useState(current?.name ?? "");
   const [choices, setChoices] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState("");
   const [older, setOlder] = useState<CalibrationCandidatePage | null>(null);
   const [pageMessage, setPageMessage] = useState<FlashMessage | null>(null);
+  const nameLength = Array.from(calibrationName.trim()).length;
+  const nameTooLong = nameLength > CALIBRATION_NAME_MAX_CODE_POINTS;
   const latestIds = new Set(candidatePage.candidates.map(({ id }) => id));
   const candidates = [
     ...candidatePage.candidates,
@@ -175,14 +179,13 @@ export function CalibrationForm({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
     const setId = current?.set_id ?? (newSet.current ??= crypto.randomUUID());
     const command = scorerGovernanceCommandSchema.safeParse({
       action: "calibration",
       setId,
       expectedRevision: current?.revision ?? 0,
       scorerRevisionId: current?.scorer_revision_id ?? scorerRevisionId,
-      name: form.get("name"),
+      name: calibrationName,
       adjudicationIds: orderedIds.filter(isChecked),
     });
     if (!command.success) {
@@ -192,13 +195,12 @@ export function CalibrationForm({
       });
       return;
     }
-    const target = event.currentTarget;
     void action.run(command.data).then((result) => {
       if (result?.action === "calibration" && !current) {
         newSet.current = null;
+        setCalibrationName("");
         setChoices({});
         setSearch("");
-        target.reset();
       }
     });
   }
@@ -230,16 +232,27 @@ export function CalibrationForm({
 
   return (
     <form className="space-y-4" onSubmit={submit}>
-      <label className="type-label flex min-w-0 flex-col gap-1.5">
-        Calibration set name
-        <input
-          className="ui-input"
-          defaultValue={current?.name ?? ""}
-          maxLength={120}
-          name="name"
-          required
-        />
-      </label>
+      <div className="space-y-1.5">
+        <label className="type-label flex min-w-0 flex-col gap-1.5">
+          Calibration set name
+          <input
+            aria-describedby={`${descriptionId}-name`}
+            aria-invalid={nameTooLong || undefined}
+            className="ui-input"
+            name="name"
+            onChange={(event) => setCalibrationName(event.currentTarget.value)}
+            required
+            value={calibrationName}
+          />
+        </label>
+        <p
+          className={`type-annotation ${nameTooLong ? "text-danger" : "text-muted"}`}
+          id={`${descriptionId}-name`}
+        >
+          {nameLength} / {CALIBRATION_NAME_MAX_CODE_POINTS} characters.
+          {nameTooLong ? " Shorten the name to publish." : ""}
+        </p>
+      </div>
       <fieldset className="min-w-0 space-y-3">
         <legend className="type-label">Calibration cases</legend>
         {orderedIds.length ? (
@@ -335,7 +348,7 @@ export function CalibrationForm({
       </fieldset>
       <button
         className="ui-button-primary px-3 py-2"
-        disabled={action.busy || action.conflict || !orderedIds.length}
+        disabled={action.busy || action.conflict || nameTooLong || !orderedIds.length}
         type="submit"
       >
         <ActionButtonLabel

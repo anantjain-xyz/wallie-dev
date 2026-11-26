@@ -5,7 +5,9 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import type { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { PageSection } from "@/components/ui/page-shell";
 import { SelectField } from "@/components/ui/select";
+import { Status } from "@/components/ui/status";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -106,12 +108,14 @@ export function ScorerForm({
   draft,
   factoryId,
   factoryLabel,
+  historical = false,
   workspaceId,
   workspaceSlug,
 }: {
   draft: ScorerDraft;
   factoryId: string;
   factoryLabel: string;
+  historical?: boolean;
   workspaceId: string;
   workspaceSlug: string;
 }) {
@@ -121,11 +125,12 @@ export function ScorerForm({
   const id = useId();
   const create = draft.kind === "create";
   const [initial] = useState(() => initialValues(draft));
-  const [values, setValues] = useState(initial);
+  const [{ values, changed }, setDraftValues] = useState({ values: initial, changed: false });
   const [errors, setErrors] = useState<Errors>({});
   const focusField = useRef<keyof DraftValues | null>(null);
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [conflict, setConflict] = useState(false);
+  const requiresReload = historical || conflict;
   const scorers = `/api/workspaces/${workspaceId}/factories/${factoryId}/scorers`;
   const endpoint = create ? scorers : `${scorers}/${draft.scorerId}/revisions`;
   const action = useApiAction<unknown, [ScorerCommand]>({
@@ -189,15 +194,14 @@ export function ScorerForm({
   }, [action.isBusy, errors, id]);
 
   function update(next: DraftValues) {
-    setValues(next);
-    if (dirty) {
-      dirty.current =
-        next.requiredEvidence.join() !== initial.requiredEvidence.join() ||
-        Object.keys(initial).some((key) => {
-          const field = key as keyof DraftValues;
-          return field !== "requiredEvidence" && next[field] !== initial[field];
-        });
-    }
+    const hasEdits =
+      next.requiredEvidence.join() !== initial.requiredEvidence.join() ||
+      Object.keys(initial).some((key) => {
+        const field = key as keyof DraftValues;
+        return field !== "requiredEvidence" && next[field] !== initial[field];
+      });
+    setDraftValues({ values: next, changed: hasEdits });
+    if (dirty) dirty.current = hasEdits;
     setErrors({});
     if (!conflict) setMessage(null);
   }
@@ -278,7 +282,7 @@ export function ScorerForm({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (conflict) return;
+    if (requiresReload) return;
     const command = parseDraft();
     if (!command) return;
     setMessage(null);
@@ -300,14 +304,16 @@ export function ScorerForm({
     ? workspaceScorerDetailPath(workspaceSlug, draft.scorerId, { factory: factoryId })
     : "";
 
-  return (
+  if (historical && !changed) return null;
+
+  const form = (
     <form
       autoComplete="off"
       className="ui-sheet min-w-0 space-y-4 p-4 sm:p-5"
       noValidate
       onSubmit={submit}
     >
-      {conflict ? (
+      {requiresReload ? (
         <div className="space-y-2 rounded-md border border-border p-3">
           <p className="type-secondary">
             Another revision was published. Copy your draft before reloading, then review it against
@@ -520,7 +526,7 @@ export function ScorerForm({
           ) : null}
           <button
             className="ui-button"
-            disabled={conflict}
+            disabled={requiresReload}
             onClick={() => {
               if (parseDraft())
                 setMessage({
@@ -532,7 +538,7 @@ export function ScorerForm({
           >
             Validate rubric
           </button>
-          <button className="ui-button ui-button-primary" disabled={conflict} type="submit">
+          <button className="ui-button ui-button-primary" disabled={requiresReload} type="submit">
             <ActionButtonLabel
               idle={create ? "Publish scorer" : "Publish revision"}
               pending={action.isBusy}
@@ -543,5 +549,16 @@ export function ScorerForm({
       </fieldset>
       <InlineActionMessage message={message} />
     </form>
+  );
+  return create ? (
+    form
+  ) : (
+    <PageSection
+      anchorId="draft-rubric"
+      statusBadge={<Status label="Draft" value="not_started" />}
+      title="Draft rubric"
+    >
+      {form}
+    </PageSection>
   );
 }

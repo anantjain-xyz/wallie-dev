@@ -107,6 +107,54 @@ it("keeps earlier cases in their saved order and appends newly selected cases", 
   expect(refresh).toHaveBeenCalledOnce();
 });
 
+it("counts trimmed Unicode code points and publishes a name at the server limit", async () => {
+  const valid = `${"a".repeat(119)}🚀`;
+  const submit = vi.fn(async () =>
+    Response.json({
+      action: "calibration",
+      calibration: { ...current, revision: 4, name: valid },
+    }),
+  );
+  vi.stubGlobal("fetch", submit);
+  render(
+    <CalibrationForm
+      current={current}
+      candidatePage={candidatePage}
+      endpoint="/governance"
+      workspaceSlug="wallie"
+      scorerRevisionId={current.scorer_revision_id}
+    />,
+  );
+  const input = screen.getByRole("textbox", { name: "Calibration set name" });
+  const publish = screen.getByRole("button", { name: "Publish next version" });
+  expect(input).not.toHaveAttribute("maxlength");
+  fireEvent.change(input, { target: { value: `${valid}🚀` } });
+  expect(input).toHaveAccessibleDescription("121 / 120 characters. Shorten the name to publish.");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(publish).toBeDisabled();
+  fireEvent.click(publish);
+  expect(submit).not.toHaveBeenCalled();
+
+  fireEvent.change(input, { target: { value: ` ${valid} ` } });
+  expect(input).toHaveAccessibleDescription("120 / 120 characters.");
+  expect(input).not.toHaveAttribute("aria-invalid");
+  fireEvent.click(publish);
+  expect(await screen.findByText("Calibration version published.")).toBeVisible();
+  expect(submit).toHaveBeenCalledWith(
+    "/governance",
+    expect.objectContaining({
+      body: JSON.stringify({
+        action: "calibration",
+        setId: current.set_id,
+        expectedRevision: 3,
+        scorerRevisionId: current.scorer_revision_id,
+        name: valid,
+        adjudicationIds: current.adjudication_ids,
+      }),
+    }),
+  );
+});
+
 it("retains the calibration draft on a stale revision while controls reload", async () => {
   vi.stubGlobal(
     "fetch",

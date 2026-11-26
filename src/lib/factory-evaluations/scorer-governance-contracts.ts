@@ -17,7 +17,8 @@ const boundedText = (limit: number) =>
     .min(1)
     .refine((value) => Array.from(value).length <= limit && isFactoryDefinitionText(value));
 const note = boundedText(640);
-const name = boundedText(120);
+export const CALIBRATION_NAME_MAX_CODE_POINTS = 120;
+const name = boundedText(CALIBRATION_NAME_MAX_CODE_POINTS);
 const caseIds = z
   .array(id)
   .min(1)
