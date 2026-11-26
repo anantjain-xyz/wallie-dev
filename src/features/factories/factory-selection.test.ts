@@ -88,7 +88,7 @@ describe("factory scope and selection", () => {
   it("resets base scope-specific filters and preserves unrelated state", () => {
     const result = factorySwitchHref(
       "/w/acme/sessions",
-      "q=auth&sort=oldest&cursor=old&stage=custom&create=1&sessionId=session&stageId=stage&after=next",
+      "q=auth&sort=oldest&cursor=old&stage=custom&create=1&returnTo=%2Fw%2Facme&sessionId=session&stageId=stage&after=next",
       secondary.id,
     );
     expect(result).toBe("/w/acme/sessions?q=auth&sort=oldest&factory=secondary-id");

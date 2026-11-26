@@ -6,23 +6,36 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { PageSection } from "@/components/ui/page-shell";
-import { SelectField } from "@/components/ui/select";
+import { CopyGovernanceId, GovernanceSelect } from "./governance-fields";
 import { GovernanceTime } from "@/features/factory-governance/governance-resource-link";
 import { type FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
-import type {
-  loadFactoryEventDeliveries,
-  loadFactoryEventSubscriptionSettings,
-} from "@/lib/factory-event-subscriptions/management";
+import type { loadFactoryEventDeliveries } from "@/lib/factory-event-subscriptions/management";
+import type { loadGovernanceSubscriptions } from "./governance-subscriptions-data";
 import {
   createFactoryEventSubscriptionSchema,
   factoryOutboundEventLabels,
   type FactoryEventSubscriptionCommand,
 } from "@/lib/factory-event-subscriptions/management-contracts";
 
-type SubscriptionSettings = Awaited<ReturnType<typeof loadFactoryEventSubscriptionSettings>>;
-type Subscription = SubscriptionSettings["subscriptions"][number];
+type SubscriptionData = Awaited<ReturnType<typeof loadGovernanceSubscriptions>>;
+type Subscription = Pick<
+  SubscriptionData["subscriptions"][number],
+  | "authorized"
+  | "credential_id"
+  | "credential_kind"
+  | "credentialLabel"
+  | "endpoint_url"
+  | "event_types"
+  | "id"
+  | "name"
+  | "status"
+>;
+type SubscriptionSettings = {
+  authorizations: SubscriptionData["authorizations"];
+  subscriptions: Subscription[];
+};
 type DeliveryPage = Awaited<ReturnType<typeof loadFactoryEventDeliveries>>;
 
 const deliveryLabels = {
@@ -34,6 +47,13 @@ const deliveryLabels = {
   unknown: "Delivery unconfirmed",
   revoked: "Authority revoked",
 };
+
+function credentialKindLabel(kind: Subscription["credential_kind"]) {
+  return kind === "machine_token" ? "Machine token" : "OAuth connection";
+}
+
+const unconfirmedWarning =
+  "The receiver may already have applied this event. Check its logs using the event ID before retrying, and make sure it deduplicates repeated deliveries by that ID.";
 
 function post(endpoint: string, command: FactoryEventSubscriptionCommand) {
   return fetch(endpoint, {
@@ -99,6 +119,7 @@ function EventSubscriptionForm({
   const form = useRef<HTMLFormElement>(null);
   const name = useRef<HTMLInputElement>(null);
   const copyButton = useRef<HTMLButtonElement>(null);
+  const [authority, setAuthority] = useState("");
   const [feedback, setFeedback] = useState<FlashMessage | null>(null);
   const [signingSecret, setSigningSecret] = useState<string | null>(null);
   const action = useApiAction<{ signingSecret: string }, [FactoryEventSubscriptionCommand]>({
@@ -108,6 +129,7 @@ function EventSubscriptionForm({
       "Subscription created. Configure your receiver and verify ownership to start delivery.",
     onSuccess: ({ signingSecret }) => {
       setSigningSecret(signingSecret);
+      setAuthority("");
       form.current?.reset();
       router.refresh();
     },
@@ -208,24 +230,19 @@ function EventSubscriptionForm({
                 />
               </label>
             </div>
-            <SelectField
-              defaultValue=""
+            <GovernanceSelect
+              choices={authorizations.map((authorization) => ({
+                id: `${authorization.credential_kind}:${authorization.credential_id}`,
+                label: `${authorization.credential_name} · ${credentialKindLabel(authorization.credential_kind)} · ${authorization.scopeLabel}`,
+              }))}
               emptyOption={{ disabled: true, label: "Choose an authorization", value: "" }}
               label="Authorization"
               labelClassName="type-label text-foreground"
               name="authority"
-              options={authorizations.map((authorization) => {
-                const value = `${authorization.credential_kind}:${authorization.credential_id}`;
-                const kind =
-                  authorization.credential_kind === "machine_token"
-                    ? "Machine token"
-                    : "OAuth client";
-                return {
-                  label: `${authorization.credential_name} · ${kind} · ${authorization.credential_id.slice(0, 8)}`,
-                  value,
-                };
-              })}
+              onValueChange={setAuthority}
               required
+              search
+              value={authority}
               wrap
             />
             <fieldset className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -306,6 +323,25 @@ function SubscriptionRow({
           <code>Wallie-Verification</code> response header.
         </p>
       ) : null}
+      {!authorized && status !== "revoked" && (
+        <div className="space-y-1 type-secondary text-muted">
+          <p className="[overflow-wrap:anywhere]">
+            Backing authorization: {subscription.credentialLabel ?? "Name unavailable"} ·{" "}
+            {credentialKindLabel(subscription.credential_kind)}
+          </p>
+          <p>
+            Choose an eligible authorization above, create a replacement subscription, and verify
+            its endpoint before expecting new deliveries. This subscription cannot be reauthorized
+            in place.
+          </p>
+          {!subscription.credentialLabel && (
+            <details>
+              <summary className="cursor-pointer">Technical details</summary>
+              <CopyGovernanceId label="Credential ID" value={subscription.credential_id} />
+            </details>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <button className="ui-button" aria-expanded={expanded} onClick={onToggle} type="button">
           {expanded ? "Hide deliveries" : "Inspect deliveries"}
@@ -370,6 +406,7 @@ function DeliveryHistory({
   const [page, setPage] = useState<DeliveryPage | null>(null);
   const [cursor, setCursor] = useState<string>();
   const [feedback, setFeedback] = useState<FlashMessage | null>(null);
+  const [replayId, setReplayId] = useState<string | null>(null);
 
   const getDeliveries = useCallback(
     (cursor?: string) => {
@@ -400,6 +437,7 @@ function DeliveryHistory({
     call: (deliveryId) => post(endpoint, { action: "retry", deliveryId }),
     errorText: "Could not retry delivery.",
     onSuccess: async () => {
+      setReplayId(null);
       await read.run(cursor);
     },
     successText: "Delivery queued.",
@@ -408,7 +446,7 @@ function DeliveryHistory({
 
   return (
     <section aria-label="Delivery history" className="space-y-3 border-t border-border pt-3">
-      <InlineActionMessage message={feedback} />
+      <InlineActionMessage message={replayId ? null : feedback} />
       <div className="flex flex-wrap gap-2">
         <button
           className="ui-button"
@@ -451,46 +489,85 @@ function DeliveryHistory({
       ) : null}
       {page?.deliveries.length ? (
         <ul className="divide-y divide-border">
-          {page.deliveries.map((delivery) => (
-            <li className="flex flex-wrap items-start justify-between gap-3 py-3" key={delivery.id}>
-              <div className="min-w-0 space-y-1">
-                <p className="text-sm font-medium text-foreground">
-                  {factoryOutboundEventLabels[delivery.event_type]} ·{" "}
-                  {deliveryLabels[delivery.status]}
-                </p>
-                <p className="type-secondary text-muted">
-                  {delivery.attempt_count} {delivery.attempt_count === 1 ? "attempt" : "attempts"}
-                  {delivery.last_http_status ? ` · HTTP ${delivery.last_http_status}` : ""}
-                  {" · "}
-                  <GovernanceTime value={delivery.created_at} />
-                </p>
-                <p className="type-secondary text-muted [overflow-wrap:anywhere]">
-                  Event <code>{delivery.event_id}</code>
-                </p>
-                {delivery.has_unknown_outcome && delivery.status !== "unknown" ? (
-                  <p className="type-secondary text-muted">Earlier attempt unconfirmed.</p>
-                ) : null}
-                {delivery.next_attempt_at ? (
-                  <p className="type-secondary text-muted">
-                    Next attempt <GovernanceTime value={delivery.next_attempt_at} />
+          {page.deliveries.map((delivery) => {
+            const unconfirmed = delivery.status === "unknown" || delivery.has_unknown_outcome;
+            return (
+              <li
+                className="flex flex-wrap items-start justify-between gap-3 py-3"
+                key={delivery.id}
+              >
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-medium text-foreground">
+                    {factoryOutboundEventLabels[delivery.event_type]} ·{" "}
+                    {deliveryLabels[delivery.status]}
                   </p>
+                  <p className="type-secondary text-muted">
+                    {delivery.attempt_count} {delivery.attempt_count === 1 ? "attempt" : "attempts"}
+                    {delivery.last_http_status ? ` · HTTP ${delivery.last_http_status}` : ""}
+                    {" · "}
+                    <GovernanceTime value={delivery.created_at} />
+                  </p>
+                  <div className="type-secondary text-muted">
+                    <CopyGovernanceId label="Event ID" value={delivery.event_id} />
+                  </div>
+                  {delivery.has_unknown_outcome && delivery.status !== "unknown" ? (
+                    <p className="type-secondary text-muted">Earlier attempt unconfirmed.</p>
+                  ) : null}
+                  {delivery.next_attempt_at ? (
+                    <p className="type-secondary text-muted">
+                      Next attempt <GovernanceTime value={delivery.next_attempt_at} />
+                    </p>
+                  ) : null}
+                </div>
+                {canRetry && delivery.retryable ? (
+                  unconfirmed ? (
+                    <div className="basis-full space-y-2">
+                      <p className="type-secondary text-muted">{unconfirmedWarning}</p>
+                      <DestructiveConfirmationDialog
+                        actionLabel="Replay delivery"
+                        description={unconfirmedWarning}
+                        errorMessage={feedback?.kind === "error" ? feedback.text : null}
+                        onConfirm={() => void retry.run(delivery.id)}
+                        onOpenChange={(open) => {
+                          setFeedback(null);
+                          setReplayId(open ? delivery.id : null);
+                        }}
+                        open={replayId === delivery.id}
+                        pending={retry.isBusy}
+                        pendingLabel="Queuing…"
+                        title="Replay an unconfirmed delivery?"
+                        trigger={
+                          <button
+                            className="ui-button"
+                            disabled={retry.isBusy || read.isBusy}
+                            type="button"
+                          >
+                            Review replay<span className="sr-only"> for {delivery.event_id}</span>
+                          </button>
+                        }
+                      >
+                        <div className="mt-3 type-secondary text-muted">
+                          <CopyGovernanceId label="Event ID" value={delivery.event_id} />
+                        </div>
+                      </DestructiveConfirmationDialog>
+                    </div>
+                  ) : (
+                    <button
+                      className="ui-button"
+                      disabled={retry.isBusy || read.isBusy}
+                      onClick={() => {
+                        setFeedback(null);
+                        void retry.run(delivery.id);
+                      }}
+                      type="button"
+                    >
+                      Retry delivery<span className="sr-only"> for {delivery.event_id}</span>
+                    </button>
+                  )
                 ) : null}
-              </div>
-              {canRetry && delivery.retryable ? (
-                <button
-                  className="ui-button"
-                  disabled={retry.isBusy || read.isBusy}
-                  onClick={() => {
-                    setFeedback(null);
-                    void retry.run(delivery.id);
-                  }}
-                  type="button"
-                >
-                  Retry delivery<span className="sr-only"> for {delivery.event_id}</span>
-                </button>
-              ) : null}
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
     </section>

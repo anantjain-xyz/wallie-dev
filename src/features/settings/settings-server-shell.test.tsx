@@ -1,7 +1,6 @@
-import { createElement, type ReactElement } from "react";
+import { createElement, type ComponentProps, type ReactElement } from "react";
 import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { WorkspaceUsageData } from "@/features/settings/data";
 
 vi.mock("@/features/settings/settings-category-nav", () => ({
   SettingsCategoryNav: () => <p>Category navigation island</p>,
@@ -23,7 +22,17 @@ vi.mock("@/features/settings/islands/advanced-islands", () => ({
 vi.mock("@/features/settings/islands/workspace-islands", () => ({
   DangerActionsIsland: () => <p>Danger zone island</p>,
   WorkspaceIdentityIsland: () => <p>Workspace identity island</p>,
-  WorkspaceMembersIsland: () => <p>Workspace members island</p>,
+}));
+vi.mock("@/features/settings/workspace-members-section", () => ({
+  WorkspaceMembersSection: () => <p>Workspace members island</p>,
+}));
+vi.mock("@/features/settings/workspace-profile-section", () => ({
+  WorkspaceProfileSection: () => <button>Edit profile</button>,
+}));
+vi.mock("@/features/settings/workspace-settings-load-error", () => ({
+  WorkspaceSettingsLoadError: ({ label }: { label: string }) => (
+    <p role="alert">Could not load {label}.</p>
+  ),
 }));
 
 import {
@@ -36,6 +45,7 @@ import {
   SettingsSectionError,
   SettingsSectionFallback,
 } from "@/features/settings/settings-server-shell";
+import type { SettingsSetupData, WorkspaceUsageData } from "@/features/settings/data";
 
 async function renderStream(element: ReactElement) {
   const stream = await renderToReadableStream(element);
@@ -43,47 +53,58 @@ async function renderStream(element: ReactElement) {
   return new Response(stream).text();
 }
 
-function renderSettingsCategory(
+const workspaceUsage: WorkspaceUsageData = {
+  totalCostUsd: 1.25,
+  totalInputTokens: 2_000,
+  totalOutputTokens: 1_000,
+  totalRuns: 3,
+  tokensUnavailable: false,
+  costUnavailable: false,
+  hasEstimatedTokens: false,
+  hasEstimatedCost: false,
+};
+
+function settingsCategory(
   category: SettingsCategory,
   canManage = true,
-  usage: Partial<WorkspaceUsageData> = {},
+  overrides?: Partial<ComponentProps<typeof SettingsServerShell>>,
 ) {
-  return renderStream(
-    createElement(SettingsServerShell, {
-      category,
-      initialData: {
-        canManage,
-        currentMember: { id: "member-1", role: canManage ? "owner" : "member" },
-        github: null,
-        workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
-      } as never,
-      searchState: { codexStatus: null, githubStatus: null },
-      setupData: Promise.resolve({
-        agentConfig: { agent_provider: "codex" },
-        rateLimits: [
-          {
-            endpoint: "POST /api/workspaces/:id/maintenance/tick",
-            scope: "maintenance",
-            max: 3,
-            windowMs: 60_000,
-          },
-        ],
-        workspaceMembers: [],
-      } as never),
-      usage: Promise.resolve({
-        totalCostUsd: 1.25,
-        totalInputTokens: 2_000,
-        totalOutputTokens: 1_000,
-        totalRuns: 3,
-        tokensUnavailable: false,
-        costUnavailable: false,
-        hasEstimatedTokens: false,
-        hasEstimatedCost: false,
-        ...usage,
-      }),
-      workspaceInvitations: Promise.resolve([]),
-    }),
-  );
+  return createElement(SettingsServerShell, {
+    category,
+    initialData: {
+      canManage,
+      currentMember: { id: "member-1", role: canManage ? "owner" : "member" },
+      github: null,
+      workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
+    } as never,
+    searchState: { codexStatus: null, githubStatus: null },
+    setupData: Promise.resolve({
+      agentConfig: { agent_provider: "codex" },
+      rateLimits: [
+        {
+          endpoint: "POST /api/workspaces/:id/maintenance/tick",
+          scope: "maintenance",
+          max: 3,
+          windowMs: 60_000,
+        },
+      ],
+      workspaceMembers: [],
+    } as never),
+    usage: Promise.resolve(workspaceUsage),
+    workspaceInvitations: Promise.resolve({ asOf: 0, invitations: [] }),
+    workspaceProfile: Promise.resolve({ avatarUrl: null, fullName: "Alex" }),
+    ...overrides,
+  });
+}
+
+function renderSettingsCategory(category: SettingsCategory, canManage = true) {
+  return renderStream(settingsCategory(category, canManage));
+}
+
+function rejected(label: string) {
+  const promise = Promise.reject(new Error(label));
+  void promise.catch(() => undefined);
+  return promise;
 }
 
 describe("Settings server shell", () => {
@@ -116,6 +137,46 @@ describe("Settings server shell", () => {
     expect(html).toContain("Danger zone island");
     expect(html).not.toContain("GitHub integration island");
     expect(html).not.toContain("Verify setup island");
+  });
+
+  it.each([
+    ["pending invitations", "workspaceInvitations", ["Workspace members island", "Edit profile"]],
+    ["active members", "setupData", ["No pending invitations.", "Edit profile"]],
+    ["your profile", "workspaceProfile", ["No pending invitations.", "Workspace members island"]],
+  ] as const)(
+    "isolates failure of %s from the other workspace reads",
+    async (label, key, healthy) => {
+      const html = await renderStream(
+        settingsCategory("workspace", true, { [key]: rejected(label) }),
+      );
+      expect(html).toContain('id="members"');
+      expect(html).toContain(">Members<");
+      expect(html.replaceAll(/<!--.*?-->/g, "")).toContain(`Could not load ${label}.`);
+      for (const text of healthy) expect(html).toContain(text);
+      if (key === "workspaceInvitations") expect(html).not.toContain("No pending invitations.");
+    },
+  );
+
+  it("keeps the Members heading and anchor while the subsections load", async () => {
+    const setup = Promise.withResolvers<SettingsSetupData>();
+    const stream = await renderToReadableStream(
+      settingsCategory("workspace", true, { setupData: setup.promise }),
+    );
+    const reader = stream.getReader();
+    try {
+      const chunk = await reader.read();
+      const html = new TextDecoder().decode(chunk.value);
+      expect(html).toContain('id="members"');
+      expect(html).toContain(">Members<");
+      expect(html.replaceAll(/<!--.*?-->/g, "")).toContain("Loading active members…");
+    } finally {
+      setup.resolve(await settingsCategory("workspace").props.setupData);
+      try {
+        while (!(await reader.read()).done) continue;
+      } finally {
+        reader.releaseLock();
+      }
+    }
   });
 
   it("renders usage, run history, maintenance, and rate-limit content for advanced", async () => {
@@ -153,23 +214,40 @@ describe("Settings server shell", () => {
   });
 
   it("distinguishes zero started runs from unavailable or partial usage", async () => {
-    const empty = await renderSettingsCategory("advanced", false, {
-      totalRuns: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCostUsd: 0,
-    });
+    const empty = await renderStream(
+      settingsCategory("advanced", false, {
+        usage: Promise.resolve({
+          ...workspaceUsage,
+          totalRuns: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalCostUsd: 0,
+        }),
+      }),
+    );
     expect(empty).toContain("No runs have started yet.");
-    const partial = await renderSettingsCategory("advanced", false, {
-      totalRuns: 3,
-      totalCostUsd: null,
-      costUnavailable: true,
-      tokensUnavailable: true,
-      hasEstimatedTokens: true,
-    });
+    const partial = await renderStream(
+      settingsCategory("advanced", false, {
+        usage: Promise.resolve({
+          ...workspaceUsage,
+          totalCostUsd: null,
+          costUnavailable: true,
+          tokensUnavailable: true,
+          hasEstimatedTokens: true,
+        }),
+      }),
+    );
     expect(partial).not.toContain("No runs have started yet.");
     expect(partial).toContain("Provider did not report");
     expect(partial).toContain("Partial · includes estimates");
+  });
+
+  it("does not render invitations for ordinary members", async () => {
+    const html = await renderSettingsCategory("workspace", false);
+    expect(html).toContain("Workspace members island");
+    expect(html).toContain("Edit profile");
+    expect(html).not.toContain("Pending invitations");
+    expect(html).not.toContain("Invite member");
   });
 
   it("uses geometry-stable section loading and error states", () => {

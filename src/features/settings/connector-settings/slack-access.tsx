@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { z } from "zod/v4";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
@@ -14,12 +14,57 @@ import {
   slackTeamIdSchema,
 } from "@/lib/connectors/slack/contracts";
 
+import { ResourceIdDetails } from "./catalog";
 import { connectorCommand, readConnectorResponse } from "./request";
 import { ConnectorSelect } from "./select";
 
 type SlackSetup = z.output<typeof slackConnectorSetupSchema>;
 type SlackCommand = z.input<typeof slackConnectorSetupCommandSchema>;
 type RevokeCommand = Extract<SlackCommand, { action: "revoke" }>;
+type SlackInstallation = SlackSetup["installations"][number];
+
+const statusLabel = {
+  connected: "Connected",
+  disconnected: "Disconnected",
+  credential_unavailable: "Access unavailable",
+};
+
+export function slackWorkspaceName(
+  installation: Pick<SlackInstallation, "teamId" | "teamName"> | undefined,
+) {
+  const name = installation?.teamName.trim();
+  return name && name !== installation?.teamId ? name : "Workspace name unavailable";
+}
+
+export function slackWorkspaceOption(installation: SlackInstallation) {
+  return [
+    slackWorkspaceName(installation),
+    installation.teamDomain,
+    statusLabel[installation.status],
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function readSlackWorkspaceTarget(value: string) {
+  const trimmed = value.trim();
+  if (slackTeamIdSchema.safeParse(trimmed).success) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    const [, prefix, teamId] = url.pathname.split("/");
+    if (
+      url.origin === "https://app.slack.com" &&
+      !url.username &&
+      !url.password &&
+      prefix === "client" &&
+      slackTeamIdSchema.safeParse(teamId).success
+    )
+      return teamId;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
 
 function oauthReturnMessage(result: string | null): FlashMessage | null {
   switch (result) {
@@ -34,44 +79,57 @@ function oauthReturnMessage(result: string | null): FlashMessage | null {
   }
 }
 
+export function useSlackConnectorSetup(endpoint: string | null, installationScope = "") {
+  const [loaded, setLoaded] = useState<{ key: string; data: SlackSetup | null } | null>(null);
+  const [reload, setReload] = useState(0);
+  const key = JSON.stringify([endpoint, installationScope, reload]);
+  const current = loaded?.key === key ? loaded : null;
+
+  useEffect(() => {
+    if (!endpoint) return;
+    const abort = new AbortController();
+    void fetch(`${endpoint}/slack`, { signal: abort.signal })
+      .then((response) => readConnectorResponse(response, slackConnectorSetupSchema))
+      .then((data) => {
+        if (abort.signal.aborted) return;
+        setLoaded({ key, data });
+      })
+      .catch(() => {
+        if (abort.signal.aborted) return;
+        setLoaded({ key, data: null });
+      });
+    return () => abort.abort();
+  }, [endpoint, key]);
+  return {
+    setup: current?.data ?? null,
+    loadFailed: current?.data === null,
+    refresh: () => setReload((value) => value + 1),
+  };
+}
+
 export function SlackConnectorAccess({
   canManage = false,
   endpoint,
   installationId,
   result,
+  setupState,
 }: {
   canManage?: boolean;
   endpoint: string;
   installationId?: string;
   result: string | null;
+  setupState?: ReturnType<typeof useSlackConnectorSetup>;
 }) {
-  const [setup, setSetup] = useState<SlackSetup | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [reload, setReload] = useState(0);
+  const localSetup = useSlackConnectorSetup(setupState ? null : endpoint);
+  const { setup, loadFailed, refresh } = setupState ?? localSetup;
   const [selectedId, setSelectedId] = useState("");
-  const [enteredTeamId, setEnteredTeamId] = useState<string>();
+  const [workspaceInput, setWorkspaceInput] = useState("");
   const [message, setMessage] = useState<FlashMessage | null>(() => oauthReturnMessage(result));
   const [revocation, setRevocation] = useState<RevokeCommand | null>(null);
+  const workspaceInputHelpId = useId();
   const accessHeading = useRef<HTMLHeadingElement>(null);
   const restoreFocus = useRef<HTMLElement>(null);
   const slackEndpoint = `${endpoint}/slack`;
-
-  useEffect(() => {
-    const abort = new AbortController();
-    void fetch(slackEndpoint, { signal: abort.signal })
-      .then((response) => readConnectorResponse(response, slackConnectorSetupSchema))
-      .then((data) => {
-        if (abort.signal.aborted) return;
-        setSetup(data);
-        setLoadFailed(false);
-      })
-      .catch(() => {
-        if (abort.signal.aborted) return;
-        setSetup(null);
-        setLoadFailed(true);
-      });
-    return () => abort.abort();
-  }, [reload, slackEndpoint]);
 
   const action = useApiAction<unknown, [SlackCommand], true>({
     call: (command) =>
@@ -80,7 +138,7 @@ export function SlackConnectorAccess({
     onSuccess: (payload, [command]) => {
       const response = slackConnectorSetupResultSchema.parse(payload);
       if (command.action === "revoke" && "revoked" in response) {
-        setReload((value) => value + 1);
+        refresh();
         return true;
       }
       if (command.action !== "revoke" && "authorizationUrl" in response) {
@@ -100,21 +158,19 @@ export function SlackConnectorAccess({
     : (installations.find(({ id }) => id === selectedId) ??
       installations.find(({ status }) => status === "connected") ??
       installations[0]);
-  const teamId = enteredTeamId ?? installation?.teamId ?? "";
-  const installTarget = installations.find((item) => item.teamId === teamId.trim());
-  const validTeam = slackTeamIdSchema.safeParse(teamId.trim()).success;
+  const teamId = readSlackWorkspaceTarget(workspaceInput);
+  const installTarget = installations.find((item) => item.teamId === teamId);
   const link = installation?.linkedActor;
   const canLink = setup?.configured && installation?.status === "connected";
 
+  function authorizeTeam(teamId: string, expectedGeneration: number) {
+    setMessage(null);
+    void action.run({ action: "install", teamId, expectedGeneration });
+  }
+
   function startInstallation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!validTeam) return;
-    setMessage(null);
-    void action.run({
-      action: "install",
-      teamId: teamId.trim(),
-      expectedGeneration: installTarget?.generation ?? 0,
-    });
+    if (teamId) authorizeTeam(teamId, installTarget?.generation ?? 0);
   }
 
   async function revokeIdentity() {
@@ -135,14 +191,7 @@ export function SlackConnectorAccess({
           <p className="text-sm text-danger" role="alert">
             Slack setup is unavailable.
           </p>
-          <button
-            className="ui-button"
-            onClick={() => {
-              setLoadFailed(false);
-              setReload((value) => value + 1);
-            }}
-            type="button"
-          >
+          <button className="ui-button" onClick={refresh} type="button">
             Reload Slack setup
           </button>
         </div>
@@ -163,14 +212,14 @@ export function SlackConnectorAccess({
               disabled={action.isBusy}
               onChange={(event) => {
                 setSelectedId(event.target.value);
-                setEnteredTeamId(undefined);
+                setWorkspaceInput("");
                 setMessage(null);
               }}
               value={installation?.id ?? ""}
             >
-              {installations.map(({ id, teamName, teamId }) => (
-                <option key={id} value={id}>
-                  {teamName} · {teamId}
+              {installations.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {slackWorkspaceOption(item)}
                 </option>
               ))}
             </ConnectorSelect>
@@ -178,13 +227,34 @@ export function SlackConnectorAccess({
           {installation ? (
             <div className="space-y-2 rounded-md border border-border p-3">
               <p className="text-sm text-muted">
-                <strong className="font-medium text-foreground">{installation.teamName}</strong>
-                {link ? ` · Linked as ${link.userId}` : null}
+                <strong className="font-medium text-foreground">
+                  {slackWorkspaceName(installation)}
+                </strong>
+                {installation.teamDomain ? ` · ${installation.teamDomain}` : null}
               </p>
+              <ResourceIdDetails ids={[installation.teamId]} label="Slack workspace ID" />
+              {link ? (
+                <>
+                  <p className="text-sm text-muted">
+                    {link.displayName ? `Linked as ${link.displayName}` : "Slack account linked"}
+                  </p>
+                  <ResourceIdDetails ids={[link.userId]} label="Slack account ID" />
+                </>
+              ) : null}
               {installation.status === "disconnected" ? (
                 <p className="text-sm text-muted">Slack workspace disconnected.</p>
               ) : installation.status === "credential_unavailable" ? (
                 <p className="text-sm text-muted">Slack workspace access unavailable.</p>
+              ) : null}
+              {setup.configured && setup.canConfigure ? (
+                <button
+                  className="ui-button"
+                  disabled={action.isBusy}
+                  onClick={() => authorizeTeam(installation.teamId, installation.generation)}
+                  type="button"
+                >
+                  Reconnect Slack
+                </button>
               ) : null}
               {(canManage || setup.canConfigure) && installation.grantedScopes.length ? (
                 <p className="break-words text-xs text-muted">
@@ -236,29 +306,42 @@ export function SlackConnectorAccess({
           ) : null}
           {setup.configured && setup.canConfigure ? (
             <form className="space-y-2" onSubmit={startInstallation}>
-              <label className="block max-w-xs space-y-1.5 text-sm font-medium text-foreground">
-                <span className="block">Slack workspace ID</span>
+              <label className="block max-w-xl space-y-1.5 text-sm font-medium text-foreground">
+                <span className="block">Slack workspace URL or ID</span>
                 <input
+                  aria-describedby={workspaceInputHelpId}
                   autoComplete="off"
                   className="ui-input"
                   disabled={action.isBusy}
-                  maxLength={32}
-                  onChange={(event) => setEnteredTeamId(event.target.value)}
-                  placeholder="T0123456789"
+                  maxLength={512}
+                  onChange={(event) => setWorkspaceInput(event.target.value)}
+                  placeholder="https://app.slack.com/client/T0123456789"
                   required
                   spellCheck={false}
-                  value={teamId}
+                  value={workspaceInput}
                 />
               </label>
-              <p className="text-xs text-muted">
-                Use the workspace ID after /client/ in the Slack web address.
+              <p className="text-xs text-muted" id={workspaceInputHelpId}>
+                Paste a Slack web app link with /client/ in the address, or enter the workspace ID
+                that follows it.
               </p>
+              {teamId ? (
+                <p className="text-xs text-muted" role="status">
+                  {installTarget
+                    ? `Selected workspace: ${slackWorkspaceName(installTarget)}.`
+                    : `Slack will confirm the name for workspace ${teamId}.`}
+                </p>
+              ) : workspaceInput.trim() ? (
+                <p className="text-xs text-danger">
+                  Use an app.slack.com/client address or a workspace ID starting with T.
+                </p>
+              ) : null}
               <button
                 className="ui-button-primary"
-                disabled={!validTeam || action.isBusy}
+                disabled={!teamId || action.isBusy}
                 type="submit"
               >
-                {installTarget ? "Reconnect Slack" : "Connect Slack"}
+                {installTarget ? "Continue to reconnect in Slack" : "Connect Slack"}
               </button>
             </form>
           ) : null}

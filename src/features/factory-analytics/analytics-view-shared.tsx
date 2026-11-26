@@ -7,6 +7,7 @@ import type {
   AnalyticsWindow,
 } from "@/features/factory-analytics/analytics-query";
 import { workspaceAnalyticsPath } from "@/lib/routes";
+import { analyticsCoreFields } from "./analytics-navigation";
 
 export const dimensionLabels = {
   source: "Request source",
@@ -29,6 +30,25 @@ export const evidenceTitles = {
 } satisfies Record<AnalyticsEvidenceSelection["metric"], string>;
 
 export const periodLabels = { primary: "Current period", compare: "Previous period" };
+export const metricPanelIds = {
+  flow: "work-flow",
+  merge: "time-to-delivery",
+  deployment: "time-to-delivery",
+  "delivery-cost": "cost-per-merge",
+  "operating-cost": "cost-per-merge",
+  "cost-merges": "cost-per-merge",
+  throughput: "throughput",
+  revert: "revert-rate",
+} satisfies Record<AnalyticsEvidenceSelection["metric"], string>;
+
+export function TechnicalDetails({ children }: { children: ReactNode }) {
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer font-medium">Technical details</summary>
+      <div className="mt-2">{children}</div>
+    </details>
+  );
+}
 type WithoutPage<Selection extends AnalyticsEvidenceSelection> =
   Selection extends AnalyticsEvidenceSelection ? Omit<Selection, "cursor" | "period"> : never;
 export type EvidenceLink = WithoutPage<AnalyticsEvidenceSelection>;
@@ -44,16 +64,11 @@ export function analyticsCohortHref(
   factoryId: string,
   query: AnalyticsQuery,
   evidence?: Parameters<AnalyticsHref>[0],
+  scorerFields?: Record<string, string | undefined>,
 ) {
   const url = workspaceAnalyticsPath(workspaceSlug, {
-    factory: factoryId,
-    from: query.from.slice(0, 10),
-    to: query.to.slice(0, 10),
-    compare: query.comparison ? "previous" : undefined,
-    dimension: query.dimension,
-    environment: query.environment ?? undefined,
-    routingCanary: query.routingCanaryId,
-    routingAlert: query.routingAlertId,
+    ...analyticsCoreFields(factoryId, query),
+    ...scorerFields,
     ...evidence,
   });
   return evidence ? `${url}#analytics-evidence` : url;
@@ -107,6 +122,7 @@ export type MetricRow = {
 export type MetricGroup = {
   label: string;
   rows: MetricRow[];
+  scale?: "percent";
 };
 
 const pointClass =
@@ -117,6 +133,7 @@ export function MetricPanel({
   title,
   definition,
   metadata,
+  headline,
   groups,
   href,
   compare,
@@ -125,78 +142,29 @@ export function MetricPanel({
   title: string;
   definition: string;
   metadata: ReactNode;
+  headline: ReactNode;
   groups: MetricGroup[];
   href: AnalyticsHref;
   compare: boolean;
 }) {
   const headingId = `${id}-title`;
   return (
-    <section aria-labelledby={headingId} className="ui-sheet min-w-0">
+    <section
+      aria-labelledby={headingId}
+      className="ui-sheet min-w-0 scroll-mt-4"
+      id={id}
+      tabIndex={-1}
+    >
       <header className="space-y-2 border-b border-border px-4 py-4 sm:px-6">
         <h2 className="type-section-title" id={headingId}>
           {title}
         </h2>
+        {headline}
         <p className="type-secondary max-w-3xl text-muted">{definition}</p>
         {metadata}
       </header>
-      <figure aria-label={`${title} chart`} className="space-y-5 px-4 py-5 sm:px-6">
-        {compare ? (
-          <figcaption className="type-label flex flex-wrap items-center gap-x-5 gap-y-1 text-muted">
-            <span className="inline-flex items-center gap-2">
-              <span aria-hidden className="size-2 rounded-sm bg-accent" />
-              Current period
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <span aria-hidden className="size-2 rounded-sm bg-muted" />
-              Previous period
-            </span>
-          </figcaption>
-        ) : null}
-        {groups.map((group) => {
-          const largest = Math.max(
-            1e-9,
-            ...group.rows.flatMap(({ primary, comparison }) => [
-              primary.value ?? 0,
-              comparison?.value ?? 0,
-            ]),
-          );
-          return (
-            <div key={group.label}>
-              <h3 className="type-label mb-2 text-muted">{group.label}</h3>
-              <ul className="space-y-2">
-                {group.rows.map((row) => (
-                  <li
-                    key={row.key}
-                    className="grid gap-1 sm:grid-cols-[minmax(8rem,1fr)_minmax(0,4fr)] sm:items-center sm:gap-3"
-                  >
-                    <span className="type-secondary break-words">{row.label}</span>
-                    <div className="grid min-w-0 gap-1">
-                      <ChartPoint
-                        href={href}
-                        largest={largest}
-                        point={row.primary}
-                        period="primary"
-                        row={row.actionLabel ?? row.label}
-                      />
-                      {row.comparison && (
-                        <ChartPoint
-                          href={href}
-                          largest={largest}
-                          point={row.comparison}
-                          period="compare"
-                          row={row.actionLabel ?? row.label}
-                        />
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
-      </figure>
       <div className="overflow-x-auto border-t border-border">
-        <table className="type-secondary w-full text-left">
+        <table className="type-secondary w-full table-fixed text-left">
           <caption className="sr-only">{title} comparison table</caption>
           <thead className="text-muted">
             <tr>
@@ -213,76 +181,60 @@ export function MetricPanel({
               )}
             </tr>
           </thead>
-          {groups.map((group) => (
-            <tbody key={group.label}>
-              <tr className="border-t border-border">
-                <th
-                  className="type-label px-4 py-2 text-muted sm:px-6"
-                  colSpan={compare ? 3 : 2}
-                  scope="rowgroup"
-                >
-                  {group.label}
-                </th>
-              </tr>
-              {group.rows.map((row) => (
-                <tr className="border-t border-border" key={row.key}>
-                  <th className="break-words px-4 py-2 font-medium sm:px-6" scope="row">
-                    {row.label}
+          {groups.map((group) => {
+            const scale =
+              group.scale === "percent"
+                ? 1
+                : Math.max(
+                    0,
+                    ...group.rows.flatMap(({ primary, comparison }) => [
+                      primary.value ?? 0,
+                      comparison?.value ?? 0,
+                    ]),
+                  );
+            return (
+              <tbody key={group.label}>
+                <tr className="border-t border-border">
+                  <th
+                    className="type-label px-4 py-2 text-muted sm:px-6"
+                    colSpan={compare ? 3 : 2}
+                    scope="rowgroup"
+                  >
+                    {group.label} ·{" "}
+                    {group.scale === "percent"
+                      ? "0–100% scale"
+                      : "Bars relative to the largest value in this group"}
                   </th>
-                  <TablePoint
-                    href={href}
-                    point={row.primary}
-                    period="primary"
-                    row={row.actionLabel ?? row.label}
-                  />
-                  {row.comparison && (
+                </tr>
+                {group.rows.map((row) => (
+                  <tr className="border-t border-border" key={row.key}>
+                    <th className="break-words px-2 py-2 font-medium sm:px-6" scope="row">
+                      {row.label}
+                    </th>
                     <TablePoint
                       href={href}
-                      point={row.comparison}
-                      period="compare"
+                      point={row.primary}
+                      scale={scale}
+                      period="primary"
                       row={row.actionLabel ?? row.label}
                     />
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          ))}
+                    {row.comparison && (
+                      <TablePoint
+                        href={href}
+                        point={row.comparison}
+                        scale={scale}
+                        period="compare"
+                        row={row.actionLabel ?? row.label}
+                      />
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            );
+          })}
         </table>
       </div>
     </section>
-  );
-}
-
-function ChartPoint({
-  point,
-  row,
-  period,
-  href,
-  largest,
-}: {
-  point: MetricPoint;
-  row: string;
-  period: keyof typeof periodLabels;
-  href: AnalyticsHref;
-  largest: number;
-}) {
-  return (
-    <Link
-      aria-label={`${row}, ${periodLabels[period]}, evidence, ${point.label}`}
-      className={`grid min-w-0 grid-cols-[minmax(2rem,1fr)_minmax(6rem,auto)] items-center gap-3 py-0.5 ${pointClass}`}
-      href={href({ ...point.evidence, period })}
-      prefetch={false}
-    >
-      <span aria-hidden className="bg-accent-soft relative h-2 overflow-hidden rounded-sm">
-        {point.value !== null && (
-          <span
-            className={`absolute inset-y-0 start-0 rounded-sm ${period === "primary" ? "bg-accent" : "bg-muted"}`}
-            style={{ width: `${(point.value / largest) * 100}%` }}
-          />
-        )}
-      </span>
-      <span className="type-secondary min-w-0 tabular-nums">{point.label}</span>
-    </Link>
   );
 }
 
@@ -291,26 +243,39 @@ function TablePoint({
   row,
   period,
   href,
+  scale,
 }: {
   point: MetricPoint;
   row: string;
   period: keyof typeof periodLabels;
   href: AnalyticsHref;
+  scale: number;
 }) {
   return (
-    <td className="px-4 py-2 tabular-nums sm:px-6">
+    <td className="break-words px-2 py-2 tabular-nums sm:px-6">
       <Link
-        aria-label={`${row}, ${periodLabels[period]}, table evidence, ${point.label}`}
-        className={`${pointClass} underline`}
+        aria-label={`${row}, ${periodLabels[period]}, evidence, ${point.label}`}
+        className={`inline-block py-1 ${pointClass} underline`}
         href={href({ ...point.evidence, period })}
         prefetch={false}
       >
         {point.label}
       </Link>
+      {point.value !== null && (
+        <div
+          aria-hidden="true"
+          className="bg-accent-soft mb-1 h-1.5 max-w-28 overflow-hidden rounded-sm"
+        >
+          <span
+            className={`block h-full ${period === "primary" ? "bg-accent" : "bg-muted"}`}
+            style={{ width: `${scale > 0 ? (point.value / scale) * 100 : 0}%` }}
+          />
+        </div>
+      )}
       {point.also && (
         <Link
           aria-label={`${row}, ${periodLabels[period]}, ${point.also.label}`}
-          className={`ml-2 ${pointClass} underline`}
+          className={`block w-fit py-1 text-xs ${pointClass} underline`}
           href={href({ ...point.also.evidence, period })}
           prefetch={false}
         >

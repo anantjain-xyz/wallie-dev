@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { PortalRootProvider } from "@/components/ui/portal-root";
 import { proposalReviewCommandSchema } from "@/lib/factory-proposals/workbench-contracts";
 
 import { ImprovementReviewForm } from "./improvement-review-form";
@@ -21,16 +23,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function review({ version = 2, member = reviewerMemberId, canReview = true } = {}) {
-  return render(
+function reviewForm({
+  version = 2,
+  member = reviewerMemberId,
+  canReview = true,
+  revision = proposalRevisionId,
+  revisionNumber = 1,
+} = {}) {
+  return (
     <ImprovementReviewForm
       endpoint={endpoint}
-      proposalRevisionId={proposalRevisionId}
+      proposalRevisionId={revision}
+      revisionNumber={revisionNumber}
       reviewerMemberId={member}
       reviewVersion={version}
       canReview={canReview}
-    />,
+    />
   );
+}
+
+function review(options?: Parameters<typeof reviewForm>[0]) {
+  return render(reviewForm(options), { wrapper: PortalRootProvider });
 }
 
 it("submits feedback for the displayed revision and stops writes when that revision becomes stale", async () => {
@@ -40,12 +53,12 @@ it("submits feedback for the displayed revision and stops writes when that revis
       Response.json({ error: "The proposal changed. Reload before reviewing." }, { status: 409 }),
     );
   vi.stubGlobal("fetch", request);
-  review();
+  const page = review();
 
   fireEvent.change(screen.getByRole("textbox", { name: "Review note" }), {
     target: { value: "Check the affected stage." },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Investigate" }));
+  fireEvent.click(screen.getByRole("button", { name: "Mark for investigation" }));
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
     "The proposal changed. Reload before reviewing.",
@@ -57,9 +70,121 @@ it("submits feedback for the displayed revision and stops writes when that revis
     action: "investigate",
     note: "Check the affected stage.",
   });
-  expect(screen.getByRole("button", { name: "Dismiss proposal" })).toHaveProperty("disabled", true);
+  expect(screen.queryByRole("button", { name: "Dismiss proposal" })).toBeNull();
+  expect(screen.getByRole("alert")).toBe(document.activeElement);
   fireEvent.click(screen.getByRole("button", { name: "Reload review" }));
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  page.rerender(reviewForm({ canReview: false }));
+  const draft = screen.getByRole("textbox", { name: "Unsubmitted note · Revision 1" });
+  expect(draft).toHaveProperty("readOnly", true);
+  expect(draft).toHaveProperty("value", "Check the affected stage.");
+  page.rerender(
+    reviewForm({
+      revision: "63700000-0000-4000-8000-000000000009",
+      revisionNumber: 2,
+      version: 0,
+    }),
+  );
+  expect(screen.getByRole("textbox", { name: "Review note" })).toHaveProperty("value", "");
+  expect(screen.getByRole("textbox", { name: "Unsubmitted note · Revision 1" })).toHaveProperty(
+    "value",
+    "Check the affected stage.",
+  );
+  expect(request).toHaveBeenCalledOnce();
+});
+
+it("confirms dismissal of the displayed revision and keeps the note on Escape", async () => {
+  const request = vi.fn().mockResolvedValue(
+    Response.json({
+      replay: false,
+      event: {
+        id: "63700000-0000-4000-8000-000000000002",
+        version: 3,
+        action: "dismiss",
+        note: "Keep the receipts.",
+        actorMemberId: reviewerMemberId,
+        actorName: "Reviewer",
+        createdAt: "2026-11-21T21:00:00Z",
+      },
+    }),
+  );
+  vi.stubGlobal("fetch", request);
+  const user = userEvent.setup();
+  review();
+  const note = screen.getByRole("textbox", { name: "Review note" });
+  await user.type(note, "Keep the receipts.");
+  const trigger = screen.getByRole("button", { name: "Dismiss proposal" });
+  await user.click(trigger);
+  const confirmation = await screen.findByRole("alertdialog", { name: "Dismiss this revision?" });
+  expect(confirmation.textContent).toContain("prevents publication of revision 1");
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" })),
+  );
+  expect(request).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(note).toHaveProperty("value", "Keep the receipts.");
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("button", { name: "Dismiss revision" }));
+  expect(await screen.findByText("Review saved.")).toHaveProperty("role", "status");
+  const [, init] = request.mock.calls[0];
+  expect(proposalReviewCommandSchema.parse(JSON.parse(init.body))).toMatchObject({
+    proposalRevisionId,
+    expectedReviewVersion: 2,
+    action: "dismiss",
+    note: "Keep the receipts.",
+  });
+});
+
+it("restores review with a separate draft when replay hits an already displayed newer version", async () => {
+  const request = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Response lost"))
+    .mockResolvedValueOnce(Response.json({ error: "Review changed." }, { status: 409 }));
+  vi.stubGlobal("fetch", request);
+  const first = review();
+  fireEvent.change(screen.getByRole("textbox", { name: "Review note" }), {
+    target: { value: "Keep my note on this revision." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Request revision" }));
+  await screen.findByRole("alert");
+  first.unmount();
+
+  review({ version: 3 });
+  fireEvent.click(screen.getByRole("button", { name: "Retry review" }));
+  await screen.findByText("Review changed.");
+  expect(screen.getByRole("textbox", { name: "Review note" })).toHaveProperty("value", "");
+  expect(screen.getByRole("textbox", { name: "Unsubmitted note · Revision 1" })).toHaveProperty(
+    "value",
+    "Keep my note on this revision.",
+  );
+  expect(screen.queryByRole("button", { name: "Reload review" })).toBeNull();
+  expect(request.mock.calls[0][1].body).toBe(request.mock.calls[1][1].body);
+});
+
+it("does not restore an older draft cleared while a new review is pending", async () => {
+  const oldRevisionId = "63700000-0000-4000-8000-000000000009";
+  window.sessionStorage.setItem(
+    `wallie:improvement-review:v1:${reviewerMemberId}:${endpoint}:conflicts`,
+    JSON.stringify([{ revisionId: oldRevisionId, revisionNumber: 1, note: "Old note." }]),
+  );
+  const response = Promise.withResolvers<Response>();
+  const request = vi.fn().mockReturnValue(response.promise);
+  vi.stubGlobal("fetch", request);
+  review({ revisionNumber: 2 });
+  fireEvent.change(screen.getByRole("textbox", { name: "Review note" }), {
+    target: { value: "New note." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Request revision" }));
+  expect(request).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
+  expect(screen.queryByRole("textbox", { name: "Unsubmitted note · Revision 1" })).toBeNull();
+  response.resolve(Response.json({ error: "Review changed." }, { status: 409 }));
+  expect(
+    await screen.findByRole("textbox", { name: "Unsubmitted note · Revision 2" }),
+  ).toHaveProperty("value", "New note.");
+  expect(screen.queryByRole("textbox", { name: "Unsubmitted note · Revision 1" })).toBeNull();
 });
 
 it("replays the original request after a reload updates the displayed review version", async () => {
@@ -98,8 +223,11 @@ it("replays the original request after a reload updates the displayed review ver
 
   review({ version: 3, canReview: false });
   expect(screen.queryByRole("button", { name: "Request revision" })).toBeNull();
+  expect(screen.getByText("Request revision · Revision 1")).toBeDefined();
   fireEvent.click(screen.getByRole("button", { name: "Retry review" }));
-  expect(await screen.findByText("Review saved.")).toHaveProperty("role", "status");
+  expect(
+    await screen.findByText("Revision request recorded. No revision was started."),
+  ).toHaveProperty("role", "status");
   const [first, replay] = request.mock.calls;
   expect(first[1].body).toBe(replay[1].body);
   expect(screen.queryByRole("button", { name: "Retry review" })).toBeNull();

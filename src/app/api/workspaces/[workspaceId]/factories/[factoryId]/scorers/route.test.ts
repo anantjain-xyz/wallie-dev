@@ -179,6 +179,7 @@ describe("factory scorer routes", () => {
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toEqual({
       error: "The scorer changed. Reload the latest revision before publishing.",
+      code: "stale_revision",
     });
     expect(write).toHaveBeenCalledTimes(1);
     fixture({ errorCode: "P0002" });

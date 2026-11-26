@@ -65,15 +65,43 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
       .locator(`[role="option"][data-value="${fixture.factoryId}"]`)
       .click();
     await expect(page).toHaveURL(new RegExp(`[?&]factory=${fixture.factoryId}(?:&|$)`));
-    await page.getByLabel("From date", { exact: true }).fill(fixture.from);
-    await page.getByLabel("To date", { exact: true }).fill(fixture.to);
-    await page.getByLabel("Deployment environment", { exact: true }).fill("production");
+    await page.getByLabel("From date (UTC)", { exact: true }).fill(fixture.from);
+    await page.getByLabel("To date (UTC, exclusive)", { exact: true }).fill(fixture.to);
+    await page.getByRole("combobox", { name: "Deployment environment", exact: true }).click();
+    await page.getByRole("option", { name: "production", exact: true }).click();
     await page.getByRole("checkbox", { name: "Compare with previous period" }).check();
     await page.getByRole("button", { name: "Apply filters", exact: true }).click();
     await expect(page).toHaveURL(/[?&]compare=previous(?:&|$)/);
     await expect(page).toHaveURL(/[?&]environment=production(?:&|$)/);
-    await expect(page.getByLabel("From date", { exact: true })).toHaveValue(fixture.from);
-    await expect(page.getByLabel("To date", { exact: true })).toHaveValue(fixture.to);
+    await expect(page.getByLabel("From date (UTC)", { exact: true })).toHaveValue(fixture.from);
+    await expect(page.getByLabel("To date (UTC, exclusive)", { exact: true })).toHaveValue(
+      fixture.to,
+    );
+    const invalidEnvironment = new URLSearchParams(analyticsFilter);
+    invalidEnvironment.set("environment", "Production");
+    await page.goto(`${analyticsPath}?${invalidEnvironment}`);
+    await expect(
+      page.getByRole("region", { name: "Reporting filters" }).getByRole("alert"),
+    ).toContainText("Choose a deployment environment");
+    await expect(page.getByLabel("From date (UTC)", { exact: true })).toHaveValue(fixture.from);
+    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveAttribute(
+      "data-value",
+      fixture.factoryId,
+    );
+
+    const staleEnvironment = new URLSearchParams(analyticsFilter);
+    staleEnvironment.set("environment", "not-observed");
+    await page.goto(`${analyticsPath}?${staleEnvironment}`);
+    await expect(page.getByText("Saved environment (not listed)", { exact: true })).toBeVisible();
+    await page
+      .getByRole("region", { name: "Reporting filters" })
+      .getByRole("link", { name: "Clear environment", exact: true })
+      .click();
+    await expect(page).not.toHaveURL(/[?&]environment=/);
+    await expect(page.getByLabel("To date (UTC, exclusive)", { exact: true })).toHaveValue(
+      fixture.to,
+    );
+    await page.goto(comparison);
     const formatDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
     await expect(
       page.getByText(
@@ -89,7 +117,6 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
       "Revert rate",
     ]) {
       await expect(page.getByRole("heading", { name: section, exact: true })).toBeVisible();
-      await expect(page.getByRole("figure", { name: `${section} chart` })).toBeVisible();
       await expect(page.getByRole("table", { name: `${section} comparison table` })).toBeVisible();
     }
     const cost = page.getByRole("table", { name: "Cost per merged PR comparison table" });
@@ -109,15 +136,12 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
     await expect(page.getByText("Restricted outcome canary", { exact: true })).toHaveCount(0);
     await capture(page, info, "01-analytics-light");
 
-    const activeChart = page
-      .getByRole("figure", { name: "Work flow chart" })
-      .getByRole("link", { name: /^Active, Current period, .*evidence/ });
     const activeTable = page.getByRole("link", {
-      name: /^Active, Current period, .*table evidence/,
+      name: /^Active, Current period, evidence/,
     });
     const activeHref = await activeTable.getAttribute("href");
     expect(activeHref).toContain("facet=active");
-    await expect(activeChart).toHaveAttribute("href", activeHref ?? "");
+    await expect(activeTable).toHaveCount(1);
     await activeTable.click();
     await expect(page).toHaveURL(/[?&]metric=flow(?:&|#|$)/);
     await expect(page).toHaveURL(/[?&]facet=active(?:&|#|$)/);
@@ -128,7 +152,7 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
 
     await page
       .getByRole("link", {
-        name: /^Request to deployment Median, Current period, .*table evidence/,
+        name: /^Request to deployment Median, Current period, evidence/,
       })
       .click();
     await expect(page).toHaveURL(/[?&]metric=deployment(?:&|#|$)/);
@@ -143,10 +167,10 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
 
     await page.goto(`${comparison}&metric=delivery-cost`);
     await expect(
-      evidence.locator(`a[href="${workspacePath}/runs/${fixture.producingRunId}"]`),
+      evidence.locator(`a[href="${workspacePath}/runs/${fixture.producingRunId}?attempt=1"]`),
     ).toBeVisible();
     await expect(
-      evidence.locator(`a[href="${workspacePath}/runs/${fixture.failedRunId}"]`),
+      evidence.locator(`a[href="${workspacePath}/runs/${fixture.failedRunId}?attempt=1"]`),
     ).toBeVisible();
 
     const throughputPath = `${comparison}&metric=throughput`;
@@ -213,11 +237,14 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
     );
     await page.keyboard.press("Escape");
     await expect(menu).toBeFocused();
-    await activeChart.press("Enter");
+    await activeTable.press("Enter");
     await expect(
       evidence.getByRole("link", { name: `Session #${fixture.deliveredSessionNumber}` }).first(),
     ).toBeVisible();
     await capture(page, info, "04-analytics-mobile-evidence");
+    await evidence.getByRole("link", { name: "Close evidence" }).press("Enter");
+    await expect(page).toHaveURL(/#work-flow$/);
+    await expect(evidence).toHaveCount(0);
   } finally {
     await owner.close();
     await fixture.cleanup();

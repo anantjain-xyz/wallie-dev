@@ -124,9 +124,7 @@ export async function saveBenchmarkCapture(scope: CaptureScope, request: Benchma
     p_actor_user_id: scope.access.user.id,
     p_source_run_id: scope.run.id,
     p_acceptance_criteria: request.acceptanceCriteria ?? "",
-    p_task_name:
-      Array.from(source.name.trim()).slice(0, 120).join("") ||
-      `Historical run ${scope.run.id.slice(0, 8)}`,
+    p_task_name: Array.from(source.name.trim()).slice(0, 120).join("") || "Historical run",
     p_replay_eligibility: source.eligibility.status,
     p_suite_id: suite.id,
     ...(request.expectedTaskRevisionId

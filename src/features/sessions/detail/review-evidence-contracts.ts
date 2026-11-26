@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { deliveryRequirementsSchema } from "@/lib/delivery-policy/contracts";
+import { blockingReviewTargetSchema } from "./blocking-review-target";
 
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/);
 const dimensionSchema = z.enum(["passed", "checking", "blocked", "unknown"]);
@@ -123,15 +124,7 @@ export const reviewEvidenceDeliverySchema = z.object({
     })
     .nullable(),
   artifactBlockingCount: z.number().int().nonnegative(),
-  artifactBlockingTarget: z
-    .object({
-      threadId: z.string().uuid(),
-      artifactId: z.string().uuid(),
-      artifactVersion: z.number().int().positive(),
-      stageSlug: z.string().min(1).max(200),
-    })
-    .nullable()
-    .default(null),
+  artifactBlockingTarget: blockingReviewTargetSchema.nullable().default(null),
   refresh: z.object({
     status: z.enum(["current", "pending", "claimed", "error"]).nullable(),
     lastErrorCode: z.string().max(100).nullable(),

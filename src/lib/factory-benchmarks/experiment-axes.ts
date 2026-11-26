@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import type { Database } from "@/lib/supabase/database.types";
 
+import { benchmarkPublicationTime } from "./comparison-labels";
 import {
   benchmarkAxisCatalogSchema,
   benchmarkAxisSnapshotSchema,
@@ -30,28 +31,106 @@ async function readPages<T>(
   }
 }
 
+export async function loadBenchmarkDefinitionChoices({
+  supabase,
+  workspaceId,
+  factoryId,
+  revisionIds,
+  frozenAt,
+}: {
+  supabase: Client;
+  workspaceId: string;
+  factoryId: string;
+  revisionIds?: string[];
+  frozenAt?: string;
+}): Promise<BenchmarkAxisCatalog["definitions"]> {
+  if (revisionIds?.length === 0) return [];
+  const [revisions, activations] = await Promise.all([
+    readPages((from, to) => {
+      const query = supabase
+        .from("factory_definition_revisions")
+        .select("id,canonical_digest,definition_json,created_at")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .order("created_at", { ascending: false })
+        .order("id");
+      return (revisionIds ? query.in("id", revisionIds) : query).range(from, to);
+    }),
+    readPages((from, to) => {
+      const query = supabase
+        .from("factory_definition_activations")
+        .select("revision_id,activation_number")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .order("activation_number");
+      if (revisionIds) query.in("revision_id", revisionIds);
+      if (frozenAt) query.lte("created_at", frozenAt);
+      return query.range(from, to);
+    }),
+  ]);
+  const firstActivation = new Map<string, number>();
+  for (const { revision_id, activation_number } of activations) {
+    if (!firstActivation.has(revision_id)) firstActivation.set(revision_id, activation_number);
+  }
+  const currentId = frozenAt ? undefined : activations.at(-1)?.revision_id;
+  return revisions.flatMap((revision) => {
+    const definition = readVerifiedFactoryDefinition(
+      revision.definition_json,
+      revision.canonical_digest,
+    );
+    if (!definition) return [];
+    const activation = firstActivation.get(revision.id);
+    const stages = definition.stages
+      .slice(0, 3)
+      .map(({ name }) => name)
+      .join(" → ");
+    return [
+      {
+        id: revision.id,
+        digest: revision.canonical_digest,
+        isCurrent: revision.id === currentId,
+        label: [
+          activation === undefined ? null : `First activated as ${activation}`,
+          `Published ${benchmarkPublicationTime(revision.created_at)}`,
+          stages ? `${stages}${definition.stages.length > 3 ? " → …" : ""}` : null,
+          `${definition.skillIds.length} ${definition.skillIds.length === 1 ? "skill" : "skills"}`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      },
+    ];
+  });
+}
+
+async function readExactMetadata<T>(
+  ids: string[],
+  query: (ids: string[]) => PromiseLike<{ data: T[] | null; error: unknown }>,
+) {
+  const rows: T[] = [];
+  const uniqueIds = [...new Set(ids)];
+  for (let start = 0; start < uniqueIds.length; start += 100) {
+    const { data, error } = await query(uniqueIds.slice(start, start + 100));
+    if (error) throw error;
+    if (data) rows.push(...data);
+  }
+  return rows;
+}
+
 export async function loadBenchmarkExperimentAxes({
   supabase,
+  admin,
   workspaceId,
   factoryId,
   suiteRevisionId,
 }: {
   supabase: Client;
+  admin: Client;
   workspaceId: string;
   factoryId: string;
   suiteRevisionId: string;
 }): Promise<BenchmarkAxisCatalog> {
-  const [revisions, policies, receipts, scorers] = await Promise.all([
-    readPages((from, to) =>
-      supabase
-        .from("factory_definition_revisions")
-        .select("id,canonical_digest,definition_json")
-        .eq("workspace_id", workspaceId)
-        .eq("factory_id", factoryId)
-        .order("created_at", { ascending: false })
-        .order("id")
-        .range(from, to),
-    ),
+  const [definitions, policies, receipts, scorers] = await Promise.all([
+    loadBenchmarkDefinitionChoices({ supabase, workspaceId, factoryId }),
     readPages((from, to) =>
       supabase
         .from("factory_benchmark_replay_policy_revisions")
@@ -83,23 +162,34 @@ export async function loadBenchmarkExperimentAxes({
     ),
   ]);
 
-  const definitions = revisions.flatMap((revision) => {
-    const definition = readVerifiedFactoryDefinition(
-      revision.definition_json,
-      revision.canonical_digest,
-    );
-    return definition
-      ? [
-          {
-            id: revision.id,
-            digest: revision.canonical_digest,
-            label: `${definition.agent.model} · ${revision.canonical_digest.slice(0, 8)}`,
-            sandboxProvider: definition.sandboxProvider,
-          },
-        ]
-      : [];
-  });
-  const definitionIds = new Set(definitions.map(({ id }) => id));
+  const definitionDigests = new Map(definitions.map(({ id, digest }) => [id, digest]));
+  const exactReceipts = receipts.filter(
+    (receipt) => definitionDigests.get(receipt.definition_id) === receipt.definition_digest,
+  );
+  const [checks, connections] = await Promise.all([
+    readExactMetadata(
+      exactReceipts.map(({ id }) => id),
+      (ids) =>
+        admin
+          .from("sandbox_capability_checks")
+          .select("id,checked_at,sandbox_connection_revision")
+          .eq("workspace_id", workspaceId)
+          .in("id", ids),
+    ),
+    readExactMetadata(
+      exactReceipts.map(({ sandbox_connection_revision }) => sandbox_connection_revision),
+      (ids) =>
+        admin
+          .from("workspace_vercel_sandbox_connections")
+          .select("connection_revision,project_name")
+          .eq("workspace_id", workspaceId)
+          .in("connection_revision", ids),
+    ),
+  ]);
+  const checksById = new Map(checks.map((check) => [check.id, check]));
+  const connectionsById = new Map(
+    connections.map((item) => [item.connection_revision, item.project_name]),
+  );
   const profiles = new Map<
     string,
     Omit<
@@ -111,9 +201,9 @@ export async function loadBenchmarkExperimentAxes({
       sandboxProvider: string;
     }
   >();
-  for (const receipt of receipts) {
-    if (!definitionIds.has(receipt.definition_id)) continue;
-    const key = `${receipt.id}:${receipt.worker_runtime}:${receipt.unavailable_reason ?? ""}`;
+  for (const receipt of exactReceipts) {
+    const key = `${receipt.id}:${receipt.worker_runtime}:${receipt.toolchain_digest}:${receipt.unavailable_reason ?? ""}`;
+    const check = checksById.get(receipt.id);
     const profile = profiles.get(key) ?? {
       id: receipt.id,
       modelKey: receipt.model_key,
@@ -124,6 +214,11 @@ export async function loadBenchmarkExperimentAxes({
       sandboxConnectionRevision: receipt.sandbox_connection_revision,
       toolchain: receipt.toolchain,
       toolchainDigest: receipt.toolchain_digest,
+      connectionName: connectionsById.get(receipt.sandbox_connection_revision) ?? null,
+      checkedAt:
+        check?.sandbox_connection_revision === receipt.sandbox_connection_revision
+          ? check.checked_at
+          : null,
       definitionIds: [],
       unavailableReason: receipt.unavailable_reason,
     };
@@ -200,10 +295,16 @@ export async function freezeBenchmarkExperimentAxes({
   if (error?.code === "P0011") {
     throw new BenchmarkExperimentError(409, "This factory no longer accepts new comparisons.");
   }
+  if (error?.code === "PT412") {
+    throw new BenchmarkExperimentError(
+      409,
+      "A selected toolchain changed. Refresh the choices and select the exact toolchain again.",
+    );
+  }
   if (error?.code === "PT422" || error?.code === "22023") {
     throw new BenchmarkExperimentError(
       422,
-      "The selected suite, policy, candidates, or scorer revisions cannot form a comparison.",
+      "The selected suite, policy, configurations, or scorer revisions are unavailable or incompatible. Refresh the choices and review your selections.",
     );
   }
   if (error) throw error;

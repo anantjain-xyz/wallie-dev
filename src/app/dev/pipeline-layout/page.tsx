@@ -49,11 +49,44 @@ const data: PipelineDashboardData = {
     })),
   })),
 };
+
+const aggregateData: PipelineDashboardData = {
+  ...data,
+  aggregateFactories: true,
+  lanes: [
+    "Plan the first production release",
+    "Implement the accepted delivery plan",
+    "Review the generated release evidence",
+    "Record the decision and publish",
+  ].map((name, position) => {
+    const original = data.lanes[position % data.lanes.length]!;
+    const id = `aggregate-stage-${position}`;
+    const factoryName = position < 2 ? "Product engineering" : "Customer tools";
+    const pipeline = { ...original.pipeline, id: `proof-pipeline-${Math.floor(position / 2)}` };
+    return {
+      ...original,
+      id,
+      name,
+      cursor: null,
+      factoryName,
+      pipeline,
+      position,
+      cards: original.cards.map((card, index) => ({
+        ...card,
+        id: `aggregate-session-${position}-${index}`,
+        currentStageId: id,
+        number: position * 10 + index + 1,
+        pipelineId: pipeline.id,
+      })),
+    };
+  }),
+};
+
 /** Non-production fixture for loading/loaded geometry and viewport regression tests. */
 export default async function PipelineLayoutPreview({
   searchParams,
 }: {
-  searchParams: Promise<{ loading?: string; empty?: string; partial?: string }>;
+  searchParams: Promise<{ loading?: string; empty?: string; partial?: string; aggregate?: string }>;
 }) {
   if (isProductionDeploy()) notFound();
   const params = await searchParams;
@@ -70,7 +103,9 @@ export default async function PipelineLayoutPreview({
                 : lane,
             ),
           }
-        : data;
+        : params.aggregate === "1"
+          ? aggregateData
+          : data;
   return (
     <AppShell
       creationFactory={{ id: "proof-default-factory", name: "Proof Factory" }}

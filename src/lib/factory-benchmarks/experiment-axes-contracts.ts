@@ -15,6 +15,7 @@ export const benchmarkAxisCandidateSchema = z.strictObject({
   definitionRevisionId: id,
   qualificationId: id,
   workerRuntime: worker,
+  expectedToolchainDigest: digest.optional(),
 });
 
 export const freezeBenchmarkAxesRequestSchema = z.strictObject({
@@ -56,7 +57,7 @@ export const benchmarkAxisSnapshotSchema = z.object({
 });
 
 export const benchmarkAxisCatalogSchema = z.object({
-  definitions: z.array(z.object({ id, digest, label: z.string(), sandboxProvider: sandbox })),
+  definitions: z.array(z.object({ id, digest, label: z.string(), isCurrent: z.boolean() })),
   scorerRevisions: z.array(
     z.object({ id, scorerName: z.string().min(1), revisionNumber: z.number().int().positive() }),
   ),
@@ -78,6 +79,8 @@ export const benchmarkAxisCatalogSchema = z.object({
       sandboxConnectionRevision: id,
       toolchain: z.string(),
       toolchainDigest: digest,
+      connectionName: z.string().nullable(),
+      checkedAt: z.string().nullable(),
       definitionIds: z.array(id),
       unavailableReason: z.string().nullable(),
     }),

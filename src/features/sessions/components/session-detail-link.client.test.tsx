@@ -96,6 +96,35 @@ async function paintFrame() {
 }
 
 describe("session prefetch completion", () => {
+  it("lets a card cancel a deferred handoff without discarding its prefetch", async () => {
+    const controller = new AbortController();
+    const view = render(
+      createElement(
+        SessionDetailLink,
+        {
+          href,
+          onDeferredNavigation: (wait, navigate) => {
+            void wait(controller.signal).then(() => {
+              if (!controller.signal.aborted) navigate();
+            });
+          },
+        },
+        "Review session",
+      ),
+    );
+    const link = view.getByRole("link", { name: "Review session" });
+    fireEvent.focusIn(link);
+    fireEvent.click(link);
+    const observer = ResourceObserver.instances[0]!;
+    expect(router.prefetch).toHaveBeenCalledExactlyOnceWith(href, expect.any(Object));
+    expect(router.push).not.toHaveBeenCalled();
+    await act(async () => controller.abort());
+    expect(observer.disconnect).toHaveBeenCalledOnce();
+    await act(() => vi.advanceTimersByTimeAsync(2_000));
+    expect(frames).toHaveLength(0);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
   it("stops waiting for a marked page but still navigates only after the final frame", async () => {
     const observer = clickSession();
     observer.deliver([new ResourceTiming({ serverTiming: [] })]);

@@ -366,7 +366,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(history.queryByRole("button", { name: /Retry .* stage/ })).toBeNull();
     fireEvent.click(
       history.getByRole("button", {
-        name: "Plan run, attempt 2, run run-2, 2026-07-18 12:57 UTC, activity: Failed",
+        name: /^Failed Plan run Attempt 2\b/,
         expanded: false,
       }),
     );
@@ -542,10 +542,9 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();
     expect(screen.getByText(/Check the activity and timeout settings/)).toBeTruthy();
     expect(fake.messageQueries).toEqual([]);
-    const toggle = screen.getByRole("button", {
-      name: /Stage 1 run, attempt 1, run run-1, .*activity:/,
-    });
+    const toggle = screen.getByRole("button", { name: "View full log", expanded: false });
     fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Hide full log", expanded: true })).toBe(toggle);
     await screen.findByText("Activity error details");
     expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();
     expect(screen.getByText("Activity error details").closest("details")?.open).toBe(false);
@@ -834,9 +833,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(view.container.querySelector('[aria-label="Current Wallie run"]')).toBeNull();
     expect(view.container.querySelector('[data-run-id="run-1"]')?.closest("details")).toBeNull();
     expect(
-      screen
-        .getByRole("button", { name: /Plan run, attempt 1, run run-1, .*activity:/ })
-        .getAttribute("aria-expanded"),
+      screen.getByRole("button", { name: /Plan run Attempt 1\b/ }).getAttribute("aria-expanded"),
     ).toBe("false");
     expect(fake.messageQueries).toEqual([]);
   });
@@ -1437,7 +1434,7 @@ describe("SessionWalliePanel activity states", () => {
       vi.fn(async () => new Response(JSON.stringify({ nextCursor: null, runs: [current] }))),
     );
     panel(data([current]), fake.supabase);
-    fireEvent.click(screen.getByRole("button", { name: /activity: Completed/ }));
+    fireEvent.click(screen.getByRole("button", { name: "View full log", expanded: false }));
     const activity = within(screen.getByRole("list", { name: "Run activity" }));
     await activity.findByText("First canonical event");
     expect(activity.getAllByRole("listitem").map((entry) => entry.textContent)).toEqual([
@@ -1611,7 +1608,7 @@ describe("SessionWalliePanel activity states", () => {
 
     expect(screen.getByText("Waiting in queue")).not.toBeNull();
     expect(screen.getByText("Attempt 3")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Waiting in queue/ }));
+    fireEvent.click(screen.getByRole("button", { name: "View full log", expanded: false }));
     expect(screen.getByText("Attempt 3")).not.toBeNull();
   });
 
@@ -2033,9 +2030,7 @@ describe("live update recovery regression", () => {
     ];
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
     expect(screen.getByText("Completed")).toBeTruthy();
-    fireEvent.click(
-      screen.getByRole("button", { name: /Build run, attempt 1, run run-1, .*activity:/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "View full log", expanded: false }));
     expect(screen.getByText("Saved during the outage")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

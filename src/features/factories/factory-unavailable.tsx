@@ -6,10 +6,12 @@ import { workspaceSessionsPath } from "@/lib/routes";
 
 export function FactoryUnavailable({
   actions,
+  description,
   title,
   workspaceSlug,
 }: {
   actions?: ReactNode;
+  description?: string;
   title: string;
   workspaceSlug: string;
 }) {
@@ -19,7 +21,7 @@ export function FactoryUnavailable({
       <section className="ui-sheet px-6 py-12 text-center">
         <h2 className="text-sm font-semibold text-foreground">Factory unavailable</h2>
         <p className="mt-2 text-sm text-muted">
-          Return to sessions to choose a factory you can access.
+          {description ?? "Return to sessions to choose a factory you can access."}
         </p>
         <Link
           className="ui-button mt-4"

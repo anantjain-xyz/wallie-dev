@@ -14,6 +14,7 @@ import {
 } from "@/lib/factory-definitions/storage";
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import { mcpOperationScopeId } from "@/lib/factory-mcp/manifest";
+import { governancePolicy, loadGovernanceEvidence } from "./governance-evidence-data";
 
 const pageSize = 20;
 const principalColumns = "id, name, slug, created_by_member_id, created_at";
@@ -33,6 +34,7 @@ export async function loadGovernanceScope(workspaceSlug: string, factoryQuery?: 
     workspaceId: workspace.id,
     workspaceSlug: workspace.slug,
     actorUserId: user.id,
+    actorMemberId: currentMember.id,
     isOperator: isWorkspaceOperator(currentMember),
   };
 }
@@ -96,6 +98,7 @@ export async function loadGovernance(
   },
 ) {
   const { factory, supabase, workspaceId } = scope;
+  const asOf = Date.now();
   const principalsQuery = () =>
     supabase
       .from("service_principals")
@@ -128,6 +131,22 @@ export async function loadGovernance(
           .limit(pageSize + 1)
       : null;
   const canApprove = factory.status === "active";
+  const showApproval = canApprove && (!source || source.kind === "principal");
+  const principalChoices = async () => {
+    const pageLength = 500;
+    const choices: { id: string; label: string }[] = [];
+    let after: string | undefined;
+    do {
+      const query = principalsQuery().order("id").limit(pageLength);
+      const { data, error } = await (after ? query.gt("id", after) : query);
+      if (error) throw error;
+      for (const { id, name, slug } of data) choices.push({ id, label: `${name} (${slug})` });
+      after = data.length === pageLength ? data.at(-1)?.id : undefined;
+    } while (after);
+    return choices.sort(
+      (left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id),
+    );
+  };
   const currentAuthority = loadCurrentAuthority(scope);
   const selectedBindingId = source?.kind === "binding" ? source.id : null;
   const credentialScope = { p_workspace_id: workspaceId, p_factory_id: factory.id };
@@ -143,8 +162,10 @@ export async function loadGovernance(
     selectedCredential,
     publishedCredential,
     members,
+    approvalPrincipals,
     repositories,
     policies,
+    currentPolicy,
     tools,
     authority,
     audit,
@@ -174,16 +195,24 @@ export async function loadGovernance(
       .eq("kind", "human")
       .order("full_name")
       .order("id"),
+    showApproval ? principalChoices() : [],
     loadFactoryDefinitionRepositories(supabase, workspaceId, factory.id),
-    canApprove
+    showApproval
       ? supabase
           .from("execution_policy_revisions")
-          .select("id, revision")
+          .select("id, revision, requirements")
           .eq("workspace_id", workspaceId)
           .order("revision", { ascending: false })
           .limit(100)
       : null,
-    canApprove
+    showApproval
+      ? supabase
+          .from("execution_policies")
+          .select("current_revision_id")
+          .eq("workspace_id", workspaceId)
+          .maybeSingle()
+      : null,
+    showApproval
       ? supabase
           .from("factory_mcp_server_revisions")
           .select("id, revision_number, operation_names, factory_mcp_servers!inner(name)")
@@ -213,6 +242,7 @@ export async function loadGovernance(
     publishedCredential,
     members,
     policies,
+    currentPolicy,
     tools,
   ]) {
     if (response?.error) throw response.error;
@@ -244,10 +274,18 @@ export async function loadGovernance(
 
   const principalList = resourcePage(principals.data ?? [], selectedPrincipal?.data ?? null);
   const grantList = resourcePage(grants.data ?? [], selectedGrant?.data ?? null);
+  const evidence = await loadGovernanceEvidence(scope, {
+    asOf,
+    bindings,
+    events: audit.events,
+    source,
+    visibleGrants: source ? (grantList.selected ? [grantList.selected] : []) : grantList.entries,
+  });
   return {
     audit,
-    asOf: Date.now(),
+    asOf,
     authority,
+    evidence,
     bindings,
     nextBinding,
     selectedBindingId: selected?.id ?? null,
@@ -255,16 +293,19 @@ export async function loadGovernance(
     grantList,
     tokenList: resourcePage(tokens?.data ?? [], null),
     principalList,
+    principalOptions: approvalPrincipals,
     memberOptions: (members.data ?? []).map((row) => ({
       id: row.id,
-      label: row.full_name?.trim() || row.email || row.id,
+      label: row.full_name?.trim() || row.email || "Workspace member (name unavailable)",
+      choiceLabel:
+        [row.full_name?.trim(), row.email].filter(Boolean).join(" · ") ||
+        "Workspace member (name unavailable)",
       active: row.is_active,
     })),
     repositoryOptions: repositories.map(({ id, full_name }) => ({ id, label: full_name })),
-    policyOptions: (policies?.data ?? []).map(({ id, revision }) => ({
-      id,
-      label: `Revision ${revision}`,
-    })),
+    policyOptions: (policies?.data ?? []).map((row) =>
+      governancePolicy(row, currentPolicy?.data?.current_revision_id),
+    ),
     toolOptions: (tools?.data ?? []).flatMap((row) =>
       row.operation_names.map((operation) => ({
         id: mcpOperationScopeId(row.id, operation),

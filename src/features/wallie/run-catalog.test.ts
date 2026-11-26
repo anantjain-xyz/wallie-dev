@@ -25,12 +25,15 @@ const timestamp = "2026-11-14T19:01:10.123456+00:00";
 function runRow(index: number, changes: Partial<CatalogRow> = {}): CatalogRow {
   return {
     run_id: `b1b2c3d4-0004-4000-8000-${String(index).padStart(12, "0")}`,
+    factory_id: workspaceId,
     session_id: sessionId,
     session_number: 42,
     session_title: "Review the catalog",
     job_id: "b1b2c3d4-0005-4000-8000-000000000001",
     attempt_count: index,
     stage_id: stageId,
+    stage_ordinal: index,
+    newer_run_id: null,
     stage_name: "Plan",
     model_provider: "codex",
     model_name: "gpt-5",
@@ -126,6 +129,29 @@ describe("workspace run catalog", () => {
       }),
     ).rejects.toBeInstanceOf(RunCatalogCursorError);
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("filters by both immutable pin IDs and keeps the stage ordinal separate from the job attempt", async () => {
+    const newer = runRow(3);
+    const older = runRow(2, { status: "error", attempt_count: 1, newer_run_id: newer.run_id });
+    const { rpc, input } = client([older, runRow(1)]);
+    const query = { agentId: sessionId, agentPromptRevisionId: stageId, limit: 1 };
+    const page = await loadWorkspaceRunCatalogPage({ ...input, query });
+    expect(page.runs).toMatchObject([
+      { id: older.run_id, stageOrdinal: 2, attemptCount: 1, newerRunId: newer.run_id },
+    ]);
+    expect(rpc).toHaveBeenCalledWith("list_workspace_run_catalog", {
+      p_workspace_id: workspaceId,
+      p_agent_id: sessionId,
+      p_agent_prompt_revision_id: stageId,
+      p_limit: 2,
+    });
+    await expect(
+      loadWorkspaceRunCatalogPage({
+        ...input,
+        query: { ...query, agentPromptRevisionId: workspaceId, cursor: page.nextCursor! },
+      }),
+    ).rejects.toBeInstanceOf(RunCatalogCursorError);
   });
 
   it.each([
