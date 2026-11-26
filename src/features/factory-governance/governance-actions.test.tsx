@@ -31,9 +31,7 @@ afterEach(() => {
 });
 
 it("searches beyond the principal display page and submits the exact reviewed permissions", async () => {
-  const fetch = vi.fn(async (_input: RequestInfo, _init?: RequestInit) =>
-    Response.json({ grant: { id: id(6) } }),
-  );
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ grant: { id: id(6) } }));
   vi.stubGlobal("fetch", fetch);
   const { container } = mount(
     <ApproveGrant
@@ -141,7 +139,7 @@ it("suggests an editable machine identifier and reports identifier collisions", 
 it.each([true, false])(
   "names a grant, warns only for its exact published pin (%s), and never retries a conflict",
   async (pinned) => {
-    const fetch = vi.fn(async (_input: RequestInfo, _init?: RequestInit) =>
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
       Response.json(
         { error: "This execution grant changed or was revoked. Reload before trying again." },
         { status: 409 },
