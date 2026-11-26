@@ -198,17 +198,17 @@ it("keeps disabled mappings inspectable, caches verified names and resets resour
 
 it("only lists Slack mappings in the selected installation", async () => {
   query = "connector=slack";
-  const installations = ["T12345", "T54321"].map((teamId, index) => ({
+  const [north, south, archive] = ["T12345", "T54321", "T67890"].map((teamId, index) => ({
     id: `67600000-0000-4000-8000-00000000001${index}`,
     provider: "slack",
-    generation: 1,
-    status: "connected",
+    generation: index + 1,
+    status: index === 2 ? "disconnected" : "connected",
     externalTenantId: teamId,
     externalInstallationId: teamId,
   }));
-  const resources = ["North alerts", "North triage", "South alerts"].map((label, index) => ({
+  const resources = ["North alerts", null, "South alerts"].map((label, index) => ({
     id: `67600000-0000-4000-8000-00000000002${index}`,
-    installationId: installations[index === 2 ? 1 : 0].id,
+    installationId: index === 2 ? south.id : north.id,
     provider: "slack",
     kind: "channel",
     externalId: `C1234${index}`,
@@ -218,22 +218,44 @@ it("only lists Slack mappings in the selected installation", async () => {
     connectionStatus: "connected",
     githubRequests: [],
   }));
-  request.mockImplementation(async (url) => {
-    if (url === endpoint) return Response.json({ ...emptyInventory, installations, resources });
-    if (url === `${endpoint}/slack`) {
+  const slack = Promise.withResolvers<Response>();
+  let verificationCount = 0;
+  request.mockImplementation(async (url, init) => {
+    if (url === endpoint) {
       return Response.json({
-        configured: true,
-        canConfigure: false,
-        installations: installations.map((item, index) => ({
-          id: item.id,
-          teamId: item.externalTenantId,
-          teamName: index === 0 ? "Fixture North" : "Fixture South",
-          generation: item.generation,
-          status: item.status,
-          grantedScopes: ["channels:read"],
-          missingScopes: [],
-          linkedActor: null,
-        })),
+        canConfigure: true,
+        installations: [south, north, archive],
+        resources,
+      });
+    }
+    if (init?.method === "POST") {
+      const error = url.endsWith("/slack") ? "Fixture link failed." : "Fixture disconnect failed.";
+      return Response.json({ error }, { status: 409 });
+    }
+    if (url === `${endpoint}/slack`) return slack.promise;
+    if (url === `${endpoint}/catalog?provider=slack&kind=resource&resourceId=${resources[1].id}`) {
+      if (verificationCount++ > 0) return Response.json({}, { status: 503 });
+      return Response.json({
+        provider: "slack",
+        kind: "resource",
+        tenant: { id: north.externalTenantId, label: "Fixture North" },
+        resources: [{ id: resources[1].externalId, label: "North triage" }],
+        nextCursor: null,
+      });
+    }
+    const installation = [north, south].find(
+      (item) => url === `${endpoint}/catalog?provider=slack&kind=channel&installationId=${item.id}`,
+    );
+    if (installation) {
+      return Response.json({
+        provider: "slack",
+        kind: "channel",
+        tenant: {
+          id: installation.externalTenantId,
+          label: installation === north ? "Fixture North" : "Fixture South",
+        },
+        resources: [{ id: "C99999", label: "A channel to map" }],
+        nextCursor: null,
       });
     }
     return Response.json(emptyDeliveries);
@@ -243,21 +265,120 @@ it("only lists Slack mappings in the selected installation", async () => {
 
   const picker = await screen.findByRole("combobox", { name: "Provider resource" });
   const workspace = screen.getByRole("combobox", { name: "Slack workspace" });
+  expect(workspace).toHaveAttribute("data-value", north.id);
+  expect(workspace).toHaveTextContent("Loading Slack workspace… · Connected");
+  slack.resolve(
+    Response.json({
+      configured: true,
+      canConfigure: false,
+      installations: [north, south].map((item) => ({
+        id: item.id,
+        teamId: item.externalTenantId,
+        teamName: item === north ? "Fixture North" : "Fixture South",
+        ...(item === north ? { teamDomain: "fixture-north" } : {}),
+        generation: item.generation,
+        status: item.status,
+        grantedScopes: ["channels:read"],
+        missingScopes: [],
+        linkedActor: null,
+      })),
+    }),
+  );
+  expect(await screen.findByText("Fixture North · fixture-north · Connected")).toBeVisible();
   await user.click(picker);
   const options = within(screen.getByRole("listbox", { name: "Provider resource" }));
   expect(options.getAllByRole("option").map((option) => option.textContent)).toEqual([
     "North alerts",
-    "North triage",
+    "Unnamed Slack channel mapping",
   ]);
-  await user.click(options.getByRole("option", { name: "North triage" }));
+  await user.click(options.getByRole("option", { name: "Unnamed Slack channel mapping" }));
   expect(picker).toHaveAttribute("data-value", resources[1].id);
+  expect(await screen.findByText("North triage")).toBeVisible();
+  const findChannels = () => screen.getByRole("button", { name: "Find Slack channels" });
+  await user.click(findChannels());
+  expect(await screen.findByRole("combobox", { name: "Slack channel to map" })).toBeVisible();
+  const direction = () => screen.getByRole("combobox", { name: "Direction" });
+  await user.click(direction());
+  await user.click(screen.getByRole("option", { name: "Ingress" }));
+  expect(direction()).toHaveAttribute("data-value", "ingress");
 
-  await user.selectOptions(workspace, installations[1].id);
+  workspace.focus();
+  await user.keyboard("{Enter}");
+  const workspaces = within(screen.getByRole("listbox", { name: "Slack workspace" }));
+  expect(
+    workspaces.getByRole("option", {
+      name: "Fixture North · fixture-north · Connected",
+      selected: true,
+    }),
+  ).toHaveFocus();
+  expect(
+    workspaces.getByRole("option", { name: "Workspace name unavailable · Disconnected" }),
+  ).toHaveAttribute("data-value", archive.id);
+  await user.keyboard("{ArrowUp}{Escape}");
+  expect(workspace).toHaveFocus();
+  expect(workspace).toHaveAttribute("data-value", north.id);
+  expect(direction()).toHaveAttribute("data-value", "ingress");
+
+  await user.keyboard("{Enter}{ArrowUp}{Enter}");
+  expect(workspace).toHaveFocus();
+  expect(workspace).toHaveAttribute("data-value", south.id);
   expect(picker).toHaveAttribute("data-value", resources[2].id);
+  expect(direction()).toHaveAttribute("data-value", "all");
+  expect(request).toHaveBeenCalledWith(
+    `${endpoint}/${resources[2].id}/deliveries?lane=all`,
+    expect.anything(),
+  );
+  expect(screen.queryByRole("combobox", { name: "Slack channel to map" })).not.toBeInTheDocument();
   await user.click(picker);
   const southOptions = within(screen.getByRole("listbox", { name: "Provider resource" }));
   expect(southOptions.getAllByRole("option")).toHaveLength(1);
   await user.click(southOptions.getByRole("option", { name: "South alerts", selected: true }));
-  await user.selectOptions(workspace, installations[0].id);
+
+  await user.click(findChannels());
+  expect(await screen.findByRole("combobox", { name: "Slack channel to map" })).toBeVisible();
+  const catalogQueries = request.mock.calls
+    .filter(([url]) => url.startsWith(`${endpoint}/catalog?provider=slack&kind=channel`))
+    .map(([url]) => new URL(url, "https://wallie.test").searchParams.get("installationId"));
+  expect(catalogQueries).toEqual([north.id, south.id]);
+  const commands = () =>
+    request.mock.calls.flatMap(([url, init]) =>
+      init?.method === "POST" ? [{ url, body: JSON.parse(String(init.body)) }] : [],
+    );
+  expect(commands()).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Link my Slack account" }));
+  expect(await screen.findByText("Fixture link failed.")).toHaveAttribute("role", "alert");
+  await user.click(screen.getByRole("button", { name: "Disconnect connector" }));
+  await user.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", { name: "Disconnect connector" }),
+  );
+  const dialog = screen.getByRole("alertdialog");
+  expect(await within(dialog).findByText("Fixture disconnect failed.")).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(commands()).toEqual([
+    {
+      url: `${endpoint}/slack`,
+      body: { action: "link", installationId: south.id, expectedGeneration: south.generation },
+    },
+    {
+      url: `${endpoint}/setup`,
+      body: {
+        action: "disconnect",
+        installationId: south.id,
+        expectedGeneration: south.generation,
+      },
+    },
+  ]);
+
+  await user.click(workspace);
+  await user.click(
+    within(screen.getByRole("listbox", { name: "Slack workspace" })).getByRole("option", {
+      name: "Fixture North · fixture-north · Connected",
+    }),
+  );
   expect(picker).toHaveAttribute("data-value", resources[1].id);
+  expect(
+    await screen.findByText("Could not load mapped resource name for this resource."),
+  ).toBeVisible();
+  expect(picker).toHaveTextContent("North triage");
+  expect(screen.queryByText("Fixture link failed.")).not.toBeInTheDocument();
 });
