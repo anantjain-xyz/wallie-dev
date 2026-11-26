@@ -565,7 +565,7 @@ function setup({
       snapshot = { ...snapshot, activationNumber: snapshot.activationNumber + 1 };
       if (refresh) fireEvent(window, new Event("focus"));
     },
-    updateDraft(change: Partial<SerialFactoryDefinition>, number = 10) {
+    updateDraft(change: Partial<Omit<SerialFactoryDefinition, "schemaVersion">>, number = 10) {
       const next = document(number, "draft", { ...(snapshot.draft?.source ?? source), ...change });
       snapshot = { ...snapshot, draft: next };
       records.set(next.id, next);
