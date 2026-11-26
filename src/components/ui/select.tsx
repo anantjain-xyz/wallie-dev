@@ -41,6 +41,7 @@ export type SelectFieldProps = {
   align?: "start" | "end";
   "aria-describedby"?: string;
   "aria-invalid"?: React.AriaAttributes["aria-invalid"];
+  "aria-required"?: React.AriaAttributes["aria-required"];
   className?: string;
   contentClassName?: string;
   defaultValue?: string;
@@ -575,7 +576,7 @@ export function SelectTrigger({
       aria-haspopup="listbox"
       aria-invalid={context.invalidMessage ? true : props["aria-invalid"]}
       aria-label={accessibleLabel ?? props["aria-label"]}
-      aria-required={context.required || undefined}
+      aria-required={context.required || props["aria-required"]}
       className={cn("ui-select-trigger", context.invalidMessage && "border-danger", className)}
       disabled={context.disabled}
       form={context.form ?? props.form}
@@ -868,6 +869,7 @@ export function SelectField({
   align = "start",
   "aria-describedby": ariaDescribedBy,
   "aria-invalid": ariaInvalid,
+  "aria-required": ariaRequired,
   className,
   contentClassName,
   defaultValue,
@@ -940,6 +942,7 @@ export function SelectField({
           aria-describedby={ariaDescribedBy}
           aria-invalid={ariaInvalid}
           aria-labelledby={labelId}
+          aria-required={ariaRequired}
           className={cn("w-full", triggerClassName)}
           fallbackLabel={resolvedFallbackLabel}
           id={triggerId}
