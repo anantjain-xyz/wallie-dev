@@ -1,9 +1,12 @@
+import Link from "next/link";
+
+import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { MemoryPageView } from "@/features/factory-content/memory-page-view";
 import { loadMemoryPage, parseMemoryQuery } from "@/features/factory-content/content-data";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { loadGovernanceScope } from "@/features/factory-governance/governance-data";
-import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
+import { workspaceMemoryPath } from "@/lib/routes";
 
 const MEMORY_FACTORY_RESET_PARAMS = [
   "memory",
@@ -11,6 +14,7 @@ const MEMORY_FACTORY_RESET_PARAMS = [
   "decision",
   "proposal",
   "version",
+  "q",
   "before",
 ] as const;
 
@@ -27,24 +31,50 @@ export default async function MemoryPage({
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const managedFactories = factories.filter(({ canManage }) => canManage);
+  const activeFactory = managedFactories.find(({ status }) => status === "active");
+  const availableFactory = activeFactory ?? managedFactories[0];
   if (!scope)
     return (
-      <FactoryUnavailable
-        actions={
-          <FactorySelector
-            factories={managedFactories}
-            resetParams={MEMORY_FACTORY_RESET_PARAMS}
-            selectedValue="unavailable"
-          />
-        }
-        title="Memory"
-        workspaceSlug={workspaceSlug}
-      />
+      <PageContainer className="pt-5 sm:pt-10">
+        <PageHeader
+          actions={
+            availableFactory && (
+              <FactorySelector
+                factories={managedFactories}
+                resetParams={MEMORY_FACTORY_RESET_PARAMS}
+                selectedValue="unavailable"
+              />
+            )
+          }
+          actionsRightOnDesktop
+          title="Memory"
+        />
+        <section aria-labelledby="memory-unavailable" className="ui-sheet space-y-3 p-4 sm:p-5">
+          <h2 className="type-label" id="memory-unavailable">
+            Factory memory unavailable
+          </h2>
+          <p className="type-secondary text-muted">
+            Memory requires factory manager access.{" "}
+            {availableFactory
+              ? "Choose a factory you manage."
+              : "Ask a workspace admin for access if you need to review memory."}
+          </p>
+          {availableFactory && (
+            <Link
+              className="ui-button"
+              href={workspaceMemoryPath(workspaceSlug, { factory: availableFactory.id })}
+            >
+              Open available memory
+            </Link>
+          )}
+        </section>
+      </PageContainer>
     );
   const parsed = parseMemoryQuery(rawQuery);
   const data = parsed.success ? await loadMemoryPage(scope, parsed.data) : null;
   return (
     <MemoryPageView
+      activeFactory={activeFactory}
       data={data}
       factorySelector={
         <FactorySelector

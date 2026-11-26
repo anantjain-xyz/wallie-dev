@@ -12,6 +12,7 @@ import {
 } from "@/features/sessions/detail/session-activity";
 import { loadSessionDetailPageData } from "@/features/sessions/detail/data";
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
+import { parseSessionBrowseReturn } from "@/lib/sessions/browse-return";
 import {
   parseSessionReviewTarget,
   sessionReviewQuery,
@@ -78,16 +79,21 @@ async function loadExactReview(
 
 export default async function SessionDetailPage({ params, searchParams }: SessionDetailPageProps) {
   const { sessionNumber, workspaceSlug } = await params;
-  const request = parseSessionReviewTarget((await searchParams) ?? {});
+  const query = (await searchParams) ?? {};
+  const browseReturn = parseSessionBrowseReturn(workspaceSlug, query.returnTo);
+  const request = parseSessionReviewTarget(query);
   if (request.kind === "invalid") notFound();
   const data =
     request.kind === "exact"
-      ? await loadSessionDetailPageData(
+      ? await loadSessionDetailPageData(workspaceSlug, sessionNumber, {
+          ...sessionReviewQuery(request.target),
+          returnTo: browseReturn?.href,
+        })
+      : await loadSessionDetailPageData(
           workspaceSlug,
           sessionNumber,
-          sessionReviewQuery(request.target),
-        )
-      : await loadSessionDetailPageData(workspaceSlug, sessionNumber);
+          browseReturn ? { returnTo: browseReturn.href } : undefined,
+        );
   const exactReview = request.kind === "exact" ? await loadExactReview(data, request.target) : null;
   const initialNow = new Date().toISOString();
   const latestArtifact =
@@ -118,6 +124,7 @@ export default async function SessionDetailPage({ params, searchParams }: Sessio
 
   return (
     <SessionDetailPageClient
+      browseReturn={browseReturn}
       activity={
         <Suspense fallback={<SessionActivityFallback />}>
           <SessionActivity

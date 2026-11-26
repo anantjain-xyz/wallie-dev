@@ -1,8 +1,10 @@
-import Link from "next/link";
-
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { loadAnalyticsPeriods } from "@/features/factory-analytics/analytics-data";
 import { parseAnalyticsQuery } from "@/features/factory-analytics/analytics-query";
+import {
+  invalidOverviewFilters,
+  OverviewFilters,
+} from "@/features/factory-overview/overview-filters";
 import { projectionHealthSchema } from "@/features/factory-overview/projection-health-contracts";
 import { OverviewView } from "@/features/factory-overview/overview-view";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
@@ -10,7 +12,6 @@ import { resolveAnalyticsFactory } from "@/features/factories/factory-selection"
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
-import { workspaceOverviewPath } from "@/lib/routes";
 
 const OVERVIEW_FACTORY_RESET_PARAMS = ["metric", "period", "facet", "bucket"] as const;
 
@@ -22,55 +23,44 @@ export default async function OverviewPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const parsed = parseAnalyticsQuery(search);
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
+  const factory = resolveAnalyticsFactory(factories, search.factory);
+  const factorySelector = (
+    <FactorySelector
+      factories={factories}
+      resetParams={OVERVIEW_FACTORY_RESET_PARAMS}
+      selectedValue={factory?.id ?? "unavailable"}
+    />
+  );
+  if (!factory)
+    return (
+      <FactoryUnavailable
+        actions={factorySelector}
+        title="Overview"
+        workspaceSlug={workspaceSlug}
+      />
+    );
+  const now = new Date();
+  const parsed = parseAnalyticsQuery(search, now);
   if (!parsed.success || parsed.data.evidence) {
-    const fallbackFactory = resolveAnalyticsFactory(factories, search.factory);
     return (
       <PageContainer>
         <PageHeader
-          actions={
-            <FactorySelector
-              factories={factories}
-              resetParams={OVERVIEW_FACTORY_RESET_PARAMS}
-              selectedValue={fallbackFactory?.id ?? "unavailable"}
-            />
-          }
+          actions={factorySelector}
           actionsRightOnDesktop
+          description={factory.name}
           title="Overview"
         />
-        <section className="ui-sheet space-y-3 px-6 py-8">
-          <h2 className="type-section-title">Invalid Overview filters</h2>
-          <p className="type-secondary text-muted">
-            Use a date range of 1 to 366 days and supported filters.
-          </p>
-          <Link
-            className="type-secondary font-medium underline"
-            href={workspaceOverviewPath(workspaceSlug)}
-          >
-            Reset Overview filters
-          </Link>
-        </section>
+        <OverviewFilters
+          factoryId={factory.id}
+          workspaceSlug={workspaceSlug}
+          {...invalidOverviewFilters(search, now)}
+        />
       </PageContainer>
     );
   }
   const query = parsed.data;
   const { supabase, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
-  const factory = resolveAnalyticsFactory(factories, query.factoryId);
-  if (!factory)
-    return (
-      <FactoryUnavailable
-        actions={
-          <FactorySelector
-            factories={factories}
-            resetParams={OVERVIEW_FACTORY_RESET_PARAMS}
-            selectedValue="unavailable"
-          />
-        }
-        title="Overview"
-        workspaceSlug={workspaceSlug}
-      />
-    );
   const [periods, health] = await Promise.all([
     loadAnalyticsPeriods({ supabase, workspaceId: workspace.id, factoryId: factory.id, query }),
     supabase.rpc("get_factory_flow_projection_health", {
@@ -82,13 +72,7 @@ export default async function OverviewPage({
   return (
     <OverviewView
       factory={factory}
-      factorySelector={
-        <FactorySelector
-          factories={factories}
-          resetParams={OVERVIEW_FACTORY_RESET_PARAMS}
-          selectedValue={factory.id}
-        />
-      }
+      factorySelector={factorySelector}
       health={!health.error && parsedHealth.success ? parsedHealth.data : null}
       periods={periods}
       query={query}

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import type { RoutingCanaryAlert } from "@/lib/model-routing/canary-alert";
@@ -193,7 +193,11 @@ it("distinguishes unavailable measurements from zero and explains an inconclusiv
   expect(spend.getByText("Unavailable")).toBeVisible();
   expect(spend.getByText(/13 unavailable · 1 pending/)).toBeVisible();
   expect(region.queryByRole("link")).toBeNull();
-  expect(region.getByText(report.canary.candidateRevisionId)).toBeVisible();
+  const candidateId = region.getByText(report.canary.candidateRevisionId);
+  expect(candidateId).not.toBeVisible();
+  fireEvent.click(candidateId.closest("details")!.querySelector("summary")!);
+  expect(candidateId).toBeVisible();
+  expect(region.getByText(/Independent of the reporting dates/)).toBeVisible();
 });
 
 it("keeps a missing exact comparison unavailable", () => {
@@ -233,7 +237,7 @@ it.each([true, false])(
       <RoutingCanaryComparison
         canManageFactory={canManageFactory}
         factoryId={id(9)}
-        state={{ kind: "retained", alert }}
+        state={{ kind: "retained", alert, frozenScorerRevision: 3 }}
         workspaceSlug="acme"
       />,
     );
@@ -242,6 +246,9 @@ it.each([true, false])(
     );
     expect(evidence.getByText("At least 25% higher")).toBeVisible();
     expect(evidence.getByText("$0.40 · 5 supporting sessions")).toBeVisible();
+    expect(evidence.getByText(`${alert.evidence.scorerName} · Revision 3`)).toBeVisible();
+    expect(evidence.getByText(alert.ruleId)).not.toBeVisible();
+    fireEvent.click(evidence.getByText("Technical details", { exact: true }));
     expect(evidence.getByText(alert.ruleId)).toBeVisible();
     expect(evidence.getByText(alert.evidence.scorerRevisionId)).toBeVisible();
     expect(
@@ -268,15 +275,21 @@ it.each([true, false])(
 
 it("loads only the exact retained alert and refuses a mismatched receipt", async () => {
   const rpc = vi.fn().mockResolvedValue({ data: alert, error: null });
+  const maybeSingle = vi.fn().mockResolvedValue({ data: { revision_number: 3 }, error: null });
+  const eq = vi.fn();
+  eq.mockReturnValue({ eq, maybeSingle });
+  const from = vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue({ eq }) });
+  const client = { rpc, from };
   const scope = {
     workspaceId: id(20),
     factoryId: id(9),
     canaryId: alert.canaryId,
     alertId: alert.id,
   };
-  await expect(loadRoutingCanaryComparison({ rpc }, scope)).resolves.toEqual({
+  await expect(loadRoutingCanaryComparison(client, scope)).resolves.toEqual({
     kind: "retained",
     alert,
+    frozenScorerRevision: 3,
   });
   expect(rpc).toHaveBeenCalledExactlyOnceWith("get_factory_routing_canary_alert", {
     p_workspace_id: scope.workspaceId,
@@ -284,7 +297,17 @@ it("loads only the exact retained alert and refuses a mismatched receipt", async
     p_canary_id: scope.canaryId,
     p_alert_id: scope.alertId,
   });
+  expect(from).toHaveBeenCalledExactlyOnceWith("factory_scorer_revisions");
+  expect(eq.mock.calls).toEqual([
+    ["workspace_id", scope.workspaceId],
+    ["factory_id", scope.factoryId],
+    ["id", alert.evidence.scorerRevisionId],
+  ]);
   await expect(
-    loadRoutingCanaryComparison({ rpc }, { ...scope, canaryId: id(22) }),
-  ).resolves.toEqual({ kind: "unavailable", alertRequested: true });
+    loadRoutingCanaryComparison(client, { ...scope, canaryId: id(22) }),
+  ).resolves.toEqual({
+    kind: "unavailable",
+    alertRequested: true,
+  });
+  expect(from).toHaveBeenCalledTimes(1);
 });
