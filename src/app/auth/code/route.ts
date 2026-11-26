@@ -14,6 +14,7 @@ import {
 import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { sanitizeAuthSessionNext } from "@/lib/workspace-return-path";
 
 const EMAIL_CODE_PATTERN = /^\d{6}$/;
 
@@ -90,7 +91,7 @@ function getEmailCodeAddress(request: NextRequest, formData: FormData) {
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
   const email = getEmailCodeAddress(request, formData);
-  const next = normalizeNextPath(String(formData.get("next") ?? ""));
+  const next = sanitizeAuthSessionNext(normalizeNextPath(String(formData.get("next") ?? "")));
   const token = getEmailCodeToken(formData);
 
   if (!email || !EMAIL_CODE_PATTERN.test(token)) {

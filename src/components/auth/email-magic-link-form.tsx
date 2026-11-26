@@ -2,6 +2,7 @@ import { AuthForm } from "@/components/auth/auth-form";
 
 type EmailMagicLinkFormProps = {
   className?: string;
+  defaultEmail?: string;
   errorMessage?: string | null;
   inputClassName?: string;
   next: string;
@@ -13,6 +14,7 @@ type EmailMagicLinkFormProps = {
 
 export function EmailMagicLinkForm({
   className,
+  defaultEmail,
   errorMessage,
   inputClassName,
   next,
@@ -41,7 +43,7 @@ export function EmailMagicLinkForm({
         submitClassName ??
         (isInline ? "ui-button-primary min-h-11 shrink-0" : "ui-button-primary min-h-11 w-full")
       }
-      submitLabel={errorMessage ? "Try sending again" : submitLabel}
+      submitLabel={submitLabel}
     >
       <input type="hidden" name="next" value={next} />
 
@@ -52,6 +54,7 @@ export function EmailMagicLinkForm({
         <input
           type="email"
           name="email"
+          defaultValue={defaultEmail || undefined}
           required
           autoComplete="email"
           inputMode="email"

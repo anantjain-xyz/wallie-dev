@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   actor: vi.fn(),
+  factories: vi.fn(),
   rpc: vi.fn(),
   redirect: vi.fn<(location: string) => never>(() => {
     throw new Error("redirect");
@@ -12,6 +13,18 @@ vi.mock("@/lib/factory-oauth/browser-auth", () => ({
   authenticateFactoryOAuthBrowser: mocks.actor,
 }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: () => ({ rpc: mocks.rpc }) }));
+vi.mock("@/lib/supabase/server", () => ({
+  createSupabaseServerClient: async () => ({
+    from: (table: string) => ({
+      select: (columns: string) => ({
+        eq: (column: string, value: string) => ({
+          in: (idColumn: string, ids: string[]) =>
+            mocks.factories(table, columns, column, value, idColumn, ids),
+        }),
+      }),
+    }),
+  }),
+}));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
 import FactoryOAuthAuthorizePage from "./page";
@@ -41,7 +54,7 @@ function authorization(resource?: string | string[]) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("NEXT_PUBLIC_APP_URL", issuer);
-  mocks.actor.mockResolvedValue({ id: "user", sessionId: "session" });
+  mocks.actor.mockResolvedValue({ id: "user", sessionId: "session", email: "member@example.test" });
 });
 
 afterEach(() => vi.unstubAllEnvs());
@@ -65,10 +78,55 @@ it("shows the exact offered scopes next to each selectable factory", async () =>
   });
 
   const html = renderToStaticMarkup(await authorization());
+  expect(html).toContain("Signed in as");
+  expect(html).toContain("member@example.test");
+  expect(html).toContain("Use a different account");
+  expect(html).toContain("What this app can do");
+  expect(html).toContain("If you deny, no access is granted.");
   expect(html).toContain(`aria-describedby="scopes-${readFactory}"`);
-  expect(html).toContain(`id="scopes-${readFactory}">Read sessions</p>`);
+  expect(html).toMatch(new RegExp(`id="scopes-${readFactory}"[^>]*>.*?Read sessions.*?</ul>`));
   expect(html).toContain(`aria-describedby="scopes-${cancelFactory}"`);
-  expect(html).toContain(`id="scopes-${cancelFactory}">Cancel session work</p>`);
+  expect(html).toMatch(
+    new RegExp(`id="scopes-${cancelFactory}"[^>]*>.*?Cancel session work.*?</ul>`),
+  );
+  expect(html).not.toContain('checked=""');
+  expect(mocks.factories).not.toHaveBeenCalled();
+});
+
+it("disambiguates equal factory names with slugs visible to this account", async () => {
+  mocks.rpc.mockReturnValue({
+    single: async () => ({
+      data: {
+        authorization_id: "56800000-0000-4000-8000-000000000003",
+        client_name: "Release tools",
+        workspace_id: workspace,
+        workspace_name: "Northwind",
+        factories: [
+          { factory_id: readFactory, name: "Release", scopes: ["sessions:read"] },
+          { factory_id: cancelFactory, name: "Release", scopes: ["sessions:cancel"] },
+        ],
+      },
+      error: null,
+    }),
+  });
+  mocks.factories.mockResolvedValue({
+    data: [
+      { id: readFactory, slug: "release-public" },
+      { id: cancelFactory, slug: "release-internal" },
+    ],
+    error: null,
+  });
+  const html = renderToStaticMarkup(await authorization());
+  expect(html).toContain("(release-public)");
+  expect(html).toContain("(release-internal)");
+  expect(mocks.factories).toHaveBeenCalledExactlyOnceWith(
+    "factories",
+    "id,slug",
+    "workspace_id",
+    workspace,
+    "id",
+    [readFactory, cancelFactory],
+  );
 });
 
 it("shows the exact factory, resource and issuer without a selectable factory", async () => {
@@ -92,6 +150,7 @@ it("shows the exact factory, resource and issuer without a selectable factory", 
   expect(html).toContain(`type="hidden" name="factoryIds" value="${readFactory}"`);
   expect(html).toContain("Customer tools");
   expect(html).toContain("Read sessions");
+  expect(html).toMatch(/<details[^>]*>.*?Technical details/);
   expect(html).toContain(target);
   expect(html).toContain(`>${issuer}</dd>`);
   expect(html).not.toContain('type="checkbox"');
@@ -167,4 +226,6 @@ it("composes the unavailable render inside one focusable main landmark", async (
   expect(html.match(/id="main-content"/g)).toHaveLength(1);
   expect(html).toContain('tabindex="-1"');
   expect(html).toContain("This authorization request is unavailable.");
+  expect(html).toContain("Use a different account");
+  expect(html).not.toContain('href="https://client.example.test');
 });

@@ -13,6 +13,7 @@ import {
   readFactoryOAuthForm,
 } from "@/lib/factory-oauth/protocol";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { consentDecisionRecovery } from "../consent-navigation";
 
 const decisionSchema = z.object({
   authorizationId: z.string().uuid(),
@@ -23,12 +24,24 @@ const decisionSchema = z.object({
     .refine((ids) => new Set(ids).size === ids.length),
 });
 
-function errorResponse(status: number, error = "invalid_request") {
+function errorResponse(request: Request, status: number, error = "invalid_request") {
+  const recovery = consentDecisionRecovery(request, status);
+  if (recovery) {
+    return new Response(null, {
+      status: 303,
+      headers: { ...factoryOAuthHeaders, Location: recovery },
+    });
+  }
   return Response.json({ error }, { status, headers: factoryOAuthHeaders });
 }
 
 export async function POST(request: Request) {
-  if (!isSameOriginFactoryOAuthPost(request)) return errorResponse(403);
+  if (!isSameOriginFactoryOAuthPost(request)) {
+    return Response.json(
+      { error: "invalid_request" },
+      { status: 403, headers: factoryOAuthHeaders },
+    );
+  }
 
   const form = await readFactoryOAuthForm(request);
   if (
@@ -37,20 +50,20 @@ export async function POST(request: Request) {
     form.getAll("decision").length !== 1 ||
     [...form.keys()].some((key) => !["authorizationId", "decision", "factoryIds"].includes(key))
   ) {
-    return errorResponse(400);
+    return errorResponse(request, 400);
   }
   const parsed = decisionSchema.safeParse({
     authorizationId: form.get("authorizationId"),
     decision: form.get("decision"),
     factoryIds: form.getAll("factoryIds"),
   });
-  if (!parsed.success) return errorResponse(400);
+  if (!parsed.success) return errorResponse(request, 400);
   const { authorizationId, decision, factoryIds } = parsed.data;
   const allow = decision === "allow";
-  if (allow && factoryIds.length === 0) return errorResponse(400);
+  if (allow && factoryIds.length === 0) return errorResponse(request, 400);
 
   const actor = await authenticateFactoryOAuthBrowser();
-  if (!actor?.sessionId) return errorResponse(401);
+  if (!actor?.sessionId) return errorResponse(request, 401);
   const code = allow ? issueFactoryOAuthCredential("code") : undefined;
   const { data, error } = await createSupabaseAdminClient()
     .rpc("decide_factory_oauth_authorization", {
@@ -62,16 +75,16 @@ export async function POST(request: Request) {
     })
     .single();
   if (error || !data) {
-    if (error?.code === "42501") return errorResponse(403);
+    if (error?.code === "42501") return errorResponse(request, 403);
     if (error?.code === "P0002" || error?.code === "22023" || error?.code === "PT409") {
-      return errorResponse(400);
+      return errorResponse(request, 400);
     }
-    return errorResponse(500, "server_error");
+    return errorResponse(request, 500, "server_error");
   }
 
   const registeredRedirect = factoryOAuthRedirectUriSchema.safeParse(data.redirect_uri);
   if (!registeredRedirect.success || data.approved !== allow)
-    return errorResponse(500, "server_error");
+    return errorResponse(request, 500, "server_error");
   const location = factoryOAuthRedirect({
     issuer: resolveAppOrigin(),
     redirectUri: registeredRedirect.data,

@@ -6,16 +6,15 @@ import { notFound, redirect } from "next/navigation";
 
 import {
   getWorkspaceBySlugForUser,
-  hasAnyWorkspaceForUser,
   type WorkspaceSummary,
   workspaceLoginRedirectPath,
 } from "@/lib/auth";
-import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
-import { SESSION_REVIEW_RETURN_HEADER, sessionReviewReturnPath } from "@/lib/sessions/review-link";
+import { loginPath } from "@/lib/routes";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { type SupabaseAuthIdentity, verifySupabaseAuthIdentity } from "@/lib/supabase/auth";
 import type { Tables } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { WORKSPACE_RETURN_HEADER, workspaceReturnPath } from "@/lib/workspace-return-path";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -55,12 +54,9 @@ export const loadAuthenticatedWorkspaceContext = cache(
       const user = verification.identity;
 
       if (!user) {
-        const forwarded = (await headers()).get(SESSION_REVIEW_RETURN_HEADER);
-        const reviewReturn =
-          forwarded?.startsWith("/") && !forwarded.startsWith("//")
-            ? sessionReviewReturnPath(new URL(forwarded, "https://wallie.invalid"), workspaceSlug)
-            : undefined;
-        redirect(loginPath(reviewReturn ?? workspaceLoginRedirectPath(workspaceSlug)));
+        const forwarded = (await headers()).get(WORKSPACE_RETURN_HEADER);
+        const next = workspaceReturnPath(forwarded, workspaceSlug);
+        redirect(loginPath(next ?? workspaceLoginRedirectPath(workspaceSlug)));
       }
 
       const workspaceAccess = await timing.segment(
@@ -72,19 +68,7 @@ export const loadAuthenticatedWorkspaceContext = cache(
         }),
       );
 
-      if (!workspaceAccess) {
-        const hasAnyWorkspace = await timing.segment(
-          "workspace.has-any",
-          () => hasAnyWorkspaceForUser(supabase),
-          (value) => ({ value }),
-        );
-
-        if (!hasAnyWorkspace) {
-          redirect(onboardingWorkspacePath());
-        }
-
-        notFound();
-      }
+      if (!workspaceAccess) notFound();
 
       return {
         currentMember: workspaceAccess.currentMember,

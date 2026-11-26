@@ -211,6 +211,15 @@ describe("SessionsCommandBar sticky filters", () => {
     );
   });
 
+  it("does not expose a resumed search when synchronizing saved filters", () => {
+    setListUrl("resumeSearch=f5dd1199-53d4-4e66-88a9-888555333111");
+    renderCommandBar({ ...defaultQueryState, scope: "all", query: "private search" });
+
+    expect(screen.getByRole("searchbox")).toHaveValue("private search");
+    expect(window.location.search).toBe("?resumeSearch=f5dd1199-53d4-4e66-88a9-888555333111");
+    expect(mocked.push).not.toHaveBeenCalled();
+  });
+
   it("does not restore when the URL already has a sticky key", async () => {
     writeSessionListPreferences("acme", {
       scope: "all",

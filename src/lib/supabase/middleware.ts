@@ -1,7 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { SESSION_REVIEW_RETURN_HEADER } from "@/lib/sessions/review-link";
+import {
+  sessionSearchCookieName,
+  sessionSearchCookieOptions,
+} from "@/lib/session-search-continuation";
 import {
   getSupabaseAuthFlowCookieNames,
   getSupabaseSessionCookieNames,
@@ -9,6 +12,7 @@ import {
 } from "@/lib/supabase/auth";
 import type { Database } from "@/lib/supabase/database.types";
 import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
+import { WORKSPACE_RETURN_HEADER } from "@/lib/workspace-return-path";
 
 function clearSupabaseAuthCookies(request: NextRequest, response: NextResponse) {
   const cookieNames = getSupabaseAuthFlowCookieNames(request.cookies.getAll());
@@ -22,21 +26,35 @@ function clearSupabaseAuthCookies(request: NextRequest, response: NextResponse) 
   });
 }
 
-export async function updateSupabaseSession(request: NextRequest, reviewReturnPath?: string) {
+export async function updateSupabaseSession(
+  request: NextRequest,
+  workspaceReturnPath?: string,
+  sessionSearchCookie?: string,
+) {
   function continueWithRequest() {
-    if (!reviewReturnPath && !request.headers.has(SESSION_REVIEW_RETURN_HEADER)) {
+    if (!workspaceReturnPath && !request.headers.has(WORKSPACE_RETURN_HEADER)) {
       return NextResponse.next({ request });
     }
     const forwarded = new Headers(request.headers);
-    forwarded.delete(SESSION_REVIEW_RETURN_HEADER);
-    if (reviewReturnPath) forwarded.set(SESSION_REVIEW_RETURN_HEADER, reviewReturnPath);
+    forwarded.delete(WORKSPACE_RETURN_HEADER);
+    if (workspaceReturnPath) forwarded.set(WORKSPACE_RETURN_HEADER, workspaceReturnPath);
     return NextResponse.next({ request: { headers: forwarded } });
   }
   let response = continueWithRequest();
+  function saveSessionSearch() {
+    if (sessionSearchCookie) {
+      response.cookies.set(
+        sessionSearchCookieName,
+        sessionSearchCookie,
+        sessionSearchCookieOptions,
+      );
+    }
+  }
   const { publishableKey, url } = resolveSupabasePublicConfig(process.env);
   const sessionCookieNames = getSupabaseSessionCookieNames(request.cookies.getAll());
 
   if (sessionCookieNames.length === 0) {
+    saveSessionSearch();
     return response;
   }
 
@@ -71,6 +89,7 @@ export async function updateSupabaseSession(request: NextRequest, reviewReturnPa
 
   if (!verification.identity) {
     clearSupabaseAuthCookies(request, response);
+    saveSessionSearch();
   }
 
   return response;

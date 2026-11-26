@@ -24,10 +24,10 @@ const code = {
   digest: "a".repeat(64),
 };
 
-function post(form: URLSearchParams, source = origin) {
+function post(form: URLSearchParams, source = origin, headers?: Record<string, string>) {
   return new Request(new URL("/oauth/authorize/decision", origin), {
     method: "POST",
-    headers: { Origin: source },
+    headers: { Origin: source, ...headers },
     body: form,
   });
 }
@@ -121,5 +121,46 @@ describe("OAuth browser consent decision", () => {
     const denied = await POST(post(consent()));
     expect(denied.status).toBe(403);
     expect(denied.headers.get("location")).toBeNull();
+  });
+
+  it("keeps expired browser consent on a local recovery page", async () => {
+    mocks.rpc.mockReturnValue({ single: async () => ({ data: null, error: { code: "42501" } }) });
+    const response = await POST(post(consent(), origin, { Accept: "text/html" }));
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/oauth/authorize/recover?reason=unavailable");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("returns signed-out browser users to login with a fresh local review destination", async () => {
+    mocks.actor.mockResolvedValueOnce(null);
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id: authorizationId,
+      redirect_uri: redirectUri,
+      scope: "sessions:read",
+      code_challenge: "a".repeat(43),
+      code_challenge_method: "S256",
+      state: "client state",
+    });
+    const response = await POST(
+      post(consent(), origin, {
+        Accept: "text/html",
+        Referer: `${origin}/oauth/authorize?${query}`,
+      }),
+    );
+    const location = new URL(response.headers.get("location")!, origin);
+    expect(response.status).toBe(303);
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("next")).toBe(`/oauth/authorize?${query}`);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.code).not.toHaveBeenCalled();
+  });
+
+  it("shows local recovery when a signed-out browser has no resumable consent page", async () => {
+    mocks.actor.mockResolvedValueOnce(null);
+    const response = await POST(post(consent(), origin, { Accept: "text/html" }));
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/oauth/authorize/recover?reason=signed_out");
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
 });

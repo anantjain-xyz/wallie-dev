@@ -32,7 +32,7 @@ describe("AuthEntryPanel", () => {
 
     expect(countMatches(html, "<h1")).toBe(1);
     expect(html).toContain("Sign in to Wallie");
-    expect(html).toContain("Continue to your workspace and review active sessions.");
+    expect(html).toContain("Sign in to continue to the page you opened.");
     expect(html).toContain("Sign in with email");
     expect(html).toContain("Work email");
     expect(html).toContain('autoComplete="email"');
@@ -81,7 +81,9 @@ describe("AuthEntryPanel", () => {
   it("keeps check-email guidance visible when the continuation cookie is absent", () => {
     const html = renderPanel({ statusCode: "check_email" });
 
-    expect(html).toContain("Check your inbox for a secure sign-in link or six-digit code.");
+    expect(html).toContain("This browser has no pending code request.");
+    expect(html).toContain("Open the link in your email");
+    expect(html).toContain("Request a new sign-in email");
     expect(html).toContain('role="status"');
     expect(html).toContain('name="email"');
     expect(html).not.toContain('name="tokenDigit"');
@@ -120,12 +122,14 @@ describe("AuthEntryPanel", () => {
     const html = renderPanel({
       canUseEmailCode: true,
       errorCode: "email_sign_in_failed",
+      retryEmail: "retry@example.test",
     });
 
     expect(html).toContain("We could not send a sign-in email.");
     expect(html).toContain("Try sending again");
     expect(html).toContain('role="alert" tabindex="-1"');
     expect(html).toContain('name="email"');
+    expect(html).toContain('value="retry@example.test"');
     expect(html).not.toContain('name="tokenDigit"');
     expect(html).not.toContain("Request a new email");
   });
@@ -137,5 +141,14 @@ describe("AuthEntryPanel", () => {
 
     expect(html).not.toContain('name="tokenDigit"');
     expect(html).not.toContain("Continue with code");
+  });
+
+  it("offers only available recovery options for a failed code without a pending email", () => {
+    const html = renderPanel({ errorCode: "email_code_failed" });
+
+    expect(html).toContain("This browser has no pending code request.");
+    expect(html).toContain("Request a new sign-in email");
+    expect(html).not.toContain("Check all six digits");
+    expect(html).not.toContain('name="tokenDigit"');
   });
 });

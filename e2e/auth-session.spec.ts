@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./helpers/auth";
 
 function sessionCookieNameFromEnv() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321";
@@ -11,12 +12,36 @@ function encodeJwtPart(value: unknown) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
 
-test("missing sessions preserve the protected-page login redirect", async ({ page }) => {
-  await page.goto("/w/acme-corp/sessions");
+const filteredSessions = "/w/acme-corp/sessions?factory=all&scope=all&sort=oldest&q=example";
 
-  // Unauthenticated workspace loaders redirect to the workspace base path as `next`.
-  await expect(page).toHaveURL(/\/login\?next=%2Fw%2Facme-corp$/);
-  await expect(page.getByText("Sign in to Wallie")).toBeVisible();
+test("a signed-out Sessions link preserves its list filters at login", async ({ page }) => {
+  await page.goto(filteredSessions);
+  await expect(page).toHaveURL(/\/login\?next=/);
+  const next = await page.locator('input[name="next"]').inputValue();
+  expect(next).toMatch(
+    /^\/w\/acme-corp\/sessions\?factory=all&scope=all&sort=oldest&resumeSearch=/,
+  );
+  expect(next).not.toContain("q=");
+  await expect(page.getByRole("heading", { name: "Sign in to Wallie" })).toBeVisible();
+});
+
+test("a magic link completes sign-in back to the filtered Sessions list", async ({ page }) => {
+  await page.goto(filteredSessions);
+  const returnTo = await page.locator('input[name="next"]').inputValue();
+  await signIn(page, returnTo);
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/w/acme-corp/sessions" &&
+      url.searchParams.get("scope") === "all" &&
+      url.searchParams.get("sort") === "oldest" &&
+      !url.searchParams.has("q"),
+  );
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("searchbox", {
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
+    }),
+  ).toHaveValue("example");
 });
 
 test("logout without a mutable user record clears the flow back to login", async ({ page }) => {
@@ -59,7 +84,7 @@ test("an expired JWT fails closed, clears its cookie, and redirects to login", a
 
   await page.goto("/w/acme-corp/sessions");
 
-  await expect(page).toHaveURL(/\/login\?next=%2Fw%2Facme-corp$/);
+  await expect(page).toHaveURL(/\/login\?next=%2Fw%2Facme-corp%2Fsessions$/);
   await expect
     .poll(async () => (await context.cookies()).some(({ name }) => name === sessionCookieName))
     .toBe(false);

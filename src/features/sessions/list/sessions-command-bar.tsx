@@ -45,6 +45,7 @@ import {
 import { workspaceSessionsPath } from "@/lib/routes";
 import { withFactoryQuery } from "@/features/factories/factory-selection";
 import { cn } from "@/lib/utils";
+import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-return-path";
 
 export type SessionsCommandBarProps = {
   factoryName?: string;
@@ -128,7 +129,12 @@ export function SessionsCommandBar({
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
-    if (sessionListSearchHasStickyParams(search) || search.has("cursor")) return;
+    if (
+      sessionListSearchHasStickyParams(search) ||
+      search.has("cursor") ||
+      search.has(SESSION_SEARCH_RESUME_PARAM)
+    )
+      return;
     if (areDefaultSessionListFilters(queryState)) return;
 
     // The server already fetched these filters. Only expose them in the URL;

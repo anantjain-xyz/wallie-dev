@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
@@ -10,6 +11,11 @@ import { FactorySelector } from "@/features/factories/factory-selector";
 import { loadSessionListPageData } from "@/features/sessions/list/data";
 import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import { workspaceSessionsPath } from "@/lib/routes";
+import {
+  readSessionSearchContinuation,
+  sessionSearchCookieName,
+} from "@/lib/session-search-continuation";
+import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-return-path";
 
 type SessionsPageProps = {
   params: Promise<{
@@ -67,9 +73,23 @@ export default async function SessionsRoutePage({ params, searchParams }: Sessio
       : requested !== undefined || !factory?.isDefault
         ? factory?.id
         : undefined;
+  let browseSearch = search;
+  if (search.q === undefined && typeof search[SESSION_SEARCH_RESUME_PARAM] === "string") {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(search)) {
+      for (const entry of typeof value === "string" ? [value] : (value ?? [])) {
+        query.append(key, entry);
+      }
+    }
+    const savedSearch = readSessionSearchContinuation(
+      `${workspaceSessionsPath(workspaceSlug)}?${query}`,
+      (await cookies()).get(sessionSearchCookieName)?.value,
+    );
+    if (savedSearch !== null) browseSearch = { ...search, q: savedSearch };
+  }
   const data = await loadSessionListPageData(
     workspaceSlug,
-    { ...search, factory: factoryQuery },
+    { ...browseSearch, factory: factoryQuery },
     factory?.id,
   );
   const initialNow = new Date().toISOString();

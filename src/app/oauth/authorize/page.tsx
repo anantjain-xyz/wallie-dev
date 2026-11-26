@@ -15,6 +15,11 @@ import { authenticateFactoryOAuthBrowser } from "@/lib/factory-oauth/browser-aut
 import { factoryOAuthRedirect, parseFactoryOAuthAuthorization } from "@/lib/factory-oauth/protocol";
 import { loginPath } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+import { ConsentForm } from "./consent-form";
+import { consentResumePath } from "./consent-navigation";
+import { ConsentRecovery } from "./consent-recovery";
 
 export const metadata: Metadata = {
   title: { absolute: "Authorize client · Wallie" },
@@ -38,17 +43,6 @@ const consentSchema = z.object({
     .min(1),
 });
 
-function Unavailable() {
-  return (
-    <PageContainer className="max-w-xl">
-      <PageHeader title="Authorize client" />
-      <p className="ui-sheet type-secondary text-muted p-4 sm:p-5">
-        This authorization request is unavailable. Return to your client and start again.
-      </p>
-    </PageContainer>
-  );
-}
-
 export default async function FactoryOAuthAuthorizePage({
   searchParams,
 }: {
@@ -60,26 +54,15 @@ export default async function FactoryOAuthAuthorizePage({
     else for (const entry of value ?? []) params.append(key, entry);
   }
   const parsed = parseFactoryOAuthAuthorization(params);
-  if (!parsed.ok) return <Unavailable />;
+  if (!parsed.ok) return <ConsentRecovery />;
 
   const request = parsed.request;
   const target = request.resource === undefined ? null : parseFactoryMcpResource(request.resource);
   const resource = request.resource === undefined ? undefined : (target?.resource ?? "");
+  const resumePath = consentResumePath(request);
   const actor = await authenticateFactoryOAuthBrowser();
-  if (!actor) {
-    const resume = new URLSearchParams({
-      response_type: "code",
-      client_id: request.clientId,
-      redirect_uri: request.redirectUri,
-      scope: request.scopes.join(" "),
-      code_challenge: request.challenge,
-      code_challenge_method: "S256",
-    });
-    if (request.state !== undefined) resume.set("state", request.state);
-    if (resource !== undefined) resume.set("resource", resource);
-    redirect(loginPath(`/oauth/authorize?${resume}`));
-  }
-  if (!actor.sessionId) return <Unavailable />;
+  if (!actor) redirect(loginPath(resumePath));
+  if (!actor.sessionId) return <ConsentRecovery resumePath={resumePath} />;
 
   const { data, error } = await createSupabaseAdminClient()
     .rpc("begin_factory_oauth_authorization", {
@@ -104,9 +87,9 @@ export default async function FactoryOAuthAuthorizePage({
       }).href,
     );
   }
-  if (error) return <Unavailable />;
+  if (error) return <ConsentRecovery resumePath={resumePath} />;
   const consent = consentSchema.safeParse(data);
-  if (!consent.success) return <Unavailable />;
+  if (!consent.success) return <ConsentRecovery resumePath={resumePath} />;
 
   const { authorization_id, client_name, workspace_id, workspace_name, factories } = consent.data;
   if (
@@ -116,84 +99,125 @@ export default async function FactoryOAuthAuthorizePage({
       factories.length !== 1 ||
       factories[0].factory_id !== target.factoryId)
   )
-    return <Unavailable />;
+    return <ConsentRecovery resumePath={resumePath} />;
+
+  const names = new Map<string, number>();
+  for (const { name } of factories) names.set(name, (names.get(name) ?? 0) + 1);
+  const duplicates = factories.filter(({ name }) => (names.get(name) ?? 0) > 1);
+  const slugs = new Map<string, string>();
+  if (duplicates.length > 0) {
+    const supabase = await createSupabaseServerClient();
+    const labels = await supabase
+      .from("factories")
+      .select("id,slug")
+      .eq("workspace_id", workspace_id)
+      .in(
+        "id",
+        duplicates.map(({ factory_id }) => factory_id),
+      );
+    if (labels.error || labels.data.length !== duplicates.length) {
+      return <ConsentRecovery resumePath={resumePath} />;
+    }
+    for (const { id, slug } of labels.data) slugs.set(id, slug);
+  }
+
   return (
     <PageContainer className="max-w-xl">
       <PageHeader title="Authorize client" />
-      <form
-        action="/oauth/authorize/decision"
-        className="ui-sheet min-w-0 space-y-5 p-4 sm:p-5"
-        method="post"
-      >
-        <input name="authorizationId" type="hidden" value={authorization_id} />
+      <div className="ui-sheet min-w-0 space-y-5 p-4 sm:p-5">
         <p className="type-body text-foreground [overflow-wrap:anywhere]">
-          <strong>{client_name}</strong> is requesting access to <strong>{workspace_name}</strong>.
-        </p>
-        <p className="type-secondary text-muted [overflow-wrap:anywhere]">
-          Returns to {new URL(request.redirectUri).origin}
-        </p>
-        <fieldset className="min-w-0 space-y-2">
-          <legend className="type-label text-foreground">{target ? "Factory" : "Factories"}</legend>
-          {!target && (
-            <p className="type-secondary text-muted">
-              Choose the factories this client can access.
-            </p>
+          {target ? (
+            <>
+              Review <strong>{client_name}</strong>’s access to <strong>{factories[0].name}</strong>{" "}
+              in <strong>{workspace_name}</strong>.
+            </>
+          ) : (
+            <>
+              Choose which factories <strong>{client_name}</strong> can access in{" "}
+              <strong>{workspace_name}</strong>.
+            </>
           )}
-          {factories.map((factory) => (
-            <div className="min-w-0 space-y-1" key={factory.factory_id}>
-              {target ? (
-                <>
-                  <input name="factoryIds" type="hidden" value={factory.factory_id} />
-                  <p className="text-sm text-foreground [overflow-wrap:anywhere]">{factory.name}</p>
-                </>
-              ) : (
-                <label className="flex items-start gap-2 text-sm text-foreground [overflow-wrap:anywhere]">
-                  <input
-                    aria-describedby={`scopes-${factory.factory_id}`}
-                    className="mt-0.5"
-                    defaultChecked={factories.length === 1}
-                    name="factoryIds"
-                    type="checkbox"
-                    value={factory.factory_id}
-                  />
-                  {factory.name}
-                </label>
-              )}
-              <p
-                className={target ? "type-secondary text-muted" : "type-secondary pl-5 text-muted"}
-                id={`scopes-${factory.factory_id}`}
-              >
-                {factory.scopes.map((scope) => factoryCommandLabels[scope]).join(", ")}
-              </p>
-            </div>
-          ))}
-        </fieldset>
-        {target && (
-          <dl className="min-w-0 space-y-2 [overflow-wrap:anywhere]">
-            <div>
-              <dt className="type-label text-foreground">Issuer</dt>
-              <dd className="type-secondary text-muted">{resolveAppOrigin()}</dd>
-            </div>
-            <div>
-              <dt className="type-label text-foreground">Resource</dt>
-              <dd className="type-secondary text-muted">{target.resource}</dd>
-            </div>
-          </dl>
-        )}
-        <div className="flex flex-wrap justify-end gap-2">
-          <button className="ui-button" name="decision" type="submit" value="deny">
-            Deny
+        </p>
+        <form
+          action="/auth/signout"
+          method="post"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1"
+        >
+          <input type="hidden" name="next" value={resumePath} />
+          <input type="hidden" name="switchAccount" value="1" />
+          <p className="type-secondary text-muted [overflow-wrap:anywhere]">
+            Signed in as{" "}
+            <strong className="font-medium text-foreground">
+              {actor.email || "the current Wallie account"}
+            </strong>
+          </p>
+          <button className="ui-button min-h-11" type="submit">
+            Use a different account
           </button>
-          <button
-            className="ui-button ui-button-primary"
-            name="decision"
-            type="submit"
-            value="allow"
-          >
-            Allow access
-          </button>
-        </div>
-      </form>
+        </form>
+        <ConsentForm
+          authorizationId={authorization_id}
+          technicalDetails={
+            target ? { issuer: resolveAppOrigin(), resource: target.resource } : undefined
+          }
+        >
+          <fieldset className="min-w-0 space-y-3 border-t border-border pt-3">
+            <legend className="type-label pr-2 text-foreground">
+              {target ? "Factory permissions" : "Factories"}
+            </legend>
+            <p className="type-secondary text-muted">
+              {target
+                ? "Allowing access grants all the listed actions together."
+                : "For each factory you select, the app gets all the listed actions together."}
+            </p>
+            {factories.map((factory) => {
+              const scopeId = `scopes-${factory.factory_id}`;
+              const slug = slugs.get(factory.factory_id);
+              return (
+                <div className="min-w-0 border-b border-border pb-3" key={factory.factory_id}>
+                  {target ? (
+                    <input name="factoryIds" type="hidden" value={factory.factory_id} />
+                  ) : (
+                    <label className="flex min-h-11 items-center gap-2 text-sm font-medium text-foreground [overflow-wrap:anywhere]">
+                      <input
+                        aria-describedby={scopeId}
+                        className="size-4 shrink-0 accent-accent"
+                        defaultChecked={factories.length === 1}
+                        name="factoryIds"
+                        type="checkbox"
+                        value={factory.factory_id}
+                      />
+                      <span>
+                        {factory.name}
+                        {slug && <span className="ml-2 font-normal text-muted">({slug})</span>}
+                      </span>
+                    </label>
+                  )}
+                  <div className={target ? "" : "ml-6"} id={scopeId}>
+                    <p className="type-label text-muted">What this app can do</p>
+                    <ul className="type-secondary mt-1 list-disc space-y-1 pl-5">
+                      {factory.scopes.map((scope) => (
+                        <li
+                          className={
+                            scope === "sessions:read" ? "text-muted" : "font-medium text-foreground"
+                          }
+                          key={scope}
+                        >
+                          {factoryCommandLabels[scope]}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              );
+            })}
+          </fieldset>
+          <p className="type-secondary text-muted [overflow-wrap:anywhere]">
+            After you choose, you’ll return to <strong>{client_name}</strong> (
+            {new URL(request.redirectUri).origin}). If you deny, no access is granted.
+          </p>
+        </ConsentForm>
+      </div>
     </PageContainer>
   );
 }
