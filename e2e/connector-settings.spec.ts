@@ -580,14 +580,147 @@ test("qualified operators can inspect and retry exact connector receipts from Se
   } finally {
     await manager.context.close();
   }
+});
+
+test("GitHub intake keeps independent rules for each request source", async ({
+  browser,
+  baseURL,
+}) => {
+  const fixturePath = process.env.WALLIE_OP680_FIXTURE_PATH;
+  test.skip(!fixturePath, "Requires a disposable OP-680 connector Settings fixture.");
+  const app = requireLoopback(baseURL);
+  const supabase = requireLoopback(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  if (!fixturePath || !process.env.SUPABASE_SECRET_KEY)
+    throw new Error("Provide the isolated fixture and local service-role key.");
+  if (
+    process.env.WALLIE_WORKER_WAKE_URL ||
+    process.env.GITHUB_APP_PRIVATE_KEY ||
+    process.env.OPENROUTER_API_KEY
+  ) {
+    throw new Error(
+      "Connector Settings browser proof requires external provider transport to remain disabled.",
+    );
+  }
+  const fixture = fixtureSchema.parse(JSON.parse(await readFile(fixturePath, "utf8")));
+  const connectors = `/api/workspaces/${fixture.workspaceId}/factories/${fixture.factoryId}/connectors`;
+  const destinations = {
+    app,
+    supabase,
+    settings: `/w/${fixture.workspaceSlug}/settings?category=integrations&factory=${fixture.factoryId}#connector-resources`,
+    linearStateId: fixture.linearStateId,
+  };
 
   const ruleOwner = await openSettings(browser, destinations, fixture.ownerEmail, variants[0]);
   try {
+    const setupUrl = `${app}${connectors}/setup`;
+    const writes: unknown[] = [];
+    ruleOwner.page.on("request", (request) => {
+      if (request.url() === setupUrl && request.method() === "POST") {
+        writes.push(request.postDataJSON());
+      }
+    });
+    const namespace = Number(fixture.workspaceSlug.slice("op651-".length));
+    const issueLabelId = String(namespace + 3);
+    const pullRequestLabelId = String(namespace + 4);
+    const draftLabelId = String(namespace + 5);
+    await ruleOwner.page.route(
+      (url) =>
+        url.origin === app &&
+        url.pathname === `${connectors}/catalog` &&
+        url.searchParams.get("provider") === "github" &&
+        url.searchParams.get("kind") === "label" &&
+        url.searchParams.get("resourceId") === fixture.githubResourceId,
+      (route) =>
+        route.fulfill({
+          json: {
+            provider: "github",
+            kind: "label",
+            tenant: { id: "fixture-tenant", label: "Fixture organization" },
+            resources: [
+              { id: issueLabelId, label: "Issue intake" },
+              { id: pullRequestLabelId, label: "PR intake" },
+              { id: draftLabelId, label: "Alternate intake" },
+            ],
+            nextCursor: null,
+          },
+        }),
+    );
+
+    await ruleOwner.page.reload();
     await selectProviderResource(ruleOwner.panel, "GitHub", fixture.githubResourceId);
+    const settingsUrl = ruleOwner.page.url();
     const source = ruleOwner.panel.getByRole("combobox", { name: "Request source", exact: true });
+    const sourceOptions = ruleOwner.page.getByRole("listbox", {
+      name: "Request source",
+      exact: true,
+    });
+    const issue = sourceOptions.getByRole("option", { name: "Issue", exact: true });
+    const pullRequest = sourceOptions.getByRole("option", { name: "Pull request", exact: true });
     const disableIssue = ruleOwner.panel.getByRole("button", { name: "Disable issue intake" });
+    const label = ruleOwner.panel.getByRole("combobox", { name: "Intake label", exact: true });
+    const save = ruleOwner.panel.getByRole("button", { name: "Save intake label", exact: true });
+
+    await expect(source).toHaveText("Issue");
     await expect(disableIssue).toBeVisible();
-    await source.selectOption("pull_request");
+    await source.press("Enter");
+    await expect(issue).toHaveAttribute("aria-selected", "true");
+    await ruleOwner.page.keyboard.press("ArrowDown");
+    await expect(pullRequest).toBeFocused();
+    await ruleOwner.page.keyboard.press("Escape");
+    await expect(sourceOptions).toHaveCount(0);
+    await expect(source).toBeFocused();
+    await expect(source).toHaveAttribute("data-value", "issue");
+
+    await ruleOwner.panel.getByRole("button", { name: "Edit intake label", exact: true }).click();
+    await expect(label).toHaveValue(issueLabelId);
+    await label.selectOption(draftLabelId);
+    await source.click();
+    await issue.click();
+    await expect(label).toHaveValue(draftLabelId);
+    await expect(save).toBeEnabled();
+
+    await source.press("Enter");
+    await ruleOwner.page.keyboard.press("ArrowDown");
+    await ruleOwner.page.keyboard.press("Enter");
+    await expect(source).toBeFocused();
+    await expect(source).toHaveAttribute("data-value", "pull_request");
+    await expect(label).toHaveValue(pullRequestLabelId);
+    await expect(save).toBeDisabled();
+    await expect(ruleOwner.page).toHaveURL(settingsUrl);
+    expect(writes).toEqual([]);
+
+    const saveError = "The fixture rejected the intake label.";
+    await label.selectOption(draftLabelId);
+    await ruleOwner.page.route(
+      setupUrl,
+      (route) => route.fulfill({ status: 409, json: { error: saveError } }),
+      { times: 1 },
+    );
+    await save.click();
+    await expect(ruleOwner.panel.getByText(saveError, { exact: true })).toBeVisible();
+    expect(writes).toEqual([
+      {
+        action: "github_request",
+        resourceId: fixture.githubResourceId,
+        sourceKind: "pull_request",
+        expectedRevision: 1,
+        labelId: Number(draftLabelId),
+        labelName: "Alternate intake",
+      },
+    ]);
+
+    await source.click();
+    await issue.click();
+    await expect(label).toHaveValue(issueLabelId);
+    await expect(save).toBeDisabled();
+    await expect(ruleOwner.panel.getByText(saveError, { exact: true })).toHaveCount(0);
+    await expect(disableIssue).toBeVisible();
+    await source.click();
+    await pullRequest.click();
+    await expect(label).toHaveValue(pullRequestLabelId);
+    await expect(save).toBeDisabled();
+    expect(writes).toHaveLength(1);
+
     const disablePullRequest = ruleOwner.panel.getByRole("button", {
       name: "Disable pull request intake",
       exact: true,
@@ -617,7 +750,12 @@ test("qualified operators can inspect and retry exact connector receipts from Se
     await expect(source).toBeEnabled();
     await expect(disablePullRequest).toHaveCount(0);
     await screenshot(ruleOwner.page, "github-pull-request-intake-disabled");
-    await source.selectOption("issue");
+    await source.click();
+    await issue.click();
+    await expect(source).toHaveAttribute("data-value", "issue");
+    await expect(label).toHaveValue(issueLabelId);
+    await expect(ruleOwner.page).toHaveURL(settingsUrl);
+    expect(writes).toHaveLength(2);
     await expect(disableIssue).toBeVisible();
     await expect(ruleOwner.panel.getByText("Connected", { exact: true })).toBeVisible();
     await expect(ruleOwner.panel.getByText("Pending", { exact: true })).toBeVisible();
