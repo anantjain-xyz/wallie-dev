@@ -1,7 +1,10 @@
 import Link from "next/link";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
-import { FactorySelector } from "@/features/factories/factory-selector";
+import {
+  AgentDirectoryDraftScope,
+  AgentDirectoryFactorySelector,
+} from "@/features/factory-agents/agent-directory-draft";
 import { AgentFactoryRecovery } from "@/features/factory-agents/agent-factory-recovery";
 import { agentListQuery } from "@/features/factory-agents/agent-navigation";
 import { loadAgentPageScope, loadAgentsList } from "@/features/factory-agents/agent-pages-data";
@@ -39,14 +42,14 @@ export default async function AgentsPage({
   const factoryQuery = { factory: factory.id };
   const directoryQuery = { ...factoryQuery, q };
 
-  return (
+  const directory = (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         title="Agents"
         description="Agents are named sets of instructions. The published definition sets the execution harness, such as Codex or Claude Code."
         actions={
           <>
-            <FactorySelector factories={factories} resetParams={["q"]} selectedValue={factory.id} />
+            <AgentDirectoryFactorySelector factories={factories} selectedValue={factory.id} />
             {canEditPrompt ? (
               <Link className="ui-button ui-button-primary" href="#new-agent">
                 New agent
@@ -166,4 +169,5 @@ export default async function AgentsPage({
       </div>
     </PageContainer>
   );
+  return <AgentDirectoryDraftScope>{directory}</AgentDirectoryDraftScope>;
 }

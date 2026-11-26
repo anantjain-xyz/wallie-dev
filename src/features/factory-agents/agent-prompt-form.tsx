@@ -13,6 +13,8 @@ import {
   createFactoryAgentSchema,
   saveFactoryAgentPromptSchema,
 } from "@/lib/factory-agents/contracts";
+
+import { useDirectoryDraftStatus } from "./agent-directory-draft";
 import { agentPromptPath } from "./agent-navigation";
 
 const revisionSchema = z.object({
@@ -83,6 +85,7 @@ export function AgentPromptForm({
   const slug = editedIdentifier ?? suggestAgentIdentifier(name);
   const needsReview = Boolean(latest && latest.revision > basedOn);
   const dirty = Boolean(draft || name || editedIdentifier !== null);
+  useDirectoryDraftStatus(dirty);
 
   useEffect(() => {
     if (!dirty) return;

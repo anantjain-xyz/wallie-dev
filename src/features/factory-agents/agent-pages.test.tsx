@@ -1,17 +1,21 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import AgentPage from "@/app/w/[workspaceSlug]/(app)/agents/[agentId]/page";
 import AgentNotFound from "@/app/w/[workspaceSlug]/(app)/agents/[agentId]/not-found";
 import AgentsPage from "@/app/w/[workspaceSlug]/(app)/agents/page";
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 
 const loaders = vi.hoisted(() => ({
   loadAgentPageScope: vi.fn(),
   loadAgentsList: vi.fn(),
   loadAgentDetail: vi.fn(),
+  push: vi.fn(),
+  search: new URLSearchParams(),
 }));
 vi.mock("./agent-pages-data", () => loaders);
 vi.mock("next/navigation", () => ({
@@ -19,12 +23,14 @@ vi.mock("next/navigation", () => ({
     throw new Error("Not found");
   },
   useParams: () => ({ workspaceSlug: "release" }),
-  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => "/w/release/agents",
+  useRouter: () => ({ push: loaders.push }),
+  useSearchParams: () => loaders.search,
 }));
-vi.mock("@/features/factories/factory-selector", () => ({
-  FactorySelector: () => null,
+vi.mock("@/components/ui/toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/ui/toast")>()),
+  useToast: () => ({ pushToast: vi.fn() }),
 }));
-vi.mock("@/components/ui/toast", () => ({ useToast: () => ({ pushToast: vi.fn() }) }));
 
 const factory = {
   id: "55200000-0000-4000-8000-000000000001",
@@ -91,6 +97,7 @@ const scope = { factory, workspaceId: "workspace", canEditPrompt: false, canEdit
 
 beforeEach(() => {
   vi.resetAllMocks();
+  loaders.search = new URLSearchParams(query);
   loaders.loadAgentPageScope.mockResolvedValue({ scope, factories: [factory] });
   loaders.loadAgentDetail.mockResolvedValue(detail);
   loaders.loadAgentsList.mockResolvedValue({
@@ -133,6 +140,48 @@ it("names both directory roles and preserves the scoped search through paginatio
   );
   expect(loaders.loadAgentsList).toHaveBeenCalledWith(scope, { search: "Release", afterId: after });
   expect(screen.queryByRole("link", { name: "New agent" })).not.toBeInTheDocument();
+});
+
+it("keeps an exact draft and factory on Cancel, then switches once on Discard", async () => {
+  const user = userEvent.setup();
+  const selected = { ...factory, isDefault: true };
+  const other = {
+    ...factory,
+    id: "55200000-0000-4000-8000-000000000008",
+    name: "Research factory",
+    isDefault: false,
+  };
+  loaders.loadAgentPageScope.mockResolvedValueOnce({
+    scope: { ...scope, factory: selected, canEditPrompt: true },
+    factories: [selected, other],
+  });
+  render(<OverlayProvider>{await readDirectory()}</OverlayProvider>);
+  const name = screen.getByRole("textbox", { name: "Agent name" });
+  const prompt = screen.getByRole("textbox", { name: "Implementation prompt" });
+  await user.type(name, "Release review draft");
+  const text = "Keep these instructions exactly.\n  Preserve indentation.";
+  await user.type(prompt, text);
+  const trigger = screen.getByRole("combobox", { name: "Factory" });
+  const chooseOtherFactory = async () => {
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: other.name }));
+    return screen.findByRole("alertdialog", { name: "Switch factories without saving?" });
+  };
+
+  const confirmation = await chooseOtherFactory();
+  expect(confirmation).toHaveTextContent(other.name);
+  await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(name).toHaveValue("Release review draft");
+  expect(prompt).toHaveValue(text);
+  expect(trigger).toHaveAttribute("data-value", factory.id);
+  expect(loaders.push).not.toHaveBeenCalled();
+
+  const discard = await chooseOtherFactory();
+  await user.click(within(discard).getByRole("button", { name: "Discard and switch" }));
+  expect(loaders.push).toHaveBeenCalledExactlyOnceWith(`/w/release/agents?factory=${other.id}`, {
+    scroll: false,
+  });
 });
 
 it("recovers locally from an inaccessible factory and from a stale or wrong-scope detail", async () => {

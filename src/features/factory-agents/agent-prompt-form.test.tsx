@@ -2,6 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import Link from "next/link";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { AgentPromptForm } from "./agent-prompt-form";
@@ -114,7 +115,7 @@ it("warns about leaving with an unsaved draft without losing the text", () => {
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   render(
     <>
-      <a href="/w/release/agents">Back to agents</a>
+      <Link href="/w/release/agents">Back to agents</Link>
       <AgentPromptForm
         {...scope}
         form={{ kind: "revise", agentId, revision: 2, prompt: "Starting prompt" }}
