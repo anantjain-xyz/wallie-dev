@@ -64,11 +64,15 @@ function setup({
   visible = true,
   claim = syncClaim,
   claimError,
+  registrationConflict = false,
+  existingSourceVisible = true,
   savedStatus = "synced",
 }: {
   visible?: boolean;
   claim?: unknown;
   claimError?: string;
+  registrationConflict?: boolean;
+  existingSourceVisible?: boolean;
   savedStatus?: string;
 } = {}) {
   const reads: URL[] = [];
@@ -82,7 +86,13 @@ function setup({
         if (url.pathname.endsWith("/factories")) {
           return Response.json(visible ? { id: factoryId } : null);
         }
+        if (url.pathname.endsWith("/github_repositories")) {
+          return Response.json({ repo_id: 42 });
+        }
         if (url.pathname.endsWith("/factory_context_sources")) {
+          if (url.searchParams.get("select") === "id") {
+            return Response.json(existingSourceVisible ? { id: sourceId } : null);
+          }
           return Response.json([
             selected(url, sourceRow),
             selected(url, { ...sourceRow, id: id(9) }),
@@ -109,6 +119,9 @@ function setup({
           return Response.json(selected(url, { ...sourceRow, status: savedStatus }));
         }
         if (name === "register_factory_context_source") {
+          if (registrationConflict) {
+            return Response.json({ code: "PT409", message: "private SQL detail" }, { status: 409 });
+          }
           return Response.json(selected(url, { ...sourceRow, status: "pending" }));
         }
         throw new Error("Unexpected admin command.");
@@ -193,6 +206,45 @@ describe("factory context source routes", () => {
     expect(github).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    "offers the existing source on conflict only when the scoped viewer can read it (%s)",
+    async (existingSourceVisible) => {
+      const { reads } = setup({ registrationConflict: true, existingSourceVisible });
+      const response = await POST(post(register), route);
+      const body = await response.json();
+      expect(response.status).toBe(409);
+      expect(body).toMatchObject({
+        code: "registration_conflict",
+        error: expect.stringMatching(/already has a source/),
+      });
+      expect(body.existingSourceId).toBe(existingSourceVisible ? sourceId : undefined);
+      expect(body.error).not.toContain("private SQL detail");
+      const repo = reads.find(({ pathname }) => pathname.endsWith("/github_repositories"));
+      const source = reads.find(({ pathname }) => pathname.endsWith("/factory_context_sources"));
+      for (const read of [repo, source]) {
+        expect(read?.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+        expect(read?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+      }
+      expect(repo?.searchParams.get("id")).toBe(`eq.${repositoryId}`);
+      expect(source?.searchParams.get("upstream_repository_id")).toBe("eq.42");
+      expect(source?.searchParams.get("file_path")).toBe(`eq.${filePath}`);
+      expect(source?.searchParams.get("deleted_at")).toBe("is.null");
+      expect(github).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reports a busy sync distinctly from a registration or settle conflict", async () => {
+    const { order } = setup({ claimError: "PT409" });
+    const response = await POST(post(sync), route);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "sync_in_progress",
+      error: expect.stringMatching(/already running/),
+    });
+    expect(order).toEqual(["claim_factory_context_source_sync"]);
+    expect(github).not.toHaveBeenCalled();
+  });
+
   it("never makes an upstream request for a hidden factory or an unauthorized lease", async () => {
     const hidden = setup({ visible: false });
     expect((await POST(post(sync), route)).status).toBe(404);
@@ -215,6 +267,14 @@ describe("factory context source routes", () => {
     const { order } = setup({ claim: { status } });
     const response = await POST(post(sync), route);
     expect(response.status).toBe(expectedStatus);
+    if (status !== "invalid") {
+      expect(await response.json()).toMatchObject({
+        sourceId,
+        status,
+        code: status,
+        error: expect.any(String),
+      });
+    }
     expect(order).toEqual(["claim_factory_context_source_sync"]);
     expect(github).not.toHaveBeenCalled();
   });

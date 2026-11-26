@@ -3,6 +3,8 @@ import "server-only";
 import { z } from "zod";
 
 import type { GovernanceScope } from "@/features/factory-governance/governance-data";
+import { selectCurrentFactoryActivation } from "@/lib/factory-definitions/storage";
+import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import type { Tables } from "@/lib/supabase/database.types";
 
 const limit = 20;
@@ -16,6 +18,7 @@ const contextQuery = z
     grantAfter: uuid.optional(),
     repoAfter: uuid.optional(),
   })
+  .refine(({ source, revision, before }) => Boolean(source) || (!revision && !before))
   .refine(({ grantAfter, repoAfter }) => Boolean(grantAfter) === Boolean(repoAfter));
 const memoryQuery = z.strictObject({
   memory: uuid.optional(),
@@ -37,7 +40,7 @@ export const parseContextQuery = contextQuery.safeParse;
 export const parseMemoryQuery = memoryQuery.safeParse;
 
 const sourceColumns =
-  "id, repository_id, grant_id, grant_version, file_path, status, current_revision_id, upstream_revision, last_successful_sync_at, last_sync_attempt_at";
+  "id, repository_id, github_installation_id, upstream_repository_id, grant_id, grant_version, file_path, status, current_revision_id, last_successful_sync_at, last_sync_attempt_at";
 const sourceRevisionColumns =
   "id, source_id, upstream_revision, upstream_updated_at, media_type, content_bytes, content_sha256, created_at, content_purged_at";
 const memoryColumns =
@@ -46,17 +49,36 @@ const memoryRevisionColumns =
   "id, revision_number, content_sha256, expires_at, supersedes_revision_id, created_at";
 const decisionColumns = "id, revision_id, action, actor_member_id, created_at";
 
+type ContextGrantName = { principalName: string; expiresAt: string; published: boolean };
+
 export type ContextRepositoryOption = {
   grant_id: string;
   grant_version: number;
   repository_id: string;
   repository_full_name: string;
+  grant: ContextGrantName | null;
 };
 
 export type MemoryIdentity = Pick<
   Tables<"factory_memories">,
   "id" | "current_revision_id" | "pending_revision_id"
 >;
+
+async function loadPublishedContext({ supabase, workspaceId, factory }: GovernanceScope) {
+  const activation = await selectCurrentFactoryActivation(supabase, workspaceId, factory.id);
+  if (activation.error) return undefined;
+  if (!activation.data) return null;
+  const stored = await supabase
+    .from("factory_definition_revisions")
+    .select("definition_json, canonical_digest")
+    .match({ workspace_id: workspaceId, factory_id: factory.id, id: activation.data.revision_id })
+    .maybeSingle();
+  const verified = stored.data
+    ? readVerifiedFactoryDefinition(stored.data.definition_json, stored.data.canonical_digest)
+    : null;
+  if (stored.error || !verified) return undefined;
+  return { documents: verified.contextDocuments ?? [], grant: verified.executionGrant };
+}
 
 type FactoryMemory = Pick<
   Tables<"factory_memories">,
@@ -95,8 +117,8 @@ export async function loadContextPage(
   const requests = sources()
     .order("id")
     .limit(limit + 1);
-  const [list, detail, requestedRevision, cursor, choices] = await Promise.all([
-    query.after ? requests.gt("id", query.after) : requests,
+  const [list, detail, requestedRevision, cursor, choices, published] = await Promise.all([
+    query.source ? null : query.after ? requests.gt("id", query.after) : requests,
     query.source ? sources().eq("id", query.source).maybeSingle() : null,
     query.source && query.revision ? revisions().eq("id", query.revision).maybeSingle() : null,
     query.source && query.before ? revisions().eq("id", query.before).maybeSingle() : null,
@@ -113,21 +135,29 @@ export async function loadContextPage(
             : {}),
         })
       : null,
+    loadPublishedContext(scope),
   ]);
-  if (list.error || detail?.error || requestedRevision?.error || cursor?.error) {
+  if (list?.error || detail?.error || requestedRevision?.error || cursor?.error) {
     throw new Error("Could not load factory context.");
   }
   const source = detail?.data ?? null;
-  const items = list.data.slice(0, limit);
-  const sourceIds = [...new Set([...items.map(({ id }) => id), ...(source ? [source.id] : [])])];
-  const [repo, access, history, current] = await Promise.all([
-    source
+  const items = (list?.data ?? []).slice(0, limit);
+  const visible = source ? [source] : items;
+  const sourceIds = visible.map(({ id }) => id);
+  const repositoryIds = [...new Set(visible.map(({ repository_id }) => repository_id))];
+  const options = (choices?.data ?? []).slice(0, limit);
+  const grantIds = [
+    ...new Set(source ? [source.grant_id] : options.map(({ grant_id }) => grant_id)),
+  ];
+  const [repos, access, history, current, grants] = await Promise.all([
+    repositoryIds.length
       ? supabase
           .from("github_repositories")
-          .select("full_name")
+          .select("id, full_name, repo_id, github_installation_id, github_installations!inner(id)")
           .match(owner)
-          .eq("id", source.repository_id)
-          .maybeSingle()
+          .eq("is_archived", false)
+          .eq("github_installations.suspended", false)
+          .in("id", repositoryIds)
       : null,
     sourceIds.length
       ? supabase.rpc("list_factory_context_source_access", {
@@ -150,21 +180,52 @@ export async function loadContextPage(
     source?.current_revision_id && !query.revision
       ? revisions().eq("id", source.current_revision_id).maybeSingle()
       : null,
+    grantIds.length
+      ? supabase
+          .from("factory_execution_grants")
+          .select("id, version, expires_at, service_principals!inner(name)")
+          .match(owner)
+          .in("id", grantIds)
+      : null,
   ]);
   if (history?.error || current?.error) throw new Error("Could not load context revision history.");
+  const repositoryNames = Object.fromEntries(
+    visible.flatMap((item) => {
+      const repo = repos?.data?.find((candidate) => candidate.id === item.repository_id);
+      return repo?.repo_id === item.upstream_repository_id &&
+        repo.github_installation_id === item.github_installation_id
+        ? [[item.id, repo.full_name] as const]
+        : [];
+    }),
+  );
+  function grantName(id: string, version: number): ContextGrantName | null {
+    const grant = grants?.data?.find((row) => row.id === id && row.version === version);
+    return grant
+      ? {
+          principalName: grant.service_principals.name,
+          expiresAt: grant.expires_at,
+          published: published?.grant?.id === id && published.grant.version === version,
+        }
+      : null;
+  }
   const historyItems = (history?.data ?? []).slice(0, limit);
   return {
     source,
     items,
-    repositoryName: repo?.data?.full_name ?? null,
+    repositoryNames,
+    sourceGrant: source ? grantName(source.grant_id, source.grant_version) : null,
+    publishedDocuments: published === undefined ? undefined : (published?.documents ?? []),
     access: Object.fromEntries(
       (access?.data ?? []).map(({ source_id, status }) => [source_id, status]),
     ),
     revision: requestedRevision?.data ?? current?.data ?? null,
     history: historyItems,
-    nextSource: list.data.length > limit ? items.at(-1)?.id : undefined,
+    nextSource: (list?.data?.length ?? 0) > limit ? items.at(-1)?.id : undefined,
     nextRevision: (history?.data?.length ?? 0) > limit ? historyItems.at(-1)?.id : undefined,
-    options: (choices?.data ?? []).slice(0, limit) satisfies ContextRepositoryOption[],
+    options: options.map((option) => ({
+      ...option,
+      grant: grantName(option.grant_id, option.grant_version),
+    })) satisfies ContextRepositoryOption[],
     nextOption: (choices?.data?.length ?? 0) > limit ? choices?.data?.[limit - 1] : undefined,
     optionsUnavailable: Boolean(choices?.error),
   };

@@ -111,6 +111,22 @@ it("keeps an unavailable saved state and retries labels without losing the intak
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not load issue labels for this resource.",
   );
+  const picker = screen.getByRole("combobox", { name: "Issue label (optional)" });
+  expect(picker).not.toBeRequired();
+  expect(picker).toHaveTextContent("Could not verify saved choice");
+  expect(screen.getByText(label.id)).not.toBeVisible();
+  await user.click(picker);
+  const listbox = screen.getByRole("listbox", { name: "Issue label (optional)" });
+  expect(
+    within(listbox).getByRole("option", { name: "Could not verify saved choice", selected: true }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(within(listbox).getByRole("option", { name: "No label filter" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(picker).toHaveFocus();
+  await user.keyboard("{ArrowDown}{Tab}");
+  expect(listbox).not.toBeInTheDocument();
+  expect(screen.getByText("Saved provider ID")).toHaveFocus();
+
   await user.click(screen.getByRole("button", { name: "Save intake" }));
   expect(states).toHaveFocus();
   expect(writes).toEqual([]);
@@ -119,11 +135,16 @@ it("keeps an unavailable saved state and retries labels without losing the intak
   await user.click(
     screen.getByRole("checkbox", { name: "In progress (Platform (PLAT) · started)" }),
   );
+  await user.click(screen.getByRole("button", { name: "Save intake" }));
+  expect(picker).toHaveFocus();
+  expect(picker).toHaveAttribute("aria-invalid", "true");
+  expect(picker).toHaveAccessibleDescription(
+    "Choose an available issue label or remove the filter.",
+  );
+  expect(writes).toEqual([]);
+
   await user.click(screen.getByRole("button", { name: "Retry issue labels lookup" }));
-  const picker = screen.getByRole("combobox", { name: "Issue label (optional)" });
-  await within(picker).findByRole("option", { name: "Wallie · Linear workspace label" });
-  expect(picker).not.toBeRequired();
-  expect(picker).toHaveValue(label.id);
+  await within(picker).findByText("Wallie · Linear workspace label");
   await user.click(screen.getByRole("button", { name: "Save intake" }));
   await screen.findByText("Linear intake saved.");
   expect(writes).toEqual([
@@ -131,6 +152,87 @@ it("keeps an unavailable saved state and retries labels without losing the intak
       url: `${endpoint}/linear-discovery/${resource.id}`,
       command: {
         enabled: true,
+        expectedRevision: 2,
+        mappingRevision: 4,
+        stateIds: [starting.id],
+        labelId: label.id,
+        serviceActorId: id(10),
+      },
+    },
+  ]);
+});
+
+it("clears the label with the keyboard without resetting the workflow-state error", async () => {
+  const writes = fixture({ failLabels: true, savedState: savedStateId });
+  const user = userEvent.setup();
+  render(
+    <LinearConnectorPolicies factoryEndpoint={endpoint} onChanged={vi.fn()} resource={resource} />,
+  );
+  await user.click(screen.getByText("Linear routing and outcomes"));
+  await screen.findByRole("button", { name: "Retry issue labels lookup" });
+  const picker = screen.getByRole("combobox", { name: "Issue label (optional)" });
+  const states = screen.getByRole("button", { name: "Workflow states 1 selected" });
+  const save = screen.getByRole("button", { name: "Save intake" });
+  await user.click(save);
+  expect(states).toHaveFocus();
+  expect(picker).toHaveAttribute("aria-invalid", "true");
+
+  await user.tab();
+  expect(picker).toHaveFocus();
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(picker).toHaveFocus();
+  expect(picker).toHaveTextContent("No label filter");
+  expect(picker).not.toHaveAttribute("aria-invalid");
+  expect(states).toHaveAccessibleDescription(
+    /Remove or replace choices that could not be verified/u,
+  );
+  expect(writes).toEqual([]);
+
+  await user.click(states);
+  await user.click(
+    screen.getByRole("checkbox", { name: "Unavailable — choose a replacement (saved state 1)" }),
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "In progress (Platform (PLAT) · started)" }),
+  );
+  await user.click(save);
+  await screen.findByText("Linear intake saved.");
+  expect(writes).toEqual([
+    {
+      url: `${endpoint}/linear-discovery/${resource.id}`,
+      command: {
+        enabled: true,
+        expectedRevision: 2,
+        mappingRevision: 4,
+        stateIds: [starting.id],
+        serviceActorId: id(10),
+      },
+    },
+  ]);
+});
+
+it("keeps the saved intake filters when disabling after changing the label draft", async () => {
+  const writes = fixture();
+  const user = userEvent.setup();
+  render(
+    <LinearConnectorPolicies factoryEndpoint={endpoint} onChanged={vi.fn()} resource={resource} />,
+  );
+  await user.click(screen.getByText("Linear routing and outcomes"));
+  const picker = await screen.findByRole("combobox", { name: "Issue label (optional)" });
+  await within(picker).findByText("Wallie · Linear workspace label");
+  await user.click(picker);
+  await user.click(screen.getByRole("option", { name: "No label filter" }));
+  expect(picker).toHaveTextContent("No label filter");
+  expect(writes).toEqual([]);
+
+  await user.click(screen.getByRole("checkbox", { name: "Discover issues on this resource" }));
+  await user.click(screen.getByRole("button", { name: "Save intake" }));
+  await screen.findByText("Linear intake saved.");
+  expect(writes).toEqual([
+    {
+      url: `${endpoint}/linear-discovery/${resource.id}`,
+      command: {
+        enabled: false,
         expectedRevision: 2,
         mappingRevision: 4,
         stateIds: [starting.id],

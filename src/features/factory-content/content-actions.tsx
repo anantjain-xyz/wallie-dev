@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState, useTransition, type FormEvent, type Ref } from "react";
 import { z } from "zod";
@@ -13,7 +14,7 @@ import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import { contextSourceCommandSchema } from "@/lib/factory-context/contracts";
 import { factoryMemoryCommandSchema } from "@/lib/factory-memory/contracts";
-import { workspaceContextPath, workspaceMemoryPath } from "@/lib/routes";
+import { workspaceContextPath, workspaceGovernancePath, workspaceMemoryPath } from "@/lib/routes";
 
 import type { ContextRepositoryOption, MemoryIdentity } from "./content-data";
 
@@ -26,6 +27,17 @@ const pendingMemoryResult = z.object({
 });
 type MemoryListQuery = { q?: string; after?: string };
 
+const contextFailure = z.object({
+  code: z.string(),
+  existingSourceId: z.string().uuid().optional(),
+});
+
+const grantExpiry = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
+
+function contextOptionValue(option: ContextRepositoryOption) {
+  return `${option.repository_id}:${option.grant_id}:${option.grant_version}`;
+}
+
 function useContentCommand(
   scope: Scope,
   resource: "context-sources" | "memories",
@@ -35,6 +47,9 @@ function useContentCommand(
   const { pushToast } = useOptionalToast();
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [contextRecovery, setContextRecovery] = useState<z.output<typeof contextFailure> | null>(
+    null,
+  );
   const [pendingCommand, setPendingCommand] = useState<ContextCommand | MemoryCommand>();
   const action = useApiAction<unknown, [ContextCommand | MemoryCommand]>({
     call: async (command) => {
@@ -47,12 +62,26 @@ function useContentCommand(
           body: JSON.stringify(command),
         },
       );
-      return resource === "context-sources" && response.status === 409
-        ? Response.json(
-            { error: "This item changed. Reload it before trying again." },
-            { status: 409 },
-          )
-        : response;
+      if (resource === "context-sources" && !response.ok) {
+        const failure = contextFailure.safeParse(
+          await response
+            .clone()
+            .json()
+            .catch(() => null),
+        );
+        if (failure.success) {
+          setContextRecovery(failure.data);
+          if (
+            command.action === "sync" &&
+            ["access_revoked", "deleted", "source_unavailable", "factory_archived"].includes(
+              failure.data.code,
+            )
+          ) {
+            router.refresh();
+          }
+        }
+      }
+      return response;
     },
     errorText: "Could not save the change.",
     setFlashMessage: setMessage,
@@ -91,20 +120,61 @@ function useContentCommand(
           pushToast({ title: "Memory forgotten", tone: "success" });
         }
         router.refresh();
+        if (command.action === "sync") {
+          const status = z.object({ source: z.object({ status: z.string() }) }).parse(payload)
+            .source.status;
+          switch (status) {
+            case "synced":
+              setMessage({
+                kind: "success",
+                text: "Source synced. Published pins have not changed.",
+              });
+              break;
+            case "stale":
+              setMessage({
+                kind: "error",
+                text: "Sync could not confirm the file. The last verified revision is retained.",
+              });
+              break;
+            case "upstream_deleted":
+              setMessage({
+                kind: "error",
+                text: "The file is missing upstream. Check the repository path before trying again.",
+              });
+              break;
+            case "access_revoked":
+              setMessage({
+                kind: "error",
+                text: "Sync lost repository access. Review the grant and connection in Governance.",
+              });
+              break;
+            default:
+              setMessage({
+                kind: "error",
+                text: "Sync did not make a revision available. Check the file and try again.",
+              });
+          }
+        }
       }
     },
   });
-  const run = (command: ContextCommand | MemoryCommand) => {
+  function clearFeedback() {
     setMessage(null);
+    if (resource === "context-sources") setContextRecovery(null);
+  }
+  const run = (command: ContextCommand | MemoryCommand) => {
+    clearFeedback();
     return action.run(command);
   };
   return {
     ...action,
     run,
+    clearFeedback,
     message,
     setMessage,
     confirm,
     setConfirm,
+    contextRecovery,
     pendingCommand: action.isBusy ? pendingCommand : undefined,
   };
 }
@@ -117,10 +187,13 @@ export function ContextRegistration({
   options: ContextRepositoryOption[];
 }) {
   const action = useContentCommand(scope, "context-sources");
+  const [repository, setRepository] = useState("");
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const option = options[Number(data.get("repository")) - 1];
+    const option = options.find(
+      (candidate) => contextOptionValue(candidate) === data.get("repository"),
+    );
     const parsed = contextSourceCommandSchema.safeParse({
       action: "register",
       repositoryId: option?.repository_id,
@@ -129,6 +202,7 @@ export function ContextRegistration({
       filePath: data.get("path"),
     });
     if (!parsed.success) {
+      action.clearFeedback();
       action.setMessage({
         kind: "error",
         text: "Choose an authorized repository and enter a repository-relative Markdown or text path.",
@@ -141,19 +215,51 @@ export function ContextRegistration({
   return (
     <form className="ui-sheet min-w-0 space-y-4 p-4 sm:p-5" onSubmit={submit}>
       <InlineActionMessage message={action.message} />
+      {action.contextRecovery?.code === "registration_conflict" &&
+        action.contextRecovery.existingSourceId && (
+          <Link
+            className="ui-button"
+            href={workspaceContextPath(scope.workspaceSlug, {
+              factory: scope.factoryId,
+              source: action.contextRecovery.existingSourceId,
+            })}
+          >
+            Open existing source and grant
+          </Link>
+        )}
+      {(action.contextRecovery?.code === "registration_access_unavailable" ||
+        options.some(({ grant }) => !grant)) && (
+        <Link
+          className="ui-button"
+          href={workspaceGovernancePath(scope.workspaceSlug, { factory: scope.factoryId })}
+        >
+          Review repository grants
+        </Link>
+      )}
       <fieldset className="min-w-0 space-y-4" aria-busy={action.isBusy} disabled={action.isBusy}>
         <legend className="sr-only">Source details</legend>
         <SelectField
-          defaultValue=""
           emptyOption={{ disabled: true, label: "Choose a repository", value: "" }}
           label="Repository and grant"
           labelClassName="type-label"
           name="repository"
-          options={options.map((option, i) => ({
-            label: `${option.repository_full_name} · Grant ${option.grant_id.slice(0, 8)} · v${option.grant_version}`,
-            value: String(i + 1),
-          }))}
+          onValueChange={(value) => {
+            if (value === repository) return;
+            setRepository(value);
+            action.clearFeedback();
+          }}
+          options={options.map((option) => {
+            const { repository_full_name, grant_version, grant } = option;
+            const name = grant
+              ? `${grant.principalName} · Grant v${grant_version} · Expires ${grantExpiry.format(new Date(grant.expiresAt))}`
+              : `Grant unavailable · v${grant_version}`;
+            return {
+              label: `${repository_full_name} · ${name}${grant?.published ? " · Used by published definition" : ""}`,
+              value: contextOptionValue(option),
+            };
+          })}
           required
+          value={repository}
           wrap
         />
         <label className="block space-y-1.5">
@@ -161,6 +267,7 @@ export function ContextRegistration({
           <input
             className="ui-input w-full"
             name="path"
+            onChange={action.clearFeedback}
             placeholder="docs/architecture.md"
             maxLength={512}
             required
@@ -187,7 +294,9 @@ export function ContextSourceActions({
   sourceId: string;
   canSync: boolean;
 }) {
+  const router = useRouter();
   const action = useContentCommand(scope, "context-sources");
+  const recovery = action.contextRecovery?.code;
   return (
     <div className="space-y-3">
       <InlineActionMessage message={action.confirm ? null : action.message} />
@@ -204,6 +313,11 @@ export function ContextSourceActions({
             pendingLabel="Syncing…"
           />
         </button>
+        {(recovery === "sync_in_progress" || recovery === "sync_result_unavailable") && (
+          <button className="ui-button" onClick={() => router.refresh()} type="button">
+            Refresh source
+          </button>
+        )}
         <DestructiveConfirmationDialog
           actionLabel="Remove source"
           description="New runs will stop using this source. Earlier receipt identities remain in run history."
