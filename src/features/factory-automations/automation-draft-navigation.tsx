@@ -18,16 +18,46 @@ const DraftNavigation = createContext<{
 
 export const useAutomationDraftNavigation = () => useContext(DraftNavigation);
 
+type HistoryEntry = { key: string; url: string | null };
+type NavigationHistory = EventTarget & {
+  currentEntry: HistoryEntry | null;
+  traverseTo: (key: string) => { committed: Promise<unknown>; finished: Promise<unknown> };
+};
+type Destination = { href: string } | { traverse: () => Promise<void> };
+
+function navigationHistory() {
+  const history = (window as Window & { navigation?: NavigationHistory }).navigation;
+  return typeof history?.traverseTo === "function" ? history : undefined;
+}
+
+function sameRoute(from: HistoryEntry, to: HistoryEntry) {
+  return (
+    from.url !== null && to.url !== null && from.url.split("#", 1)[0] === to.url.split("#", 1)[0]
+  );
+}
+
+async function traverse(history: NavigationHistory, key: string) {
+  const { committed, finished } = history.traverseTo(key);
+  await Promise.all([committed, finished]);
+}
+
 export function AutomationDraftNavigation({ children }: { children: ReactNode }) {
   const router = useRouter();
   const dirtyRef = useRef(false);
   const restoreFocus = useRef<HTMLElement | null>(null);
   const [dirty, setDirtyState] = useState(false);
-  const [destination, setDestination] = useState<string | null>(null);
+  const [destination, setDestination] = useState<Destination | null>(null);
+  const [historyNotice, setHistoryNotice] = useState("");
 
   function setDirty(value: boolean) {
+    if (dirtyRef.current === value) return;
     dirtyRef.current = value;
     setDirtyState(value);
+    setHistoryNotice(
+      value && !navigationHistory()?.currentEntry
+        ? "This browser cannot protect Back or Forward. Save your draft before using browser history."
+        : "",
+    );
   }
 
   function go(href: string) {
@@ -47,11 +77,17 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
     }
     restoreFocus.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setDestination(href);
+    setDestination({ href });
   }
 
   useEffect(() => {
     if (!dirty) return;
+    const history = navigationHistory();
+    let draftEntry = history?.currentEntry;
+    let active = true;
+    let returning = 0;
+    let request = 0;
+
     function beforeUnload(event: BeforeUnloadEvent) {
       if (!dirtyRef.current) return;
       event.preventDefault();
@@ -82,19 +118,81 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
         return;
       event.preventDefault();
       restoreFocus.current = link;
-      setDestination(url.href);
+      setDestination({ href: url.href });
+    }
+
+    function updateDraftEntry(event: Event) {
+      const type = (event as Event & { navigationType?: string }).navigationType;
+      const current = history?.currentEntry;
+      if (
+        !returning &&
+        draftEntry &&
+        current &&
+        (type === "push" || type === "replace") &&
+        sameRoute(draftEntry, current)
+      ) {
+        draftEntry = current;
+      }
+    }
+
+    function followHistory(event: PopStateEvent) {
+      const target = history?.currentEntry;
+      if (!dirtyRef.current || !history || !draftEntry || !target) return;
+      if (target.key === draftEntry.key) {
+        if (returning) event.stopImmediatePropagation();
+        return;
+      }
+      if (!returning && sameRoute(draftEntry, target)) {
+        draftEntry = target;
+        return;
+      }
+      event.stopImmediatePropagation();
+      const draftKey = draftEntry.key;
+      const attempt = ++request;
+      returning = attempt;
+      restoreFocus.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setDestination(null);
+      void traverse(history, draftKey).then(
+        () => {
+          if (!active || returning !== attempt) return;
+          returning = 0;
+          if (!dirtyRef.current || history.currentEntry?.key !== draftKey) return;
+          setHistoryNotice("");
+          setDestination({ traverse: () => traverse(history, target.key) });
+        },
+        () => {
+          if (!active || returning !== attempt) return;
+          returning = 0;
+          setHistoryNotice(
+            "Could not return through browser history. Your edits are still here; save them before leaving.",
+          );
+        },
+      );
     }
     window.addEventListener("beforeunload", beforeUnload);
     document.addEventListener("click", followLink, true);
+    if (history) {
+      history.addEventListener("currententrychange", updateDraftEntry);
+      window.addEventListener("popstate", followHistory, true);
+    }
     return () => {
+      active = false;
       window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("click", followLink, true);
+      history?.removeEventListener("currententrychange", updateDraftEntry);
+      window.removeEventListener("popstate", followHistory, true);
     };
   }, [dirty]);
 
   return (
     <DraftNavigation.Provider value={{ setDirty, navigate }}>
       {children}
+      {historyNotice ? (
+        <p role="status" className="px-4 py-3 text-sm text-muted">
+          {historyNotice}
+        </p>
+      ) : null}
       <DestructiveConfirmationDialog
         actionLabel="Discard changes"
         cancelLabel="Keep editing"
@@ -103,7 +201,16 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
           if (!destination) return;
           setDirty(false);
           setDestination(null);
-          go(destination);
+          if ("href" in destination) {
+            go(destination.href);
+          } else {
+            void destination.traverse().catch(() => {
+              setDirty(true);
+              setHistoryNotice(
+                "Could not move through browser history. Your edits are still here.",
+              );
+            });
+          }
         }}
         onOpenChange={(open) => {
           if (!open) setDestination(null);

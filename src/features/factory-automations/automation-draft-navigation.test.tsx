@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -16,6 +16,8 @@ import {
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
+const observePopstate = vi.fn();
 
 function Example() {
   const { setDirty } = useAutomationDraftNavigation();
@@ -55,8 +57,45 @@ function setup() {
   return userEvent.setup();
 }
 
+function setupHistory() {
+  const draftUrl = "https://wallie.test/w/example/settings/automations?automation=rule";
+  const urls = {
+    back: "https://wallie.test/w/example/settings",
+    draft: draftUrl,
+    hash: `${draftUrl}#history`,
+    forward: "https://wallie.test/w/example/settings/automations?automation=another",
+  };
+  type Key = keyof typeof urls;
+  function move(key: Key) {
+    history.currentEntry = { key, url: urls[key] };
+    window.dispatchEvent(new PopStateEvent("popstate", { state: key }));
+  }
+  const history = Object.assign(new EventTarget(), {
+    currentEntry: { key: "draft" as Key, url: urls.draft },
+    traverseTo: vi.fn(asyncMove),
+    move,
+    pushHash() {
+      history.currentEntry = { key: "hash", url: urls.hash };
+      history.dispatchEvent(
+        Object.assign(new Event("currententrychange"), { navigationType: "push" }),
+      );
+    },
+  });
+  function asyncMove(key: Key) {
+    const committed = Promise.resolve().then(() => move(key));
+    return { committed, finished: committed };
+  }
+
+  vi.stubGlobal("navigation", history);
+  window.addEventListener("popstate", observePopstate);
+  return history;
+}
+
 afterEach(() => {
   cleanup();
+  window.removeEventListener("popstate", observePopstate);
+  observePopstate.mockReset();
+  vi.unstubAllGlobals();
   push.mockReset();
 });
 
@@ -94,4 +133,63 @@ it("warns on unload while dirty and opens the rule without a dialog after save",
   expect(push).toHaveBeenCalledExactlyOnceWith(
     "/w/example/settings/automations?factory=current&automation=rule",
   );
+});
+
+it.each(["back", "forward"] as const)(
+  "protects a dirty draft on browser %s and replays the exact history entry after discard",
+  async (target) => {
+    const history = setupHistory();
+    const user = setup();
+    await act(async () => {
+      history.move(target);
+      history.move("draft");
+    });
+    expect(observePopstate.mock.calls.map(([event]) => event.state)).toEqual([target, "draft"]);
+    expect(history.traverseTo).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    observePopstate.mockClear();
+
+    const draft = screen.getByRole("textbox", { name: "Draft name" });
+    await user.type(draft, "Unsaved edits");
+    await act(async () => history.move(target));
+    let dialog = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+    expect(history.currentEntry.key).toBe("draft");
+    expect(observePopstate).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+    expect(draft).toHaveValue("Unsaved edits");
+
+    await act(async () => history.move(target));
+    dialog = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(dialog).getByRole("button", { name: "Discard changes" }));
+    expect(history.currentEntry.key).toBe(target);
+    expect(observePopstate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ state: target }),
+    );
+    expect(history.traverseTo.mock.calls).toEqual([["draft"], ["draft"], [target]]);
+    expect(push).not.toHaveBeenCalled();
+  },
+);
+
+it("allows hash-only history and returns to the exact draft entry after a hash push", async () => {
+  const history = setupHistory();
+  const user = setup();
+  const draft = screen.getByRole("textbox", { name: "Draft name" });
+  await user.type(draft, "Unsaved edits");
+
+  await act(async () => {
+    history.pushHash();
+    history.move("draft");
+  });
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(history.traverseTo).not.toHaveBeenCalled();
+
+  await act(async () => {
+    history.pushHash();
+    history.move("back");
+  });
+  const dialog = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+  await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+  expect(history.currentEntry.key).toBe("hash");
+  expect(history.traverseTo).toHaveBeenCalledExactlyOnceWith("hash");
+  expect(draft).toHaveValue("Unsaved edits");
 });
