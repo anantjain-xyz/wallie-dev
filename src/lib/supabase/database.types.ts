@@ -13713,6 +13713,9 @@ export type Database = {
           p_definition_revision_id?: string
           p_factory_id: string
           p_limit?: number
+          p_member_id?: string
+          p_observed_on?: string
+          p_run_search?: string
           p_workspace_id: string
         }
         Returns: Json
