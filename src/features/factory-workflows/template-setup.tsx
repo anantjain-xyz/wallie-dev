@@ -1,8 +1,5 @@
 "use client";
 
-import { useState } from "react";
-
-import { SelectField } from "@/components/ui/select";
 import type { WorkflowEditorCatalog } from "@/lib/factory-workflows/authoring-contracts";
 import {
   materializeWorkflowTemplate,
@@ -12,6 +9,8 @@ import {
 } from "@/lib/factory-workflows/workflow-templates";
 
 import { defaultDelegationPolicy, type WorkflowGraphDraft } from "./editor-graph";
+import { WorkflowOptions } from "./editor-fields";
+import type { TemplateRoles } from "./editor-recovery";
 
 type Profile = WorkflowEditorCatalog["profiles"][number];
 
@@ -27,19 +26,21 @@ export function TemplateSetup({
   template,
   choices,
   disabled,
+  roles,
+  setRoles,
+  settingsHref,
   loadMore,
   apply,
 }: {
   template: WorkflowTemplateRevision;
   choices: WorkflowEditorCatalog;
   disabled: boolean;
+  roles: TemplateRoles;
+  setRoles: (roles: TemplateRoles) => void;
+  settingsHref: string;
   loadMore: (catalog: "profiles" | "prompts") => void;
   apply: (graph: WorkflowGraphDraft) => void;
 }) {
-  const [foremanId, setForemanId] = useState("");
-  const [implementationId, setImplementationId] = useState("");
-  const [supportId, setSupportId] = useState("");
-  const [reviewerId, setReviewerId] = useState("");
   const { id } = template;
   const needsForeman = id !== "scoped-fix";
   const needsReview = id !== "incident-analysis";
@@ -56,12 +57,12 @@ export function TemplateSetup({
   const foremanProfiles = eligibleProfiles.filter(
     ({ templateRole }) => templateRole?.canRunForeman,
   );
-  const foreman = resolveRole(foremanProfiles.find((profile) => profile.id === foremanId));
+  const foreman = resolveRole(foremanProfiles.find((profile) => profile.id === roles.foreman));
   const implementation = resolveRole(
-    eligibleProfiles.find((profile) => profile.id === implementationId),
+    eligibleProfiles.find((profile) => profile.id === roles.implementation),
   );
-  const supporting = resolveRole(eligibleProfiles.find((profile) => profile.id === supportId));
-  const reviewer = choices.prompts.find((prompt) => prompt.id === reviewerId);
+  const supporting = resolveRole(eligibleProfiles.find((profile) => profile.id === roles.support));
+  const reviewer = choices.prompts.find((prompt) => prompt.id === roles.reviewer);
   const canApply =
     !blocked &&
     (!needsForeman || !!foreman) &&
@@ -104,12 +105,45 @@ export function TemplateSetup({
     }
   }
 
-  const roleOptions = (profiles: Profile[]) =>
-    profiles.map(({ id, label, templateRole }) => {
-      const prompt = choices.prompts.find((choice) => choice.id === templateRole?.promptRevisionId);
-      return { value: id, label: prompt ? `${prompt.label} · ${label}` : label };
-    });
-  const codeProfiles = roleOptions(eligibleProfiles);
+  const settings = (
+    <a className="underline underline-offset-4" href={settingsHref}>
+      Factory definition settings
+    </a>
+  );
+  const roleOptions = [
+    ...(needsForeman
+      ? [
+          {
+            key: "foreman" as const,
+            label: "Foreman profile",
+            empty: "Choose an activated Codex profile",
+            options: foremanProfiles,
+          },
+        ]
+      : []),
+    ...(needsReview
+      ? [
+          {
+            key: "implementation" as const,
+            label: "Implementation profile",
+            empty: "Choose a required branch profile",
+            options: eligibleProfiles,
+          },
+          {
+            key: "support" as const,
+            label: "Support profile",
+            empty: "Choose an optional branch profile",
+            options: eligibleProfiles,
+          },
+          {
+            key: "reviewer" as const,
+            label: "Reviewer prompt revision",
+            empty: "Choose a reviewer prompt",
+            options: choices.prompts,
+          },
+        ]
+      : []),
+  ];
 
   return (
     <section
@@ -126,56 +160,36 @@ export function TemplateSetup({
           </p>
         ) : null}
       </div>
-      {blocked ? <p className="text-sm text-muted">{blocked}</p> : null}
+      {blocked ? (
+        <p className="text-sm text-muted">
+          {blocked} Open {settings}.
+        </p>
+      ) : null}
       {!blocked ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2">
-            {needsForeman ? (
-              <SelectField
-                label="Foreman profile"
-                value={foremanId}
-                onValueChange={setForemanId}
-                fallbackLabel="Choose an activated Codex profile"
-                options={roleOptions(foremanProfiles)}
+            {roleOptions.map(({ key, label, empty, options }) => (
+              <WorkflowOptions
+                key={key}
+                label={label}
+                path={["template", key]}
+                diagnostics={[]}
+                options={options}
+                empty={empty}
                 disabled={disabled}
-                wrap
+                value={roles[key]}
+                change={(value) => setRoles({ ...roles, [key]: value })}
+                reference={{
+                  hasMore: !!choices.nextCursors[key === "reviewer" ? "prompts" : "profiles"],
+                  detail: choices.profiles.find(({ id }) => id === roles[key])?.digest,
+                }}
               />
-            ) : null}
-            {needsReview ? (
-              <>
-                <SelectField
-                  label="Implementation profile"
-                  value={implementationId}
-                  onValueChange={setImplementationId}
-                  fallbackLabel="Choose a required branch profile"
-                  options={codeProfiles}
-                  disabled={disabled}
-                  wrap
-                />
-                <SelectField
-                  label="Support profile"
-                  value={supportId}
-                  onValueChange={setSupportId}
-                  fallbackLabel="Choose an optional branch profile"
-                  options={codeProfiles}
-                  disabled={disabled}
-                  wrap
-                />
-                <SelectField
-                  label="Reviewer prompt revision"
-                  value={reviewerId}
-                  onValueChange={setReviewerId}
-                  fallbackLabel="Choose a reviewer prompt"
-                  options={choices.prompts.map(({ id, label }) => ({ value: id, label }))}
-                  disabled={disabled}
-                  wrap
-                />
-              </>
-            ) : null}
+            ))}
           </div>
           {eligibleProfiles.length === 0 || (needsForeman && foremanProfiles.length === 0) ? (
             <p className="text-sm text-muted">
-              Load more profiles or activate a compatible role in this factory.
+              {choices.nextCursors.profiles ? "Load more profiles or activate" : "Activate"} a
+              compatible role in {settings}.
             </p>
           ) : null}
           <div className="flex flex-wrap gap-2">

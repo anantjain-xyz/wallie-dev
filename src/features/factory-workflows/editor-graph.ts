@@ -6,6 +6,7 @@ import type {
   WorkflowRoutePolicy,
   workflowGraphSchema,
 } from "@/lib/factory-definitions/workflow-schema";
+import type { WorkflowEditorCatalog } from "@/lib/factory-workflows/authoring-contracts";
 
 type InputGraph = z.input<typeof workflowGraphSchema>;
 type Route = WorkflowRoutePolicy["nodes"][string];
@@ -36,6 +37,8 @@ export type WorkflowEditorChoices = {
   approvers: { id: string; label: string }[];
   profiles: { id: string; digest: string; label: string }[];
   grant: WorkflowGraphDefinition["grants"][number] | null;
+  grantRepository?: string;
+  nextCursors?: WorkflowEditorCatalog["nextCursors"];
   writers: { repositoryId: string; id: string; version: number; label: string }[];
 };
 
