@@ -962,10 +962,10 @@ function SessionDetailContent({
         (action === "approve"
           ? expectedReviewRevision !== exactTarget.reviewRevision ||
             !canApprove ||
-            exactApproval.value?.blockingCount !== 0 ||
+            approvalReview.value?.blockingCount !== 0 ||
             Boolean(
-              exactApproval.value.delivery?.required &&
-              exactApproval.value.delivery.state !== "ready",
+              approvalReview.value.delivery?.required &&
+              approvalReview.value.delivery.state !== "ready",
             )
           : feedbackSubmission?.expectedReviewRevision !== exactTarget.reviewRevision))
     )
@@ -1122,7 +1122,7 @@ function SessionDetailContent({
     } catch (error) {
       finishInteraction(action, "error");
       if (exactTarget) {
-        void exactApproval.refresh();
+        void approvalReview.refresh();
         if (selectedStageIsSpecification) void specification.refresh();
       }
       if (action === "reject")
