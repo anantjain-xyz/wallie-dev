@@ -105,12 +105,12 @@ export function useNamedReferences(url: string | null, pinKey: string) {
   }, [url, pinKey, retry]);
 
   function loadMore(kind: ReferenceKind) {
-    const offset = pages?.[kind]?.next;
-    if (!url || !canPage || !offset || paging.current) return;
+    const after = pages?.[kind]?.next;
+    if (!url || !canPage || !after || paging.current) return;
     const controller = new AbortController();
     paging.current = controller;
     setMore(kind);
-    void requestReferences(url, { mode: "more", kind, offset }, controller.signal)
+    void requestReferences(url, { mode: "more", kind, after }, controller.signal)
       .then(
         ({ groups }) => {
           const group = groups[kind];

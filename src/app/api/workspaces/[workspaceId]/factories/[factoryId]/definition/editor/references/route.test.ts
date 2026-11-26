@@ -65,6 +65,15 @@ it("does not query for mismatched or malformed reference inputs", async () => {
   expect(lookup).not.toHaveBeenCalled();
 });
 
+it("rejects a suggestion cursor that does not match the group order", async () => {
+  const response = await POST(
+    request({ mode: "more", kind: "skills", after: { id: factoryId } }),
+    context,
+  );
+  expect(response.status).toBe(400);
+  expect(lookup).not.toHaveBeenCalled();
+});
+
 it("returns only allowlisted picker metadata", async () => {
   const option = { id: factoryId, label: "Read issues · tools.example.test" };
   lookup.mockResolvedValue({

@@ -9,6 +9,7 @@ import { namedReferencesResponseSchema } from "./named-reference-contracts";
 const id = (suffix: number) => `54600000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 const workspace = id(1);
 const factory = id(2);
+const createdAt = "2026-11-25T12:00:00.123456+00:00";
 
 it("loads approved suggestions and separately resolves exact out-of-page pins in the same scope", async () => {
   const requests: URL[] = [];
@@ -57,7 +58,7 @@ it("loads approved suggestions and separately resolves exact out-of-page pins in
     await loadNamedFactoryReferences(client, workspace, factory, {
       mode: "more",
       kind: "skills",
-      offset: 40,
+      after: { id: id(2), createdAt },
     }),
   );
   expect(skills.groups.skills?.options).toMatchObject([
@@ -78,7 +79,7 @@ it("loads approved suggestions and separately resolves exact out-of-page pins in
   const rawTools = await loadNamedFactoryReferences(client, workspace, factory, {
     mode: "more",
     kind: "tools",
-    offset: 40,
+    after: { id: id(2), createdAt },
   });
   expect(JSON.stringify(rawTools)).not.toContain("/internal-path");
   const tools = namedReferencesResponseSchema.parse(rawTools);
@@ -94,6 +95,62 @@ it("loads approved suggestions and separately resolves exact out-of-page pins in
     expect(searchParams.get("workspace_id")).toBe(`eq.${workspace}`);
     expect(searchParams.get("factory_id")).toBe(`eq.${factory}`);
   }
+});
+
+it("retains the next eligible skill after a first-page revocation", async () => {
+  const revisions = Array.from({ length: 42 }, (_, index) => ({
+    id: id(100 + index),
+    revision_number: 100 + index,
+    created_at: index === 41 ? "2026-11-24T12:00:00+00:00" : createdAt,
+    revoked_at: null as string | null,
+    factory_skills: { name: "Search" },
+  }));
+  const client = createClient<Database>("https://database.example.test", "test-key", {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: {
+      fetch: async (input) => {
+        const { pathname, searchParams: params } = new URL(
+          input instanceof Request ? input.url : input,
+        );
+        if (!pathname.endsWith("/factory_skill_revisions")) return Response.json([]);
+        expect(params.get("workspace_id")).toBe(`eq.${workspace}`);
+        expect(params.get("factory_id")).toBe(`eq.${factory}`);
+        expect(params.get("revoked_at")).toBe("is.null");
+        expect(params.get("order")).toBe("created_at.desc,id.asc");
+        const after = params.get("or");
+        if (after)
+          expect(after).toBe(
+            `(created_at.lt.${createdAt},and(created_at.eq.${createdAt},id.gt.${id(139)}))`,
+          );
+        const eligible = revisions.filter(
+          (row) =>
+            row.revoked_at === null &&
+            (!after ||
+              row.created_at < createdAt ||
+              (row.created_at === createdAt && row.id > id(139))),
+        );
+        const offset = Number(params.get("offset") ?? 0);
+        return Response.json(eligible.slice(offset, offset + Number(params.get("limit"))));
+      },
+    },
+  });
+
+  const first = namedReferencesResponseSchema.parse(
+    await loadNamedFactoryReferences(client, workspace, factory, { mode: "initial" }),
+  ).groups.skills;
+  expect(first?.options).toHaveLength(40);
+  expect(first?.next).toEqual({ id: id(139), createdAt });
+  revisions[20].revoked_at = createdAt;
+  if (!first?.next) throw new Error("First suggestions page is missing its cursor.");
+  const second = namedReferencesResponseSchema.parse(
+    await loadNamedFactoryReferences(client, workspace, factory, {
+      mode: "more",
+      kind: "skills",
+      after: first.next,
+    }),
+  ).groups.skills;
+  expect(second?.options.map(({ id }) => id)).toEqual([id(140), id(141)]);
+  expect(second?.next).toBeUndefined();
 });
 
 it.each([false, true])(
