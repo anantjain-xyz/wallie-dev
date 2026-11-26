@@ -1,17 +1,7 @@
 "use client";
 
-import { useParams } from "next/navigation";
-
-import { PageFailure } from "@/components/ui/page-failure";
-import { workspaceRunsPath } from "@/lib/routes";
+import { RunInspectorFailure } from "@/features/wallie/run-inspector-failure";
 
 export default function RunError({ retry, reset }: { retry?: () => void; reset?: () => void }) {
-  const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
-  return (
-    <PageFailure
-      reset={retry ?? reset}
-      returnHref={workspaceRunsPath(workspaceSlug)}
-      returnLabel="Back to runs"
-    />
-  );
+  return <RunInspectorFailure reset={retry ?? reset} />;
 }

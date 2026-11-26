@@ -239,6 +239,51 @@ describe("Runs list", () => {
     },
   );
 
+  it.each(["matches", "no matches"] as const)(
+    "can explicitly select Any session by keyboard after a search with %s",
+    async (outcome) => {
+      const selected = { id: SESSION_ID, label: "#42 Improve sign-in reliability" };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json(outcome === "matches" ? [selected] : [])),
+      );
+      render(
+        <RunsList
+          initialNow={now}
+          factoryQuery={FACTORY_ID}
+          data={{
+            workspaceId: WORKSPACE_ID,
+            workspaceSlug: "acme",
+            query: { status: "error", sessionId: SESSION_ID },
+            sessionOption: selected,
+            state: { kind: "ready", page: { runs: [], nextCursor: null } },
+          }}
+        />,
+      );
+      const input = screen.getByRole("combobox", { name: "Session" }) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "reliability" } });
+      if (outcome === "matches") {
+        await screen.findByRole("option", { name: selected.label });
+      } else {
+        await screen.findByText("No matching sessions.");
+        fireEvent.keyDown(input, { key: "Enter" });
+        expect(input.value).toBe("reliability");
+      }
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      expect(
+        screen.getByRole("option", { name: "Any session" }).getAttribute("aria-selected"),
+      ).toBe("true");
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(input.value).toBe("Any session");
+      fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
+      const destination = new URL(mocked.push.mock.calls[0]?.[0], "https://wallie.test");
+      expect(Object.fromEntries(destination.searchParams)).toEqual({
+        status: "error",
+        factory: FACTORY_ID,
+      });
+    },
+  );
+
   it("clears only the unavailable selection and restarts pagination", () => {
     render(
       <RunsList

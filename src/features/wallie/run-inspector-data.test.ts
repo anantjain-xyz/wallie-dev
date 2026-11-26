@@ -425,7 +425,7 @@ describe("run inspector composition", () => {
     role: "member" | "owner" | "admin" = "member",
     factoryStatus: "active" | "archived" = "active",
   ) {
-    const { input, routingRequests } = fixture({
+    const { input, requests, routingRequests } = fixture({
       revisions: [skillRevision],
       routingDecision: historicalRoutingReceipt,
     });
@@ -449,7 +449,7 @@ describe("run inspector composition", () => {
       runStatus: "canceled",
       entries: [],
     });
-    return { input, routingRequests };
+    return { input, requests, routingRequests };
   }
 
   it.each([
@@ -534,17 +534,43 @@ describe("run inspector composition", () => {
   });
 
   it("isolates a known transcript read failure while retaining the authorized run and evidence", async () => {
-    prepare();
+    const { requests, routingRequests } = prepare();
+    mocks.catalog.mockResolvedValueOnce({ ...run, status: "queued", attemptCount: null });
     mocks.transcript.mockRejectedValueOnce(new RunTranscriptReadError());
     const data = await loadRunInspectorData("wallie", run.id);
     expect(data).toMatchObject({
-      run: { id: run.id },
+      run: { id: run.id, status: "canceled", attemptCount: 4 },
       artifact: { id: artifactId },
       transcript: null,
     });
+    expect(mocks.catalog).toHaveBeenCalledTimes(2);
+    const checkpointRequests = requests.filter(({ pathname }) =>
+      pathname.endsWith("/session_git_checkpoints"),
+    );
+    expect(checkpointRequests.map(({ searchParams }) => searchParams.get("attempt_count"))).toEqual(
+      ["eq.4"],
+    );
+    expect(routingRequests).toEqual([
+      { target_workspace_id: workspaceId, target_run_id: run.id, target_attempt_count: 4 },
+    ]);
     mocks.transcript.mockRejectedValueOnce(new Error("Unexpected read failure"));
     await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("Unexpected read failure");
   });
+
+  it.each([null, new RunCatalogWorkspaceUnavailableError()])(
+    "stops before loading evidence when the run is no longer authorized after a transcript failure",
+    async (unavailable) => {
+      const { requests } = prepare();
+      mocks.catalog.mockResolvedValueOnce(run);
+      if (unavailable) mocks.catalog.mockRejectedValueOnce(unavailable);
+      else mocks.catalog.mockResolvedValueOnce(null);
+      mocks.transcript.mockRejectedValueOnce(new RunTranscriptReadError());
+      await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("NOT_FOUND");
+      expect(mocks.catalog).toHaveBeenCalledTimes(2);
+      expect(requests).toHaveLength(0);
+      expect(mocks.factories).not.toHaveBeenCalled();
+    },
+  );
 
   it("restarts an initial transcript once when capture begins during the read", async () => {
     prepare();
