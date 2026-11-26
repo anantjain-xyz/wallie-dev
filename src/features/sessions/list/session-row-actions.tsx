@@ -81,6 +81,8 @@ export function SessionRowIsland({
   const visibility = useSessionsLedgerVisibility();
   const archiveInFlightRef = useRef(false);
   const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const titleLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const wasEditingRef = useRef(false);
   const [titleOverride, setTitleOverride] = useState<TitleOverride | null>(null);
   const [draftTitle, setDraftTitle] = useState(session.title);
   const [archiveOverride, setArchiveOverride] = useState<ArchiveOverride | null>(null);
@@ -102,6 +104,13 @@ export function SessionRowIsland({
 
   function setRowHidden(hidden: boolean) {
     setLocallyHidden(hidden);
+    if (hidden) {
+      requestAnimationFrame(() => {
+        if (document.activeElement === document.body) {
+          document.getElementById("sessions-search")?.focus();
+        }
+      });
+    }
     if (!visibility) return;
     if (hidden) visibility.hideSession(session.id);
     else visibility.showSession(session.id);
@@ -295,9 +304,13 @@ export function SessionRowIsland({
   }
 
   useEffect(() => {
-    if (!isEditing) return;
-    editInputRef.current?.focus();
-    editInputRef.current?.select();
+    if (isEditing) {
+      editInputRef.current?.focus();
+      editInputRef.current?.select();
+    } else if (wasEditingRef.current) {
+      titleLinkRef.current?.focus();
+    }
+    wasEditingRef.current = isEditing;
   }, [isEditing]);
 
   function startEditing() {
@@ -383,7 +396,7 @@ export function SessionRowIsland({
   }
 
   const hiddenFromCurrentScope =
-    (scope !== "archived" && locallyHidden) ||
+    locallyHidden ||
     (scope === "active" && Boolean(archivedAt)) ||
     (scope === "archived" && !archivedAt);
 
@@ -463,7 +476,8 @@ export function SessionRowIsland({
                   href={detailHref}
                   trackSessionsToDetail
                   aria-label={`Open session #${session.number}: ${displayTitle}`}
-                  className="sessions-ledger-session-title min-w-0 break-words text-[14px] font-medium text-foreground hover:text-accent"
+                  className="sessions-ledger-session-title min-w-0 break-words text-[14px] font-medium text-foreground hover:text-accent focus-visible:[outline-offset:-2px]!"
+                  ref={titleLinkRef}
                 >
                   {displayTitle}
                 </SessionDetailLink>
@@ -489,7 +503,7 @@ export function SessionRowIsland({
                 }
               </span>
               <span className="sessions-ledger-title-flow-separator">·</span>
-              <span className="sessions-ledger-title-flow-updated">{updated}</span>
+              <span className="sessions-ledger-title-flow-updated">Updated {updated}</span>
               {repositoryLabel ? (
                 <span className="sessions-ledger-title-flow-repository">{repositoryLabel}</span>
               ) : null}

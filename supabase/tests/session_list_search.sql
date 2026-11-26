@@ -157,10 +157,13 @@ select is(payload->'scopeFacets',
 select is(payload->'stageFacets',
   case scope
     when 'active' then '[{"count":1,"name":"Plan","position":1,"slug":"plan"},{"count":1,"name":"Build","position":2,"slug":"build"}]'::jsonb
-    when 'archived' then '[{"count":1,"name":"Build","position":2,"slug":"build"}]'::jsonb
+    when 'archived' then case stage
+      when 'plan' then '[{"count":1,"name":"Build","position":2,"slug":"build"},{"count":0,"name":"Plan","position":1,"slug":"plan"}]'::jsonb
+      else '[{"count":1,"name":"Build","position":2,"slug":"build"}]'::jsonb
+    end
     else '[{"count":1,"name":"Plan","position":1,"slug":"plan"},{"count":2,"name":"Build","position":2,"slug":"build"}]'::jsonb
   end,
-  format('%s/%s/%s stage counts honor scope and ignore stage', query, scope, coalesce(stage, 'all'))
+  format('%s/%s/%s stage counts honor scope and retain a selected stage at zero', query, scope, coalesce(stage, 'all'))
 ) from filtered_search;
 
 select is(

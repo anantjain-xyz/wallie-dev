@@ -414,6 +414,19 @@ select is(
   'the session list RPC returns only the member factory'
 );
 select is(
+  public.get_session_list_page('factory-scope-primary', status_filter => 'in_progress')#>>'{scopeFacets,all}',
+  '1',
+  'filtering display status does not include sibling-factory sessions in counts'
+);
+select is(
+  public.get_session_list_page('factory-scope-primary', status_filter => 'in_progress',
+    target_factory_id => (select factory_id from scope_fixtures where slug = 'payments'),
+    stage_filter_slug => 'plan'
+  )->'stageFacets',
+  '[]'::jsonb,
+  'the filtered ledger cannot discover a restricted factory stage'
+);
+select is(
   public.get_session_detail_page('factory-scope-primary', 2),
   null::jsonb,
   'the session detail RPC hides a sibling-factory session'
