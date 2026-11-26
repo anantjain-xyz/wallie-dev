@@ -80,6 +80,7 @@ function renderSection({
   variant?: "onboarding" | "settings";
 } = {}) {
   const onSettingsChange = vi.fn();
+  const onDraftStateChange = vi.fn();
   const setFlashMessage = vi.fn();
 
   function Harness() {
@@ -87,6 +88,7 @@ function renderSection({
     return (
       <SandboxProviderSection
         canManage={canManage}
+        onDraftStateChange={onDraftStateChange}
         onSettingsChange={(next) => {
           onSettingsChange(next);
           if (stateful) setCurrentSettings(next);
@@ -106,7 +108,7 @@ function renderSection({
     </OverlayProvider>,
   );
 
-  return { onSettingsChange, setFlashMessage };
+  return { onDraftStateChange, onSettingsChange, setFlashMessage };
 }
 
 beforeAll(() => {
@@ -190,6 +192,38 @@ describe("SandboxProviderSection provider selection", () => {
     expect(screen.queryByRole("heading", { name: "Connect E2B" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Connect Daytona" })).not.toBeInTheDocument();
   });
+
+  it.each([
+    ["API URL (optional)", "https://daytona.example.test/api"],
+    ["Target (optional)", "draft-target"],
+  ])(
+    "keeps the Daytona %s draft guarded after selecting another provider",
+    async (label, value) => {
+      const user = userEvent.setup();
+      const { onDraftStateChange } = renderSection({
+        settings: sandboxSettings({ daytona: daytonaConnection }),
+        variant: "onboarding",
+      });
+      const daytona = screen.getByRole("radio", { name: /Daytona/ });
+      const e2b = screen.getByRole("radio", { name: /E2B/ });
+      expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false });
+
+      await user.click(daytona);
+      await user.click(screen.getByRole("button", { name: "Replace connection" }));
+      await user.clear(screen.getByLabelText(label));
+      await user.type(screen.getByLabelText(label), value);
+      await user.type(screen.getByLabelText("API key"), "synthetic-daytona-key");
+      await user.click(e2b);
+      expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: true, pending: false });
+
+      await user.click(daytona);
+      await user.click(screen.getByRole("button", { name: "Replace connection" }));
+      expect(screen.getByLabelText(label)).toHaveValue(value);
+      expect(screen.getByLabelText("API key")).toHaveValue("");
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false });
+    },
+  );
 });
 
 describe("SandboxProviderSection saves", () => {
@@ -278,7 +312,7 @@ describe("SandboxProviderSection saves", () => {
 
 describe("Vercel target discovery", () => {
   const northwind = { id: "team_123", name: "Northwind", slug: "northwind" };
-  const acme = { id: "team_other", name: "Acme", slug: "acme" };
+  const acme = { id: "team_other", name: "acme", slug: "acme" };
 
   it("restores a saved target by name and scopes projects to the chosen team", async () => {
     const user = userEvent.setup();
@@ -298,6 +332,7 @@ describe("Vercel target discovery", () => {
 
     const team = await screen.findByRole("combobox", { name: "Team" });
     expect(team).toHaveValue("team_123");
+    expect(within(team).getByRole("option", { name: "acme" })).toHaveValue("team_other");
     expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("prj_123");
     await user.selectOptions(team, "team_other");
     expect(await screen.findByRole("option", { name: "Acme runner · acme" })).toBeInTheDocument();

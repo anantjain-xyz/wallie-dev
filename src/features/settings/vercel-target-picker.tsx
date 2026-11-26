@@ -233,7 +233,7 @@ export function VercelTargetPicker({
                 <option value="">Choose a team</option>
                 {teams.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} · {item.slug}
+                    {item.name === item.slug ? item.slug : `${item.name} · ${item.slug}`}
                   </option>
                 ))}
               </select>

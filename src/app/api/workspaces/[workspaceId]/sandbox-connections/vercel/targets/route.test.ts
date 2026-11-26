@@ -65,16 +65,21 @@ describe("POST Vercel sandbox target lookup", () => {
       .mockResolvedValueOnce(
         Response.json({
           pagination: { next: null },
-          teams: [{ id: "team_b", name: "Northwind", slug: "northwind" }],
+          teams: [
+            { id: "team_b", name: null, slug: "northwind" },
+            { id: "team_c", slug: "contoso" },
+          ],
         }),
       );
 
     const result = await send({ token: syntheticToken });
+    expect(result.status).toBe(200);
     expect(result.headers.get("cache-control")).toBe("no-store");
     expect(await result.json()).toEqual({
       teams: [
         { id: "team_a", name: "Acme", slug: "acme" },
-        { id: "team_b", name: "Northwind", slug: "northwind" },
+        { id: "team_b", name: "northwind", slug: "northwind" },
+        { id: "team_c", name: "contoso", slug: "contoso" },
       ],
     });
     expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
@@ -86,6 +91,17 @@ describe("POST Vercel sandbox target lookup", () => {
       headers: { Authorization: `Bearer ${syntheticToken}` },
       redirect: "error",
     });
+  });
+
+  it.each([
+    { id: "team_a", name: null },
+    { name: null, slug: "acme" },
+    { id: "team_a", name: 3, slug: "acme" },
+  ])("rejects malformed team records even when the name is optional: %j", async (team) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ teams: [team], pagination: { next: null } }),
+    );
+    expect((await send({ token: syntheticToken })).status).toBe(502);
   });
 
   it("limits returned project metadata to the requested team", async () => {

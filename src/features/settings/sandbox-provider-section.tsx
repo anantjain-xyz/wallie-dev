@@ -71,8 +71,9 @@ export function SandboxProviderSection({
     e2b: "",
   });
   const [vercelDirty, setVercelDirty] = useState(false);
-  const [daytonaApiUrl, setDaytonaApiUrl] = useState(settings.connections.daytona?.apiUrl ?? "");
-  const [daytonaTarget, setDaytonaTarget] = useState(settings.connections.daytona?.target ?? "");
+  const [daytonaDraft, setDaytonaDraft] = useState<{ apiUrl?: string; target?: string } | null>(
+    null,
+  );
   const [selectedProvider, setSelectedProvider] = useState<SandboxProvider | null>(() => {
     if (variant === "onboarding") {
       return settings.connections[settings.activeProvider] ? settings.activeProvider : null;
@@ -86,15 +87,16 @@ export function SandboxProviderSection({
   const [pending, setPending] = useState<string | null>(null);
   const [disconnectProvider, setDisconnectProvider] = useState<SandboxProvider | null>(null);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const savedDaytonaApiUrl = settings.connections.daytona?.apiUrl ?? "";
+  const savedDaytonaTarget = settings.connections.daytona?.target ?? "";
+  const daytonaApiUrl = daytonaDraft?.apiUrl ?? savedDaytonaApiUrl;
+  const daytonaTarget = daytonaDraft?.target ?? savedDaytonaTarget;
   const dirty =
-    selectedProvider === "vercel"
-      ? vercelDirty
-      : selectedProvider === "e2b"
-        ? apiKeys.e2b.length > 0
-        : selectedProvider === "daytona" &&
-          (apiKeys.daytona.length > 0 ||
-            daytonaApiUrl !== (settings.connections.daytona?.apiUrl ?? "") ||
-            daytonaTarget !== (settings.connections.daytona?.target ?? ""));
+    (selectedProvider === "vercel" && vercelDirty) ||
+    apiKeys.e2b.length > 0 ||
+    apiKeys.daytona.length > 0 ||
+    daytonaApiUrl !== savedDaytonaApiUrl ||
+    daytonaTarget !== savedDaytonaTarget;
   const isPending = pending !== null;
   useEffect(() => {
     onDraftStateChange?.({ dirty, pending: isPending });
@@ -114,22 +116,14 @@ export function SandboxProviderSection({
     if (provider !== "vercel") setApiKeys((current) => ({ ...current, [provider]: "" }));
   }
 
-  function restoreNonSecretFields(provider: SandboxProvider) {
-    if (provider === "daytona") {
-      setDaytonaApiUrl(settings.connections.daytona?.apiUrl ?? "");
-      setDaytonaTarget(settings.connections.daytona?.target ?? "");
-    }
-  }
-
   function startReplace(provider: SandboxProvider) {
-    restoreNonSecretFields(provider);
     clearSecretDraft(provider);
     setReplacingProvider(provider);
   }
 
   function cancelReplace(provider: SandboxProvider) {
     clearSecretDraft(provider);
-    restoreNonSecretFields(provider);
+    if (provider === "daytona") setDaytonaDraft(null);
     setReplacingProvider(null);
   }
 
@@ -152,6 +146,7 @@ export function SandboxProviderSection({
         connections: { ...settings.connections, [provider]: result.connection },
       });
       clearSecretDraft(provider);
+      if (provider === "daytona") setDaytonaDraft(null);
       setReplacingProvider(null);
       setFlashMessage({ kind: "success", text: `${providerLabel(provider)} connection saved.` });
     } catch (error) {
@@ -176,6 +171,7 @@ export function SandboxProviderSection({
         ...settings,
         connections: { ...settings.connections, [provider]: null },
       });
+      if (provider === "daytona") setDaytonaDraft(null);
       setReplacingProvider((current) => (current === provider ? null : current));
       setDisconnectProvider(null);
       setFlashMessage({ kind: "success", text: `${providerLabel(provider)} disconnected.` });
@@ -268,8 +264,16 @@ export function SandboxProviderSection({
           onChange={(value) => setApiKeys((current) => ({ ...current, daytona: value }))}
           value={apiKeys.daytona}
         />
-        <TextInput label="API URL (optional)" onChange={setDaytonaApiUrl} value={daytonaApiUrl} />
-        <TextInput label="Target (optional)" onChange={setDaytonaTarget} value={daytonaTarget} />
+        <TextInput
+          label="API URL (optional)"
+          onChange={(apiUrl) => setDaytonaDraft((current) => ({ ...current, apiUrl }))}
+          value={daytonaApiUrl}
+        />
+        <TextInput
+          label="Target (optional)"
+          onChange={(target) => setDaytonaDraft((current) => ({ ...current, target }))}
+          value={daytonaTarget}
+        />
         <FormActions
           disabled={pending !== null}
           onCancel={onCancel}

@@ -8,7 +8,12 @@ const target = z.object({
   id: z.string().trim().min(1).max(128),
   name: z.string().trim().min(1).max(256),
 });
-const team = target.extend({ slug: z.string().trim().min(1).max(256) });
+const team = target
+  .extend({
+    name: target.shape.name.nullish(),
+    slug: z.string().trim().min(1).max(256),
+  })
+  .transform((item) => ({ ...item, name: item.name ?? item.slug }));
 const project = target.extend({ accountId: z.string().optional() });
 const pagination = z.object({
   next: z.union([z.number().int().nonnegative(), z.string().min(1).max(2048)]).nullable(),
