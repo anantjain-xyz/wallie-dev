@@ -28,6 +28,7 @@ import type { ExactSessionReviewTarget } from "@/lib/sessions/review-link";
 
 vi.mock("@/features/sessions/detail/use-approval-review", () => ({
   useApprovalReview: () => ({
+    confirmedRevision: mocked.approvalReview?.reviewRevision ?? null,
     value: mocked.approvalReview,
     error: null,
     refresh: vi.fn(),
@@ -946,6 +947,63 @@ describe("SessionDetailPageClient", () => {
       ),
     );
     expect(mocked.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks before stopping a queued rerun and Undo only unarchives", async () => {
+    const data = makeSessionDetailData();
+    data.session.phaseStatus = "rejected";
+    const archivedAt = "2026-06-07T12:00:00.000Z";
+    const requests: Array<string | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!url.endsWith("/archive")) return Response.json({});
+        requests.push(init?.method);
+        return Response.json({
+          id: data.session.id,
+          archivedAt: init?.method === "DELETE" ? null : archivedAt,
+          phaseStatus: "rejected",
+          updatedAt: archivedAt,
+        });
+      }),
+    );
+    render(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionDetailPageClient, {
+          activity: null,
+          initialData: data,
+          initialFormattedArtifact: null,
+          initialFormattedArtifactKey: null,
+          latestRun: {
+            id: "queued-run",
+            stageId: data.session.currentStageId,
+            createdAt: data.session.updatedAt,
+            updatedAt: data.session.updatedAt,
+            status: "queued",
+          },
+        }),
+      ),
+    );
+    const archive = screen.getByRole("button", { name: "Archive" });
+    fireEvent.click(archive);
+    const confirmation = await screen.findByRole("alertdialog");
+    expect(confirmation).toHaveAccessibleDescription(/Unarchiving won’t restart this run/);
+    expect(requests).toEqual([]);
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(archive).toHaveFocus());
+    fireEvent.click(archive);
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Stop run and archive" })),
+    );
+    expect(requests).toEqual(["POST"]);
+    const undo = mocked.pushToast.mock.calls.find(([toast]) => toast.action?.label === "Undo")?.[0];
+    expect(undo?.description).toMatch(/doesn’t restart the run/);
+    await act(async () => undo?.action?.onClick());
+    expect(requests).toEqual(["POST", "DELETE"]);
+    expect(screen.getByRole("button", { name: "Archive" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
   });
 
   it("reconciles recovered snapshots without overwriting newer session state", async () => {

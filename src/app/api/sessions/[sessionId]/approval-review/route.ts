@@ -24,18 +24,30 @@ export async function GET(
     const [countResult, delivery] = await Promise.all([
       supabase
         .from("artifact_review_threads")
-        .select("id", { count: "exact", head: true })
+        .select("id, artifact_id, artifact_version, stage_slug", { count: "exact" })
         .eq("workspace_id", session.workspace_id)
         .eq("session_id", session.id)
         .eq("kind", "blocking")
-        .eq("status", "open"),
+        .eq("status", "open")
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(1),
       evaluateSessionPrReadiness(supabase, session.id, { record: false }).catch(() => null),
     ]);
-    const { count, error } = countResult;
+    const { count, data, error } = countResult;
     if (error || count === null) throw error ?? new Error("Review count unavailable.");
+    const first = data?.[0];
     return reviewJson({
       reviewRevision,
       blockingCount: count,
+      blockingTarget: first
+        ? {
+            threadId: first.id,
+            artifactId: first.artifact_id,
+            artifactVersion: first.artifact_version,
+            stageSlug: first.stage_slug,
+          }
+        : null,
       ...(delivery
         ? {
             delivery: {

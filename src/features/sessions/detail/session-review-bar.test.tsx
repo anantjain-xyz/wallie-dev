@@ -8,12 +8,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
+import type { ApprovalReview } from "@/features/sessions/detail/use-approval-review";
 
 const approvalState = vi.hoisted(() => ({
-  value: { reviewRevision: 7, blockingCount: 0 } as {
-    reviewRevision: number;
-    blockingCount: number;
-  } | null,
+  value: { reviewRevision: 7, blockingCount: 0 } as ApprovalReview | null,
   error: null as string | null,
   refresh: vi.fn(),
 }));
@@ -67,6 +65,96 @@ describe("SessionReviewBar", () => {
     expect(screen.getByRole("button", { name: "Approve stage" })).toHaveAccessibleDescription(
       description,
     );
+  });
+
+  it("opens the exact earlier-version blocker with no PR gate and advances to the next blocker", async () => {
+    const first = {
+      artifactId: "artifact-previous",
+      artifactVersion: 1,
+      threadId: "first",
+      stageSlug: "plan",
+    };
+    const second = { ...first, artifactVersion: 2, artifactId: "artifact-2", threadId: "next" };
+    const thread = {
+      id: first.threadId,
+      artifact_id: first.artifactId,
+      artifact_version: first.artifactVersion,
+      stage_slug: first.stageSlug,
+      status: "open",
+      kind: "blocking",
+      author_label: "Reviewer",
+      revision: 3,
+      anchor: { quote: "Exact earlier passage" },
+    };
+    let resolved = false;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        resolved = true;
+        return Response.json({ thread: { ...thread, status: "resolved" } });
+      }
+      if (url.endsWith("/comments")) return Response.json({ comments: [], nextCursor: null });
+      if (url.endsWith("/reviews/first"))
+        return Response.json({ thread: { ...thread, status: resolved ? "resolved" : "open" } });
+      return Response.json({
+        threads: [],
+        submittedThreadRevisions: {},
+        counts: { total: 1, open: 1, blocking: 1 },
+        viewer: { memberId: "reviewer", canReview: true, readOnlyReason: null },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    approvalState.value = { reviewRevision: 7, blockingCount: 2, blockingTarget: first };
+    const props = {
+      sessionId: "session-1",
+      stageNames: { plan: "Planning" },
+      onRefreshReview: () => {
+        approvalState.value = { reviewRevision: 8, blockingCount: 1, blockingTarget: second };
+      },
+    };
+    const view = renderBar(props);
+    expect(screen.getByRole("button", { name: /Approve/ })).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open blocking request (Planning · Version 1)" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Blocking request" });
+    expect(dialog).toHaveAccessibleDescription("Planning · Version 1");
+    expect(await within(dialog).findByText("Exact earlier passage")).toBeVisible();
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/sessions/session-1/reviews?artifactId=artifact-previous",
+      expect.anything(),
+    );
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/sessions/session-1/reviews/first",
+      expect.anything(),
+    );
+    fireEvent.change(within(dialog).getByLabelText("Reason for changing thread status"), {
+      target: { value: "Verified against the current material." },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Resolve thread" }));
+    expect(await within(dialog).findByText("Thread resolved.")).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/sessions/session-1/reviews/first",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+    view.rerender(
+      <OverlayProvider>
+        <SessionReviewBar
+          {...props}
+          approveLabel="Approve stage"
+          mode={{ canApprove: true, kind: "reviewable" }}
+          onApprove={vi.fn()}
+          onReject={vi.fn()}
+          phaseActionPending={null}
+          reviewArtifact={reviewArtifact}
+        />
+      </OverlayProvider>,
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close dialog" }));
+    const next = screen.getByRole("button", {
+      name: "Open blocking request (Planning · Version 2)",
+    });
+    await waitFor(() => expect(next).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Approve stage" })).toBeDisabled();
   });
 
   it("preserves the draft and refuses to retarget it when the reviewed output changes", async () => {

@@ -136,7 +136,7 @@ test("review and activity work while the SDK loads, then authenticated recovery 
     expect(fixture.joins).toHaveLength(0);
 
     const activity = page.getByRole("region", { name: "Session runs", exact: true });
-    const disclosure = activity.getByRole("button", { name: /run activity: Completed/ }).first();
+    const disclosure = activity.getByRole("button", { name: /^Completed .* run Attempt/ }).first();
     await expect(disclosure).toBeVisible();
     await disclosure.click();
     await expect(disclosure).toHaveAttribute("aria-expanded", "true");

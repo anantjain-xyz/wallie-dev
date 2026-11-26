@@ -8,6 +8,7 @@ import {
 } from "@/lib/supabase/deferred-browser";
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
+import { blockingReviewTargetSchema, type BlockingReviewTarget } from "./blocking-review-target";
 
 export type ApprovalReviewDelivery = {
   required: boolean;
@@ -18,6 +19,7 @@ export type ApprovalReviewDelivery = {
 export type ApprovalReview = {
   reviewRevision: number;
   blockingCount: number;
+  blockingTarget?: BlockingReviewTarget | null;
   delivery?: ApprovalReviewDelivery | null;
 };
 
@@ -38,28 +40,42 @@ const approvalReviewSchema = z
   .object({
     reviewRevision: z.number().int().nonnegative(),
     blockingCount: z.number().int().nonnegative(),
+    blockingTarget: blockingReviewTargetSchema.nullable().optional(),
     delivery: approvalDeliverySchema.nullable().optional(),
   })
   .strict();
 
 /** Approval is disabled until the reviewer sees an authoritative, bounded summary. */
-export function useApprovalReview(sessionId: string | undefined, artifactId: string | undefined) {
+export function useApprovalReview(
+  sessionId: string | undefined,
+  artifactId: string | undefined,
+  verificationKey?: string,
+) {
   const config = useSupabasePublicConfig();
   const { recovery } = useRealtimeRecovery();
   const [state, setState] = useState<{
     key: string;
+    scope: string;
+    confirmedRevision: number | null;
     value: ApprovalReview | null;
     error: string | null;
   } | null>(null);
   const sequence = useRef(0);
-  const key = `${sessionId}:${artifactId}`;
+  const scope = `${sessionId}:${artifactId}`;
+  const key = `${scope}:${verificationKey ?? ""}`;
   const invalidate = useCallback(() => {
     sequence.current += 1;
   }, []);
   const refresh = useCallback(async () => {
     if (!sessionId || !artifactId) return;
     const request = ++sequence.current;
-    setState({ key, value: null, error: null });
+    setState((prev) => ({
+      key,
+      scope,
+      confirmedRevision: prev?.scope === scope ? prev.confirmedRevision : null,
+      value: null,
+      error: null,
+    }));
     try {
       const response = await fetch(`/api/sessions/${sessionId}/approval-review`, {
         cache: "no-store",
@@ -67,16 +83,19 @@ export function useApprovalReview(sessionId: string | undefined, artifactId: str
       const parsed = approvalReviewSchema.safeParse(await response.json());
       if (!response.ok || !parsed.success) throw new Error("Review state unavailable.");
       const value = parsed.data;
-      if (request === sequence.current) setState({ key, value, error: null });
+      if (request === sequence.current)
+        setState({ key, scope, confirmedRevision: value.reviewRevision, value, error: null });
     } catch {
       if (request === sequence.current)
         setState({
           key,
+          scope,
+          confirmedRevision: null,
           value: null,
           error: "Could not confirm blocking requests. Refresh review before approving.",
         });
     }
-  }, [artifactId, key, sessionId]);
+  }, [artifactId, key, scope, sessionId]);
   useEffect(() => {
     void refresh();
     window.addEventListener("focus", refresh);
@@ -114,6 +133,7 @@ export function useApprovalReview(sessionId: string | undefined, artifactId: str
     });
   }, [artifactId, config, recovery, refresh, sessionId]);
   return {
+    confirmedRevision: state?.scope === scope ? state.confirmedRevision : null,
     value: state?.key === key ? state.value : null,
     error: state?.key === key ? state.error : null,
     refresh,

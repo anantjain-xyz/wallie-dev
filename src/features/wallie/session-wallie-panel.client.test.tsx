@@ -366,7 +366,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(history.queryByRole("button", { name: /Retry .* stage/ })).toBeNull();
     fireEvent.click(
       history.getByRole("button", {
-        name: "Plan run, attempt 2, run run-2, 2026-07-18 12:57 UTC, activity: Failed",
+        name: /^Failed Plan run Attempt 2\b/,
         expanded: false,
       }),
     );
@@ -543,7 +543,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(screen.getByText(/Check the activity and timeout settings/)).toBeTruthy();
     expect(fake.messageQueries).toEqual([]);
     const toggle = screen.getByRole("button", {
-      name: /Stage 1 run, attempt 1, run run-1, .*activity:/,
+      name: /^Failed Stage 1 run Attempt 1\b/,
     });
     fireEvent.click(toggle);
     await screen.findByText("Activity error details");
@@ -834,9 +834,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(view.container.querySelector('[aria-label="Current Wallie run"]')).toBeNull();
     expect(view.container.querySelector('[data-run-id="run-1"]')?.closest("details")).toBeNull();
     expect(
-      screen
-        .getByRole("button", { name: /Plan run, attempt 1, run run-1, .*activity:/ })
-        .getAttribute("aria-expanded"),
+      screen.getByRole("button", { name: /Plan run Attempt 1\b/ }).getAttribute("aria-expanded"),
     ).toBe("false");
     expect(fake.messageQueries).toEqual([]);
   });
@@ -1437,7 +1435,7 @@ describe("SessionWalliePanel activity states", () => {
       vi.fn(async () => new Response(JSON.stringify({ nextCursor: null, runs: [current] }))),
     );
     panel(data([current]), fake.supabase);
-    fireEvent.click(screen.getByRole("button", { name: /activity: Completed/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Completed .* run Attempt/ }));
     const activity = within(screen.getByRole("list", { name: "Run activity" }));
     await activity.findByText("First canonical event");
     expect(activity.getAllByRole("listitem").map((entry) => entry.textContent)).toEqual([
@@ -2033,9 +2031,7 @@ describe("live update recovery regression", () => {
     ];
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
     expect(screen.getByText("Completed")).toBeTruthy();
-    fireEvent.click(
-      screen.getByRole("button", { name: /Build run, attempt 1, run run-1, .*activity:/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^Completed Build run Attempt 1\b/ }));
     expect(screen.getByText("Saved during the outage")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

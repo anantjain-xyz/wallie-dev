@@ -86,6 +86,49 @@ it("ignores late evidence from a different artifact and invalidates when review 
   expect(result.current.value).toBeNull();
 });
 
+it("rechecks on each accepted verification change and ignores an older answer", async () => {
+  const blocked = { required: true, state: "blocked", blockers: [] };
+  const ready = { ...blocked, state: "ready" };
+  const snapshot = (delivery: typeof blocked) =>
+    Response.json({
+      reviewRevision: 7,
+      blockingCount: 0,
+      delivery,
+    });
+  let finishReady!: (value: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(snapshot(blocked))
+      .mockResolvedValueOnce(snapshot(ready))
+      .mockReturnValueOnce(
+        new Promise<Response>((resolve) => {
+          finishReady = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(snapshot(blocked)),
+  );
+  const { result, rerender } = renderHook(
+    ({ verification }) => useApprovalReview("session", "artifact", verification),
+    { initialProps: { verification: "observation-1" } },
+  );
+  await waitFor(() => expect(result.current.value?.delivery?.state).toBe("blocked"));
+  rerender({ verification: "observation-2" });
+  expect(result.current.value).toBeNull();
+  expect(result.current.confirmedRevision).toBe(7);
+  await waitFor(() => expect(result.current.value?.delivery?.state).toBe("ready"));
+  void act(() => {
+    void result.current.refresh();
+  });
+  expect(result.current.value).toBeNull();
+  rerender({ verification: "observation-3" });
+  expect(result.current.value).toBeNull();
+  await waitFor(() => expect(result.current.value?.delivery?.state).toBe("blocked"));
+  await act(async () => finishReady(snapshot(ready)));
+  expect(result.current.value?.delivery?.state).toBe("blocked");
+});
+
 function realtimeClient() {
   const channel = {
     on: vi.fn().mockReturnThis(),

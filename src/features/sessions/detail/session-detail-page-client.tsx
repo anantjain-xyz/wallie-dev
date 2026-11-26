@@ -19,6 +19,7 @@ import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   SessionExecutionProvider,
@@ -57,11 +58,13 @@ import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/se
 import { SessionDetailHeader } from "./session-detail-header";
 import { ArchivedRetentionActions } from "./archived-retention-actions";
 import { useApprovalReview } from "./use-approval-review";
+import { useReviewEvidence } from "./use-review-evidence";
 import { SessionStageWorkspace } from "./session-stage-workspace";
 import { SessionSpecificationControl, useSessionSpecification } from "./session-specification";
 import { SessionActivityPresentationProvider } from "./session-activity-presentation";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
-import { SessionReviewEvidence } from "@/features/sessions/detail/session-review-evidence";
+import { SessionReviewEvidenceView } from "@/features/sessions/detail/session-review-evidence";
+import { isWallieRunActiveStatus } from "@/features/wallie/utils";
 import {
   SessionReviewBar,
   type SessionFeedbackSubmission,
@@ -103,6 +106,7 @@ import {
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import type { ExactSessionReviewTarget } from "@/lib/sessions/review-link";
+import type { parseSessionBrowseReturn } from "@/lib/sessions/browse-return";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 
@@ -130,6 +134,7 @@ function isAcceptedFeedbackReceipt(value: unknown): value is AcceptedFeedbackRec
 
 type SessionDetailPageClientProps = {
   activity: ReactNode;
+  browseReturn?: ReturnType<typeof parseSessionBrowseReturn>;
   canReview?: boolean;
   failedStageSlug?: string | null;
   hasFailedRun?: boolean;
@@ -204,7 +209,8 @@ function exactReviewStatus(
   approval: ReturnType<typeof useApprovalReview>,
 ) {
   if (!isCurrent) return "stale";
-  if (approval.value && approval.value.reviewRevision !== target.reviewRevision) return "stale";
+  if (approval.confirmedRevision !== null && approval.confirmedRevision !== target.reviewRevision)
+    return "stale";
 
   if (target.clarificationId) {
     if (!specification) return "stale";
@@ -223,7 +229,7 @@ function exactReviewStatus(
   if (specification && !specification.canReview) {
     return specification.view.status === "ready" ? "stale" : specification.view.status;
   }
-  if (approval.value) return "review";
+  if (approval.confirmedRevision !== null) return "review";
   return approval.error ? "error" : "checking";
 }
 
@@ -241,6 +247,7 @@ export function SessionDetailPageClient(props: SessionDetailPageClientProps) {
 
 function SessionDetailContent({
   activity,
+  browseReturn,
   canReview = true,
   failedStageSlug: initialFailedStageSlug = null,
   hasFailedRun: initialHasFailedRun = false,
@@ -290,6 +297,8 @@ function SessionDetailContent({
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  const archiveFocusRef = useRef<HTMLButtonElement | null>(null);
   const [viewingHistoricalArtifact, setViewingHistoricalArtifact] = useState(false);
   const [displayedArtifact, setDisplayedArtifact] = useState<DisplayedArtifactIdentity | null>(
     null,
@@ -352,6 +361,10 @@ function SessionDetailContent({
     () => buildStageTimeline(session, { failedStageSlug, currentRun }),
     [failedStageSlug, currentRun, session],
   );
+  const stageNames = useMemo(
+    () => Object.fromEntries(session.pipeline.stages.map(({ slug, name }) => [slug, name])),
+    [session.pipeline.stages],
+  );
 
   const selectedStage = session.pipeline.stages.find((s) => s.slug === selectedStageSlug) ?? null;
 
@@ -413,16 +426,56 @@ function SessionDetailContent({
     session.currentArtifactId === exactTarget.artifactId &&
     session.currentArtifactVersion === exactTarget.artifactVersion,
   );
-  const exactApproval = useApprovalReview(
-    exactTargetIsCurrent ? session.id : undefined,
-    exactTarget?.artifactId,
+  const runIsFocus =
+    selectedStageIsCurrent &&
+    phaseActionPending === null &&
+    (session.phaseStatus === "in_progress" ||
+      session.phaseStatus === "rejected" ||
+      (hasFailedRun && session.phaseStatus !== "approved") ||
+      stopPending);
+  const pinnedEvidenceArtifact =
+    (searchParams.get(SCREENSHOT_EVIDENCE_PARAM) === "1" ||
+      searchParams.get(RECORDING_EVIDENCE_PARAM) === "1") &&
+    Boolean(searchParams.get(ARTIFACT_ID_PARAM));
+  const reviewEvidence = useReviewEvidence(
+    (exactTarget ? exactTargetIsCurrent : !runIsFocus || pinnedEvidenceArtifact)
+      ? session.id
+      : undefined,
   );
+  const verification = reviewEvidence.value;
+  const verificationState = verification?.approvalGated
+    ? verification.refresh.status === "pending" || verification.refresh.status === "claimed"
+      ? "checking"
+      : verification.evaluation.state
+    : undefined;
+  const approvalReview = useApprovalReview(
+    (
+      exactTarget
+        ? exactTargetIsCurrent
+        : canApprove &&
+          selectedStageIsCurrent &&
+          !viewingHistoricalArtifact &&
+          !session.archivedAt &&
+          !hasFailedRun &&
+          session.phaseStatus === "awaiting_review"
+    )
+      ? session.id
+      : undefined,
+    exactTarget?.artifactId ?? reviewArtifact?.artifactId,
+    verificationState === undefined
+      ? undefined
+      : JSON.stringify([verification?.sourceObservationId, verificationState]),
+  );
+  const refreshReview = () => {
+    void approvalReview.refresh();
+    void reviewEvidence.refresh();
+  };
   const exactReviewState = exactTarget
     ? exactReviewStatus(
         exactTarget,
         exactTargetIsCurrent,
         selectedStageIsSpecification ? specification : null,
-        exactApproval,
+        approvalReview,
       )
     : null;
   const exactReadOnly =
@@ -470,17 +523,6 @@ function SessionDetailContent({
             } as const)
           : reviewMode;
 
-  const runIsFocus =
-    selectedStageIsCurrent &&
-    phaseActionPending === null &&
-    (session.phaseStatus === "in_progress" ||
-      session.phaseStatus === "rejected" ||
-      (hasFailedRun && session.phaseStatus !== "approved") ||
-      stopPending);
-  const pinnedEvidenceArtifact =
-    (searchParams.get(SCREENSHOT_EVIDENCE_PARAM) === "1" ||
-      searchParams.get(RECORDING_EVIDENCE_PARAM) === "1") &&
-    Boolean(searchParams.get(ARTIFACT_ID_PARAM));
   const artifactAvailable =
     Boolean(exactTarget) ||
     pinnedEvidenceArtifact ||
@@ -1165,7 +1207,11 @@ function SessionDetailContent({
     }
   }
 
-  async function handleArchive() {
+  const archiveStopsWork =
+    session.phaseStatus === "in_progress" ||
+    (currentRun !== null && isWallieRunActiveStatus(currentRun.status));
+
+  async function handleArchive(stopsWork: boolean) {
     if (archivePending !== null || phaseActionPending !== null || stopPending) return;
     archiveUndoVersionRef.current = null;
     setArchiveError(null);
@@ -1198,6 +1244,7 @@ function SessionDetailContent({
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
           ),
       });
+      setArchiveDialogOpen(false);
       if (!result.archivedAt) {
         pushToast({
           priority: "polite",
@@ -1226,6 +1273,9 @@ function SessionDetailContent({
         duration: 7000,
         priority: "polite",
         title: `Session #${session.number} archived.`,
+        description: stopsWork
+          ? "Undo unarchives the session. It doesn’t restart the run."
+          : undefined,
         tone: "success",
       });
     } catch (error) {
@@ -1324,6 +1374,7 @@ function SessionDetailContent({
           sessionId={session.id}
         >
           <button
+            ref={archiveFocusRef}
             type="button"
             className="ui-button gap-1.5"
             disabled={archivePending !== null || phaseActionPending !== null}
@@ -1347,12 +1398,17 @@ function SessionDetailContent({
       <div className="flex items-center gap-2">
         <Tooltip content="Archive">
           <button
+            ref={archiveFocusRef}
             type="button"
             className="ui-icon-button"
             aria-label="Archive"
             aria-busy={archivePending === "archive" || undefined}
             disabled={archivePending !== null || phaseActionPending !== null || stopPending}
-            onClick={() => void handleArchive()}
+            onClick={() => {
+              setArchiveError(null);
+              if (archiveStopsWork) setArchiveDialogOpen(true);
+              else void handleArchive(false);
+            }}
           >
             {archivePending === "archive" ? (
               <Spinner className="h-3.5 w-3.5" />
@@ -1415,6 +1471,7 @@ function SessionDetailContent({
       <VisibleInteractionBoundary action="sessions_to_detail" />
       <SessionDetailHeader
         actions={headerActions}
+        browseReturn={browseReturn}
         creatorDisplayName={creatorDisplayName}
         initialNow={renderNow}
         repository={repository}
@@ -1430,6 +1487,19 @@ function SessionDetailContent({
           />
         }
       />
+      <DestructiveConfirmationDialog
+        actionDisabled={Boolean(session.archivedAt) || phaseActionPending !== null || stopPending}
+        actionLabel="Stop run and archive"
+        description="This stops active work and cancels queued work. Unarchiving won’t restart this run."
+        errorMessage={archiveError}
+        onConfirm={() => void handleArchive(true)}
+        onOpenChange={setArchiveDialogOpen}
+        open={archiveDialogOpen}
+        pending={archivePending === "archive"}
+        pendingLabel="Stopping and archiving…"
+        restoreFocusRef={archiveFocusRef}
+        title={`Stop work and archive session #${session.number}?`}
+      />
       <SessionCompletionSummary session={session} />
       {exactTarget ? (
         <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -1444,7 +1514,9 @@ function SessionDetailContent({
           </p>
           <Link
             className="text-accent underline underline-offset-2"
-            href={workspaceSessionDetailPath(initialData.workspaceSlug, session.number)}
+            href={workspaceSessionDetailPath(initialData.workspaceSlug, session.number, {
+              returnTo: browseReturn?.href,
+            })}
           >
             Open current review
           </Link>
@@ -1471,9 +1543,11 @@ function SessionDetailContent({
         artifact={artifactViewer}
         evidence={
           stageFocus === "run" || exactReadOnly ? null : (
-            <SessionReviewEvidence
+            <SessionReviewEvidenceView
+              evidence={reviewEvidence}
               historical={!selectedStageIsCurrent || viewingHistoricalArtifact}
               initialNow={renderNow}
+              onBlockingChange={refreshReview}
               sessionId={session.id}
             />
           )
@@ -1517,7 +1591,10 @@ function SessionDetailContent({
             <SessionReviewBar
               attached
               sessionId={session.id}
-              approvalReview={exactTarget ? exactApproval : undefined}
+              approvalReview={approvalReview}
+              verificationState={verificationState}
+              onRefreshReview={refreshReview}
+              stageNames={stageNames}
               exactReviewRevision={exactTarget?.reviewRevision}
               approveLabel="Approve stage"
               approveDescription={

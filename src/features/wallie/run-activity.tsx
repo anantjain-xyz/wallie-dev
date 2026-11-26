@@ -5,7 +5,7 @@ import { memo, type ReactNode, useMemo, useState } from "react";
 import { useSessionRunFocus } from "@/features/sessions/detail/session-activity-presentation";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { ShimmerText } from "@/components/shared/shimmer-text";
-import { formatUtcTimestamp, TimeDisplay } from "@/components/shared/time-display";
+import { TimeDisplay } from "@/components/shared/time-display";
 import { agentRunStatusValue } from "@/components/ui/status";
 import {
   compactActivityText,
@@ -126,6 +126,7 @@ export const WallieRunCard = memo(function WallieRunCard({
 }: WallieRunCardProps) {
   const focused = useSessionRunFocus();
   const prominent = isPrimary && focused;
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const runDetailsId = `wallie-run-details-${run.id}`;
   const stalled = isRunActivityStalled({
     createdAt: run.createdAt,
@@ -192,7 +193,6 @@ export const WallieRunCard = memo(function WallieRunCard({
     <button
       aria-controls={runDetailsId}
       aria-expanded={isExpanded}
-      aria-label={`${formatStageRunLabel(run)}, attempt ${run.attemptCount}, run ${run.id}, ${formatUtcTimestamp(run.createdAt)}, activity: ${operation}`}
       className={cn(
         "flex min-h-9 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-[4px] py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
         prominent ? "text-xs text-muted" : "flex-1 text-sm",
@@ -201,6 +201,7 @@ export const WallieRunCard = memo(function WallieRunCard({
       type="button"
     >
       <ChevronDownIcon
+        aria-hidden="true"
         className={cn(
           "size-3.5 shrink-0 text-muted transition-transform motion-reduce:transition-none",
           !isExpanded && "-rotate-90",
@@ -446,7 +447,26 @@ export const WallieRunCard = memo(function WallieRunCard({
                 </div>
                 <div className="min-w-0">
                   <dt>Run ID</dt>
-                  <dd className="break-all font-mono text-foreground">{run.id}</dd>
+                  <dd>
+                    <code className="select-all break-all text-foreground">{run.id}</code>
+                    <button
+                      className="block min-h-9 text-accent underline underline-offset-2"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(run.id);
+                          setCopyStatus("Run ID copied.");
+                        } catch {
+                          setCopyStatus(
+                            "Couldn’t copy. You can select the run ID and copy it manually.",
+                          );
+                        }
+                      }}
+                      type="button"
+                    >
+                      Copy run ID
+                    </button>
+                    <span role="status">{copyStatus}</span>
+                  </dd>
                 </div>
                 {branchName ? (
                   <div className="min-w-0">
