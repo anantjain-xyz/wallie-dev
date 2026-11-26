@@ -445,6 +445,7 @@ export function ContextPageView({
                         key={item.id}
                       >
                         <Link
+                          aria-label={`${item.file_path} — ${repository}`}
                           className="min-w-0 underline-offset-4 hover:underline [overflow-wrap:anywhere]"
                           href={workspaceContextPath(workspaceSlug, {
                             factory: scope.factory.id,

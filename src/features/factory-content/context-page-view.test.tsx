@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -147,10 +148,16 @@ describe("Context source workflow", () => {
           query={{}}
         />,
       );
-      expect(screen.getByRole("link", { name: "docs/design.md atlas/design" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "docs/design.md — atlas/design" })).toHaveAttribute(
+        "href",
+        workspaceContextPath("atlas", { factory: factoryId, source: sourceId }),
+      );
       expect(
-        screen.getByRole("link", { name: "docs/design.md atlas/engineering" }),
-      ).toBeInTheDocument();
+        screen.getByRole("link", { name: "docs/design.md — atlas/engineering" }),
+      ).toHaveAttribute(
+        "href",
+        workspaceContextPath("atlas", { factory: factoryId, source: id(9) }),
+      );
       expect(screen.getAllByText("Pin status unavailable")).toHaveLength(2);
       expect(screen.getByRole("link", { name: "View Governance" })).toBeInTheDocument();
       if (isOperator)
