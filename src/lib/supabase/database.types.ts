@@ -13876,6 +13876,19 @@ export type Database = {
         }
         Returns: Json
       }
+      get_filtered_pipeline_dashboard_page: {
+        Args: {
+          cursor_seen_ids?: string[]
+          page_limit?: number
+          search_query?: string
+          status_filter?: string
+          target_factory_id?: string
+          target_pipeline_id?: string
+          target_stage_id?: string
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
       get_git_continuity_release_state: {
         Args: never
         Returns: {
