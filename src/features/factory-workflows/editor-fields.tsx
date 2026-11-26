@@ -51,8 +51,33 @@ const operations = [
   { id: "policy", label: "Execution policy" },
 ] as const;
 
+function ownerPath(path: Path): Path {
+  const [section, , , property, detail] = path;
+  if (section === "nodes" && path[2] === "approverMemberIds") return path.slice(0, 3);
+  if (section === "nodes" && path[2] === "repair" && property === "eligibleRuleIds") {
+    return path.slice(0, 4);
+  }
+  if (
+    section === "routePolicy" &&
+    (property === "allowedDestinationIds" || property === "foremanProfile")
+  ) {
+    return path.slice(0, 4);
+  }
+  if (section === "routePolicy" && property === "fallback" && detail === "kind") {
+    return path.slice(0, 4);
+  }
+  if (section === "delegationPolicy" && path[1] === "targets") return path.slice(0, 3);
+  if (
+    section === "repositorySets" &&
+    (property === "writerGrant" || property === "branchEdgeIds")
+  ) {
+    return path.slice(0, 4);
+  }
+  return path;
+}
+
 export function workflowFieldId(path: Path) {
-  return "workflow-field-" + path.map(String).join("-");
+  return "workflow-field-" + ownerPath(path).map(String).join("-");
 }
 
 function Field({
@@ -73,11 +98,15 @@ function Field({
   }) => ReactNode;
 }) {
   const id = workflowFieldId(path);
-  const issue = diagnostics.find(
-    ({ path: value }) => JSON.stringify(value) === JSON.stringify(path),
-  );
+  const issues = [
+    ...new Set(
+      diagnostics
+        .filter(({ path: value }) => workflowFieldId(value) === id)
+        .map(({ message }) => message),
+    ),
+  ];
   const descriptionId = description ? `${id}-description` : undefined;
-  const errorId = issue ? `${id}-error` : undefined;
+  const errorId = issues.length ? `${id}-error` : undefined;
   return (
     <div className="grid min-w-0 content-start gap-1.5">
       <label className="type-label" htmlFor={id}>
@@ -85,7 +114,7 @@ function Field({
       </label>
       {children({
         id,
-        "aria-invalid": issue ? true : undefined,
+        "aria-invalid": issues.length ? true : undefined,
         "aria-describedby": [descriptionId, errorId].filter(Boolean).join(" ") || undefined,
       })}
       {description ? (
@@ -93,10 +122,12 @@ function Field({
           {description}
         </p>
       ) : null}
-      {issue ? (
-        <p className="text-sm text-danger" id={errorId}>
-          {issue.message}
-        </p>
+      {errorId ? (
+        <div className="text-sm text-danger" id={errorId}>
+          {issues.map((message) => (
+            <p key={message}>{message}</p>
+          ))}
+        </div>
       ) : null}
     </div>
   );
@@ -104,47 +135,142 @@ function Field({
 
 type FieldProps = Omit<Parameters<typeof Field>[0], "children">;
 
+const unavailableReference = "Unavailable — choose a replacement";
+
+function matchesReference({ label }: Option, query: string) {
+  return query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .every((term) => label.toLowerCase().includes(term));
+}
+
+function ReferenceSearch({
+  label,
+  query,
+  change,
+  noMatches,
+  hasMore,
+}: {
+  label: string;
+  query: string;
+  change: (query: string) => void;
+  noMatches: boolean;
+  hasMore: boolean;
+}) {
+  return (
+    <div className="grid gap-1">
+      <label className="grid gap-1 text-xs text-muted">
+        Filter {label.toLowerCase()}
+        <input
+          type="search"
+          autoComplete="off"
+          className="ui-input w-full"
+          value={query}
+          onChange={(event) => change(event.currentTarget.value)}
+        />
+      </label>
+      {noMatches ? (
+        <p className="text-xs text-muted" role="status">
+          No {hasMore ? "loaded " : ""}choices match.{" "}
+          {hasMore ? "Load more to continue searching." : "Try a different filter."}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ExactReferences({ values }: { values: string[] }) {
+  return values.length ? (
+    <details className="text-xs text-muted">
+      <summary className="w-fit cursor-pointer">
+        Exact reference{values.length === 1 ? "" : "s"}
+      </summary>
+      <ul className="mt-1 grid gap-1">
+        {values.map((value) => (
+          <li className="wrap-anywhere" key={value}>
+            <code className="select-all">{value}</code>
+          </li>
+        ))}
+      </ul>
+    </details>
+  ) : null;
+}
+
 export function WorkflowOptions({
   value,
   options,
   change,
   empty,
   disabled,
+  reference,
+  unavailable = unavailableReference,
   ...field
 }: FieldProps & {
   value: string;
   options: readonly Option[];
   empty?: string;
   disabled?: boolean;
+  reference?: { hasMore?: boolean; detail?: string };
+  unavailable?: string;
   change: (value: string) => void;
 }) {
+  const [query, setQuery] = useState("");
   const current = options.find(({ id }) => id === value);
-  const label = current?.label || value || empty || "Select an option";
+  const label = current?.label || (value ? unavailable : (empty ?? "Select an option"));
+  const filtered = reference
+    ? options.filter((option) => matchesReference(option, query))
+    : options;
   return (
     <Field {...field}>
       {(attributes) => (
-        <Select
-          disabled={disabled}
-          value={value}
-          onValueChange={(next) => {
-            if (next !== value) change(next);
-          }}
-        >
-          <SelectTrigger className="w-full" {...attributes} fallbackLabel={label}>
-            <span className="min-w-0 truncate">{label}</span>
-          </SelectTrigger>
-          <SelectContent>
-            {empty !== undefined ? <SelectItem value="">{empty}</SelectItem> : null}
-            {value && !current ? <SelectItem value={value}>{value}</SelectItem> : null}
-            {options
-              .filter(({ id }) => id !== "")
-              .map(({ id, label: option }) => (
-                <SelectItem key={id} value={id}>
-                  {option}
+        <>
+          {reference && !disabled && options.length > 0 ? (
+            <ReferenceSearch
+              label={field.label}
+              query={query}
+              change={setQuery}
+              noMatches={filtered.length === 0}
+              hasMore={!!reference.hasMore}
+            />
+          ) : null}
+          <Select
+            disabled={disabled}
+            value={value}
+            onValueChange={(next) => {
+              if (next !== value) change(next);
+            }}
+          >
+            <SelectTrigger className="w-full" {...attributes} fallbackLabel={label}>
+              <span className="min-w-0 whitespace-normal wrap-anywhere">{label}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {empty !== undefined ? <SelectItem value="">{empty}</SelectItem> : null}
+              {value && !current ? (
+                <SelectItem value={value} disabled wrap>
+                  {label}
                 </SelectItem>
-              ))}
-          </SelectContent>
-        </Select>
+              ) : null}
+              {current && !filtered.includes(current) ? (
+                <SelectItem value={value} wrap>
+                  {current.label}
+                </SelectItem>
+              ) : null}
+              {filtered
+                .filter(({ id }) => id !== "")
+                .map(({ id, label: option }) => (
+                  <SelectItem key={id} value={id} wrap>
+                    {option}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+          {reference ? (
+            <ExactReferences
+              values={value ? [value, ...(reference.detail ? [reference.detail] : [])] : []}
+            />
+          ) : null}
+        </>
       )}
     </Field>
   );
@@ -166,6 +292,8 @@ function TextField({
         <input
           className="ui-input w-full"
           {...attributes}
+          autoComplete="off"
+          spellCheck={false}
           value={value}
           maxLength={96}
           onChange={(event) => change(event.currentTarget.value)}
@@ -246,36 +374,59 @@ function MultipleOptions({
   value,
   change,
   options,
+  reference,
+  unavailable = unavailableReference,
   ...field
 }: FieldProps & {
   value: string[];
   options: readonly Option[];
+  reference?: { hasMore?: boolean };
+  unavailable?: string;
   change: (value: string[]) => void;
 }) {
-  const missing = value.filter((selected) => !options.some(({ id }) => id === selected));
+  const [query, setQuery] = useState("");
+  const missing = [...new Set(value)].filter(
+    (selected) => !options.some(({ id }) => id === selected),
+  );
+  const matches = reference ? options.filter((item) => matchesReference(item, query)) : options;
+  const visible = reference
+    ? options.filter((item) => value.includes(item.id) || matches.includes(item))
+    : options;
   return (
     <Field {...field}>
       {(attributes) => (
-        <select
-          className="ui-input min-h-24 w-full"
-          {...attributes}
-          multiple
-          value={value}
-          onChange={(event) =>
-            change(Array.from(event.currentTarget.selectedOptions, (option) => option.value))
-          }
-        >
-          {missing.map((id) => (
-            <option key={id} value={id}>
-              {id}
-            </option>
-          ))}
-          {options.map(({ id, label }) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <>
+          {reference && options.length ? (
+            <ReferenceSearch
+              label={field.label}
+              query={query}
+              change={setQuery}
+              noMatches={matches.length === 0}
+              hasMore={!!reference.hasMore}
+            />
+          ) : null}
+          <select
+            className="ui-input min-h-24 w-full"
+            {...attributes}
+            multiple
+            value={value}
+            onChange={(event) =>
+              change(Array.from(event.currentTarget.selectedOptions, (option) => option.value))
+            }
+          >
+            {missing.map((id) => (
+              <option key={id} value={id}>
+                {unavailable}
+              </option>
+            ))}
+            {visible.map(({ id, label }) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+          {reference ? <ExactReferences values={[...new Set(value)]} /> : null}
+        </>
       )}
     </Field>
   );
@@ -304,8 +455,41 @@ function ToggleField({
   );
 }
 
-export function nodeOptions(nodes: WorkflowGraphDraft["nodes"]): Option[] {
-  return nodes.map(({ id }) => ({ id, label: id || "Unnamed step" }));
+export function nodeOptions(
+  nodes: WorkflowGraphDraft["nodes"],
+  prompts: readonly Option[],
+): Option[] {
+  const names = nodes.map((node) => {
+    if (node.kind === "deterministic")
+      return operations.find(({ id }) => id === node.operation)!.label;
+    if (node.kind === "human-gate") return "Approval";
+    const promptId =
+      node.kind === "review"
+        ? node.reviewerPromptRevisionId
+        : "agentPromptRevisionId" in node
+          ? node.agentPromptRevisionId
+          : null;
+    const agent =
+      promptId && prompts.find(({ id }) => id === promptId)?.label.replace(/ · Revision \d+$/, "");
+    return agent
+      ? node.kind === "agent"
+        ? agent
+        : `${nodeLabels[node.kind]} · ${agent}`
+      : nodeLabels[node.kind];
+  });
+  return nodes.map(({ id }, index) => ({
+    id,
+    label:
+      names.indexOf(names[index]!) === names.lastIndexOf(names[index]!)
+        ? names[index]!
+        : `${names[index]} · Step ${index + 1}`,
+  }));
+}
+
+export function transitionName(edge: WorkflowEdgeDraft, nodes: readonly Option[]) {
+  const from = nodes.find(({ id }) => id === edge.from)?.label ?? "Unavailable step";
+  const to = nodes.find(({ id }) => id === edge.to)?.label ?? "Unavailable step";
+  return `${from} → ${to} · ${edgeLabels[edge.kind]}`;
 }
 
 function ProfilePicker({
@@ -323,13 +507,21 @@ function ProfilePicker({
   diagnostics: readonly EditorDiagnostic[];
   change: (value?: { definitionRevisionId: string; definitionDigest: string }) => void;
 }) {
+  const exact = choices.profiles.find(
+    ({ id, digest }) => id === value?.definitionRevisionId && digest === value?.definitionDigest,
+  );
   return (
     <WorkflowOptions
       label={label}
       path={path}
       diagnostics={diagnostics}
       value={value?.definitionRevisionId ?? ""}
-      options={choices.profiles}
+      options={
+        exact || !value
+          ? choices.profiles
+          : choices.profiles.filter(({ id }) => id !== value.definitionRevisionId)
+      }
+      reference={{ hasMore: !!choices.nextCursors?.profiles, detail: value?.definitionDigest }}
       empty="No execution profile"
       change={(id) => {
         const profile = choices.profiles.find((candidate) => candidate.id === id);
@@ -358,7 +550,32 @@ function RouteFields({
   const path = ["routePolicy", "nodes", id];
   const change = (update: Partial<typeof route>) =>
     edit(setNodeRoute(graph, id, { ...route, ...update }));
-  const targets = nodeOptions(graph.nodes.filter((candidate) => candidate.id !== id));
+  const targets = new Map(
+    graph.edges
+      .filter(({ from, to }) => from === id && to !== id)
+      .map((edge) => [edge.to, edge.kind]),
+  );
+  const nodeChoices = nodeOptions(graph.nodes, choices.prompts);
+  const allowedTargets = nodeChoices.filter(({ id }) => {
+    const kind = targets.get(id);
+    return (
+      (kind === "route" || kind === "loop") &&
+      !(route.fallback.kind === "route" && route.fallback.destinationId === id)
+    );
+  });
+  const fallbackTargets = nodeChoices.filter(
+    ({ id }) => targets.get(id) === "route" && !route.allowedDestinationIds.includes(id),
+  );
+  const transitionHelp =
+    graph.nodes.length < 2 ? (
+      <a className="underline underline-offset-4" href="#workflow-add-step">
+        Add a step
+      </a>
+    ) : (
+      <a className="underline underline-offset-4" href="#workflow-add-transition">
+        Add transition
+      </a>
+    );
   return (
     <>
       <NumberField
@@ -374,10 +591,16 @@ function RouteFields({
         label="Allowed route destinations"
         path={[...path, "allowedDestinationIds"]}
         diagnostics={diagnostics}
-        options={targets}
+        options={allowedTargets}
+        unavailable="No longer eligible — remove this destination"
         value={route.allowedDestinationIds}
         change={(allowedDestinationIds) => change({ allowedDestinationIds })}
       />
+      {!allowedTargets.length ? (
+        <p className="text-sm text-muted">
+          {transitionHelp} to make an outgoing Route or Loop destination available.
+        </p>
+      ) : null}
       <WorkflowOptions
         label="Fallback"
         path={[...path, "fallback"]}
@@ -391,7 +614,10 @@ function RouteFields({
           change({
             fallback:
               kind === "route"
-                ? { kind: "route", destinationId: route.allowedDestinationIds[0] ?? "" }
+                ? {
+                    kind: "route",
+                    destinationId: fallbackTargets.length === 1 ? fallbackTargets[0]!.id : "",
+                  }
                 : { kind: "clarification" },
           })
         }
@@ -401,11 +627,18 @@ function RouteFields({
           label="Fallback destination"
           path={[...path, "fallback", "destinationId"]}
           diagnostics={diagnostics}
-          options={targets}
+          options={fallbackTargets}
+          unavailable="No longer eligible — choose another destination"
           empty="Select a step"
           value={route.fallback.destinationId}
           change={(destinationId) => change({ fallback: { kind: "route", destinationId } })}
         />
+      ) : null}
+      {!fallbackTargets.length ? (
+        <p className="text-sm text-muted">
+          A fallback needs a separate outgoing Route transition. Remove a Route destination from the
+          allowed list or use {transitionHelp}.
+        </p>
       ) : null}
       <ProfilePicker
         label="Foreman execution profile"
@@ -425,6 +658,7 @@ function ReviewFields({
   index,
   diagnostics,
   prompts,
+  hasMorePrompts,
   update,
 }: {
   graph: WorkflowGraphDraft;
@@ -432,11 +666,16 @@ function ReviewFields({
   index: number;
   diagnostics: readonly EditorDiagnostic[];
   prompts: WorkflowEditorChoices["prompts"];
+  hasMorePrompts: boolean;
   update: (node: WorkflowNodeDraft) => void;
 }) {
   const path = ["nodes", index];
   const repair = node.repair;
-  const ruleOptions = node.ruleIds.map((id) => ({ id, label: id }));
+  const ruleOptions = node.ruleIds.map((id, index) => ({
+    id,
+    label: /^review-\d+$/.test(id) ? `Rule ${index + 1}` : id.replace(/[.-]/g, " "),
+  }));
+  const promptLabel = prompts.find(({ id }) => id === node.reviewerPromptRevisionId)?.label;
   const editRule = (position: number, id?: string) => {
     const previous = node.ruleIds[position];
     if (id !== undefined && node.ruleIds.some((rule, index) => index !== position && rule === id)) {
@@ -463,27 +702,41 @@ function ReviewFields({
         diagnostics={diagnostics}
         empty="Select a prompt"
         options={prompts}
+        reference={{ hasMore: hasMorePrompts }}
         value={node.reviewerPromptRevisionId}
         change={(reviewerPromptRevisionId) => update({ ...node, reviewerPromptRevisionId })}
       />
       <div className="grid gap-2 sm:col-span-2">
         <h3 className="type-label">Review rules</h3>
+        <p className="text-sm text-muted">
+          {promptLabel
+            ? `Rules checked by ${promptLabel}.`
+            : "Choose the reviewer prompt that checks these rules."}{" "}
+          Rule keys must match the reviewer prompt.
+        </p>
         <ol className="grid gap-2">
           {node.ruleIds.map((rule, position) => (
             <li key={position} className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-              <UniqueIdField
-                label={`Rule ${position + 1} ID`}
-                path={[...path, "ruleIds", position]}
-                diagnostics={diagnostics}
-                value={rule}
-                change={(id) => editRule(position, id)}
-              />
+              <details className="min-w-0 text-sm">
+                <summary className="cursor-pointer wrap-anywhere">
+                  {ruleOptions[position]?.label} · Rule key
+                </summary>
+                <div className="mt-2">
+                  <UniqueIdField
+                    label={`Rule ${position + 1} ID`}
+                    path={[...path, "ruleIds", position]}
+                    diagnostics={diagnostics}
+                    value={rule}
+                    change={(id) => editRule(position, id)}
+                  />
+                </div>
+              </details>
               <button
                 type="button"
                 className="ui-button w-fit"
                 disabled={node.ruleIds.length === 1}
                 onClick={() => editRule(position)}
-                aria-label={`Remove rule ${rule}`}
+                aria-label={`Remove rule ${position + 1}: ${ruleOptions[position]?.label}`}
               >
                 Remove rule
               </button>
@@ -529,13 +782,18 @@ function ReviewFields({
       />
       {repair ? (
         <>
-          <TextField
-            label="Repair edge ID"
-            path={[...path, "repair", "edgeId"]}
-            diagnostics={diagnostics}
-            value={repair.edgeId}
-            change={(edgeId) => update({ ...node, repair: { ...repair, edgeId } })}
-          />
+          <details className="text-sm sm:col-span-2">
+            <summary className="cursor-pointer">Advanced repair settings</summary>
+            <div className="mt-2">
+              <TextField
+                label="Repair edge ID"
+                path={[...path, "repair", "edgeId"]}
+                diagnostics={diagnostics}
+                value={repair.edgeId}
+                change={(edgeId) => update({ ...node, repair: { ...repair, edgeId } })}
+              />
+            </div>
+          </details>
           <NumberField
             label="Maximum repairs"
             path={[...path, "repair", "maxRepairs"]}
@@ -547,6 +805,7 @@ function ReviewFields({
           />
           <MultipleOptions
             label="Rules eligible for repair"
+            description={promptLabel ? `Rules from ${promptLabel}.` : undefined}
             path={[...path, "repair", "eligibleRuleIds"]}
             diagnostics={diagnostics}
             options={ruleOptions}
@@ -567,14 +826,17 @@ function JoinRepositoryFields({
   diagnostics,
   choices,
   joinId,
+  grantsHref,
 }: Fields & {
   choices: WorkflowEditorChoices;
   joinId: string;
+  grantsHref?: string;
 }) {
   const sets = graph.repositorySets;
   const rows = sets && Object.hasOwn(sets, joinId) ? sets[joinId] : [];
   const path = ["repositorySets", joinId];
   const branchEdges = branchEdgesForJoin(graph, joinId);
+  const names = nodeOptions(graph.nodes, choices.prompts);
   const withBranches = (entries: RepositoryWriterDraft[]) =>
     edit(setEditorRepositoryWriters(graph, joinId, entries));
   const change = (index: number, next: RepositoryWriterDraft) =>
@@ -601,7 +863,16 @@ function JoinRepositoryFields({
               label="Repository and exact writer grant"
               path={[...path, index, "writerGrant"]}
               diagnostics={diagnostics}
-              options={options.map(({ id, label }) => ({ id, label }))}
+              options={options.filter(
+                ({ id, version, repositoryId }) =>
+                  id !== row.writerGrant.id ||
+                  (version === row.writerGrant.version && repositoryId === row.repositoryId),
+              )}
+              reference={{
+                hasMore: !!choices.nextCursors?.writers,
+                detail: `Grant version ${row.writerGrant.version}`,
+              }}
+              description="Choose an active writer for the exact repository and grant version."
               value={row.writerGrant.id}
               change={(id) => {
                 const writer = options.find((option) => option.id === id);
@@ -619,7 +890,7 @@ function JoinRepositoryFields({
               diagnostics={diagnostics}
               options={branchEdges
                 .filter(({ id }) => !occupied.has(id))
-                .map(({ id }) => ({ id, label: id }))}
+                .map((edge) => ({ id: edge.id, label: transitionName(edge, names) }))}
               value={row.branchEdgeIds}
               change={(branchEdgeIds) => change(index, { ...row, branchEdgeIds })}
             />
@@ -651,6 +922,22 @@ function JoinRepositoryFields({
           Add secondary repository
         </button>
       ) : null}
+      {!candidate && rows.length < 8 ? (
+        <p className="text-sm text-muted">
+          No additional eligible repository writers are loaded.
+          {choices.nextCursors?.writers ? " Load more writers to see additional choices." : null}
+          {grantsHref ? (
+            <>
+              {" "}
+              Check{" "}
+              <a className="underline underline-offset-4" href={grantsHref}>
+                execution grants
+              </a>{" "}
+              for active access.
+            </>
+          ) : null}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -661,14 +948,36 @@ export function NodeFields({
   diagnostics,
   choices,
   index,
+  grantsHref,
+  pickStep,
 }: Fields & {
   choices: WorkflowEditorChoices;
   index: number;
+  grantsHref?: string;
+  pickStep?: (index: number) => void;
 }) {
   const node = graph.nodes[index];
   if (!node) return null;
   const path = ["nodes", index];
   const assignment = node.kind === "agent" ? getAgentRepositoryWriter(graph, node.id) : undefined;
+  const factoryGrantLabel = choices.grant
+    ? `${choices.grantRepository ?? "Factory grant"} · Grant version ${choices.grant.version}`
+    : undefined;
+  const chosenGrant =
+    assignment?.writerGrant ??
+    graph.grants.find(({ id }) => "grantId" in node && id === node.grantId);
+  const grantOptions = assignment
+    ? choices.writers.filter(
+        ({ id, version }) =>
+          id === assignment.writerGrant.id && version === assignment.writerGrant.version,
+      )
+    : choices.grant &&
+        factoryGrantLabel &&
+        graph.grants.some(
+          ({ id, version }) => id === choices.grant?.id && version === choices.grant.version,
+        )
+      ? [{ id: choices.grant.id, label: factoryGrantLabel }]
+      : [];
   const update = (next: WorkflowNodeDraft) => edit(setEditorNode(graph, index, next));
   const setProfile = (profile?: { definitionRevisionId: string; definitionDigest: string }) => {
     const policy = graph.delegationPolicy ?? defaultDelegationPolicy;
@@ -679,19 +988,6 @@ export function NodeFields({
   };
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      <UniqueIdField
-        key={index}
-        label="Step ID"
-        path={[...path, "id"]}
-        diagnostics={diagnostics}
-        value={node.id}
-        change={(id) => {
-          const next = setEditorNode(graph, index, { ...node, id });
-          if (next === graph) return false;
-          edit(next);
-          return true;
-        }}
-      />
       <WorkflowOptions
         label="Step kind"
         path={[...path, "kind"]}
@@ -717,7 +1013,11 @@ export function NodeFields({
         />
       ) : null}
       {node.kind === "review" ? (
-        <ReviewFields {...{ graph, node, index, diagnostics, update }} prompts={choices.prompts} />
+        <ReviewFields
+          {...{ graph, node, index, diagnostics, update }}
+          prompts={choices.prompts}
+          hasMorePrompts={!!choices.nextCursors?.prompts}
+        />
       ) : null}
       {node.kind === "human-gate" ? (
         <>
@@ -734,6 +1034,8 @@ export function NodeFields({
               path={[...path, "approverMemberIds"]}
               diagnostics={diagnostics}
               options={choices.approvers}
+              reference={{ hasMore: !!choices.nextCursors?.approvers }}
+              description="Select members to require their approval. Use Ctrl or Command to change multiple selections with a mouse."
               value={node.approverMemberIds ?? []}
               change={(approverMemberIds) => update({ ...node, approverMemberIds })}
             />
@@ -748,6 +1050,7 @@ export function NodeFields({
             diagnostics={diagnostics}
             empty="Select a prompt"
             options={choices.prompts}
+            reference={{ hasMore: !!choices.nextCursors?.prompts }}
             value={node.agentPromptRevisionId}
             change={(agentPromptRevisionId) => update({ ...node, agentPromptRevisionId })}
           />
@@ -755,30 +1058,60 @@ export function NodeFields({
             label="Execution grant"
             path={[...path, "grantId"]}
             diagnostics={diagnostics}
-            description={
-              assignment
-                ? `To change this grant, edit the secondary repository assignment at join “${assignment.joinId}”.`
-                : undefined
-            }
             disabled={!!assignment}
-            options={(assignment
-              ? [assignment.writerGrant]
-              : graph.grants.filter(({ id }) => id === choices.grant?.id || id === node.grantId)
-            ).map(({ id, version }) => ({
-              id,
-              label:
-                choices.writers.find((writer) => writer.id === id && writer.version === version)
-                  ?.label ?? `Factory grant · Version ${version}`,
-            }))}
+            options={grantOptions}
+            reference={chosenGrant ? { detail: `Grant version ${chosenGrant.version}` } : undefined}
             value={assignment?.writerGrant.id ?? node.grantId ?? ""}
-            empty={assignment ? undefined : "Use workflow default"}
+            empty={
+              assignment
+                ? undefined
+                : `Use workflow default${factoryGrantLabel ? ` · ${factoryGrantLabel}` : ""}`
+            }
             change={(grantId) => update({ ...node, grantId: grantId || undefined })}
           />
+          {assignment && pickStep ? (
+            <button
+              id="workflow-edit-join"
+              type="button"
+              className="ui-button w-fit sm:col-span-2"
+              onClick={() => pickStep(graph.nodes.findIndex(({ id }) => id === assignment.joinId))}
+            >
+              Edit secondary writer at join
+            </button>
+          ) : chosenGrant && !grantOptions.length && grantsHref ? (
+            <p className="text-sm text-muted sm:col-span-2">
+              This grant may have expired or no longer match the active definition. Check{" "}
+              <a className="underline underline-offset-4" href={grantsHref}>
+                execution grants
+              </a>{" "}
+              or choose the workflow default.
+            </p>
+          ) : null}
         </>
       ) : null}
       {node.kind === "join" ? (
-        <JoinRepositoryFields {...{ graph, edit, diagnostics, choices }} joinId={node.id} />
+        <JoinRepositoryFields
+          {...{ graph, edit, diagnostics, choices, grantsHref }}
+          joinId={node.id}
+        />
       ) : null}
+      <details key={index} className="text-sm sm:col-span-2">
+        <summary className="cursor-pointer">Advanced step settings</summary>
+        <div className="mt-2">
+          <UniqueIdField
+            label="Step ID"
+            path={[...path, "id"]}
+            diagnostics={diagnostics}
+            value={node.id}
+            change={(id) => {
+              const next = setEditorNode(graph, index, { ...node, id });
+              if (next === graph) return false;
+              edit(next);
+              return true;
+            }}
+          />
+        </div>
+      </details>
       {node.kind === "route" ? (
         <RouteFields {...{ graph, edit, diagnostics, choices }} id={node.id} />
       ) : null}
@@ -796,27 +1129,23 @@ export function NodeFields({
   );
 }
 
-export function EdgeFields({ graph, edit, diagnostics, index }: Fields & { index: number }) {
+export function EdgeFields({
+  graph,
+  edit,
+  diagnostics,
+  index,
+  choices,
+}: Fields & {
+  index: number;
+  choices: WorkflowEditorChoices;
+}) {
   const edge = graph.edges[index];
   if (!edge) return null;
   const path = ["edges", index];
   const update = (next: WorkflowEdgeDraft) => edit(updateEditorEdge(graph, index, next));
-  const nodes = nodeOptions(graph.nodes);
+  const nodes = nodeOptions(graph.nodes, choices.prompts);
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      <UniqueIdField
-        key={index}
-        label="Transition ID"
-        path={[...path, "id"]}
-        diagnostics={diagnostics}
-        value={edge.id}
-        change={(id) => {
-          const next = updateEditorEdge(graph, index, { ...edge, id });
-          if (next === graph) return false;
-          edit(next);
-          return true;
-        }}
-      />
       <WorkflowOptions
         label="Transition kind"
         path={[...path, "kind"]}
@@ -864,6 +1193,23 @@ export function EdgeFields({ graph, edit, diagnostics, index }: Fields & { index
           change={(required) => update({ ...edge, required })}
         />
       ) : null}
+      <details key={index} className="text-sm sm:col-span-2">
+        <summary className="cursor-pointer">Advanced transition settings</summary>
+        <div className="mt-2">
+          <UniqueIdField
+            label="Transition ID"
+            path={[...path, "id"]}
+            diagnostics={diagnostics}
+            value={edge.id}
+            change={(id) => {
+              const next = updateEditorEdge(graph, index, { ...edge, id });
+              if (next === graph) return false;
+              edit(next);
+              return true;
+            }}
+          />
+        </div>
+      </details>
     </div>
   );
 }
@@ -893,6 +1239,9 @@ export function PolicyFields({
       {grant ? (
         <ToggleField
           label={`Use approved factory grant · Version ${grant.version}`}
+          description={
+            choices.grantRepository ? `Primary repository: ${choices.grantRepository}.` : undefined
+          }
           path={["grants"]}
           diagnostics={diagnostics}
           value={graph.grants.some(

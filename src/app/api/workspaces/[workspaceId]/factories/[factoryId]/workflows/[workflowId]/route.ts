@@ -67,6 +67,7 @@ export async function GET(request: Request, { params }: Context) {
         scope,
         snapshot.baseDefinition,
         snapshot.template,
+        snapshot.selectedDraftGraph ?? snapshot.graph,
       );
       return workflowAuthoringResponse({ snapshot, choices });
     }

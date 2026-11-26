@@ -1,8 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+} from "@/components/ui/alert-dialog";
 import {
   FactoryEditorRequestError,
   type EditorDiagnostic,
@@ -14,8 +22,14 @@ import type {
   WorkflowReferenceKind,
   WorkflowReferencePage,
 } from "@/lib/factory-workflows/authoring-contracts";
+import { workflowEditorReferencePins } from "@/lib/factory-workflows/editor-reference-pins";
 import { workflowTemplates } from "@/lib/factory-workflows/workflow-templates";
-import { workspaceWorkflowDetailPath, workspaceWorkflowsPath } from "@/lib/routes";
+import {
+  workspaceFactoryDefinitionPath,
+  workspaceGovernancePath,
+  workspaceWorkflowDetailPath,
+  workspaceWorkflowsPath,
+} from "@/lib/routes";
 
 import {
   loadCurrentWorkflowEditor,
@@ -30,6 +44,7 @@ import {
   PolicyFields,
   WorkflowOptions,
   nodeOptions,
+  transitionName,
   workflowFieldId,
 } from "./editor-fields";
 import {
@@ -43,7 +58,12 @@ import {
   workflowLayers,
   type WorkflowGraphDraft,
 } from "./editor-graph";
-
+import {
+  emptyTemplateRoles,
+  useWorkflowDraftRecovery,
+  writeWorkflowDraftRecovery,
+  type DraftRecovery,
+} from "./editor-recovery";
 import { TemplateSetup } from "./template-setup";
 
 const panel = "min-w-0 rounded-lg border border-border bg-sheet p-4";
@@ -54,10 +74,12 @@ function GraphCanvas({
   graph,
   selected,
   pick,
+  names,
 }: {
   graph: WorkflowGraphDraft;
   selected: number;
   pick: (index: number) => void;
+  names: ReturnType<typeof nodeOptions>;
 }) {
   const layers = workflowLayers(graph);
   const boxWidth = 176;
@@ -130,8 +152,8 @@ function GraphCanvas({
               onClick={() => pick(index)}
               style={{ left: position.x, top: position.y, width: boxWidth, height: boxHeight }}
             >
-              <span className="truncate text-sm font-medium" title={id}>
-                {id || "Unnamed step"}
+              <span className="truncate text-sm font-medium" title={names[index]?.label}>
+                {names[index]?.label}
               </span>
               <span className="truncate text-xs text-muted">
                 {nodeLabels[node.kind]}
@@ -149,10 +171,12 @@ function OrderedSteps({
   graph,
   selected,
   pick,
+  names,
 }: {
   graph: WorkflowGraphDraft;
   selected: number;
   pick: (index: number) => void;
+  names: ReturnType<typeof nodeOptions>;
 }) {
   const rank = new Map(
     workflowLayers(graph)
@@ -177,7 +201,7 @@ function OrderedSteps({
               onClick={() => pick(index)}
               aria-pressed={selected === index}
             >
-              <span className="wrap-anywhere text-sm font-medium">{node.id || "Unnamed step"}</span>
+              <span className="wrap-anywhere text-sm font-medium">{names[index]?.label}</span>
               <span className="wrap-anywhere text-xs text-muted">
                 {nodeLabels[node.kind]}
                 {graph.entryNodeId === node.id ? " · Entry" : ""}
@@ -186,11 +210,12 @@ function OrderedSteps({
             {outgoing.length ? (
               <ul
                 className="ml-3 border-l border-border pl-3 pt-1 text-xs text-muted"
-                aria-label={`Outgoing transitions from ${node.id}`}
+                aria-label={`Outgoing transitions from ${names[index]?.label}`}
               >
                 {outgoing.map((edge, edgeIndex) => (
                   <li key={edgeIndex} className="wrap-anywhere py-0.5">
-                    {edgeLabels[edge.kind]} → {edge.to}
+                    {edgeLabels[edge.kind]} →{" "}
+                    {names.find(({ id }) => id === edge.to)?.label ?? "Unavailable step"}
                     {edge.kind === "loop" ? ` · ${edge.maxTraversals} max` : ""}
                     {edge.kind === "branch" ? (edge.required ? " · Required" : " · Optional") : ""}
                   </li>
@@ -214,15 +239,32 @@ const diagnosticLabels = {
   repositorySets: "Repository writers",
 } as Readonly<Record<string, string>>;
 
-function diagnosticLabel(path: EditorDiagnostic["path"], graph: WorkflowGraphDraft) {
+function diagnosticLabel(
+  path: EditorDiagnostic["path"],
+  graph: WorkflowGraphDraft,
+  names: ReturnType<typeof nodeOptions>,
+) {
   const [key, index] = path;
-  if (key === "nodes" && typeof index === "number") return graph.nodes[index]?.id || "Step";
-  if (key === "edges" && typeof index === "number") return graph.edges[index]?.id || "Transition";
+  if (key === "nodes" && typeof index === "number") return names[index]?.label || "Step";
+  if (key === "edges" && typeof index === "number" && graph.edges[index])
+    return transitionName(graph.edges[index], names);
   return diagnosticLabels[String(key)] ?? "Workflow";
 }
 
 type Notice = { kind: "status" | "alert"; message: string };
 type DraftAction = "save" | "publish" | "reload";
+type RecoverySource = "working" | "kept";
+type DraftConfirmation =
+  | { kind: "reload" }
+  | { kind: "restore"; source: RecoverySource }
+  | { kind: "leave"; proceed: () => void };
+type BrowserNavigation = EventTarget & {
+  traverseTo: (key: string) => { finished: Promise<unknown> };
+};
+type TraversalEvent = Event & {
+  navigationType: string;
+  destination: { key: string; url: string; sameDocument: boolean };
+};
 const catalogLabels = {
   prompts: "prompt revisions",
   approvers: "approvers",
@@ -239,19 +281,48 @@ function appendReferencePage(choices: WorkflowEditorCatalog, page: WorkflowRefer
   };
 }
 
+function refreshReferenceChoices(
+  previous: WorkflowEditorCatalog,
+  latest: WorkflowEditorCatalog,
+  snapshot: WorkflowAuthoringSnapshot,
+) {
+  const pins = workflowEditorReferencePins(snapshot.graph);
+  function keepPaged<Choice extends { id: string }>(
+    kind: WorkflowReferenceKind,
+    prior: Choice[],
+    fresh: Choice[],
+  ) {
+    const seen = new Set(fresh.map(({ id }) => id));
+    return [...fresh, ...prior.filter(({ id }) => !seen.has(id) && !pins[kind].has(id))];
+  }
+  return {
+    ...latest,
+    prompts: keepPaged("prompts", previous.prompts, latest.prompts),
+    profiles: keepPaged("profiles", previous.profiles, latest.profiles),
+    nextCursors: {
+      ...latest.nextCursors,
+      prompts: previous.nextCursors.prompts,
+      profiles: previous.nextCursors.profiles,
+    },
+  };
+}
+
 export function WorkflowEditor({
   initial,
   endpoint,
   workspaceSlug,
   factoryId,
+  recoveryOwner,
   choices: initialChoices,
 }: {
   initial: WorkflowAuthoringSnapshot;
   endpoint: string;
   workspaceSlug: string;
   factoryId: string;
+  recoveryOwner: string;
   choices: WorkflowEditorCatalog;
 }) {
+  const router = useRouter();
   const historical = initial.selectedDraftId !== null;
   const initialValue = initial.selectedDraftGraph ?? initial.graph ?? initialGraph;
   const [graph, setGraph] = useState<WorkflowGraphDraft>(initialValue);
@@ -266,12 +337,17 @@ export function WorkflowEditor({
   const [notice, setNotice] = useState<Notice | null>(null);
   const [action, setAction] = useState<DraftAction | WorkflowReferenceKind | null>(null);
   const [hasConflict, setHasConflict] = useState(false);
+  const [roles, setRoles] = useState(emptyTemplateRoles);
+  const [confirmation, setConfirmation] = useState<DraftConfirmation | null>(null);
+  const confirmationOrigin = useRef<HTMLElement | null>(null);
+  const restoredKeptCopy = useRef(false);
+  const hadDirtyEdits = useRef(false);
   const [focusRequest, setFocusRequest] = useState<{ fieldId: string } | null>(null);
   const commandRef = useRef<WorkflowAuthoringCommand | null>(null);
   const submitting = useRef(false);
-  const dirty =
-    JSON.stringify(graph) !==
-    JSON.stringify(snapshot.selectedDraftGraph ?? snapshot.graph ?? initialGraph);
+  const graphJson = JSON.stringify(graph);
+  const graphDirty =
+    graphJson !== JSON.stringify(snapshot.selectedDraftGraph ?? snapshot.graph ?? initialGraph);
   const rebase = workflowDraftNeedsRebase(snapshot);
   const readOnly = historical || !snapshot.baseDefinition;
   const editorProps = { graph, edit: setGraph, diagnostics };
@@ -279,9 +355,45 @@ export function WorkflowEditor({
   const template = workflowTemplates.find(
     ({ id, version }) => id === snapshot.template?.id && version === snapshot.template.version,
   );
-  const configuringTemplate = !!template && !snapshot.draftId && graph === initialGraph;
-  const canPublish =
-    !rebase && !dirty && !!currentDraftId && currentDraftId !== snapshot.publishedDraftId;
+  const configuringTemplate =
+    !!template && !snapshot.draftId && graphJson === JSON.stringify(initialGraph);
+  const dirty =
+    !historical && (graphDirty || (configuringTemplate && Object.values(roles).some(Boolean)));
+  const recoveryKey = `wallie:workflow-draft:v1:${recoveryOwner}:${endpoint}`;
+  const keptRecoveryKey = `${recoveryKey}:kept`;
+  const workingRecovery = useWorkflowDraftRecovery(recoveryKey);
+  const keptRecovery = useWorkflowDraftRecovery(keptRecoveryKey);
+  const copy: DraftRecovery = {
+    graph,
+    roles,
+    draftId: snapshot.draftId,
+    activationId: snapshot.activationId,
+    baseActivationId: snapshot.baseDefinition?.activationId ?? null,
+  };
+  const recoveryPayload = dirty ? JSON.stringify(copy) : null;
+  const currentRevision = snapshot.recentDrafts.find(({ id }) => id === currentDraftId)?.revision;
+  const liveRevision = snapshot.recentDrafts.find(
+    ({ id }) => id === snapshot.publishedDraftId,
+  )?.revision;
+  const selectedRevision = snapshot.recentDrafts.find(
+    ({ id }) => id === snapshot.selectedDraftId,
+  )?.revision;
+  const live = snapshot.publishedDraftId !== null;
+  const viewingLive = historical && snapshot.selectedDraftId === snapshot.publishedDraftId;
+  const publishReason = hasConflict
+    ? "Load the latest draft before publishing."
+    : rebase
+      ? "The factory definition changed. Rebase and save before publishing."
+      : !currentDraftId
+        ? "Save a draft before publishing."
+        : dirty
+          ? "Save your changes before publishing."
+          : currentDraftId === snapshot.publishedDraftId
+            ? "This draft is already live for new sessions."
+            : null;
+  const names = nodeOptions(graph.nodes, choices.prompts);
+  const settingsHref = workspaceFactoryDefinitionPath(workspaceSlug, { factory: factoryId });
+  const grantsHref = `${workspaceGovernancePath(workspaceSlug, { factory: factoryId })}#execution-grants`;
   const selectedNode = graph.nodes[nodeIndex];
   const stepCatalogs: WorkflowReferenceKind[] = [];
   if (selectedNode?.kind === "agent" || selectedNode?.kind === "route") {
@@ -294,12 +406,101 @@ export function WorkflowEditor({
   }
 
   useEffect(() => {
+    if (recoveryPayload) writeWorkflowDraftRecovery(recoveryKey, recoveryPayload);
+    else if (hadDirtyEdits.current) writeWorkflowDraftRecovery(recoveryKey, null);
+    hadDirtyEdits.current = !!recoveryPayload;
+  }, [recoveryKey, recoveryPayload]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warnOnUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = true;
+    };
+    const guardLink = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey ||
+        !(event.target instanceof Element)
+      )
+        return;
+      const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+      if (
+        !anchor ||
+        (anchor.target && anchor.target.toLowerCase() !== "_self") ||
+        anchor.hasAttribute("download")
+      )
+        return;
+      const destination = new URL(anchor.href, window.location.href);
+      if (
+        destination.origin !== window.location.origin ||
+        destination.protocol !== window.location.protocol ||
+        destination.pathname.startsWith("//") ||
+        (destination.pathname === window.location.pathname &&
+          destination.search === window.location.search)
+      )
+        return;
+      event.preventDefault();
+      const href = destination.pathname + destination.search + destination.hash;
+      confirmationOrigin.current = anchor;
+      setConfirmation({ kind: "leave", proceed: () => router.push(href) });
+    };
+    const navigation = (window as Window & { navigation?: BrowserNavigation }).navigation;
+    let permittedKey: string | null = null;
+    const guardHistory = (event: Event) => {
+      const { navigationType, destination } = event as TraversalEvent;
+      if (navigationType !== "traverse" || !destination?.sameDocument || !event.cancelable) return;
+      const target = new URL(destination.url);
+      if (target.pathname === window.location.pathname && target.search === window.location.search)
+        return;
+      if (permittedKey === destination.key) {
+        permittedKey = null;
+        return;
+      }
+      event.preventDefault();
+      const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      confirmationOrigin.current = focused;
+      setConfirmation({
+        kind: "leave",
+        proceed: () => {
+          if (!navigation) return;
+          permittedKey = destination.key;
+          void navigation.traverseTo(destination.key).finished.catch(() => {
+            permittedKey = null;
+          });
+        },
+      });
+    };
+    window.addEventListener("beforeunload", warnOnUnload);
+    document.addEventListener("click", guardLink, true);
+    navigation?.addEventListener("navigate", guardHistory);
+    return () => {
+      window.removeEventListener("beforeunload", warnOnUnload);
+      document.removeEventListener("click", guardLink, true);
+      navigation?.removeEventListener("navigate", guardHistory);
+    };
+  }, [dirty, router]);
+
+  useEffect(() => {
     if (!focusRequest) return;
-    const element =
-      document.getElementById(focusRequest.fieldId) ??
-      document.getElementById("workflow-diagnostics");
-    const details = element?.closest("details");
-    if (details) details.open = true;
+    let element = document.getElementById(focusRequest.fieldId);
+    if (!element || element.matches(":disabled")) {
+      element =
+        (focusRequest.fieldId.endsWith("-grantId")
+          ? document.getElementById("workflow-edit-join")
+          : null) ?? document.getElementById("workflow-diagnostics");
+    }
+    for (
+      let details = element?.closest("details");
+      details;
+      details = details.parentElement?.closest("details")
+    ) {
+      details.open = true;
+    }
     element?.focus();
   }, [focusRequest]);
 
@@ -335,6 +536,8 @@ export function WorkflowEditor({
       }));
       setNotice({ kind: "status", message: `More ${catalogLabels[catalog]} loaded.` });
     } catch (failure) {
+      if (failure instanceof FactoryEditorRequestError && failure.status === 409)
+        setHasConflict(true);
       setNotice({
         kind: "alert",
         message: failure instanceof Error ? failure.message : "Could not load more references.",
@@ -357,10 +560,16 @@ export function WorkflowEditor({
         const latest = await loadCurrentWorkflowEditor(endpoint);
         setEditorData((current) =>
           sameWorkflowEditorBase(current.snapshot.baseDefinition, latest.snapshot.baseDefinition)
-            ? { ...current, snapshot: latest.snapshot }
+            ? {
+                snapshot: latest.snapshot,
+                choices: refreshReferenceChoices(current.choices, latest.choices, latest.snapshot),
+              }
             : latest,
         );
+        if (dirty) writeWorkflowDraftRecovery(recoveryKey, null);
+        restoredKeptCopy.current = false;
         setGraph(latest.snapshot.graph ?? initialGraph);
+        setRoles(emptyTemplateRoles);
         setNodeIndex(0);
         setEdgeIndex(0);
         setHasConflict(false);
@@ -378,7 +587,7 @@ export function WorkflowEditor({
       const command =
         nextAction === "save"
           ? { action: "save" as const, expected, graph, rebase }
-          : currentDraftId && canPublish
+          : currentDraftId && !publishReason
             ? { action: "publish" as const, expected: { ...expected, draftId: currentDraftId } }
             : null;
       if (!command) return;
@@ -396,11 +605,16 @@ export function WorkflowEditor({
         setNotice({
           kind: "alert",
           message:
-            "The draft, publication, or base definition changed. Load the current draft before editing again.",
+            "The draft, live revision, or factory definition changed. Your edits are still here. Load the latest draft to continue.",
         });
         return;
       }
       const savedGraph = result.snapshot.graph ?? initialGraph;
+      if (nextAction === "save") {
+        writeWorkflowDraftRecovery(recoveryKey, null);
+        if (restoredKeptCopy.current) writeWorkflowDraftRecovery(keptRecoveryKey, null);
+        restoredKeptCopy.current = false;
+      }
       setEditorData((current) => ({
         ...current,
         snapshot: { ...result.snapshot, selectedDraftGraph: null, selectedDraftId: null },
@@ -432,11 +646,57 @@ export function WorkflowEditor({
       }
       setNotice({
         kind: "alert",
-        message: failure instanceof Error ? failure.message : "The workflow could not be updated.",
+        message:
+          failure instanceof FactoryEditorRequestError && failure.status === 409
+            ? "The draft, live revision, or factory definition changed. Your edits are still here. Load the latest draft to continue."
+            : failure instanceof Error
+              ? failure.message
+              : "The workflow could not be updated.",
       });
     } finally {
       submitting.current = false;
       setAction(null);
+    }
+  }
+
+  function requestConfirmation(next: DraftConfirmation, origin: HTMLElement) {
+    confirmationOrigin.current = origin;
+    setConfirmation(next);
+  }
+
+  const recovery =
+    confirmation?.kind === "restore"
+      ? confirmation.source === "kept"
+        ? keptRecovery
+        : workingRecovery
+      : null;
+
+  function confirmDraftAction(keepCopy = false) {
+    if (!confirmation) return;
+    if (keepCopy && !writeWorkflowDraftRecovery(keptRecoveryKey, recoveryPayload)) {
+      setNotice({
+        kind: "alert",
+        message: "This tab couldn’t store a recovery copy. Your edits are still here.",
+      });
+      setConfirmation(null);
+      return;
+    }
+    setConfirmation(null);
+    if (confirmation.kind === "leave") {
+      writeWorkflowDraftRecovery(recoveryKey, null);
+      confirmation.proceed();
+    } else if (confirmation.kind === "reload") {
+      void run("reload");
+    } else if (recovery) {
+      restoredKeptCopy.current = confirmation.source === "kept";
+      setGraph(recovery.graph);
+      setRoles(recovery.roles);
+      setNodeIndex(0);
+      setEdgeIndex(0);
+      setNotice({
+        kind: "status",
+        message: "Recovery copy restored as unsaved edits. Review them before saving.",
+      });
     }
   }
 
@@ -448,7 +708,7 @@ export function WorkflowEditor({
       entryNodeId: graph.entryNodeId || id,
     });
     setNodeIndex(graph.nodes.length);
-    setFocusRequest({ fieldId: workflowFieldId(["nodes", graph.nodes.length, "id"]) });
+    setFocusRequest({ fieldId: workflowFieldId(["nodes", graph.nodes.length, "kind"]) });
   }
 
   function removeStep() {
@@ -458,7 +718,7 @@ export function WorkflowEditor({
     setNodeIndex(Math.max(0, survivor));
     setEdgeIndex(0);
     setFocusRequest({
-      fieldId: survivor < 0 ? "workflow-add-step" : workflowFieldId(["nodes", survivor, "id"]),
+      fieldId: survivor < 0 ? "workflow-add-step" : workflowFieldId(["nodes", survivor, "kind"]),
     });
   }
 
@@ -479,6 +739,11 @@ export function WorkflowEditor({
 
   const pageFor = (draft?: string) =>
     workspaceWorkflowDetailPath(workspaceSlug, initial.workflowId, { factory: factoryId, draft });
+  const recoveryHasOlderHead =
+    recovery &&
+    (recovery.draftId !== snapshot.draftId ||
+      recovery.activationId !== snapshot.activationId ||
+      recovery.baseActivationId !== (snapshot.baseDefinition?.activationId ?? null));
 
   return (
     <div className="mx-auto grid w-full min-w-0 max-w-6xl gap-5 px-4 py-6 sm:px-6">
@@ -491,19 +756,41 @@ export function WorkflowEditor({
         </Link>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="type-page-title wrap-anywhere">{initial.displayName}</h1>
+            <h1 id="workflow-editor-title" tabIndex={-1} className="type-page-title wrap-anywhere">
+              {initial.displayName}
+            </h1>
             {template ? (
               <p className="mt-1 text-sm text-muted">
                 {template.label} · v{template.version}
               </p>
             ) : null}
-            <p className="mt-1 text-sm text-muted">
-              {historical
-                ? "Saved draft · Read only"
-                : snapshot.activationId
-                  ? "Published workflow"
-                  : "Unpublished workflow"}
-            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+              <span className="font-medium">
+                {historical
+                  ? `Saved draft${selectedRevision ? ` ${selectedRevision}` : ""} · Read only`
+                  : currentDraftId
+                    ? `${readOnly ? "Current" : "Editing"} draft${currentRevision ? ` ${currentRevision}` : ""}`
+                    : readOnly
+                      ? "No saved draft"
+                      : "Editing new draft"}
+              </span>
+              <span
+                className={
+                  live ? "rounded bg-accent-soft px-2 py-0.5 text-foreground" : "text-muted"
+                }
+              >
+                {live ? `Live revision${liveRevision ? ` ${liveRevision}` : ""}` : "Not published"}
+                {viewingLive ? " · Viewing live" : ""}
+              </span>
+              {live && !viewingLive && historical ? (
+                <span className="text-muted">Viewing an inactive revision</span>
+              ) : null}
+            </div>
+            {!historical ? (
+              <p className="mt-2 text-sm font-medium" role="status">
+                {dirty ? "Unsaved changes" : ""}
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2" aria-label="Draft actions">
             {!historical && (snapshot.draftId || hasConflict) ? (
@@ -511,9 +798,12 @@ export function WorkflowEditor({
                 type="button"
                 className="ui-button"
                 disabled={!!action}
-                onClick={() => void run("reload")}
+                onClick={(event) => {
+                  if (dirty) requestConfirmation({ kind: "reload" }, event.currentTarget);
+                  else void run("reload");
+                }}
               >
-                Load current draft
+                {action === "reload" ? "Loading latest draft…" : "Load current draft"}
               </button>
             ) : null}
             {historical ? (
@@ -530,7 +820,7 @@ export function WorkflowEditor({
                     !!action ||
                     hasConflict ||
                     configuringTemplate ||
-                    (!!snapshot.draftId && !dirty && !rebase)
+                    (!!snapshot.draftId && !graphDirty && !rebase)
                   }
                   onClick={() => void run("save")}
                 >
@@ -539,24 +829,80 @@ export function WorkflowEditor({
                 <button
                   type="button"
                   className="ui-button-primary"
-                  disabled={!!action || hasConflict || !canPublish}
+                  disabled={!!action || !!publishReason}
+                  aria-describedby="workflow-publish-help"
                   onClick={() => void run("publish")}
                 >
-                  {action === "publish" ? "Publishing…" : "Publish draft"}
+                  {action === "publish"
+                    ? "Publishing…"
+                    : `Publish draft${currentRevision ? ` ${currentRevision}` : ""}`}
                 </button>
               </>
             ) : null}
           </div>
         </div>
+        {!readOnly ? (
+          <p id="workflow-publish-help" className="text-sm text-muted">
+            {publishReason ??
+              "Publishing makes this revision available for new sessions. Existing sessions keep their revision."}
+          </p>
+        ) : null}
       </header>
 
-      {!snapshot.baseDefinition ? (
-        <p className="text-sm text-muted">Activate a factory definition to edit this workflow.</p>
-      ) : rebase && !historical ? (
-        <p className="rounded-md border border-border bg-warning-soft px-4 py-3 text-sm">
-          The factory definition changed. Rebase this draft before publishing.
+      {!snapshot.baseDefinition && !historical ? (
+        <p className="text-sm text-muted">
+          Activate a{" "}
+          <Link className="underline underline-offset-4" href={settingsHref}>
+            factory definition
+          </Link>{" "}
+          to edit this workflow.
         </p>
       ) : null}
+
+      {!readOnly && !dirty
+        ? (["kept", "working"] as const).map((source) => {
+            const saved = source === "kept" ? keptRecovery : workingRecovery;
+            if (!saved) return null;
+            const label =
+              source === "working" && keptRecovery ? "interrupted edits" : "recovery copy";
+            return (
+              <div
+                key={source}
+                className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-warning-soft px-4 py-3 text-sm"
+              >
+                <p className="min-w-0 flex-1">
+                  {source === "kept"
+                    ? "You kept a recovery copy after a draft conflict."
+                    : "This tab recovered unsaved changes from your last visit."}{" "}
+                  These changes aren’t saved or published.
+                </p>
+                <button
+                  className="ui-button"
+                  type="button"
+                  disabled={!!action}
+                  onClick={(event) =>
+                    requestConfirmation({ kind: "restore", source }, event.currentTarget)
+                  }
+                >
+                  Review {label}
+                </button>
+                <button
+                  className="ui-button"
+                  type="button"
+                  disabled={!!action}
+                  onClick={() =>
+                    writeWorkflowDraftRecovery(
+                      source === "kept" ? keptRecoveryKey : recoveryKey,
+                      null,
+                    )
+                  }
+                >
+                  Remove {label}
+                </button>
+              </div>
+            );
+          })
+        : null}
 
       {notice ? (
         <div
@@ -575,7 +921,7 @@ export function WorkflowEditor({
                     className="wrap-anywhere text-left underline underline-offset-4"
                     onClick={() => focusDiagnostic(path)}
                   >
-                    {diagnosticLabel(path, graph)} · {message}
+                    {diagnosticLabel(path, graph, names)} · {message}
                   </button>
                 </li>
               ))}
@@ -589,16 +935,20 @@ export function WorkflowEditor({
           template={snapshot.template}
           choices={choices}
           disabled={readOnly || !!action}
+          roles={roles}
+          setRoles={setRoles}
+          settingsHref={settingsHref}
           loadMore={(catalog) => void loadMoreReferences(catalog)}
           apply={(nextGraph) => {
             setGraph(nextGraph);
+            setRoles(emptyTemplateRoles);
             setNodeIndex(0);
             setEdgeIndex(0);
             setNotice({
               kind: "status",
               message: "Template loaded. Save a draft to retain these roles.",
             });
-            setFocusRequest({ fieldId: workflowFieldId(["nodes", 0, "id"]) });
+            setFocusRequest({ fieldId: workflowFieldId(["nodes", 0, "kind"]) });
           }}
         />
       ) : (
@@ -621,18 +971,24 @@ export function WorkflowEditor({
                 </button>
               ))}
             </div>
+            <a
+              href="#workflow-step-properties"
+              className="text-sm text-muted underline underline-offset-4 lg:hidden"
+            >
+              Jump to step properties
+            </a>
             {snapshot.publishedDraftId && snapshot.publishedDraftId !== initial.selectedDraftId ? (
               <Link
                 className="text-sm text-muted underline underline-offset-4"
                 href={pageFor(snapshot.publishedDraftId)}
               >
-                Inspect published draft
+                Inspect live revision{liveRevision ? ` ${liveRevision}` : ""}
               </Link>
             ) : null}
           </div>
 
           {view === "Graph" ? (
-            <GraphCanvas graph={graph} selected={nodeIndex} pick={setNodeIndex} />
+            <GraphCanvas graph={graph} names={names} selected={nodeIndex} pick={setNodeIndex} />
           ) : null}
 
           <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(15rem,0.65fr)_minmax(0,1.35fr)]">
@@ -656,17 +1012,19 @@ export function WorkflowEditor({
                   label="Entry step"
                   path={["entryNodeId"]}
                   diagnostics={diagnostics}
-                  options={nodeOptions(graph.nodes)}
+                  options={names}
                   value={graph.entryNodeId}
                   change={(entryNodeId) => setGraph({ ...graph, entryNodeId })}
                 />
               </fieldset>
-              <OrderedSteps graph={graph} selected={nodeIndex} pick={setNodeIndex} />
+              <OrderedSteps graph={graph} names={names} selected={nodeIndex} pick={setNodeIndex} />
             </section>
 
             <section className={panel} aria-label="Step properties">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-medium">Step properties</h2>
+                <h2 id="workflow-step-properties" tabIndex={-1} className="font-medium">
+                  Step properties
+                </h2>
                 {!readOnly && graph.nodes[nodeIndex] ? (
                   <button
                     type="button"
@@ -679,7 +1037,17 @@ export function WorkflowEditor({
                 ) : null}
               </div>
               <fieldset disabled={readOnly || !!action}>
-                <NodeFields {...editorProps} index={nodeIndex} choices={choices} />
+                <NodeFields
+                  {...editorProps}
+                  index={nodeIndex}
+                  choices={choices}
+                  grantsHref={grantsHref}
+                  pickStep={(index) => {
+                    if (index < 0) return;
+                    setNodeIndex(index);
+                    setFocusRequest({ fieldId: workflowFieldId(["nodes", index, "kind"]) });
+                  }}
+                />
               </fieldset>
               {!readOnly ? (
                 <div className="mt-3 flex flex-wrap gap-2 empty:hidden">
@@ -708,6 +1076,7 @@ export function WorkflowEditor({
               <h2 className="font-medium">Transitions</h2>
               {!readOnly ? (
                 <button
+                  id="workflow-add-transition"
                   type="button"
                   className="ui-button"
                   onClick={addTransition}
@@ -729,10 +1098,7 @@ export function WorkflowEditor({
                         onClick={() => setEdgeIndex(index)}
                       >
                         <span className="wrap-anywhere text-sm font-medium">
-                          {edge.id || "Unnamed transition"}
-                        </span>
-                        <span className="wrap-anywhere text-xs text-muted">
-                          {edge.from} → {edge.to} · {edgeLabels[edge.kind]}
+                          {transitionName(edge, names)}
                         </span>
                       </button>
                     </li>
@@ -740,7 +1106,7 @@ export function WorkflowEditor({
                 </ol>
                 <div>
                   <fieldset disabled={readOnly || !!action}>
-                    <EdgeFields {...editorProps} index={edgeIndex} />
+                    <EdgeFields {...editorProps} index={edgeIndex} choices={choices} />
                   </fieldset>
                   {!readOnly && graph.edges[edgeIndex] ? (
                     <button
@@ -782,13 +1148,72 @@ export function WorkflowEditor({
                   aria-current={id === initial.selectedDraftId ? "page" : undefined}
                 >
                   Draft {revision}
-                  {id === snapshot.publishedDraftId ? " · Published" : ""}
+                  {id === snapshot.publishedDraftId ? " · Live" : ""}
+                  {id === currentDraftId && id !== snapshot.publishedDraftId
+                    ? " · Latest saved"
+                    : ""}
                 </Link>
               </li>
             ))}
           </ol>
         </details>
       ) : null}
+      <AlertDialog
+        open={!!confirmation}
+        onOpenChange={(open) => {
+          if (!open) setConfirmation(null);
+        }}
+      >
+        <AlertDialogContent
+          title={
+            confirmation?.kind === "restore"
+              ? "Restore unsaved changes?"
+              : confirmation?.kind === "reload"
+                ? "Load the latest draft?"
+                : "Leave this workflow?"
+          }
+          description={
+            confirmation?.kind === "restore"
+              ? recoveryHasOlderHead
+                ? "This copy predates the latest draft, publication, or factory definition. Restoring it replaces what’s in the editor, not what’s saved. Review the latest draft first so you don’t overwrite someone else’s changes."
+                : "The copy will replace what’s in the editor. You can review and save it as a new draft."
+              : confirmation?.kind === "reload"
+                ? hasConflict
+                  ? keptRecovery
+                    ? "Loading the latest draft replaces what’s in the editor. Keeping this copy replaces the earlier recovery copy in this tab."
+                    : "Loading the latest draft replaces what’s in the editor. Keep a recovery copy in this tab if you want to revisit your changes."
+                  : "Loading the latest draft replaces your unsaved changes."
+                : "Leaving now discards your unsaved changes. Keep editing to save them first."
+          }
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const origin = confirmationOrigin.current;
+            if (origin?.isConnected && !origin.matches(":disabled")) origin.focus();
+            else document.getElementById("workflow-editor-title")?.focus();
+          }}
+        >
+          <AlertDialogFooter className="flex-wrap">
+            <AlertDialogCancel className="ui-button">
+              {confirmation?.kind === "restore" ? "Cancel" : "Keep editing"}
+            </AlertDialogCancel>
+            <AlertDialogAction className="ui-button" onClick={() => confirmDraftAction()}>
+              {confirmation?.kind === "restore"
+                ? "Restore as unsaved changes"
+                : confirmation?.kind === "reload"
+                  ? "Discard changes and load latest"
+                  : "Discard changes and leave"}
+            </AlertDialogAction>
+            {confirmation?.kind === "reload" && hasConflict ? (
+              <AlertDialogAction
+                className="ui-button-primary"
+                onClick={() => confirmDraftAction(true)}
+              >
+                Keep a recovery copy and load latest
+              </AlertDialogAction>
+            ) : null}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { PortalRootProvider } from "@/components/ui/portal-root";
 import { compileWorkflowGraph } from "@/lib/factory-definitions/workflow-compiler";
 import { workflowGraphSchema } from "@/lib/factory-definitions/workflow-schema";
 import type {
@@ -13,6 +14,9 @@ import type {
 
 import { WorkflowEditor } from "./workflow-editor";
 import { defaultDelegationPolicy } from "./editor-graph";
+
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 function id(value: number) {
   return `65520000-0000-4000-8000-${String(value).padStart(12, "0")}`;
@@ -57,20 +61,25 @@ const choices: WorkflowEditorCatalog = {
   nextCursors: { writers: null, prompts: promptCursor, approvers: null, profiles: null },
 };
 
-function openEditor(snapshot = initial, editorChoices = choices) {
+function openEditor(snapshot = initial, editorChoices = choices, recoveryOwner = id(31)) {
   return render(
-    <WorkflowEditor
-      initial={snapshot}
-      choices={editorChoices}
-      workspaceSlug="acme"
-      factoryId={id(6)}
-      endpoint={endpoint}
-    />,
+    <PortalRootProvider>
+      <WorkflowEditor
+        initial={snapshot}
+        choices={editorChoices}
+        workspaceSlug="acme"
+        factoryId={id(6)}
+        endpoint={endpoint}
+        recoveryOwner={recoveryOwner}
+      />
+    </PortalRootProvider>,
   );
 }
 
 afterEach(() => {
   cleanup();
+  window.sessionStorage.clear();
+  router.push.mockClear();
   vi.unstubAllGlobals();
 });
 
@@ -292,16 +301,9 @@ it("focuses the same diagnostic again after selecting another step", async () =>
       ),
     ),
   );
-  render(
-    <WorkflowEditor
-      initial={snapshot}
-      choices={choices}
-      workspaceSlug="acme"
-      factoryId={id(6)}
-      endpoint={endpoint}
-    />,
-  );
+  openEditor(snapshot);
 
+  fireEvent.click(screen.getByText("Advanced step settings"));
   fireEvent.change(screen.getByRole("textbox", { name: "Step ID" }), {
     target: { value: "prepare-source" },
   });
@@ -310,7 +312,8 @@ it("focuses the same diagnostic again after selecting another step", async () =>
   expect(screen.getByRole("textbox", { name: "Step ID" })).toHaveValue("verify");
 
   const steps = screen.getByRole("region", { name: "Workflow steps" });
-  fireEvent.click(within(steps).getByRole("button", { name: /prepare-source/ }));
+  fireEvent.click(within(steps).getByRole("button", { name: /Checkpoint/ }));
+  fireEvent.click(screen.getByText("Advanced step settings"));
   expect(screen.getByRole("textbox", { name: "Step ID" })).toHaveValue("prepare-source");
   fireEvent.click(diagnostic);
   const field = screen.getByRole("textbox", { name: "Step ID" });
@@ -424,9 +427,221 @@ it("saves and publishes the product template with scoped roles and source-stage 
   fireEvent.click(screen.getByRole("combobox", { name: "Reviewer prompt revision" }));
   fireEvent.click(await screen.findByRole("option", { name: reviewer.label }));
   fireEvent.click(screen.getByRole("button", { name: "Apply template" }));
+  fireEvent.click(screen.getByText("Advanced step settings"));
   expect(screen.getByRole("textbox", { name: "Step ID" })).toHaveValue("scope.approval");
   fireEvent.click(save);
   await screen.findByText("Draft saved.");
   fireEvent.click(screen.getByRole("button", { name: "Publish draft" }));
   await screen.findByText("Workflow published.");
+});
+
+it("protects template picks before applying the template and clears the warning if reverted", async () => {
+  const profile = {
+    id: id(44),
+    digest,
+    label: "Activated role",
+    templateRole: { promptRevisionId: laterPrompt.id, canRunForeman: true },
+  };
+  openEditor(
+    {
+      ...initial,
+      template: { id: "incident-analysis", version: 1 },
+      graph: null,
+      draftId: null,
+      draftBaseDefinition: null,
+      draftDigest: null,
+    },
+    {
+      ...choices,
+      profiles: [profile],
+      templateSource: {
+        label: "Approval",
+        anyoneCanApprove: true,
+        approverMemberIds: [],
+        hasRequiredEvidence: false,
+        canDraftProductScope: false,
+      },
+    },
+  );
+  const foreman = screen.getByRole("combobox", { name: "Foreman profile" });
+  fireEvent.click(foreman);
+  fireEvent.click(await screen.findByRole("option", { name: "Activated role" }));
+  expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+  const unload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(unload);
+  expect(unload.defaultPrevented).toBe(true);
+  const all = screen.getByRole("link", { name: "All workflows" });
+  all.focus();
+  fireEvent.click(all);
+  const dialog = await screen.findByRole("alertdialog", { name: "Leave this workflow?" });
+  const keep = within(dialog).getByRole("button", { name: "Keep editing" });
+  expect(keep).toHaveFocus();
+  fireEvent.click(keep);
+  expect(router.push).not.toHaveBeenCalled();
+  expect(foreman).toHaveAttribute("data-value", profile.id);
+  fireEvent.click(foreman);
+  fireEvent.click(await screen.findByRole("option", { name: "Choose an activated Codex profile" }));
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
+  expect(window.sessionStorage.length).toBe(0);
+});
+
+it("keeps stale edits until reload is confirmed, then restores a kept copy without publishing it", async () => {
+  const liveId = id(45);
+  const newer = {
+    ...initial,
+    draftId: id(46),
+    activationId: id(47),
+    publishedDraftId: liveId,
+    recentDrafts: [
+      { id: id(46), revision: 25 },
+      { id: liveId, revision: 1 },
+    ],
+  };
+  const fetch = vi.fn(async (url: string) =>
+    url.endsWith("includeChoices=true")
+      ? Response.json({ snapshot: newer, choices })
+      : Response.json({ error: "Draft changed." }, { status: 409 }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  openEditor();
+  fireEvent.click(screen.getByRole("button", { name: "Add step" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText(/Your edits are still here/);
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Load current draft" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Load current draft" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Keep a recovery copy and load latest" }),
+  );
+  await screen.findByText("Editing draft 25");
+  expect(screen.getByText("Live revision 1")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Publish draft 25" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Review recovery copy" }));
+  expect(await screen.findByText(/This copy predates the latest draft/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Restore as unsaved changes" }));
+  expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Publish draft 25" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(
+    within(screen.getByRole("list", { name: "Ordered workflow steps" })).getByRole("button", {
+      name: /Checkpoint/,
+    }),
+  ).toBeInTheDocument();
+});
+
+it("offers interrupted changes only to their owner and can open the history link after discard", async () => {
+  const liveId = id(48);
+  const current = {
+    ...initial,
+    activationId: id(49),
+    publishedDraftId: liveId,
+    recentDrafts: [
+      { id: initial.draftId!, revision: 4 },
+      { id: liveId, revision: 2 },
+    ],
+  };
+  const { unmount } = openEditor(current);
+  fireEvent.click(screen.getByRole("button", { name: "Add step" }));
+  unmount();
+  const asOtherOwner = openEditor(current, choices, id(54));
+  expect(screen.queryByRole("button", { name: "Review recovery copy" })).toBeNull();
+  asOtherOwner.unmount();
+  openEditor(current);
+  fireEvent.click(screen.getByRole("button", { name: "Review recovery copy" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Restore as unsaved changes" }));
+  const liveLink = screen.getByRole("link", { name: "Inspect live revision 2" });
+  fireEvent.click(liveLink);
+  fireEvent.click(await screen.findByRole("button", { name: "Discard changes and leave" }));
+  expect(router.push).toHaveBeenCalledWith(liveLink.getAttribute("href"));
+  expect(window.sessionStorage.length).toBe(0);
+});
+
+it("distinguishes old and live historical deep links without enabling mutations", () => {
+  const liveId = id(51);
+  const oldId = id(52);
+  const current = {
+    ...initial,
+    activationId: id(53),
+    publishedDraftId: liveId,
+    selectedDraftId: oldId,
+    selectedDraftGraph: initial.graph,
+    recentDrafts: [
+      { id: initial.draftId!, revision: 25 },
+      { id: liveId, revision: 3 },
+      { id: oldId, revision: 1 },
+    ],
+  };
+  const { unmount } = openEditor(current);
+  expect(screen.getByText("Saved draft 1 · Read only")).toBeInTheDocument();
+  expect(screen.getByText("Viewing an inactive revision")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Publish draft/ })).toBeNull();
+  unmount();
+  openEditor({ ...current, selectedDraftId: liveId });
+  expect(screen.getByText("Saved draft 3 · Read only")).toBeInTheDocument();
+  expect(screen.getByText("Live revision 3 · Viewing live")).toBeInTheDocument();
+});
+
+it("focuses the parent control for indexed route and approver diagnostics", async () => {
+  const snapshot = {
+    ...initial,
+    graph: workflowGraphSchema.parse({
+      schemaVersion: 1,
+      kind: "graph",
+      entryNodeId: "triage",
+      nodes: [
+        { id: "triage", kind: "route", agentPromptRevisionId: missingPrompt },
+        { id: "approve", kind: "human-gate", anyoneCanApprove: false, approverMemberIds: [id(55)] },
+      ],
+      edges: [{ id: "send", kind: "route", from: "triage", to: "approve" }],
+      grants: [],
+      routePolicy: {
+        maxNodeVisits: 5,
+        maxLoopTraversals: 0,
+        nodes: {
+          triage: {
+            minimumConfidence: 0.5,
+            allowedDestinationIds: ["approve"],
+            fallback: { kind: "clarification" },
+          },
+        },
+      },
+    }),
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json(
+        {
+          error: "Resolve the workflow diagnostics.",
+          diagnostics: [
+            {
+              path: ["routePolicy", "nodes", "triage", "allowedDestinationIds", 0],
+              message: "Choose a separate route.",
+            },
+            { path: ["nodes", 1, "approverMemberIds", 0], message: "Choose an active member." },
+          ],
+        },
+        { status: 422 },
+      ),
+    ),
+  );
+  openEditor(snapshot);
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Minimum confidence" }), {
+    target: { value: "0.7" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  const memberDiagnostic = await screen.findByRole("button", { name: /Choose an active member/ });
+  const destinations = screen.getByRole("listbox", { name: "Allowed route destinations" });
+  expect(destinations).toHaveFocus();
+  expect(destinations).toHaveAccessibleDescription("Choose a separate route.");
+  fireEvent.click(memberDiagnostic);
+  const members = screen.getByRole("listbox", { name: "Required approvers" });
+  expect(members).toHaveFocus();
+  expect(members).toHaveAccessibleDescription(/Choose an active member/);
 });
