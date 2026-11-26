@@ -4,529 +4,98 @@
 
 .illustrations {
   min-width: 0;
-  padding: 4px 16px;
 }
 
-.figureTitle {
+.workflow {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--content-radius);
+  background: var(--surface-sheet);
+}
+
+.stages {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stage {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
   font-size: 14px;
-  font-weight: 500;
-  line-height: 1.5;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.stage:not(:last-child)::after {
+  position: absolute;
+  top: 19px;
+  left: calc(50% + 26px);
+  width: max(0px, calc(100% - 52px));
+  border-top: 1px solid var(--border-strong);
+  content: "";
+}
+
+.stageNode {
+  display: grid;
+  width: 39px;
+  height: 39px;
+  margin-bottom: 8px;
+  place-items: center;
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.approvalNode {
+  border-radius: 50%;
+  border-color: var(--border-strong);
+  background: var(--surface-sheet);
+  color: var(--foreground);
+}
+
+.providers {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
 }
 
 .agents,
 .sandboxes {
-  --provider-motion: playing;
   display: grid;
   gap: 8px;
-  margin-top: 18px;
 }
 
 .agents {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 6px;
 }
 
 .sandboxes {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.providerOption {
-  display: flex;
+.provider {
+  display: grid;
+  grid-template-rows: 24px auto;
   min-width: 0;
-  flex-direction: column;
+  justify-items: center;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
-.providerLogo {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border-radius: 12px;
-  transition:
-    background-color 300ms ease,
-    box-shadow 300ms ease,
-    transform 300ms ease;
-}
-
-.providerOption[data-highlighted="true"] .providerLogo {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
-  transform: translateY(-2px);
-}
-
-.providerLabel {
-  transition: color 300ms ease;
-}
-
-.providerOption[data-highlighted="true"] .providerLabel {
-  color: var(--accent);
-}
-
-.sandboxTitle {
-  margin-top: 30px;
-}
-
-.workflow {
-  --workflow-cycle: 16s;
-  margin-top: 38px;
-}
-
-.workflowCanvas {
-  position: relative;
-  height: 108px;
-  margin-top: 24px;
-}
-
-.stages {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.stage,
-.addStage {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.stage {
-  position: relative;
-  animation: plan-added var(--workflow-cycle) ease-out infinite;
-}
-
-.reviewStage {
-  animation-name: review-added;
-}
-.buildStage {
-  animation-name: build-added;
-}
-
-.stage::after {
-  position: absolute;
-  top: 19px;
-  left: calc(50% + 25px);
-  width: calc(100% - 50px);
-  height: 1px;
-  background: color-mix(in srgb, var(--border) 45%, transparent);
-  content: "";
-}
-
-.planStage::after {
-  animation: review-added var(--workflow-cycle) ease-out infinite;
-}
-.reviewStage::after {
-  animation: build-added var(--workflow-cycle) ease-out infinite;
-}
-.buildStage::after {
-  background: none;
-  border-top: 1px dashed var(--muted);
-  opacity: 0.5;
-}
-
-.stageNode,
-.addNode {
-  display: grid;
-  width: 39px;
-  height: 39px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  border-radius: 11px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.planStage .stageNode {
-  animation: agent-working var(--workflow-cycle) ease-out infinite;
-}
-
-.reviewStage .stageNode {
-  border-radius: 50%;
-  border-color: color-mix(in srgb, var(--foreground) 35%, transparent);
-  background: var(--canvas);
-  color: var(--foreground);
-  animation: human-waiting var(--workflow-cycle) ease-out infinite;
-}
-
-.stageName {
-  margin-top: 9px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.stageOwner {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.addStage {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 25%;
-  transform: translateX(300%);
-  color: var(--muted);
-  animation: add-position var(--workflow-cycle) ease-in-out infinite;
-}
-
-.addNode {
-  border: 1px dashed color-mix(in srgb, var(--muted) 65%, transparent);
-  background: transparent;
-  color: var(--muted);
-  font-size: 23px;
-  font-weight: 300;
-}
-
-.workflowCursor {
-  position: absolute;
-  top: 27px;
-  left: 0;
-  width: 25%;
-  padding-left: calc(12.5% + 9px);
-  opacity: 0;
-  pointer-events: none;
-  animation: user-adds-stage var(--workflow-cycle) ease-in-out infinite;
-}
-
-.workflowCursor svg {
-  max-width: none;
-}
-
-.workflowStatus {
-  display: grid;
-  color: var(--muted);
-  font-family: var(--font-ibm-plex-mono), monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  text-align: center;
-}
-
-.workflowStatus > span {
-  grid-area: 1 / 1;
-}
-.workflowStatus > span:not(.workflowSummary) {
-  opacity: 0;
-}
-.startStatus {
-  animation: start-caption var(--workflow-cycle) linear infinite;
-}
-.planStatus {
-  animation: plan-caption var(--workflow-cycle) linear infinite;
-}
-.reviewStatus {
-  animation: review-caption var(--workflow-cycle) linear infinite;
-}
-.buildStatus {
-  animation: build-caption var(--workflow-cycle) linear infinite;
-}
-.workingStatus {
-  animation: working-caption var(--workflow-cycle) linear infinite;
-}
-.waitingStatus {
-  animation: waiting-caption var(--workflow-cycle) linear infinite;
-}
-.workflowSummary {
-  animation: summary-caption var(--workflow-cycle) linear infinite;
-}
-
-/* Build the workflow before demonstrating execution. The unanimated state is a
-   complete, readable example for reduced motion and server-rendered content. */
-@keyframes plan-added {
-  0%,
-  10%,
-  100% {
-    opacity: 0;
-    transform: translateY(6px) scale(0.9);
+@media (min-width: 640px) {
+  .workflow {
+    padding: 24px;
   }
-  14%,
-  94% {
-    opacity: 1;
-    transform: none;
-  }
-  98% {
-    opacity: 0;
-    transform: none;
-  }
-}
-@keyframes review-added {
-  0%,
-  28%,
-  100% {
-    opacity: 0;
-    transform: translateY(6px) scale(0.9);
-  }
-  32%,
-  94% {
-    opacity: 1;
-    transform: none;
-  }
-  98% {
-    opacity: 0;
-    transform: none;
-  }
-}
-@keyframes build-added {
-  0%,
-  46%,
-  100% {
-    opacity: 0;
-    transform: translateY(6px) scale(0.9);
-  }
-  50%,
-  94% {
-    opacity: 1;
-    transform: none;
-  }
-  98% {
-    opacity: 0;
-    transform: none;
-  }
-}
-@keyframes add-position {
-  0%,
-  10%,
-  100% {
-    transform: translateX(0);
-    opacity: 1;
-  }
-  15%,
-  28% {
-    transform: translateX(100%);
-    opacity: 1;
-  }
-  33%,
-  46% {
-    transform: translateX(200%);
-    opacity: 1;
-  }
-  51%,
-  94% {
-    transform: translateX(300%);
-    opacity: 1;
-  }
-  98% {
-    transform: translateX(300%);
-    opacity: 0;
-  }
-  99% {
-    transform: translateX(0);
-    opacity: 0;
-  }
-}
-@keyframes user-adds-stage {
-  0%,
-  3% {
-    opacity: 0;
-    transform: translate(0, 12px);
-  }
-  7%,
-  9% {
-    opacity: 1;
-    transform: translate(0, 0);
-  }
-  10% {
-    opacity: 1;
-    transform: translate(0, 0) scale(0.85);
-  }
-  13%,
-  19% {
-    opacity: 1;
-    transform: translate(0, 0);
-  }
-  25%,
-  27% {
-    opacity: 1;
-    transform: translateX(100%);
-  }
-  28% {
-    opacity: 1;
-    transform: translateX(100%) scale(0.85);
-  }
-  31%,
-  37% {
-    opacity: 1;
-    transform: translateX(100%);
-  }
-  43%,
-  45% {
-    opacity: 1;
-    transform: translateX(200%);
-  }
-  46% {
-    opacity: 1;
-    transform: translateX(200%) scale(0.85);
-  }
-  49%,
-  52% {
-    opacity: 1;
-    transform: translateX(200%);
-  }
-  57%,
-  100% {
-    opacity: 0;
-    transform: translate(200%, 12px);
-  }
-}
-@keyframes agent-working {
-  0%,
-  58%,
-  72%,
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-  62%,
-  68% {
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-  65% {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent);
-  }
-}
-@keyframes human-waiting {
-  0%,
-  73%,
-  94%,
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-  78%,
-  88% {
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--foreground) 8%, transparent);
-  }
-  83% {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 4%, transparent);
-  }
-}
-@keyframes start-caption {
-  0%,
-  9%,
-  100% {
-    opacity: 1;
-  }
-  10%,
-  98% {
-    opacity: 0;
-  }
-}
-@keyframes plan-caption {
-  0%,
-  10%,
-  28%,
-  100% {
-    opacity: 0;
-  }
-  12%,
-  26% {
-    opacity: 1;
-  }
-}
-@keyframes review-caption {
-  0%,
-  28%,
-  46%,
-  100% {
-    opacity: 0;
-  }
-  30%,
-  44% {
-    opacity: 1;
-  }
-}
-@keyframes build-caption {
-  0%,
-  46%,
-  59%,
-  100% {
-    opacity: 0;
-  }
-  48%,
-  57% {
-    opacity: 1;
-  }
-}
-@keyframes working-caption {
-  0%,
-  59%,
-  73%,
-  100% {
-    opacity: 0;
-  }
-  61%,
-  71% {
-    opacity: 1;
-  }
-}
-@keyframes waiting-caption {
-  0%,
-  73%,
-  98%,
-  100% {
-    opacity: 0;
-  }
-  75%,
-  94% {
-    opacity: 1;
-  }
-}
-@keyframes summary-caption {
-  0%,
-  100% {
-    opacity: 0;
-  }
-}
-
-/* Re-entering the viewport always starts with adding the first stage. */
-.workflow[data-animation="offscreen"] *,
-.workflow[data-animation="offscreen"] *::after {
-  animation: none;
-}
-
-.animatedFigure[data-animation="waiting"] *,
-.animatedFigure[data-animation="waiting"] *::before,
-.animatedFigure[data-animation="waiting"] *::after {
-  animation: none;
-}
-
-.animatedFigure[data-animation="offscreen"] *,
-.animatedFigure[data-animation="offscreen"] *::before,
-.animatedFigure[data-animation="offscreen"] *::after {
-  animation-play-state: paused;
-}
-
-@media (max-width: 479px) {
-  .illustrations {
-    padding-inline: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce), (forced-colors: active) {
-  .agents,
-  .sandboxes {
-    --provider-motion: paused;
-  }
-
-  .animatedFigure *,
-  .animatedFigure *::before,
-  .animatedFigure *::after {
-    animation: none !important;
-  }
-}
-
-:global(:root[data-reduced-motion="reduce"]) .agents,
-:global(:root[data-reduced-motion="reduce"]) .sandboxes {
-  --provider-motion: paused;
-}
-
-:global(:root[data-reduced-motion="reduce"]) .animatedFigure *,
-:global(:root[data-reduced-motion="reduce"]) .animatedFigure *::before,
-:global(:root[data-reduced-motion="reduce"]) .animatedFigure *::after {
-  animation: none !important;
 }
