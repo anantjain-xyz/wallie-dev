@@ -2,6 +2,10 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
+  sessionSearchCookieName,
+  sessionSearchCookieOptions,
+} from "@/lib/session-search-continuation";
+import {
   getSupabaseAuthFlowCookieNames,
   getSupabaseSessionCookieNames,
   verifySupabaseAuthIdentity,
@@ -22,7 +26,11 @@ function clearSupabaseAuthCookies(request: NextRequest, response: NextResponse) 
   });
 }
 
-export async function updateSupabaseSession(request: NextRequest, workspaceReturnPath?: string) {
+export async function updateSupabaseSession(
+  request: NextRequest,
+  workspaceReturnPath?: string,
+  sessionSearchCookie?: string,
+) {
   function continueWithRequest() {
     if (!workspaceReturnPath && !request.headers.has(WORKSPACE_RETURN_HEADER)) {
       return NextResponse.next({ request });
@@ -33,10 +41,20 @@ export async function updateSupabaseSession(request: NextRequest, workspaceRetur
     return NextResponse.next({ request: { headers: forwarded } });
   }
   let response = continueWithRequest();
+  function saveSessionSearch() {
+    if (sessionSearchCookie) {
+      response.cookies.set(
+        sessionSearchCookieName,
+        sessionSearchCookie,
+        sessionSearchCookieOptions,
+      );
+    }
+  }
   const { publishableKey, url } = resolveSupabasePublicConfig(process.env);
   const sessionCookieNames = getSupabaseSessionCookieNames(request.cookies.getAll());
 
   if (sessionCookieNames.length === 0) {
+    saveSessionSearch();
     return response;
   }
 
@@ -71,6 +89,7 @@ export async function updateSupabaseSession(request: NextRequest, workspaceRetur
 
   if (!verification.identity) {
     clearSupabaseAuthCookies(request, response);
+    saveSessionSearch();
   }
 
   return response;

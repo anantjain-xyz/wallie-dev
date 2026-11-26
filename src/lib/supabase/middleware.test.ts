@@ -27,6 +27,7 @@ vi.mock("next/server", () => ({
   },
 }));
 
+import { sessionSearchCookieName } from "@/lib/session-search-continuation";
 import { updateSupabaseSession } from "@/lib/supabase/middleware";
 import { WORKSPACE_RETURN_HEADER } from "@/lib/workspace-return-path";
 
@@ -69,6 +70,20 @@ describe("Supabase session middleware", () => {
     expect(mocked.auth.getClaims).not.toHaveBeenCalled();
   });
 
+  it("saves private search state in an HttpOnly cookie for a signed-out request", async () => {
+    const response = await updateSupabaseSession(
+      createRequest([]) as never,
+      "/w/local/sessions",
+      "synthetic search state",
+    );
+
+    expect(response.cookies.set).toHaveBeenCalledWith(
+      sessionSearchCookieName,
+      "synthetic search state",
+      expect.objectContaining({ httpOnly: true, maxAge: 600, sameSite: "lax" }),
+    );
+  });
+
   it("replaces inbound workspace-return metadata with the path derived by middleware", async () => {
     const request = createRequest([]);
     request.headers.set(WORKSPACE_RETURN_HEADER, "/w/foreign/sessions/7");
@@ -99,10 +114,15 @@ describe("Supabase session middleware", () => {
     });
     const request = createRequest();
 
-    await updateSupabaseSession(request as never);
+    const response = await updateSupabaseSession(
+      request as never,
+      "/w/local/sessions",
+      "synthetic search state",
+    );
 
     expect(mocked.auth.getClaims).toHaveBeenCalledTimes(1);
     expect(request.cookies.delete).not.toHaveBeenCalled();
+    expect(response.cookies.set).not.toHaveBeenCalled();
   });
 
   it("propagates refreshed cookies before continuing", async () => {

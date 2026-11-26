@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 
 it("asks for sign-in with the exact supported Sessions query state", async () => {
-  const path = "/w/acme/sessions?factory=all&scope=archived&sort=oldest&q=release";
+  const path = "/w/acme/sessions?factory=all&scope=archived&sort=oldest";
   mocks.headers.mockResolvedValue(new Headers({ [WORKSPACE_RETURN_HEADER]: path }));
   await expect(loadAuthenticatedWorkspaceContext("acme")).rejects.toThrow("redirect:");
   const next = new URL(mocks.redirect.mock.lastCall![0], "https://wallie.invalid");

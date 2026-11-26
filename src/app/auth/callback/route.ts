@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { sanitizeAuthSessionNext } from "@/lib/workspace-return-path";
 
 function loginErrorPath(next: string, error: string) {
   return `/login?error=${error}&next=${encodeURIComponent(next)}`;
@@ -15,7 +16,7 @@ function loginErrorPath(next: string, error: string) {
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
-  const next = normalizeNextPath(request.nextUrl.searchParams.get("next"));
+  const next = sanitizeAuthSessionNext(normalizeNextPath(request.nextUrl.searchParams.get("next")));
 
   if (!code) {
     return NextResponse.redirect(

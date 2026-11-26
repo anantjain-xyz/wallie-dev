@@ -17,7 +17,11 @@ const filteredSessions = "/w/acme-corp/sessions?factory=all&scope=all&sort=oldes
 test("a signed-out Sessions link preserves its list filters at login", async ({ page }) => {
   await page.goto(filteredSessions);
   await expect(page).toHaveURL(/\/login\?next=/);
-  await expect(page.locator('input[name="next"]')).toHaveValue(filteredSessions);
+  const next = await page.locator('input[name="next"]').inputValue();
+  expect(next).toMatch(
+    /^\/w\/acme-corp\/sessions\?factory=all&scope=all&sort=oldest&resumeSearch=/,
+  );
+  expect(next).not.toContain("q=");
   await expect(page.getByRole("heading", { name: "Sign in to Wallie" })).toBeVisible();
 });
 
@@ -25,8 +29,17 @@ test("a magic link completes sign-in back to the filtered Sessions list", async 
   await page.goto(filteredSessions);
   const returnTo = await page.locator('input[name="next"]').inputValue();
   await signIn(page, returnTo);
-  await expect(page).toHaveURL((url) => url.pathname + url.search === filteredSessions);
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/w/acme-corp/sessions" &&
+      url.searchParams.get("scope") === "all" &&
+      url.searchParams.get("sort") === "oldest" &&
+      !url.searchParams.has("q"),
+  );
   await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+  ).toHaveValue("example");
 });
 
 test("logout without a mutable user record clears the flow back to login", async ({ page }) => {

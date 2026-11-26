@@ -10,6 +10,7 @@ import {
 import { emailCodeAuthCookieName, emailCodeAuthCookieOptions } from "@/lib/auth-email-code-cookie";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { sanitizeAuthSessionNext } from "@/lib/workspace-return-path";
 
 function loginErrorPath(next: string, error: string) {
   return `/login?error=${error}&next=${encodeURIComponent(next)}`;
@@ -41,7 +42,7 @@ function redirectToAuthenticatedPath(request: NextRequest, redirectTarget: strin
 }
 
 export async function GET(request: NextRequest) {
-  const next = normalizeNextPath(request.nextUrl.searchParams.get("next"));
+  const next = sanitizeAuthSessionNext(normalizeNextPath(request.nextUrl.searchParams.get("next")));
   const code = request.nextUrl.searchParams.get("code");
   const tokenHash = request.nextUrl.searchParams.get("token_hash");
   const type = normalizeEmailOtpType(request.nextUrl.searchParams.get("type"));

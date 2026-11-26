@@ -144,6 +144,7 @@ export default async function FactoryOAuthAuthorizePage({
           className="flex flex-wrap items-center gap-x-3 gap-y-1"
         >
           <input type="hidden" name="next" value={resumePath} />
+          <input type="hidden" name="switchAccount" value="1" />
           <p className="type-secondary text-muted [overflow-wrap:anywhere]">
             Signed in as{" "}
             <strong className="font-medium text-foreground">

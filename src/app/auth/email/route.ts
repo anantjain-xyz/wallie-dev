@@ -9,7 +9,14 @@ import {
   normalizeEmailCodeAddress,
 } from "@/lib/auth-email-code-cookie";
 import { loginPath } from "@/lib/routes";
+import {
+  createSessionSearchContinuation,
+  readSessionSearchContinuation,
+  sessionSearchCookieName,
+  sessionSearchCookieOptions,
+} from "@/lib/session-search-continuation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { sanitizeAuthSessionNext } from "@/lib/workspace-return-path";
 
 function getEntryPath(next: string, params: Record<string, string>) {
   const basePath = loginPath(next);
@@ -45,7 +52,7 @@ function redirectToEntry(
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
   const email = normalizeEmailCodeAddress(String(formData.get("email") ?? ""));
-  const next = normalizeNextPath(String(formData.get("next") ?? ""));
+  const next = sanitizeAuthSessionNext(normalizeNextPath(String(formData.get("next") ?? "")));
 
   if (!email) {
     return redirectToEntry(request, next, { error: "email_sign_in_failed" });
@@ -53,8 +60,13 @@ export async function POST(request: NextRequest) {
 
   const supabase = await createSupabaseServerClient();
   const confirmUrl = buildAppUrl("/auth/confirm");
+  const continuation = createSessionSearchContinuation(
+    next,
+    readSessionSearchContinuation(next, request.cookies.get(sessionSearchCookieName)?.value),
+  );
+  const returnPath = continuation?.next ?? next;
 
-  confirmUrl.searchParams.set("next", next);
+  confirmUrl.searchParams.set("next", returnPath);
 
   const { error } = await supabase.auth.signInWithOtp({
     email,
@@ -75,13 +87,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return redirectToEntry(
+  const response = redirectToEntry(
     request,
-    next,
+    returnPath,
     { status: "check_email" },
     {
       kind: "sent",
       address: email,
     },
   );
+  if (continuation) {
+    response.cookies.set(sessionSearchCookieName, continuation.cookie, sessionSearchCookieOptions);
+  }
+  return response;
 }

@@ -18,6 +18,7 @@ import {
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { readFirstValue } from "@/lib/utils";
+import { sanitizeAuthSessionNext } from "@/lib/workspace-return-path";
 
 type LoginPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -31,7 +32,9 @@ export const metadata: Metadata = {
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const resolvedSearchParams = await searchParams;
-  const next = normalizeNextPath(readFirstValue(resolvedSearchParams.next));
+  const next = sanitizeAuthSessionNext(
+    normalizeNextPath(readFirstValue(resolvedSearchParams.next)),
+  );
   const errorCode = readFirstValue(resolvedSearchParams.error);
   const statusCode = readFirstValue(resolvedSearchParams.status);
   const retryId = readFirstValue(resolvedSearchParams.retry);

@@ -21,6 +21,7 @@ export default async function NotFoundPage() {
           actions={
             <form action="/auth/signout" method="post">
               <input type="hidden" name="next" value={next} />
+              <input type="hidden" name="switchAccount" value="1" />
               <button type="submit" className="ui-button">
                 Use a different account
               </button>

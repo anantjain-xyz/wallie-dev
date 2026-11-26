@@ -25,6 +25,7 @@ export function ConsentRecovery({
         {resumePath ? (
           <form action="/auth/signout" method="post">
             <input type="hidden" name="next" value={resumePath} />
+            <input type="hidden" name="switchAccount" value="1" />
             <button className="ui-button min-h-11" type="submit">
               Use a different account
             </button>
