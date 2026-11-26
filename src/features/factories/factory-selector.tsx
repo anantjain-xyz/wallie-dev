@@ -5,6 +5,7 @@ import { useTransition } from "react";
 
 import { FilterSelectTrigger } from "@/components/ui/filter-controls";
 import { Select, SelectContent, SelectItem } from "@/components/ui/select";
+import { SELECT_FIT_CONTENT_CLASS } from "@/components/ui/select-popup";
 import {
   factorySwitchHref,
   type FactorySelectionOption,
@@ -63,10 +64,7 @@ export function FactorySelector({
         className="max-w-full sm:max-w-52"
         data-value={effectiveValue}
       />
-      <SelectContent
-        align="end"
-        className="w-max min-w-[max(12rem,var(--radix-select-trigger-width))] max-w-[min(24rem,var(--radix-select-content-available-width,100vw),calc(100vw-(var(--overlay-gutter-inline)*2)))]"
-      >
+      <SelectContent align="end" className={SELECT_FIT_CONTENT_CLASS}>
         {effectiveValue === "unavailable" ? (
           <SelectItem disabled value="unavailable" wrap>
             Factory unavailable
