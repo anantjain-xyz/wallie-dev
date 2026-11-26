@@ -85,12 +85,14 @@ function Field({
   label,
   diagnostics,
   description,
+  group = false,
   children,
 }: {
   path: Path;
   label: string;
   diagnostics: readonly EditorDiagnostic[];
   description?: string;
+  group?: boolean;
   children: (attributes: {
     id: string;
     "aria-invalid": true | undefined;
@@ -107,16 +109,25 @@ function Field({
   ];
   const descriptionId = description ? `${id}-description` : undefined;
   const errorId = issues.length ? `${id}-error` : undefined;
+  const attributes = {
+    id,
+    "aria-invalid": issues.length ? (true as const) : undefined,
+    "aria-describedby": [descriptionId, errorId].filter(Boolean).join(" ") || undefined,
+  };
+  const Wrapper = group ? "fieldset" : "div";
   return (
-    <div className="grid min-w-0 content-start gap-1.5">
-      <label className="type-label" htmlFor={id}>
-        {label}
-      </label>
-      {children({
-        id,
-        "aria-invalid": issues.length ? true : undefined,
-        "aria-describedby": [descriptionId, errorId].filter(Boolean).join(" ") || undefined,
-      })}
+    <Wrapper
+      className={`grid min-w-0 content-start gap-1.5${group ? " rounded-[6px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--focus-ring)" : ""}`}
+      {...(group ? { ...attributes, tabIndex: -1 } : {})}
+    >
+      {group ? (
+        <legend className="type-label mb-1.5">{label}</legend>
+      ) : (
+        <label className="type-label" htmlFor={id}>
+          {label}
+        </label>
+      )}
+      {children(attributes)}
       {description ? (
         <p className="text-sm text-muted" id={descriptionId}>
           {description}
@@ -129,11 +140,11 @@ function Field({
           ))}
         </div>
       ) : null}
-    </div>
+    </Wrapper>
   );
 }
 
-type FieldProps = Omit<Parameters<typeof Field>[0], "children">;
+type FieldProps = Omit<Parameters<typeof Field>[0], "children" | "group">;
 
 const unavailableReference = "Unavailable — choose a replacement";
 
@@ -375,7 +386,7 @@ function MultipleOptions({
   change,
   options,
   reference,
-  unavailable = unavailableReference,
+  unavailable = "Unavailable — uncheck to remove",
   ...field
 }: FieldProps & {
   value: string[];
@@ -385,47 +396,67 @@ function MultipleOptions({
   change: (value: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
-  const missing = [...new Set(value)].filter(
-    (selected) => !options.some(({ id }) => id === selected),
+  const selected = new Set(value);
+  const available = new Set(options.map(({ id }) => id));
+  const matches = new Set(
+    options.filter((option) => !reference || matchesReference(option, query)).map(({ id }) => id),
   );
-  const matches = reference ? options.filter((item) => matchesReference(item, query)) : options;
-  const visible = reference
-    ? options.filter((item) => value.includes(item.id) || matches.includes(item))
-    : options;
+  const visible = [
+    ...[...selected].filter((id) => !available.has(id)).map((id) => ({ id, label: unavailable })),
+    ...options.filter(({ id }) => selected.has(id) || matches.has(id)),
+  ];
   return (
-    <Field {...field}>
-      {(attributes) => (
+    <Field {...field} group>
+      {() => (
         <>
           {reference && options.length ? (
             <ReferenceSearch
               label={field.label}
               query={query}
               change={setQuery}
-              noMatches={matches.length === 0}
+              noMatches={matches.size === 0}
               hasMore={!!reference.hasMore}
             />
           ) : null}
-          <select
-            className="ui-input min-h-24 w-full"
-            {...attributes}
-            multiple
-            value={value}
-            onChange={(event) =>
-              change(Array.from(event.currentTarget.selectedOptions, (option) => option.value))
-            }
-          >
-            {missing.map((id) => (
-              <option key={id} value={id}>
-                {unavailable}
-              </option>
-            ))}
-            {visible.map(({ id, label }) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-          </select>
-          {reference ? <ExactReferences values={[...new Set(value)]} /> : null}
+          {visible.length || !options.length ? (
+            <div className="ui-input max-h-52 overflow-y-auto p-1">
+              {visible.length ? (
+                visible.map(({ id, label }) => (
+                  <label
+                    className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[4px] px-2 py-2 has-[:disabled]:cursor-not-allowed has-[:disabled]:text-muted has-[:enabled]:hover:bg-control-hover"
+                    key={id}
+                  >
+                    <input
+                      checked={selected.has(id)}
+                      className="size-4 shrink-0 accent-accent"
+                      onChange={({ currentTarget }) => {
+                        const { checked } = currentTarget;
+                        if (
+                          !checked &&
+                          !matches.has(id) &&
+                          currentTarget === document.activeElement
+                        )
+                          currentTarget.closest("fieldset")?.focus();
+                        change(
+                          visible
+                            .filter(({ id: itemId }) =>
+                              itemId === id ? checked : selected.has(itemId),
+                            )
+                            .map(({ id }) => id),
+                        );
+                      }}
+                      type="checkbox"
+                      value={id}
+                    />
+                    <span className="min-w-0 wrap-anywhere">{label}</span>
+                  </label>
+                ))
+              ) : (
+                <p className="px-2 py-1 text-sm text-muted">No choices available.</p>
+              )}
+            </div>
+          ) : null}
+          {reference ? <ExactReferences values={[...selected]} /> : null}
         </>
       )}
     </Field>
@@ -1035,7 +1066,7 @@ export function NodeFields({
               diagnostics={diagnostics}
               options={choices.approvers}
               reference={{ hasMore: !!choices.nextCursors?.approvers }}
-              description="Select members to require their approval. Use Ctrl or Command to change multiple selections with a mouse."
+              description="Select members to require their approval."
               value={node.approverMemberIds ?? []}
               change={(approverMemberIds) => update({ ...node, approverMemberIds })}
             />

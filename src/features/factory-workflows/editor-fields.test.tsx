@@ -169,16 +169,21 @@ it("keeps repair eligibility on the intended review rule when another rule is re
   );
   fireEvent.click(screen.getByText("behavior · Rule key"));
   const rule = screen.getByRole("textbox", { name: "Rule 2 ID" });
-  const eligible = screen.getByRole("listbox", { name: "Rules eligible for repair" });
+  const eligible = within(screen.getByRole("group", { name: "Rules eligible for repair" }));
   fireEvent.change(rule, { target: { value: "security" } });
   expect(rule).toHaveAccessibleDescription(
     "Rule 2 ID “security” is already in use. Choose a unique ID.",
   );
   fireEvent.change(rule, { target: { value: "security-check" } });
-  expect(eligible).toHaveValue(["security"]);
-  expect(within(eligible).getByRole("option", { name: "security check" })).toHaveValue(
-    "security-check",
-  );
+  const security = eligible.getByRole("checkbox", { name: "security" });
+  const other = eligible.getByRole("checkbox", { name: "security check" });
+  expect(security).toHaveAttribute("value", "security");
+  expect(security).toBeChecked();
+  expect(other).toHaveAttribute("value", "security-check");
+  expect(other).not.toBeChecked();
+  fireEvent.click(other);
+  expect(security).toBeChecked();
+  expect(other).toBeChecked();
   expect(screen.getByRole("spinbutton", { name: "Maximum repairs" })).toHaveValue(2);
 });
 
@@ -232,6 +237,23 @@ it("shows a branch agent's exact secondary grant until the join removes its assi
   expect(grant()).toHaveAttribute("data-value", secondaryGrant.id);
 
   rerender(<Inspector node={2} initial={initial} />);
+  const output = within(screen.getByRole("group", { name: "Assigned branch outputs" })).getByRole(
+    "checkbox",
+    { name: "Branch → Agent · Branch" },
+  );
+  expect(output).toHaveAttribute("value", "work");
+  expect(output).toBeChecked();
+  fireEvent.click(output);
+  expect(output).not.toBeChecked();
+  rerender(<Inspector node={1} initial={initial} />);
+  expect(grant()).toBeEnabled();
+
+  rerender(<Inspector node={2} initial={initial} />);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Branch → Agent · Branch" }));
+  rerender(<Inspector node={1} initial={initial} />);
+  expect(grant()).toBeDisabled();
+
+  rerender(<Inspector node={2} initial={initial} />);
   fireEvent.click(screen.getByRole("button", { name: "Remove secondary repository" }));
   rerender(<Inspector node={1} initial={initial} />);
   expect(grant()).toBeEnabled();
@@ -277,20 +299,21 @@ it("keeps connected route and loop choices when provisional Next edges share the
       }}
     />,
   );
-  const allowed = screen.getByRole("listbox", { name: "Allowed route destinations" });
-  expect(
-    within(allowed)
-      .getAllByRole("option")
-      .map((option) => (option as HTMLOptionElement).value),
-  ).toEqual(["selected", "destination", "loop"]);
-  expect(
-    within(allowed).queryByRole("option", { name: /no longer eligible/i }),
-  ).not.toBeInTheDocument();
+  const allowed = within(screen.getByRole("group", { name: "Allowed route destinations" }));
+  expect(allowed.getAllByRole("checkbox").map((option) => option.getAttribute("value"))).toEqual([
+    "selected",
+    "destination",
+    "loop",
+  ]);
+  expect(allowed.queryByRole("checkbox", { name: /no longer eligible/i })).not.toBeInTheDocument();
+  const loop = allowed.getByRole("checkbox", { name: "Branch" });
+  fireEvent.click(loop);
   choose("Fallback", "Send to a step");
   const fallback = screen.getByRole("combobox", { name: "Fallback destination" });
   expect(fallback).toHaveAttribute("data-value", "destination");
-  expect(allowed).toHaveValue(["selected"]);
-  expect(within(allowed).queryByRole("option", { name: "Join" })).toBeNull();
+  expect(allowed.getByRole("checkbox", { name: "Approval" })).toBeChecked();
+  expect(loop).toBeChecked();
+  expect(allowed.queryByRole("checkbox", { name: "Join" })).toBeNull();
   fireEvent.click(fallback);
   expect(
     within(screen.getByRole("listbox", { name: "Fallback destination" }))

@@ -687,11 +687,102 @@ it("focuses the parent control for indexed route and approver diagnostics", asyn
   });
   fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
   const memberDiagnostic = await screen.findByRole("button", { name: /Choose an active member/ });
-  const destinations = screen.getByRole("listbox", { name: "Allowed route destinations" });
+  const destinations = screen.getByRole("group", { name: "Allowed route destinations" });
   expect(destinations).toHaveFocus();
   expect(destinations).toHaveAccessibleDescription("Choose a separate route.");
   fireEvent.click(memberDiagnostic);
-  const members = screen.getByRole("listbox", { name: "Required approvers" });
+  const members = screen.getByRole("group", { name: "Required approvers" });
   expect(members).toHaveFocus();
   expect(members).toHaveAccessibleDescription(/Choose an active member/);
+  expect(members).toHaveAttribute("aria-invalid", "true");
+});
+
+it("keeps filtered and unavailable approvers selected until removed and saves IDs in option order", async () => {
+  const alpha = { id: id(61), label: "Alpha Example" };
+  const bravo = { id: id(62), label: "Bravo Example" };
+  const charlie = { id: id(63), label: "Charlie Example" };
+  const delta = { id: id(64), label: "Delta Example" };
+  const unavailable = id(65);
+  const snapshot = {
+    ...initial,
+    graph: workflowGraphSchema.parse({
+      schemaVersion: 1,
+      kind: "graph",
+      entryNodeId: "approve",
+      nodes: [
+        {
+          id: "approve",
+          kind: "human-gate",
+          anyoneCanApprove: true,
+          approverMemberIds: [charlie.id, unavailable, alpha.id],
+        },
+      ],
+      edges: [],
+      grants: [],
+    }),
+  };
+  const save = Promise.withResolvers<Response>();
+  const fetch = vi.fn<typeof globalThis.fetch>(() => save.promise);
+  vi.stubGlobal("fetch", fetch);
+  openEditor(snapshot, {
+    ...choices,
+    approvers: [alpha, bravo, charlie, delta],
+    nextCursors: { ...choices.nextCursors, approvers: promptCursor },
+  });
+
+  const group = { name: "Required approvers" };
+  expect(screen.queryByRole("group", group)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Any eligible member can approve" }));
+  const members = screen.getByRole("group", group);
+  const member = (name: string) => within(members).getByRole("checkbox", { name });
+  const filter = within(members).getByRole("searchbox", { name: "Filter required approvers" });
+  fireEvent.change(filter, { target: { value: "  BrAVO  exa " } });
+  expect(within(members).queryByRole("checkbox", { name: delta.label })).not.toBeInTheDocument();
+  expect(member(alpha.label)).toBeChecked();
+  expect(member(charlie.label)).toBeChecked();
+
+  const missing = member("Unavailable — uncheck to remove");
+  expect(missing).toBeChecked();
+  expect(missing).toHaveAttribute("value", unavailable);
+  fireEvent.click(member(bravo.label));
+  expect(missing).toBeChecked();
+  missing.focus();
+  fireEvent.click(missing);
+  expect(missing).not.toBeInTheDocument();
+  expect(members).toHaveFocus();
+
+  const filtered = member(alpha.label);
+  filtered.focus();
+  fireEvent.click(filtered);
+  expect(filtered).not.toBeInTheDocument();
+  expect(members).toHaveFocus();
+  fireEvent.change(filter, { target: { value: "no match" } });
+  expect(within(members).getByRole("status")).toHaveTextContent(
+    "No loaded choices match. Load more to continue searching.",
+  );
+  expect(screen.getByRole("button", { name: "Load more approvers" })).toBeEnabled();
+  expect(member(bravo.label)).toBeChecked();
+  expect(member(charlie.label)).toBeChecked();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(member(bravo.label)).toBeDisabled();
+  expect(member(charlie.label)).toBeDisabled();
+  expect(filter).toBeDisabled();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+    action: "save",
+    graph: {
+      nodes: [
+        {
+          id: "approve",
+          kind: "human-gate",
+          anyoneCanApprove: false,
+          approverMemberIds: [bravo.id, charlie.id],
+        },
+      ],
+    },
+  });
+  save.resolve(Response.json({ error: "Draft not saved." }, { status: 422 }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Draft not saved.");
+  expect(member(bravo.label)).toBeEnabled();
 });
