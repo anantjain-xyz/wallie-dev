@@ -208,12 +208,13 @@ export function CalibrationForm({
   const visibleCases = orderedIds.flatMap((id, index) => {
     const candidate = candidateById.get(id);
     const saved = savedRefs.get(id);
-    const item = candidate?.session_title ? candidate : (saved ?? candidate);
+    const namedCase = candidate?.session_title ? candidate : saved;
+    const judgedCase = candidate ?? saved;
     const fallback = selected.has(id)
       ? `Saved case ${index + 1} · Details unavailable`
       : "Evaluation · Session unavailable";
-    const name = item ? calibrationCaseName(item, fallback) : fallback;
-    const verdict = item ? calibrationCaseVerdict(item) : "";
+    const name = namedCase ? calibrationCaseName(namedCase, fallback) : fallback;
+    const verdict = judgedCase ? calibrationCaseVerdict(judgedCase) : "";
     const reason = candidate ? scoreReasonDetail(candidate.reason) : null;
     if (!`${name} ${verdict}`.toLowerCase().includes(search.trim().toLowerCase())) return [];
     const runId = candidate?.run_id ?? saved?.run_id;

@@ -254,6 +254,62 @@ it("appends an older case page without resetting the draft or prior checkbox cho
   });
 });
 
+it("shows authorized verdicts for loaded cases without revealing unavailable case details", () => {
+  const receipt = { attempt_id: id(7), reason: null, created_at: at, note: null };
+  render(
+    <CalibrationForm
+      current={{
+        ...current,
+        case_refs: [
+          { adjudication_id: id(4), attempt_id: id(7), run_id: id(11) },
+          { adjudication_id: id(5), attempt_id: null, run_id: null },
+        ],
+      }}
+      candidatePage={{
+        ...candidatePage,
+        candidates: [
+          {
+            ...receipt,
+            id: id(4),
+            disposition: "disputed",
+            status: "fail",
+            expected_status: "pass",
+          },
+          {
+            ...receipt,
+            id: id(5),
+            disposition: "confirmed",
+            status: "pass",
+            expected_status: null,
+            session_title: null,
+            stage_name: null,
+            attempt_number: null,
+            run_id: null,
+          },
+        ],
+      }}
+      endpoint="/governance"
+      workspaceSlug="wallie"
+      scorerRevisionId={current.scorer_revision_id}
+    />,
+  );
+  const legacy = "Saved case 1 · Details unavailable";
+  const withheld = "Saved case 2 · Details unavailable";
+  expect(screen.getByRole("checkbox", { name: legacy })).toHaveAccessibleDescription(
+    /Disputed · fail → pass/,
+  );
+  expect(screen.getByRole("checkbox", { name: withheld })).toHaveAccessibleDescription(
+    /Confirmed · pass.*Adjudication note withheld/,
+  );
+  expect(screen.getByRole("link", { name: `Inspect adjudication: ${legacy}` })).toHaveAttribute(
+    "href",
+    `/w/wallie/runs/${id(11)}?evaluationAttempt=${id(7)}&evaluationAdjudication=${id(4)}#adjudication-${id(4)}`,
+  );
+  expect(
+    screen.queryByRole("link", { name: `Inspect adjudication: ${withheld}` }),
+  ).not.toBeInTheDocument();
+});
+
 it("links a reader to the rubric and exact attempts retained in the calibration version", () => {
   render(
     <ScorerGovernanceSection

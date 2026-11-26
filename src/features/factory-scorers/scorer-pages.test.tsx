@@ -104,7 +104,7 @@ it("keeps a dirty draft and its original revision when history paging discovers 
   };
   mocks.loadScorerDetail.mockResolvedValueOnce(originalPage);
   const { rerender } = render(await readDetail(latestId));
-  const rubric = screen.getByRole("textbox", { name: "Rubric", exact: true });
+  const rubric = screen.getByRole("textbox", { name: "Rubric" });
   fireEvent.change(rubric, { target: { value: "Unpublished rule" } });
 
   mocks.loadScorerDetail
@@ -123,8 +123,8 @@ it("keeps a dirty draft and its original revision when history paging discovers 
     expect(url.searchParams.get("revision")).toBe(latestId);
     expect(url.searchParams.get("before")).toBe(before);
     rerender(await readDetail(latestId, before ?? undefined));
-    expect(screen.getByRole("heading", { name: "Revision 2", exact: true })).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Rubric", exact: true })).toBe(rubric);
+    expect(screen.getByRole("heading", { name: "Revision 2" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Rubric" })).toBe(rubric);
     expect(rubric).toHaveValue("Unpublished rule");
     expect(screen.getByRole("button", { name: "Publish revision" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Copy draft" })).toBeVisible();
