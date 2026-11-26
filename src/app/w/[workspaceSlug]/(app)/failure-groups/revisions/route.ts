@@ -4,7 +4,7 @@ import { listFailureRevisionPage, loadFailureActivation } from "@/lib/factory-fa
 
 export async function GET(
   request: Request,
-  { params }: RouteContext<"/w/[workspaceSlug]/failure-groups/revisions">,
+  { params }: { params: Promise<{ workspaceSlug: string }> },
 ) {
   const { workspaceSlug } = await params;
   const query = new URL(request.url).searchParams;
