@@ -79,7 +79,6 @@ function useCatalog(endpoint: string, query: string, setMessage: (message: Flash
 
   return {
     catalog,
-    selected,
     setSelected,
     option: catalog?.resources.find(({ id }) => id === selected),
     load: action.run,
@@ -107,21 +106,19 @@ function CatalogChoices({
   return (
     <div className="space-y-2">
       {catalog.resources.length ? (
-        <ConnectorSelect
-          className="block max-w-xl space-y-1.5 text-sm font-medium text-foreground"
-          label={label}
+        <SelectField
+          className="max-w-xl"
           disabled={disabled}
-          onChange={(event) => onSelect(event.target.value)}
+          emptyOption={{ label: "Choose an option", value: "" }}
+          label={label}
+          onValueChange={onSelect}
+          options={catalog.resources.map(({ id, label, description }) => ({
+            label: description ? `${label} · ${description}` : label,
+            value: id,
+          }))}
           value={selected}
-        >
-          <option value="">Choose an option</option>
-          {catalog.resources.map(({ id, label, description }) => (
-            <option key={id} value={id}>
-              {label}
-              {description ? ` · ${description}` : ""}
-            </option>
-          ))}
-        </ConnectorSelect>
+          wrap
+        />
       ) : (
         <p className="text-sm text-muted">No available options were returned.</p>
       )}
@@ -334,7 +331,7 @@ function MapResource({
 }) {
   const query = new URLSearchParams({ provider, kind });
   if (installation) query.set("installationId", installation.id);
-  const { catalog, selected, setSelected, option, load, busy } = useCatalog(
+  const { catalog, setSelected, option, load, busy } = useCatalog(
     endpoint,
     query.toString(),
     setMessage,
@@ -429,7 +426,7 @@ function MapResource({
                 label={provider === "slack" ? "Slack channel to map" : "Resource to map"}
                 loadOlder={getOptions}
                 onSelect={setSelected}
-                selected={selected}
+                selected={option?.id ?? ""}
               />
               <button
                 className="ui-button-primary"

@@ -271,7 +271,16 @@ it("maps the selected Slack channel under the exact installed tenant", async () 
         provider: "slack",
         kind: "channel",
         tenant: { id: teamId, label: "Fixture Slack" },
-        resources: [{ id: channelId, label: "#fixture" }],
+        resources: [{ id: "C67890", label: "#fixture", description: "Fixture channel" }],
+        nextCursor: "next-page",
+      }),
+    )
+    .mockResolvedValueOnce(
+      Response.json({
+        provider: "slack",
+        kind: "channel",
+        tenant: { id: teamId, label: "Fixture Slack" },
+        resources: [{ id: channelId, label: "#on-call" }],
         nextCursor: null,
       }),
     )
@@ -288,18 +297,41 @@ it("maps the selected Slack channel under the exact installed tenant", async () 
       provider="slack"
       resources={[]}
     />,
+    { wrapper: OverlayProvider },
   );
 
   await user.click(screen.getByRole("button", { name: "Find Slack channels" }));
-  await user.selectOptions(await screen.findByLabelText("Slack channel to map"), channelId);
-  await user.click(screen.getByRole("button", { name: "Map to factory" }));
+  const picker = await screen.findByRole("combobox", { name: "Slack channel to map" });
+  const map = screen.getByRole("button", { name: "Map to factory" });
+  expect(picker).toHaveTextContent("Choose an option");
+  expect(map).toBeDisabled();
+  await user.tab();
+  expect(picker).toHaveFocus();
+  await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+  expect(picker).toHaveFocus();
+  expect(picker).toHaveTextContent("#fixture · Fixture channel");
+  expect(map).toBeEnabled();
 
-  const catalog = request.mock.calls[0]?.[0] ?? "";
-  expect(Object.fromEntries(new URL(catalog, "https://wallie.test").searchParams)).toEqual({
-    provider: "slack",
-    kind: "channel",
-    installationId,
-  });
+  await user.click(screen.getByRole("button", { name: "Load more options" }));
+  await user.click(picker);
+  expect(
+    screen.getByRole("option", { name: "#fixture · Fixture channel", selected: true }),
+  ).toBeVisible();
+  expect(screen.getByRole("option", { name: "#on-call" })).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(picker).toHaveFocus();
+  expect(picker).toHaveTextContent("#fixture · Fixture channel");
+  await user.click(picker);
+  await user.click(screen.getByRole("option", { name: "Choose an option" }));
+  expect(map).toBeDisabled();
+  await user.click(picker);
+  await user.click(screen.getByRole("option", { name: "#on-call" }));
+  expect(postedCommands()).toEqual([]);
+  await user.click(map);
+
+  const catalog = `${connectorEndpoint}/catalog?provider=slack&kind=channel&installationId=${installationId}`;
+  expect(request).toHaveBeenNthCalledWith(1, catalog);
+  expect(request).toHaveBeenNthCalledWith(2, `${catalog}&cursor=next-page`);
   expect(postedCommands()).toEqual([
     {
       url: `${connectorEndpoint}/setup`,
