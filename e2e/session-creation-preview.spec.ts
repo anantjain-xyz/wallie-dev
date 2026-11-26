@@ -12,6 +12,10 @@ test("cancel and browser Back return from the named launcher to the original fac
   await page.goto(origin);
 
   const launcher = page.getByRole("link", { name: /^New session in / });
+  await expect(launcher).toHaveAttribute(
+    "href",
+    new RegExp(`returnTo=${encodeURIComponent(origin)}$`),
+  );
   await launcher.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Start a new session" });
   await expect(dialog).toBeVisible();

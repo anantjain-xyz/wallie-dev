@@ -256,6 +256,30 @@ describe("ShellHeader", () => {
     );
   });
 
+  it("includes the current hash in copyable launch links and updates when it changes", async () => {
+    mocked.pathname = "/w/acme-corp/activity";
+    mocked.searchParams = new URLSearchParams("actor=example");
+    const initialUrl = window.location.href;
+    window.history.replaceState(null, "", "#recent");
+    try {
+      mountShell();
+      const link = screen.getByRole("link", {
+        name: "New session in Default Factory",
+      }) as HTMLAnchorElement;
+      expect(new URL(link.href).searchParams.get("returnTo")).toBe(
+        "/w/acme-corp/activity?actor=example#recent",
+      );
+      window.location.hash = "latest";
+      await waitFor(() =>
+        expect(new URL(link.href).searchParams.get("returnTo")).toBe(
+          "/w/acme-corp/activity?actor=example#latest",
+        ),
+      );
+    } finally {
+      window.history.replaceState(null, "", initialUrl);
+    }
+  });
+
   it("restores the launch page, query, anchor and launcher focus on cancel", async () => {
     const origin = "/w/acme-corp/activity?factory=all&actor=example#recent";
     mocked.pathname = "/w/acme-corp/sessions";
