@@ -5,7 +5,7 @@ import { useEffect, useId, useState } from "react";
 import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
 import type { RunSessionOption } from "./runs-list-options";
 
-const anySession = { id: "", label: "Any session" };
+const anySession: RunSessionOption = { id: "", label: "Any session" };
 
 export function RunSessionFilter({
   factory,
