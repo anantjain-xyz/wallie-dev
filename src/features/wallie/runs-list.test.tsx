@@ -8,23 +8,30 @@ import {
   parseRunsListQuery,
   runCatalogActivityLabel,
   runCatalogCostLabel,
+  runListReturn,
   runsListPageHref,
 } from "@/features/wallie/runs-list-state";
+import { parseRunFailure } from "@/lib/pipeline/run-failure";
 
 const mocked = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => mocked }));
 
 const SESSION_ID = "b0000000-0000-4000-8000-000000000001";
+const WORKSPACE_ID = "a0000000-0000-4000-8000-000000000001";
+const FACTORY_ID = "a0000000-0000-4000-8000-000000000002";
 const STAGE_ID = "c0000000-0000-4000-8000-000000000001";
 const RUN_ID = "d0000000-0000-4000-8000-000000000001";
 const now = "2026-11-14T21:00:00.000Z";
 const run: WorkspaceRunCatalogItem = {
   id: RUN_ID,
+  factoryId: FACTORY_ID,
   sessionId: SESSION_ID,
   sessionNumber: 42,
   sessionTitle: "Improve sign-in reliability",
   sessionRunHref: `/w/acme/sessions/42#wallie-run-${RUN_ID}`,
-  attemptCount: 2,
+  attemptCount: 1,
+  stageOrdinal: 2,
+  newerRunId: null,
   stageId: STAGE_ID,
   stageName: "Build",
   modelProvider: "codex",
@@ -56,6 +63,7 @@ const run: WorkspaceRunCatalogItem = {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("Runs list", () => {
@@ -64,12 +72,14 @@ describe("Runs list", () => {
       ...run,
       id: "d0000000-0000-4000-8000-000000000002",
       attemptCount: 1,
+      stageOrdinal: 1,
       status: "error" as const,
     };
     render(
       <RunsList
         initialNow={now}
         data={{
+          workspaceId: WORKSPACE_ID,
           workspaceSlug: "acme",
           query: {},
           state: { kind: "ready", page: { runs: [run, earlier], nextCursor: null } },
@@ -98,7 +108,9 @@ describe("Runs list", () => {
     render(
       <RunsList
         initialNow={now}
+        factoryQuery="all"
         data={{
+          workspaceId: WORKSPACE_ID,
           workspaceSlug: "acme",
           query: {
             cursor: "previous",
@@ -121,10 +133,30 @@ describe("Runs list", () => {
       provider: "codex",
       sessionId: SESSION_ID,
       stageId: STAGE_ID,
+      factory: "all",
     });
     const latest = screen.getByRole("link", { name: "Back to latest" }).getAttribute("href");
     expect(latest).toContain("status=error");
     expect(latest).not.toContain("cursor=");
+
+    const inspectorLinks = [
+      screen.getByRole("link", { name: /Improve sign-in reliability/ }),
+      screen.getByRole("link", { name: "Inspect run for session 42, Build, attempt 2" }),
+    ];
+    for (const link of inspectorLinks) {
+      const inspector = new URL(link.getAttribute("href")!, "https://wallie.test");
+      expect(inspector.pathname).toBe(`/w/acme/runs/${RUN_ID}`);
+      const back = runListReturn("acme", inspector.searchParams.get("fromRuns")!);
+      expect(back?.label).toBe("Back to filtered runs");
+      expect(Object.fromEntries(new URL(back!.href, "https://wallie.test").searchParams)).toEqual({
+        cursor: "previous",
+        status: "error",
+        provider: "codex",
+        sessionId: SESSION_ID,
+        stageId: STAGE_ID,
+        factory: "all",
+      });
+    }
 
     fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
     fireEvent.click(screen.getByRole("option", { name: "Canceled" }));
@@ -136,8 +168,11 @@ describe("Runs list", () => {
       provider: "codex",
       sessionId: SESSION_ID,
       stageId: STAGE_ID,
+      factory: "all",
     });
-    expect(screen.getByRole("link", { name: "Clear" }).getAttribute("href")).toBe("/w/acme/runs");
+    expect(screen.getByRole("link", { name: "Clear" }).getAttribute("href")).toBe(
+      "/w/acme/runs?factory=all",
+    );
   });
 
   it("keeps active session/stage filters even when no rows are available", () => {
@@ -145,20 +180,175 @@ describe("Runs list", () => {
       <RunsList
         initialNow={now}
         data={{
+          workspaceId: WORKSPACE_ID,
           workspaceSlug: "acme",
           query: { sessionId: SESSION_ID, stageId: STAGE_ID },
+          sessionOption: { id: SESSION_ID, label: "#42 Improve sign-in reliability" },
+          stages: [{ id: STAGE_ID, label: "Build (archived) · Release" }],
           state: { kind: "ready", page: { runs: [], nextCursor: null } },
         }}
       />,
     );
     expect(screen.getByRole("heading", { name: "No matching runs" })).toBeTruthy();
-    const sessionFilter = screen.getByRole("combobox", { name: "Session" });
-    expect(sessionFilter.getAttribute("data-value")).toBe(SESSION_ID);
-    expect(sessionFilter.textContent).toContain("Selected session");
+    const sessionFilter = screen.getByRole("combobox", { name: "Session" }) as HTMLInputElement;
+    expect(sessionFilter.value).toBe("#42 Improve sign-in reliability");
+    expect(screen.getByRole("combobox", { name: "Stage" }).textContent).toContain(
+      "Build (archived) · Release",
+    );
     fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
     expect(mocked.push).toHaveBeenCalledWith(
       `/w/acme/runs?sessionId=${SESSION_ID}&stageId=${STAGE_ID}`,
     );
+  });
+
+  it.each(["reliability", "#42"])(
+    "searches a factory for %s beyond the current page",
+    async (query) => {
+      const fetch = vi.fn(async () =>
+        Response.json([{ id: SESSION_ID, label: "#42 Improve sign-in reliability" }]),
+      );
+      vi.stubGlobal("fetch", fetch);
+      render(
+        <RunsList
+          initialNow={now}
+          factoryQuery={FACTORY_ID}
+          data={{
+            workspaceId: WORKSPACE_ID,
+            workspaceSlug: "acme",
+            query: { status: "error" },
+            state: { kind: "ready", page: { runs: [], nextCursor: null } },
+          }}
+        />,
+      );
+      const input = screen.getByRole("combobox", { name: "Session" }) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: query } });
+      await screen.findByRole("option", { name: "#42 Improve sign-in reliability" });
+      expect(fetch).toHaveBeenCalledWith(
+        `/api/workspaces/${WORKSPACE_ID}/runs/session-options?${new URLSearchParams({ factory: FACTORY_ID, q: query })}`,
+        expect.anything(),
+      );
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(input.value).toBe("#42 Improve sign-in reliability");
+      fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
+      const destination = new URL(mocked.push.mock.calls[0]?.[0], "https://wallie.test");
+      expect(Object.fromEntries(destination.searchParams)).toEqual({
+        status: "error",
+        factory: FACTORY_ID,
+        sessionId: SESSION_ID,
+      });
+    },
+  );
+
+  it.each(["matches", "no matches"] as const)(
+    "can explicitly select Any session by keyboard after a search with %s",
+    async (outcome) => {
+      const selected = { id: SESSION_ID, label: "#42 Improve sign-in reliability" };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json(outcome === "matches" ? [selected] : [])),
+      );
+      render(
+        <RunsList
+          initialNow={now}
+          factoryQuery={FACTORY_ID}
+          data={{
+            workspaceId: WORKSPACE_ID,
+            workspaceSlug: "acme",
+            query: { status: "error", sessionId: SESSION_ID },
+            sessionOption: selected,
+            state: { kind: "ready", page: { runs: [], nextCursor: null } },
+          }}
+        />,
+      );
+      const input = screen.getByRole("combobox", { name: "Session" }) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "reliability" } });
+      if (outcome === "matches") {
+        await screen.findByRole("option", { name: selected.label });
+      } else {
+        await screen.findByText("No matching sessions.");
+        fireEvent.keyDown(input, { key: "Enter" });
+        expect(input.value).toBe("reliability");
+      }
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      expect(
+        screen.getByRole("option", { name: "Any session" }).getAttribute("aria-selected"),
+      ).toBe("true");
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(input.value).toBe("Any session");
+      fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
+      const destination = new URL(mocked.push.mock.calls[0]?.[0], "https://wallie.test");
+      expect(Object.fromEntries(destination.searchParams)).toEqual({
+        status: "error",
+        factory: FACTORY_ID,
+      });
+    },
+  );
+
+  it("clears only the unavailable selection and restarts pagination", () => {
+    render(
+      <RunsList
+        initialNow={now}
+        factoryQuery={FACTORY_ID}
+        data={{
+          workspaceId: WORKSPACE_ID,
+          workspaceSlug: "acme",
+          query: { cursor: "previous", status: "error", sessionId: SESSION_ID, stageId: STAGE_ID },
+          state: { kind: "ready", page: { runs: [], nextCursor: null } },
+        }}
+      />,
+    );
+    const href = screen
+      .getByRole("link", { name: "Clear unavailable session" })
+      .getAttribute("href");
+    expect(Object.fromEntries(new URL(href!, "https://wallie.test").searchParams)).toEqual({
+      factory: FACTORY_ID,
+      status: "error",
+      stageId: STAGE_ID,
+    });
+  });
+
+  it("shows an allowlisted cause and the queued retry time on a failed row", () => {
+    const retryAt = "2026-11-14T21:04:00.000Z";
+    const failed: WorkspaceRunCatalogItem = {
+      ...run,
+      status: "error",
+      failure: parseRunFailure(
+        '{"version":1,"code":"budget","category":"budget","text":"private details"}',
+      ),
+      recovery: {
+        metadataAvailable: true,
+        queue: {
+          state: "retry_scheduled",
+          status: "queued",
+          attemptCount: 1,
+          scheduledAt: retryAt,
+        },
+        publication: null,
+        sourceRecoveryRequired: false,
+        retryCheckpointAvailable: false,
+        activity: { state: "unknown", observedAt: now, thresholdMs: 900_000 },
+        worker: {
+          state: "unobserved",
+          deadlineAt: null,
+          dispatchedAt: null,
+          executionStartedAt: null,
+        },
+      },
+    };
+    render(
+      <RunsList
+        initialNow={now}
+        data={{
+          workspaceId: WORKSPACE_ID,
+          workspaceSlug: "acme",
+          query: { status: "error" },
+          state: { kind: "ready", page: { runs: [failed], nextCursor: null } },
+        }}
+      />,
+    );
+    expect(screen.getByText("Execution limit")).toBeTruthy();
+    expect(screen.getByText(/Retry scheduled/).querySelector("time")?.dateTime).toBe(retryAt);
+    expect(screen.queryByText(/private details/)).toBeNull();
   });
 
   it("shows a useful first-run empty state and a sessions return", () => {
@@ -166,6 +356,7 @@ describe("Runs list", () => {
       <RunsList
         initialNow={now}
         data={{
+          workspaceId: WORKSPACE_ID,
           workspaceSlug: "acme",
           query: {},
           state: { kind: "ready", page: { runs: [], nextCursor: null } },
@@ -183,6 +374,7 @@ describe("Runs list", () => {
       <RunsList
         initialNow={now}
         data={{
+          workspaceId: WORKSPACE_ID,
           workspaceSlug: "acme",
           query: { cursor: "invalid", status: "error" },
           state: { kind: "invalid-cursor" },
@@ -199,7 +391,12 @@ describe("Runs list", () => {
     render(
       <RunsList
         initialNow={now}
-        data={{ workspaceSlug: "acme", query: {}, state: { kind: "error" } }}
+        data={{
+          workspaceId: WORKSPACE_ID,
+          workspaceSlug: "acme",
+          query: {},
+          state: { kind: "error" },
+        }}
       />,
     );
     expect(screen.getByRole("heading", { name: "Runs couldn’t load" })).toBeTruthy();
@@ -218,6 +415,9 @@ describe("Runs list state", () => {
     expect(parseRunsListQuery({ status: ["error", "success"] }).success).toBe(false);
     expect(parseRunsListQuery({ sessionId: "not-a-session" }).success).toBe(false);
     expect(parseRunsListQuery({ limit: "1000" }).success).toBe(false);
+    expect(parseRunsListQuery({ agentId: SESSION_ID }).success).toBe(false);
+    expect(runListReturn("acme", "next=https://elsewhere.test")).toBeUndefined();
+    expect(runListReturn("acme", "factory=all&factory=elsewhere")).toBeUndefined();
   });
 
   it("keeps opaque cursors unchanged across navigable URLs", () => {

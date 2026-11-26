@@ -79,6 +79,7 @@ export async function loadBenchmarkScope(
 }
 
 type Scope = NonNullable<Awaited<ReturnType<typeof loadBenchmarkScope>>>;
+type TaskScope = Pick<Scope, "supabase" | "workspaceId"> & { factory: { id: string } };
 
 export async function hasBenchmarkTasks({ supabase, workspaceId, factory }: Scope) {
   const { data, error } = await supabase
@@ -110,7 +111,7 @@ export async function loadBenchmarkSuites(
   };
 }
 
-export async function loadBenchmarkTaskChoices(scope: Scope) {
+export async function loadBenchmarkTaskChoices(scope: TaskScope) {
   const { supabase, workspaceId, factory } = scope;
   const choices: TaskWithProvenance[] = [];
   let after: string | undefined;
@@ -175,7 +176,7 @@ async function loadBenchmarkMembers(scope: Scope, revisionId: string) {
 }
 
 async function loadTaskSources(
-  { supabase, workspaceId, factory }: Scope,
+  { supabase, workspaceId, factory }: TaskScope,
   tasks: TaskWithProvenance[],
 ) {
   const sources = new Map<string, Omit<BenchmarkTaskSource, "attempt" | "commit">>();

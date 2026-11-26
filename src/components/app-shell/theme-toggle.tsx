@@ -97,13 +97,7 @@ export function ThemeToggle() {
 
   return (
     <Tooltip content={label}>
-      <button
-        type="button"
-        className="ui-icon-button"
-        aria-label={label}
-        aria-pressed={theme === null ? undefined : isDark}
-        onClick={handleToggle}
-      >
+      <button type="button" className="ui-icon-button" aria-label={label} onClick={handleToggle}>
         {/* Keep the glyph out of the SSR/hydration tree until the client snapshot is ready. */}
         {theme === null ? (
           <span aria-hidden="true" className="h-3.5 w-3.5" />

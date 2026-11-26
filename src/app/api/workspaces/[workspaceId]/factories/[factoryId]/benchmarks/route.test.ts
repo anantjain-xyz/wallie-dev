@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({ access: vi.fn(), admin: vi.fn() }));
 vi.mock("@/lib/workspaces/access", () => ({ requireWorkspaceAccessById: mocks.access }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: mocks.admin }));
 
-import { POST as saveSuite } from "./suites/route";
+import { GET as refreshSuitePreview, POST as saveSuite } from "./suites/route";
 import { POST as saveTask } from "./tasks/route";
 
 const workspaceId = "61300000-0000-4000-8000-000000000001";
@@ -44,22 +44,47 @@ const taskEdit = {
   acceptanceCriteria: " Preserve the stage output. ",
   tags: ["  review  "],
 };
+const previewTask = {
+  id: newRevisionId,
+  task_id: taskId,
+  name: "Review a stage",
+  revision_number: 2,
+  tags: ["review"],
+  replay_eligibility: "ineligible",
+  acceptance_criteria: "Preserve the stage output.",
+  eligibility_reason: "The original source was removed.",
+};
 
 function useDatabase({
   visible = true,
   taskVisible = true,
   currentTaskRevision = baseRevisionId,
+  currentSuiteRevision = baseRevisionId,
   writeError,
 }: {
   visible?: boolean;
   taskVisible?: boolean;
   currentTaskRevision?: string;
+  currentSuiteRevision?: string | null;
   writeError?: string;
 } = {}) {
   const read = vi.fn<typeof fetch>(async (input) => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.pathname.endsWith("/factories"))
       return Response.json(visible ? { id: factoryId } : null);
+    if (url.pathname.endsWith("/factory_benchmark_suite_revisions"))
+      return Response.json(currentSuiteRevision ? [{ id: currentSuiteRevision }] : []);
+    if (url.pathname.endsWith("/factory_benchmark_tasks")) {
+      return Response.json([
+        {
+          id: taskId,
+          source_run_id: userId,
+          source_provenance: { attempt: 1 },
+          factory_benchmark_task_revisions: [previewTask],
+        },
+      ]);
+    }
+    if (url.pathname.endsWith("/agent_runs")) return Response.json([]);
     if (url.pathname.endsWith("/factory_benchmark_task_revisions")) {
       return Response.json(
         taskVisible
@@ -117,8 +142,57 @@ function post(resource: "suites" | "tasks", body: unknown) {
 
 const actor = { p_workspace_id: workspaceId, p_factory_id: factoryId, p_actor_user_id: userId };
 
-describe("benchmark suite and task mutations", () => {
+describe("benchmark suite and task routes", () => {
   beforeEach(() => vi.resetAllMocks());
+
+  it.each([
+    { currentSuiteRevision: baseRevisionId, status: 200 },
+    { currentSuiteRevision: staleRevisionId, status: 409 },
+    { currentSuiteRevision: null, status: 404 },
+  ])(
+    "checks the exact suite preview base with the session client ($status)",
+    async ({ currentSuiteRevision, status }) => {
+      const { read } = useDatabase({ currentSuiteRevision });
+      const request = new Request(
+        `${baseUrl}/suites?suiteId=${suiteId}&expectedRevisionId=${baseRevisionId}`,
+      );
+      const response = await refreshSuitePreview(request, { params });
+
+      expect(response.status).toBe(status);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      const queries = read.mock.calls.map(
+        ([input]) => new URL(input instanceof Request ? input.url : input),
+      );
+      const suite = queries.find((url) =>
+        url.pathname.endsWith("/factory_benchmark_suite_revisions"),
+      );
+      expect(suite?.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+      expect(suite?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+      expect(suite?.searchParams.get("suite_id")).toBe(`eq.${suiteId}`);
+      expect(suite?.searchParams.get("order")).toBe("revision_number.desc");
+      expect(suite?.searchParams.get("limit")).toBe("1");
+      const tasks = queries.find((url) => url.pathname.endsWith("/factory_benchmark_tasks"));
+      if (status === 200) {
+        expect(await response.json()).toEqual({ taskChoices: [{ ...previewTask, source: null }] });
+        expect(tasks?.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+        expect(tasks?.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+      } else {
+        expect(tasks).toBeUndefined();
+      }
+      expect(mocks.admin).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows a preview for a new suite, but rejects an incomplete edit base or hidden factory", async () => {
+    useDatabase();
+    const newSuite = new Request(`${baseUrl}/suites`);
+    expect((await refreshSuitePreview(newSuite, { params })).status).toBe(200);
+    const incomplete = new Request(`${baseUrl}/suites?suiteId=${suiteId}`);
+    expect((await refreshSuitePreview(incomplete, { params })).status).toBe(400);
+    useDatabase({ visible: false });
+    expect((await refreshSuitePreview(newSuite, { params })).status).toBe(404);
+    expect(mocks.admin).not.toHaveBeenCalled();
+  });
 
   it("writes exact suite selection modes and uses the authenticated actor and requested revision", async () => {
     const { write } = useDatabase();

@@ -14,6 +14,7 @@ import type { SessionListPageData } from "@/features/sessions/list/data";
 const mocked = vi.hoisted(() => ({
   destructiveConfirmationDialogRender: vi.fn(),
   push: vi.fn(),
+  prefetch: vi.fn(),
   refresh: vi.fn(),
   replace: vi.fn(),
 }));
@@ -35,6 +36,7 @@ vi.mock("@/components/ui/destructive-confirmation-dialog", async (importOriginal
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: mocked.push,
+    prefetch: mocked.prefetch,
     refresh: mocked.refresh,
     replace: mocked.replace,
   }),
@@ -108,7 +110,7 @@ afterEach(() => {
 });
 
 describe("SessionsPage accessibility", () => {
-  it("labels Search, scope radios, Stage, Sort, and Clear with selected semantics", async () => {
+  it("labels Search, scope radios, Stage, Status, Sort, and Clear with selected semantics", async () => {
     const user = userEvent.setup();
     render(
       <OverlayProvider>
@@ -119,16 +121,23 @@ describe("SessionsPage accessibility", () => {
     );
 
     expect(screen.getByRole("radiogroup", { name: "Session scope" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Active 1" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Not archived 1" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     const stageCombo = screen.getByRole("combobox", { name: "Filter by stage" });
     expect(stageCombo).toBeInTheDocument();
     expect(stageCombo).toHaveTextContent("Build");
+    expect(screen.getByRole("combobox", { name: "Filter by status" })).toHaveTextContent(
+      "All statuses",
+    );
     expect(screen.getByRole("combobox", { name: "Sort sessions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
 
     const search = screen.getByRole("searchbox", {
-      name: "Search prompts, titles, or Linear IDs",
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
     });
+    expect(search).toHaveAccessibleDescription("Title, prompt, session #42, or Linear OP-517");
     await user.type(search, "OP-339{Enter}");
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?stage=build&q=OP-339", {
       scroll: false,
@@ -159,7 +168,10 @@ describe("SessionsPage accessibility", () => {
       </OverlayProvider>,
     );
 
-    expect(screen.getByRole("radio", { name: "Active 1" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Not archived 1" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
   });
 
@@ -200,7 +212,9 @@ describe("SessionsPage accessibility", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+        screen.getByRole("searchbox", {
+          name: "Search sessions by title, prompt, session number, or Linear issue key",
+        }),
       ).toHaveFocus(),
     );
   });
@@ -232,13 +246,13 @@ describe("SessionsPage accessibility", () => {
       { scroll: false },
     );
 
-    await user.click(screen.getByRole("radio", { name: "All 1" }));
+    await user.click(screen.getByRole("radio", { name: "All sessions 1" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=all&sort=oldest",
       { scroll: false },
     );
 
-    await user.click(screen.getByRole("radio", { name: "Active 1" }));
+    await user.click(screen.getByRole("radio", { name: "Not archived 1" }));
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&sort=oldest",
       { scroll: false },
@@ -302,6 +316,7 @@ describe("SessionsPage accessibility", () => {
     await user.click(screen.getByRole("button", { name: "Archive session" }));
     expect(screen.queryByRole("link", { name: /Open session #339/ })).toBeNull();
     expect(screen.getByText("Archiving session #339…", { exact: true })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("searchbox")).toHaveFocus());
 
     const pendingArchiveAxe = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } },
@@ -341,7 +356,7 @@ describe("SessionsPage accessibility", () => {
       "/w/acme/sessions?scope=all",
     );
     expect(screen.queryByText("No sessions yet")).toBeNull();
-    expect(screen.queryByText("No active sessions")).toBeNull();
+    expect(screen.queryByText("No unarchived sessions")).toBeNull();
     expect(screen.queryByRole("link", { name: /New session/ })).toBeNull();
   });
 
@@ -367,10 +382,90 @@ describe("SessionsPage accessibility", () => {
     expect(document.querySelector(".sessions-ledger-cell-repository")).toHaveTextContent(
       "acme/wallie",
     );
-    expect(screen.getByRole("link", { name: /Open session #339/ })).toHaveAttribute(
-      "href",
-      "/w/acme/sessions/339",
+    const detailHref = new URL(
+      (screen.getByRole("link", { name: /Open session #339/ }) as HTMLAnchorElement).href,
+    );
+    expect(detailHref.pathname).toBe("/w/acme/sessions/339");
+    expect(detailHref.searchParams.get("returnTo")).toBe(
+      "/w/acme/sessions?stage=build&scope=active",
     );
     expect(screen.queryByRole("link", { name: /Archive/ })).toBeNull();
+  });
+
+  it("widens an empty filtered search on the same term, even when a stage has no matches", () => {
+    render(
+      <OverlayProvider>
+        <SessionsPage
+          factoryName="Payments"
+          factoryQuery="payments-id"
+          initialData={{
+            ...initialData,
+            sessions: [],
+            queryState: { ...initialData.queryState, query: "#42", status: "failed" },
+            stageFacets: [{ count: 0, name: "Build", position: 1, slug: "build" }],
+          }}
+        />
+      </OverlayProvider>,
+    );
+    expect(screen.getByRole("combobox", { name: "Filter by stage" })).toHaveTextContent("Build");
+    expect(screen.getByRole("combobox", { name: "Filter by status" })).toHaveTextContent("Failed");
+    expect(screen.getByText("Scope: Payments · Not archived")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Search all sessions in accessible factories" }),
+    ).toHaveAttribute("href", "/w/acme/sessions?q=%2342&scope=all&factory=all");
+  });
+
+  it("retains all applied filters and the cursor in the detail return link", () => {
+    render(
+      <OverlayProvider>
+        <SessionsPage
+          factoryId="default-id"
+          initialData={{
+            ...initialData,
+            queryState: {
+              cursor: "cursor-2",
+              query: "#42 & release",
+              scope: "all",
+              sort: "number",
+              stageSlug: "build",
+              status: "awaiting_review",
+            },
+          }}
+        />
+      </OverlayProvider>,
+    );
+    const detail = screen.getByRole("link", { name: /Open session #339/ }) as HTMLAnchorElement;
+    const href = new URL(
+      new URL(detail.href).searchParams.get("returnTo")!,
+      window.location.origin,
+    );
+    expect(href.pathname).toBe("/w/acme/sessions");
+    expect(Object.fromEntries(href.searchParams)).toEqual({
+      cursor: "cursor-2",
+      factory: "default-id",
+      q: "#42 & release",
+      scope: "all",
+      sort: "number",
+      stage: "build",
+      status: "awaiting_review",
+    });
+    expect(screen.getByText("Later page · 1 session")).toBeVisible();
+    const first = screen.getByRole("link", { name: "Back to first page" }) as HTMLAnchorElement;
+    href.searchParams.delete("cursor");
+    expect(new URL(first.href).searchParams.toString()).toBe(href.searchParams.toString());
+  });
+
+  it("restores title-link focus when inline rename is canceled", async () => {
+    const user = userEvent.setup();
+    render(
+      <OverlayProvider>
+        <SessionsPage initialData={initialData} />
+      </OverlayProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Actions for session #339" }));
+    await user.keyboard("{Home}{Enter}");
+    expect(screen.getByRole("textbox", { name: "Session #339 title" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("link", { name: /Open session #339/ })).toHaveFocus();
   });
 });

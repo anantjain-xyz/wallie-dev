@@ -43,12 +43,16 @@ values ('53400000-0004-4000-8000-000000000099', '53400000-0001-4000-8000-0000000
 -- attempt on each run instead of relabeling it from the mutable job row.
 insert into public.agent_jobs(id, workspace_id, session_id, trigger_type, status, attempt_count)
 values ('53400000-0005-4000-8000-000000000001', '53400000-0001-4000-8000-000000000001',
-  '53400000-0003-4000-8000-000000000001', 'assignment', 'running', 2);
+  '53400000-0003-4000-8000-000000000001', 'assignment', 'running', 2),
+  ('53400000-0005-4000-8000-000000000002', '53400000-0001-4000-8000-000000000001',
+  '53400000-0003-4000-8000-000000000001', 'assignment', 'error', 1);
 update public.agent_runs set agent_job_id = '53400000-0005-4000-8000-000000000001', attempt_count = 1
 where id = '53400000-0004-4000-8000-000000000058';
 update public.agent_runs set agent_job_id = '53400000-0005-4000-8000-000000000001', attempt_count = 2,
   source_recovery_required = true, input_tokens = 17, output_tokens = 3, total_cost_usd = 0
 where id = '53400000-0004-4000-8000-000000000056';
+update public.agent_runs set agent_job_id = '53400000-0005-4000-8000-000000000002'
+where id = '53400000-0004-4000-8000-000000000054';
 
 insert into public.agent_run_messages(workspace_id, agent_run_id, kind, message_md) values
   ('53400000-0001-4000-8000-000000000001', '53400000-0004-4000-8000-000000000060', 'worker_progress', repeat('private-transcript-marker', 20000)),
@@ -65,16 +69,16 @@ insert into public.agent_run_events(agent_run_id, workspace_id, attempt_count, s
   ('53400000-0004-4000-8000-000000000058', '53400000-0001-4000-8000-000000000001', 1, 3, 'capture_end', '{"status":"interrupted"}');
 
 select ok((select not prosecdef and proconfig @> array['search_path=""'] from pg_proc
-  where oid = 'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid)'::regprocedure),
+  where oid = 'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid,uuid,uuid)'::regprocedure),
   'catalog uses invoker RLS and an empty search path');
 select ok((select proconfig @> array['plan_cache_mode=force_custom_plan'] from pg_proc
-  where oid = 'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid)'::regprocedure),
+  where oid = 'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid,uuid,uuid)'::regprocedure),
   'bound optional filters and cursor values receive a custom query plan');
 select ok(has_function_privilege('authenticated',
-  'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid)', 'EXECUTE'),
+  'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid,uuid,uuid)', 'EXECUTE'),
   'authenticated callers can read the catalog');
 select ok(not has_function_privilege(role_name,
-  'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid)', 'EXECUTE'),
+  'public.list_workspace_run_catalog(uuid,timestamptz,uuid,uuid,public.agent_run_status,text,uuid,uuid,integer,uuid,uuid,uuid)', 'EXECUTE'),
   role_name || ' has no catalog execute grant') from (values ('anon'), ('service_role')) roles(role_name);
 select ok(to_regprocedure('public.list_run_legacy_transcript(uuid,uuid,timestamptz,uuid,text,integer)') is null,
   'the legacy transcript endpoint is retired');
@@ -128,6 +132,17 @@ select is((select attempt_count from public.list_workspace_run_catalog('53400000
 select is((select job_id from public.list_workspace_run_catalog('53400000-0001-4000-8000-000000000001',
   p_run_id => '53400000-0004-4000-8000-000000000058')), '53400000-0005-4000-8000-000000000001'::uuid,
   'history retains the original job association');
+select is((select stage_ordinal from catalog_page_one where run_id = '53400000-0004-4000-8000-000000000058'),
+  29, 'a paged run counts earlier attempts outside the page');
+select ok((select stage_ordinal = 27 and attempt_count = 1 and
+    job_id = '53400000-0005-4000-8000-000000000002'
+  from public.list_workspace_run_catalog('53400000-0001-4000-8000-000000000001',
+    p_run_id => '53400000-0004-4000-8000-000000000054')),
+  'independent jobs each keep attempt 1 while stage ordinals distinguish exact runs');
+select is((select newer_run_id from public.list_workspace_run_catalog('53400000-0001-4000-8000-000000000001',
+  p_run_id => '53400000-0004-4000-8000-000000000058', p_status => 'error', p_limit => 1)),
+  '53400000-0004-4000-8000-000000000060'::uuid,
+  'the next exact run stays in the same stage even when the current filters hide it');
 select ok((select attempt_count is null and not has_events and not capture_ended and not capture_interrupted
   from public.list_workspace_run_catalog('53400000-0001-4000-8000-000000000001',
     p_run_id => '53400000-0004-4000-8000-000000000060')), 'a run without transcript rows has no ordered capture');

@@ -5,6 +5,7 @@ const mocked = vi.hoisted(() => ({
   AppShell: vi.fn(() => null),
   loadWorkspaceFactoryOptions: vi.fn(),
   loadWorkspaceLayoutContext: vi.fn(),
+  loadWorkspaceSwitcherOptions: vi.fn(),
 }));
 
 vi.mock("@/components/app-shell/app-shell", () => ({
@@ -17,6 +18,10 @@ vi.mock("@/features/workspaces/workspace-layout-data", () => ({
 
 vi.mock("@/features/factories/factory-options-data", () => ({
   loadWorkspaceFactoryOptions: mocked.loadWorkspaceFactoryOptions,
+}));
+
+vi.mock("@/components/app-shell/workspace-switcher-data", () => ({
+  loadWorkspaceSwitcherOptions: mocked.loadWorkspaceSwitcherOptions,
 }));
 
 import WorkspaceAppLayout from "./layout";
@@ -64,6 +69,8 @@ describe("workspace app route group layout", () => {
         { id: "factory-1", name: "Northwind", isDefault, status, canManage: managesFactory },
       ];
       mocked.loadWorkspaceFactoryOptions.mockResolvedValue(factories);
+      const workspaceOptions = [{ name: "Tailspin", slug: "tailspin" }];
+      mocked.loadWorkspaceSwitcherOptions.mockResolvedValue(workspaceOptions);
       mocked.loadWorkspaceLayoutContext.mockResolvedValue({
         currentMember: { kind: "human", is_active: true, role },
         onboarding,
@@ -80,6 +87,7 @@ describe("workspace app route group layout", () => {
         canManageFactoryDefinition: boolean;
         canManageGovernance: boolean;
         creationFactory: { id: string; name: string } | null;
+        factories: typeof factories;
         children: string;
         onboarding: typeof onboarding;
         viewerAvatarUrl: string | null;
@@ -87,6 +95,7 @@ describe("workspace app route group layout", () => {
         viewerId: string;
         workspace: typeof workspace;
         workspaceAvatarUrl: string | null;
+        workspaceOptions: typeof workspaceOptions;
       }>;
 
       expect(element.type).toBe(mocked.AppShell);
@@ -94,6 +103,7 @@ describe("workspace app route group layout", () => {
         canManageFactoryDefinition: canManage,
         canManageGovernance: managesFactory,
         creationFactory: canStart ? { id: "factory-1", name: "Northwind" } : null,
+        factories,
         children: "app-page",
         onboarding,
         viewerAvatarUrl: "https://cdn.example.com/owner.png",
@@ -101,6 +111,7 @@ describe("workspace app route group layout", () => {
         viewerId: "user-1",
         workspace,
         workspaceAvatarUrl: "https://cdn.example.com/avatar.png",
+        workspaceOptions,
       });
     },
   );

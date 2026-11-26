@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import {
   CreateSessionDialogLoading,
+  CreateSessionDialogRequest,
   isActiveNavItem,
   prefetchShellNavHrefOnIntent,
   preloadCreateSessionDialogOnce,
@@ -64,14 +65,16 @@ function renderShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "chi
   return renderToStaticMarkup(createElement(ShellHeader, createShellProps(props), "Page body"));
 }
 
-function mountShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
-  return render(
-    createElement(
-      OverlayProvider,
-      null,
-      createElement(ShellHeader, createShellProps(props), "Page body"),
-    ),
+function shellElement(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
+  return createElement(
+    OverlayProvider,
+    null,
+    createElement(ShellHeader, createShellProps(props), "Page body"),
   );
+}
+
+function mountShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
+  return render(shellElement(props));
 }
 
 describe("ShellHeader", () => {
@@ -203,10 +206,16 @@ describe("ShellHeader", () => {
     mountShell();
 
     const link = screen.getByRole("link", {
-      name: "New session",
+      name: "New session in Default Factory",
     });
-    expect(link).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
-    expect(link).toHaveTextContent("New session");
+    const href = new URL((link as HTMLAnchorElement).href);
+    expect(href.pathname).toBe("/w/acme-corp/sessions");
+    expect(Object.fromEntries(href.searchParams)).toEqual({
+      factory: "factory-1",
+      create: "1",
+      returnTo: `/w/acme-corp?${query}`,
+    });
+    expect(link).toHaveTextContent("New session in Default Factory");
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
   });
 
@@ -218,11 +227,19 @@ describe("ShellHeader", () => {
     ["Memory", "/w/acme-corp/memory"],
   ])("routes creation through the default factory from implicit %s scope", (_label, pathname) => {
     mocked.pathname = pathname;
-    mountShell();
+    mountShell({
+      navItems: getWorkspaceNavItems(workspace.slug, { canManageGovernance: true }),
+      factories: [
+        { ...creationFactory, isDefault: true, status: "active" },
+        { id: "managed", name: "Managed", isDefault: false, status: "active", canManage: true },
+      ],
+    });
 
-    const link = screen.getByRole("link", { name: "New session" });
-    expect(link).toHaveAttribute("href", "/w/acme-corp/sessions?factory=factory-1&create=1");
-    expect(link).toHaveTextContent("New session");
+    const link = screen.getByRole("link", { name: "New session in Default Factory" });
+    const href = new URL((link as HTMLAnchorElement).href);
+    expect(href.searchParams.get("returnTo")).toBe(pathname);
+    expect(href.searchParams.get("factory")).toBe("factory-1");
+    expect(link).toHaveTextContent("New session in Default Factory");
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
   });
 
@@ -231,13 +248,79 @@ describe("ShellHeader", () => {
     mountShell();
 
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("link", { name: "New session" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp/sessions?factory=factory-1&create=1",
+    const link = screen.getByRole("link", {
+      name: "New session in Default Factory",
+    }) as HTMLAnchorElement;
+    expect(new URL(link.href).searchParams.get("returnTo")).toBe(
+      "/w/acme-corp?factory=other-factory",
+    );
+  });
+
+  it("includes the current hash in copyable launch links and updates when it changes", async () => {
+    mocked.pathname = "/w/acme-corp/activity";
+    mocked.searchParams = new URLSearchParams("actor=example");
+    const initialUrl = window.location.href;
+    window.history.replaceState(null, "", "#recent");
+    try {
+      mountShell();
+      const link = screen.getByRole("link", {
+        name: "New session in Default Factory",
+      }) as HTMLAnchorElement;
+      expect(new URL(link.href).searchParams.get("returnTo")).toBe(
+        "/w/acme-corp/activity?actor=example#recent",
+      );
+      window.location.hash = "latest";
+      await waitFor(() =>
+        expect(new URL(link.href).searchParams.get("returnTo")).toBe(
+          "/w/acme-corp/activity?actor=example#latest",
+        ),
+      );
+    } finally {
+      window.history.replaceState(null, "", initialUrl);
+    }
+  });
+
+  it("restores the launch page, query, anchor and launcher focus on cancel", async () => {
+    const origin = "/w/acme-corp/activity?factory=all&actor=example#recent";
+    mocked.pathname = "/w/acme-corp/sessions";
+    mocked.searchParams = new URLSearchParams({
+      factory: "factory-1",
+      create: "1",
+      returnTo: origin,
+    });
+    const { rerender } = mountShell();
+
+    const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(mocked.replace).toHaveBeenCalledWith(origin, { scroll: true }));
+
+    mocked.pathname = "/w/acme-corp/activity";
+    mocked.searchParams = new URLSearchParams("factory=all&actor=example");
+    rerender(shellElement());
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "New session in Default Factory" })).toHaveFocus(),
+    );
+  });
+
+  it("uses Sessions rather than a different workspace as the direct URL fallback", async () => {
+    mocked.pathname = "/w/acme-corp/overview";
+    mocked.searchParams = new URLSearchParams({
+      create: "1",
+      returnTo: "/w/another-workspace",
+    });
+    mountShell();
+
+    const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() =>
+      expect(mocked.replace).toHaveBeenCalledWith("/w/acme-corp/sessions?factory=factory-1", {
+        scroll: true,
+      }),
     );
   });
 
   it("keeps an unsent draft mounted while the factory scope changes", async () => {
+    await import("@/features/sessions/create-session-dialog");
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
       defaultGithubRepositoryId: null,
       pipelineId: null,
@@ -260,7 +343,7 @@ describe("ShellHeader", () => {
     mocked.searchParams = new URLSearchParams("factory=other-factory");
     view.rerender(shell());
     await waitFor(() => expect(screen.queryByLabelText("Prompt")).toBeNull());
-    expect(screen.getByRole("link", { name: "New session" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "New session in Default Factory" })).toBeVisible();
 
     mocked.searchParams = new URLSearchParams();
     view.rerender(shell());
@@ -273,6 +356,18 @@ describe("ShellHeader", () => {
 
     expect(html).toContain('aria-label="Toggle color theme"');
     expect(html).not.toContain('title="Switch to dark mode"');
+  });
+
+  it("names the next theme action without a contradictory pressed state", () => {
+    document.documentElement.dataset.theme = "light";
+    mountShell();
+    const button = screen.getByRole("button", { name: "Switch to dark mode" });
+    expect(button).not.toHaveAttribute("aria-pressed");
+    fireEvent.click(button);
+    expect(button).toHaveAccessibleName("Switch to light mode");
+    expect(button).not.toHaveAttribute("aria-pressed");
+    expect(window.localStorage.getItem("wallie-theme")).toBe("dark");
+    delete document.documentElement.dataset.theme;
   });
 
   it("keeps workspace identity in the top bar", () => {
@@ -343,21 +438,30 @@ describe("ShellHeader", () => {
   });
 
   it.each([true, false])(
-    "preserves Workflows scope only for a manageable factory (%s)",
+    "preserves Workflows scope only for a manageable factory and names the fallback (%s)",
     (manageable) => {
       const managedFactory = "00000000-0000-4000-8000-000000000010";
       const selectedFactory = manageable ? managedFactory : "00000000-0000-4000-8000-000000000011";
       mocked.searchParams = new URLSearchParams({ factory: selectedFactory });
       mountShell({
         navItems: getWorkspaceNavItems(workspace.slug, { canManageWorkflows: true }),
-        workflowFactoryIds: [managedFactory],
+        factories: [
+          { ...creationFactory, isDefault: true, status: "active" },
+          {
+            id: managedFactory,
+            name: "Managed",
+            canManage: true,
+            isDefault: false,
+            status: "active",
+          },
+          { id: selectedFactory, name: "Other", isDefault: false, status: "active" },
+        ],
       });
 
       const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-      expect(within(nav).getByRole("link", { name: "Workflows" })).toHaveAttribute(
-        "href",
-        manageable ? `/w/acme-corp/workflows?factory=${managedFactory}` : "/w/acme-corp/workflows",
-      );
+      const workflows = within(nav).getByRole("link", { name: "Workflows" });
+      expect(workflows).toHaveAttribute("href", `/w/acme-corp/workflows?factory=${managedFactory}`);
+      expect(workflows).toHaveAccessibleDescription(manageable ? "" : "Opens in Managed");
     },
   );
 
@@ -406,7 +510,31 @@ describe("ShellHeader", () => {
       within(within(nav).getByRole("list", { name: "Work" })).getByRole("link", {
         name: "Overview",
       }),
-    ).toHaveAttribute("href", "/w/acme-corp/overview");
+    ).toHaveAttribute("href", "/w/acme-corp/overview?factory=factory-1");
+  });
+
+  it.each([
+    ["Activity", ""],
+    ["Inbox", ""],
+    ["Inbox", "factory=all"],
+  ])("keeps the effective aggregate scope from %s in rail and drawer", async (label, search) => {
+    mocked.pathname = `/w/acme-corp/${label.toLowerCase()}`;
+    mocked.searchParams = new URLSearchParams(search);
+    mountShell();
+
+    expect(screen.getByRole("link", { name: "Sessions" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/sessions?factory=all",
+    );
+    fireEvent.click(screen.getByRole("button", { name: `Workspace navigation: ${label}` }));
+    const drawer = await screen.findByRole("dialog", { name: "Workspace pages" });
+    expect(within(drawer).getByRole("link", { name: "Sessions" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/sessions?factory=all",
+    );
+    expect(within(drawer).getByRole("link", { name: "Overview" })).toHaveAccessibleDescription(
+      "Opens in Default Factory",
+    );
   });
 
   it("keeps the desktop sidebar always expanded without a collapse control", () => {
@@ -473,24 +601,59 @@ describe("ShellHeader", () => {
     expect(mocked.prefetch).toHaveBeenCalledTimes(1);
   });
 
-  it("prefetches the desktop workspace logo link on pen hover or focus and skips touch pointers", () => {
-    mocked.pathname = "/w/acme-corp/sessions";
-    mountShell();
-
-    const logoLink = screen.getByRole("link", { name: "Acme Corp" });
-    expect(logoLink.getAttribute("href")).toBe("/w/acme-corp");
-
-    fireEvent.pointerEnter(logoLink, { pointerType: "touch" });
-    expect(mocked.prefetch).not.toHaveBeenCalled();
-
-    fireEvent.pointerEnter(logoLink, { pointerType: "pen" });
-    expect(mocked.prefetch).toHaveBeenCalledTimes(1);
-    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp", {
-      kind: PrefetchKind.FULL,
+  it("switches by name without carrying the old scope, while the current Pipeline link keeps it", async () => {
+    mocked.pathname = "/w/acme-corp/activity";
+    mountShell({
+      workspaceOptions: [
+        { name: "Acme Corp", slug: "acme-corp" },
+        { name: "Acme Corp", slug: "another-acme" },
+        { name: "Tailspin Toys", slug: "tailspin" },
+      ],
     });
+    const trigger = screen.getByRole("button", { name: "Switch workspace: Acme Corp" });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const menu = await screen.findByRole("menu", { name: "Switch workspace" });
+    const current = within(menu).getByRole("menuitem", {
+      name: "Acme Corp acme-corp · Current workspace",
+    });
+    expect(current).toHaveAttribute("href", "/w/acme-corp?factory=all");
+    expect(current).toHaveAttribute("aria-current", "true");
+    expect(within(menu).getByRole("menuitem", { name: "Acme Corp another-acme" })).toHaveAttribute(
+      "href",
+      "/w/another-acme",
+    );
+    expect(within(menu).getByRole("menuitem", { name: "Tailspin Toys" })).toHaveAttribute(
+      "href",
+      "/w/tailspin",
+    );
+    fireEvent.keyDown(current, { key: "Escape" });
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
 
-    fireEvent.focus(logoLink);
-    expect(mocked.prefetch).toHaveBeenCalledTimes(1);
+  it("shows a focused Retry after a failed load and retries without closing", async () => {
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("chunk unavailable"))
+      .mockImplementationOnce(() => new Promise(() => undefined));
+    const onClose = vi.fn();
+    render(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(CreateSessionDialogRequest, { load, onClose }),
+      ),
+    );
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Couldn’t load the session form");
+    expect(retry).toHaveFocus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Loading session form");
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });
 

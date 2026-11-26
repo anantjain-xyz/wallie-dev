@@ -44,6 +44,7 @@ const draft = {
   members: [task],
 };
 const explicitDraft = { ...draft, selectionTags: null };
+const previewUrl = `/api/workspaces/${scope.workspaceId}/factories/${scope.factoryId}/benchmarks/suites?suiteId=${draft.suiteId}&expectedRevisionId=${draft.revisionId}`;
 
 afterEach(() => {
   cleanup();
@@ -282,21 +283,23 @@ it("requires an intentional empty save, and moving between modes clears consent"
 
 it("shows refresh deltas and keeps the draft when the server finds a changed match", async () => {
   const dropped = { ...task, id: id(11), task_id: id(12), name: "Former match", source: null };
-  const restored = { ...latest, id: id(13), revision_number: 3 };
+  const matching = { ...latest, tags: ["ui", "invoice"] };
+  const restored = { ...matching, id: id(13), revision_number: 3 };
   const fetch = vi
     .fn<typeof globalThis.fetch>()
     .mockResolvedValueOnce(Response.json({ error: "Tag matches changed." }, { status: 412 }))
+    .mockResolvedValueOnce(Response.json({ taskChoices: [restored] }))
     .mockResolvedValueOnce(
       Response.json({ suiteId: draft.suiteId, revisionId: id(8), revisionNumber: 2 }),
     );
   vi.stubGlobal("fetch", fetch);
   const taggedDraft = { ...draft, members: [task, dropped] };
-  const { rerender } = render(
-    <SuiteCurationForm {...scope} draft={taggedDraft} taskChoices={[latest]} />,
-  );
+  render(<SuiteCurationForm {...scope} draft={taggedDraft} taskChoices={[matching]} />);
   const name = screen.getByRole("textbox", { name: "Suite name" });
   fireEvent.change(name, { target: { value: "Updated tag suite" } });
   fireEvent.click(screen.getByRole("radio", { name: "Refresh tag matches" }));
+  const tags = screen.getByRole("textbox", { name: "Selection tags" });
+  fireEvent.change(tags, { target: { value: " Invoice " } });
   expect(screen.getByRole("status")).toHaveTextContent("1 matching task · 2 previously frozen");
   expect(screen.getByText(/Was revision 1/)).toBeVisible();
   expect(screen.getByText("Would remove: Former match.")).toBeVisible();
@@ -306,14 +309,62 @@ it("shows refresh deltas and keeps the draft when the server finds a changed mat
   expect(name).toHaveValue("Updated tag suite");
   expect(save).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
-  expect(refresh).toHaveBeenCalledOnce();
-  rerender(<SuiteCurationForm {...scope} draft={taggedDraft} taskChoices={[restored]} />);
-  expect(screen.getByText(/Revision 3 · Eligible/)).toBeVisible();
+  expect(await screen.findByText(/Revision 3 · Eligible/)).toBeVisible();
+  await waitFor(() => expect(save).toBeEnabled());
+  expect(fetch).toHaveBeenNthCalledWith(2, previewUrl);
+  expect(refresh).not.toHaveBeenCalled();
+  expect(replace).not.toHaveBeenCalled();
+  expect(name).toHaveValue("Updated tag suite");
+  expect(tags).toHaveValue(" Invoice ");
+  expect(screen.getByRole("radio", { name: "Refresh tag matches" })).toBeChecked();
   fireEvent.click(save);
   await waitFor(() => expect(replace).toHaveBeenCalledOnce());
-  expect(
-    JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).selection.previewTaskRevisionIds,
-  ).toEqual([restored.id]);
+  expect(JSON.parse(String(fetch.mock.calls[2]?.[1]?.body))).toEqual({
+    suiteId: draft.suiteId,
+    expectedRevisionId: draft.revisionId,
+    name: "Updated tag suite",
+    purpose: "regression",
+    selection: { kind: "tags", tags: ["ui", "invoice"], previewTaskRevisionIds: [restored.id] },
+  });
+});
+
+it("keeps the draft and blocks saving when the preview read detects a newer suite revision", async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json({ error: "Tag matches changed." }, { status: 412 }))
+    .mockResolvedValueOnce(
+      Response.json({ error: "The benchmark suite changed." }, { status: 409 }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <SuiteCurationForm
+      {...scope}
+      draft={draft}
+      taskChoices={[{ ...latest, tags: ["ui", "invoice"] }]}
+    />,
+  );
+  const name = screen.getByRole("textbox", { name: "Suite name" });
+  fireEvent.change(name, { target: { value: "Unsaved draft" } });
+  const mode = screen.getByRole("radio", { name: "Refresh tag matches" });
+  fireEvent.click(mode);
+  const tags = screen.getByRole("textbox", { name: "Selection tags" });
+  fireEvent.change(tags, { target: { value: "Invoice" } });
+  const save = screen.getByRole("button", { name: "Save suite" });
+  fireEvent.click(save);
+  fireEvent.click(await screen.findByRole("button", { name: "Refresh preview" }));
+
+  expect(await screen.findByText("The benchmark suite changed.")).toBeVisible();
+  expect(fetch).toHaveBeenNthCalledWith(2, previewUrl);
+  expect(name).toHaveValue("Unsaved draft");
+  expect(tags).toHaveValue("Invoice");
+  expect(mode).toBeChecked();
+  expect(screen.getByText(/Revision 2 · Eligible/)).toBeVisible();
+  expect(screen.getByRole("link", { name: "Reload latest revision" })).toBeVisible();
+  expect(save).toBeDisabled();
+  fireEvent.submit(screen.getByRole("form", { name: "Edit suite" }));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(refresh).not.toHaveBeenCalled();
+  expect(replace).not.toHaveBeenCalled();
 });
 
 it("guards switching a dirty draft and preserves the named filters after a confirmed switch", async () => {

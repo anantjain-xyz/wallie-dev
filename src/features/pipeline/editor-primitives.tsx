@@ -608,11 +608,29 @@ export function StageRowEditor({
     stage.approverMemberIds.length === 0
       ? "Select at least one approver"
       : `${stage.approverMemberIds.length} member${stage.approverMemberIds.length === 1 ? "" : "s"}`;
-  const approverOptions = workspaceMembers.map((member) => ({
-    description: member.role,
-    label: member.fullName ?? member.email ?? member.id,
-    value: member.id,
-  }));
+  const unnamedMembers = workspaceMembers.filter(
+    (member) => !member.fullName?.trim() && !member.email?.trim(),
+  );
+  const unnamedApprovers = unnamedMembers.flatMap(({ id }, index) =>
+    stage.approverMemberIds.includes(id) ? [{ id, label: `Unnamed member ${index + 1}` }] : [],
+  );
+  const approverOptions = workspaceMembers.flatMap((member) => {
+    const name = member.fullName?.trim();
+    const email = member.email?.trim();
+    const label = name || email || unnamedApprovers.find(({ id }) => id === member.id)?.label;
+    if (!label) return [];
+    const needsEmail =
+      name &&
+      email &&
+      workspaceMembers.some((other) => other.id !== member.id && other.fullName?.trim() === name);
+    return [
+      {
+        description: needsEmail ? `${email} · ${member.role}` : member.role,
+        label,
+        value: member.id,
+      },
+    ];
+  });
 
   return (
     <li className={`rounded-[6px] border border-border bg-sheet ${compact ? "p-4" : "p-5"}`}>
@@ -749,18 +767,36 @@ export function StageRowEditor({
                 </label>
               </div>
               {!stage.anyoneCanApprove ? (
-                <MultiSelectField
-                  description="Choose who can approve this stage before the session advances."
-                  disabled={!canManage}
-                  emptyMessage="No human members are available."
-                  error={errors.approvers}
-                  id={`${fieldPrefix}-approvers`}
-                  label="Approvers"
-                  onValuesChange={(approverMemberIds) => onChange({ approverMemberIds })}
-                  options={approverOptions}
-                  summary={approverPreview}
-                  values={stage.approverMemberIds}
-                />
+                <>
+                  <MultiSelectField
+                    description={
+                      unnamedMembers.length > 0
+                        ? "Members need a name or email before they can be added as approvers. Review unnamed members in workspace settings."
+                        : "Choose who can approve this stage before the session advances."
+                    }
+                    disabled={!canManage}
+                    emptyMessage="No human members are available."
+                    error={errors.approvers}
+                    id={`${fieldPrefix}-approvers`}
+                    label="Approvers"
+                    onValuesChange={(approverMemberIds) => onChange({ approverMemberIds })}
+                    options={approverOptions}
+                    summary={approverPreview}
+                    values={stage.approverMemberIds}
+                  />
+                  {unnamedApprovers.length > 0 ? (
+                    <details className="text-xs text-muted">
+                      <summary className="cursor-pointer">Unnamed approver details</summary>
+                      <ul className="mt-1 space-y-1">
+                        {unnamedApprovers.map(({ id, label }) => (
+                          <li className="break-all" key={id}>
+                            {label}: <code className="select-all">{id}</code>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+                </>
               ) : null}
             </fieldset>
           </div>
