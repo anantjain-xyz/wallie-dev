@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { SelectField } from "@/components/ui/select";
 import {
@@ -257,6 +257,11 @@ export function AutomationEditorFields({
 }) {
   const [kind, setKind] = useState<AutomationTriggerKind>(initial?.trigger.kind ?? "schedule");
   const { canDiscover, setEditorEnabled } = useAutomationLinearCatalog();
+  useEffect(() => {
+    if (kind !== "issue-state") return;
+    setEditorEnabled(true);
+    return () => setEditorEnabled(false);
+  }, [kind, setEditorEnabled]);
   const trigger = initial?.trigger;
   const filters = initial?.filters;
   const schedule = trigger?.kind === "schedule" ? trigger : undefined;
@@ -317,9 +322,7 @@ export function AutomationEditorFields({
         }))}
         value={kind}
         onValueChange={(value) => {
-          const next = automationTriggerKindSchema.parse(value);
-          setKind(next);
-          setEditorEnabled(next === "issue-state");
+          setKind(automationTriggerKindSchema.parse(value));
           changed();
         }}
         wrap
