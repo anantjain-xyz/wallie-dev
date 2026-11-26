@@ -99,15 +99,18 @@ describe("session prefetch completion", () => {
   it("lets a card cancel a deferred handoff without discarding its prefetch", async () => {
     const controller = new AbortController();
     const view = render(
-      createElement(SessionDetailLink, {
-        href,
-        children: "Review session",
-        onDeferredNavigation: (wait, navigate) => {
-          void wait(controller.signal).then(() => {
-            if (!controller.signal.aborted) navigate();
-          });
+      createElement(
+        SessionDetailLink,
+        {
+          href,
+          onDeferredNavigation: (wait, navigate) => {
+            void wait(controller.signal).then(() => {
+              if (!controller.signal.aborted) navigate();
+            });
+          },
         },
-      }),
+        "Review session",
+      ),
     );
     const link = view.getByRole("link", { name: "Review session" });
     fireEvent.focusIn(link);
