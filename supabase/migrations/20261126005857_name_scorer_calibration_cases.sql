@@ -13,14 +13,13 @@ returns jsonb language sql stable strict set search_path = '' as $$
         'adjudication_id', chosen.id,
         'attempt_id', case when session.id is not null then receipt.attempt_id end,
         'run_id', case when session.id is not null then receipt.run_id end,
-        'session_title', case when not exists (
-          select 1 from public.session_retained_content_erasures erasure
-          where (erasure.workspace_id, erasure.factory_id, erasure.session_id) =
-            (session.workspace_id, session.factory_id, session.id)
-        ) then session.title end,
-        'stage_name', coalesce(run.stage_name, run.stage_slug),
-        'attempt_number', receipt.attempt_number,
-        'created_at', review.created_at,
+        'session_title', case when erasure.session_id is null then session.title end,
+        'stage_name', case when session.id is not null and erasure.session_id is null
+          then coalesce(run.stage_name, run.stage_slug) end,
+        'attempt_number', case when session.id is not null and erasure.session_id is null
+          then receipt.attempt_number end,
+        'created_at', case when session.id is not null and erasure.session_id is null
+          then review.created_at end,
         'disposition', review.disposition,
         'status', receipt.status,
         'expected_status', review.expected_status
@@ -35,6 +34,9 @@ returns jsonb language sql stable strict set search_path = '' as $$
         (receipt.workspace_id, receipt.session_id, receipt.run_id)
       left join public.sessions session on (session.workspace_id, session.factory_id, session.id) =
         (receipt.workspace_id, receipt.factory_id, receipt.session_id)
+      left join public.session_retained_content_erasures erasure on
+        (erasure.workspace_id, erasure.factory_id, erasure.session_id) =
+        (session.workspace_id, session.factory_id, session.id)
     ), '[]')
   )
 $$;
@@ -79,12 +81,10 @@ begin
   if can_manage then
     with choice_page as materialized (
       select review as item, review.created_at, review.id, receipt,
-        case when not exists (
-          select 1 from public.session_retained_content_erasures erasure
-          where (erasure.workspace_id, erasure.factory_id, erasure.session_id) =
-            (session.workspace_id, session.factory_id, session.id)
-        ) then session.title end as session_title,
-        coalesce(run.stage_name, run.stage_slug) as stage_name
+        case when erasure.session_id is null then receipt.run_id end as run_id,
+        case when erasure.session_id is null then receipt.attempt_number end as attempt_number,
+        case when erasure.session_id is null then session.title end as session_title,
+        case when erasure.session_id is null then coalesce(run.stage_name, run.stage_slug) end as stage_name
       from public.factory_scorer_adjudications review
       join public.factory_evaluation_receipts receipt on (receipt.workspace_id, receipt.factory_id, receipt.attempt_id) =
         (review.workspace_id, review.factory_id, review.attempt_id)
@@ -92,6 +92,9 @@ begin
         (receipt.workspace_id, receipt.session_id, receipt.run_id)
       join public.sessions session on (session.workspace_id, session.factory_id, session.id) =
         (receipt.workspace_id, receipt.factory_id, receipt.session_id)
+      left join public.session_retained_content_erasures erasure on
+        (erasure.workspace_id, erasure.factory_id, erasure.session_id) =
+        (session.workspace_id, session.factory_id, session.id)
       where (review.workspace_id, review.factory_id, review.scorer_id) = (p_workspace_id, p_factory_id, p_scorer_id)
         and (p_before_candidate_at is null or (review.created_at, review.id) < (p_before_candidate_at, p_before_candidate_id))
       order by review.created_at desc, review.id desc limit 41
@@ -102,7 +105,7 @@ begin
     )
     select coalesce(jsonb_agg(internal.project_factory_scorer_adjudication(item, receipt)
       || jsonb_build_object('status', (receipt).status, 'reason', (receipt).reason,
-        'run_id', (receipt).run_id, 'attempt_number', (receipt).attempt_number,
+        'run_id', run_id, 'attempt_number', attempt_number,
         'session_title', session_title, 'stage_name', stage_name)
       order by created_at desc, id desc), '[]'),
       (select created_at from choice_boundary), (select id from choice_boundary)

@@ -1652,15 +1652,24 @@ from reviewed_erasure_target target;
 create temp table withheld_scorer_review as
 select pg_temp.review_held_score(pg_temp.sampling_id(141))->'selected_adjudication' as confirmed,
   pg_temp.review_held_score(pg_temp.sampling_id(142))->'selected_adjudication' as disputed;
-select ok((select payload->'versions' @> jsonb_build_array(jsonb_build_object(
+select ok((select first.payload->>'next_before_candidate_id' is not null
+    and older.payload->'versions' @> jsonb_build_array(jsonb_build_object(
       'revision', 1, 'case_refs', jsonb_build_array(jsonb_build_object(
-        'adjudication_id', pg_temp.sampling_id(141), 'session_title', null::text, 'disposition', 'confirmed'))))
-    and payload->'candidates' @> jsonb_build_array(jsonb_build_object(
-      'id', pg_temp.sampling_id(142), 'session_title', null::text, 'note', null::text))
+        'adjudication_id', pg_temp.sampling_id(141), 'session_title', null::text, 'stage_name', null::text,
+        'attempt_number', null::integer, 'created_at', null::timestamptz, 'disposition', 'confirmed', 'status', 'fail'))))
+    and older.payload->'candidates' @> jsonb_build_array(jsonb_build_object(
+      'id', pg_temp.sampling_id(142), 'session_title', null::text, 'stage_name', null::text,
+      'attempt_number', null::integer, 'run_id', null::uuid, 'note', null::text,
+      'disposition', 'disputed', 'status', 'fail', 'expected_status', 'pass'))
   from numeric_scorer scorer cross join lateral (
     select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
       scorer.scorer_id, pg_temp.sampling_id(140)) as payload
-  ) calibration), 'session erasure withholds case names and notes while keeping the saved adjudication and verdict');
+  ) first cross join lateral (
+    select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
+      scorer.scorer_id, pg_temp.sampling_id(140),
+      p_before_candidate_at => (first.payload->>'next_before_candidate_at')::timestamptz,
+      p_before_candidate_id => (first.payload->>'next_before_candidate_id')::uuid) as payload
+  ) older), 'session erasure withholds case names and notes while keeping the saved adjudication and verdict');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '';

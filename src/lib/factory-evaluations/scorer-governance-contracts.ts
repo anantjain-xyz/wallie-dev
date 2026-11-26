@@ -142,7 +142,7 @@ const candidatePageFields = {
       z.object({
         ...adjudicationFields,
         ...caseIdentity,
-        run_id: id.optional(),
+        run_id: id.nullish(),
         status: evaluationStatus,
         reason: z.string().max(80).nullable(),
       }),
