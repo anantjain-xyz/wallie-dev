@@ -15,7 +15,7 @@ import {
   readSessionSearchContinuation,
   sessionSearchCookieName,
 } from "@/lib/session-search-continuation";
-import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-return-path";
+import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-list-return-path";
 
 type SessionsPageProps = {
   params: Promise<{

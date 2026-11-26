@@ -1,10 +1,7 @@
 import { expect, it } from "vitest";
 
-import {
-  sanitizeAuthSessionNext,
-  workspaceListReturnPath,
-  workspaceReturnPath,
-} from "./workspace-return-path";
+import { workspaceListReturnPath } from "./workspace-list-return-path";
+import { sanitizeAuthSessionNext, workspaceReturnPath } from "./workspace-return-path";
 
 it("retains the workspace pathname and supported Sessions query state", () => {
   const pathname = "/w/acme/sessions";

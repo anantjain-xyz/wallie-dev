@@ -1,9 +1,11 @@
 import { z } from "zod";
 
+import { factoryInboxKinds } from "./inbox-kinds";
+
 const id = z.string().uuid();
 const occurredAt = z.string().datetime({ offset: true });
 
-export const factoryInboxKindSchema = z.enum(["review", "clarification"]);
+export const factoryInboxKindSchema = z.enum(factoryInboxKinds);
 
 const factoryInboxItemSchema = z
   .object({

@@ -1,5 +1,5 @@
 import { getWorkspaceNavItems, workspaceBasePath, workspaceSessionsPath } from "@/lib/routes";
-import { workspaceListReturnPath } from "@/lib/workspace-return-path";
+import { workspaceListReturnPath } from "@/lib/workspace-list-return-path";
 
 export function workspaceFailureDestination(
   workspaceSlug: string,
