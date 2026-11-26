@@ -49,31 +49,31 @@ export function LandingPage() {
         id="main-content"
         aria-labelledby="landing-title"
         tabIndex={-1}
-        className="flex flex-1 items-center py-10 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] max-[360px]:pt-6 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))] lg:px-10"
+        className="flex flex-1 items-center py-10 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] max-[360px]:pt-4 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))] lg:px-10"
       >
-        <div className="mx-auto grid w-full max-w-[1120px] gap-8 max-[360px]:gap-6 sm:gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
+        <div className="mx-auto grid w-full max-w-[1120px] gap-8 max-[360px]:gap-4 sm:gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
           <div>
             <h1
               id="landing-title"
-              className="max-w-[640px] text-[38px] font-semibold leading-[1.06] tracking-[-0.035em] text-foreground sm:text-[48px] lg:text-[54px]"
+              className="max-w-[640px] text-[38px] font-semibold leading-[1.06] tracking-[-0.035em] text-foreground max-[360px]:text-[34px] sm:text-[48px] lg:text-[54px]"
             >
               Turn a task into a pull request you can trust
             </h1>
-            <p className="mt-5 max-w-[540px] text-[16px] leading-7 text-muted sm:text-[17px] sm:leading-8">
+            <p className="mt-5 max-w-[540px] text-[16px] leading-7 text-muted max-[360px]:mt-4 max-[360px]:leading-6 sm:text-[17px] sm:leading-8">
               Describe the work. Review the plan. Let your coding agent build it in an isolated
               sandbox, with your team in control at every stage.
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3 max-[360px]:mt-6">
+            <div className="mt-8 flex flex-wrap items-center gap-3 max-[360px]:mt-4 max-[360px]:gap-2">
               <Link
                 href="/login"
                 aria-describedby="hosted-setup"
-                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas max-[360px]:px-4"
               >
                 Get started
               </Link>
               <a
                 href={selfHostingUrl}
-                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-border px-5 text-[14px] font-medium text-foreground transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-border px-5 text-[14px] font-medium text-foreground transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 max-[360px]:px-4"
               >
                 Self-host Wallie
               </a>

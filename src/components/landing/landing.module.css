@@ -99,3 +99,10 @@
     padding: 24px;
   }
 }
+
+@media (max-width: 360px) {
+  .workflow {
+    gap: 12px;
+    padding-block: 12px;
+  }
+}
