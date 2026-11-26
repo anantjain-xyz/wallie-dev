@@ -221,7 +221,24 @@ export function SessionReviewEvidence({
   initialNow: string;
   sessionId: string;
 }) {
-  const { value, error, loading, refresh } = useReviewEvidence(sessionId);
+  const evidence = useReviewEvidence(sessionId);
+  return <SessionReviewEvidenceView {...{ evidence, historical, initialNow, sessionId }} />;
+}
+
+export function SessionReviewEvidenceView({
+  evidence,
+  historical,
+  initialNow,
+  onBlockingChange,
+  sessionId,
+}: {
+  evidence: ReturnType<typeof useReviewEvidence>;
+  historical: boolean;
+  initialNow: string;
+  onBlockingChange?: () => void;
+  sessionId: string;
+}) {
+  const { value, error, loading, refresh } = evidence;
   const valueRef = useRef(value);
   valueRef.current = value;
   const [refreshPending, setRefreshPending] = useState(false);
@@ -670,6 +687,7 @@ export function SessionReviewEvidence({
             historical={false}
             anchor={null}
             onClearAnchor={() => undefined}
+            onBlockingChange={onBlockingChange}
             onClose={() => setCommentsOpen(false)}
             openerRef={commentsOpenerRef}
           />
