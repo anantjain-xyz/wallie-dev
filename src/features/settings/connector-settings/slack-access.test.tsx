@@ -37,6 +37,13 @@ const installation = {
   missingScopes: [],
   linkedActor: null,
 };
+const otherInstallation = {
+  ...installation,
+  id: "67600000-0000-4000-8000-000000000006",
+  teamId: "T67890",
+  teamName: "Other Slack",
+  generation: 9,
+};
 
 beforeEach(() => {
   request.mockReset();
@@ -186,19 +193,25 @@ it("reconnects the named workspace directly and parses a new Slack web app link"
   ]);
 });
 
-it("uses workspace names rather than IDs and puts unknown identities in details", async () => {
+it("defaults to the connected Slack workspace and shows names and statuses in the picker", async () => {
   request.mockResolvedValueOnce(
     Response.json({
       configured: true,
       canConfigure: false,
       installations: [
+        {
+          ...otherInstallation,
+          teamName: otherInstallation.teamId,
+          status: "disconnected",
+        },
         { ...installation, linkedActor: { id: linkId, userId: "U12345" } },
         {
           ...installation,
-          id: "67600000-0000-4000-8000-000000000006",
-          teamId: "T67890",
-          teamName: "T67890",
-          status: "disconnected",
+          id: "67600000-0000-4000-8000-000000000007",
+          teamId: "T98765",
+          teamName: "Restricted Slack",
+          teamDomain: "restricted",
+          status: "credential_unavailable",
         },
       ],
     }),
@@ -207,29 +220,88 @@ it("uses workspace names rather than IDs and puts unknown identities in details"
   render(<SlackConnectorAccess endpoint={connectorEndpoint} result={null} />);
 
   const workspace = await screen.findByRole("combobox", { name: "Slack workspace" });
-  expect(
-    within(workspace).getByRole("option", { name: "Fixture Slack · Connected" }),
-  ).toBeInTheDocument();
-  expect(workspace).toHaveValue(installationId);
+  expect(workspace).toHaveTextContent("Fixture Slack · Connected");
   expect(screen.getByText("Slack account linked")).toBeVisible();
   expect(screen.getByText("U12345")).not.toBeVisible();
-  await user.selectOptions(
-    workspace,
-    within(workspace).getByRole("option", {
-      name: "Workspace name unavailable · Disconnected",
+
+  workspace.focus();
+  await user.keyboard("{Enter}");
+  const listbox = await screen.findByRole("listbox");
+  expect(
+    within(listbox).getByRole("option", { name: "Fixture Slack · Connected", selected: true }),
+  ).toBeInTheDocument();
+  expect(
+    within(listbox).getByRole("option", {
+      name: "Restricted Slack · restricted · Access unavailable",
     }),
-  );
+  ).toBeInTheDocument();
+  await user.keyboard("{ArrowUp}{Escape}");
+  expect(listbox).not.toBeInTheDocument();
+  expect(workspace).toHaveFocus();
+  expect(workspace).toHaveTextContent("Fixture Slack · Connected");
+
+  await user.keyboard("{Enter}{ArrowUp}{Enter}");
+  expect(workspace).toHaveFocus();
+  expect(workspace).toHaveTextContent("Workspace name unavailable · Disconnected");
+  expect(screen.getByText("Slack workspace disconnected.")).toBeVisible();
+  expect(screen.getByText("T67890")).not.toBeVisible();
   await user.click(screen.getByText("Slack workspace ID"));
   expect(screen.getByText("T67890")).toBeVisible();
+  expect(postedCommands()).toEqual([]);
 });
 
-it("confirms removal of the current actor link and refreshes just the Slack summary", async () => {
+it("clears the draft and notice only on a workspace change, then links the selected workspace on request", async () => {
+  request
+    .mockResolvedValueOnce(
+      Response.json({
+        configured: true,
+        canConfigure: true,
+        installations: [installation, otherInstallation],
+      }),
+    )
+    .mockResolvedValueOnce(
+      Response.json({ error: "Slack authorization expired." }, { status: 409 }),
+    );
+  const user = userEvent.setup();
+  render(<SlackConnectorAccess endpoint={connectorEndpoint} result="linked" />);
+
+  const workspace = await screen.findByRole("combobox", { name: "Slack workspace" });
+  const draft = screen.getByRole("textbox", { name: "Slack workspace URL or ID" });
+  const notice = screen.getByText("Your Slack identity is linked.");
+  await user.type(draft, "T98765");
+  await user.click(workspace);
+  await user.click(screen.getByRole("option", { name: "Fixture Slack · Connected" }));
+  expect(draft).toHaveValue("T98765");
+  expect(notice).toBeVisible();
+
+  await user.click(workspace);
+  await user.click(screen.getByRole("option", { name: "Other Slack · Connected" }));
+  expect(workspace).toHaveTextContent("Other Slack · Connected");
+  expect(draft).toHaveValue("");
+  expect(notice).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Connect Slack" })).toBeDisabled();
+  expect(postedCommands()).toEqual([]);
+
+  await user.click(screen.getByRole("button", { name: "Link my Slack account" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Slack authorization expired.");
+  expect(postedCommands()).toEqual([
+    {
+      url: slackEndpoint,
+      body: { action: "link", installationId: otherInstallation.id, expectedGeneration: 9 },
+    },
+  ]);
+});
+
+it("confirms removal of the selected workspace's identity link and refreshes just the Slack summary", async () => {
   request
     .mockResolvedValueOnce(
       Response.json({
         configured: true,
         canConfigure: false,
-        installations: [{ ...installation, linkedActor: { id: linkId, userId: "U12345" } }],
+        installations: [
+          installation,
+          { ...otherInstallation, linkedActor: { id: linkId, userId: "U12345" } },
+        ],
       }),
     )
     .mockResolvedValueOnce(Response.json({ revoked: true }))
@@ -240,14 +312,20 @@ it("confirms removal of the current actor link and refreshes just the Slack summ
   render(<SlackConnectorAccess endpoint={connectorEndpoint} result={null} />, {
     wrapper: OverlayProvider,
   });
-  await user.click(await screen.findByRole("button", { name: "Remove Slack identity link" }));
+  await user.click(await screen.findByRole("combobox", { name: "Slack workspace" }));
+  await user.click(screen.getByRole("option", { name: "Other Slack · Connected" }));
+  expect(postedCommands()).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Remove Slack identity link" }));
   const dialog = await screen.findByRole("alertdialog");
   expect(postedCommands()).toEqual([]);
   await user.click(within(dialog).getByRole("button", { name: "Remove identity link" }));
 
   expect(await screen.findByRole("button", { name: "Link my Slack account" })).toBeEnabled();
   expect(postedCommands()).toEqual([
-    { url: slackEndpoint, body: { action: "revoke", installationId, linkId } },
+    {
+      url: slackEndpoint,
+      body: { action: "revoke", installationId: otherInstallation.id, linkId },
+    },
   ]);
   expect(request.mock.calls.map(([url]) => url)).toEqual([
     slackEndpoint,
