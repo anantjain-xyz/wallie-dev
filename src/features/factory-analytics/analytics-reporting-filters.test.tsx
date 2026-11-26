@@ -2,11 +2,12 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { AnalyticsFilters } from "./analytics-filters";
 import { recoverAnalyticsFilters } from "./analytics-query";
+import { AnalyticsReportingFilters } from "./analytics-reporting-filters";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
@@ -14,6 +15,55 @@ const factoryId = "58200000-0000-4000-8000-000000000001";
 const action = "/w/demo/analytics";
 
 afterEach(cleanup);
+
+it("preserves the Overview caller's native GET form and free-text environment", () => {
+  const { query } = recoverAnalyticsFilters({
+    from: "2026-11-01",
+    to: "2026-11-08",
+    environment: "production",
+  });
+  render(<AnalyticsFilters action="/w/demo/overview" factoryId={factoryId} query={query} />);
+  const environment = screen.getByRole("textbox", { name: "Deployment environment" });
+  expect(environment).toHaveValue("production");
+  expect(screen.getByLabelText("From date", { exact: true })).toHaveValue("2026-11-01");
+  expect(environment.closest("form")).toHaveAttribute("action", "/w/demo/overview");
+  expect(environment.closest("form")).toHaveAttribute("method", "get");
+  expect(screen.queryByText(/Could not load deployment environments/)).not.toBeInTheDocument();
+});
+
+it("offers loaded deployment environments in the Analytics form", () => {
+  const { query } = recoverAnalyticsFilters({});
+  render(
+    <AnalyticsReportingFilters
+      action={action}
+      environments={["production"]}
+      factoryId={factoryId}
+      query={query}
+      scorerFields={{}}
+    />,
+  );
+  fireEvent.click(screen.getByRole("combobox", { name: "Deployment environment" }));
+  expect(screen.getByRole("option", { name: "production" })).toBeVisible();
+  expect(screen.queryByText(/Could not load deployment environments/)).not.toBeInTheDocument();
+});
+
+it("reports a failed environment read in the Analytics form without calling it stale", () => {
+  const { query } = recoverAnalyticsFilters({ environment: "production" });
+  render(
+    <AnalyticsReportingFilters
+      action={action}
+      environments={null}
+      factoryId={factoryId}
+      query={query}
+      scorerFields={{}}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "Deployment environment" })).toHaveTextContent(
+    "production",
+  );
+  expect(screen.getByText(/Could not load deployment environments/)).toBeVisible();
+  expect(screen.queryByText("Saved environment (not listed)")).not.toBeInTheDocument();
+});
 
 it("marks rejected comparison, dimension and environment controls with their errors", () => {
   const recovered = recoverAnalyticsFilters({
@@ -24,7 +74,7 @@ it("marks rejected comparison, dimension and environment controls with their err
     environment: "Production",
   });
   render(
-    <AnalyticsFilters
+    <AnalyticsReportingFilters
       {...recovered}
       action={action}
       environments={["production"]}
@@ -61,7 +111,7 @@ it.each([
     environment: "retired",
   });
   render(
-    <AnalyticsFilters
+    <AnalyticsReportingFilters
       {...recovered}
       action={action}
       environments={["production"]}

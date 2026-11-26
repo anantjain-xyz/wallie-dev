@@ -5,13 +5,13 @@ import type {
   loadAnalyticsEvidence,
   loadAnalyticsPeriods,
 } from "@/features/factory-analytics/analytics-data";
-import { AnalyticsFilters } from "@/features/factory-analytics/analytics-filters";
 import { AnalyticsEvidence } from "@/features/factory-analytics/analytics-view-evidence";
 import { type AnalyticsExportFilters } from "@/features/factory-analytics/analytics-export-contracts";
 import { AnalyticsExportControls } from "@/features/factory-analytics/analytics-export-controls";
 import { AnalyticsMetrics } from "@/features/factory-analytics/analytics-view-metrics";
 import { type AnalyticsLabels, throughputLabel } from "./analytics-labels";
 import type { AnalyticsQuery } from "@/features/factory-analytics/analytics-query";
+import { AnalyticsReportingFilters } from "@/features/factory-analytics/analytics-reporting-filters";
 import {
   type AnalyticsHref,
   analyticsCohortHref,
@@ -82,7 +82,7 @@ export function AnalyticsView({
         description={factorySelector ? undefined : factory.name}
         title="Analytics"
       />
-      <AnalyticsFilters
+      <AnalyticsReportingFilters
         action={workspaceAnalyticsPath(workspaceSlug)}
         environments={environments}
         factoryId={factory.id}

@@ -4,7 +4,6 @@ import {
   loadAnalyticsPeriods,
   loadDeploymentEnvironments,
 } from "@/features/factory-analytics/analytics-data";
-import { AnalyticsFilters } from "@/features/factory-analytics/analytics-filters";
 import { loadAnalyticsLabels } from "@/features/factory-analytics/analytics-labels";
 import {
   analyticsCoreFields,
@@ -13,6 +12,7 @@ import {
   analyticsScorerFields,
 } from "@/features/factory-analytics/analytics-navigation";
 import { recoverAnalyticsFilters } from "@/features/factory-analytics/analytics-query";
+import { AnalyticsReportingFilters } from "@/features/factory-analytics/analytics-reporting-filters";
 import { RoutingCanaryComparison } from "@/features/factory-analytics/routing-canary-comparison";
 import { loadRoutingCanaryComparison } from "@/features/factory-analytics/routing-canary-data";
 import { resolveAnalyticsFactory } from "@/features/factories/factory-selection";
@@ -100,7 +100,7 @@ export default async function AnalyticsPage({
     return (
       <PageContainer>
         <PageHeader actions={factorySelector} actionsRightOnDesktop title="Analytics" />
-        <AnalyticsFilters
+        <AnalyticsReportingFilters
           action={path}
           dates={dates}
           environments={await environmentsRead}
