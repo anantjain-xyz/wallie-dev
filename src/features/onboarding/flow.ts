@@ -54,7 +54,8 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
     title: "Connect Sandbox",
   },
   {
-    description: "Configure the coding agent provider and credentials.",
+    description:
+      "Connect agent access. You can keep your current settings or use Wallie’s defaults, but access is required to verify setup.",
     id: "runtime",
     shortTitle: "Agent",
     title: "Connect Agent",

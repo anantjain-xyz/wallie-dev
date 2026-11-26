@@ -749,7 +749,7 @@ function deriveActiveSandboxConnectionHealth(
   const enabled = settings.enabledProviders.includes(provider);
   const displayName =
     provider === "vercel"
-      ? (vercel?.projectName ?? vercel?.projectId ?? null)
+      ? (vercel?.projectName ?? (vercel ? "Connected project · name unavailable" : null))
       : provider === "e2b"
         ? (settings.connections.e2b?.apiKeyPreview ?? null)
         : (settings.connections.daytona?.target ?? settings.connections.daytona?.apiUrl ?? null);

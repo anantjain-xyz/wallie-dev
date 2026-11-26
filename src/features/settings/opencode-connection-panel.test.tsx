@@ -91,17 +91,22 @@ describe("OpenCodeConnectionPanel", () => {
     render(
       <OpenCodeConnectionPanel
         initialStatus={{ checkedAt: "2099-08-30T00:00:00.000Z", connected: false, providers: [] }}
+        modelProviderId="opencode-go"
         onStatusChange={onStatusChange}
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Provider id"), { target: { value: "opencode-go" } });
+    expect(screen.getByRole("combobox", { name: "Provider" })).toHaveValue("opencode-go");
     fireEvent.change(screen.getByLabelText("Provider API key"), {
       target: { value: "go-key-12345678901234567890" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save provider key" }));
 
-    await waitFor(() => expect(screen.getByText("opencode-go")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "OpenCode Go credential actions" }),
+      ).toBeInTheDocument(),
+    );
     expect(fetchMock).toHaveBeenCalledWith("/api/opencode/providers/opencode-go", {
       body: JSON.stringify({ credential: "go-key-12345678901234567890" }),
       headers: { "Content-Type": "application/json" },

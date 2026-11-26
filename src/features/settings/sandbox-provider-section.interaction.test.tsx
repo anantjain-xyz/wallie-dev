@@ -161,8 +161,9 @@ describe("SandboxProviderSection provider selection", () => {
     await user.click(screen.getByRole("radio", { name: /Vercel Sandbox/ }));
     expect(screen.getByRole("heading", { name: "Connect Vercel Sandbox" })).toBeVisible();
     expect(screen.getByLabelText("Token")).toBeVisible();
-    expect(screen.getByLabelText("Team id")).toBeVisible();
-    expect(screen.getByLabelText("Project id")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Find teams" })).toBeVisible();
+    expect(screen.queryByLabelText("Team ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Project ID")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: /E2B/ }));
     expect(screen.getByRole("heading", { name: "Connect E2B" })).toBeVisible();
@@ -204,8 +205,8 @@ describe("SandboxProviderSection saves", () => {
       connection: vercelConnection,
       fields: [
         ["Token", "vca_new"],
-        ["Team id", "team_new"],
-        ["Project id", "prj_new"],
+        ["Team ID", "team_new"],
+        ["Project ID", "prj_new"],
       ],
       label: "Vercel Sandbox",
       provider: "vercel",
@@ -246,6 +247,9 @@ describe("SandboxProviderSection saves", () => {
     const { onSettingsChange, setFlashMessage } = renderSection({ settings });
 
     await user.click(screen.getByRole("radio", { name: new RegExp(testCase.label) }));
+    if (testCase.provider === "vercel") {
+      await user.click(screen.getByRole("button", { name: "Enter IDs manually" }));
+    }
     for (const [label, value] of testCase.fields) {
       await user.clear(screen.getByLabelText(label));
       await user.type(screen.getByLabelText(label), value);
@@ -256,11 +260,11 @@ describe("SandboxProviderSection saves", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/workspaces/${workspaceId}/sandbox-connections/${testCase.provider}`,
       expect.objectContaining({
-        body: JSON.stringify(testCase.body),
         headers: { "Content-Type": "application/json" },
         method: "PUT",
       }),
     );
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual(testCase.body);
     expect(onSettingsChange).toHaveBeenCalledWith({
       ...settings,
       connections: { ...settings.connections, [testCase.provider]: testCase.connection },
@@ -269,6 +273,82 @@ describe("SandboxProviderSection saves", () => {
       kind: "success",
       text: `${testCase.label} connection saved.`,
     });
+  });
+});
+
+describe("Vercel target discovery", () => {
+  const northwind = { id: "team_123", name: "Northwind", slug: "northwind" };
+  const acme = { id: "team_other", name: "Acme", slug: "acme" };
+
+  it("restores a saved target by name and scopes projects to the chosen team", async () => {
+    const user = userEvent.setup();
+    const requests = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ teams: [northwind, acme] }))
+      .mockResolvedValueOnce(
+        Response.json({ projects: [{ id: "prj_123", name: "Wallie runner" }] }),
+      )
+      .mockResolvedValueOnce(Response.json({ projects: [{ id: "prj_acme", name: "Acme runner" }] }))
+      .mockResolvedValueOnce(Response.json({ connection: vercelConnection }));
+    renderSection({ settings: sandboxSettings({ vercel: vercelConnection }), stateful: true });
+
+    await user.click(screen.getByRole("button", { name: "Replace connection" }));
+    await user.type(screen.getByLabelText("Token"), "synthetic-token");
+    await user.click(screen.getByRole("button", { name: "Find teams" }));
+
+    const team = await screen.findByRole("combobox", { name: "Team" });
+    expect(team).toHaveValue("team_123");
+    expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("prj_123");
+    await user.selectOptions(team, "team_other");
+    expect(await screen.findByRole("option", { name: "Acme runner · acme" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Wallie runner · northwind" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("prj_acme");
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
+    expect(
+      requests.mock.calls.slice(0, 3).map(([, init]) => JSON.parse(init!.body as string)),
+    ).toEqual([
+      { token: "synthetic-token" },
+      { token: "synthetic-token", teamId: "team_123" },
+      { token: "synthetic-token", teamId: "team_other" },
+    ]);
+    expect(JSON.parse(requests.mock.calls[3]![1]!.body as string)).toEqual({
+      projectId: "prj_acme",
+      teamId: "team_other",
+      token: "synthetic-token",
+    });
+  });
+
+  it("requires reselection when the saved project is missing and preserves the manual target", async () => {
+    const user = userEvent.setup();
+    const requests = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ teams: [northwind] }))
+      .mockResolvedValueOnce(
+        Response.json({ projects: [{ id: "prj_replacement", name: "New runner" }] }),
+      );
+    const { onSettingsChange } = renderSection({
+      settings: sandboxSettings({ vercel: { ...vercelConnection, projectName: null } }),
+      variant: "onboarding",
+    });
+    expect(screen.getByText("Connected project · name unavailable")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Test capabilities" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Replace connection" }));
+    await user.type(screen.getByLabelText("Token"), "synthetic-token");
+    await user.click(screen.getByRole("button", { name: "Find teams" }));
+    expect(await screen.findByText(/Saved project unavailable/)).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Save connection" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Enter IDs manually" }));
+    expect(screen.getByRole("link", { name: /Team ID from Team Settings/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("find-your-team-id"),
+    );
+    expect(screen.getByLabelText("Project ID")).toHaveValue("prj_123");
+    expect(requests).toHaveBeenCalledTimes(2);
+    expect(onSettingsChange).not.toHaveBeenCalled();
   });
 });
 
@@ -410,6 +490,9 @@ describe("SandboxProviderSection saved connections", () => {
     expect(header).not.toContainElement(disconnectGuidance);
     expect(screen.getByText("vca_…1234")).toBeVisible();
     expect(screen.getByText(updatedLabel)).toBeVisible();
+    expect(screen.getByText("Project: wallie-sandboxes")).toBeVisible();
+    expect(screen.getByText("Team ID")).not.toBeVisible();
+    await user.click(screen.getByText("Connection details"));
     expect(screen.getByText("Team ID")).toBeVisible();
     expect(screen.getByText("team_123")).toBeVisible();
     expect(screen.getByText("Project ID")).toBeVisible();
@@ -473,18 +556,20 @@ describe("SandboxProviderSection saved connections", () => {
     ).not.toBeInTheDocument();
     const token = screen.getByLabelText("Token");
     expect(token).toHaveValue("");
-    expect(screen.getByLabelText("Team id")).toHaveValue("team_123");
-    expect(screen.getByLabelText("Project id")).toHaveValue("prj_123");
+    await user.click(screen.getByRole("button", { name: "Enter IDs manually" }));
+    expect(screen.getByLabelText("Team ID")).toHaveValue("team_123");
+    expect(screen.getByLabelText("Project ID")).toHaveValue("prj_123");
     expect(screen.getByRole("button", { name: "Save connection" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
 
     await user.type(token, "secret-should-not-leak");
-    await user.clear(screen.getByLabelText("Team id"));
-    await user.type(screen.getByLabelText("Team id"), "team_draft");
+    await user.clear(screen.getByLabelText("Team ID"));
+    await user.type(screen.getByLabelText("Team ID"), "team_draft");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.getByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
     expect(screen.getByText("vca_…1234")).toBeVisible();
+    await user.click(screen.getByText("Connection details"));
     expect(screen.getByText("team_123")).toBeVisible();
     expect(screen.queryByText("team_draft")).not.toBeInTheDocument();
     expect(screen.queryByText("secret-should-not-leak")).not.toBeInTheDocument();
@@ -493,7 +578,8 @@ describe("SandboxProviderSection saved connections", () => {
 
     await user.click(screen.getByRole("button", { name: "Replace connection" }));
     expect(screen.getByLabelText("Token")).toHaveValue("");
-    expect(screen.getByLabelText("Team id")).toHaveValue("team_123");
+    await user.click(screen.getByRole("button", { name: "Enter IDs manually" }));
+    expect(screen.getByLabelText("Team ID")).toHaveValue("team_123");
   });
 
   it("returns to an updated summary after a successful replacement", async () => {
@@ -514,15 +600,17 @@ describe("SandboxProviderSection saved connections", () => {
     renderSection({ settings: sandboxSettings({ vercel: vercelConnection }), stateful: true });
 
     await user.click(screen.getByRole("button", { name: "Replace connection" }));
+    await user.click(screen.getByRole("button", { name: "Enter IDs manually" }));
     await user.type(screen.getByLabelText("Token"), "vca_new");
-    await user.clear(screen.getByLabelText("Team id"));
-    await user.type(screen.getByLabelText("Team id"), "team_new");
-    await user.clear(screen.getByLabelText("Project id"));
-    await user.type(screen.getByLabelText("Project id"), "prj_new");
+    await user.clear(screen.getByLabelText("Team ID"));
+    await user.type(screen.getByLabelText("Team ID"), "team_new");
+    await user.clear(screen.getByLabelText("Project ID"));
+    await user.type(screen.getByLabelText("Project ID"), "prj_new");
     await user.click(screen.getByRole("button", { name: "Save connection" }));
 
     expect(await screen.findByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
     expect(screen.getByText("vca_…9999")).toBeVisible();
+    await user.click(screen.getByText("Connection details"));
     expect(screen.getByText("team_new")).toBeVisible();
     expect(screen.getByText("prj_new")).toBeVisible();
     expect(screen.getByText("Updated Aug 15, 2026")).toBeVisible();

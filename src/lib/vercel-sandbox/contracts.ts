@@ -22,6 +22,9 @@ export type VercelSandboxCredentials = {
   token: string;
 };
 
+export type VercelProjectOption = { id: string; name: string };
+export type VercelTeamOption = VercelProjectOption & { slug: string };
+
 export type VercelSandboxConnectionPreview = {
   connectionRevision?: string;
   lastValidatedAt: string | null;

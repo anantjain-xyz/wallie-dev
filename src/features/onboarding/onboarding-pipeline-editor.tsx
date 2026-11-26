@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useOptionalLiveRegion } from "@/components/ui/live-region";
+import type { OnboardingStepDraftState } from "@/features/onboarding/steps/types";
 import {
   appendDraftStage,
   fieldErrorsForStage,
@@ -15,6 +16,7 @@ import {
   RemoveStageDialog,
   removeDraftStage,
   resolveFocusAfterStageRemoval,
+  serializePipelineDraft,
   StageRowEditor,
   stageDisplayName,
   stageToDraft,
@@ -29,7 +31,9 @@ import type { SessionPipeline } from "@/features/sessions/types";
 
 type OnboardingPipelineEditorProps = {
   canManage: boolean;
+  navigationPending?: boolean;
   onCompleted: (action: string, pipeline: SessionPipeline) => Promise<void>;
+  onDraftStateChange?: (state: OnboardingStepDraftState) => void;
   pipeline: SessionPipeline | null;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
@@ -37,7 +41,9 @@ type OnboardingPipelineEditorProps = {
 
 export function OnboardingPipelineEditor({
   canManage,
+  navigationPending,
   onCompleted,
+  onDraftStateChange,
   pipeline,
   workspaceId,
   workspaceMembers,
@@ -57,12 +63,35 @@ export function OnboardingPipelineEditor({
     ? validatePipelineDraft({ name, stages })
     : { ok: true };
   const removeStage = removeIndex === null ? null : stages[removeIndex];
-  const editable = canManage && !isSaving;
+  const editable = canManage && !isSaving && !navigationPending;
+  const dirty = Boolean(
+    pipeline &&
+    serializePipelineDraft({ name, operatingRules, stages }) !==
+      serializePipelineDraft({
+        name: pipeline.name,
+        operatingRules: pipeline.operatingRulesMd ?? "",
+        stages: keepKnownApproverIds(pipeline.stages.map(stageToDraft), workspaceMembers),
+      }),
+  );
+  const unidentifiedMembers = workspaceMembers.filter(
+    (member) => !member.fullName?.trim() && !member.email?.trim(),
+  );
+
+  useEffect(() => {
+    onDraftStateChange?.({ dirty, pending: isSaving });
+  }, [dirty, isSaving, onDraftStateChange]);
 
   if (!pipeline) {
     return (
-      <div className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger">
-        Workspace has no default pipeline.
+      <div
+        className="space-y-1 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+        role="alert"
+      >
+        <p className="font-medium">This workspace has no default pipeline.</p>
+        <p>
+          You can review other steps, but verification needs a default pipeline. Ask your workspace
+          owner to contact Wallie support to restore it.
+        </p>
       </div>
     );
   }
@@ -193,6 +222,13 @@ export function OnboardingPipelineEditor({
         value={operatingRules}
       />
 
+      {unidentifiedMembers.length ? (
+        <p className="text-xs leading-5 text-muted">
+          Some members can’t be identified. Existing approver assignments are kept as “Member
+          details unavailable”. Ask those members to complete their profile before assigning them to
+          new stages.
+        </p>
+      ) : null}
       <ol className="space-y-3">
         {stages.map((stage, index) => (
           <StageRowEditor
@@ -217,17 +253,35 @@ export function OnboardingPipelineEditor({
             priorStages={stages.slice(0, index).map((prior) => ({ slug: prior.slug }))}
             stage={stage}
             totalStages={stages.length}
-            workspaceMembers={workspaceMembers}
+            workspaceMembers={workspaceMembers.flatMap((member) => {
+              const name = member.fullName?.trim();
+              const email = member.email?.trim();
+              if (!name && !email && !stage.approverMemberIds.includes(member.id)) return [];
+              return [
+                {
+                  ...member,
+                  fullName:
+                    name && email && name !== email
+                      ? `${name} · ${email}`
+                      : name || email || "Member details unavailable",
+                },
+              ];
+            })}
           />
         ))}
       </ol>
 
       <PipelineEditorControls
         canManage={canManage}
-        isPending={isSaving}
+        isPending={isSaving || Boolean(navigationPending)}
         onAddStage={handleAddStage}
         onSave={() => void savePipeline()}
       />
+      {dirty && !isSaving ? (
+        <p className="text-xs text-muted" role="status">
+          Unsaved changes
+        </p>
+      ) : null}
 
       <RemoveStageDialog
         onConfirm={() => {
