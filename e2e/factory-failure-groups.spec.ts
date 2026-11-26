@@ -289,7 +289,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await capture(page, info, "08-selected-split-group");
     await main
       .getByRole("listitem")
-      .filter({ has: main.locator(`a[href$="/runs/${firstRun}?attempt=1"]`) })
+      .filter({ has: page.locator(`a[href$="/runs/${firstRun}?attempt=1"]`) })
       .getByRole("link", { name: /^Open validation evidence for / })
       .click();
     await expect(
