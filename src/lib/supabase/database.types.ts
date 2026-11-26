@@ -14379,6 +14379,10 @@ export type Database = {
       }
       list_due_factory_automation_schedules: { Args: never; Returns: Json }
       list_factory_actions_dispatches: { Args: never; Returns: Json }
+      list_factory_analytics_deployment_environments: {
+        Args: { p_factory_id: string; p_workspace_id: string }
+        Returns: string[]
+      }
       list_factory_automation_occurrence_history: {
         Args: {
           p_automation_id: string

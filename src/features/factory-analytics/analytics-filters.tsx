@@ -1,86 +1,200 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useTransition } from "react";
+
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField } from "@/components/ui/select";
-import type { AnalyticsQuery } from "@/features/factory-analytics/analytics-query";
-import { dimensionLabels, windowLabel } from "@/features/factory-analytics/analytics-view-shared";
+
+import {
+  analyticsCoreFields,
+  analyticsEvidenceFields,
+  analyticsFieldsHref,
+  applyAnalyticsFields,
+} from "./analytics-navigation";
+import type { AnalyticsFilterErrors, AnalyticsQuery } from "./analytics-query";
+import { dimensionLabels, windowLabel } from "./analytics-view-shared";
 
 export function AnalyticsFilters({
   action,
   factoryId,
   query,
+  environments,
+  scorerFields,
+  errors,
+  dates,
 }: {
   action: string;
   factoryId: string;
   query: AnalyticsQuery;
+  environments: string[] | null;
+  scorerFields: Record<string, string | undefined>;
+  errors?: AnalyticsFilterErrors;
+  dates?: { from: string; to: string };
 }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const core = analyticsCoreFields(factoryId, query);
+  const evidence = analyticsEvidenceFields(query.evidence);
+  const environment = query.environment ?? "";
+  const missingEnvironment = Boolean(
+    environment && environments && !environments.includes(environment),
+  );
+  const clearEnvironment = analyticsFieldsHref(action, {
+    ...core,
+    ...evidence,
+    cursor: undefined,
+    ...scorerFields,
+    environment: undefined,
+  });
   return (
-    <>
+    <section
+      aria-label="Reporting filters"
+      className="mb-6 space-y-3 scroll-mt-4"
+      id="analytics-filters"
+      tabIndex={-1}
+    >
       <form
         action={action}
-        className="ui-sheet mb-6 flex flex-wrap items-end gap-4 p-4"
+        aria-busy={pending}
+        className="ui-sheet space-y-3 p-4"
         method="get"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const fields = applyAnalyticsFields(
+            new FormData(event.currentTarget),
+            core,
+            evidence,
+            scorerFields,
+          );
+          startTransition(() => router.push(analyticsFieldsHref(action, fields)));
+        }}
       >
-        <input name="factory" type="hidden" value={factoryId} />
-        {query.routingCanaryId ? (
-          <input name="routingCanary" type="hidden" value={query.routingCanaryId} />
-        ) : null}
-        {query.routingAlertId ? (
-          <input name="routingAlert" type="hidden" value={query.routingAlertId} />
-        ) : null}
-        <label className="type-label flex flex-col gap-1.5">
-          From date
-          <input
-            className="ui-input"
-            defaultValue={query.from.slice(0, 10)}
-            name="from"
-            required
-            type="date"
+        <div className="flex flex-wrap items-end gap-4">
+          {Object.entries({
+            factory: factoryId,
+            routingCanary: query.routingCanaryId,
+            routingAlert: query.routingAlertId,
+            scorerRevision: scorerFields.scorerRevision,
+            cohort: scorerFields.cohort,
+          }).map(([name, value]) =>
+            value ? <input key={name} name={name} type="hidden" value={value} /> : null,
+          )}
+          <label className="type-label flex flex-col gap-1.5">
+            From date (UTC)
+            <input
+              aria-describedby={errors?.range ? "analytics-range-error" : undefined}
+              aria-invalid={Boolean(errors?.range)}
+              className="ui-input"
+              defaultValue={dates?.from ?? core.from}
+              key={dates?.from ?? core.from}
+              name="from"
+              required
+              type="date"
+            />
+          </label>
+          <label className="type-label flex flex-col gap-1.5">
+            To date (UTC, exclusive)
+            <input
+              aria-describedby={errors?.range ? "analytics-range-error" : undefined}
+              aria-invalid={Boolean(errors?.range)}
+              className="ui-input"
+              defaultValue={dates?.to ?? core.to}
+              key={dates?.to ?? core.to}
+              name="to"
+              required
+              type="date"
+            />
+          </label>
+          <SelectField
+            aria-describedby={errors?.dimension ? "analytics-dimension-error" : undefined}
+            className="min-w-44 max-w-full"
+            defaultValue={query.dimension}
+            key={query.dimension}
+            label="Break down throughput by"
+            labelClassName="type-label"
+            name="dimension"
+            options={Object.entries(dimensionLabels).map(([value, label]) => ({ label, value }))}
           />
-        </label>
-        <label className="type-label flex flex-col gap-1.5">
-          To date
-          <input
-            className="ui-input"
-            defaultValue={query.to.slice(0, 10)}
-            name="to"
-            required
-            type="date"
-          />
-        </label>
-        <SelectField
-          className="min-w-44"
-          defaultValue={query.dimension}
-          key={query.dimension}
-          label="Break down throughput by"
-          labelClassName="type-label"
-          name="dimension"
-          options={Object.entries(dimensionLabels).map(([value, label]) => ({ label, value }))}
-        />
-        <label className="type-label flex flex-col gap-1.5">
-          Deployment environment
-          <input
-            className="ui-input"
-            defaultValue={query.environment ?? ""}
-            maxLength={64}
+          <SelectField
+            aria-describedby={
+              errors?.environment
+                ? "analytics-environment-error"
+                : missingEnvironment
+                  ? "analytics-environment-help analytics-environment-missing"
+                  : "analytics-environment-help"
+            }
+            className="min-w-44 max-w-full"
+            defaultValue={environment}
+            emptyOption={{ label: "All environments", value: "" }}
+            key={environment}
+            label="Deployment environment"
+            labelClassName="type-label"
             name="environment"
-            placeholder="All environments"
+            options={[
+              ...(environment && (missingEnvironment || !environments)
+                ? [
+                    {
+                      label: missingEnvironment ? "Saved environment (not listed)" : environment,
+                      value: environment,
+                    },
+                  ]
+                : []),
+              ...(environments ?? []).map((value) => ({ label: value, value })),
+            ]}
+            wrap
           />
-        </label>
-        <label className="type-label flex h-9 items-center gap-2">
-          <input
-            defaultChecked={query.comparison !== null}
-            name="compare"
-            type="checkbox"
-            value="previous"
-          />
-          Compare with previous period
-        </label>
-        <button className="ui-button-primary h-9 px-3 text-sm" type="submit">
-          Apply filters
-        </button>
+          <label className="type-label flex min-h-9 items-center gap-2">
+            <input
+              defaultChecked={Boolean(query.comparison)}
+              key={String(Boolean(query.comparison))}
+              name="compare"
+              type="checkbox"
+              value="previous"
+            />
+            Compare with previous period
+          </label>
+          <button className="ui-button-primary" disabled={pending} type="submit">
+            <ActionButtonLabel
+              idle="Apply filters"
+              pending={pending}
+              pendingLabel="Applying filters…"
+            />
+          </button>
+        </div>
+        <p className="type-label text-muted" id="analytics-environment-help">
+          Environment applies to deployment timing only.
+        </p>
+        {missingEnvironment && (
+          <p className="type-secondary text-muted" id="analytics-environment-missing">
+            The saved environment <code className="break-all">{environment}</code> has no recorded
+            deployments for this factory.{" "}
+            <a className="text-accent underline underline-offset-4" href={clearEnvironment}>
+              Clear environment
+            </a>
+          </p>
+        )}
+        {!environments && (
+          <p className="type-secondary text-muted">
+            Could not load deployment environments. Apply filters to try again.
+          </p>
+        )}
+        {errors && (
+          <div className="type-secondary space-y-1" role="alert">
+            {errors.range && <p id="analytics-range-error">{errors.range}</p>}
+            {errors.compare && <p>{errors.compare}</p>}
+            {errors.dimension && <p id="analytics-dimension-error">{errors.dimension}</p>}
+            {errors.environment && <p id="analytics-environment-error">{errors.environment}</p>}
+            {errors.other && <p>{errors.other}</p>}
+          </div>
+        )}
       </form>
-      <p className="type-secondary mb-8 text-muted">
-        {windowLabel(query)}. Dates include the start and exclude the end.
-        {query.comparison ? ` Previous period ${windowLabel(query.comparison)}.` : ""}
-      </p>
-    </>
+      {!errors && (
+        <p className="type-secondary text-muted">
+          {windowLabel(query)} (end excluded).
+          {query.comparison ? ` Previous period ${windowLabel(query.comparison)}.` : ""}
+        </p>
+      )}
+    </section>
   );
 }

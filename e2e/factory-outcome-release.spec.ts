@@ -67,7 +67,7 @@ async function screenshot(page: Page, info: TestInfo, name: string) {
 function analyticsValue(page: Page, section: string, label: string, period = "Current period") {
   return page
     .getByRole("table", { name: `${section} comparison table` })
-    .getByRole("link", { name: `${label}, ${period}, table evidence,` });
+    .getByRole("link", { name: `${label}, ${period}, evidence,` });
 }
 
 function overviewValue(page: Page, section: string, label: string, period = "Current period") {
@@ -282,7 +282,7 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     for (const interval of await intervals.all()) await interval.click({ timeout: 10_000 });
     for (const runId of [fixture.failedRunId, fixture.estimatedRunId, fixture.producingRunId]) {
       await expect(
-        evidence.getByRole("link", { name: `Run ${runId}`, exact: true }).first(),
+        evidence.locator(`a[href="${workspace}/runs/${runId}"]`).first(),
       ).toHaveAttribute("href", `${workspace}/runs/${runId}`);
     }
 
@@ -327,11 +327,12 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     await analyticsValue(page, "Cost per merged PR", "Delivery Unavailable attempts").press(
       "Enter",
     );
+    await expect(evidence.getByRole("link", { name: /^Open run · attempt / })).toHaveAttribute(
+      "href",
+      `${workspace}/runs/${fixture.failedRunId}`,
+    );
     await expect(
-      evidence.getByRole("link", { name: `Run ${fixture.failedRunId}`, exact: true }),
-    ).toHaveAttribute("href", `${workspace}/runs/${fixture.failedRunId}`);
-    await expect(
-      evidence.getByRole("link", { name: `Run ${fixture.producingRunId}`, exact: true }),
+      evidence.locator(`a[href="${workspace}/runs/${fixture.producingRunId}"]`),
     ).toHaveCount(0);
 
     await expect(analyticsValue(page, "Pull request throughput", "Browser")).toHaveText(
@@ -346,14 +347,15 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
         exact: true,
       }),
     ).toBeVisible();
-    await expect(
-      evidence.getByRole("link", { name: `Run ${fixture.producingRunId}`, exact: true }),
-    ).toBeVisible();
+    await expect(evidence.getByRole("link", { name: /^Open run · attempt / })).toHaveAttribute(
+      "href",
+      `${workspace}/runs/${fixture.producingRunId}`,
+    );
     await expect(evidence).toContainText(fixture.mergeObservationId);
     await expect(evidence).toContainText(fixture.browserRequestReceiptId);
     await analyticsValue(page, "Pull request throughput", "Unknown").press("Enter");
     await expect(
-      evidence.getByRole("link", { name: `Run ${fixture.producingRunId}`, exact: true }),
+      evidence.locator(`a[href="${workspace}/runs/${fixture.producingRunId}"]`),
     ).toHaveCount(0);
     await expect(evidence.getByRole("link", { name: "Session #81", exact: true })).toBeVisible();
 
@@ -365,16 +367,17 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     await expect(analyticsValue(page, "Pull request throughput", "gpt-5.5")).toHaveText("1");
     await expect(analyticsValue(page, "Pull request throughput", "Unlinked")).toHaveText("3");
     await analyticsValue(page, "Pull request throughput", "gpt-5.5").press("Enter");
-    await expect(
-      evidence.getByRole("link", { name: `Run ${fixture.producingRunId}`, exact: true }),
-    ).toBeVisible();
+    await expect(evidence.getByRole("link", { name: /^Open run · attempt / })).toHaveAttribute(
+      "href",
+      `${workspace}/runs/${fixture.producingRunId}`,
+    );
     await expect(evidence).toContainText(fixture.mergeObservationId);
     await selectDropdownOption(
       page.getByRole("combobox", { name: /^Break down throughput by/u }),
       "person",
     );
     await page.getByRole("button", { name: "Apply filters", exact: true }).click();
-    const requester = `Workspace member ${fixture.ownerMemberId.slice(0, 8)}`;
+    const requester = "Morgan Example · Owner";
     await expect(analyticsValue(page, "Pull request throughput", requester)).toHaveText("4");
 
     await analyticsValue(page, "Revert rate", "Ambiguous relationship").press("Enter");
@@ -390,7 +393,15 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     await evidence
       .getByText("Revert relationship observations", { exact: true })
       .click({ timeout: 10_000 });
-    await expect(evidence.getByText(fixture.verifiedRelationshipId, { exact: true })).toBeVisible();
+    const relationshipId = evidence.getByText(fixture.verifiedRelationshipId, { exact: true });
+    await expect(relationshipId).toBeHidden();
+    await evidence
+      .locator("details")
+      .filter({ has: relationshipId })
+      .last()
+      .locator("summary")
+      .click();
+    await expect(relationshipId).toBeVisible();
 
     await page.goto(analytics);
     const exports = page.getByRole("region", { name: "Export analytics" });

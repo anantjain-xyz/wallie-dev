@@ -32,7 +32,7 @@ describe("analytics export controls", () => {
       return Response.json({
         id: exportId,
         createdAt: "2026-11-19T00:00:00.123456Z",
-        expiresAt: "2026-11-20T00:00:00.123456Z",
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
       });
     });
     vi.stubGlobal("fetch", fetch);
@@ -61,5 +61,31 @@ describe("analytics export controls", () => {
     });
     expect(requests[0]).toEqual(requests[1]);
     expect(fetch).toHaveBeenCalledWith(path, expect.objectContaining({ method: "POST" }));
+  });
+  it.each(["expired", "unavailable"])("offers recovery for an %s snapshot", async (state) => {
+    const fetch = vi.fn(async (input: string) =>
+      input.endsWith("?format=json")
+        ? new Response(null, { status: 404 })
+        : Response.json({
+            id: exportId,
+            createdAt: "2026-11-19T00:00:00Z",
+            expiresAt: new Date(Date.now() + (state === "expired" ? -1 : 86_400_000)).toISOString(),
+          }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <AnalyticsExportControls workspaceId={workspaceId} factoryId={factoryId} filters={filters} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create export snapshot" }));
+    if (state === "unavailable") {
+      fireEvent.click(await screen.findByRole("link", { name: "Download JSON" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "This snapshot is no longer available",
+      );
+    } else {
+      expect(await screen.findByRole("status")).toHaveTextContent("Snapshot expired");
+    }
+    expect(screen.getByRole("button", { name: "Create a new snapshot" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Download CSV" })).not.toBeInTheDocument();
   });
 });
