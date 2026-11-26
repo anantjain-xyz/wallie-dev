@@ -362,6 +362,24 @@ async function loadTemplateSource(
   };
 }
 
+export async function loadWorkflowTemplatePrerequisites(
+  scope: CatalogScope,
+  base: WorkflowBaseDefinition | null,
+) {
+  const definition = await loadWorkflowBaseDefinition(scope, base);
+  if (!definition) return { state: "no-definition" } as const;
+  const source = await loadTemplateSource(scope, definition, {
+    id: "product-delivery",
+    version: 1,
+  });
+  if (!source) return { state: "missing-references" } as const;
+  return {
+    state: "configured",
+    canDraftProductScope: source.canDraftProductScope,
+    hasRequiredEvidence: source.hasRequiredEvidence,
+  } as const;
+}
+
 export async function loadWorkflowEditorChoices(
   scope: CatalogScope,
   base: WorkflowBaseDefinition | null,

@@ -132,6 +132,38 @@ select ok(exists (
   where (option.workflow_id,option.activation_id,option.definition_digest) =
     (scope.workflow_id,(record.result->>'activationId')::uuid,scope.base_digest)
 ), 'intake catalog returns its selected activation and authoritative base digest from one read');
+create temp table op655_directory_samples as
+select public.create_factory_workflow_authoring(scope.workspace_id,scope.factory_id,pg_temp.op651_id(1),
+  pg_temp.op651_id(1200+n),case n when 52 then 'Directory target %'
+    when 53 then 'Directory target other' else 'Directory sample' end) as id
+from op655_scope scope cross join generate_series(1,53) n;
+select set_config('request.jwt.claim.role','authenticated',true);
+select set_config('request.jwt.claim.sub',pg_temp.op651_id(911)::text,true);
+select is((select public.list_factory_workflow_directory(workspace_id,factory_id,p_search=>'release')
+  from op655_scope),null::jsonb,'ordinary members cannot search the manager-only directory');
+select set_config('request.jwt.claim.sub',pg_temp.op651_id(910)::text,true);
+select ok((select row->>'draftRevision'='2' and row#>>'{publication,draftRevision}'='2'
+    and row#>>'{publication,draftId}'=draft.result->>'draftId'
+    and row#>>'{publication,activationId}'=published.result->>'activationId'
+    and row#>>'{publication,intake}'='eligible'
+  from op655_scope scope cross join op655_draft_second draft cross join op655_activation_first published
+  cross join lateral jsonb_array_elements(public.list_factory_workflow_directory(scope.workspace_id,
+    scope.factory_id,p_search=>'RELEASE')->'workflows') row),
+  'scoped managers get exact working and published metadata with current intake eligibility');
+select is((select public.list_factory_workflow_directory(workspace_id,factory_id,p_search=>'TARGET %')
+  #>>'{workflows,0,workflowId}' from op655_scope),pg_temp.op651_id(1252)::text,
+  'case-insensitive literal name search finds matches outside the first unfiltered page');
+select is((select jsonb_array_length(public.list_factory_workflow_directory(workspace_id,factory_id,
+  p_search=>'TARGET %')->'workflows') from op655_scope),1,
+  'a percent in the name query is literal');
+select is((select public.list_factory_workflow_directory(workspace_id,factory_id,pg_temp.op651_id(1250),'directory sample')
+  #>>'{workflows,0,workflowId}' from op655_scope),pg_temp.op651_id(1251)::text,
+  'the next page uses the scoped UUID as a stable tiebreaker for matching names');
+select is((select public.list_factory_workflow_directory(workspace_id,factory_id,pg_temp.op651_id(1252),'directory sample')
+  ->>'cursorUnavailable' from op655_scope),'true',
+  'a cursor from another search does not reposition the directory');
+select set_config('request.jwt.claim.role','service_role',true);
+select set_config('request.jwt.claim.sub',pg_temp.op651_id(1)::text,true);
 select is((select pg_temp.op655_publish('second',933,(result->>'draftId')::uuid)->>'created' from op655_draft_second),
   'false','a lost publication response replays the immutable activation');
 select throws_ok($$select pg_temp.op655_publish('second',934,(result->>'draftId')::uuid) from op655_draft_second$$,
@@ -484,6 +516,12 @@ $$;
 select set_config('request.jwt.claim.role','authenticated',true);
 select ok((select pg_temp.hidden_checkpoint_retains_readback(result->>'activationId') from checkpoint_without_policy_activation),
   'a signed-in catalog hides the published checkpoint without a grant and preserves its authoring base digest');
+select is((select public.list_factory_workflow_directory(workspace_id,factory_id,p_search=>'Pinned policy fixture')
+  #>>'{workflows,0,publication,intake}' from op655_scope),'unavailable',
+  'the directory preserves the publication but does not advertise an ineligible intake');
+select is((select public.list_factory_workflow_directory(workspace_id,factory_id,p_search=>'Release workflow')
+  #>>'{workflows,0,publication,intake}' from op655_scope),'definition_changed',
+  'the directory explains when a publication belongs to an older definition activation');
 select set_config('request.jwt.claim.role','service_role',true);
 select throws_ok($$select created.* from checkpoint_without_policy_activation receipt
   cross join lateral pg_temp.policy_fixture_create(1032,receipt.result->>'activationId') created$$,

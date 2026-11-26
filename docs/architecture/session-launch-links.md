@@ -17,6 +17,9 @@ Canceling a direct Sessions link keeps its non-launch filters. The shared shell 
 restores focus and uses browser history to return to its own recorded origin when possible.
 Starting a session still follows the creation flow, not the cancel destination.
 
-This contract does not select a workflow publication or change intake eligibility. Any
-workflow-specific handoff must check the exact publication and must not silently fall back
-to the default pipeline.
+For a workflow-specific handoff, pass the eligible publication's activation ID as the fourth
+argument to `sessionLaunchHref`. The `workflowActivation` URL value is an untrusted hint.
+The composer checks that exact activation against current intake options in the named default
+factory and requires its default repository. A missing, malformed, or superseded requested
+activation blocks submission rather than falling back to the default pipeline. Links without
+the parameter retain the normal composer and workflow picker.
