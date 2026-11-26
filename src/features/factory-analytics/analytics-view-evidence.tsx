@@ -112,13 +112,14 @@ function RunLink({
   context?: string;
   workspaceSlug: string;
 }) {
+  const recordedAttempt = attempt != null && attempt > 0 ? attempt : undefined;
   return (
     <Link
       className="break-words underline underline-offset-4"
-      href={workspaceRunDetailPath(workspaceSlug, runId)}
+      href={workspaceRunDetailPath(workspaceSlug, runId, { attempt: recordedAttempt })}
       prefetch={false}
     >
-      {["Open run", attempt != null ? `attempt ${attempt}` : null, stage, context]
+      {["Open run", recordedAttempt ? `attempt ${recordedAttempt}` : null, stage, context]
         .filter(Boolean)
         .join(" · ")}
     </Link>

@@ -42,6 +42,7 @@ export function AnalyticsFilters({
   );
   const clearEnvironment = analyticsFieldsHref(action, {
     ...core,
+    ...dates,
     ...evidence,
     cursor: undefined,
     ...scorerFields,
@@ -108,6 +109,7 @@ export function AnalyticsFilters({
           </label>
           <SelectField
             aria-describedby={errors?.dimension ? "analytics-dimension-error" : undefined}
+            aria-invalid={errors?.dimension ? true : undefined}
             className="min-w-44 max-w-full"
             defaultValue={query.dimension}
             key={query.dimension}
@@ -124,6 +126,7 @@ export function AnalyticsFilters({
                   ? "analytics-environment-help analytics-environment-missing"
                   : "analytics-environment-help"
             }
+            aria-invalid={errors?.environment ? true : undefined}
             className="min-w-44 max-w-full"
             defaultValue={environment}
             emptyOption={{ label: "All environments", value: "" }}
@@ -146,6 +149,8 @@ export function AnalyticsFilters({
           />
           <label className="type-label flex min-h-9 items-center gap-2">
             <input
+              aria-describedby={errors?.compare ? "analytics-compare-error" : undefined}
+              aria-invalid={errors?.compare ? true : undefined}
               defaultChecked={Boolean(query.comparison)}
               key={String(Boolean(query.comparison))}
               name="compare"
@@ -182,7 +187,7 @@ export function AnalyticsFilters({
         {errors && (
           <div className="type-secondary space-y-1" role="alert">
             {errors.range && <p id="analytics-range-error">{errors.range}</p>}
-            {errors.compare && <p>{errors.compare}</p>}
+            {errors.compare && <p id="analytics-compare-error">{errors.compare}</p>}
             {errors.dimension && <p id="analytics-dimension-error">{errors.dimension}</p>}
             {errors.environment && <p id="analytics-environment-error">{errors.environment}</p>}
             {errors.other && <p>{errors.other}</p>}

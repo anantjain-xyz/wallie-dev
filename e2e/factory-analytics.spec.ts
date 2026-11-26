@@ -167,10 +167,10 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
 
     await page.goto(`${comparison}&metric=delivery-cost`);
     await expect(
-      evidence.locator(`a[href="${workspacePath}/runs/${fixture.producingRunId}"]`),
+      evidence.locator(`a[href="${workspacePath}/runs/${fixture.producingRunId}?attempt=1"]`),
     ).toBeVisible();
     await expect(
-      evidence.locator(`a[href="${workspacePath}/runs/${fixture.failedRunId}"]`),
+      evidence.locator(`a[href="${workspacePath}/runs/${fixture.failedRunId}?attempt=1"]`),
     ).toBeVisible();
 
     const throughputPath = `${comparison}&metric=throughput`;

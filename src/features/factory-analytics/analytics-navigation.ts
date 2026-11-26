@@ -22,8 +22,9 @@ export function analyticsEvidenceFields(evidence: AnalyticsQuery["evidence"]): F
 
 export function analyticsScorerFields(query: ScorerTrendQuery | null): Fields {
   if (!query) return {};
-  const { from: _from, to: _to, ...fields } = query;
-  return fields;
+  return Object.fromEntries(
+    Object.entries(query).filter(([key]) => key !== "from" && key !== "to"),
+  );
 }
 
 export function applyAnalyticsFields(
@@ -58,6 +59,8 @@ export function applyAnalyticsFields(
 
 export function analyticsFieldsHref(path: string, fields: Fields) {
   const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(fields)) if (value) search.set(key, value);
+  for (const [key, value] of Object.entries(fields)) {
+    if (value || (value === "" && (key === "from" || key === "to"))) search.set(key, value);
+  }
   return search.size ? path + "?" + search.toString() : path;
 }

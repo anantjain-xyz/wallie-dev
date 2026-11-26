@@ -282,8 +282,8 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     for (const interval of await intervals.all()) await interval.click({ timeout: 10_000 });
     for (const runId of [fixture.failedRunId, fixture.estimatedRunId, fixture.producingRunId]) {
       await expect(
-        evidence.locator(`a[href="${workspace}/runs/${runId}"]`).first(),
-      ).toHaveAttribute("href", `${workspace}/runs/${runId}`);
+        evidence.locator(`a[href="${workspace}/runs/${runId}?attempt=1"]`).first(),
+      ).toBeVisible();
     }
 
     await analyticsValue(page, "Time to delivery", "Request to deployment Median").press("Enter");
@@ -329,10 +329,10 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     );
     await expect(evidence.getByRole("link", { name: /^Open run · attempt / })).toHaveAttribute(
       "href",
-      `${workspace}/runs/${fixture.failedRunId}`,
+      `${workspace}/runs/${fixture.failedRunId}?attempt=1`,
     );
     await expect(
-      evidence.locator(`a[href="${workspace}/runs/${fixture.producingRunId}"]`),
+      evidence.locator(`a[href^="${workspace}/runs/${fixture.producingRunId}"]`),
     ).toHaveCount(0);
 
     await expect(analyticsValue(page, "Pull request throughput", "Browser")).toHaveText(
@@ -349,13 +349,13 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     ).toBeVisible();
     await expect(evidence.getByRole("link", { name: /^Open run · attempt / })).toHaveAttribute(
       "href",
-      `${workspace}/runs/${fixture.producingRunId}`,
+      `${workspace}/runs/${fixture.producingRunId}?attempt=1`,
     );
     await expect(evidence).toContainText(fixture.mergeObservationId);
     await expect(evidence).toContainText(fixture.browserRequestReceiptId);
     await analyticsValue(page, "Pull request throughput", "Unknown").press("Enter");
     await expect(
-      evidence.locator(`a[href="${workspace}/runs/${fixture.producingRunId}"]`),
+      evidence.locator(`a[href^="${workspace}/runs/${fixture.producingRunId}"]`),
     ).toHaveCount(0);
     await expect(evidence.getByRole("link", { name: "Session #81", exact: true })).toBeVisible();
 
@@ -369,7 +369,7 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     await analyticsValue(page, "Pull request throughput", "gpt-5.5").press("Enter");
     await expect(evidence.getByRole("link", { name: /^Open run · attempt / })).toHaveAttribute(
       "href",
-      `${workspace}/runs/${fixture.producingRunId}`,
+      `${workspace}/runs/${fixture.producingRunId}?attempt=1`,
     );
     await expect(evidence).toContainText(fixture.mergeObservationId);
     await selectDropdownOption(

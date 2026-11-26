@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AnalyticsExportControls } from "./analytics-export-controls";
@@ -20,6 +20,7 @@ const filters = {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -87,5 +88,55 @@ describe("analytics export controls", () => {
     }
     expect(screen.getByRole("button", { name: "Create a new snapshot" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "Download CSV" })).not.toBeInTheDocument();
+  });
+  it("does not let a replaced receipt's expiry timer expire the new receipt", async () => {
+    const replacement = "58200000-0000-4000-8000-000000000004";
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const timers = vi.spyOn(window, "setTimeout");
+    const firstLifetime = 60_000;
+    const nextLifetime = 120_000;
+    const receipt = (id: string, lifetime: number) =>
+      Response.json({
+        id,
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + lifetime).toISOString(),
+      });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(receipt(exportId, firstLifetime))
+        .mockResolvedValueOnce(receipt(replacement, nextLifetime)),
+    );
+    render(
+      <AnalyticsExportControls workspaceId={workspaceId} factoryId={factoryId} filters={filters} />,
+    );
+    const capture = screen.getByRole("button", { name: "Create export snapshot" });
+    fireEvent.click(capture);
+    expect(await screen.findByRole("link", { name: "Download JSON" })).toHaveAttribute(
+      "href",
+      path + "/" + exportId + "?format=json",
+    );
+    const first = timers.mock.calls.find(([, delay]) => delay === firstLifetime)?.[0];
+    if (typeof first !== "function") throw new Error("First expiry callback was not scheduled");
+    fireEvent.click(capture);
+    const download = await screen.findByRole("link", { name: "Download JSON" });
+    expect(download).toHaveAttribute("href", path + "/" + replacement + "?format=json");
+
+    act(() => {
+      first();
+    });
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
+      "href",
+      path + "/" + replacement + "?format=json",
+    );
+    const next = timers.mock.calls.find(([, delay]) => delay === nextLifetime)?.[0];
+    if (typeof next !== "function")
+      throw new Error("Replacement expiry callback was not scheduled");
+    act(() => {
+      next();
+    });
+    expect(screen.queryByRole("link", { name: "Download JSON" })).not.toBeInTheDocument();
   });
 });

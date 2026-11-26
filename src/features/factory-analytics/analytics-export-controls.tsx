@@ -34,13 +34,17 @@ export function AnalyticsExportControls({
   factoryId: string;
   filters: AnalyticsExportFilters;
 }) {
-  const [snapshot, setSnapshot] = useState<AnalyticsExportReceipt | null>(null);
-  const [expired, setExpired] = useState(false);
+  const [capture, setCapture] = useState<{
+    receipt: AnalyticsExportReceipt;
+    expired: boolean;
+  } | null>(null);
   const [snapshotUnavailable, setSnapshotUnavailable] = useState(false);
   const [downloading, setDownloading] = useState<AnalyticsExportFormat | null>(null);
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const requestId = useRef<string | null>(null);
   const endpoint = factoryAnalyticsExportsPath(workspaceId, factoryId);
+  const snapshot = capture?.receipt ?? null;
+  const expired = capture?.expired ?? false;
 
   const action = useApiAction({
     call: async () => {
@@ -61,8 +65,10 @@ export function AnalyticsExportControls({
       if (!receipt.success)
         throw new Error("Could not read the export receipt. Retry the request.");
       requestId.current = null;
-      setSnapshot(receipt.data);
-      setExpired(Date.parse(receipt.data.expiresAt) <= Date.now());
+      setCapture({
+        receipt: receipt.data,
+        expired: Date.parse(receipt.data.expiresAt) <= Date.now(),
+      });
       setSnapshotUnavailable(false);
     },
     errorText: "Could not create the analytics export.",
@@ -72,7 +78,11 @@ export function AnalyticsExportControls({
   useEffect(() => {
     if (!snapshot || expired) return;
     const timer = window.setTimeout(
-      () => setExpired(true),
+      () => {
+        setCapture((current) =>
+          current && current.receipt === snapshot ? { ...current, expired: true } : current,
+        );
+      },
       Math.max(0, Date.parse(snapshot.expiresAt) - Date.now()),
     );
     return () => window.clearTimeout(timer);
@@ -82,12 +92,12 @@ export function AnalyticsExportControls({
   async function downloadSnapshot(format: AnalyticsExportFormat) {
     if (!snapshot || !download || downloading || action.isBusy) return;
     if (Date.parse(snapshot.expiresAt) <= Date.now()) {
-      setExpired(true);
+      setCapture({ receipt: snapshot, expired: true });
       return;
     }
     setDownloading(format);
     setMessage(null);
-    let url: string | undefined;
+    let objectUrl: string | undefined;
     try {
       const response = await fetch(download + "?format=" + format, { cache: "no-store" });
       if (response.redirected || [401, 403, 404, 410].includes(response.status)) {
@@ -108,9 +118,9 @@ export function AnalyticsExportControls({
       if (!response.ok || !response.headers.get("Content-Disposition")?.startsWith("attachment;")) {
         throw new Error("Download unavailable");
       }
-      url = URL.createObjectURL(await response.blob());
+      objectUrl = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
-      link.href = url;
+      link.href = objectUrl;
       link.download = "wallie-analytics-" + snapshot.id + "." + format;
       link.click();
     } catch {
@@ -119,6 +129,7 @@ export function AnalyticsExportControls({
         text: "Could not download this snapshot. Try downloading again.",
       });
     } finally {
+      const url = objectUrl;
       if (url) window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
       setDownloading(null);
     }

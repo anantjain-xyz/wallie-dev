@@ -122,9 +122,17 @@ export type AnalyticsQuery = AnalyticsWindow & {
   routingAlertId?: string;
 };
 
-export function recoverAnalyticsFilters(search: Record<string, string | string[] | undefined>) {
+export type AnalyticsFilterErrors = Partial<
+  Record<"range" | "compare" | "dimension" | "environment" | "other", string | undefined>
+>;
+
+export function recoverAnalyticsFilters(search: Record<string, string | string[] | undefined>): {
+  query: AnalyticsQuery;
+  errors: AnalyticsFilterErrors;
+  dates?: { from: string; to: string };
+} {
   const parsed = parseAnalyticsQuery(search);
-  if (parsed.success) return { query: parsed.data, errors: {}, dates: undefined };
+  if (parsed.success) return { query: parsed.data, errors: {} };
 
   const { factory, from, to, compare, dimension, environment, routingCanary, routingAlert } =
     search;
@@ -156,19 +164,18 @@ export function recoverAnalyticsFilters(search: Record<string, string | string[]
   });
   if (!clean.success) throw new Error("Could not recover analytics filter controls.");
 
-  const errors = {
+  const errors: AnalyticsFilterErrors = {
     range: !datesOnly.success
       ? "Choose a UTC range of 1 to 366 days. The end must be later than the start."
       : undefined,
     compare:
-      datesOnly.success && !datesWithCompare.success
+      !fields.compare.safeParse(compare).success || (datesOnly.success && !datesWithCompare.success)
         ? "The previous period is invalid for these dates. Adjust the range or leave comparison off."
         : undefined,
     dimension: !safe.dimension.success ? "Select a supported throughput breakdown." : undefined,
     environment: !safe.environment.success
       ? "Choose a deployment environment from the list."
       : undefined,
-    other: undefined as string | undefined,
   };
   if (!Object.values(errors).some(Boolean))
     errors.other =
@@ -184,8 +191,6 @@ export function recoverAnalyticsFilters(search: Record<string, string | string[]
       : undefined,
   };
 }
-
-export type AnalyticsFilterErrors = ReturnType<typeof recoverAnalyticsFilters>["errors"];
 
 function analyticsWindow(from: number, to: number): AnalyticsWindow {
   return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
