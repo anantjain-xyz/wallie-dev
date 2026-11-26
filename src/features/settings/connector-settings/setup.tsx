@@ -519,19 +519,23 @@ export function GitHubRequestRule({
       <h3 className="text-sm font-semibold text-foreground" ref={ruleHeadingRef} tabIndex={-1}>
         GitHub work intake
       </h3>
-      <ConnectorSelect
-        label="Request source"
+      <SelectField
+        className="max-w-xs"
         disabled={inactive}
-        onChange={(event) => {
-          setSourceKind(event.target.value === "pull_request" ? "pull_request" : "issue");
+        label="Request source"
+        onValueChange={(value) => {
+          const nextSource = value === "pull_request" ? "pull_request" : "issue";
+          if (nextSource === sourceKind) return;
+          setSourceKind(nextSource);
           setSelected(null);
           setMessage(null);
         }}
+        options={[
+          { label: "Issue", value: "issue" },
+          { label: "Pull request", value: "pull_request" },
+        ]}
         value={sourceKind}
-      >
-        <option value="issue">Issue</option>
-        <option value="pull_request">Pull request</option>
-      </ConnectorSelect>
+      />
       <p className="text-sm text-muted">
         {current?.enabled ? (
           savedLabel ? (
