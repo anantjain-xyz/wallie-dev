@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { ActionMenu } from "@/components/ui/action-menu";
@@ -8,6 +8,12 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
+import { OPENCODE_ZEN_PROVIDER_ID, parseOpenCodeModelId } from "@/lib/agent-config/contracts";
+
+const namedProviders: Record<string, string> = {
+  "opencode-go": "OpenCode Go",
+  openrouter: "OpenRouter",
+};
 
 export interface OpenCodeProviderCredentialStatus {
   providerId: string;
@@ -23,6 +29,7 @@ export interface OpenCodeConnectionStatus {
 
 interface OpenCodeConnectionPanelProps {
   initialStatus?: OpenCodeConnectionStatus;
+  selectedModel?: string;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: OpenCodeConnectionStatus) => void;
 }
@@ -30,13 +37,20 @@ interface OpenCodeConnectionPanelProps {
 export function OpenCodeConnectionPanel({
   initialStatus,
   onStatusChange,
+  selectedModel,
 }: OpenCodeConnectionPanelProps = {}) {
+  const providerListId = useId();
   const initialStatusRef = useRef(initialStatus);
   const [status, setStatus] = useState<OpenCodeConnectionStatus | null>(
     initialStatus ? { ...initialStatus, providers: initialStatus.providers ?? [] } : null,
   );
   const [credential, setCredential] = useState("");
-  const [providerId, setProviderId] = useState("");
+  const [providerOverride, setProviderOverride] = useState<string | null>(null);
+  const modelProviderId = parseOpenCodeModelId(selectedModel ?? "")?.providerId;
+  const providerId =
+    providerOverride ??
+    (modelProviderId !== OPENCODE_ZEN_PROVIDER_ID ? modelProviderId : undefined) ??
+    "";
   const [providerCredential, setProviderCredential] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +157,7 @@ export function OpenCodeConnectionPanel({
         throw new Error(data?.error ?? `Save failed (${response.status}).`);
       }
       await refresh();
-      setProviderId("");
+      setProviderOverride(null);
       setProviderCredential("");
       setNotice(`API key saved for ${trimmedProviderId}.`);
       pushToast({
@@ -268,12 +282,21 @@ export function OpenCodeConnectionPanel({
               >
                 <div className="space-y-0.5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-mono text-[13px] font-medium text-foreground">
-                      {provider.providerId}
+                    <p className="text-[13px] font-medium text-foreground">
+                      {Object.hasOwn(namedProviders, provider.providerId)
+                        ? namedProviders[provider.providerId]
+                        : provider.providerId}
                     </p>
                     <Status compact label="Connected" value="healthy" />
                   </div>
-                  <p className="text-xs text-muted">Updated {formatDate(provider.updatedAt)}</p>
+                  <p className="text-xs text-muted">
+                    {Object.hasOwn(namedProviders, provider.providerId) ? (
+                      <>
+                        <code>{provider.providerId}</code> ·{" "}
+                      </>
+                    ) : null}
+                    Updated {formatDate(provider.updatedAt)}
+                  </p>
                 </div>
                 <ActionMenu disabled={isBusy} label={`${provider.providerId} credential actions`}>
                   <DropdownMenuItem
@@ -295,12 +318,18 @@ export function OpenCodeConnectionPanel({
               autoComplete="off"
               className="ui-input font-mono text-[13px]"
               disabled={isBusy}
-              onChange={(event) => setProviderId(event.target.value)}
+              list={providerListId}
+              onChange={(event) => setProviderOverride(event.target.value)}
               placeholder="opencode-go"
               spellCheck={false}
               value={providerId}
             />
           </label>
+          <datalist id={providerListId}>
+            {Object.entries(namedProviders).map(([id, name]) => (
+              <option key={id} label={name} value={id} />
+            ))}
+          </datalist>
           <label className="block space-y-1.5">
             <span className="text-xs font-medium text-foreground">Provider API key</span>
             <input

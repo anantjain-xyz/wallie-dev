@@ -46,13 +46,37 @@ export const connectorCatalogQuerySchema = z.union([
     kind: z.enum(["team", "project"]),
     cursor: cursor.optional(),
   }),
+  z.strictObject({
+    provider: z.literal("linear"),
+    kind: z.enum(["team", "label"]),
+    resourceId: uuid,
+    cursor: cursor.optional(),
+  }),
+  z.strictObject({
+    provider: z.literal("linear"),
+    kind: z.literal("state"),
+    resourceId: uuid,
+    teamId: uuid.optional(),
+    cursor: cursor.optional(),
+  }),
+  z.strictObject({
+    provider: z.enum(["linear", "slack"]),
+    kind: z.literal("resource"),
+    resourceId: uuid,
+  }),
 ]);
 
 export const connectorCatalogResponseSchema = z.strictObject({
   provider,
-  kind: z.enum(["repository", "label", "team", "project", "channel"]),
+  kind: z.enum(["repository", "label", "team", "project", "channel", "state", "resource"]),
   tenant: option,
-  resources: z.array(option.extend({ externalId: externalId.optional() })),
+  resources: z.array(
+    option.extend({
+      externalId: externalId.optional(),
+      description: z.string().max(512).optional(),
+      teamId: uuid.optional(),
+    }),
+  ),
   nextCursor: cursor.nullable(),
 });
 
@@ -108,5 +132,6 @@ export const connectorSetupResponseSchema = z.union([
 ]);
 
 export type ConnectorCatalogResponse = z.output<typeof connectorCatalogResponseSchema>;
+export type ConnectorCatalogOption = ConnectorCatalogResponse["resources"][number];
 export type ConnectorSetupCommand = z.output<typeof connectorSetupCommandSchema>;
 export type ConnectorSetupResponse = z.output<typeof connectorSetupResponseSchema>;

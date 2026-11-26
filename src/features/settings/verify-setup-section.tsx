@@ -27,6 +27,18 @@ const stepAnchor: Record<WorkspaceOnboardingStep, string> = {
   verify: "verify",
 };
 
+const stepLabel: Record<WorkspaceOnboardingStep, string> = {
+  github: "GitHub",
+  linear: "Linear",
+  pipeline: "Pipeline",
+  repository: "Repository",
+  runtime: "Agent runtime",
+  sandbox: "Sandbox",
+  verify: "Verify setup",
+};
+
+const sandboxLabel = { daytona: "Daytona", e2b: "E2B", vercel: "Vercel Sandbox" } as const;
+
 function checklistItemHref(item: ReturnType<typeof buildVerifyChecklist>[number]) {
   return item.id === "vercel-sandbox" ? "#sandbox" : `#${stepAnchor[item.step]}`;
 }
@@ -53,6 +65,9 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
     data.setupHealth.primaryRepositoryProfile.repositoryId ??
     data.setupHealth.selectedRepository.repositoryId;
   const activeSandbox = data.setupHealth.sandboxConnection;
+  const factoryRepository = definitionTarget
+    ? data.github.repositories.find((item) => item.id === definitionTarget.repositoryId)?.fullName
+    : undefined;
   const sandboxConnected =
     definitionTarget && snapshot
       ? data.sandboxSettings.enabledProviders.includes(snapshot.sandboxProvider) &&
@@ -67,14 +82,34 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
     >
       <div className="space-y-8">
         <div className="space-y-3">
+          <div>
+            <h3 className="text-[14px] font-semibold text-foreground">Workspace readiness</h3>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              These results apply to the workspace defaults, not to a factory definition.
+            </p>
+          </div>
           {checklist.map((item) => (
             <div
               className="flex flex-col gap-3 rounded-[6px] border border-border bg-sheet px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
               key={item.id}
             >
               <div className="min-w-0">
-                <p className="text-[13px] font-medium text-foreground">{item.label}</p>
+                <p className="text-[13px] font-medium text-foreground">
+                  {item.id === "linear"
+                    ? "Linear API key and session routing"
+                    : item.id === "sandbox"
+                      ? "Workspace sandbox capability"
+                      : item.label}
+                </p>
                 <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
+                {item.id === "linear" ? (
+                  <a
+                    className="mt-1 inline-block text-xs font-medium text-accent underline"
+                    href="#connector-resources"
+                  >
+                    Open Factory connector resources
+                  </a>
+                ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Status
@@ -85,7 +120,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
                 />
                 {!item.passed && item.step !== "verify" ? (
                   <a className="ui-button" href={checklistItemHref(item)}>
-                    Open
+                    Open {stepLabel[item.step]} settings
                   </a>
                 ) : null}
               </div>
@@ -95,11 +130,17 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
 
         <div className="border-t border-border pt-6">
           <div className="mb-4 min-w-0">
-            <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
-            <p className="mt-1 text-xs leading-5 text-muted">
+            <h3 className="text-[14px] font-semibold text-foreground">
               {definitionTarget
-                ? `Run the check against the ${definitionTarget.kind === "draft" ? "saved draft" : "published factory configuration"}.`
-                : "Run the check against the selected repository."}
+                ? definitionTarget.kind === "draft"
+                  ? "Factory draft capability"
+                  : "Published factory capability"
+                : "Check workspace sandbox capability"}
+            </h3>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              {definitionTarget && snapshot
+                ? `${factoryRepository ?? "Factory repository unavailable"} · ${sandboxLabel[snapshot.sandboxProvider]}. This check does not update workspace readiness.`
+                : "Run the check against the selected repository to update workspace readiness."}
             </p>
           </div>
           <SandboxCapabilitySection

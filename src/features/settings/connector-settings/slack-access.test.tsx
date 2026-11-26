@@ -97,7 +97,7 @@ it("shows granted and missing Slack permissions to a factory manager", async () 
   expect(screen.getByText("Missing Slack permissions chat:write")).toBeVisible();
 });
 
-it("uses the entered Slack team and its own generation for install versus reconnect", async () => {
+it("reconnects the named workspace directly and parses a new Slack web app link", async () => {
   request
     .mockResolvedValueOnce(
       Response.json({ configured: true, canConfigure: true, installations: [installation] }),
@@ -111,10 +111,11 @@ it("uses the entered Slack team and its own generation for install versus reconn
   await user.click(reconnect);
   await screen.findByRole("alert");
 
-  const teamField = screen.getByRole("textbox", { name: "Slack workspace ID" });
-  await user.clear(teamField);
+  const teamField = screen.getByRole("textbox", { name: "Slack workspace URL or ID" });
+  expect(teamField).toHaveValue("");
   expect(screen.getByRole("button", { name: "Connect Slack" })).toBeDisabled();
-  await user.type(teamField, "T67890");
+  await user.type(teamField, "https://app.slack.com/client/T67890/C23456");
+  expect(screen.getByText("Slack will confirm the name for workspace T67890.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Connect Slack" }));
 
   expect(postedCommands()).toEqual([
@@ -124,6 +125,43 @@ it("uses the entered Slack team and its own generation for install versus reconn
       body: { action: "install", teamId: "T67890", expectedGeneration: 0 },
     },
   ]);
+});
+
+it("uses workspace names rather than IDs and puts unknown identities in details", async () => {
+  request.mockResolvedValueOnce(
+    Response.json({
+      configured: true,
+      canConfigure: false,
+      installations: [
+        { ...installation, linkedActor: { id: linkId, userId: "U12345" } },
+        {
+          ...installation,
+          id: "67600000-0000-4000-8000-000000000006",
+          teamId: "T67890",
+          teamName: "T67890",
+          status: "disconnected",
+        },
+      ],
+    }),
+  );
+  const user = userEvent.setup();
+  render(<SlackConnectorAccess endpoint={connectorEndpoint} result={null} />);
+
+  const workspace = await screen.findByRole("combobox", { name: "Slack workspace" });
+  expect(
+    within(workspace).getByRole("option", { name: "Fixture Slack · Connected" }),
+  ).toBeInTheDocument();
+  expect(workspace).toHaveValue(installationId);
+  expect(screen.getByText("Slack account linked")).toBeVisible();
+  expect(screen.getByText("U12345")).not.toBeVisible();
+  await user.selectOptions(
+    workspace,
+    within(workspace).getByRole("option", {
+      name: "Workspace name unavailable · Disconnected",
+    }),
+  );
+  await user.click(screen.getByText("Slack workspace ID"));
+  expect(screen.getByText("T67890")).toBeVisible();
 });
 
 it("confirms removal of the current actor link and refreshes just the Slack summary", async () => {

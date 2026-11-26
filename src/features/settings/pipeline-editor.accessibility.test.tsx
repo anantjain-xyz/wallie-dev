@@ -7,8 +7,9 @@ import axe from "axe-core";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
-import { PipelineEditor } from "@/features/settings/pipeline-editor";
+import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
 import type { PipelineConfiguration } from "@/features/sessions/types";
+import { PipelineEditor } from "@/features/settings/pipeline-editor";
 
 const memberId = "00000000-0000-4000-8000-000000000021";
 
@@ -93,6 +94,7 @@ afterEach(() => {
 function renderEditor(
   onPipelineSaved?: (pipeline: PipelineConfiguration) => void,
   pipelineValue: PipelineConfiguration = pipeline,
+  members: WorkspaceMemberSummary[] = workspaceMembers,
 ) {
   return render(
     <OverlayProvider>
@@ -102,7 +104,7 @@ function renderEditor(
           onPipelineSaved={onPipelineSaved}
           pipeline={pipelineValue}
           workspaceId="00000000-0000-4000-8000-000000000002"
-          workspaceMembers={workspaceMembers}
+          workspaceMembers={members}
         />
       </main>
     </OverlayProvider>,
@@ -110,6 +112,20 @@ function renderEditor(
 }
 
 describe("PipelineEditor accessibility", () => {
+  it("retains unnamed saved approvers and omits unnamed members from new assignments", async () => {
+    const user = userEvent.setup();
+    const unassignedId = "00000000-0000-4000-8000-000000000022";
+    const unnamed = { ...workspaceMembers[0]!, fullName: null, email: null };
+    renderEditor(undefined, pipeline, [unnamed, { ...unnamed, id: unassignedId }]);
+
+    await user.click(screen.getAllByRole("button", { name: "Approvers 1 member" })[0]!);
+    expect(screen.getByRole("checkbox", { name: "Unnamed member (owner)" })).toBeChecked();
+    expect(screen.queryByText(unassignedId)).not.toBeInTheDocument();
+    expect(screen.getAllByText(memberId)[0]).not.toBeVisible();
+    await user.click(screen.getAllByText("Unnamed approver details")[0]!);
+    expect(screen.getAllByText(memberId)[0]).toBeVisible();
+  });
+
   it("labels every stage field and supports keyboard approver selection", async () => {
     const user = userEvent.setup();
     renderEditor();

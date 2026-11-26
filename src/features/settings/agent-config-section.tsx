@@ -504,6 +504,7 @@ export function AgentConfigSection({
             onCursorStatusChange?.(status);
           }}
           onOpenCodeStatusChange={onOpenCodeStatusChange}
+          selectedModel={drafts.agent_model}
           provider={selectedAgentProvider}
           sandboxConnectionHref={sandboxConnectionHref}
           sandboxConnectionLabel={sandboxConnectionLabel}

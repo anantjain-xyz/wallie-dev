@@ -55,7 +55,7 @@ function requireLoopback(value: string | undefined) {
 
 async function openSettings(
   browser: Browser,
-  destinations: { app: string; supabase: string; settings: string },
+  destinations: { app: string; supabase: string; settings: string; linearStateId: string },
   email: string,
   variant: Variant,
 ) {
@@ -72,6 +72,30 @@ async function openSettings(
     return origin === destinations.app || origin === destinations.supabase
       ? route.continue()
       : route.abort();
+  });
+  await context.route(/\/connectors\/catalog\?/u, (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin !== destinations.app) return route.abort();
+    const provider = url.searchParams.get("provider");
+    const kind = url.searchParams.get("kind");
+    return route.fulfill({
+      json: {
+        provider,
+        kind,
+        tenant: { id: "fixture-tenant", label: "Fixture organization" },
+        resources:
+          provider === "linear" && kind === "state"
+            ? [
+                {
+                  id: destinations.linearStateId,
+                  label: "In progress",
+                  description: "Platform · started",
+                },
+              ]
+            : [],
+        nextCursor: null,
+      },
+    });
   });
   const page = await context.newPage();
   await page.addInitScript(
@@ -247,7 +271,12 @@ test("qualified operators can inspect and retry exact connector receipts from Se
   }
   const fixture = fixtureSchema.parse(JSON.parse(await readFile(fixturePath, "utf8")));
   const path = `/w/${fixture.workspaceSlug}/settings?category=integrations&factory=${fixture.factoryId}`;
-  const destinations = { app, supabase, settings: `${path}#connector-resources` };
+  const destinations = {
+    app,
+    supabase,
+    settings: `${path}#connector-resources`,
+    linearStateId: fixture.linearStateId,
+  };
   const factoryApi = `/api/workspaces/${fixture.workspaceId}/factories`;
   const connectors = `${factoryApi}/${fixture.factoryId}/connectors`;
   const githubHistory = `${connectors}/${fixture.githubResourceId}/deliveries`;
@@ -310,9 +339,14 @@ test("qualified operators can inspect and retry exact connector receipts from Se
         await expect(
           panel.getByRole("checkbox", { name: "Discover issues on this resource" }),
         ).toBeChecked();
-        await expect(panel.getByLabel("Workflow state IDs", { exact: true })).toHaveValue(
-          fixture.linearStateId,
-        );
+        const selectedStates = panel.getByRole("button", {
+          name: "Workflow states 1 selected",
+          exact: true,
+        });
+        await selectedStates.press("Enter");
+        await expect(
+          panel.getByRole("checkbox", { name: "In progress (Platform · started)" }),
+        ).toBeChecked();
         await expect(
           panel.getByRole("checkbox", { name: "Post updates to linked issues" }),
         ).toBeChecked();
@@ -334,7 +368,14 @@ test("qualified operators can inspect and retry exact connector receipts from Se
         await expect(
           panel.getByRole("checkbox", { name: "Discover issues on this resource" }),
         ).not.toBeChecked();
-        await expect(panel.getByLabel("Workflow state IDs", { exact: true })).toHaveValue("");
+        const stateChoices = panel.getByRole("button", {
+          name: "Workflow states Choose workflow states",
+          exact: true,
+        });
+        await stateChoices.press("Enter");
+        await expect(
+          panel.getByRole("checkbox", { name: "In progress (Platform · started)" }),
+        ).not.toBeChecked();
         await expect(
           panel.getByRole("checkbox", { name: "Post updates to linked issues" }),
         ).not.toBeChecked();

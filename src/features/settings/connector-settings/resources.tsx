@@ -8,12 +8,13 @@ import {
   type ConnectorInventory,
 } from "@/lib/connectors/diagnostics-contracts";
 
+import { CatalogStatus, ResourceIdDetails, useConnectorCatalog } from "./catalog";
 import { ConnectorDeliveryHistory } from "./history";
 import { LinearConnectorPolicies } from "./linear-policies";
 import { readConnectorResponse } from "./request";
 import { ConnectorSelect } from "./select";
 import { ConnectorSetup, GitHubRequestRule } from "./setup";
-import { SlackConnectorAccess } from "./slack-access";
+import { SlackConnectorAccess, slackWorkspaceOption, useSlackConnectorSetup } from "./slack-access";
 
 export type ConnectorInstallation = ConnectorInventory["installations"][number];
 export type ConnectorResource = ConnectorInventory["resources"][number];
@@ -34,10 +35,10 @@ export const connectionStatusLabel: Record<ConnectorResource["connectionStatus"]
 };
 
 export function resourceLabel(resource: ConnectorResource) {
-  if (resource.label) return resource.label;
-  const identity =
-    resource.provider === "linear" ? resource.externalId.slice(-12) : resource.externalId;
-  return `${kindLabel[resource.kind]} · ${identity}`;
+  return (
+    resource.label?.trim() ||
+    `Unnamed ${providerLabel[resource.provider]} ${kindLabel[resource.kind].toLowerCase()} mapping`
+  );
 }
 
 export function ConnectorResources({
@@ -160,9 +161,11 @@ function ProviderResources({
   workspaceSlug: string;
 }) {
   const [selected, setSelected] = useState("");
+  const [knownNames, setKnownNames] = useState<Record<string, string>>({});
   const [selectedInstallation, setSelectedInstallation] = useState("");
   const [policyRevision, setPolicyRevision] = useState(0);
   const endpoint = `${factoryEndpoint}/connectors`;
+  const slackSetup = useSlackConnectorSetup(provider === "slack" ? endpoint : null);
   const providerResources = inventory.resources.filter(
     (resource) => resource.provider === provider,
   );
@@ -175,7 +178,7 @@ function ProviderResources({
     installations.find(({ id }) => id === selectedInstallation) ??
     installations.find(({ id }) => id === selectedResource?.installationId) ??
     installations.find(({ status }) => status === "connected") ??
-    (installations.length === 1 ? installations[0] : undefined);
+    (provider === "slack" || installations.length === 1 ? installations[0] : undefined);
   const resources =
     provider === "slack" && installation
       ? providerResources.filter(({ installationId }) => installationId === installation.id)
@@ -183,6 +186,25 @@ function ProviderResources({
   const resource = resources.find(({ id }) => id === selected) ?? resources[0];
   const status = resource?.connectionStatus ?? installation?.status;
   const canUseProvider = resource?.enabled === true && status === "connected";
+  const verified = useConnectorCatalog(
+    endpoint,
+    inventory.canConfigure &&
+      resource &&
+      !resource.label &&
+      status === "connected" &&
+      provider !== "github"
+      ? new URLSearchParams({ provider, kind: "resource", resourceId: resource.id }).toString()
+      : null,
+  );
+  const verifiedName = verified.catalog?.resources.find(
+    (item) => item.id === resource?.externalId,
+  )?.label;
+  const verifiedContext = verified.catalog?.tenant.label;
+
+  function rememberResourceName() {
+    if (!resource || !verifiedName) return;
+    setKnownNames((current) => ({ ...current, [resource.id]: verifiedName }));
+  }
 
   return (
     <div className="space-y-5">
@@ -190,27 +212,42 @@ function ProviderResources({
         {provider === "slack" && installations.length > 1 ? (
           <ConnectorSelect
             label="Slack workspace"
-            onChange={(event) => setSelectedInstallation(event.target.value)}
+            onChange={(event) => {
+              rememberResourceName();
+              setSelectedInstallation(event.target.value);
+            }}
             value={installation?.id ?? ""}
           >
             {!installation ? <option value="">Choose a workspace</option> : null}
-            {installations.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.externalTenantId} · {connectionStatusLabel[item.status]}
-              </option>
-            ))}
+            {installations.map((item) => {
+              const workspace = slackSetup.setup?.installations.find(
+                (entry) => entry.id === item.id,
+              );
+              return (
+                <option key={item.id} value={item.id}>
+                  {workspace
+                    ? slackWorkspaceOption(workspace)
+                    : `${slackSetup.setup || slackSetup.loadFailed ? "Workspace name unavailable" : "Loading Slack workspace…"} · ${connectionStatusLabel[item.status]}`}
+                </option>
+              );
+            })}
           </ConnectorSelect>
         ) : null}
         {resource ? (
           <ConnectorSelect
             className="block max-w-xl space-y-1.5 text-sm font-medium text-foreground"
             label="Provider resource"
-            onChange={(event) => setSelected(event.target.value)}
+            onChange={(event) => {
+              rememberResourceName();
+              setSelected(event.target.value);
+            }}
             value={resource.id}
           >
             {resources.map((item) => (
               <option key={item.id} value={item.id}>
-                {resourceLabel(item)}
+                {(item.id === resource.id ? verifiedName : undefined) ??
+                  knownNames[item.id] ??
+                  resourceLabel(item)}
                 {item.enabled ? "" : " (disabled)"}
               </option>
             ))}
@@ -220,8 +257,26 @@ function ProviderResources({
             No {providerLabel[provider]} resources mapped to this factory.
           </p>
         )}
-        {resource && !resource.label && resource.provider === "linear" ? (
-          <p className="break-all text-xs text-muted">Provider resource ID {resource.externalId}</p>
+        {resource ? (
+          <>
+            {verifiedName || knownNames[resource.id] || resource.label ? (
+              <p className="text-xs text-muted">
+                {providerLabel[provider]} {kindLabel[resource.kind].toLowerCase()}
+                {verifiedContext && verifiedContext !== installation?.externalTenantId
+                  ? ` · ${verifiedContext}`
+                  : ""}
+              </p>
+            ) : null}
+            {!resource.label && !verifiedName && !knownNames[resource.id] && !verified.loading ? (
+              <p className="text-xs text-muted">
+                {inventory.canConfigure
+                  ? "To identify or replace this mapping, find the resource by name below. The current mapping won’t change automatically."
+                  : "A workspace admin can find this resource by name in connector setup."}
+              </p>
+            ) : null}
+            <ResourceIdDetails ids={[resource.externalId]} label="Provider resource ID" />
+            <CatalogStatus catalog={verified} label="mapped resource name" />
+          </>
         ) : null}
         {status ? (
           <p className="text-sm text-muted">
@@ -247,6 +302,7 @@ function ProviderResources({
           installationId={installation?.id}
           key={`${installation?.id}:${installation?.generation}:${installation?.status}`}
           result={slackResult}
+          setupState={slackSetup}
         />
       ) : null}
       {inventory.canConfigure ? (
@@ -258,6 +314,10 @@ function ProviderResources({
           onChanged={(resourceId) => {
             if (resourceId) setSelected(resourceId);
             onChanged();
+          }}
+          onSelectMapped={(resourceId, name) => {
+            setKnownNames((current) => ({ ...current, [resourceId]: name }));
+            setSelected(resourceId);
           }}
           provider={provider}
           resource={resource}

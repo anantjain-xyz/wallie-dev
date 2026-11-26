@@ -12,6 +12,20 @@ afterEach(() => {
 });
 
 describe("OpenCodeConnectionPanel", () => {
+  it("prefills the selected model's custom provider prefix without locking manual entry", () => {
+    const { rerender } = render(
+      <OpenCodeConnectionPanel
+        initialStatus={{ checkedAt: "2099-08-30T00:00:00.000Z", connected: false }}
+        selectedModel="openrouter/anthropic/claude-sonnet-4"
+      />,
+    );
+    const provider = screen.getByLabelText("Provider id");
+    expect(provider).toHaveValue("openrouter");
+    fireEvent.change(provider, { target: { value: "my-custom-provider" } });
+    rerender(<OpenCodeConnectionPanel selectedModel="opencode-go/glm-5.3" />);
+    expect(provider).toHaveValue("my-custom-provider");
+  });
+
   it("renders server-loaded connected status without exposing a key", () => {
     render(
       <OpenCodeConnectionPanel
