@@ -45,6 +45,7 @@ const mocked = vi.hoisted(() => {
   return {
     channel,
     fetch: vi.fn(),
+    prefetch: vi.fn(),
     push: vi.fn(),
     refresh: vi.fn(),
     removeChannel: vi.fn(),
@@ -54,7 +55,12 @@ const mocked = vi.hoisted(() => {
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/w/acme/sessions/7",
-  useRouter: () => ({ push: mocked.push, refresh: mocked.refresh, replace: mocked.replace }),
+  useRouter: () => ({
+    prefetch: mocked.prefetch,
+    push: mocked.push,
+    refresh: mocked.refresh,
+    replace: mocked.replace,
+  }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
