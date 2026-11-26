@@ -42,14 +42,15 @@ import {
   GrantCard,
   PrincipalCard,
 } from "@/features/factory-governance/governance-resources";
+import { CopyGovernanceId } from "@/features/factory-governance/governance-fields";
+import { loadGovernanceSubscriptions } from "@/features/factory-governance/governance-subscriptions-data";
 import { FactoryAuditCursorError } from "@/lib/factories/audit";
 import {
   factoryAuditCursorTokenSchema,
   factoryAuditSourceSchema,
   type FactoryAuditSource,
 } from "@/lib/factories/audit-contracts";
-import { loadFactoryEventSubscriptionSettings } from "@/lib/factory-event-subscriptions/management";
-import { workspaceGovernancePath } from "@/lib/routes";
+import { workspaceGovernancePath, workspaceSettingsPath } from "@/lib/routes";
 
 const sourceKinds = {
   actor: "actor",
@@ -110,11 +111,13 @@ function GovernanceResources({
   filters: query,
   scope,
   source,
+  subscriptions,
 }: {
   data: GovernanceData;
   filters: Filters;
   scope: GovernanceScope;
   source?: FactoryAuditSource;
+  subscriptions: Awaited<ReturnType<typeof loadGovernanceSubscriptions>> | null;
 }) {
   const { factory, workspaceSlug } = scope;
   const { bindings, canApprove, grantList, memberOptions, nextBinding, principalList } = data;
@@ -122,14 +125,27 @@ function GovernanceResources({
   const selectedBinding = bindings.find(({ id }) => id === data.selectedBindingId);
   const selectedActor =
     source?.kind === "actor" ? memberOptions.find(({ id }) => id === source.id) : null;
+  const grantDependencies = (grant: NonNullable<typeof grantList.selected>) =>
+    subscriptions?.subscriptions
+      .filter(
+        (subscription) =>
+          subscription.authorized &&
+          subscription.status !== "revoked" &&
+          subscription.grantId === grant.id &&
+          subscription.grantVersion === grant.version,
+      )
+      .map(({ name }) => `Event subscription: ${name}`);
   const filterHref = (key: "afterBinding" | "afterGrant" | "afterPrincipal", value?: string) =>
     workspaceGovernancePath(workspaceSlug, { factory: factory.id, ...query, [key]: value });
   const approve = (
     <ApproveGrant
       key={principalList.selected?.id ?? factory.id}
-      members={memberOptions.filter(({ active }) => active)}
+      isOperator={scope.isOperator}
+      members={memberOptions
+        .filter(({ active }) => active)
+        .map(({ id, choiceLabel }) => ({ id, label: choiceLabel }))}
       policies={data.policyOptions}
-      principals={principalList.entries.map(({ id, name }) => ({ id, label: name }))}
+      principals={data.principalOptions}
       repositories={data.repositoryOptions}
       scope={actionScope}
       selectedPrincipal={principalList.selected?.id}
@@ -157,7 +173,9 @@ function GovernanceResources({
               )}
             </PageSection>
             {principalList.selected && canApprove && (
-              <PageSection title="Approve an execution grant">{approve}</PageSection>
+              <PageSection anchorId="approve-grant" title="Approve an execution grant">
+                {approve}
+              </PageSection>
             )}
           </>
         );
@@ -167,7 +185,13 @@ function GovernanceResources({
             <PageSection title="Execution grant">
               {grantList.selected ? (
                 <div className="ui-sheet">
-                  <GrantCard data={data} focused grant={grantList.selected} scope={scope} />
+                  <GrantCard
+                    data={data}
+                    eventDependencies={grantDependencies(grantList.selected)}
+                    focused
+                    grant={grantList.selected}
+                    scope={scope}
+                  />
                 </div>
               ) : (
                 <p className="type-secondary text-muted">This execution grant is unavailable.</p>
@@ -228,27 +252,50 @@ function GovernanceResources({
               <MetadataList>
                 <MetadataItem
                   label="Workspace member"
-                  value={selectedActor?.label ?? "Unavailable"}
+                  value={selectedActor?.label ?? "Former workspace member or unavailable"}
                 />
                 <MetadataItem
                   label="Member ID"
                   monospace
-                  value={<span className="[overflow-wrap:anywhere]">{source.id}</span>}
+                  value={<CopyGovernanceId label="Member ID" value={source.id} />}
                 />
               </MetadataList>
             </div>
           </PageSection>
         );
-      case "mcp-binding":
+      case "mcp-binding": {
+        const binding = data.evidence.mcpBindings.find(({ id }) => id === source.id);
+        const revision = data.evidence.toolRevisions.find(
+          ({ id }) => id === binding?.tool_revision_id,
+        );
+        const agent = data.evidence.agents.find(({ id }) => id === binding?.factory_agent_id);
         return (
           <PageSection title="MCP credential binding">
             <div className="ui-sheet p-4 sm:p-5">
-              {data.audit.events.length || query.beforeAudit ? (
+              {binding || data.audit.events.length || query.beforeAudit ? (
                 <MetadataList>
+                  <MetadataItem
+                    label="Agent"
+                    value={agent?.name ?? "Historical agent unavailable"}
+                  />
+                  <MetadataItem
+                    label="MCP server revision"
+                    value={
+                      revision
+                        ? `${revision.factory_mcp_servers.name} · v${revision.revision_number}`
+                        : "Historical tool revision unavailable"
+                    }
+                  />
+                  {revision && (
+                    <MetadataItem
+                      label="Operations in this revision"
+                      value={revision.operation_names.join(", ") || "None"}
+                    />
+                  )}
                   <MetadataItem
                     label="Binding ID"
                     monospace
-                    value={<span className="[overflow-wrap:anywhere]">{source.id}</span>}
+                    value={<CopyGovernanceId label="Binding ID" value={source.id} />}
                   />
                 </MetadataList>
               ) : (
@@ -259,6 +306,7 @@ function GovernanceResources({
             </div>
           </PageSection>
         );
+      }
       case "event":
         return null;
     }
@@ -294,7 +342,13 @@ function GovernanceResources({
         {grantList.entries.length ? (
           <div className="ui-sheet divide-y divide-border">
             {grantList.entries.map((grant) => (
-              <GrantCard data={data} grant={grant} key={grant.id} scope={scope} />
+              <GrantCard
+                data={data}
+                eventDependencies={grantDependencies(grant)}
+                grant={grant}
+                key={grant.id}
+                scope={scope}
+              />
             ))}
           </div>
         ) : (
@@ -305,7 +359,11 @@ function GovernanceResources({
           next={grantList.next && `${filterHref("afterGrant", grantList.next)}#execution-grants`}
           previous={Boolean(query.afterGrant)}
         />
-        {canApprove && <div className="mt-4">{approve}</div>}
+        {canApprove && (
+          <div className="mt-4" id="approve-grant">
+            {approve}
+          </div>
+        )}
       </PageSection>
       <PageSection anchorId="credential-ownership" title="Credential ownership">
         {bindings.length ? (
@@ -345,6 +403,25 @@ export default async function GovernancePage({
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const managedFactories = factories.filter(({ canManage }) => canManage);
+  if (!scope && managedFactories.length === 0) {
+    return (
+      <PageContainer className="pt-5 sm:pt-10">
+        <PageHeader title="Governance" />
+        <div className="ui-sheet space-y-3 p-4 sm:p-5">
+          <h2 className="font-semibold text-foreground">Factory manager access required</h2>
+          <p className="type-secondary text-muted">
+            You can still review or disconnect your own integrations in Workspace Settings.
+          </p>
+          <Link
+            className="ui-button"
+            href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace" })}#connected-clients`}
+          >
+            Manage your connected clients
+          </Link>
+        </div>
+      </PageContainer>
+    );
+  }
   if (!scope)
     return (
       <FactoryUnavailable
@@ -401,7 +478,7 @@ export default async function GovernancePage({
   const { beforeAudit, afterOAuthClient, afterOAuthGrant, ...pages } = parsed.data;
   let data: GovernanceData;
   let oauth: GovernanceOAuthData | null;
-  let subscriptions: Awaited<ReturnType<typeof loadFactoryEventSubscriptionSettings>> | null;
+  let subscriptions: Awaited<ReturnType<typeof loadGovernanceSubscriptions>> | null;
   try {
     [data, oauth, subscriptions] = await Promise.all([
       loadGovernance(scope, { ...pages, auditCursor: beforeAudit, source: source.data }),
@@ -409,15 +486,13 @@ export default async function GovernancePage({
         ? loadOAuthClientData(scope, {
             afterOAuthClient,
             afterOAuthGrant,
-            isOperator: scope.isOperator,
+            ...(scope.isOperator
+              ? { isOperator: true }
+              : { consentingMemberId: scope.actorMemberId }),
           })
         : null,
-      !source.data
-        ? loadFactoryEventSubscriptionSettings({
-            workspaceId: scope.workspaceId,
-            factoryId: factory.id,
-            actorUserId: scope.actorUserId,
-          }).catch(() => null)
+      !source.data || source.data.kind === "grant"
+        ? loadGovernanceSubscriptions(scope).catch(() => null)
         : null,
     ]);
   } catch (error) {
@@ -455,10 +530,29 @@ export default async function GovernancePage({
           ) : undefined
         }
         eyebrowAsPlain
+        description={
+          source.data
+            ? `Factory: ${factory.name}`
+            : `The factory selector scopes principals, execution grants, credentials, subscriptions, and audit to ${factory.name}. It does not filter workspace OAuth clients or connections.`
+        }
         title="Governance"
       />
       <div className="space-y-8">
-        <GovernanceResources data={data} filters={parsed.data} scope={scope} source={source.data} />
+        <GovernanceResources
+          data={data}
+          filters={parsed.data}
+          scope={scope}
+          source={source.data}
+          subscriptions={subscriptions}
+        />
+        {!source.data && (
+          <GovernanceEventSubscriptions
+            key={factory.id}
+            data={subscriptions}
+            endpoint={`/api/workspaces/${scope.workspaceId}/factories/${factory.id}/event-subscriptions`}
+          />
+        )}
+        <GovernanceAudit cursor={beforeAudit} data={data} scope={scope} source={source.data} />
         {oauth && scope.isOperator && (
           <RegisteredOAuthClients
             data={oauth}
@@ -478,7 +572,8 @@ export default async function GovernancePage({
         {oauth && (
           <ConnectedOAuthClients
             data={oauth}
-            memberOptions={data.memberOptions}
+            governanceScope={scope.isOperator ? "workspace" : "personal"}
+            memberOptions={scope.isOperator ? data.memberOptions : undefined}
             workspaceId={scope.workspaceId}
             navigation={
               <GovernanceResourcePages
@@ -492,14 +587,6 @@ export default async function GovernancePage({
             }
           />
         )}
-        {!source.data && (
-          <GovernanceEventSubscriptions
-            key={factory.id}
-            data={subscriptions}
-            endpoint={`/api/workspaces/${scope.workspaceId}/factories/${factory.id}/event-subscriptions`}
-          />
-        )}
-        <GovernanceAudit cursor={beforeAudit} data={data} scope={scope} source={source.data} />
       </div>
     </PageContainer>
   );

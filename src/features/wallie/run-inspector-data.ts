@@ -10,9 +10,15 @@ import {
   type WorkspaceRunCatalogItem,
 } from "@/features/wallie/run-catalog";
 import { runCatalogItemParamsSchema } from "@/features/wallie/run-catalog-contracts";
-import { loadRunTranscript, RunTranscriptResetError } from "@/features/wallie/run-transcript";
+import { loadRunInspectorNames } from "@/features/wallie/run-inspector-names";
+import {
+  loadRunTranscript,
+  RunTranscriptReadError,
+  RunTranscriptResetError,
+} from "@/features/wallie/run-transcript";
 import { isWorkspaceOperator } from "@/features/workspaces/authenticated-context";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
+import { isWallieRunTerminalStatus } from "@/features/wallie/utils";
 import {
   recordedRunExecutionProfileSchema,
   type RecordedRunExecutionProfile,
@@ -291,12 +297,24 @@ export async function loadRunInspectorData(
   let run = await loadRun();
   if (!run) notFound();
   const transcriptInput = { supabase, workspaceId: workspace.id, runId };
-  const transcript = await loadRunTranscript(transcriptInput).catch((error: unknown) => {
-    if (error instanceof RunTranscriptResetError) return loadRunTranscript(transcriptInput);
-    throw error;
-  });
-  if (!transcript) notFound();
-  if (run.status !== transcript.runStatus || run.attemptCount !== transcript.attemptCount) {
+  const transcript = await loadRunTranscript(transcriptInput)
+    .catch((error: unknown) => {
+      if (error instanceof RunTranscriptResetError) return loadRunTranscript(transcriptInput);
+      throw error;
+    })
+    .then((page) => {
+      if (!page) notFound();
+      return page;
+    })
+    .catch((error: unknown) => {
+      if (error instanceof RunTranscriptReadError) return null;
+      throw error;
+    });
+  if (
+    !transcript ||
+    run.status !== transcript.runStatus ||
+    run.attemptCount !== transcript.attemptCount
+  ) {
     run = await loadRun();
     if (!run) notFound();
   }
@@ -309,6 +327,7 @@ export async function loadRunInspectorData(
     frozenContext,
     routingDecision,
     workflowInspection,
+    factories,
   ] = await Promise.all([
     loadRunInspectorArtifact({ ...context, run }),
     loadRunInspectorSkills({ ...context, run }),
@@ -321,11 +340,12 @@ export async function loadRunInspectorData(
     loadRunInspectorContext({ ...context, run }),
     loadRunInspectorRoutingDecision({ ...context, run }),
     loadWorkflowInspectionHeader(supabase, run.sessionId, run.id),
+    loadWorkspaceFactoryOptions(workspaceSlug).catch(() => []),
   ]);
   const canOpenRoutingPolicy =
     routingDecision.kind === "recorded" &&
     isWorkspaceOperator(currentMember) &&
-    (await loadWorkspaceFactoryOptions(workspaceSlug)).some(
+    factories.some(
       ({ id, status }) => id === routingDecision.receipt.factoryId && status === "active",
     );
   const memoryProposal =
@@ -339,6 +359,14 @@ export async function loadRunInspectorData(
           p_artifact_version: artifact.version,
         })
       : null;
+  const names = await loadRunInspectorNames({
+    supabase,
+    workspaceId: workspace.id,
+    factoryId: run.factoryId,
+    executionProfile,
+    routingDecision,
+    credential,
+  });
   return {
     workspaceId: workspace.id,
     workspaceSlug: workspace.slug,
@@ -350,7 +378,14 @@ export async function loadRunInspectorData(
     executionProfile,
     frozenContext,
     routingDecision,
+    names,
     canOpenRoutingPolicy,
+    canCaptureBenchmark:
+      Boolean(run.finishedAt) &&
+      isWallieRunTerminalStatus(run.status) &&
+      factories.some(
+        ({ id, status, canManage }) => id === run.factoryId && status === "active" && canManage,
+      ),
     workflowInspection,
     memoryProposalHref:
       memoryProposal?.data === true &&

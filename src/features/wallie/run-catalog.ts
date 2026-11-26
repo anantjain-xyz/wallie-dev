@@ -36,7 +36,8 @@ type NullableCatalogField =
   | "output_tokens"
   | "total_cost_usd"
   | "usage_finalized_at"
-  | "transcript_expired_at";
+  | "transcript_expired_at"
+  | "newer_run_id";
 export type CatalogRow = Omit<GeneratedCatalogRow, NullableCatalogField> & {
   [Field in NullableCatalogField]: GeneratedCatalogRow[Field] | null;
 };
@@ -81,6 +82,10 @@ export async function loadWorkspaceRunCatalogPage(
     ...(filters.status ? { p_status: filters.status } : {}),
     ...(filters.provider ? { p_provider: filters.provider } : {}),
     ...(filters.stageId ? { p_stage_id: filters.stageId } : {}),
+    ...(filters.agentId ? { p_agent_id: filters.agentId } : {}),
+    ...(filters.agentPromptRevisionId
+      ? { p_agent_prompt_revision_id: filters.agentPromptRevisionId }
+      : {}),
     ...(input.factoryId ? { p_factory_id: input.factoryId } : {}),
     ...(cursor ? { p_before_created_at: cursor.createdAt, p_before_id: cursor.id } : {}),
   });
@@ -135,11 +140,14 @@ function toCatalogItem(
   const failure = row.failure_receipt ? parseRunFailure(row.failure_receipt) : null;
   return {
     id: row.run_id,
+    factoryId: row.factory_id,
     sessionId: row.session_id,
     sessionNumber: row.session_number,
     sessionTitle: row.session_title,
     sessionRunHref: `${workspaceSessionDetailPath(workspaceSlug, row.session_number)}#wallie-run-${row.run_id}`,
     attemptCount: row.attempt_count ?? null,
+    stageOrdinal: row.stage_ordinal > 0 ? row.stage_ordinal : null,
+    newerRunId: row.newer_run_id ?? null,
     stageId: row.stage_id ?? null,
     stageName: row.stage_name ?? null,
     modelProvider: row.model_provider,
@@ -192,7 +200,9 @@ function readCatalogCursor(
       parsed.filters.sessionId === filters.sessionId &&
       parsed.filters.status === filters.status &&
       parsed.filters.provider === filters.provider &&
-      parsed.filters.stageId === filters.stageId
+      parsed.filters.stageId === filters.stageId &&
+      parsed.filters.agentId === filters.agentId &&
+      parsed.filters.agentPromptRevisionId === filters.agentPromptRevisionId
     ) {
       return { createdAt: parsed.createdAt, id: parsed.id };
     }

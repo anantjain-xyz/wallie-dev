@@ -255,7 +255,7 @@ export function FactoryDefinitionEditor({
     [refreshProfile],
   );
   const inFlight = useRef(false);
-  const urlSelectionRequest = useRef<AbortController | null>(null);
+  const selectionRequest = useRef<AbortController | null>(null);
   const reloadButtonRef = useRef<HTMLButtonElement>(null);
   const conflictReloadRef = useRef<HTMLButtonElement>(null);
   const editControlsRef = useRef<HTMLDivElement>(null);
@@ -371,6 +371,30 @@ export function FactoryDefinitionEditor({
     Boolean(anchorCandidate) &&
     (!selection?.test || anchorCandidate?.id === (requestedRevision ?? requestedDraft));
 
+  const loadSelection = useCallback(
+    async (target: Selection | null, manualActivation?: number) => {
+      selectionRequest.current?.abort();
+      const controller = new AbortController();
+      selectionRequest.current = controller;
+      const { signal } = controller;
+      try {
+        const document = await (target ? readDefinition(editorApi, target, signal) : null);
+        if (signal.aborted) return;
+        if (document && manualActivation !== undefined) {
+          setSelected({ ...document, activationNumber: manualActivation });
+          setPreview(null);
+        } else {
+          setSelected(document);
+        }
+      } catch (error) {
+        if (!signal.aborted) throw error;
+      }
+    },
+    [editorApi],
+  );
+
+  useEffect(() => () => selectionRequest.current?.abort(), []);
+
   useEffect(() => {
     if (!dirty) return;
     const preserveEdit = (event: BeforeUnloadEvent) => {
@@ -481,23 +505,10 @@ export function FactoryDefinitionEditor({
       : requestedDraft
         ? { draft: requestedDraft }
         : null;
-    if (!target) return;
-    const controller = new AbortController();
-    urlSelectionRequest.current = controller;
-    const { signal } = controller;
-    void readDefinition(editorApi, target, signal).then(
-      (document) => {
-        if (!signal.aborted) setSelected(document);
-      },
-      (error: unknown) => {
-        if (!signal.aborted) setFeedback({ kind: "error", text: errorText(error) });
-      },
+    void loadSelection(target).catch((error: unknown) =>
+      setFeedback({ kind: "error", text: errorText(error) }),
     );
-    return () => {
-      controller.abort();
-      urlSelectionRequest.current = null;
-    };
-  }, [editorApi, requestedActivation, requestedDraft, requestedRevision]);
+  }, [loadSelection, requestedActivation, requestedDraft, requestedRevision]);
 
   async function run(operation: Operation, task: () => Promise<void>) {
     if (inFlight.current || loading) return;
@@ -538,6 +549,7 @@ export function FactoryDefinitionEditor({
           ? { draft: selected.id }
           : { revision: selected.id, activation: selectedActivationNumber }
         : null;
+      const selectionAtStart = selectionRequest.current;
       const current = await loadWorkspace();
       setSnapshot(current.snapshot);
       setHistory(current.history);
@@ -548,7 +560,16 @@ export function FactoryDefinitionEditor({
       draftTests.refresh();
       revisionTests.refresh();
       refreshProfile();
-      if (currentTarget) setSelected(await readDefinition(editorApi, currentTarget));
+      if (currentTarget && selectionRequest.current === selectionAtStart) {
+        const signal = selectionAtStart?.signal;
+        try {
+          const refreshed = await readDefinition(editorApi, currentTarget, signal);
+          if (!signal?.aborted)
+            setSelected((current) => (current === selected ? refreshed : current));
+        } catch (error) {
+          if (!signal?.aborted) throw error;
+        }
+      }
     });
   }
 
@@ -693,12 +714,7 @@ export function FactoryDefinitionEditor({
     revisionId,
     activationNumber: activation,
   }: FactoryEditorActivation) {
-    await run("select", async () => {
-      urlSelectionRequest.current?.abort();
-      const document = await readDefinition(editorApi, { revision: revisionId, activation });
-      setSelected({ ...document, activationNumber: activation });
-      setPreview(null);
-    });
+    await run("select", () => loadSelection({ revision: revisionId, activation }, activation));
   }
 
   async function loadMore() {
@@ -1341,10 +1357,7 @@ export function FactoryDefinitionEditor({
                 <button
                   className="ui-button mb-3"
                   disabled={busy}
-                  onClick={() => {
-                    urlSelectionRequest.current?.abort();
-                    setSelected(null);
-                  }}
+                  onClick={() => void loadSelection(null)}
                   type="button"
                 >
                   Clear revision selection

@@ -385,6 +385,25 @@ export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> 
   if (attachment.error) throw attachment.error;
 
   const original = admission.data;
+  const historical =
+    !original?.original_title && "supabase" in scope.access
+      ? await scope.access.supabase.rpc("list_workspace_run_catalog", {
+          p_workspace_id: workspace.id,
+          p_factory_id: scope.factoryId,
+          p_run_id: run.id,
+          p_limit: 1,
+        })
+      : null;
+  const historicalRun = historical?.data?.[0];
+  const historicalLabel =
+    historicalRun &&
+    [
+      `Historical run · #${historicalRun.session_number} ${historicalRun.session_title.slice(0, 60)}`,
+      historicalRun.stage_name ?? "Session run",
+      historicalRun.stage_ordinal > 0
+        ? `Attempt ${historicalRun.stage_ordinal}`
+        : historicalRun.created_at.slice(0, 10),
+    ].join(" · ");
   const manifest = attempt?.data ?? null;
   const parsedContext = runContextManifestSchema.safeParse(context?.data?.manifest);
   const originalPrompt =
@@ -441,7 +460,7 @@ export async function loadBenchmarkSource(scope: Scope): Promise<SourcePreview> 
   return {
     runId: run.id,
     sessionId: run.session_id,
-    name: original?.original_title ?? `Historical run ${run.id.slice(0, 8)}`,
+    name: original?.original_title || historicalLabel || "Historical run",
     originalPrompt,
     checkoutSha: manifest?.checkout_sha ?? null,
     inputRef: manifest?.input_ref ?? null,

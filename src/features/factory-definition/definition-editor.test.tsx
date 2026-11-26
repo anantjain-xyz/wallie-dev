@@ -539,19 +539,19 @@ function setup({
     return Response.json({ draft: { id: next.id } });
   });
 
-  const renderEditor = () =>
-    render(
-      <FactoryDefinitionEditor
-        repositories={repositories}
-        selection={selection}
-        workspaceId={id(1)}
-        workspaceSlug="acme"
-        {...editorProps}
-      />,
-      { wrapper: PortalRootProvider },
-    );
+  const editorView = (urlSelection = selection) => (
+    <FactoryDefinitionEditor
+      repositories={repositories}
+      selection={urlSelection}
+      workspaceId={id(1)}
+      workspaceSlug="acme"
+      {...editorProps}
+    />
+  );
+  const renderEditor = () => render(editorView(), { wrapper: PortalRootProvider });
   return {
     editor: renderEditor(),
+    editorView,
     renderEditor,
     requests,
     reads,
@@ -956,6 +956,45 @@ it("keeps the manually selected activation when an earlier URL response arrives 
     "aria-pressed",
     "false",
   );
+});
+
+it("keeps a newer URL activation when an earlier manual response arrives late", async () => {
+  const manualResponse = Promise.withResolvers<Response>();
+  const manualRequest = vi.fn();
+  const { editor, editorView } = setup({
+    readSelection(query, signal) {
+      if (query.get("revisionId") !== previous.id) return;
+      manualRequest(query.get("activationNumber"), signal);
+      return manualResponse.promise;
+    },
+  });
+  const manual = await screen.findByRole("button", { name: /^Activation #1,/ });
+  fireEvent.click(manual);
+  expect(manualRequest).toHaveBeenCalledExactlyOnceWith("1", expect.any(AbortSignal));
+  editor.rerender(editorView({ revision: published.id, activation: 2 }));
+  const linked = screen.getByRole("button", { name: /^Activation #2,/ });
+  await waitFor(() => expect(linked).toHaveAttribute("aria-pressed", "true"));
+
+  await act(async () => {
+    manualResponse.resolve(Response.json({ document: { ...previous, activationNumber: 1 } }));
+    await manualResponse.promise;
+  });
+  expect(manualRequest.mock.calls[0]?.[1]?.aborted).toBe(true);
+  expect(linked).toHaveAttribute("aria-pressed", "true");
+  expect(manual).toHaveAttribute("aria-pressed", "false");
+});
+
+it("reports an error from the current manual activation read", async () => {
+  setup({
+    readSelection(query) {
+      if (query.get("revisionId") !== previous.id) return;
+      return Promise.resolve(Response.json({ error: "Revision unavailable." }, { status: 404 }));
+    },
+  });
+  const manual = await screen.findByRole("button", { name: /^Activation #1,/ });
+  fireEvent.click(manual);
+  expect(await screen.findByText("Revision unavailable.")).toBeVisible();
+  expect(manual).toHaveAttribute("aria-pressed", "false");
 });
 
 it("shows stale qualification and disables reviewed activation despite passing smoke", async () => {

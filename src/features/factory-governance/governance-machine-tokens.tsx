@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
@@ -35,6 +35,9 @@ function CreateMachineToken({ endpoint, grant }: { endpoint: string; grant: Gran
   const router = useRouter();
   const [feedback, setFeedback] = useState<FlashMessage | null>(null);
   const [credential, setCredential] = useState<string | null>(null);
+  const copyButton = useRef<HTMLButtonElement>(null);
+  const name = useRef<HTMLInputElement>(null);
+  const dismissed = useRef(false);
   const action = useApiAction<{ credential: string }, [FactoryMachineTokenCommand]>({
     call: (command) => post(endpoint, command),
     errorText: "Could not create the machine token.",
@@ -44,6 +47,14 @@ function CreateMachineToken({ endpoint, grant }: { endpoint: string; grant: Gran
     },
     setFlashMessage: setFeedback,
   });
+
+  useEffect(() => {
+    if (credential) copyButton.current?.focus();
+    else if (dismissed.current) {
+      dismissed.current = false;
+      name.current?.focus();
+    }
+  }, [credential]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -93,6 +104,7 @@ function CreateMachineToken({ endpoint, grant }: { endpoint: string; grant: Gran
           <button
             className="ui-button ui-button-primary"
             onClick={() => void copyCredential()}
+            ref={copyButton}
             type="button"
           >
             Copy token
@@ -100,6 +112,7 @@ function CreateMachineToken({ endpoint, grant }: { endpoint: string; grant: Gran
           <button
             className="ui-button"
             onClick={() => {
+              dismissed.current = true;
               setCredential(null);
               setFeedback(null);
             }}
@@ -120,7 +133,14 @@ function CreateMachineToken({ endpoint, grant }: { endpoint: string; grant: Gran
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block min-w-0 space-y-1.5">
             <span className="type-label text-foreground">Token name</span>
-            <input autoComplete="off" className="ui-input" maxLength={120} name="name" required />
+            <input
+              autoComplete="off"
+              className="ui-input"
+              maxLength={120}
+              name="name"
+              ref={name}
+              required
+            />
           </label>
           <label className="block min-w-0 space-y-1.5">
             <span className="type-label text-foreground">Expires at (optional)</span>
