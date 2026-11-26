@@ -112,13 +112,13 @@ export function FactoryInboxPage({
       required: true,
       async refresh(signal) {
         const request = ++requestSequence;
+        const isCurrent = () => active && request === requestSequence;
         const manual = manualRequest.current;
         const settleManual = (success: boolean) => {
-          if (!active || !manual || manualRequest.current !== manual) return;
+          if (!isCurrent() || !manual || manualRequest.current !== manual) return;
           manualRequest.current = null;
           setManualRefresh(success ? "success" : "idle");
         };
-        const isCurrent = () => active && request === requestSequence;
         const hideIfCurrent = (kind: HiddenInboxKind) => {
           if (isCurrent()) setView({ kind });
         };

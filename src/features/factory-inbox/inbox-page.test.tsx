@@ -218,6 +218,42 @@ describe("FactoryInboxPage", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Inbox is up to date.");
   });
 
+  it("keeps manual refresh pending through a superseding access recheck", async () => {
+    const snapshot = { items: [review], counts: { review: 1, clarification: 0 }, nextCursor: null };
+    const superseded = Promise.withResolvers<Response>();
+    const replacement = Promise.withResolvers<Response>();
+    vi.spyOn(globalThis, "fetch")
+      .mockReturnValueOnce(superseded.promise)
+      .mockReturnValueOnce(replacement.promise);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    renderInbox(snapshot, "2020-01-01T00:00:00.000Z");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    const source = recoverySource();
+    const signal = new AbortController().signal;
+    let first!: Promise<void>;
+    await act(async () => {
+      first = source.refresh(signal);
+    });
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(screen.getByText("Checking Inbox access…")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: review.title })).not.toBeInTheDocument();
+    superseded.resolve(Response.json(snapshot));
+    await act(() => first);
+    expect(screen.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
+    expect(screen.queryByText("Inbox is up to date.")).not.toBeInTheDocument();
+
+    let second!: Promise<void>;
+    await act(async () => {
+      second = source.refresh(signal);
+    });
+    replacement.resolve(Response.json(snapshot));
+    await act(() => second);
+    expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Inbox is up to date.");
+  });
+
   it("replaces rows and counts with fresh scoped reads and clears them if access is denied", async () => {
     const fetchInbox = vi
       .spyOn(globalThis, "fetch")
