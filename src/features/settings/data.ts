@@ -90,11 +90,14 @@ export type SettingsSetupData = Omit<
   "canManage" | "currentMember" | "github" | "usage" | "workspace" | "workspaceInvitations"
 >;
 
+export type SettingsWorkspaceProfile = { avatarUrl: string | null; fullName: string | null };
+
 export type SettingsPageDataLoader = {
   initialData: Promise<SettingsInitialData>;
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
   workspaceInvitations: Promise<WorkspaceInvitation[]>;
+  workspaceProfile?: Promise<SettingsWorkspaceProfile>;
 };
 
 async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceInvitation[]> {
@@ -312,7 +315,7 @@ export async function loadSettingsPageData(
         workspaceId: context.workspace.id,
       }),
     );
-    const { currentMember, supabase, workspace } = authenticatedContext;
+    const { currentMember, supabase, user, workspace } = authenticatedContext;
 
     if (!currentMember || !currentMember.is_active || currentMember.kind !== "human") {
       notFound();
@@ -466,11 +469,31 @@ export async function loadSettingsPageData(
             },
           );
 
+    const workspaceProfile =
+      category === "workspace"
+        ? observeDeferredSection(
+            withServerTiming(
+              "settings.section.profile",
+              { workspaceId: workspace.id },
+              async () => {
+                const { data, error } = await supabase
+                  .from("profiles")
+                  .select("full_name, avatar_url")
+                  .eq("id", user.id)
+                  .maybeSingle();
+                if (error) throw error;
+                return { avatarUrl: data?.avatar_url ?? null, fullName: data?.full_name ?? null };
+              },
+            ),
+          )
+        : undefined;
+
     return {
       initialData,
       setupData: observeDeferredSection(setupData),
       usage: observeDeferredSection(usage),
       workspaceInvitations: observeDeferredSection(workspaceInvitations),
+      workspaceProfile,
     };
   });
 }

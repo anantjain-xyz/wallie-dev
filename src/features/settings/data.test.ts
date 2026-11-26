@@ -106,6 +106,7 @@ function buildSupabase(input: {
     role: "admin" | "member" | "owner";
   } | null;
   usageResult: Promise<{ data: unknown; error: unknown }>;
+  profileResult?: Promise<{ data: unknown; error: unknown }>;
   workspaceMembersResult?: Promise<{ data: unknown[] | null; error: { message: string } | null }>;
 }) {
   const usageMaybeSingle = vi.fn(() => input.usageResult);
@@ -115,8 +116,13 @@ function buildSupabase(input: {
     order: workspaceMembersOrder,
   }));
   const workspaceMembersSelect = vi.fn(() => ({ eq: workspaceMembersEq }));
+  const profileEq = vi.fn(() => ({
+    maybeSingle: () => input.profileResult ?? Promise.resolve({ data: null, error: null }),
+  }));
+  const profileSelect = vi.fn(() => ({ eq: profileEq }));
   const supabase = {
     from: vi.fn((table: string) => {
+      if (table === "profiles") return { select: profileSelect };
       if (table === "workspace_members" && input.workspaceMembersResult) {
         return { select: workspaceMembersSelect };
       }
@@ -127,6 +133,8 @@ function buildSupabase(input: {
 
   return {
     currentMember: input.member,
+    profileEq,
+    profileSelect,
     supabase,
     usageMaybeSingle,
     workspaceMembersEq,
@@ -368,9 +376,11 @@ describe("loadSettingsPageData", () => {
     });
   });
 
-  it("skips onboarding snapshot and queries only workspace_members for the workspace category", async () => {
+  it("loads the roster and the authenticated user's profile without the onboarding snapshot", async () => {
     const {
       currentMember,
+      profileEq,
+      profileSelect,
       supabase,
       workspaceMembersEq,
       workspaceMembersOrder,
@@ -378,6 +388,10 @@ describe("loadSettingsPageData", () => {
     } = buildSupabase({
       member: { id: "member-1", is_active: true, kind: "human", role: "owner" },
       usageResult: Promise.resolve({ data: null, error: null }),
+      profileResult: Promise.resolve({
+        data: { avatar_url: "https://cdn.example.com/ada.png", full_name: "Ada Lovelace" },
+        error: null,
+      }),
       workspaceMembersResult: Promise.resolve({
         data: [
           {
@@ -404,8 +418,11 @@ describe("loadSettingsPageData", () => {
 
     expect(mocked.loadAuthenticatedWorkspaceContext).toHaveBeenCalledWith("acme");
     expect(mocked.createWorkspaceOnboardingSnapshot).not.toHaveBeenCalled();
-    expect(supabase.from).toHaveBeenCalledTimes(1);
+    expect(supabase.from).toHaveBeenCalledTimes(2);
     expect(supabase.from).toHaveBeenCalledWith("workspace_members");
+    expect(supabase.from).toHaveBeenCalledWith("profiles");
+    expect(profileSelect).toHaveBeenCalledWith("full_name, avatar_url");
+    expect(profileEq).toHaveBeenCalledWith("id", user.id);
     expect(workspaceMembersSelect).toHaveBeenCalledWith("id, full_name, email, avatar_url, role");
     expect(workspaceMembersEq).toHaveBeenNthCalledWith(1, "workspace_id", workspace.id);
     expect(workspaceMembersEq).toHaveBeenNthCalledWith(2, "kind", "human");
@@ -444,6 +461,10 @@ describe("loadSettingsPageData", () => {
       ],
     });
     await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    await expect(loader.workspaceProfile).resolves.toEqual({
+      avatarUrl: "https://cdn.example.com/ada.png",
+      fullName: "Ada Lovelace",
+    });
     await expect(loader.usage).resolves.toMatchObject({ totalRuns: 0 });
   });
 
@@ -468,6 +489,8 @@ describe("loadSettingsPageData", () => {
     await expect(loader.setupData).rejects.toThrow(
       "Failed to load workspace members: permission denied",
     );
+    await expect(loader.workspaceProfile).resolves.toEqual({ avatarUrl: null, fullName: null });
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
   it("observes below-fold failures before the above-fold section resolves", async () => {

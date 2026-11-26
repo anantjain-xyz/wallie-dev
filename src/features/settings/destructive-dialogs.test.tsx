@@ -11,6 +11,9 @@ import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
+import { WorkspaceInvitationsSection } from "@/features/settings/workspace-invitations-section";
+import { WorkspaceProfileSection } from "@/features/settings/workspace-profile-section";
+import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
 import { maxProfileAvatarBytes } from "@/lib/storage/profile-avatar-contracts";
 
 const refresh = vi.fn();
@@ -22,6 +25,7 @@ vi.mock("next/navigation", () => ({
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const timestamp = "2026-07-17T12:00:00.000Z";
 const axeOptions = { rules: { "color-contrast": { enabled: false } } };
+const axeTestTimeout = 15_000;
 
 beforeAll(() => {
   class ResizeObserverStub {
@@ -80,9 +84,11 @@ function renderSettingsDestructiveFlows() {
     <OverlayProvider>
       <DangerZoneSection canDelete workspaceId={workspaceId} workspaceName="Acme" />
       <DangerZoneSection canDelete={false} workspaceId={workspaceId} workspaceName="Acme" />
-      <WorkspaceMembersSection
-        canManage
-        currentMemberId="owner-1"
+      <WorkspaceProfileSection
+        initialProfile={{ avatarUrl: "https://provider.example/owner.png", fullName: "Owner" }}
+      />
+      <WorkspaceInvitationsSection
+        asOf={Date.parse(timestamp)}
         initialInvitations={[
           {
             acceptedAt: null,
@@ -101,7 +107,11 @@ function renderSettingsDestructiveFlows() {
             workspaceId,
           },
         ]}
-        setFlashMessage={vi.fn()}
+        workspaceId={workspaceId}
+      />
+      <WorkspaceMembersSection
+        canManage
+        currentMemberId="owner-1"
         workspaceId={workspaceId}
         workspaceMembers={[
           {
@@ -116,6 +126,13 @@ function renderSettingsDestructiveFlows() {
             email: "ada@example.com",
             fullName: "Ada",
             id: "member-1",
+            role: "member",
+          },
+          {
+            avatarUrl: null,
+            email: "ada.second@example.com",
+            fullName: "Ada",
+            id: "member-2",
             role: "member",
           },
         ]}
@@ -162,34 +179,162 @@ describe("destructive settings dialogs", () => {
     expect(screen.getByPlaceholderText("SERVICE_API_KEY…")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("LINEAR_API_KEY…")).not.toBeInTheDocument();
   });
-  it("uses labelled Dialogs with focused fields for member invitations and role changes", async () => {
+  it(
+    "uses labelled Dialogs with focused fields for member invitations and role changes",
+    async () => {
+      const user = userEvent.setup();
+      renderSettingsDestructiveFlows();
+
+      const inviteTrigger = screen.getByRole("button", { name: "Invite member" });
+      await user.click(inviteTrigger);
+      const inviteDialog = await screen.findByRole("dialog", {
+        name: "Invite a workspace member",
+      });
+      await waitFor(() => expect(screen.getByLabelText("Name")).toHaveFocus());
+      expect((await axe.run(document.body, axeOptions)).violations).toEqual([]);
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(inviteDialog).not.toBeInTheDocument());
+      expect(inviteTrigger).toHaveFocus();
+
+      const roleTrigger = screen.getByRole("button", {
+        name: "Change role (Member) for Ada (ada@example.com)",
+      });
+      await user.click(roleTrigger);
+      expect(
+        await screen.findByRole("dialog", { name: "Change role for Ada" }),
+      ).toHaveAccessibleDescription(
+        "ada@example.com Choose Ada's access. Changing an admin to member removes workspace management access.",
+      );
+      expect((await axe.run(document.body, axeOptions)).violations).toEqual([]);
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Change role for Ada" })).toBeNull(),
+      );
+      expect(roleTrigger).toHaveFocus();
+    },
+    axeTestTimeout,
+  );
+
+  it("identifies the second of two same-name members in the roster and confirmations", async () => {
     const user = userEvent.setup();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json({ member: { id: "member-2", fullName: "Ada", role: "member" } }),
+      );
     renderSettingsDestructiveFlows();
 
-    const inviteTrigger = screen.getByRole("button", { name: "Invite member" });
-    await user.click(inviteTrigger);
-    const inviteDialog = await screen.findByRole("dialog", {
-      name: "Invite a workspace member",
-    });
-    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveFocus());
-    expect((await axe.run(document.body, axeOptions)).violations).toEqual([]);
+    expect(screen.getByText("ada.second@example.com")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Change role (Member) for Ada (ada.second@example.com)",
+      }),
+    );
+    const roleDialog = await screen.findByRole("dialog", { name: "Change role for Ada" });
+    expect(roleDialog).toHaveAccessibleDescription(
+      expect.stringContaining("ada.second@example.com"),
+    );
+    expect(within(roleDialog).queryByText("ada@example.com")).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(inviteDialog).not.toBeInTheDocument());
-    expect(inviteTrigger).toHaveFocus();
 
-    const roleTrigger = screen.getByRole("button", { name: "Change role (Member)" });
-    await user.click(roleTrigger);
-    expect(
-      await screen.findByRole("dialog", { name: "Change role for Ada" }),
-    ).toHaveAccessibleDescription(
-      "Choose Ada's access. Changing an admin to member removes workspace management access.",
+    await user.click(screen.getByRole("button", { name: "Remove Ada (ada.second@example.com)" }));
+    const removeDialog = await screen.findByRole("alertdialog", { name: "Remove Ada?" });
+    expect(removeDialog).toHaveAccessibleDescription(
+      expect.stringContaining("ada.second@example.com"),
     );
-    expect((await axe.run(document.body, axeOptions)).violations).toEqual([]);
-    await user.keyboard("{Escape}");
+    await user.click(within(removeDialog).getByRole("button", { name: "Remove member" }));
+    expect(fetchMock).toHaveBeenCalledWith(`/api/workspaces/${workspaceId}/members/member-2`, {
+      method: "DELETE",
+    });
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Change role for Ada" })).toBeNull(),
+      expect(screen.queryByText("ada.second@example.com")).not.toBeInTheDocument(),
     );
-    expect(roleTrigger).toHaveFocus();
+    expect(screen.getByText("ada@example.com")).toBeVisible();
+  });
+
+  it("marks the invitation expired at its deadline and sends a new link to that recipient", async () => {
+    const user = userEvent.setup();
+    const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        invitation: {
+          id: "invitation-1",
+          email: "invitee@example.com",
+          fullName: "Invitee Person",
+          expiresAt,
+          lastSentAt: timestamp,
+          role: "member",
+          status: "pending",
+        },
+      }),
+    );
+    renderSettingsDestructiveFlows();
+
+    expect(screen.getByText("Expired")).toBeVisible();
+    expect(screen.getByText(/Expired on/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Send new link for invitee@example.com" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/workspaces/${workspaceId}/invitations/invitation-1/resend`,
+      { method: "POST" },
+    );
+    expect(
+      await screen.findByRole("button", { name: "Resend for invitee@example.com" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Expired")).not.toBeInTheDocument();
+  });
+
+  it("offers a retry named for the unavailable workspace subsection", async () => {
+    const user = userEvent.setup();
+    render(<WorkspaceSettingsLoadError label="pending invitations" />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not load pending invitations.");
+    await user.click(screen.getByRole("button", { name: "Retry loading pending invitations" }));
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("keeps accepted deletion distinct from failed requests and retries cleanup after close", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ error: "Please try again." }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ deleted: false }, { status: 202 }))
+      .mockResolvedValueOnce(
+        Response.json({ error: "Cleanup service unavailable." }, { status: 503 }),
+      );
+    renderSettingsDestructiveFlows();
+
+    await user.click(screen.getByRole("button", { name: "Delete workspace" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Delete Acme?" });
+    expect(within(confirm).getByRole("button", { name: "Delete workspace" })).toBeDisabled();
+    await user.type(within(confirm).getByRole("textbox", { name: "Type Acme to confirm" }), "Acme");
+    await user.click(within(confirm).getByRole("button", { name: "Delete workspace" }));
+    expect(await within(confirm).findByRole("alert")).toHaveTextContent("Please try again.");
+    expect(within(confirm).getByRole("button", { name: "Cancel" })).toBeVisible();
+    await user.click(within(confirm).getByRole("button", { name: "Delete workspace" }));
+
+    const progress = await screen.findByRole("alertdialog", { name: "Deletion in progress" });
+    expect(within(progress).getByRole("status")).toHaveTextContent(
+      "Deletion started. Closing this dialog won’t stop it.",
+    );
+    expect(within(progress).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(progress).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(progress).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    await user.click(within(progress).getByRole("button", { name: "Close" }));
+    const reopen = screen.getByRole("button", { name: "View deletion progress" });
+    expect(reopen).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Delete workspace" })).not.toBeInTheDocument();
+    await user.click(reopen);
+    const reopened = await screen.findByRole("alertdialog", { name: "Deletion in progress" });
+    await user.click(within(reopened).getByRole("button", { name: "Retry cleanup" }));
+    expect(await within(reopened).findByRole("alert")).toHaveTextContent(
+      "Could not retry cleanup. Cleanup service unavailable.",
+    );
+    expect(within(reopened).getByRole("status")).toHaveTextContent("Deletion started.");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      `/api/workspaces/${workspaceId}`,
+      expect.objectContaining({ body: JSON.stringify({ confirmation: "Acme" }), method: "DELETE" }),
+    );
   });
 
   it("lets the current member update their account-wide profile", async () => {
@@ -344,7 +489,7 @@ describe("destructive settings dialogs", () => {
   it.each([
     ["Delete workspace", "Delete Acme?"],
     ["Leave workspace", "Leave Acme?"],
-    ["Remove Ada", "Remove Ada?"],
+    ["Remove Ada (ada@example.com)", "Remove Ada?"],
     ["Revoke invitation for invitee@example.com", "Revoke invitee@example.com's invitation?"],
     ["Remove Linear API key", "Remove Linear API key?"],
     ["Delete DEPLOY_TOKEN", "Delete DEPLOY_TOKEN?"],
@@ -363,6 +508,7 @@ describe("destructive settings dialogs", () => {
       await waitFor(() => expect(screen.queryByRole("alertdialog", { name: title })).toBeNull());
       expect(trigger).toHaveFocus();
     },
+    axeTestTimeout,
   );
 
   it("keeps a failed Linear-key removal open for retry and blocks dismissal while pending", async () => {

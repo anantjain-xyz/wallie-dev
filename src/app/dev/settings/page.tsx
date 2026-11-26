@@ -92,6 +92,12 @@ export default async function SettingsPreviewPage({
         setupData={setupData}
         usage={Promise.resolve(data.usage)}
         workspaceInvitations={Promise.resolve([])}
+        workspaceProfile={Promise.resolve(
+          data.workspaceMembers.find(({ id }) => id === data.currentMember.id) ?? {
+            avatarUrl: null,
+            fullName: null,
+          },
+        )}
       />
       {state === "error" ? (
         <aside

@@ -4,6 +4,7 @@ import type {
   SettingsInitialData,
   SettingsPageData,
   SettingsSetupData,
+  SettingsWorkspaceProfile,
   WorkspaceUsageData,
 } from "@/features/settings/data";
 import {
@@ -22,12 +23,12 @@ import { PipelineIsland } from "@/features/settings/islands/pipeline-island";
 import {
   DangerActionsIsland,
   WorkspaceIdentityIsland,
-  WorkspaceMembersIsland,
 } from "@/features/settings/islands/workspace-islands";
 import { RunHistoryControls } from "@/features/settings/run-history-controls";
 import { SettingsCategoryNav } from "@/features/settings/settings-category-nav";
 import type { SettingsCategory } from "@/features/settings/settings-categories";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
+import { WorkspaceMemberSettings } from "@/features/settings/workspace-member-settings";
 import { workspaceFactoryDefinitionPath } from "@/lib/routes";
 import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
@@ -41,6 +42,7 @@ type SettingsServerShellProps = {
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
   workspaceInvitations: Promise<WorkspaceInvitation[]>;
+  workspaceProfile?: Promise<SettingsWorkspaceProfile>;
 };
 
 const EMPTY_USAGE: WorkspaceUsageData = {
@@ -243,31 +245,16 @@ function AdvancedCategory(props: SettingsServerShellProps) {
   );
 }
 
-async function MembersSection({
-  initialData,
-  setupData,
-  workspaceInvitations,
-}: SettingsServerShellProps) {
-  const result = await settle(Promise.all([setupData, workspaceInvitations]));
-  if (!result.ok) {
-    return <SettingsSectionError label="Members and invitations" />;
-  }
-  const [setup, invitations] = result.value;
-  return (
-    <WorkspaceMembersIsland
-      initialData={completeSettingsData(initialData, setup)}
-      invitations={invitations}
-    />
-  );
-}
-
 function WorkspaceCategory(props: SettingsServerShellProps) {
   return (
     <div className="space-y-16">
       <WorkspaceIdentityIsland initialData={props.initialData} />
-      <Suspense fallback={<SettingsSectionFallback label="members and invitations" />}>
-        <MembersSection {...props} />
-      </Suspense>
+      <WorkspaceMemberSettings
+        initialData={props.initialData}
+        invitations={props.workspaceInvitations}
+        profile={props.workspaceProfile}
+        setup={props.setupData}
+      />
       {props.personalConnections && (
         <Suspense
           fallback={

@@ -1,104 +1,57 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useRef, useState } from "react";
 
-import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
-import { Status } from "@/components/ui/status";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
-import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { SelectField } from "@/components/ui/select";
+import { Status } from "@/components/ui/status";
 import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
-import type { FlashMessage } from "@/features/settings/settings-types";
-import { dateFormatter, Section } from "@/features/settings/settings-ui";
+import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
 import { ProfileAvatar } from "@/features/settings/profile-avatar";
 import { readResponseJson } from "@/features/settings/use-api-action";
-import { validateProfileAvatarFile } from "@/lib/storage/profile-avatar-contracts";
-import type { ProfileAvatarAction } from "@/lib/workspace-members/contracts";
+import { ROLE_OPTIONS, roleLabel } from "@/features/settings/workspace-member-roles";
+import type { WorkspaceInvitationRole } from "@/lib/workspace-invitations/contracts";
 import type { WorkspaceMemberResponse } from "@/lib/workspace-members/contracts";
-import type {
-  WorkspaceInvitation,
-  WorkspaceInvitationResponse,
-  WorkspaceInvitationRole,
-} from "@/lib/workspace-invitations/contracts";
-
-const ROLE_OPTIONS = [
-  { label: "Member", value: "member" },
-  { label: "Admin", value: "admin" },
-];
-
-type ProfileUpdateResponse = {
-  profile: { avatarUrl: string | null; fullName: string };
-};
 
 function memberDisplayName(member: Pick<WorkspaceMemberSummary, "email" | "fullName">) {
   return member.fullName ?? member.email ?? "Unknown member";
 }
 
-function roleLabel(role: string) {
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
-
-function formatDate(value: string | null) {
-  if (!value) return "Not sent";
-  return dateFormatter.format(new Date(value));
-}
-
-function upsertInvitation(
-  invitations: WorkspaceInvitation[],
-  invitation: WorkspaceInvitation,
-): WorkspaceInvitation[] {
-  return [
-    invitation,
-    ...invitations.filter((existingInvitation) => existingInvitation.id !== invitation.id),
-  ].filter((existingInvitation) => existingInvitation.status === "pending");
+function memberActionIdentity(member: WorkspaceMemberSummary) {
+  const name = memberDisplayName(member);
+  return member.email && member.email !== name ? `${name} (${member.email})` : name;
 }
 
 export function WorkspaceMembersSection({
   canManage,
   currentMemberId,
-  initialInvitations,
-  setFlashMessage,
   workspaceId,
   workspaceMembers,
 }: {
   canManage: boolean;
   currentMemberId: string;
-  initialInvitations: WorkspaceInvitation[];
-  setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
 }) {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [fullName, setFullName] = useState("");
+  const { feedback, setMessage: setFlashMessage } = useIslandFeedback();
+  const [snapshot, setSnapshot] = useState(workspaceMembers);
   const [members, setMembers] = useState(workspaceMembers);
-  const [invitations, setInvitations] = useState(initialInvitations);
-  const [role, setRole] = useState<WorkspaceInvitationRole>("member");
+  if (workspaceMembers !== snapshot) {
+    setSnapshot(workspaceMembers);
+    setMembers(workspaceMembers);
+  }
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const busyActionRef = useRef<string | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [profileDraft, setProfileDraft] = useState("");
-  const [profileAvatarAction, setProfileAvatarAction] = useState<ProfileAvatarAction>("keep");
-  const [profileAvatarFile, setProfileAvatarFile] = useState<File | null>(null);
-  const [profileAvatarPreviewUrl, setProfileAvatarPreviewUrl] = useState<string | null>(null);
-  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
-  const [profileError, setProfileError] = useState<string | null>(null);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [profileTrigger, setProfileTrigger] = useState<HTMLButtonElement | null>(null);
-  const profileFileInputRef = useRef<HTMLInputElement>(null);
   const [memberRoleTarget, setMemberRoleTarget] = useState<WorkspaceMemberSummary | null>(null);
   const [memberRoleTrigger, setMemberRoleTrigger] = useState<HTMLButtonElement | null>(null);
   const [memberRoleDraft, setMemberRoleDraft] = useState<WorkspaceInvitationRole>("member");
   const [memberPendingRemoval, setMemberPendingRemoval] = useState<WorkspaceMemberSummary | null>(
     null,
   );
-  const [invitationPendingRevocation, setInvitationPendingRevocation] =
-    useState<WorkspaceInvitation | null>(null);
 
   function beginAction(action: string) {
     if (busyActionRef.current) return false;
@@ -110,134 +63,6 @@ export function WorkspaceMembersSection({
   function finishAction() {
     busyActionRef.current = null;
     setBusyAction(null);
-  }
-
-  useEffect(() => {
-    return () => {
-      if (profileAvatarPreviewUrl) URL.revokeObjectURL(profileAvatarPreviewUrl);
-    };
-  }, [profileAvatarPreviewUrl]);
-
-  function clearProfilePhotoDraft() {
-    setProfileAvatarAction("keep");
-    setProfileAvatarFile(null);
-    setProfileAvatarPreviewUrl(null);
-    if (profileFileInputRef.current) profileFileInputRef.current.value = "";
-  }
-
-  function openProfileEditor(member: WorkspaceMemberSummary, trigger: HTMLButtonElement) {
-    setProfileDraft(member.fullName ?? "");
-    setProfileAvatarUrl(member.avatarUrl);
-    clearProfilePhotoDraft();
-    setProfileError(null);
-    setProfileTrigger(trigger);
-    setProfileOpen(true);
-  }
-
-  function handleProfilePhotoChange(event: ChangeEvent<HTMLInputElement>) {
-    const input = event.currentTarget;
-    const file = input.files?.[0];
-    if (!file) return;
-
-    try {
-      validateProfileAvatarFile(file);
-      setProfileAvatarFile(file);
-      setProfileAvatarAction("replace");
-      setProfileAvatarPreviewUrl(URL.createObjectURL(file));
-      setProfileError(null);
-    } catch (error) {
-      clearProfilePhotoDraft();
-      setProfileError(error instanceof Error ? error.message : "Profile photo upload is invalid.");
-    }
-  }
-
-  function removeProfilePhoto() {
-    setProfileAvatarAction("remove");
-    setProfileAvatarFile(null);
-    setProfileAvatarPreviewUrl(null);
-    setProfileError(null);
-    if (profileFileInputRef.current) profileFileInputRef.current.value = "";
-  }
-
-  async function inviteMember(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!beginAction("create")) return;
-    setInviteError(null);
-
-    try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/invitations`, {
-        body: JSON.stringify({ email, fullName, role }),
-        headers: { "content-type": "application/json" },
-        method: "POST",
-      });
-      const payload = await readResponseJson<WorkspaceInvitationResponse>(response);
-
-      setInvitations((currentInvitations) =>
-        upsertInvitation(currentInvitations, payload.invitation),
-      );
-      setEmail("");
-      setFullName("");
-      setRole("member");
-      setInviteOpen(false);
-      setFlashMessage({
-        kind: "success",
-        text: `Invitation sent to ${payload.invitation.email}.`,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Wallie could not send that invitation.";
-      setInviteError(message);
-    } finally {
-      finishAction();
-    }
-  }
-
-  async function updateProfile(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!beginAction("profile")) return;
-    setProfileError(null);
-
-    try {
-      const formData = new FormData();
-      formData.append("avatarAction", profileAvatarAction);
-      formData.append("fullName", profileDraft);
-      if (profileAvatarAction === "replace" && profileAvatarFile) {
-        formData.append("file", profileAvatarFile);
-      }
-
-      const response = await fetch("/api/profile", {
-        body: formData,
-        method: "PATCH",
-      });
-      const payload = await readResponseJson<ProfileUpdateResponse>(response);
-
-      setMembers((currentMembers) =>
-        currentMembers.map((member) =>
-          member.id === currentMemberId
-            ? {
-                ...member,
-                avatarUrl: payload.profile.avatarUrl,
-                fullName: payload.profile.fullName,
-              }
-            : member,
-        ),
-      );
-      setProfileDraft(payload.profile.fullName);
-      setProfileAvatarUrl(payload.profile.avatarUrl);
-      clearProfilePhotoDraft();
-      setProfileOpen(false);
-      setFlashMessage({
-        kind: "success",
-        text: "Your profile was updated across all workspaces.",
-      });
-      router.refresh();
-    } catch (error) {
-      setProfileError(
-        error instanceof Error ? error.message : "Wallie could not update your profile.",
-      );
-    } finally {
-      finishAction();
-    }
   }
 
   async function changeMemberRole(member: WorkspaceMemberSummary, nextRole: string) {
@@ -301,464 +126,109 @@ export function WorkspaceMembersSection({
     }
   }
 
-  async function resendInvitation(invitationId: string) {
-    if (!beginAction(`resend:${invitationId}`)) return;
-
-    try {
-      const response = await fetch(
-        `/api/workspaces/${workspaceId}/invitations/${invitationId}/resend`,
-        { method: "POST" },
-      );
-      const payload = await readResponseJson<WorkspaceInvitationResponse>(response);
-
-      setInvitations((currentInvitations) =>
-        upsertInvitation(currentInvitations, payload.invitation),
-      );
-      setFlashMessage({
-        kind: "success",
-        text: `Invitation resent to ${payload.invitation.email}.`,
-      });
-    } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not resend that invitation.",
-      });
-    } finally {
-      finishAction();
-    }
-  }
-
-  async function revokeInvitation(invitationId: string) {
-    if (!beginAction(`revoke:${invitationId}`)) return;
-    setDialogError(null);
-
-    try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, {
-        method: "DELETE",
-      });
-      const payload = await readResponseJson<WorkspaceInvitationResponse>(response);
-
-      setInvitations((currentInvitations) =>
-        currentInvitations.filter((invitation) => invitation.id !== payload.invitation.id),
-      );
-      setFlashMessage({
-        kind: "success",
-        text: `Invitation revoked for ${payload.invitation.email}.`,
-      });
-      setInvitationPendingRevocation(null);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Wallie could not revoke that invitation.";
-      setDialogError(message);
-    } finally {
-      finishAction();
-    }
-  }
-
   return (
-    <Section anchorId="members" tagline="Manage members and invitations." title="Members">
-      <div className="space-y-6">
-        {canManage ? (
-          <div className="flex justify-end">
-            <Dialog
-              open={inviteOpen}
-              onOpenChange={(open) => {
-                if (busyAction === "create") return;
-                setInviteOpen(open);
-                setInviteError(null);
-              }}
-            >
-              <DialogTrigger asChild>
-                <button className="ui-button-primary min-h-10 gap-2" type="button">
-                  <PlusIcon />
-                  Invite member
-                </button>
-              </DialogTrigger>
-              <DialogContent
-                description="Choose access and invite a teammate."
-                dismissible={busyAction !== "create"}
-                title="Invite a workspace member"
+    <>
+      {feedback}
+      {members.length === 0 ? (
+        <p className="ui-sheet px-4 py-3 type-body text-muted">No active members.</p>
+      ) : (
+        <ul className="divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet">
+          {members.map((member) => {
+            const isOwner = member.role === "owner";
+            const isSelf = member.id === currentMemberId;
+            // Ownership transfer is out of scope and you cannot manage your own
+            // row, so those rows stay read-only even for managers.
+            const canManageRow = canManage && !isOwner && !isSelf;
+            const removeBusy = busyAction === `remove:${member.id}`;
+            const roleBusy = busyAction === `role:${member.id}`;
+
+            return (
+              <li
+                className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                key={member.id}
               >
-                <form className="space-y-4" onSubmit={inviteMember}>
-                  <label className="block space-y-1.5">
-                    <span className="text-[13px] font-medium text-foreground">Name</span>
-                    <input
-                      autoComplete="name"
-                      autoFocus
-                      className="ui-input"
-                      disabled={busyAction === "create"}
-                      maxLength={100}
-                      onChange={(event) => setFullName(event.target.value)}
-                      placeholder="Teammate name"
-                      required
-                      type="text"
-                      value={fullName}
-                    />
-                  </label>
-                  <label className="block space-y-1.5">
-                    <span className="text-[13px] font-medium text-foreground">Email</span>
-                    <input
-                      autoComplete="email"
-                      className="ui-input"
-                      disabled={busyAction === "create"}
-                      inputMode="email"
-                      onChange={(event) => setEmail(event.target.value)}
-                      placeholder="teammate@company.com"
-                      required
-                      spellCheck={false}
-                      type="email"
-                      value={email}
-                    />
-                  </label>
-                  <SelectField
-                    disabled={busyAction === "create"}
-                    label="Role"
-                    onValueChange={(value) => setRole(value as WorkspaceInvitationRole)}
-                    options={ROLE_OPTIONS}
-                    value={role}
+                <div className="flex min-w-0 items-center gap-3">
+                  <ProfileAvatar
+                    className="h-10 w-10 text-sm"
+                    name={memberDisplayName(member)}
+                    url={member.avatarUrl}
                   />
-                  {inviteError ? (
-                    <div className="ui-inline-message ui-inline-message-danger" role="alert">
-                      {inviteError}
-                    </div>
-                  ) : null}
-                  <DialogFooter>
+                  <div className="min-w-0">
+                    <p className="[overflow-wrap:anywhere] text-sm font-medium text-foreground">
+                      {memberDisplayName(member)}
+                      {isSelf ? <span className="ml-2 text-xs text-muted">(you)</span> : null}
+                    </p>
+                    {member.email && member.email !== memberDisplayName(member) ? (
+                      <p className="[overflow-wrap:anywhere] text-xs leading-5 text-muted">
+                        {member.email}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                {canManageRow ? (
+                  <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                     <button
-                      className="ui-button"
-                      disabled={busyAction === "create"}
-                      onClick={() => setInviteOpen(false)}
+                      aria-label={`Change role (${roleLabel(member.role)}) for ${memberActionIdentity(member)}`}
+                      className="ui-button min-h-9"
+                      disabled={busyAction !== null}
+                      onClick={(event) => {
+                        setDialogError(null);
+                        setMemberRoleDraft(member.role as WorkspaceInvitationRole);
+                        setMemberRoleTrigger(event.currentTarget);
+                        setMemberRoleTarget(member);
+                      }}
                       type="button"
                     >
-                      Cancel
-                    </button>
-                    <button
-                      className="ui-button-primary"
-                      disabled={busyAction === "create" || !email.trim() || !fullName.trim()}
-                      type="submit"
-                    >
                       <ActionButtonLabel
-                        idle="Send invitation"
-                        pending={busyAction === "create"}
-                        pendingLabel="Sending…"
+                        idle={`Change role (${roleLabel(member.role)})`}
+                        pending={roleBusy}
+                        pendingLabel="Saving…"
                       />
                     </button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
-          </div>
-        ) : null}
-
-        <div className="space-y-3">
-          <h3 className="text-[14px] font-semibold text-foreground">Active members</h3>
-          <ul className="divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet">
-            {members.map((member) => {
-              const isOwner = member.role === "owner";
-              const isSelf = member.id === currentMemberId;
-              // Ownership transfer is out of scope and you cannot manage your own
-              // row, so those rows stay read-only even for managers.
-              const canManageRow = canManage && !isOwner && !isSelf;
-              const removeBusy = busyAction === `remove:${member.id}`;
-              const roleBusy = busyAction === `role:${member.id}`;
-
-              return (
-                <li
-                  className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                  key={member.id}
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <ProfileAvatar
-                      className="h-10 w-10 text-sm"
-                      name={memberDisplayName(member)}
-                      url={member.avatarUrl}
+                    <DestructiveConfirmationDialog
+                      actionLabel="Remove member"
+                      description={
+                        <>
+                          {member.email && member.email !== memberDisplayName(member) ? (
+                            <span className="mb-2 block font-semibold text-foreground [overflow-wrap:anywhere]">
+                              {member.email}
+                            </span>
+                          ) : null}
+                          Removing this member revokes their workspace access immediately. You can
+                          re-invite them later.
+                        </>
+                      }
+                      errorMessage={memberPendingRemoval?.id === member.id ? dialogError : null}
+                      onConfirm={() => void removeMember(member)}
+                      onOpenChange={(open) => {
+                        setDialogError(null);
+                        setMemberPendingRemoval(open ? member : null);
+                      }}
+                      open={memberPendingRemoval?.id === member.id}
+                      pending={removeBusy}
+                      pendingLabel="Removing…"
+                      title={`Remove ${memberDisplayName(member)}?`}
+                      trigger={
+                        <button
+                          aria-label={`Remove ${memberActionIdentity(member)}`}
+                          className="ui-button min-h-9 gap-2"
+                          disabled={busyAction !== null}
+                          type="button"
+                        >
+                          <XIcon />
+                          Remove
+                        </button>
+                      }
                     />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {memberDisplayName(member)}
-                        {isSelf ? <span className="ml-2 text-xs text-muted">(you)</span> : null}
-                      </p>
-                      {member.email ? (
-                        <p className="truncate text-xs leading-5 text-muted">{member.email}</p>
-                      ) : null}
-                    </div>
                   </div>
-                  {canManageRow ? (
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      <button
-                        className="ui-button min-h-9"
-                        disabled={busyAction !== null}
-                        onClick={(event) => {
-                          setDialogError(null);
-                          setMemberRoleDraft(member.role as WorkspaceInvitationRole);
-                          setMemberRoleTrigger(event.currentTarget);
-                          setMemberRoleTarget(member);
-                        }}
-                        type="button"
-                      >
-                        <ActionButtonLabel
-                          idle={`Change role (${roleLabel(member.role)})`}
-                          pending={roleBusy}
-                          pendingLabel="Saving…"
-                        />
-                      </button>
-                      <DestructiveConfirmationDialog
-                        actionLabel="Remove member"
-                        description={
-                          <>
-                            Removing <strong>{memberDisplayName(member)}</strong> revokes their
-                            workspace access immediately. You can re-invite them later.
-                          </>
-                        }
-                        errorMessage={memberPendingRemoval?.id === member.id ? dialogError : null}
-                        onConfirm={() => void removeMember(member)}
-                        onOpenChange={(open) => {
-                          setDialogError(null);
-                          setMemberPendingRemoval(open ? member : null);
-                        }}
-                        open={memberPendingRemoval?.id === member.id}
-                        pending={removeBusy}
-                        pendingLabel="Removing…"
-                        title={`Remove ${memberDisplayName(member)}?`}
-                        trigger={
-                          <button
-                            aria-label={`Remove ${memberDisplayName(member)}`}
-                            className="ui-button min-h-9 gap-2"
-                            disabled={busyAction !== null}
-                            type="button"
-                          >
-                            <XIcon />
-                            Remove
-                          </button>
-                        }
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      {isSelf ? (
-                        <button
-                          className="ui-button min-h-9"
-                          disabled={busyAction !== null}
-                          onClick={(event) => {
-                            openProfileEditor(member, event.currentTarget);
-                          }}
-                          type="button"
-                        >
-                          Edit profile
-                        </button>
-                      ) : null}
-                      <Status label={roleLabel(member.role)} value="not_started" />
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        {canManage ? (
-          <div className="space-y-3">
-            <h3 className="text-[14px] font-semibold text-foreground">Pending invitations</h3>
-            {invitations.length === 0 ? (
-              <div className="rounded-[6px] border border-border bg-sheet px-4 py-3 text-sm text-muted">
-                No pending invitations.
-              </div>
-            ) : (
-              <ul className="divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet">
-                {invitations.map((invitation) => {
-                  const resendBusy = busyAction === `resend:${invitation.id}`;
-                  const revokeBusy = busyAction === `revoke:${invitation.id}`;
-
-                  return (
-                    <li
-                      className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between"
-                      key={invitation.id}
-                    >
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-medium text-foreground">
-                            {invitation.fullName ?? invitation.email}
-                          </p>
-                          <Status label="Pending" value="queued" />
-                          <Status label={roleLabel(invitation.role)} value="not_started" />
-                        </div>
-                        {invitation.fullName ? (
-                          <p className="truncate text-xs leading-5 text-muted">
-                            {invitation.email}
-                          </p>
-                        ) : null}
-                        <p className="mt-1 text-xs leading-5 text-muted">
-                          Sent {formatDate(invitation.lastSentAt)}. Expires{" "}
-                          {formatDate(invitation.expiresAt)}.
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 flex-wrap gap-2">
-                        <button
-                          className="ui-button min-h-9"
-                          disabled={busyAction !== null}
-                          onClick={() => void resendInvitation(invitation.id)}
-                          type="button"
-                        >
-                          <ActionButtonLabel
-                            idle="Resend"
-                            pending={resendBusy}
-                            pendingLabel="Resending…"
-                          />
-                        </button>
-                        <DestructiveConfirmationDialog
-                          actionLabel="Revoke invitation"
-                          description={
-                            <>
-                              Revoking the invitation for <strong>{invitation.email}</strong>
-                              prevents that invitation link from granting workspace access.
-                            </>
-                          }
-                          errorMessage={
-                            invitationPendingRevocation?.id === invitation.id ? dialogError : null
-                          }
-                          onConfirm={() => void revokeInvitation(invitation.id)}
-                          onOpenChange={(open) => {
-                            setDialogError(null);
-                            setInvitationPendingRevocation(open ? invitation : null);
-                          }}
-                          open={invitationPendingRevocation?.id === invitation.id}
-                          pending={revokeBusy}
-                          pendingLabel="Revoking…"
-                          title={`Revoke ${invitation.email}'s invitation?`}
-                          trigger={
-                            <button
-                              aria-label={`Revoke invitation for ${invitation.email}`}
-                              className="ui-button min-h-9 gap-2"
-                              disabled={busyAction !== null}
-                              type="button"
-                            >
-                              <XIcon />
-                              Revoke
-                            </button>
-                          }
-                        />
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        ) : null}
-      </div>
-
-      <Dialog
-        open={profileOpen}
-        onOpenChange={(open) => {
-          if (busyAction === "profile") return;
-          setProfileOpen(open);
-          setProfileError(null);
-          if (!open) clearProfilePhotoDraft();
-        }}
-      >
-        <DialogContent
-          description="Your name and photo are shown on member lists in every workspace you belong to."
-          dismissible={busyAction !== "profile"}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            profileTrigger?.focus();
-          }}
-          title="Edit profile"
-        >
-          <form className="space-y-4" onSubmit={updateProfile}>
-            <div className="flex items-center gap-4">
-              <ProfileAvatar
-                className="h-16 w-16 text-xl"
-                name={profileDraft}
-                url={
-                  profileAvatarAction === "remove"
-                    ? null
-                    : (profileAvatarPreviewUrl ?? profileAvatarUrl)
-                }
-              />
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <button
-                  className="ui-button"
-                  disabled={busyAction === "profile"}
-                  onClick={() => profileFileInputRef.current?.click()}
-                  type="button"
-                >
-                  {profileAvatarAction !== "remove" && (profileAvatarPreviewUrl || profileAvatarUrl)
-                    ? "Change photo"
-                    : "Add photo"}
-                </button>
-                {profileAvatarAction !== "remove" &&
-                (profileAvatarPreviewUrl || profileAvatarUrl) ? (
-                  <button
-                    className="ui-button"
-                    disabled={busyAction === "profile"}
-                    onClick={removeProfilePhoto}
-                    type="button"
-                  >
-                    Remove photo
-                  </button>
-                ) : null}
-                <input
-                  ref={profileFileInputRef}
-                  accept=".jpg,.jpeg,.png,.webp"
-                  aria-hidden="true"
-                  className="sr-only"
-                  disabled={busyAction === "profile"}
-                  onChange={handleProfilePhotoChange}
-                  tabIndex={-1}
-                  type="file"
-                />
-                <p className="w-full text-xs leading-5 text-muted">
-                  PNG, JPEG, or WebP. Up to 2 MB.
-                </p>
-              </div>
-            </div>
-            <label className="block space-y-1.5">
-              <span className="text-[13px] font-medium text-foreground">Name</span>
-              <input
-                autoComplete="name"
-                autoFocus
-                className="ui-input"
-                disabled={busyAction === "profile"}
-                maxLength={100}
-                onChange={(event) => setProfileDraft(event.target.value)}
-                required
-                type="text"
-                value={profileDraft}
-              />
-            </label>
-            {profileError ? (
-              <div className="ui-inline-message ui-inline-message-danger" role="alert">
-                {profileError}
-              </div>
-            ) : null}
-            <DialogFooter>
-              <button
-                className="ui-button"
-                disabled={busyAction === "profile"}
-                onClick={() => {
-                  clearProfilePhotoDraft();
-                  setProfileOpen(false);
-                }}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button
-                className="ui-button-primary"
-                disabled={busyAction === "profile" || !profileDraft.trim()}
-                type="submit"
-              >
-                <ActionButtonLabel
-                  idle="Save profile"
-                  pending={busyAction === "profile"}
-                  pendingLabel="Saving…"
-                />
-              </button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
+                ) : (
+                  <Status label={roleLabel(member.role)} value="not_started" />
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <Dialog
         open={memberRoleTarget !== null}
         onOpenChange={(open) => {
@@ -769,9 +239,19 @@ export function WorkspaceMembersSection({
       >
         <DialogContent
           description={
-            memberRoleTarget
-              ? `Choose ${memberDisplayName(memberRoleTarget)}'s access. Changing an admin to member removes workspace management access.`
-              : "Choose this member's workspace access."
+            memberRoleTarget ? (
+              <>
+                {memberRoleTarget.email &&
+                memberRoleTarget.email !== memberDisplayName(memberRoleTarget) ? (
+                  <span className="mb-2 block font-semibold text-foreground [overflow-wrap:anywhere]">
+                    {memberRoleTarget.email}
+                  </span>
+                ) : null}
+                {`Choose ${memberDisplayName(memberRoleTarget)}'s access. Changing an admin to member removes workspace management access.`}
+              </>
+            ) : (
+              "Choose this member's workspace access."
+            )
           }
           dismissible={!busyAction?.startsWith("role:")}
           onCloseAutoFocus={(event) => {
@@ -824,6 +304,6 @@ export function WorkspaceMembersSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Section>
+    </>
   );
 }
