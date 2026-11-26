@@ -45,7 +45,7 @@ import {
 import { workspaceSessionsPath } from "@/lib/routes";
 import { withFactoryQuery } from "@/features/factories/factory-selection";
 import { cn } from "@/lib/utils";
-import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-return-path";
+import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-list-return-path";
 
 export type SessionsCommandBarProps = {
   factoryName?: string;

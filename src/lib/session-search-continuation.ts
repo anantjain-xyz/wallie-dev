@@ -2,8 +2,8 @@ import { emailCodeAuthCookieOptions } from "@/lib/auth-email-code-cookie";
 import {
   isSessionSearchMarker,
   SESSION_SEARCH_RESUME_PARAM,
-  workspaceReturnPath,
-} from "@/lib/workspace-return-path";
+} from "@/lib/workspace-list-return-path";
+import { workspaceReturnPath } from "@/lib/workspace-return-path";
 
 export const sessionSearchCookieName = "wallie_session_search";
 export const sessionSearchCookieOptions = emailCodeAuthCookieOptions;
