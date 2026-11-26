@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OpenCodeConnectionPanel } from "@/features/settings/opencode-connection-panel";
@@ -57,6 +58,82 @@ describe("OpenCodeConnectionPanel", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("offers named alternatives to the model default and clears the key when one is picked", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    const onDraftStateChange = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <OpenCodeConnectionPanel
+        initialStatus={{ checkedAt: "2099-08-30T00:00:00.000Z", connected: false }}
+        onDraftStateChange={onDraftStateChange}
+        selectedModel="openrouter/model"
+      />,
+    );
+    const provider = screen.getByRole("combobox", { name: "Provider id" });
+    const key = screen.getByLabelText("Provider API key");
+
+    await user.click(provider);
+    const modelOption = screen.getByRole("option", { name: "OpenRouter · openrouter" });
+    expect(modelOption).toHaveAttribute("aria-selected", "true");
+    await user.click(modelOption);
+    expect(provider).toHaveValue("openrouter");
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false });
+
+    await user.type(key, "example-openrouter-key");
+    await user.click(provider);
+    await user.keyboard("{ArrowDown}{Escape}");
+    expect(provider).toHaveFocus();
+    expect(provider).toHaveValue("openrouter");
+    expect(key).toHaveValue("example-openrouter-key");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(provider).toHaveValue("anthropic");
+    expect(provider).toHaveFocus();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(key).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Save provider key" })).toBeDisabled();
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: true, pending: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("filters suggestions by name and saves unlisted text using only its trimmed id in the URL", async () => {
+    const user = userEvent.setup();
+    const status = { checkedAt: "2099-08-30T00:00:00.000Z", connected: false };
+    const fetchMock = vi.fn().mockResolvedValue({ json: async () => status, ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OpenCodeConnectionPanel initialStatus={status} selectedModel="opencode/model" />);
+    const provider = screen.getByRole("combobox", { name: "Provider id" });
+    const key = screen.getByLabelText("Provider API key");
+    const credential = "synthetic-provider-test-key";
+
+    expect(provider).toHaveValue("");
+    await user.type(provider, "CODE GO");
+    expect(screen.getByRole("listbox", { name: "Provider suggestions" })).toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toEqual([
+      screen.getByRole("option", { name: "OpenCode Go · opencode-go" }),
+    ]);
+
+    await user.clear(provider);
+    await user.type(provider, "fixture.proxy_v2");
+    await user.type(key, credential);
+    await user.click(provider);
+    fireEvent.change(provider, { target: { value: "  fixture.proxy_v2  " } });
+    expect(key).toHaveValue(credential);
+    expect(provider).toHaveValue("  fixture.proxy_v2  ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(key).toHaveValue(""));
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/opencode/providers/fixture.proxy_v2", {
+      body: JSON.stringify({ credential }),
+      headers: { "Content-Type": "application/json" },
+      method: "PUT",
+    });
+    expect(provider).toHaveValue("");
+  });
+
   it("renders server-loaded connected status without exposing a key", () => {
     render(
       <OpenCodeConnectionPanel
@@ -107,6 +184,7 @@ describe("OpenCodeConnectionPanel", () => {
   });
 
   it("saves a custom provider key without echoing the secret", async () => {
+    const user = userEvent.setup();
     const onDraftStateChange = vi.fn();
     const onStatusChange = vi.fn();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -143,12 +221,11 @@ describe("OpenCodeConnectionPanel", () => {
     );
 
     expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false });
-    fireEvent.change(screen.getByLabelText("Provider id"), { target: { value: "opencode-go" } });
-    fireEvent.change(screen.getByLabelText("Provider API key"), {
-      target: { value: "go-key-12345678901234567890" },
-    });
+    await user.click(screen.getByRole("combobox", { name: "Provider id" }));
+    await user.click(screen.getByRole("option", { name: "OpenCode Go · opencode-go" }));
+    await user.type(screen.getByLabelText("Provider API key"), "go-key-12345678901234567890");
     expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: true, pending: false });
-    fireEvent.click(screen.getByRole("button", { name: "Save provider key" }));
+    await user.click(screen.getByRole("button", { name: "Save provider key" }));
 
     await waitFor(() =>
       expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false }),
