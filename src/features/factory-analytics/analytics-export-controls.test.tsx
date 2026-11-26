@@ -21,6 +21,7 @@ const filters = {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -91,8 +92,8 @@ describe("analytics export controls", () => {
   });
   it("does not let a replaced receipt's expiry timer expire the new receipt", async () => {
     const replacement = "58200000-0000-4000-8000-000000000004";
-    const now = Date.now();
-    vi.spyOn(Date, "now").mockReturnValue(now);
+    const now = Date.parse("2026-11-19T00:00:00Z");
+    vi.useFakeTimers({ now, toFake: ["Date", "setTimeout", "clearTimeout"] });
     const timers = vi.spyOn(window, "setTimeout");
     const firstLifetime = 60_000;
     const nextLifetime = 120_000;
@@ -113,30 +114,46 @@ describe("analytics export controls", () => {
       <AnalyticsExportControls workspaceId={workspaceId} factoryId={factoryId} filters={filters} />,
     );
     const capture = screen.getByRole("button", { name: "Create export snapshot" });
-    fireEvent.click(capture);
-    expect(await screen.findByRole("link", { name: "Download JSON" })).toHaveAttribute(
+    await act(async () => {
+      fireEvent.click(capture);
+    });
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
       "href",
       path + "/" + exportId + "?format=json",
     );
     const first = timers.mock.calls.find(([, delay]) => delay === firstLifetime)?.[0];
     if (typeof first !== "function") throw new Error("First expiry callback was not scheduled");
-    fireEvent.click(capture);
-    const download = await screen.findByRole("link", { name: "Download JSON" });
-    expect(download).toHaveAttribute("href", path + "/" + replacement + "?format=json");
+    await act(async () => {
+      fireEvent.click(capture);
+    });
+    const replacementHref = path + "/" + replacement + "?format=json";
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
+      "href",
+      replacementHref,
+    );
 
     act(() => {
+      vi.advanceTimersByTime(firstLifetime);
       first();
     });
     expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
       "href",
-      path + "/" + replacement + "?format=json",
+      replacementHref,
     );
-    const next = timers.mock.calls.find(([, delay]) => delay === nextLifetime)?.[0];
-    if (typeof next !== "function")
-      throw new Error("Replacement expiry callback was not scheduled");
+
     act(() => {
-      next();
+      vi.advanceTimersByTime(nextLifetime - firstLifetime - 1);
     });
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
+      "href",
+      replacementHref,
+    );
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Snapshot expired");
+    expect(screen.getByRole("button", { name: "Create a new snapshot" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Download CSV" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Download JSON" })).not.toBeInTheDocument();
   });
 });
