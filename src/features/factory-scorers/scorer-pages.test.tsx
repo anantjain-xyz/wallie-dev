@@ -80,10 +80,15 @@ it("shows the exact historical rubric and links that revision for binding withou
   expect(screen.getByRole("heading", { name: "Revision 1" })).toBeVisible();
   expect(container.querySelector("pre")?.textContent).toBe(historical.rubric);
   expect(screen.getByText("Read-only revision")).toBeVisible();
+  expect(screen.getByText("Historical")).toBeVisible();
+  expect(screen.getByText("Latest published")).toBeVisible();
+  expect(screen.getAllByText("Active in factory")).toHaveLength(2);
   expect(screen.queryByRole("textbox", { name: "Rubric" })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Configure binding" }).getAttribute("href")).toContain(
-    `scorerRevision=${historicalId}`,
-  );
+  expect(
+    screen
+      .getByRole("link", { name: "Bind revision 1 in Factory Definition" })
+      .getAttribute("href"),
+  ).toContain(`scorerRevision=${historicalId}`);
 });
 
 it("gives a read-only member no authoring or binding controls even on the latest revision", async () => {
@@ -98,7 +103,7 @@ it("gives a read-only member no authoring or binding controls even on the latest
   render(await readDetail(latestId));
   expect(screen.getByRole("heading", { name: "Revision 2" })).toBeVisible();
   expect(screen.queryByRole("textbox", { name: "Rubric" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: "Configure binding" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /in Factory Definition/ })).not.toBeInTheDocument();
 });
 
 it("redirects an exact revision link only after finding its owner in the selected factory", async () => {

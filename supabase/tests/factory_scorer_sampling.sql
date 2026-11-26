@@ -1587,6 +1587,9 @@ select ok((select jsonb_array_length(payload->'candidates') = 40
   from first_calibration_candidates), 'the first candidate page exposes its exact boundary and omits an older valid case');
 select ok((select jsonb_array_length(older.payload->'candidates') = 1
     and older.payload#>>'{candidates,0,id}' = pg_temp.sampling_id(141)::text
+    and older.payload#>>'{candidates,0,session_title}' = 'Complete a held scorer attempt'
+    and older.payload#>>'{candidates,0,run_id}' = older.payload#>>'{versions,1,case_refs,0,run_id}'
+    and older.payload#>>'{versions,1,case_refs,0,session_title}' = 'Complete a held scorer attempt'
     and older.payload @> '{"next_before_candidate_at":null,"next_before_candidate_id":null}'::jsonb
     and older.payload->'versions' = first.payload->'versions'
   from first_calibration_candidates first cross join numeric_scorer scorer cross join lateral (
@@ -1594,7 +1597,7 @@ select ok((select jsonb_array_length(older.payload->'candidates') = 1
       scorer.scorer_id, pg_temp.sampling_id(140),
       p_before_candidate_at => (first.payload->>'next_before_candidate_at')::timestamptz,
       p_before_candidate_id => (first.payload->>'next_before_candidate_id')::uuid) as payload
-  ) older), 'the candidate continuation exposes the older case without changing calibration version history');
+  ) older), 'the saved case has the same authorized run identity before and after its candidate page loads');
 select throws_ok($$select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
     scorer.scorer_id, p_before_candidate_id => pg_temp.sampling_id(141))
   from numeric_scorer scorer$$, '22023', null, 'calibration candidates require both keyset cursor fields');
@@ -1649,6 +1652,15 @@ from reviewed_erasure_target target;
 create temp table withheld_scorer_review as
 select pg_temp.review_held_score(pg_temp.sampling_id(141))->'selected_adjudication' as confirmed,
   pg_temp.review_held_score(pg_temp.sampling_id(142))->'selected_adjudication' as disputed;
+select ok((select payload->'versions' @> jsonb_build_array(jsonb_build_object(
+      'revision', 1, 'case_refs', jsonb_build_array(jsonb_build_object(
+        'adjudication_id', pg_temp.sampling_id(141), 'session_title', null::text, 'disposition', 'confirmed'))))
+    and payload->'candidates' @> jsonb_build_array(jsonb_build_object(
+      'id', pg_temp.sampling_id(142), 'session_title', null::text, 'note', null::text))
+  from numeric_scorer scorer cross join lateral (
+    select public.read_factory_scorer_calibration(scorer.workspace_id, scorer.factory_id,
+      scorer.scorer_id, pg_temp.sampling_id(140)) as payload
+  ) calibration), 'session erasure withholds case names and notes while keeping the saved adjudication and verdict');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '';

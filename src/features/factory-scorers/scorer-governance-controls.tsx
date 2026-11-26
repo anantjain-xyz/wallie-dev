@@ -1,9 +1,17 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
+import { useId, useRef, useState, type FormEvent } from "react";
 import type { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -17,6 +25,11 @@ import {
   scorerGovernanceResponseSchema,
 } from "@/lib/factory-evaluations/scorer-governance-contracts";
 
+import {
+  calibrationCaseHref,
+  calibrationCaseName,
+  calibrationCaseVerdict,
+} from "./scorer-calibration-case";
 import { scoreReasonDetail } from "./score-outcome";
 import { useGovernanceAction } from "./use-governance-action";
 
@@ -50,35 +63,44 @@ export function ScorerPauseControl({ endpoint, pause }: { endpoint: string; paus
     response: scorerGovernanceResponseSchema,
     successText: "Scorer admission updated.",
   });
+  const toggle = () =>
+    void action.run({ action: "pause", expectedRevision: pause.revision, paused: !pause.paused });
   return (
     <div className="space-y-3">
-      <button
-        className="ui-button"
-        disabled={action.busy || action.conflict}
-        onClick={() =>
-          void action.run({
-            action: "pause",
-            expectedRevision: pause.revision,
-            paused: !pause.paused,
-          })
-        }
-        type="button"
-      >
-        <ActionButtonLabel
-          idle={pause.paused ? "Resume scorer" : "Pause scorer"}
-          pending={action.busy}
-          pendingLabel="Saving"
-        />
-      </button>
+      {pause.paused ? (
+        <button
+          className="ui-button"
+          disabled={action.busy || action.conflict}
+          onClick={toggle}
+          type="button"
+        >
+          <ActionButtonLabel idle="Resume scorer" pending={action.busy} pendingLabel="Saving…" />
+        </button>
+      ) : (
+        <AlertDialog>
+          <AlertDialogTrigger
+            className="ui-button"
+            disabled={action.busy || action.conflict}
+            type="button"
+          >
+            <ActionButtonLabel idle="Pause scorer" pending={action.busy} pendingLabel="Saving…" />
+          </AlertDialogTrigger>
+          <AlertDialogContent
+            title="Pause this scorer across all rubric revisions?"
+            description="In this factory, new sampled evaluations for this scorer will be skipped, and queued work and retries will wait. Active attempts can finish. Production runs continue."
+          >
+            <div className="flex flex-wrap justify-end gap-2">
+              <AlertDialogCancel className="ui-button">Cancel</AlertDialogCancel>
+              <AlertDialogAction className="ui-button ui-button-danger" onClick={toggle}>
+                Pause all revisions
+              </AlertDialogAction>
+            </div>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
       <GovernanceFeedback action={action} />
     </div>
   );
-}
-
-function caseLabel(candidate: CalibrationCandidatePage["candidates"][number]) {
-  const disposition = candidate.disposition === "disputed" ? "Disputed" : "Confirmed";
-  const reason = scoreReasonDetail(candidate.reason);
-  return `${disposition} · ${candidate.status}${candidate.expected_status ? ` → ${candidate.expected_status}` : ""}${reason ? ` · ${reason}` : ""}`;
 }
 
 export function CalibrationForm({
@@ -86,14 +108,18 @@ export function CalibrationForm({
   current,
   candidatePage,
   scorerRevisionId,
+  workspaceSlug,
 }: {
   endpoint: string;
   current?: CalibrationRevision;
   candidatePage: CalibrationCandidatePage;
   scorerRevisionId: string;
+  workspaceSlug: string;
 }) {
   const newSet = useRef<string | null>(null);
+  const descriptionId = useId();
   const [choices, setChoices] = useState<Record<string, boolean>>({});
+  const [search, setSearch] = useState("");
   const [older, setOlder] = useState<CalibrationCandidatePage | null>(null);
   const [pageMessage, setPageMessage] = useState<FlashMessage | null>(null);
   const latestIds = new Set(candidatePage.candidates.map(({ id }) => id));
@@ -138,8 +164,11 @@ export function CalibrationForm({
     successText: "Calibration version published.",
   });
   const selected = new Set(current?.adjudication_ids);
-  const recent = new Set(candidates.map(({ id }) => id));
-  const historical = [...selected].filter((id) => !recent.has(id));
+  const savedRefs = new Map(
+    current?.case_refs.map((reference) => [reference.adjudication_id, reference]),
+  );
+  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const orderedIds = [...new Set([...(current?.adjudication_ids ?? []), ...candidateById.keys()])];
   const isChecked = (id: string) => choices[id] ?? selected.has(id);
   const select = (id: string, checked: boolean) =>
     setChoices((previous) => ({ ...previous, [id]: checked }));
@@ -148,18 +177,13 @@ export function CalibrationForm({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const setId = current?.set_id ?? (newSet.current ??= crypto.randomUUID());
-    const checked = form.getAll("case");
-    const adjudicationIds = [
-      ...(current?.adjudication_ids ?? []).filter((id) => checked.includes(id)),
-      ...checked.filter((id) => typeof id !== "string" || !selected.has(id)),
-    ];
     const command = scorerGovernanceCommandSchema.safeParse({
       action: "calibration",
       setId,
       expectedRevision: current?.revision ?? 0,
       scorerRevisionId: current?.scorer_revision_id ?? scorerRevisionId,
       name: form.get("name"),
-      adjudicationIds,
+      adjudicationIds: orderedIds.filter(isChecked),
     });
     if (!command.success) {
       action.setMessage({
@@ -173,10 +197,36 @@ export function CalibrationForm({
       if (result?.action === "calibration" && !current) {
         newSet.current = null;
         setChoices({});
+        setSearch("");
         target.reset();
       }
     });
   }
+
+  const visibleCases = orderedIds.flatMap((id, index) => {
+    const candidate = candidateById.get(id);
+    const saved = savedRefs.get(id);
+    const item = candidate?.session_title ? candidate : (saved ?? candidate);
+    const fallback = selected.has(id)
+      ? `Saved case ${index + 1} · Details unavailable`
+      : "Evaluation · Session unavailable";
+    const name = item ? calibrationCaseName(item, fallback) : fallback;
+    const verdict = item ? calibrationCaseVerdict(item) : "";
+    const reason = candidate ? scoreReasonDetail(candidate.reason) : null;
+    if (!`${name} ${verdict}`.toLowerCase().includes(search.trim().toLowerCase())) return [];
+    const runId = candidate?.run_id ?? saved?.run_id;
+    const attemptId = candidate?.attempt_id ?? saved?.attempt_id;
+    return [
+      {
+        id,
+        name,
+        verdict,
+        reason,
+        note: candidate ? (candidate.note ?? "Adjudication note withheld") : null,
+        href: runId && attemptId ? calibrationCaseHref(workspaceSlug, id, runId, attemptId) : null,
+      },
+    ];
+  });
 
   return (
     <form className="space-y-4" onSubmit={submit}>
@@ -185,49 +235,79 @@ export function CalibrationForm({
         <input
           className="ui-input"
           defaultValue={current?.name ?? ""}
-          maxLength={240}
+          maxLength={120}
           name="name"
           required
         />
       </label>
       <fieldset className="min-w-0 space-y-3">
         <legend className="type-label">Calibration cases</legend>
-        {candidates.length || historical.length ? (
-          <div className="max-h-72 divide-y divide-border overflow-auto rounded-md border border-border">
-            {candidates.map((candidate) => (
-              <label className="flex items-start gap-3 px-3 py-2.5" key={candidate.id}>
-                <input
-                  className="mt-0.5"
-                  checked={isChecked(candidate.id)}
-                  name="case"
-                  onChange={(event) => select(candidate.id, event.currentTarget.checked)}
-                  type="checkbox"
-                  value={candidate.id}
-                />
-                <span className="min-w-0">
-                  <span className="type-label block text-foreground">{caseLabel(candidate)}</span>
-                  <span className="type-secondary block break-words text-muted">
-                    {candidate.note ?? "Adjudication note withheld"}
-                  </span>
-                </span>
-              </label>
-            ))}
-            {historical.map((id) => (
-              <label className="flex items-start gap-3 px-3 py-2.5" key={id}>
-                <input
-                  className="mt-0.5"
-                  checked={isChecked(id)}
-                  name="case"
-                  onChange={(event) => select(id, event.currentTarget.checked)}
-                  type="checkbox"
-                  value={id}
-                />
-                <span className="type-secondary min-w-0 break-words text-muted">
-                  Earlier case {id.slice(0, 8)}
-                </span>
-              </label>
-            ))}
-          </div>
+        {orderedIds.length ? (
+          <>
+            <label className="type-label block max-w-md space-y-1.5">
+              <span>Filter saved and loaded cases</span>
+              <input
+                className="ui-input"
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.currentTarget.value)}
+              />
+            </label>
+            <p className="type-annotation text-muted" role="status">
+              {orderedIds.filter(isChecked).length} selected
+              {search.trim() ? ` · ${visibleCases.length} matching loaded or saved cases` : ""}
+            </p>
+            {visibleCases.length ? (
+              <ul className="max-h-72 divide-y divide-border overflow-auto rounded-md border border-border">
+                {visibleCases.map(({ id, name, verdict, reason, note, href }) => (
+                  <li className="min-w-0 space-y-1 px-3 py-2.5" key={id}>
+                    <label className="flex items-start gap-3">
+                      <input
+                        className="mt-0.5 accent-accent"
+                        aria-label={name}
+                        aria-describedby={verdict || note ? `${descriptionId}-${id}` : undefined}
+                        checked={isChecked(id)}
+                        onChange={(event) => select(id, event.currentTarget.checked)}
+                        type="checkbox"
+                      />
+                      <span className="min-w-0 break-words">
+                        <span className="type-label block text-foreground">{name}</span>
+                        <span
+                          id={verdict || note ? `${descriptionId}-${id}` : undefined}
+                          className="type-secondary block text-muted"
+                        >
+                          {verdict ? (
+                            <span className="block">
+                              {verdict}
+                              {reason ? ` · ${reason}` : ""}
+                            </span>
+                          ) : null}
+                          {note ? <span className="block">{note}</span> : null}
+                        </span>
+                      </span>
+                    </label>
+                    {href ? (
+                      <Link
+                        className="type-secondary ml-6 text-accent underline underline-offset-4"
+                        href={href}
+                        aria-label={`Inspect adjudication: ${name}`}
+                        prefetch={false}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Inspect adjudication (new tab)
+                      </Link>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="type-secondary text-muted">
+                No saved or loaded cases match. Try a different filter or load older cases when
+                available.
+              </p>
+            )}
+          </>
         ) : (
           <p className="type-secondary text-muted">
             Adjudicate an evaluation before creating calibration cases.
@@ -255,7 +335,7 @@ export function CalibrationForm({
       </fieldset>
       <button
         className="ui-button-primary px-3 py-2"
-        disabled={action.busy || action.conflict || (!candidates.length && !historical.length)}
+        disabled={action.busy || action.conflict || !orderedIds.length}
         type="submit"
       >
         <ActionButtonLabel

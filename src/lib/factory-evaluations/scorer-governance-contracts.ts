@@ -98,6 +98,23 @@ export const evaluationReviewSchema = z.object({
 });
 export type EvaluationReview = z.output<typeof evaluationReviewSchema>;
 
+const caseIdentity = {
+  session_title: z.string().nullish(),
+  stage_name: z.string().nullish(),
+  attempt_number: positiveRevision.nullish(),
+};
+const evaluationStatus = z.enum(["pass", "fail", "inconclusive", "skipped", "error"]);
+const caseReference = z.object({
+  adjudication_id: id,
+  attempt_id: id.nullable(),
+  run_id: id.nullable(),
+  ...caseIdentity,
+  created_at: timestamp.nullish(),
+  disposition: adjudicationDisposition.nullish(),
+  status: evaluationStatus.nullish(),
+  expected_status: adjudicationOutcome.nullish(),
+});
+
 export const scorerCalibrationRevisionSchema = z
   .object({
     id,
@@ -107,7 +124,7 @@ export const scorerCalibrationRevisionSchema = z
     scorer_revision_id: id,
     scorer_revision_number: positiveRevision,
     adjudication_ids: caseIds,
-    case_refs: z.array(z.object({ adjudication_id: id, attempt_id: id, run_id: id })).max(40),
+    case_refs: z.array(caseReference).max(40),
     created_at: timestamp,
   })
   .refine(
@@ -124,7 +141,9 @@ const candidatePageFields = {
     .array(
       z.object({
         ...adjudicationFields,
-        status: z.enum(["pass", "fail", "inconclusive", "skipped", "error"]),
+        ...caseIdentity,
+        run_id: id.optional(),
+        status: evaluationStatus,
         reason: z.string().max(80).nullable(),
       }),
     )

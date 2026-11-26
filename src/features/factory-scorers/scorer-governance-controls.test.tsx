@@ -13,7 +13,14 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 const id = (suffix: number) => `60900000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 const at = "2026-11-19T23:30:00Z";
 const refs = (...ids: string[]) =>
-  ids.map((adjudication_id) => ({ adjudication_id, attempt_id: id(7), run_id: id(11) }));
+  ids.map((adjudication_id) => ({
+    adjudication_id,
+    attempt_id: id(7),
+    run_id: id(11),
+    session_title: "Saved invoice run",
+    stage_name: "Build",
+    attempt_number: 1,
+  }));
 const current = {
   id: id(1),
   set_id: id(2),
@@ -22,7 +29,7 @@ const current = {
   scorer_revision_id: id(3),
   scorer_revision_number: 2,
   adjudication_ids: [id(4), id(5)],
-  case_refs: refs(id(4), id(5)),
+  case_refs: [refs(id(4))[0]!, { adjudication_id: id(5), attempt_id: null, run_id: null }],
   created_at: at,
 };
 const candidates = [
@@ -37,6 +44,7 @@ const candidates = [
   reason: null,
   created_at: at,
   note,
+  session_title: note,
 }));
 const candidatePage = {
   candidates,
@@ -69,12 +77,15 @@ it("keeps earlier cases in their saved order and appends newly selected cases", 
       current={current}
       candidatePage={candidatePage}
       endpoint="/governance"
+      workspaceSlug="wallie"
       scorerRevisionId={id(12)}
     />,
   );
-  expect(screen.getByRole("checkbox", { name: /Earlier case/ })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /Saved invoice run/ })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: /Recent selected case/ })).toBeChecked();
   fireEvent.click(screen.getByRole("checkbox", { name: /New case/ }));
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "new case" } });
+  expect(screen.queryByRole("checkbox", { name: /Saved invoice run/ })).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Calibration set name"), {
     target: { value: "Renamed set" },
   });
@@ -106,6 +117,7 @@ it("retains the calibration draft on a stale revision while controls reload", as
       current={current}
       candidatePage={candidatePage}
       endpoint="/governance"
+      workspaceSlug="wallie"
       scorerRevisionId={current.scorer_revision_id}
     />,
   );
@@ -137,8 +149,18 @@ it("appends an older case page without resetting the draft or prior checkbox cho
         })
       : Response.json({
           candidates: [
-            { ...candidates[0], id: id(4), note: "Previously hidden saved case" },
-            { ...candidates[0], id: id(8), note: "Another older case" },
+            {
+              ...candidates[0],
+              id: id(4),
+              note: "Previously hidden saved case",
+              session_title: "Previously hidden saved case",
+            },
+            {
+              ...candidates[0],
+              id: id(8),
+              note: "Another older case",
+              session_title: "Another older case",
+            },
           ],
           next_before_candidate_at: null,
           next_before_candidate_id: null,
@@ -154,13 +176,14 @@ it("appends an older case page without resetting the draft or prior checkbox cho
         next_before_candidate_id: id(5),
       }}
       endpoint="/governance"
+      workspaceSlug="wallie"
       scorerRevisionId={id(12)}
     />,
   );
   fireEvent.change(screen.getByLabelText("Calibration set name"), {
     target: { value: "Draft after paging" },
   });
-  fireEvent.click(screen.getByRole("checkbox", { name: /Earlier case/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Saved invoice run/ }));
   fireEvent.click(screen.getByRole("checkbox", { name: /New case/ }));
   fireEvent.click(screen.getByRole("button", { name: "Load older calibration cases" }));
   expect(
@@ -189,6 +212,7 @@ it("links a reader to the rubric and exact attempts retained in the calibration 
       workspaceSlug="wallie"
       scope={{ workspaceId: id(20), factoryId: id(21) }}
       scorerId={id(23)}
+      scorerRevisionNumber={3}
       scorerRevisionId={id(12)}
       canEdit={false}
       path="/w/wallie/scorers/detail"
@@ -227,7 +251,10 @@ it("links a reader to the rubric and exact attempts retained in the calibration 
     new URL(rubric.getAttribute("href") ?? "", "https://wallie.test").searchParams.get("revision"),
   ).toBe(current.scorer_revision_id);
   fireEvent.click(screen.getByText("Inspect calibration cases"));
-  const caseLink = screen.getByRole("link", { name: "Open case 1" });
+  expect(screen.getByText("Saved case 2 · Details unavailable")).toBeVisible();
+  const caseLink = screen.getByRole("link", {
+    name: "Saved invoice run · Build · Evaluation attempt 1",
+  });
   expect(caseLink.getAttribute("href")).toBe(
     `/w/wallie/runs/${id(11)}?evaluationAttempt=${id(7)}&evaluationAdjudication=${id(4)}#adjudication-${id(4)}`,
   );

@@ -21,7 +21,8 @@ export const createFactoryScorerSchema = z.strictObject({
     })
     .trim()
     .max(60, "Keep the identifier within 60 characters.")
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens."),
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens.")
+    .optional(),
   definition: factoryScorerDefinitionSchema,
 });
 
