@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { workspaceContextPath } from "@/lib/routes";
 
+import { ContextRegistration } from "./content-actions";
 import { ContextPageView } from "./context-page-view";
 
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
@@ -47,6 +48,13 @@ const revision = {
   content_purged_at: null as string | null,
 };
 const grant = { principalName: "Docs reader", expiresAt: instant, published: true };
+const registrationOption = {
+  grant_id: grantId,
+  grant_version: 3,
+  repository_id: repositoryId,
+  repository_full_name: "atlas/design",
+  grant,
+};
 const detail = {
   source,
   revision,
@@ -178,13 +186,6 @@ describe("Context source workflow", () => {
       ),
     );
     vi.stubGlobal("fetch", fetch);
-    const option = {
-      grant_id: grantId,
-      grant_version: 3,
-      repository_id: repositoryId,
-      repository_full_name: "atlas/design",
-      grant,
-    };
     render(
       <ContextPageView
         scope={scope}
@@ -192,9 +193,9 @@ describe("Context source workflow", () => {
           ...detail,
           source: null,
           options: [
-            option,
+            registrationOption,
             {
-              ...option,
+              ...registrationOption,
               grant_id: id(10),
               grant: { ...grant, principalName: "Review reader", published: false },
             },
@@ -232,6 +233,66 @@ describe("Context source workflow", () => {
     );
     expect(router.push).not.toHaveBeenCalled();
   });
+
+  it.each(["path", "repository"])(
+    "clears registration conflict recovery when the %s changes without resetting form values",
+    async (field) => {
+      const fetch = vi.fn().mockResolvedValueOnce(
+        Response.json(
+          {
+            error: "That path already has a source.",
+            code: "registration_conflict",
+            existingSourceId: sourceId,
+          },
+          { status: 409 },
+        ),
+      );
+      vi.stubGlobal("fetch", fetch);
+      render(
+        <ContextRegistration
+          scope={{ workspaceId, workspaceSlug: "atlas", factoryId }}
+          options={[
+            registrationOption,
+            {
+              ...registrationOption,
+              grant_id: id(10),
+              repository_id: id(11),
+              repository_full_name: "atlas/engineering",
+            },
+          ]}
+        />,
+      );
+      const repository = screen.getByRole("combobox", { name: "Repository and grant" });
+      const input = screen.getByRole("textbox", { name: "Document path" });
+      fireEvent.click(repository);
+      fireEvent.click(screen.getByRole("option", { name: /^atlas\/design/ }));
+      fireEvent.change(input, { target: { value: source.file_path } });
+      fireEvent.click(screen.getByRole("button", { name: "Register source" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("already has a source");
+      const recoveryLink = "Open existing source and grant";
+      expect(screen.getByRole("link", { name: recoveryLink })).toHaveAttribute(
+        "href",
+        workspaceContextPath("atlas", { factory: factoryId, source: sourceId }),
+      );
+
+      if (field === "path") {
+        fireEvent.change(input, { target: { value: "docs/updated.md" } });
+        expect(input).toHaveValue("docs/updated.md");
+        expect(repository).toHaveTextContent("atlas/design");
+      } else {
+        fireEvent.click(repository);
+        fireEvent.click(screen.getByRole("option", { name: /^atlas\/design/ }));
+        expect(screen.getByRole("link", { name: recoveryLink })).toBeInTheDocument();
+        fireEvent.click(repository);
+        fireEvent.click(screen.getByRole("option", { name: /^atlas\/engineering/ }));
+        expect(input).toHaveValue(source.file_path);
+        expect(repository).toHaveTextContent("atlas/engineering");
+      }
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: recoveryLink })).not.toBeInTheDocument();
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
 
   it("announces a busy sync, offers refresh, and reports a later success without claiming a new pin", async () => {
     const fetch = vi

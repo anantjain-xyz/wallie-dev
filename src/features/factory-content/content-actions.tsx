@@ -158,14 +158,18 @@ function useContentCommand(
       }
     },
   });
-  const run = (command: ContextCommand | MemoryCommand) => {
+  function clearFeedback() {
     setMessage(null);
     if (resource === "context-sources") setContextRecovery(null);
+  }
+  const run = (command: ContextCommand | MemoryCommand) => {
+    clearFeedback();
     return action.run(command);
   };
   return {
     ...action,
     run,
+    clearFeedback,
     message,
     setMessage,
     confirm,
@@ -183,6 +187,7 @@ export function ContextRegistration({
   options: ContextRepositoryOption[];
 }) {
   const action = useContentCommand(scope, "context-sources");
+  const [repository, setRepository] = useState("");
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -197,6 +202,7 @@ export function ContextRegistration({
       filePath: data.get("path"),
     });
     if (!parsed.success) {
+      action.clearFeedback();
       action.setMessage({
         kind: "error",
         text: "Choose an authorized repository and enter a repository-relative Markdown or text path.",
@@ -233,11 +239,15 @@ export function ContextRegistration({
       <fieldset className="min-w-0 space-y-4" aria-busy={action.isBusy} disabled={action.isBusy}>
         <legend className="sr-only">Source details</legend>
         <SelectField
-          defaultValue=""
           emptyOption={{ disabled: true, label: "Choose a repository", value: "" }}
           label="Repository and grant"
           labelClassName="type-label"
           name="repository"
+          onValueChange={(value) => {
+            if (value === repository) return;
+            setRepository(value);
+            action.clearFeedback();
+          }}
           options={options.map((option) => {
             const { repository_full_name, grant_version, grant } = option;
             const name = grant
@@ -249,6 +259,7 @@ export function ContextRegistration({
             };
           })}
           required
+          value={repository}
           wrap
         />
         <label className="block space-y-1.5">
@@ -256,6 +267,7 @@ export function ContextRegistration({
           <input
             className="ui-input w-full"
             name="path"
+            onChange={action.clearFeedback}
             placeholder="docs/architecture.md"
             maxLength={512}
             required
