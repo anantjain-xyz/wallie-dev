@@ -9,6 +9,7 @@ const id = (n: number) => `58100000-0000-4000-8000-${String(n).padStart(12, "0")
 const [workspaceId, factoryId, actorId, memoryId, revisionId, decisionId, cursorId] = [
   1, 2, 3, 4, 5, 6, 7,
 ].map(id);
+const actorUserId = id(8);
 const createdAt = "2024-01-02T12:30:00.000123+00:00";
 
 function mockScope(read: (table: string, search: URLSearchParams) => Response) {
@@ -31,7 +32,8 @@ function mockScope(read: (table: string, search: URLSearchParams) => Response) {
     workspaceId,
     workspaceSlug: "atlas",
     factory: { id: factoryId, name: "Atlas", status: "active" as const, isDefault: true },
-    actorUserId: actorId,
+    actorUserId,
+    actorMemberId: actorId,
     isOperator: true,
     supabase,
   };
