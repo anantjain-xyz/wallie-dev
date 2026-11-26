@@ -10,7 +10,11 @@ import {
   loadAuthenticatedWorkspaceContext,
 } from "@/features/workspaces/authenticated-context";
 import { loadFactoryDefinitionRepositories } from "@/lib/factory-definitions/authority";
-import { loadFactoryEditorReferenceOptions } from "@/lib/factory-definitions/editor-reference-options";
+import {
+  factoryContextHandoffKeys,
+  parseFactoryContextHandoff,
+  type FactoryContextHandoffQuery,
+} from "@/lib/factory-definitions/context-handoff";
 import { selectFactory } from "@/lib/factory-definitions/storage";
 
 const idSchema = z
@@ -46,6 +50,7 @@ const FACTORY_DEFINITION_RESET_PARAMS = [
   "test",
   "implementationAgent",
   "scorerRevision",
+  ...factoryContextHandoffKeys,
 ] as const;
 
 export default async function FactoryDefinitionPage({
@@ -53,16 +58,18 @@ export default async function FactoryDefinitionPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{
-    factory?: string | string[];
-    implementationAgent?: string | string[];
-    scorerRevision?: string | string[];
-    revision?: string | string[];
-    activation?: string | string[];
-    restoreFrom?: string | string[];
-    draft?: string | string[];
-    test?: string | string[];
-  }>;
+  searchParams: Promise<
+    {
+      factory?: string | string[];
+      implementationAgent?: string | string[];
+      scorerRevision?: string | string[];
+      revision?: string | string[];
+      activation?: string | string[];
+      restoreFrom?: string | string[];
+      draft?: string | string[];
+      test?: string | string[];
+    } & FactoryContextHandoffQuery
+  >;
 }) {
   const { workspaceSlug } = await params;
   const [{ currentMember, supabase, workspace }, factories, query] = await Promise.all([
@@ -74,7 +81,14 @@ export default async function FactoryDefinitionPage({
     notFound();
   }
   const activeFactories = factories.filter(({ status }) => status === "active");
-  const { factory: factoryQuery, implementationAgent, scorerRevision, ...target } = query;
+  const {
+    factory: factoryQuery,
+    implementationAgent,
+    scorerRevision,
+    contextSource,
+    contextRevision,
+    ...target
+  } = query;
   const factoryId = idSchema.optional().safeParse(factoryQuery);
   if (!factoryId.success)
     return (
@@ -112,9 +126,21 @@ export default async function FactoryDefinitionPage({
 
   const prompt = idSchema.safeParse(implementationAgent);
   const requestedScorer = selection.success ? undefined : idSchema.safeParse(scorerRevision).data;
-  const [repositories, referenceOptions, { data: agent, error: agentError }] = await Promise.all([
+  const requestedContext =
+    !selection.success &&
+    factoryId.data &&
+    (contextSource !== undefined || contextRevision !== undefined)
+      ? parseFactoryContextHandoff({ contextSource, contextRevision })
+      : null;
+  const [repositories, scorer, { data: agent, error: agentError }] = await Promise.all([
     loadFactoryDefinitionRepositories(supabase, workspace.id, factory.id),
-    loadFactoryEditorReferenceOptions(supabase, workspace.id, factory.id, requestedScorer),
+    requestedScorer
+      ? supabase
+          .from("factory_scorer_revisions")
+          .select("id")
+          .match({ workspace_id: workspace.id, factory_id: factory.id, id: requestedScorer })
+          .maybeSingle()
+      : null,
     prompt.success && !selection.success
       ? supabase
           .from("factory_agent_prompt_revisions")
@@ -126,12 +152,9 @@ export default async function FactoryDefinitionPage({
       : { data: null, error: null },
   ]);
   if (agentError) throw agentError;
+  if (scorer?.error) throw scorer.error;
   if (implementationAgent !== undefined && !agent && !selection.success) notFound();
-  if (
-    scorerRevision !== undefined &&
-    !selection.success &&
-    !referenceOptions.scorers.some(({ id }) => id === requestedScorer)
-  ) {
+  if (scorerRevision !== undefined && !selection.success && !scorer?.data) {
     notFound();
   }
 
@@ -149,7 +172,8 @@ export default async function FactoryDefinitionPage({
       initialAgent={agent ? { agentId: agent.agent_id, promptRevisionId: agent.id } : undefined}
       initialScorerRevisionId={requestedScorer}
       recoveryKey={`${workspace.id}:${currentMember.id}:${definitionKey}`}
-      referenceOptions={referenceOptions}
+      contextProposal={requestedContext?.success ? requestedContext.data : undefined}
+      invalidContextProposal={requestedContext?.success === false}
       repositories={repositories
         .map(({ id, full_name }) => ({ id, fullName: full_name, isArchived: false }))
         .sort((left, right) => left.fullName.localeCompare(right.fullName))}

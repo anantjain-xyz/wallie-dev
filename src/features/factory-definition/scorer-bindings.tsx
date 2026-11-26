@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { PageSection } from "@/components/ui/page-shell";
 import type { FactoryEditorContent } from "@/lib/factory-definitions/editor-contracts";
-import type { FactoryEditorScorerReferenceOption } from "@/lib/factory-definitions/editor-reference-options";
+import type { NamedReference } from "@/lib/factory-definitions/named-reference-contracts";
 import { FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION } from "@/lib/factory-definitions/schema";
 import { workspaceScorersPath } from "@/lib/routes";
 
@@ -14,7 +14,7 @@ export function FactoryScorerBindings({
 }: {
   definitions: { label: string; content: FactoryEditorContent | null }[];
   factoryId?: string;
-  options: readonly FactoryEditorScorerReferenceOption[];
+  options: readonly Pick<NamedReference, "id" | "label">[];
   workspaceSlug: string;
 }) {
   const rows = definitions.flatMap(({ label, content }) => {
@@ -50,7 +50,7 @@ export function FactoryScorerBindings({
                           revision: id,
                         })}
                       >
-                        {labels.get(id) ?? id}
+                        {labels.get(id) ?? "Scorer revision unavailable"}
                       </Link>
                     </li>
                   ))}

@@ -733,23 +733,28 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     ).toBeVisible();
     await expect(page.locator("pre")).toContainText(firstAgentPrompt.prompt_md);
     await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
-    const promptInput = page.getByRole("textbox", { name: "Implementation agent prompt revision" });
-    await expect(promptInput).toHaveValue(firstAgentPrompt.id);
+    const promptInput = page.getByRole("combobox", {
+      name: "Implementation agent prompt revision",
+    });
+    await expect(promptInput).toContainText("Implementation reviewer · Revision 1");
     const skillPicker = page.getByRole("combobox", { name: "Add a skill revision", exact: true });
     const skillListbox = await openDropdownListbox(skillPicker);
     const skillOption = skillListbox.getByRole("option", { name: `${skillName} · Revision 1` });
     await expect(skillOption).toHaveCount(1);
     await expect(skillOption).toHaveAttribute("data-value", skillRevision.id);
     await skillOption.click();
-    await expect(page.getByRole("textbox", { name: "Skills", exact: true })).toHaveValue(
-      skillRevision.id,
+    await expect(page.getByRole("list", { name: "Skills", exact: true })).toContainText(
+      `${skillName} · Revision 1`,
     );
     await page.getByRole("button", { name: "Validate and preview", exact: true }).click();
     await expect(
       page.getByText("Definition is valid. Review its semantic changes.", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.locator("#semantic-diff").getByText(firstAgentPrompt.id, { exact: true }),
+      page
+        .locator("#semantic-diff")
+        .getByText(/Implementation reviewer · Revision 1/)
+        .first(),
     ).toBeVisible();
     const capabilityPath = `/api/workspaces/${workspace.id}/factories/${factory.id}/definition/capability-check`;
     const [capabilityRead] = await Promise.all([
@@ -761,7 +766,7 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     ]);
     expect(capabilityRead.ok()).toBe(true);
     await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
-    await expect(promptInput).toHaveValue(firstAgentPrompt.id);
+    await expect(promptInput).toContainText("Implementation reviewer · Revision 1");
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({
       path: testInfo.outputPath("01-agent-prompt-binding-desktop-light.png"),
@@ -779,13 +784,17 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
-    const publish = page.getByRole("button", { name: "Publish draft" });
+    const publish = page.getByRole("button", { name: "Review and publish saved draft" });
     const draftTests = page.getByRole("region", { name: "Draft configuration tests" });
     const firstStage = await editAndSave(page, firstModel, false);
     await expect(publish).toBeDisabled();
     await draftTests.getByRole("button", { name: "Run configuration test" }).click();
     await expect(publish).toBeEnabled();
     await publish.click();
+    await page
+      .getByRole("alertdialog", { name: "Publish this saved draft?" })
+      .getByRole("button", { name: "Publish draft", exact: true })
+      .click();
     await expect(page.getByText("Draft published for new sessions.")).toBeVisible();
     const activation = (number: number) =>
       checked(
@@ -927,7 +936,9 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     ).toHaveCount(0);
     await page.getByRole("link", { name: "Private research agent", exact: true }).click();
     await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
-    await expect(promptInput).toHaveValue(siblingAgent.id, { timeout: 30_000 });
+    await expect(promptInput).toContainText("Private research agent · Revision 1", {
+      timeout: 30_000,
+    });
     await editAndSave(
       page,
       firstModel,
@@ -958,6 +969,10 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await draftTests.getByRole("button", { name: "Run configuration test" }).click();
     await expect(publish).toBeEnabled();
     await publish.click();
+    await page
+      .getByRole("alertdialog", { name: "Publish this saved draft?" })
+      .getByRole("button", { name: "Publish draft", exact: true })
+      .click();
     await expect(page.getByText("Draft published for new sessions.")).toBeVisible();
     await page.goto(`/w/${workspace.slug}/agents/${siblingAgent.agent_id}?factory=${sibling.id}`);
     await expect(page.locator("#published-bindings")).toContainText("research-tool");
@@ -997,14 +1012,24 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       `${agentPage}&revision=${firstAgentPrompt.id}#prompt-revision`,
     );
     await page.getByRole("link", { name: "Configure bindings", exact: true }).click();
-    await expect(promptInput).toHaveValue(secondAgentPrompt.id);
+    await expect(promptInput).toContainText("Implementation reviewer · Revision 2");
+    const grantOption = (
+      await openDropdownListbox(
+        page.getByRole("combobox", { name: "Execution grant", exact: true }),
+      )
+    ).getByRole("option", { name: new RegExp(`Grant v${service.grant.version}`) });
+    await expect(grantOption).toHaveCount(1);
+    await grantOption.click();
     await page.getByRole("button", { name: "Add tool binding", exact: true }).click();
     const toolRevisionInput = page.getByRole("combobox", { name: "Tool revision 1", exact: true });
     await expect(toolRevisionInput).toBeVisible();
-    await toolRevisionInput.fill(toolId);
-    await page
-      .getByRole("textbox", { name: "Allowed operations", exact: true })
-      .fill(toolOperation);
+    const toolOption = (await openDropdownListbox(toolRevisionInput)).getByRole("option", {
+      name: /release-evidence · Revision 1/,
+    });
+    await expect(toolOption).toHaveAttribute("data-value", toolId);
+    await toolOption.click();
+    await page.getByRole("button", { name: /Allowed operations/ }).click();
+    await page.getByRole("checkbox", { name: toolOperation, exact: true }).check();
     const wrongBinding = await page.request.get(
       `${factoryApi}/secret-bindings?${new URLSearchParams({
         agentId: firstAgentPrompt.agent_id,
@@ -1043,6 +1068,10 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     await expect(draftTests.getByText("2 of 2", { exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("01-candidate-tested.png"), fullPage: true });
     await publish.click();
+    await page
+      .getByRole("alertdialog", { name: "Publish this saved draft?" })
+      .getByRole("button", { name: "Publish draft", exact: true })
+      .click();
     await expect(page.getByText("Draft published for new sessions.")).toBeVisible();
     const changed = (await activation(2)).revision_id;
     expect(changed).not.toBe(original);

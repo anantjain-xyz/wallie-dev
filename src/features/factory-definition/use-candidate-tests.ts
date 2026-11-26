@@ -229,6 +229,7 @@ export function useCandidateTests({
 
   return {
     eligible,
+    passingTest: eligible ? latest : undefined,
     canTest,
     refresh,
     panel: {

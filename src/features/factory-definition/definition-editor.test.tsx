@@ -334,6 +334,7 @@ function setup({
   routingPreview,
   editorProps,
   readSelection,
+  rejectPublish,
 }: {
   selection?: Parameters<typeof FactoryDefinitionEditor>[0]["selection"];
   initialActivationNumber?: number;
@@ -348,6 +349,7 @@ function setup({
     query: URLSearchParams,
     signal: RequestInit["signal"],
   ) => Promise<Response> | undefined;
+  rejectPublish?: Response;
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
     activationNumber: initialActivationNumber,
@@ -499,6 +501,7 @@ function setup({
       if (body.draftId !== snapshot.draft?.id || !snapshot.draft) {
         return Response.json({ error: "The draft changed." }, { status: 409 });
       }
+      if (body.action === "publish" && rejectPublish) return rejectPublish;
       const next = { ...snapshot.draft, id: id(11), kind: "revision" as const };
       records.set(next.id, next);
       snapshot = {
@@ -656,7 +659,9 @@ it("round-trips source edits with scorer pins and publishes the exact saved draf
   const { requests, completeTest } = setup();
   const scorerRevisionIds = [id(76)];
   await screen.findByRole("textbox", { name: "Model" });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Review and publish saved draft" })).toBeEnabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "JSON source" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Definition JSON" }), {
     target: {
@@ -668,7 +673,7 @@ it("round-trips source edits with scorer pins and publishes the exact saved draf
       }),
     },
   });
-  expect(screen.getByRole("button", { name: "Publish draft" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Review and publish saved draft" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Structured" }));
   await waitFor(() =>
     expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("gpt-5.6"),
@@ -694,7 +699,7 @@ it("round-trips source edits with scorer pins and publishes the exact saved draf
       },
     },
   });
-  expect(screen.getByRole("button", { name: "Publish draft" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Review and publish saved draft" })).toBeDisabled();
   const start = await screen.findByRole("button", { name: "Run configuration test" });
   await waitFor(() => expect(start).toBeEnabled());
   fireEvent.click(start);
@@ -703,13 +708,44 @@ it("round-trips source edits with scorer pins and publishes the exact saved draf
     body: { target: { kind: "draft", id: id(8) }, expectedDigest: "8".repeat(64) },
   });
   completeTest(id(8), "passed");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "Publish draft" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Review and publish saved draft" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Review and publish saved draft" }));
+  const confirmation = within(
+    await screen.findByRole("alertdialog", { name: "Publish this saved draft?" }),
+  );
+  expect(confirmation.getByText("8".repeat(64))).toBeVisible();
+  expect(confirmation.getByText(/Existing sessions keep their pinned configuration/)).toBeVisible();
+  expect(requests).toHaveLength(3);
+  fireEvent.click(confirmation.getByRole("button", { name: "Publish draft" }));
   await screen.findByText("Draft published for new sessions.");
   expect(requests[3]).toEqual({
     path: `${endpoint}/settings`,
     body: { action: "publish", expectedActivationNumber: 2, draftId: id(8) },
   });
+});
+
+it("shows saved-draft validation diagnostics inside a rejected publish review", async () => {
+  setup({
+    rejectPublish: Response.json(
+      {
+        error: "The saved definition no longer validates.",
+        diagnostics: [{ path: ["executionGrant"], message: "The grant is revoked." }],
+      },
+      { status: 422 },
+    ),
+  });
+  const publish = await screen.findByRole("button", { name: "Review and publish saved draft" });
+  await waitFor(() => expect(publish).toBeEnabled());
+  fireEvent.click(publish);
+  const dialog = within(
+    await screen.findByRole("alertdialog", { name: "Publish this saved draft?" }),
+  );
+  fireEvent.click(dialog.getByRole("button", { name: "Publish draft" }));
+  expect(
+    await dialog.findByRole("list", { name: "Publish validation diagnostics" }),
+  ).toHaveTextContent("Execution grant: The grant is revoked.");
 });
 
 it("preserves both operators' edits when they change different fields", async () => {
@@ -1004,7 +1040,7 @@ it("shows stale qualification and disables reviewed activation despite passing s
   expect(await screen.findByText("The scoring rubric has a newer revision.")).toBeVisible();
   expect(screen.getByRole("button", { name: "Activate reviewed routing" })).toBeDisabled();
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Publish in shadow mode" })).toBeEnabled(),
+    expect(screen.getByRole("button", { name: "Review and publish saved draft" })).toBeEnabled(),
   );
 });
 
@@ -1038,7 +1074,7 @@ it("confirms the exact reviewed draft and smoke receipt before activating routin
   const { requests } = setup({ initialDraft: reviewedRoutingDraft });
   const activate = await screen.findByRole("button", { name: "Activate reviewed routing" });
   await waitFor(() => expect(activate).toBeEnabled());
-  expect(screen.getByRole("button", { name: "Publish in shadow mode" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Review and publish saved draft" })).toBeEnabled();
 
   const rules = screen.getByRole("textbox", { name: "Operating rules" });
   fireEvent.change(rules, { target: { value: "Unsaved edit" } });
@@ -1181,7 +1217,7 @@ it("explains a newer activation and preserves unsaved input when the reviewer re
   const revisionTests = within(
     await screen.findByRole("region", { name: "Revision configuration tests" }),
   );
-  const publish = screen.getByRole("button", { name: "Publish draft" });
+  const publish = screen.getByRole("button", { name: "Review and publish saved draft" });
   const rollback = screen.getByRole("button", { name: "Roll back to this revision" });
   const draftRetest = draftTests.getByRole("button", { name: "Retest configuration" });
   const revisionRetest = await revisionTests.findByRole("button", { name: "Retest configuration" });
@@ -1293,11 +1329,13 @@ it("defers exact receipt evidence and retains a failed attempt when a retest com
   expect(reads.every((url) => url.includes("/candidate-tests?"))).toBe(true);
   completeTest(draft.id, "failed");
   const retest = await screen.findByRole("button", { name: "Retest configuration" });
-  expect(screen.getByRole("button", { name: "Publish draft" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Review and publish saved draft" })).toBeDisabled();
   fireEvent.click(retest);
   await screen.findByRole("button", { name: "Cancel test" });
   completeTest(draft.id, "passed");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Review and publish saved draft" })).toBeEnabled(),
+  );
   expect(screen.getAllByRole("button", { name: /View evidence for test/ })).toHaveLength(2);
   expect(reads.every((url) => url.includes("/candidate-tests?"))).toBe(true);
   fireEvent.click(screen.getAllByRole("button", { name: /View evidence for test/ })[0]);

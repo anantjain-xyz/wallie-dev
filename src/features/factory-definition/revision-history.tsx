@@ -11,6 +11,7 @@ import type {
   FactoryEditorActivation,
   FactoryEditorDocument,
 } from "@/lib/factory-definitions/editor-contracts";
+import type { CandidateSmokeTest } from "@/lib/factory-definitions/candidate-smoke-contracts";
 import { cn } from "@/lib/utils";
 
 type RevisionHistoryProps = {
@@ -24,6 +25,10 @@ type RevisionHistoryProps = {
   busy: boolean;
   canManage: boolean;
   activationEligible: boolean;
+  activationBlockReason?: string | null;
+  compareHref?: string;
+  passingTest?: CandidateSmokeTest;
+  testHref?: string;
   candidateTests?: ReactNode;
   onSelect: (activation: FactoryEditorActivation) => void;
   onLoadMore: () => void;
@@ -41,6 +46,7 @@ type RollbackConfirmation = {
   revisionDigest: string;
   expectedActivationNumber: number;
   targetActivationNumber: number;
+  testId?: string;
 };
 
 const sourceLinkClass =
@@ -57,6 +63,10 @@ export function FactoryRevisionHistory({
   busy,
   canManage,
   activationEligible,
+  activationBlockReason,
+  compareHref,
+  passingTest,
+  testHref,
   candidateTests,
   onSelect,
   onLoadMore,
@@ -74,12 +84,12 @@ export function FactoryRevisionHistory({
   const selectedIsActive =
     selectedIsRevision && selectedActivationNumber === activeActivationNumber;
   const targetActivationNumber = selectedIsRevision ? selectedActivationNumber : undefined;
-  const allowRollback =
-    canManage &&
+  const historicalRevision =
     selectedIsRevision &&
     selectedDocument.id !== activeRevisionId &&
     targetActivationNumber !== undefined &&
     targetActivationNumber < activeActivationNumber;
+  const allowRollback = canManage && historicalRevision;
   const controlsDisabled = busy || rollbackPending;
   const canConfirm =
     allowRollback &&
@@ -87,7 +97,8 @@ export function FactoryRevisionHistory({
     confirmation?.revisionId === selectedDocument.id &&
     confirmation.revisionDigest === selectedDocument.digest &&
     confirmation.expectedActivationNumber === activeActivationNumber &&
-    confirmation.targetActivationNumber === targetActivationNumber;
+    confirmation.targetActivationNumber === targetActivationNumber &&
+    confirmation.testId === passingTest?.id;
 
   async function confirmRollback() {
     if (!confirmation || !canConfirm || controlsDisabled) return;
@@ -251,6 +262,39 @@ export function FactoryRevisionHistory({
         </div>
       )}
       {candidateTests}
+      {compareHref ? (
+        <a className={sourceLinkClass} href={compareHref}>
+          {selectedIsRevision ? "Compare this revision" : "Compare this draft"}
+        </a>
+      ) : null}
+      {historicalRevision ? (
+        <div className="space-y-1">
+          <p className="type-secondary text-muted">
+            Rollback changes the definition for new sessions. Existing sessions keep their pinned
+            configuration.
+          </p>
+          {passingTest && testHref ? (
+            <Link
+              className={sourceLinkClass}
+              href={testHref}
+              prefetch={false}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Passing configuration test ·{" "}
+              {formatUtcTimestamp(passingTest.finishedAt ?? passingTest.createdAt)}
+              <span className="sr-only"> (opens in a new tab)</span>
+            </Link>
+          ) : activationBlockReason ? (
+            <p className="type-secondary text-muted">
+              {activationBlockReason}{" "}
+              <a className={sourceLinkClass} href="#selected-revision-tests">
+                Go to revision configuration tests
+              </a>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <DestructiveConfirmationDialog
         actionDisabled={!canConfirm || busy}
         actionLabel="Activate revision"
@@ -266,6 +310,7 @@ export function FactoryRevisionHistory({
                   revisionDigest: selectedDocument.digest,
                   expectedActivationNumber: activeActivationNumber,
                   targetActivationNumber,
+                  testId: passingTest?.id,
                 }
               : null,
           );
@@ -305,6 +350,14 @@ export function FactoryRevisionHistory({
                 {confirmation.revisionDigest}
               </dd>
             </div>
+            {confirmation.testId ? (
+              <div>
+                <dt className="text-muted">Passing configuration test</dt>
+                <dd className="font-mono text-foreground [overflow-wrap:anywhere]">
+                  {confirmation.testId}
+                </dd>
+              </div>
+            ) : null}
           </dl>
         )}
       </DestructiveConfirmationDialog>
