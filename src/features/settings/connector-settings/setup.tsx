@@ -494,7 +494,8 @@ export function GitHubRequestRule({
   );
   const { catalog } = labels;
   const savedLabel = catalog?.resources.find((item) => item.id === currentId);
-  const option = catalog?.resources.find((item) => item.id === (selected ?? currentId));
+  const selectedId = selected ?? currentId;
+  const option = catalog?.resources.find((item) => item.id === selectedId);
   const inactive = disabled || action.isBusy;
   const sourceLabel = sourceKind === "issue" ? "issue" : "pull request";
   const savedLabelStatus = labels.loading
@@ -593,24 +594,23 @@ export function GitHubRequestRule({
       ) : null}
       {canManageLabels && editing && catalog ? (
         <div className="space-y-3">
-          <ConnectorSelect
-            label="Intake label"
+          <SelectField
+            className="max-w-xs"
             disabled={inactive}
-            onChange={(event) => setSelected(event.target.value)}
-            value={selected ?? currentId}
-          >
-            <option value="">Choose a label</option>
-            {currentId && !savedLabel ? (
-              <option value={currentId} disabled>
-                {savedLabelStatus}
-              </option>
-            ) : null}
-            {catalog.resources.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </ConnectorSelect>
+            emptyOption={{ label: "Choose a label", value: "" }}
+            label="Intake label"
+            onValueChange={(value) => {
+              if (value !== selectedId) setSelected(value);
+            }}
+            options={[
+              ...(currentId && !savedLabel
+                ? [{ disabled: true, label: savedLabelStatus, value: currentId }]
+                : []),
+              ...catalog.resources.map(({ id, label }) => ({ label, value: id })),
+            ]}
+            value={selectedId}
+            wrap
+          />
           <button
             className="ui-button-primary"
             disabled={inactive || !option || (current?.enabled && option.id === currentId)}
