@@ -32,69 +32,76 @@ export function OverviewProjectionHealth({
   const status = statuses[health?.status ?? "unavailable"];
   const rebuild = health?.rebuild;
   return (
-    <section className="ui-sheet min-w-0" aria-labelledby="projection-health">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-5">
-        <h2 className="type-section-title" id="projection-health">
-          Projection health
-        </h2>
-        <Status compact label={status.label} value={status.value} />
-      </header>
-      <div className="space-y-3 px-4 py-3 sm:px-5">
-        <p className="type-secondary text-muted">
-          Projection updates and rebuilds affect flow and delivery summaries. Sessions and outcome
-          capture continue independently.
-        </p>
-        <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <HealthField label="Lifecycle capture began" text={timeLabel(captureStartedAt)} />
-          <HealthField label="Projection snapshot" text={timeLabel(health?.sourceSnapshotAt)} />
-          <HealthField
-            label="Oldest pending observation"
-            text={
-              health && !health.oldestPendingAt ? "None queued" : timeLabel(health?.oldestPendingAt)
-            }
-          />
-          <HealthField
-            label="Projection lag"
-            text={
-              health
-                ? health.lagSeconds === null
-                  ? "No queued observations"
-                  : durationLabel(health.lagSeconds)
-                : "Unknown"
-            }
-          />
-          <HealthField label="Rebuild" text={rebuild ? rebuildLabels[rebuild.state] : "Unknown"} />
-          {rebuild?.requestedAt && (
-            <HealthField label="Rebuild requested" text={timeLabel(rebuild.requestedAt)} />
-          )}
-          {rebuild?.completedAt && (
-            <HealthField label="Rebuild completed" text={timeLabel(rebuild.completedAt)} />
-          )}
-          {health?.pausedAt && (
-            <HealthField label="Paused since" text={timeLabel(health.pausedAt)} />
-          )}
-          {health?.failedAt && (
-            <HealthField label="Last projection failure" text={timeLabel(health.failedAt)} />
-          )}
-          {health?.retryAfter && (
-            <HealthField label="Next retry eligible" text={timeLabel(health.retryAfter)} />
-          )}
-        </dl>
-        {health?.paused && rebuild?.state === "queued" && (
+    <section className="ui-sheet min-w-0" aria-label="Projection health">
+      <details>
+        <summary className="cursor-pointer rounded-md px-4 py-3 marker:text-muted hover:bg-control-muted focus-visible:outline-2 focus-visible:outline-accent sm:px-5">
+          <span className="ml-2 inline-flex flex-wrap items-center gap-x-3 gap-y-1 align-middle">
+            <span className="type-section-title">Projection health</span>
+            <Status compact label={status.label} value={status.value} />
+          </span>
+        </summary>
+        <div className="space-y-3 border-t border-border px-4 py-3 sm:px-5">
           <p className="type-secondary text-muted">
-            The queued rebuild starts after the projection resumes.
+            Projection updates and rebuilds affect flow and delivery summaries. Sessions and outcome
+            capture continue independently.
           </p>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <HealthField label="Lifecycle capture began" text={timeLabel(captureStartedAt)} />
+            <HealthField label="Projection snapshot" text={timeLabel(health?.sourceSnapshotAt)} />
+            <HealthField
+              label="Oldest pending observation"
+              text={
+                health && !health.oldestPendingAt
+                  ? "None queued"
+                  : timeLabel(health?.oldestPendingAt)
+              }
+            />
+            <HealthField
+              label="Projection lag"
+              text={
+                health
+                  ? health.lagSeconds === null
+                    ? "No queued observations"
+                    : durationLabel(health.lagSeconds)
+                  : "Unknown"
+              }
+            />
+            <HealthField
+              label="Rebuild"
+              text={rebuild ? rebuildLabels[rebuild.state] : "Unknown"}
+            />
+            {rebuild?.requestedAt && (
+              <HealthField label="Rebuild requested" text={timeLabel(rebuild.requestedAt)} />
+            )}
+            {rebuild?.completedAt && (
+              <HealthField label="Rebuild completed" text={timeLabel(rebuild.completedAt)} />
+            )}
+            {health?.pausedAt && (
+              <HealthField label="Paused since" text={timeLabel(health.pausedAt)} />
+            )}
+            {health?.failedAt && (
+              <HealthField label="Last projection failure" text={timeLabel(health.failedAt)} />
+            )}
+            {health?.retryAfter && (
+              <HealthField label="Next retry eligible" text={timeLabel(health.retryAfter)} />
+            )}
+          </dl>
+          {health?.paused && rebuild?.state === "queued" && (
+            <p className="type-secondary text-muted">
+              The queued rebuild starts after the projection resumes.
+            </p>
+          )}
+        </div>
+        {health?.canManage && (
+          <ProjectionControls
+            key={factoryId}
+            factoryId={factoryId}
+            workspaceId={workspaceId}
+            paused={health.paused}
+            rebuilding={rebuild?.state === "queued" || rebuild?.state === "building"}
+          />
         )}
-      </div>
-      {health?.canManage && (
-        <ProjectionControls
-          key={factoryId}
-          factoryId={factoryId}
-          workspaceId={workspaceId}
-          paused={health.paused}
-          rebuilding={rebuild?.state === "queued" || rebuild?.state === "building"}
-        />
-      )}
+      </details>
     </section>
   );
 }
