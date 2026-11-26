@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { z } from "zod/v4";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -16,7 +17,6 @@ import {
 
 import { ResourceIdDetails } from "./catalog";
 import { connectorCommand, readConnectorResponse } from "./request";
-import { ConnectorSelect } from "./select";
 
 type SlackSetup = z.output<typeof slackConnectorSetupSchema>;
 type SlackCommand = z.input<typeof slackConnectorSetupCommandSchema>;
@@ -207,22 +207,23 @@ export function SlackConnectorAccess({
             </p>
           ) : null}
           {!installationId && installations.length > 1 ? (
-            <ConnectorSelect
-              label="Slack workspace"
+            <SelectField
+              className="max-w-xs"
               disabled={action.isBusy}
-              onChange={(event) => {
-                setSelectedId(event.target.value);
+              label="Slack workspace"
+              onValueChange={(value) => {
+                if (value === installation?.id) return;
+                setSelectedId(value);
                 setWorkspaceInput("");
                 setMessage(null);
               }}
+              options={installations.map((item) => ({
+                value: item.id,
+                label: slackWorkspaceOption(item),
+              }))}
               value={installation?.id ?? ""}
-            >
-              {installations.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {slackWorkspaceOption(item)}
-                </option>
-              ))}
-            </ConnectorSelect>
+              wrap
+            />
           ) : null}
           {installation ? (
             <div className="space-y-2 rounded-md border border-border p-3">
