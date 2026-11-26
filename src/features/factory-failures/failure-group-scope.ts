@@ -8,10 +8,12 @@ export async function loadFailureGroupScope(
   workspaceSlug: string,
   requestedFactory: string | string[] | undefined,
 ) {
-  const [{ supabase, workspace }, factories] = await Promise.all([
+  const [{ supabase, workspace, currentMember }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
   const factory = resolveAnalyticsFactory(factories, requestedFactory);
-  return factory ? { supabase, factory, workspaceId: workspace.id, factoryId: factory.id } : null;
+  return factory
+    ? { supabase, factory, currentMember, workspaceId: workspace.id, factoryId: factory.id }
+    : null;
 }

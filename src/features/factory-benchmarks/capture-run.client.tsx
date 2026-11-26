@@ -31,6 +31,7 @@ type CaptureView =
 
 function SnapshotPreview({ source }: { source: BenchmarkCapturePreview["source"] }) {
   const inputs = [
+    ["Source run ID", source.runId],
     ["Starting checkout", source.checkoutSha],
     ["Retained ref", source.inputRef],
     ["Factory definition revision", source.definitionRevisionId],

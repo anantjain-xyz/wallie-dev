@@ -6,12 +6,14 @@ import { mapOnboardingResumeState } from "@/features/onboarding/flow";
 import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type {
   PipelineDashboardData,
+  PipelineDashboardFilters,
   PipelineDashboardLane,
   PipelineDashboardLanePage,
 } from "@/features/pipeline/types";
 import { PIPELINE_DASHBOARD_PAGE_SIZE } from "@/features/pipeline/types";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
+import type { Database } from "@/lib/supabase/database.types";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export class PipelineWorkspaceUnavailableError extends Error {
@@ -27,14 +29,8 @@ type PipelineDashboardCursor = {
   stageId: string;
 };
 
-type PipelineDashboardRpcArgs = {
-  cursor_seen_ids?: string[];
-  page_limit: number;
-  target_factory_id?: string;
-  target_pipeline_id?: string;
-  target_stage_id?: string;
-  target_workspace_id: string;
-};
+type PipelineDashboardRpcArgs =
+  Database["public"]["Functions"]["get_filtered_pipeline_dashboard_page"]["Args"];
 
 type PipelineDashboardRpcCursor = {
   pipelineId: string;
@@ -48,11 +44,6 @@ type PipelineDashboardRpcLane = Omit<PipelineDashboardLane, "cursor"> & {
 type PipelineDashboardRpcPayload = {
   lanes?: PipelineDashboardRpcLane[];
 };
-
-type PipelineDashboardRpcResult = PromiseLike<{
-  data: unknown;
-  error: { message: string } | null;
-}>;
 
 const cursorSchema = z.object({
   pipelineId: z.string().uuid(),
@@ -71,9 +62,11 @@ export function decodePipelineDashboardCursor(raw: string | null): PipelineDashb
 
 function normalizeLane(lane: PipelineDashboardRpcLane): PipelineDashboardLane {
   return {
+    ...(lane.activeCount !== undefined ? { activeCount: lane.activeCount } : {}),
     cards: Array.isArray(lane.cards) ? lane.cards.slice(0, PIPELINE_DASHBOARD_PAGE_SIZE) : [],
     cursor: lane.cursor ? encodePipelineDashboardCursor(lane.cursor) : null,
     description: lane.description,
+    ...(lane.factoryName !== undefined ? { factoryName: lane.factoryName } : {}),
     id: lane.id,
     name: lane.name,
     pipeline: lane.pipeline,
@@ -94,25 +87,28 @@ export function filterArchivedPipelineDashboardLanes(
   lanes: PipelineDashboardLane[],
   archivedStageIds: ReadonlySet<string>,
 ): PipelineDashboardLane[] {
-  return lanes.filter((lane) => !archivedStageIds.has(lane.id) || lane.totalCount > 0);
+  return lanes.filter(
+    (lane) => !archivedStageIds.has(lane.id) || (lane.activeCount ?? lane.totalCount) > 0,
+  );
 }
 
 async function queryPipelineDashboard(
   supabase: SupabaseServerClient,
   args: PipelineDashboardRpcArgs,
 ) {
-  const client = supabase as unknown as {
-    rpc: (
-      name: "get_pipeline_dashboard_page",
-      args: PipelineDashboardRpcArgs,
-    ) => PipelineDashboardRpcResult;
-  };
+  return supabase.rpc("get_filtered_pipeline_dashboard_page", args);
+}
 
-  return client.rpc("get_pipeline_dashboard_page", args);
+function filterArgs(filters: PipelineDashboardFilters | undefined) {
+  return {
+    ...(filters?.query ? { search_query: filters.query } : {}),
+    ...(filters && filters.status !== "all" ? { status_filter: filters.status } : {}),
+  };
 }
 
 export async function loadPipelineDashboardLanePage({
   factoryId,
+  filters,
   pipelineId,
   seenIds,
   stageId,
@@ -120,6 +116,7 @@ export async function loadPipelineDashboardLanePage({
   workspaceId,
 }: {
   factoryId?: string;
+  filters?: PipelineDashboardFilters;
   pipelineId: string;
   seenIds: string[];
   stageId: string;
@@ -130,6 +127,7 @@ export async function loadPipelineDashboardLanePage({
     cursor_seen_ids: seenIds,
     page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
     ...(factoryId ? { target_factory_id: factoryId } : {}),
+    ...filterArgs(filters),
     target_pipeline_id: pipelineId,
     target_stage_id: stageId,
     target_workspace_id: workspaceId,
@@ -153,10 +151,12 @@ export async function loadPipelineDashboardLanePage({
 /** The bounded authoritative board snapshot used by initial render and recovery. */
 export async function loadPipelineDashboardSnapshot({
   factoryId,
+  filters,
   supabase,
   workspaceId,
 }: {
   factoryId?: string;
+  filters?: PipelineDashboardFilters;
   supabase: SupabaseServerClient;
   workspaceId: string;
 }): Promise<Pick<PipelineDashboardData, "lanes" | "hasAnySession" | "onboarding">> {
@@ -172,6 +172,7 @@ export async function loadPipelineDashboardSnapshot({
       page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
       target_workspace_id: workspaceId,
       ...(factoryId ? { target_factory_id: factoryId } : {}),
+      ...filterArgs(filters),
     }),
     supabase.from("pipeline_stages").select("id, archived_at").eq("workspace_id", workspaceId),
     scopedSessions.limit(1),

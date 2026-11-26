@@ -260,6 +260,18 @@ function isShellNavIntentPointer(pointerType: string) {
   return pointerType === "" || pointerType === "mouse" || pointerType === "pen";
 }
 
+function subscribeToLocationHash(change: () => void) {
+  const { navigation } = window as Window & { navigation?: EventTarget };
+  navigation?.addEventListener("currententrychange", change);
+  window.addEventListener("hashchange", change);
+  window.addEventListener("popstate", change);
+  return () => {
+    navigation?.removeEventListener("currententrychange", change);
+    window.removeEventListener("hashchange", change);
+    window.removeEventListener("popstate", change);
+  };
+}
+
 /** Prefetch a top-level workspace route once per `(currentPathname, targetHref)` pair on user intent. */
 export function prefetchShellNavHrefOnIntent(
   router: { prefetch?: (href: string, options?: { kind: PrefetchKind }) => void },
@@ -298,6 +310,11 @@ export function ShellHeader({
   const routedPathname = usePathname();
   const pathname = pathnameOverride ?? routedPathname ?? workspaceBasePath(workspace.slug);
   const searchParams = useSearchParams();
+  const locationHash = useSyncExternalStore(
+    subscribeToLocationHash,
+    () => window.location.hash,
+    () => "",
+  );
   const router = useRouter();
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
   const onboardingHref = workspaceOnboardingPath(workspace.slug);
@@ -603,19 +620,20 @@ export function ShellHeader({
       const creationSwitchHref = sessionLaunchHref(
         workspace.slug,
         creationFactory.id,
-        withoutSessionLaunch(pathname, search),
+        withoutSessionLaunch(pathname, search, locationHash),
       );
       return (
         <Link
           className="ui-button-primary inline-flex min-h-9 max-w-[min(44vw,18rem)] items-center gap-1.5 px-2 py-1 text-left text-[13px] leading-tight"
           href={creationSwitchHref}
           onNavigate={(event) => {
+            const hash = window.location.hash;
             visibleCreationPreview?.dismiss();
-            const origin = withoutSessionLaunch(pathname, search, window.location.hash);
+            const origin = withoutSessionLaunch(pathname, search, hash);
             const href = sessionLaunchHref(workspace.slug, creationFactory.id, origin);
             launchHistory.current = {
               returnTo: origin,
-              origin: locationKey + window.location.hash,
+              origin: locationKey + hash,
               arrived: false,
             };
             if (href !== creationSwitchHref) {

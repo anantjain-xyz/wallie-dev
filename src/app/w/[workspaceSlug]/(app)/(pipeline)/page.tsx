@@ -43,6 +43,10 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
       }
       initialData={{
         ...data,
+        aggregateFactories: selection.kind === "all",
+        creationFactoryName: factories.find(
+          ({ isDefault, status }) => isDefault && status === "active",
+        )?.name,
         showCreationOnboarding: !!factory?.isDefault && factory.status === "active",
       }}
       initialNow={initialNow}

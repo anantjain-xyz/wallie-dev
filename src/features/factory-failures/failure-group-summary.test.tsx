@@ -40,7 +40,18 @@ it("renders a reviewed label without hiding the independent evidence limits", ()
   expect(html).toContain("Flaky build step");
   expect(html).toContain("Dismissed");
   expect(html).toContain("Inconclusive");
-  expect(html).toContain("Insufficient support");
+  expect(html).toContain("Too few sessions with available evidence");
   expect(html).toContain("Missing evidence");
   expect(html).toContain("1 of 3 needed");
+});
+
+it("labels open and split snapshots independently of evidence", () => {
+  const open = { ...group, review: { ...group.review, disposition: "open" as const } };
+  expect(renderToStaticMarkup(<FailureGroupStatus cohort={open} />)).toContain(">Open<");
+  expect(
+    renderToStaticMarkup(<FailureGroupStatus cohort={{ ...open, partition: "remaining" }} />),
+  ).toContain("Split snapshot");
+  expect(
+    failureGroupTitle({ ...open, symptom_label: null, review: { ...open.review, label: null } }),
+  ).toBe("Validation failure");
 });

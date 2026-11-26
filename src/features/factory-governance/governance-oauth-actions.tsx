@@ -5,7 +5,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
-import { SelectField } from "@/components/ui/select";
+import { GovernanceSelect } from "./governance-fields";
 import type { GovernanceOAuthData } from "@/features/factory-governance/governance-oauth-data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
@@ -126,7 +126,8 @@ export function RegisterOAuthClient({
         <fieldset className="grid min-w-0 gap-3 sm:grid-cols-2">
           <legend className="type-label mb-2 text-foreground">Factory execution grants</legend>
           {options.map((factory) => (
-            <SelectField
+            <GovernanceSelect
+              choices={factory.choices}
               emptyOption={{ label: "No access", value: "" }}
               key={factory.id}
               label={`${factory.name} execution grant`}
@@ -134,7 +135,7 @@ export function RegisterOAuthClient({
               onValueChange={(value) => {
                 setSelection((current) => ({ ...current, [factory.id]: value }));
               }}
-              options={factory.choices.map((grant) => ({ label: grant.label, value: grant.id }))}
+              search
               value={selection[factory.id] ?? ""}
               wrap
             />
@@ -169,10 +170,12 @@ export function RegisterOAuthClient({
 
 export function RevokeOAuthAccess({
   command,
+  factories,
   name,
   workspaceId,
 }: {
   command: Exclude<FactoryOAuthManagementCommand, { action: "register" }>;
+  factories?: string[];
   name: string;
   workspaceId: string;
 }) {
@@ -196,8 +199,10 @@ export function RevokeOAuthAccess({
       actionLabel={label}
       description={
         registration
-          ? "This registration and all its connections will lose access."
-          : "This connection will lose read and command access."
+          ? "This revokes the workspace registration and all its connections across every linked factory, regardless of the selected factory."
+          : factories
+            ? "This connection will lose read and command access across all of its authorized factories."
+            : "This connection will lose read and command access."
       }
       errorMessage={feedback?.text}
       onConfirm={() => void action.run()}
@@ -214,6 +219,12 @@ export function RevokeOAuthAccess({
           {label}
         </button>
       }
-    />
+    >
+      {factories?.length ? (
+        <p className="mt-3 type-secondary text-muted [overflow-wrap:anywhere]">
+          Affected factories: {factories.join(", ")}.
+        </p>
+      ) : null}
+    </DestructiveConfirmationDialog>
   );
 }

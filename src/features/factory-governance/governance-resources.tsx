@@ -2,6 +2,10 @@ import Link from "next/link";
 
 import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
 import { RevokeGrant } from "@/features/factory-governance/governance-actions";
+import { governancePolicy } from "./governance-evidence-data";
+import { CopyGovernanceId } from "./governance-fields";
+import { GrantScopeSummary } from "./governance-grant-summary";
+import { grantName, principalName, repositoryName, toolName } from "./governance-names";
 import type {
   GovernanceData,
   GovernanceScope,
@@ -10,16 +14,20 @@ import {
   GovernanceResourceLink,
   GovernanceTime,
 } from "@/features/factory-governance/governance-resource-link";
-import { workspaceAgentDetailPath, workspaceFactoryDefinitionPath } from "@/lib/routes";
+import { factoryCommandLabels } from "@/lib/factory-machine-tokens/contracts";
+import {
+  workspaceAgentDetailPath,
+  workspaceFactoryDefinitionPath,
+  workspaceGovernancePath,
+} from "@/lib/routes";
 
 type ScopeProps = { scope: GovernanceScope; data: GovernanceData };
 
 function actorLabel(data: GovernanceData, memberId: string | null) {
-  return data.memberOptions.find(({ id }) => id === memberId)?.label ?? memberId ?? "Unavailable";
-}
-
-function principalLabel(data: GovernanceData, principalId: string) {
-  return data.principalList.entries.find(({ id }) => id === principalId)?.name ?? principalId;
+  return (
+    data.memberOptions.find(({ id }) => id === memberId)?.label ??
+    "Former workspace member or unavailable"
+  );
 }
 
 function MemberLink({ scope, data, id }: ScopeProps & { id: string }) {
@@ -41,7 +49,7 @@ function PrincipalLink({ scope, data, id }: ScopeProps & { id: string }) {
       source={{ kind: "principal", id }}
       workspaceSlug={scope.workspaceSlug}
     >
-      {principalLabel(data, id)}
+      {principalName(data, id) ?? "Service principal unavailable"}
     </GovernanceResourceLink>
   );
 }
@@ -71,7 +79,7 @@ export function PrincipalCard({
           <MetadataItem
             label="Principal ID"
             monospace
-            value={<span className="[overflow-wrap:anywhere]">{principal.id}</span>}
+            value={<CopyGovernanceId label="Principal ID" value={principal.id} />}
           />
         )}
       </MetadataList>
@@ -84,37 +92,45 @@ export function GrantCard({
   data,
   grant,
   focused,
+  eventDependencies = [],
 }: ScopeProps & {
   grant: GovernanceData["grantList"]["entries"][number];
   focused?: boolean;
+  eventDependencies?: string[];
 }) {
   const revoked = Boolean(grant.revoked_at);
   const expired = Date.parse(grant.expires_at) <= data.asOf;
   const status = revoked ? "Revoked" : expired ? "Expired" : "Approved";
   const authority = data.authority?.grantId === grant.id ? data.authority : null;
   const blocked = authority && (revoked || expired || authority.grantVersion !== grant.version);
-  const repository = (id: string) =>
-    data.repositoryOptions.find((row) => row.id === id)?.label ?? id;
-  const policy =
-    data.policyOptions.find(({ id }) => id === grant.execution_policy_revision_id)?.label ??
-    grant.execution_policy_revision_id;
-  const toolName = (id: string) => data.toolOptions.find((row) => row.id === id)?.label ?? id;
-  const grantName = `Grant ${grant.id.slice(0, 8)}`;
-  const shortDetails = !focused;
+  const repository = (id: string) => repositoryName(data, id) ?? "Repository unavailable";
+  const policy = data.evidence.policies.find(({ id }) => id === grant.execution_policy_revision_id);
+  const title = grantName(data, grant);
+  const dependencyPreview = data.evidence.dependencies[grant.id];
+  const principal = <PrincipalLink scope={scope} data={data} id={grant.service_principal_id} />;
+  const ids = [
+    ["Grant ID", grant.id],
+    ["Service principal ID", grant.service_principal_id],
+    ["Writable repository ID", grant.github_repository_id],
+    ["Execution policy revision ID", grant.execution_policy_revision_id],
+    ["Budget payer ID", grant.budget_payer_member_id],
+    ...grant.read_context_repository_ids.map((id) => ["Read-only repository ID", id]),
+    ...grant.tool_ids.map((id) => ["Tool operation ID", id]),
+  ];
 
   return (
     <article className="min-w-0 space-y-3 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold text-foreground">
+        <h3 className="font-semibold text-foreground [overflow-wrap:anywhere]">
           {focused ? (
-            grantName
+            title
           ) : (
             <GovernanceResourceLink
               factoryId={scope.factory.id}
               source={{ kind: "grant", id: grant.id }}
               workspaceSlug={scope.workspaceSlug}
             >
-              {grantName}
+              {title}
             </GovernanceResourceLink>
           )}
         </h3>
@@ -124,43 +140,37 @@ export function GrantCard({
           </span>
           {!revoked && (
             <RevokeGrant
+              key={grant.version}
+              dependencies={[
+                ...new Set([...(dependencyPreview?.entries ?? []), ...eventDependencies]),
+              ]}
+              dependencyLookup={
+                dependencyPreview
+                  ? dependencyPreview.readFailed
+                    ? "failed"
+                    : "checked"
+                  : "not-checked"
+              }
               grantId={grant.id}
+              pinned={authority?.grantVersion === grant.version}
               scope={{
                 factoryId: scope.factory.id,
                 workspaceId: scope.workspaceId,
                 workspaceSlug: scope.workspaceSlug,
               }}
+              target={title}
               version={grant.version}
             />
           )}
         </div>
       </div>
       <MetadataList>
-        <MetadataItem
-          label="Service principal"
-          value={<PrincipalLink scope={scope} data={data} id={grant.service_principal_id} />}
-        />
         <MetadataItem label="Grant version" value={grant.version} />
-        <MetadataItem
-          label="Writable repository"
-          value={
-            <span className="[overflow-wrap:anywhere]">
-              {repository(grant.github_repository_id)}
-            </span>
-          }
-        />
-        <MetadataItem label="Expires at" value={<GovernanceTime value={grant.expires_at} />} />
-        {!shortDetails && (
+        {!focused && (
+          <MetadataItem label="Expires at" value={<GovernanceTime value={grant.expires_at} />} />
+        )}
+        {focused && (
           <>
-            <MetadataItem
-              label="Grant ID"
-              monospace
-              value={<span className="[overflow-wrap:anywhere]">{grant.id}</span>}
-            />
-            <MetadataItem
-              label="Budget payer"
-              value={<MemberLink scope={scope} data={data} id={grant.budget_payer_member_id} />}
-            />
             <MetadataItem
               label="Approved by"
               value={<MemberLink scope={scope} data={data} id={grant.approved_by_member_id} />}
@@ -168,26 +178,6 @@ export function GrantCard({
             <MetadataItem
               label="Approved at"
               value={<GovernanceTime value={grant.approved_at} />}
-            />
-            <MetadataItem
-              label="Execution policy"
-              value={<span className="[overflow-wrap:anywhere]">{policy}</span>}
-            />
-            <MetadataItem
-              label="Read-only repositories"
-              value={
-                <span className="[overflow-wrap:anywhere]">
-                  {grant.read_context_repository_ids.map(repository).join(", ") || "None"}
-                </span>
-              }
-            />
-            <MetadataItem
-              label="Tool operations"
-              value={
-                <span className="[overflow-wrap:anywhere]">
-                  {grant.tool_ids.map(toolName).join(", ") || "None"}
-                </span>
-              }
             />
           </>
         )}
@@ -207,6 +197,56 @@ export function GrantCard({
           />
         )}
       </MetadataList>
+      {focused && (
+        <>
+          <GrantScopeSummary
+            commands={grant.command_scopes.map((command) => factoryCommandLabels[command])}
+            expires={<GovernanceTime value={grant.expires_at} />}
+            payer={<MemberLink scope={scope} data={data} id={grant.budget_payer_member_id} />}
+            policy={policy && governancePolicy(policy)}
+            principal={principal}
+            readOnly={grant.read_context_repository_ids.map(repository)}
+            tools={grant.tool_ids.map((id) => toolName(data, id) ?? "Tool operation unavailable")}
+            writable={repository(grant.github_repository_id)}
+          />
+          <details>
+            <summary className="cursor-pointer type-label text-muted">Technical details</summary>
+            <MetadataList className="mt-2">
+              {ids.map(([label, id]) => (
+                <MetadataItem
+                  key={`${label}:${id}`}
+                  label={label}
+                  value={<CopyGovernanceId label={label} value={id} />}
+                />
+              ))}
+            </MetadataList>
+          </details>
+        </>
+      )}
+      {revoked && (data.canApprove || blocked) && (
+        <div className="space-y-2">
+          <p className="type-secondary text-muted">
+            {blocked
+              ? scope.isOperator
+                ? "Approve a replacement, then publish an updated definition pinned to it before resuming admission."
+                : "Approve a replacement, then ask a workspace owner or admin to publish an updated definition pinned to it."
+              : "If this grant is still needed, approve a replacement before reconnecting its integrations."}
+          </p>
+          {data.canApprove && (
+            <Link
+              className="ui-button"
+              href={`${workspaceGovernancePath(scope.workspaceSlug, {
+                factory: scope.factory.id,
+                principal: principalName(data, grant.service_principal_id)
+                  ? grant.service_principal_id
+                  : undefined,
+              })}#approve-grant`}
+            >
+              Approve a replacement grant
+            </Link>
+          )}
+        </div>
+      )}
       {authority && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="type-secondary text-muted">
@@ -255,13 +295,16 @@ export function CredentialCard({
   credential: GovernanceData["bindings"][number];
   focused?: boolean;
 }) {
-  const credentialLabel = `Binding ${credential.id.slice(0, 8)}`;
+  const agent =
+    data.evidence.agents.find(({ id }) => id === credential.agentId)?.name ?? "Agent unavailable";
+  const grant = data.evidence.grants.find(({ id }) => id === credential.grantId);
+  const credentialLabel = `${agent} · ${credential.provider}`;
   const published =
     data.authority && data.authority.bindingId === credential.id ? data.authority : null;
   return (
     <article className="min-w-0 space-y-3 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold text-foreground">
+        <h3 className="font-semibold text-foreground [overflow-wrap:anywhere]">
           {focused ? (
             credentialLabel
           ) : (
@@ -289,7 +332,7 @@ export function CredentialCard({
               source={{ kind: "grant", id: credential.grantId }}
               workspaceSlug={scope.workspaceSlug}
             >
-              Grant {credential.grantId.slice(0, 8)}
+              {grant ? grantName(data, grant) : "Execution grant unavailable"}
             </GovernanceResourceLink>
           }
         />
@@ -302,7 +345,7 @@ export function CredentialCard({
                 factory: scope.factory.id,
               })}
             >
-              Agent {credential.agentId.slice(0, 8)}
+              {agent}
             </Link>
           }
         />
@@ -340,7 +383,7 @@ export function CredentialCard({
           <MetadataItem
             label="Binding ID"
             monospace
-            value={<span className="[overflow-wrap:anywhere]">{credential.id}</span>}
+            value={<CopyGovernanceId label="Binding ID" value={credential.id} />}
           />
         )}
       </MetadataList>

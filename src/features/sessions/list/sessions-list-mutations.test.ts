@@ -5,7 +5,7 @@ import {
   compareSessionsBySort,
   resolveOptimisticArchive,
   resolveOptimisticTitle,
-  sessionsPaginationLabel,
+  sessionsPaginationDirection,
   shouldApplyArchiveResult,
 } from "@/features/sessions/list/sessions-list-mutations";
 
@@ -67,9 +67,9 @@ describe("sessions list helpers", () => {
   });
 
   it("labels pagination by the active sort direction", () => {
-    expect(sessionsPaginationLabel("updated")).toBe("Load older sessions");
-    expect(sessionsPaginationLabel("oldest")).toBe("Load newer sessions");
-    expect(sessionsPaginationLabel("number")).toBe("Load more sessions");
+    expect(sessionsPaginationDirection("updated")).toBe("Older updates");
+    expect(sessionsPaginationDirection("oldest")).toBe("Newer updates");
+    expect(sessionsPaginationDirection("number")).toBe("Lower session numbers");
   });
 
   it("orders sessions by the active sort key", () => {

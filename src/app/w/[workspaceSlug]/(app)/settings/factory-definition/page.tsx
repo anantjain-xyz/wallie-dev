@@ -41,6 +41,7 @@ const selectionSchema = z.union([
 const FACTORY_DEFINITION_RESET_PARAMS = [
   "revision",
   "activation",
+  "restoreFrom",
   "draft",
   "test",
   "implementationAgent",
@@ -134,20 +135,20 @@ export default async function FactoryDefinitionPage({
     notFound();
   }
 
+  const definitionKey = `${factory.id}:${agent?.id ?? ""}:${requestedScorer ?? ""}`;
   return (
     <FactoryDefinitionEditor
-      key={`${factory.id}:${agent?.id ?? ""}:${requestedScorer ?? ""}`}
-      factoryId={factoryId.data}
+      key={definitionKey}
+      factoryId={factory.id}
       factoryName={factory.name}
-      factorySelector={
-        <FactorySelector
-          factories={activeFactories}
-          resetParams={FACTORY_DEFINITION_RESET_PARAMS}
-          selectedValue={factory.id}
-        />
-      }
+      factorySelection={{
+        factories: activeFactories,
+        resetParams: FACTORY_DEFINITION_RESET_PARAMS,
+        selectedValue: factory.id,
+      }}
       initialAgent={agent ? { agentId: agent.agent_id, promptRevisionId: agent.id } : undefined}
       initialScorerRevisionId={requestedScorer}
+      recoveryKey={`${workspace.id}:${currentMember.id}:${definitionKey}`}
       referenceOptions={referenceOptions}
       repositories={repositories
         .map(({ id, full_name }) => ({ id, fullName: full_name, isArchived: false }))

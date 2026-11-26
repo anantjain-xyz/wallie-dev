@@ -5,23 +5,69 @@ import { SelectField } from "@/components/ui/select";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
+import type { FactorySelectionOption } from "@/features/factories/factory-selection";
+import { FailureRevisionPicker } from "@/features/factory-failures/failure-revision-picker";
 import { loadFailureGroupScope } from "@/features/factory-failures/failure-group-scope";
 import {
   FailureGroupCounts,
   FailureGroupLimits,
   FailureGroupStatus,
+  failureGroupTask,
   failureGroupTitle,
 } from "@/features/factory-failures/failure-group-summary";
-import { parseFailureCohortQuery } from "@/lib/factory-failures/cohort-contracts";
+import {
+  failureCohortIdSchema,
+  parseFailureCohortQuery,
+} from "@/lib/factory-failures/cohort-contracts";
 import {
   listFailureCohorts,
-  listRecentFailureDefinitionRevisions,
+  listFailureRevisionPage,
+  loadFailureActivation,
+  loadFailureAgentNames,
+  loadFailureRevisionOptions,
 } from "@/lib/factory-failures/cohorts";
-import { workspaceFailureGroupPath, workspaceFailureGroupsPath } from "@/lib/routes";
-import { titleFromSlug } from "@/lib/utils";
+import {
+  workspaceFailureGroupPath,
+  workspaceFailureGroupsPath,
+  workspaceSessionsPath,
+} from "@/lib/routes";
 
-const revisionDate = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
 const FAILURE_GROUPS_FACTORY_RESET_PARAMS = ["revision"] as const;
+
+function UnavailableFactory({
+  factories,
+  workspaceSlug,
+}: {
+  factories: FactorySelectionOption[];
+  workspaceSlug: string;
+}) {
+  if (!factories.length)
+    return <FactoryUnavailable title="Failure groups" workspaceSlug={workspaceSlug} />;
+  return (
+    <PageContainer>
+      <PageHeader
+        title="Failure groups"
+        actionsRightOnDesktop
+        actions={
+          <FactorySelector
+            factories={factories}
+            resetParams={FAILURE_GROUPS_FACTORY_RESET_PARAMS}
+            selectedValue="unavailable"
+          />
+        }
+      />
+      <section className="ui-sheet space-y-3 p-5">
+        <h2 className="type-label">Factory unavailable</h2>
+        <p className="type-secondary text-muted">
+          Choose an accessible factory from the Factory picker to browse its failure groups.
+        </p>
+        <Link className="ui-button" href={workspaceSessionsPath(workspaceSlug, { factory: "all" })}>
+          View accessible sessions
+        </Link>
+      </section>
+    </PageContainer>
+  );
+}
 
 export default async function FailureGroupsPage({
   params,
@@ -31,25 +77,17 @@ export default async function FailureGroupsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const query = parseFailureCohortQuery(search);
+  const malformedRevision = Boolean(
+    search.revision && !failureCohortIdSchema.safeParse(search.revision).success,
+  );
+  const query = parseFailureCohortQuery(
+    malformedRevision ? { ...search, revision: undefined, after: undefined } : search,
+  );
   const [scope, factories] = await Promise.all([
     loadFailureGroupScope(workspaceSlug, search.factory),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
-  if (!scope)
-    return (
-      <FactoryUnavailable
-        actions={
-          <FactorySelector
-            factories={factories}
-            resetParams={FAILURE_GROUPS_FACTORY_RESET_PARAMS}
-            selectedValue="unavailable"
-          />
-        }
-        title="Failure groups"
-        workspaceSlug={workspaceSlug}
-      />
-    );
+  if (!scope) return <UnavailableFactory factories={factories} workspaceSlug={workspaceSlug} />;
   const factorySelector = (
     <FactorySelector
       factories={factories}
@@ -73,36 +111,61 @@ export default async function FailureGroupsPage({
     );
   }
   const { after, ...filters } = query.data;
-  const preserved = { ...filters, factory: scope.factoryId };
+  const preserved = { ...filters, factory: scope.factoryId, order: "failures" };
   const filtered = Boolean(filters.symptom || filters.revision || filters.disposition);
-  const [page, revisions] = await Promise.all([
+  const [page, active] = await Promise.all([
     listFailureCohorts(scope.supabase, scope, query.data),
-    listRecentFailureDefinitionRevisions(scope.supabase, scope),
+    loadFailureActivation(scope.supabase, scope),
   ]);
-  if (!page)
-    return (
-      <FactoryUnavailable
-        actions={
-          <FactorySelector
-            factories={factories}
-            resetParams={FAILURE_GROUPS_FACTORY_RESET_PARAMS}
-            selectedValue="unavailable"
-          />
-        }
-        title="Failure groups"
-        workspaceSlug={workspaceSlug}
-      />
-    );
+  if (!page) return <UnavailableFactory factories={factories} workspaceSlug={workspaceSlug} />;
+  const [revisions, pinned, agentNames] = await Promise.all([
+    listFailureRevisionPage(scope.supabase, scope, active),
+    loadFailureRevisionOptions(
+      scope.supabase,
+      scope,
+      [active, filters.revision].filter((id): id is string => Boolean(id)),
+      active,
+    ),
+    loadFailureAgentNames(
+      scope.supabase,
+      scope,
+      page.cohorts.map((cohort) => cohort.agent_id),
+    ),
+  ]);
+  const missingRevision = Boolean(filters.revision && !pinned.has(filters.revision));
+  if (filters.revision && missingRevision) {
+    pinned.set(filters.revision, {
+      id: filters.revision,
+      label: "Revision unavailable",
+      detail: "",
+    });
+  }
+  const clearRevision = workspaceFailureGroupsPath(workspaceSlug, {
+    ...preserved,
+    revision: undefined,
+  });
 
   return (
     <PageContainer>
-      <PageHeader actions={factorySelector} actionsRightOnDesktop title="Failure groups" />
+      <PageHeader
+        actions={factorySelector}
+        actionsRightOnDesktop
+        title="Failure groups"
+        description={
+          scope.factory.status === "archived"
+            ? "This factory is archived. You can browse evidence, but reviews are closed."
+            : !scope.factory.canManage
+              ? "You can browse evidence. Only factory managers can review groups."
+              : undefined
+        }
+      />
       <form
         action={base}
         key={JSON.stringify(preserved)}
-        className="ui-sheet grid gap-4 p-4 sm:grid-cols-[1fr_minmax(0,1.6fr)_1fr] sm:items-end sm:p-5"
+        className="ui-sheet grid gap-4 p-4 sm:grid-cols-[1fr_minmax(0,1.6fr)_1fr] sm:items-start sm:p-5"
       >
         <input type="hidden" name="factory" value={scope.factoryId} />
+        <input type="hidden" name="order" value="failures" />
         <SelectField
           defaultValue={filters.symptom ?? ""}
           label="Symptom"
@@ -114,24 +177,12 @@ export default async function FailureGroupsPage({
             { label: "Validation failures", value: "validation" },
           ]}
         />
-        <label className="type-label grid min-w-0 gap-1.5">
-          Factory definition revision
-          <input
-            className="ui-input w-full min-w-0"
-            name="revision"
-            defaultValue={filters.revision ?? ""}
-            list="failure-definition-revisions"
-            placeholder="Any revision"
-          />
-        </label>
-        <datalist id="failure-definition-revisions">
-          {revisions.map((revision) => (
-            <option key={revision.id} value={revision.id}>
-              {revisionDate.format(new Date(revision.created_at))} ·{" "}
-              {revision.canonical_digest.slice(0, 10)}
-            </option>
-          ))}
-        </datalist>
+        <FailureRevisionPicker
+          endpoint={`${base}/revisions?factory=${scope.factoryId}`}
+          initialPage={revisions ?? { options: [], next: null }}
+          pinned={[...pinned.values()]}
+          selected={filters.revision ?? ""}
+        />
         <SelectField
           defaultValue={filters.disposition ?? ""}
           label="Review state"
@@ -144,6 +195,18 @@ export default async function FailureGroupsPage({
             { label: "Split", value: "split" },
           ]}
         />
+        {missingRevision || malformedRevision ? (
+          <div className="type-secondary space-y-2 text-muted sm:col-span-3">
+            <p>
+              {missingRevision
+                ? "This revision isn’t available in this factory. Clear it or choose a different revision."
+                : "The revision in this link is invalid. Showing all revisions."}
+            </p>
+            <Link className="font-semibold underline underline-offset-4" href={clearRevision}>
+              Clear revision filter
+            </Link>
+          </div>
+        ) : null}
         <div className="flex flex-wrap gap-2 sm:col-span-3">
           <button className="ui-button ui-button-primary" type="submit">
             Apply filters
@@ -156,6 +219,12 @@ export default async function FailureGroupsPage({
         </div>
       </form>
       <section aria-label="Failure groups" className="ui-sheet mt-5">
+        <div className="space-y-1 border-b border-border px-4 py-3 sm:px-5">
+          <p className="type-label">Most failed runs first</p>
+          <p className="type-annotation text-muted">
+            Evidence support counts distinct sessions with available evidence.
+          </p>
+        </div>
         {page.cohorts.length ? (
           <ul className="divide-y divide-border">
             {page.cohorts.map((cohort) => (
@@ -170,12 +239,17 @@ export default async function FailureGroupsPage({
                     prefetch={false}
                   >
                     {failureGroupTitle(cohort)}
+                    <span className="sr-only">
+                      {" "}
+                      · {agentNames.get(cohort.agent_id) ?? "Agent unavailable"} ·{" "}
+                      {failureGroupTask(cohort)}
+                    </span>
                   </Link>
-                  <p className="type-secondary text-muted">
-                    {cohort.task_class_slug
-                      ? titleFromSlug(cohort.task_class_slug)
-                      : "Unclassified task"}{" "}
-                    · {cohort.symptom_kind === "scorer" ? "Scorer failure" : "Validation failure"}
+                  <p className="type-secondary break-words text-muted">
+                    {agentNames.get(cohort.agent_id) ?? "Agent unavailable"}
+                    {" · "}
+                    {failureGroupTask(cohort)} ·{" "}
+                    {cohort.symptom_kind === "scorer" ? "Scorer failure" : "Validation failure"}
                   </p>
                   <FailureGroupStatus cohort={cohort} />
                   <FailureGroupLimits cohort={cohort} />
@@ -185,13 +259,20 @@ export default async function FailureGroupsPage({
             ))}
           </ul>
         ) : (
-          <p className="type-secondary px-4 py-8 text-muted sm:px-5">
-            {after
-              ? "There are no more failure groups."
-              : filtered
-                ? "No failure groups match these filters."
-                : "This factory has no recorded failure groups."}
-          </p>
+          <div className="type-secondary space-y-2 px-4 py-8 text-muted sm:px-5">
+            <p>
+              {page.cursor_unavailable
+                ? "This results page is no longer available. Return to the first page."
+                : after
+                  ? "There are no more failure groups."
+                  : filtered
+                    ? "No failure groups match these filters."
+                    : "No failure groups to show for this factory."}
+            </p>
+            {!filtered && !after && factories.length > 1 ? (
+              <p>Choose another factory to browse its groups.</p>
+            ) : null}
+          </div>
         )}
         {after || page.next_cohort_id ? (
           <nav

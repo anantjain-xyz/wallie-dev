@@ -9,6 +9,8 @@ import { RunsList } from "@/features/wallie/runs-list";
 import { loadRunsListData } from "@/features/wallie/runs-list-data";
 import type { RunsListSearchParams } from "@/features/wallie/runs-list-state";
 
+const factoryResetParams = ["agentId", "agentPromptRevisionId"];
+
 export default async function RunsPage({
   params,
   searchParams,
@@ -24,7 +26,14 @@ export default async function RunsPage({
   if (selection.kind === "unavailable")
     return (
       <FactoryUnavailable
-        actions={<FactorySelector allowAll factories={factories} selectedValue="unavailable" />}
+        actions={
+          <FactorySelector
+            allowAll
+            factories={factories}
+            resetParams={factoryResetParams}
+            selectedValue="unavailable"
+          />
+        }
         title="Runs"
         workspaceSlug={workspaceSlug}
       />
@@ -38,11 +47,13 @@ export default async function RunsPage({
   return (
     <RunsList
       data={data}
-      factoryQuery={typeof factoryQuery === "string" ? factoryQuery : undefined}
+      factoryQuery={selection.kind === "factory" ? selection.factory.id : "all"}
+      factoryName={selection.kind === "factory" ? selection.factory.name : undefined}
       factorySelector={
         <FactorySelector
           allowAll
           factories={factories}
+          resetParams={factoryResetParams}
           selectedValue={selection.kind === "factory" ? selection.factory.id : "all"}
         />
       }

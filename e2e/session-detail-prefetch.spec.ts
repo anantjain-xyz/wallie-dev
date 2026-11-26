@@ -5,6 +5,7 @@ import { SESSION_PAGE_DATA_SERVER_TIMING } from "../src/lib/performance/session-
 
 const workspacePath = "/w/acme-corp";
 const sessionDetailPathPattern = /^\/w\/acme-corp\/sessions\/\d+$/;
+const pathnameOf = (href: string) => new URL(href, "http://localhost").pathname;
 
 function isSessionDetailRscRequest(request: Request) {
   const url = new URL(request.url());
@@ -44,14 +45,14 @@ async function prepareSessionLink(page: Page) {
   const link = page.getByRole("link", { name: /^Open session / }).first();
   const href = await link.getAttribute("href");
   const title = (await link.getAttribute("aria-label"))?.replace(/^Open session #\d+: /, "");
-  if (!href || !sessionDetailPathPattern.test(href) || !title) {
+  if (!href || !sessionDetailPathPattern.test(pathnameOf(href)) || !title) {
     throw new Error("The seeded sessions list has no session detail link.");
   }
   await page.waitForFunction((destination) => {
     const anchor = document.querySelector(`a[href="${destination}"]`);
     return anchor && Object.keys(anchor).some((key) => key.startsWith("__reactFiber"));
   }, href);
-  return { href, link, title };
+  return { href, link, pathname: pathnameOf(href), title };
 }
 
 test("session detail prefetch requires intent and stays deduplicated", async ({ page }) => {
@@ -108,22 +109,28 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
   );
 
   const unprefetchedSessionLink = page
-    .locator(`a[href^="${workspacePath}/sessions/"]:not([href="${intentHref}"])`)
+    .locator(
+      `a[href^="${workspacePath}/sessions/"]:not([href="${intentHref}"], [href^="${intentHref}?"])`,
+    )
     .first();
   const navigationHref = await unprefetchedSessionLink.getAttribute("href");
-  expect(navigationHref).toMatch(sessionDetailPathPattern);
-  expect(navigationHref).not.toBe(intentHref);
   if (!navigationHref) throw new Error("Sessions row link is missing its href");
+  const navigationPath = pathnameOf(navigationHref);
+  expect(navigationPath).toMatch(sessionDetailPathPattern);
+  expect(navigationPath).not.toBe(intentHref);
 
   let releaseNavigation!: () => void;
   const navigationGate = new Promise<void>((resolve) => {
     releaseNavigation = resolve;
   });
 
-  await page.route(`**${navigationHref}**`, async (route) => {
-    if (isSessionDetailRscRequest(route.request())) await navigationGate;
-    await route.continue();
-  });
+  await page.route(
+    (url) => url.pathname === navigationPath,
+    async (route) => {
+      if (isSessionDetailRscRequest(route.request())) await navigationGate;
+      await route.continue();
+    },
+  );
 
   await unprefetchedSessionLink.evaluate((element) => {
     (element as HTMLAnchorElement).click();
@@ -132,14 +139,14 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
   expect(
     detailRequests.slice(intentRequestCount).map((request) => new URL(request.url()).pathname),
     "click navigation should request only its destination",
-  ).toEqual([navigationHref]);
+  ).toEqual([navigationPath]);
 
   releaseNavigation();
   await expect(page).toHaveURL(navigationHref);
   await expect(page.getByRole("status", { name: "Loading session" })).toBeHidden();
 
   const requestedPaths = detailRequests.map((request) => new URL(request.url()).pathname);
-  expect(new Set(requestedPaths)).toEqual(new Set([intentHref, navigationHref]));
+  expect(new Set(requestedPaths)).toEqual(new Set([intentHref, navigationPath]));
 
   console.log(
     `session-detail RSC requests: initial Pipeline=0, initial Sessions=0, intent=${intentRequestCount}, after click=${detailRequests.length}`,
@@ -149,16 +156,16 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
 test("only completed session page data exposes the timing signal to the browser", async ({
   page,
 }) => {
-  const { href, link } = await prepareSessionLink(page);
+  const { link, pathname } = await prepareSessionLink(page);
   const treeResponse = page.waitForResponse(
     (response) =>
-      new URL(response.url()).pathname === href &&
+      new URL(response.url()).pathname === pathname &&
       response.request().headers()["next-router-segment-prefetch"] === "/_tree",
   );
   const pageResponse = page.waitForResponse((response) => {
     const headers = response.request().headers();
     return (
-      new URL(response.url()).pathname === href &&
+      new URL(response.url()).pathname === pathname &&
       headers.rsc === "1" &&
       Boolean(headers["next-router-state-tree"]) &&
       !("next-router-prefetch" in headers) &&
@@ -187,7 +194,7 @@ for (const delayedPhase of ["tree", "page"] as const) {
   test(`session opening reuses a prefetch with its ${delayedPhase} response still pending`, async ({
     page,
   }) => {
-    const { href, link, title } = await prepareSessionLink(page);
+    const { href, link, pathname, title } = await prepareSessionLink(page);
     const aborted: string[] = [];
     const recovery: string[] = [];
     const destinationRequests: Request[] = [];
@@ -212,16 +219,19 @@ for (const delayedPhase of ["tree", "page"] as const) {
     const responseHeld = new Promise<void>((resolve) => {
       held = resolve;
     });
-    await page.route(`**${href}**`, async (route) => {
-      const request = route.request();
-      const tree = request.headers()["next-router-segment-prefetch"] === "/_tree";
-      const response = await route.fetch();
-      if (isSessionDetailRscRequest(request) && tree === (delayedPhase === "tree")) {
-        held();
-        await gate;
-      }
-      await route.fulfill({ response });
-    });
+    await page.route(
+      (url) => url.pathname === pathname,
+      async (route) => {
+        const request = route.request();
+        const tree = request.headers()["next-router-segment-prefetch"] === "/_tree";
+        const response = await route.fetch();
+        if (isSessionDetailRscRequest(request) && tree === (delayedPhase === "tree")) {
+          held();
+          await gate;
+        }
+        await route.fulfill({ response });
+      },
+    );
 
     try {
       await link.hover();
@@ -238,7 +248,7 @@ for (const delayedPhase of ["tree", "page"] as const) {
               performance.now() - resource.responseEnd > 120
             );
           });
-        }, href);
+        }, pathname);
       }
       await page.evaluate((destination) => {
         document.addEventListener(
@@ -255,7 +265,7 @@ for (const delayedPhase of ["tree", "page"] as const) {
           },
           { capture: true, once: true },
         );
-      }, href);
+      }, pathname);
       await link.click({ noWaitAfter: true });
       await page.waitForFunction(
         () => document.documentElement.dataset.pendingSessionSnapshotReady === "true",
@@ -338,33 +348,36 @@ test("unmarked page data retains the fallback instead of reaching the deadline",
       },
     });
   });
-  const { href, link, title } = await prepareSessionLink(page);
+  const { href, link, pathname, title } = await prepareSessionLink(page);
   const destinationRequests: Request[] = [];
   page.on("request", (request) => {
     if (isSessionDetailRscRequest(request)) destinationRequests.push(request);
   });
-  await page.route(`**${href}**`, async (route) => {
-    const request = route.request();
-    const headers = request.headers();
-    if (
-      !isSessionDetailRscRequest(request) ||
-      !headers["next-router-state-tree"] ||
-      headers["next-router-prefetch"] ||
-      headers["next-router-segment-prefetch"]
-    ) {
-      await route.continue();
-      return;
-    }
-    const response = await route.fetch();
-    const responseHeaders = { ...response.headers() };
-    delete responseHeaders["server-timing"];
-    await route.fulfill({ response, headers: responseHeaders });
-  });
+  await page.route(
+    (url) => url.pathname === pathname,
+    async (route) => {
+      const request = route.request();
+      const headers = request.headers();
+      if (
+        !isSessionDetailRscRequest(request) ||
+        !headers["next-router-state-tree"] ||
+        headers["next-router-prefetch"] ||
+        headers["next-router-segment-prefetch"]
+      ) {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      const responseHeaders = { ...response.headers() };
+      delete responseHeaders["server-timing"];
+      await route.fulfill({ response, headers: responseHeaders });
+    },
+  );
   const pageResponse = page.waitForResponse((response) => {
     const request = response.request();
     const headers = request.headers();
     return (
-      new URL(response.url()).pathname === href &&
+      new URL(response.url()).pathname === pathname &&
       isSessionDetailRscRequest(request) &&
       Boolean(headers["next-router-state-tree"]) &&
       !headers["next-router-prefetch"] &&
@@ -407,21 +420,24 @@ test("unmarked page data retains the fallback instead of reaching the deadline",
 });
 
 test("session opening recovers when the intent prefetch fails", async ({ page }) => {
-  const { href, link } = await prepareSessionLink(page);
+  const { href, link, pathname } = await prepareSessionLink(page);
   let failedPrefetch = false;
-  await page.route(`**${href}**`, async (route) => {
-    const request = route.request();
-    if (
-      !failedPrefetch &&
-      isSessionDetailRscRequest(request) &&
-      request.headers()["next-router-segment-prefetch"] === "/_tree"
-    ) {
-      failedPrefetch = true;
-      await route.fulfill({ status: 503, body: "Prefetch unavailable" });
-      return;
-    }
-    await route.continue();
-  });
+  await page.route(
+    (url) => url.pathname === pathname,
+    async (route) => {
+      const request = route.request();
+      if (
+        !failedPrefetch &&
+        isSessionDetailRscRequest(request) &&
+        request.headers()["next-router-segment-prefetch"] === "/_tree"
+      ) {
+        failedPrefetch = true;
+        await route.fulfill({ status: 503, body: "Prefetch unavailable" });
+        return;
+      }
+      await route.continue();
+    },
+  );
   await link.hover();
   await expect.poll(() => failedPrefetch).toBe(true);
   await link.click();

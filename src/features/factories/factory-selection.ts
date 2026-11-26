@@ -16,6 +16,7 @@ export type FactorySelectionOption = {
   id: string;
   canManage?: boolean;
   name: string;
+  slug?: string;
   isDefault: boolean;
   status: "active" | "archived";
 };
