@@ -340,6 +340,7 @@ export function WorkflowEditor({
   const [roles, setRoles] = useState(emptyTemplateRoles);
   const [confirmation, setConfirmation] = useState<DraftConfirmation | null>(null);
   const confirmationOrigin = useRef<HTMLElement | null>(null);
+  const editorTitle = useRef<HTMLHeadingElement>(null);
   const restoredKeptCopy = useRef(false);
   const hadDirtyEdits = useRef(false);
   const [focusRequest, setFocusRequest] = useState<{ fieldId: string } | null>(null);
@@ -756,7 +757,7 @@ export function WorkflowEditor({
         </Link>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 id="workflow-editor-title" tabIndex={-1} className="type-page-title wrap-anywhere">
+            <h1 ref={editorTitle} tabIndex={-1} className="type-page-title wrap-anywhere">
               {initial.displayName}
             </h1>
             {template ? (
@@ -1187,9 +1188,13 @@ export function WorkflowEditor({
           }
           onCloseAutoFocus={(event) => {
             event.preventDefault();
+            if (!editorTitle.current) return;
             const origin = confirmationOrigin.current;
+            confirmationOrigin.current = null;
+            if (document.activeElement !== document.body && document.activeElement !== origin)
+              return;
             if (origin?.isConnected && !origin.matches(":disabled")) origin.focus();
-            else document.getElementById("workflow-editor-title")?.focus();
+            else editorTitle.current.focus();
           }}
         >
           <AlertDialogFooter className="flex-wrap">
