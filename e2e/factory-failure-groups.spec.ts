@@ -6,7 +6,7 @@ import { z } from "zod/v4";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
-import { expectDropdownValue, selectDropdownOption } from "./helpers/select";
+import { expectDropdownValue, openDropdownListbox, selectDropdownOption } from "./helpers/select";
 
 const scorerSeed = z.object({
   runs: z.array(z.object({ runId: z.uuid() })).min(1),
@@ -82,13 +82,9 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, groupsPath, { baseURL: fixture.app, email: fixture.ownerEmail });
     await expect(page.getByRole("heading", { name: "Failure groups", exact: true })).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "reconciliation-tests", exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("link", { name: /^reconciliation-tests · .+ · / })).toBeVisible();
     await expect(main.getByText("Qualified evidence", { exact: true })).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "Reconciliation quality", exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("link", { name: /^Reconciliation quality · .+ · / })).toBeVisible();
     await expect(main.getByText("Missing evidence")).toBeVisible();
     await capture(page, info, "01-failure-groups-desktop");
 
@@ -102,29 +98,34 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await page.keyboard.press("Escape");
     await expect(drawer).toHaveCount(0);
     const symptom = page.getByRole("combobox", { name: "Symptom", exact: true });
-    const revision = page.getByLabel("Factory definition revision", { exact: true });
+    const revision = page.getByRole("combobox", {
+      name: "Factory definition revision",
+      exact: true,
+    });
     await selectDropdownOption(symptom, "validation");
     await symptom.focus();
     await symptom.press("Tab");
     await expect(revision).toBeFocused();
-    await revision.fill(seeded.revisions[1]);
+    const revisions = await openDropdownListbox(revision);
+    await revisions
+      .getByRole("option", { name: /Factory revision · Activation \d+ · .* · Active · / })
+      .click();
+    await expectDropdownValue(revision, seeded.revisions[1]);
     await page.getByRole("button", { name: "Apply filters", exact: true }).press("Enter");
     await expect(page).toHaveURL(new RegExp(`revision=${seeded.revisions[1]}`));
-    await expect(page.getByRole("link", { name: "reconciliation-tests", exact: true })).toHaveCount(
-      0,
-    );
-    await expect(
-      page.getByRole("link", { name: "Reconciliation quality", exact: true }),
-    ).toHaveCount(0);
-    const unavailableGroup = page.getByRole("link", { name: "Validation", exact: true });
+    await expect(page.getByRole("link", { name: /^reconciliation-tests · / })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^Reconciliation quality · / })).toHaveCount(0);
+    const unavailableGroup = page.getByRole("link", { name: /^Validation failure · / });
     const missingGroupPath = z.string().parse(await unavailableGroup.getAttribute("href"));
     await unavailableGroup.focus();
     await expect(unavailableGroup).toBeFocused();
     await capture(page, info, "02-filtered-failure-groups-mobile-keyboard", true);
     await unavailableGroup.press("Enter");
-    await expect(page.getByRole("heading", { name: "Validation", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Validation failure", exact: true }),
+    ).toBeVisible();
     await expect(main.getByText("Evidence unavailable", { exact: false })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Open validation receipt" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^Open validation evidence for / })).toHaveCount(0);
     await capture(page, info, "03-missing-evidence-mobile");
 
     const emptyGroups = new URL(groupsPath, fixture.app);
@@ -140,7 +141,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await capture(page, info, "04-empty-filters-mobile");
     await page.getByRole("link", { name: "Clear filters", exact: true }).click();
     await expectDropdownValue(symptom, "");
-    await expect(revision).toHaveValue("");
+    await expectDropdownValue(revision, "");
     await expectDropdownValue(
       page.getByRole("combobox", { name: "Review state", exact: true }),
       "",
@@ -149,13 +150,13 @@ test("reviews recurring failures and preserves source evidence across filters, s
 
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.getByRole("button", { name: "Switch to light mode" }).click();
-    const scorerGroup = page.getByRole("link", { name: "Reconciliation quality", exact: true });
+    const scorerGroup = page.getByRole("link", { name: /^Reconciliation quality · / });
     const scorerGroupPath = z.string().parse(await scorerGroup.getAttribute("href"));
     const scorerGroupId = z
       .uuid()
       .parse(new URL(scorerGroupPath, fixture.app).pathname.split("/").at(-1));
     await scorerGroup.click();
-    const evaluation = page.getByRole("link", { name: "Open evaluation", exact: true });
+    const evaluation = page.getByRole("link", { name: /^Open evaluation for / });
     await expect(evaluation).toHaveAttribute(
       "href",
       new RegExp(`/runs/${scores.runs[0].runId}\\?evaluationAttempt=`),
@@ -166,19 +167,27 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await expect(page.getByRole("heading", { name: "Adjudication", exact: true })).toBeVisible();
     await page.goto(scorerGroupPath);
 
-    await page.getByRole("button", { name: "Dismiss group", exact: true }).click();
+    const dismiss = page.getByRole("button", { name: "Dismiss group", exact: true });
+    const confirmation = page.getByRole("alertdialog", { name: "Dismiss this failure group?" });
+    await dismiss.click();
+    const cancel = confirmation.getByRole("button", { name: "Cancel", exact: true });
+    await expect(cancel).toBeFocused();
+    await cancel.press("Enter");
+    await expect(main.getByText("Open", { exact: true })).toBeVisible();
+    await dismiss.click();
+    await confirmation.getByRole("button", { name: "Dismiss group", exact: true }).click();
     await expect(main.getByText("Dismissed", { exact: true })).toBeVisible();
     await expect(evaluation).toBeVisible();
     await expect(page.getByRole("button", { name: "Dismiss group" })).toHaveCount(0);
     await capture(page, info, "05-dismissed-group-desktop");
     await page.getByRole("link", { name: "Back to failure groups", exact: true }).click();
 
-    const originalGroup = page.getByRole("link", { name: "reconciliation-tests", exact: true });
+    const originalGroup = page.getByRole("link", { name: /^reconciliation-tests · / });
     const originalGroupPath = z.string().parse(await originalGroup.getAttribute("href"));
     await originalGroup.click();
-    await expect(
-      page.getByRole("link", { name: "Open validation receipt", exact: true }),
-    ).toHaveCount(25);
+    await expect(page.getByRole("link", { name: /^Open validation evidence for / })).toHaveCount(
+      25,
+    );
     await expect(
       page.getByRole("link", { name: "Producing configuration", exact: true }),
     ).toHaveCount(25);
@@ -209,7 +218,9 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await capture(page, info, "06-reviewed-group-desktop");
 
     await main.getByText("Split by run", { exact: true }).press("Enter");
-    const splitRuns = page.getByRole("checkbox", { name: /^Run / });
+    const splitRuns = page.getByRole("checkbox", {
+      name: /^Validation regression .* · Attempt 1$/,
+    });
     await expect(splitRuns).toHaveCount(25);
     const firstRun = z.uuid().parse(await splitRuns.first().getAttribute("value"));
     await splitRuns.first().press("Space");
@@ -217,6 +228,9 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await page.getByRole("link", { name: "More runs", exact: true }).click();
     await expect(splitRuns).toHaveCount(1);
     await expect(main.getByText("1 run selected", { exact: true })).toBeVisible();
+    await expect(main.getByRole("list", { name: "Selected runs across pages" })).toContainText(
+      "Validation regression",
+    );
     const secondRun = z.uuid().parse(await splitRuns.first().getAttribute("value"));
     expect(secondRun).not.toBe(firstRun);
     await splitRuns.first().press("Space");
@@ -242,9 +256,9 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await expect(
       page.getByRole("link", { name: "Remaining runs group", exact: true }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "Open validation receipt", exact: true }),
-    ).toHaveCount(25);
+    await expect(page.getByRole("link", { name: /^Open validation evidence for / })).toHaveCount(
+      25,
+    );
     await capture(page, info, "07-original-group-after-split");
 
     const selectedGroupPath = z
@@ -258,23 +272,38 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await expect(
       page.getByRole("heading", { name: "reconciliation-tests · Selected runs", exact: true }),
     ).toBeVisible();
+    await expect(page.getByRole("link", { name: /^Open validation evidence for / })).toHaveCount(2);
     await expect(
-      page.getByRole("link", { name: "Open validation receipt", exact: true }),
-    ).toHaveCount(2);
-    for (const run of [firstRun, secondRun]) {
-      await expect(
-        page.getByRole("link", { name: `Run ${run.slice(0, 8)}`, exact: true }),
-      ).toHaveAttribute("href", new RegExp(`/runs/${run}$`));
-    }
-    const receiptHref = z.string().parse(
-      await page
-        .getByRole("listitem")
-        .filter({
-          has: page.getByRole("link", { name: `Run ${firstRun.slice(0, 8)}`, exact: true }),
-        })
-        .getByRole("link", { name: "Open validation receipt", exact: true })
-        .getAttribute("href"),
+      page.getByRole("link", { name: "View original group’s proposals" }),
+    ).toHaveAttribute(
+      "href",
+      new RegExp(
+        `cohort=${new URL(originalGroupPath, fixture.app).pathname.split("/").at(-1)}(?:&|$)`,
+      ),
     );
+    for (const run of [firstRun, secondRun]) {
+      await expect(main.locator(`a[href$="/runs/${run}?attempt=1"]`)).toHaveText(
+        /Validation regression .* · Attempt 1/,
+      );
+    }
+    await capture(page, info, "08-selected-split-group");
+    await main
+      .getByRole("listitem")
+      .filter({ has: main.locator(`a[href$="/runs/${firstRun}?attempt=1"]`) })
+      .getByRole("link", { name: /^Open validation evidence for / })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Validation evidence", exact: true }),
+    ).toBeVisible();
+    await expect(main.getByText("reconciliation-tests", { exact: true })).toBeVisible();
+    await expect(main.getByText("Failed", { exact: true })).toBeVisible();
+    const receiptHref = z
+      .string()
+      .parse(
+        await main
+          .getByRole("link", { name: "View technical receipt (JSON)" })
+          .getAttribute("href"),
+      );
     const receipt = await page.request.get(receiptHref);
     expect(receipt.ok()).toBe(true);
     expect(await receipt.json()).toMatchObject({
@@ -282,7 +311,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
         { run_id: firstRun, records: [{ key: "reconciliation-tests", status: "failed" }] },
       ],
     });
-    await capture(page, info, "08-selected-split-group");
+    await capture(page, info, "08a-exact-validation-evidence");
 
     const reader = await browser.newPage({ viewport: { width: 390, height: 844 } });
     try {
@@ -300,9 +329,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
       await expect(reader.getByRole("button", { name: "Save label", exact: true })).toHaveCount(0);
       await reader.goto(scorerGroupPath);
       await expect(readerMain.getByText("Dismissed", { exact: true })).toBeVisible();
-      await expect(
-        reader.getByRole("link", { name: "Open evaluation", exact: true }),
-      ).toBeVisible();
+      await expect(reader.getByRole("link", { name: /^Open evaluation for / })).toBeVisible();
       await expect(reader.getByRole("button", { name: "Save label", exact: true })).toHaveCount(0);
       const denied = await reader.request.post(
         `/api/workspaces/${fixture.workspaceId}/factories/${fixture.factoryId}/failure-groups/${scorerGroupId}/review`,

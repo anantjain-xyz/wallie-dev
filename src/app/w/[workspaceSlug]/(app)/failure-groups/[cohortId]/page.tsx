@@ -1,24 +1,39 @@
+import Form from "next/form";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
+import { failureValidationPath } from "@/features/factory-failures/failure-evidence-path";
 import { FailureGroupReview } from "@/features/factory-failures/failure-group-review";
 import { loadFailureGroupScope } from "@/features/factory-failures/failure-group-scope";
 import {
   FailureGroupCounts,
   FailureGroupLimits,
   FailureGroupStatus,
+  failureGroupSymptom,
+  failureGroupTask,
   failureGroupTitle,
 } from "@/features/factory-failures/failure-group-summary";
+import {
+  failureEvidenceLabels,
+  failureMemberLabel,
+  failureMemberObservation,
+} from "@/features/factory-failures/failure-member-labels";
 import { runAttemptHref } from "@/features/factory-scorers/run-evaluation-governance";
-import { browserEvidencePath } from "@/features/wallie/browser-evidence-contracts";
 import {
   failureCohortIdSchema,
+  parseFailureCohortEvidenceQuery,
   parseFailureCohortQuery,
   type FailureCohortMember,
+  type FailureRevisionOption,
 } from "@/lib/factory-failures/cohort-contracts";
-import { getFailureCohort } from "@/lib/factory-failures/cohorts";
+import {
+  getFailureCohort,
+  loadFailureActivation,
+  loadFailureAgentNames,
+  loadFailureRevisionOptions,
+} from "@/lib/factory-failures/cohorts";
 import {
   workspaceAgentDetailPath,
   workspaceFailureGroupPath,
@@ -27,30 +42,22 @@ import {
   workspaceRunDetailPath,
   workspaceScorersPath,
 } from "@/lib/routes";
-import { titleFromSlug } from "@/lib/utils";
-
-const evidenceLabels = {
-  available: "Evidence available",
-  withheld: "Evidence withheld",
-  unavailable: "Evidence unavailable",
-};
-const observedAt = new Intl.DateTimeFormat("en", {
-  dateStyle: "medium",
-  timeStyle: "short",
-  timeZone: "UTC",
-});
 
 function FailureMember({
   member,
   workspaceSlug,
   factoryId,
+  validationHref,
+  definition,
 }: {
   member: FailureCohortMember;
   workspaceSlug: string;
   factoryId: string;
+  validationHref: string;
+  definition?: FailureRevisionOption;
 }) {
   const { source, configuration } = member;
-  const run = workspaceRunDetailPath(workspaceSlug, member.run_id);
+  const label = failureMemberLabel(member);
   const configurationPath = workspaceRunDetailPath(workspaceSlug, member.run_id, {
     attempt: member.run_attempt_count,
   });
@@ -63,36 +70,45 @@ function FailureMember({
           source.evaluation_job_id,
         )
       : null;
-  const validation =
-    source.kind === "validation" && source.evidence_state === "available"
-      ? browserEvidencePath(member.session_id, { runId: source.validation_run_id })
-      : null;
   return (
     <li className="min-w-0 space-y-2 p-4 sm:p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <Link className="font-semibold underline-offset-4 hover:underline" href={run}>
-          Run {member.run_id.slice(0, 8)}
+        <Link
+          className="font-semibold underline-offset-4 [overflow-wrap:anywhere] hover:underline"
+          href={configurationPath}
+        >
+          {label}
         </Link>
         <time className="type-annotation text-muted" dateTime={member.observed_at}>
-          {observedAt.format(new Date(member.observed_at))} UTC
+          {failureMemberObservation(member)}
         </time>
       </div>
       <p className="type-secondary break-words text-muted">
-        Attempt {member.run_attempt_count} · {configuration.model_provider} /{" "}
-        {configuration.model_name} · {evidenceLabels[source.evidence_state]}
+        {configuration.model_provider} / {configuration.model_name} ·{" "}
+        {failureEvidenceLabels[source.evidence_state]}
         {source.kind === "validation" && source.validation_record_key
           ? ` · ${source.validation_record_key}`
           : null}
       </p>
       <div className="flex flex-wrap gap-2">
         {evaluation ? (
-          <Link className="ui-button" href={evaluation} prefetch={false}>
+          <Link
+            className="ui-button"
+            href={evaluation}
+            prefetch={false}
+            aria-label={`Open evaluation for ${label}`}
+          >
             Open evaluation
           </Link>
         ) : null}
-        {validation ? (
-          <Link className="ui-button" href={validation} prefetch={false}>
-            Open validation receipt
+        {source.kind === "validation" && source.evidence_state === "available" ? (
+          <Link
+            className="ui-button"
+            href={validationHref}
+            prefetch={false}
+            aria-label={`Open validation evidence for ${label}`}
+          >
+            Open validation evidence
           </Link>
         ) : null}
         <Link
@@ -127,13 +143,14 @@ function FailureMember({
       </div>
       {configuration.definition_revision_id ? (
         <Link
-          className="type-annotation inline-block break-all text-muted underline underline-offset-4"
+          className="type-annotation inline-block text-muted underline underline-offset-4 [overflow-wrap:anywhere]"
           href={workspaceFailureGroupsPath(workspaceSlug, {
             factory: factoryId,
             revision: configuration.definition_revision_id,
           })}
         >
-          Filter groups by revision {configuration.definition_revision_id.slice(0, 8)}
+          Show groups from {definition?.label.toLowerCase() ?? "unavailable revision"}
+          {definition ? ` · ${definition.detail}` : ""}
         </Link>
       ) : null}
     </li>
@@ -151,17 +168,23 @@ export default async function FailureGroupPage({
   const id = failureCohortIdSchema.safeParse(cohortId);
   if (!id.success) notFound();
   const query = parseFailureCohortQuery(search);
+  const evidenceQuery = parseFailureCohortEvidenceQuery(search);
   const scope = await loadFailureGroupScope(workspaceSlug, search.factory);
   if (!scope) return <FactoryUnavailable title="Failure group" workspaceSlug={workspaceSlug} />;
-  const data = query.success
-    ? await getFailureCohort(scope.supabase, scope, id.data, query.data)
-    : null;
+  const data =
+    query.success && evidenceQuery.success
+      ? await getFailureCohort(scope.supabase, scope, id.data, {
+          ...query.data,
+          ...evidenceQuery.data,
+        })
+      : null;
   const factoryQuery = { factory: scope.factoryId };
   const filters = query.success
     ? {
         symptom: query.data.symptom,
         revision: query.data.revision,
         disposition: query.data.disposition,
+        order: query.data.order,
       }
     : {};
   const list = workspaceFailureGroupsPath(workspaceSlug, { ...factoryQuery, ...filters });
@@ -170,14 +193,28 @@ export default async function FailureGroupPage({
       Back to failure groups
     </Link>
   );
-  if (!data || !query.success) {
+  if (!data || !query.success || !evidenceQuery.success) {
     return (
       <PageContainer>
         <PageHeader title="Failure group unavailable" eyebrow={back} eyebrowAsPlain />
-        {query.success && query.data.revision ? (
+        {!evidenceQuery.success || !query.success ? (
           <Link
             className="ui-button"
-            href={workspaceFailureGroupPath(workspaceSlug, id.data, factoryQuery)}
+            href={workspaceFailureGroupPath(workspaceSlug, id.data, {
+              ...factoryQuery,
+              ...filters,
+            })}
+          >
+            Reset group filters
+          </Link>
+        ) : query.data.revision ? (
+          <Link
+            className="ui-button"
+            href={workspaceFailureGroupPath(workspaceSlug, id.data, {
+              ...factoryQuery,
+              ...filters,
+              revision: undefined,
+            })}
           >
             Clear revision filter
           </Link>
@@ -188,7 +225,8 @@ export default async function FailureGroupPage({
 
   const { cohort, members, membership_digest: digest } = data;
   const { after, revision } = query.data;
-  const pageQuery = { ...factoryQuery, ...filters };
+  const pageQuery = { ...factoryQuery, ...filters, ...evidenceQuery.data };
+  const evidenceFiltered = Boolean(evidenceQuery.data.runSearch || evidenceQuery.data.observedOn);
   const firstPage = after ? workspaceFailureGroupPath(workspaceSlug, id.data, pageQuery) : null;
   const nextPage = data.next_member_id
     ? workspaceFailureGroupPath(workspaceSlug, id.data, {
@@ -196,12 +234,13 @@ export default async function FailureGroupPage({
         after: data.next_member_id,
       })
     : null;
-  const uniqueRuns = new Map<string, { id: string; label: string }>();
+  const uniqueRuns = new Map<string, { id: string; label: string; detail: string }>();
   for (const member of members) {
     if (!uniqueRuns.has(member.run_id)) {
       uniqueRuns.set(member.run_id, {
         id: member.run_id,
-        label: `Run ${member.run_id.slice(0, 8)} · ${observedAt.format(new Date(member.observed_at))} UTC`,
+        label: failureMemberLabel(member),
+        detail: `${failureMemberObservation(member)} · ${failureEvidenceLabels[member.source.evidence_state]}`,
       });
     }
   }
@@ -209,6 +248,28 @@ export default async function FailureGroupPage({
     digest && !revision && cohort.failure_count > 1
       ? { digest, runs: [...uniqueRuns.values()], firstPage, nextPage }
       : null;
+  const [agentNames, active] = await Promise.all([
+    loadFailureAgentNames(scope.supabase, scope, [cohort.agent_id]),
+    loadFailureActivation(scope.supabase, scope),
+  ]);
+  const revisionOptions = await loadFailureRevisionOptions(
+    scope.supabase,
+    scope,
+    members
+      .map(({ configuration }) => configuration.definition_revision_id)
+      .filter((id): id is string => id !== null),
+    active,
+  );
+  const lineageQuery = { ...factoryQuery, ...filters, revision: undefined };
+  const readOnly = cohort.partition
+    ? "This split snapshot is read-only. The original group retains the full history."
+    : cohort.review.disposition === "dismissed"
+      ? "Review is closed. Run evidence is still available below."
+      : cohort.review.disposition === "split"
+        ? "Review is closed. The original group retains all run evidence; the split groups show snapshots."
+        : scope.factory.status === "archived"
+          ? "This factory is archived. Evidence is read-only."
+          : "Only factory managers can review this group.";
   return (
     <PageContainer>
       <PageHeader
@@ -221,51 +282,65 @@ export default async function FailureGroupPage({
         <section aria-label="Failure group summary" className="ui-sheet space-y-3 p-4 sm:p-5">
           <FailureGroupStatus cohort={cohort} />
           <p className="type-secondary break-words text-muted">
-            {cohort.task_class_slug ? titleFromSlug(cohort.task_class_slug) : "Unclassified task"} ·{" "}
-            {cohort.symptom_label ??
-              (cohort.symptom_kind === "scorer" ? "Scorer failure" : "Validation failure")}
+            Grouped by {failureGroupTask(cohort)} ·{" "}
+            {agentNames.get(cohort.agent_id) ?? "Agent unavailable"} · {failureGroupSymptom(cohort)}
           </p>
+          {cohort.qualification === "qualified" ? (
+            <p className="type-secondary text-muted">
+              Enough comparable evidence to investigate; not a confirmed cause.
+            </p>
+          ) : null}
           <FailureGroupLimits cohort={cohort} />
           <FailureGroupCounts cohort={cohort} />
-          <Link
-            className="ui-button"
-            href={workspaceImprovementsPath(workspaceSlug, {
-              factory: scope.factoryId,
-              cohort: cohort.id,
-            })}
-            prefetch={false}
-          >
-            View improvements
-          </Link>
-          {revision ? (
+          {!cohort.review.can_review ? (
+            <p className="type-secondary text-muted">{readOnly}</p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
             <Link
               className="ui-button"
-              href={workspaceFailureGroupPath(workspaceSlug, id.data, factoryQuery)}
+              href={workspaceImprovementsPath(workspaceSlug, {
+                factory: scope.factoryId,
+                cohort: cohort.parent_cohort_id ?? cohort.id,
+              })}
+              prefetch={false}
             >
-              View all revisions
+              {cohort.parent_cohort_id
+                ? "View original group’s proposals"
+                : "View proposals for this group"}
             </Link>
-          ) : null}
-          {cohort.parent_cohort_id ? (
-            <Link
-              className="ui-button"
-              href={workspaceFailureGroupPath(workspaceSlug, cohort.parent_cohort_id, factoryQuery)}
-            >
-              Original group
-            </Link>
-          ) : null}
-          {cohort.split_cohort_ids.length ? (
+            {revision ? (
+              <Link
+                className="ui-button"
+                href={workspaceFailureGroupPath(workspaceSlug, id.data, {
+                  ...pageQuery,
+                  revision: undefined,
+                })}
+              >
+                View all revisions
+              </Link>
+            ) : null}
+            {cohort.parent_cohort_id ? (
+              <Link
+                className="ui-button"
+                href={workspaceFailureGroupPath(
+                  workspaceSlug,
+                  cohort.parent_cohort_id,
+                  lineageQuery,
+                )}
+              >
+                Original group
+              </Link>
+            ) : null}
+          </div>
+          {data.split_groups.length ? (
             <nav aria-label="Split groups" className="flex flex-wrap gap-2">
-              {cohort.split_cohort_ids.map((childId, index) => (
+              {data.split_groups.map(({ id: childId, side }) => (
                 <Link
                   className="ui-button"
                   key={childId}
-                  href={workspaceFailureGroupPath(workspaceSlug, childId, factoryQuery)}
+                  href={workspaceFailureGroupPath(workspaceSlug, childId, lineageQuery)}
                 >
-                  {cohort.split_cohort_ids.length === 1
-                    ? "Open split group"
-                    : index === 0
-                      ? "Selected runs group"
-                      : "Remaining runs group"}
+                  {side === "selected" ? "Selected runs group" : "Remaining runs group"}
                 </Link>
               ))}
             </nav>
@@ -273,6 +348,55 @@ export default async function FailureGroupPage({
         </section>
         <PageSection title="Run evidence">
           <div className="ui-sheet">
+            {cohort.failure_count > 1 || evidenceFiltered ? (
+              <Form
+                action={workspaceFailureGroupPath(workspaceSlug, id.data)}
+                prefetch={false}
+                scroll={false}
+                className="flex flex-wrap items-end gap-3 border-b border-border p-4 sm:p-5"
+              >
+                {Object.entries({ ...factoryQuery, ...filters }).map(([name, value]) =>
+                  value ? <input key={name} type="hidden" name={name} value={value} /> : null,
+                )}
+                <label className="type-label grid min-w-0 flex-1 basis-52 gap-1.5">
+                  Search by session or stage
+                  <input
+                    key={evidenceQuery.data.runSearch ?? ""}
+                    className="ui-input w-full"
+                    name="runSearch"
+                    type="search"
+                    maxLength={120}
+                    autoComplete="off"
+                    defaultValue={evidenceQuery.data.runSearch}
+                  />
+                </label>
+                <label className="type-label grid min-w-0 gap-1.5">
+                  Observed date (UTC)
+                  <input
+                    key={evidenceQuery.data.observedOn ?? ""}
+                    className="ui-input w-full"
+                    name="observedOn"
+                    type="date"
+                    defaultValue={evidenceQuery.data.observedOn}
+                  />
+                </label>
+                <button className="ui-button" type="submit">
+                  Filter runs
+                </button>
+                {evidenceFiltered ? (
+                  <Link
+                    className="ui-button"
+                    href={workspaceFailureGroupPath(workspaceSlug, id.data, {
+                      ...factoryQuery,
+                      ...filters,
+                    })}
+                    scroll={false}
+                  >
+                    Clear run filters
+                  </Link>
+                ) : null}
+              </Form>
+            ) : null}
             {members.length ? (
               <ul className="divide-y divide-border">
                 {members.map((member) => (
@@ -281,12 +405,21 @@ export default async function FailureGroupPage({
                     key={member.id}
                     workspaceSlug={workspaceSlug}
                     factoryId={scope.factoryId}
+                    validationHref={failureValidationPath(workspaceSlug, cohort.id, member.id, {
+                      ...pageQuery,
+                      after,
+                    })}
+                    definition={revisionOptions.get(
+                      member.configuration.definition_revision_id ?? "",
+                    )}
                   />
                 ))}
               </ul>
             ) : (
               <p className="type-secondary px-4 py-6 text-muted">
-                There are no more members on this page.
+                {after
+                  ? "There are no more members on this page."
+                  : "No run evidence matches these filters."}
               </p>
             )}
             {firstPage || nextPage ? (
@@ -310,11 +443,15 @@ export default async function FailureGroupPage({
         </PageSection>
         {cohort.review.can_review ? (
           <PageSection title="Review group">
+            {revision ? (
+              <p className="type-secondary mb-3 text-muted">
+                View all revisions to split the group by run.
+              </p>
+            ) : null}
             <FailureGroupReview
               endpoint={`/api/workspaces/${scope.workspaceId}/factories/${scope.factoryId}/failure-groups/${cohort.id}/review`}
               revision={cohort.review.revision}
               label={cohort.review.label}
-              dismissed={cohort.review.disposition === "dismissed"}
               split={split}
             />
           </PageSection>
