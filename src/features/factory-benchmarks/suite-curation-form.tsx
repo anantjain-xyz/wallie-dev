@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField } from "@/components/ui/select";
@@ -46,7 +46,7 @@ export function SuiteCurationForm({
   workspaceId,
   workspaceSlug,
   factoryId,
-  taskChoices,
+  taskChoices: initialTaskChoices,
   draft,
   cancelHref,
   onDraftStatusChange,
@@ -76,7 +76,8 @@ export function SuiteCurationForm({
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [conflict, setConflict] = useState(false);
   const [previewStale, setPreviewStale] = useState(false);
-  const [refreshing, refreshPreview] = useTransition();
+  const [refreshedChoices, setRefreshedChoices] = useState<BenchmarkTaskChoice[] | null>(null);
+  const taskChoices = refreshedChoices ?? initialTaskChoices;
   const [picks, setPicks] = useState(
     () => new Map(draft?.members.map((task) => [task.task_id, task])),
   );
@@ -138,17 +139,15 @@ export function SuiteCurationForm({
   const reloadHref = draft
     ? `${workspaceBenchmarkSuitePath(workspaceSlug, draft.suiteId, { ...factory, edit: "suite" })}#edit-suite`
     : `${workspaceBenchmarksPath(workspaceSlug, { ...factory, newSuite: "1" })}#new-suite`;
+  const suitesUrl = `/api/workspaces/${workspaceId}/factories/${factoryId}/benchmarks/suites`;
 
   const action = useApiAction<unknown, [SaveBenchmarkSuite]>({
     async call(command) {
-      const response = await fetch(
-        `/api/workspaces/${workspaceId}/factories/${factoryId}/benchmarks/suites`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(command),
-        },
-      );
+      const response = await fetch(suitesUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(command),
+      });
       if (response.status === 409) setConflict(true);
       if (response.status === 412 || response.status === 428) setPreviewStale(true);
       return response;
@@ -164,6 +163,28 @@ export function SuiteCurationForm({
       router.replace(
         `${workspaceBenchmarkSuitePath(workspaceSlug, result.suiteId, { ...factory, revision: result.revisionId })}#suite-membership`,
       );
+    },
+  });
+
+  const preview = useApiAction<{ taskChoices: BenchmarkTaskChoice[] }>({
+    async call() {
+      const url = draft
+        ? `${suitesUrl}?${new URLSearchParams({ suiteId: draft.suiteId, expectedRevisionId: draft.revisionId })}`
+        : suitesUrl;
+      const response = await fetch(url);
+      if (response.status === 409) setConflict(true);
+      return response;
+    },
+    errorText: "Could not refresh the benchmark task preview.",
+    setFlashMessage: setMessage,
+    onError() {
+      feedback.current?.focus();
+    },
+    onSuccess({ taskChoices }) {
+      setRefreshedChoices(taskChoices);
+      setAllowEmpty(false);
+      setPreviewStale(false);
+      setMessage(null);
     },
   });
 
@@ -203,7 +224,8 @@ export function SuiteCurationForm({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (conflict || previewStale || refreshing || saved.current || (empty && !allowEmpty)) return;
+    if (conflict || previewStale || preview.isBusy || saved.current || (empty && !allowEmpty))
+      return;
     if (!name.trim()) {
       setInvalid("name");
       nameField.current?.focus();
@@ -253,9 +275,9 @@ export function SuiteCurationForm({
       noValidate
     >
       <fieldset
-        aria-busy={action.isBusy || refreshing}
+        aria-busy={action.isBusy || preview.isBusy}
         className="min-w-0 space-y-5"
-        disabled={action.isBusy || refreshing}
+        disabled={action.isBusy || preview.isBusy}
       >
         <legend className="sr-only">Suite details</legend>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -523,21 +545,10 @@ export function SuiteCurationForm({
             />
           </button>
           {previewStale && !conflict ? (
-            <button
-              className="ui-button"
-              type="button"
-              onClick={() =>
-                refreshPreview(() => {
-                  router.refresh();
-                  setPreviewStale(false);
-                  setAllowEmpty(false);
-                  setMessage(null);
-                })
-              }
-            >
+            <button className="ui-button" type="button" onClick={() => void preview.run()}>
               <ActionButtonLabel
                 idle="Refresh preview"
-                pending={refreshing}
+                pending={preview.isBusy}
                 pendingLabel="Refreshing…"
               />
             </button>
