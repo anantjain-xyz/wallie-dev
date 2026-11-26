@@ -167,7 +167,16 @@ it("keeps disabled mappings inspectable, caches verified names and resets resour
   expect(await screen.findByText("Platform team")).toBeVisible();
   expect(picker).toHaveAttribute("data-value", team.id);
   const direction = screen.getByRole("combobox", { name: "Direction" });
-  await user.selectOptions(direction, "ingress");
+  await user.click(direction);
+  await user.click(
+    within(screen.getByRole("listbox", { name: "Direction" })).getByRole("option", {
+      name: "Ingress",
+    }),
+  );
+  expect(request).toHaveBeenCalledWith(
+    `${endpoint}/${team.id}/deliveries?lane=ingress`,
+    expect.anything(),
+  );
   picker.focus();
   await user.keyboard("{Enter}");
   const options = within(screen.getByRole("listbox", { name: "Provider resource" }));
@@ -175,14 +184,14 @@ it("keeps disabled mappings inspectable, caches verified names and resets resour
   await user.keyboard("{ArrowDown}{Escape}");
   expect(picker).toHaveFocus();
   expect(picker).toHaveAttribute("data-value", team.id);
-  expect(direction).toHaveValue("ingress");
+  expect(direction).toHaveTextContent(/^Ingress$/);
 
   await user.keyboard("{Enter}{ArrowDown}{Enter}");
   expect(picker).toHaveFocus();
   expect(picker).toHaveAttribute("data-value", archivedTeam.id);
   expect(picker).toHaveTextContent("Archived team (disabled)");
   expect(screen.getByText(/Mapping disabled/)).toBeVisible();
-  expect(screen.getByRole("combobox", { name: "Direction" })).toHaveValue("all");
+  expect(screen.getByRole("combobox", { name: "Direction" })).toHaveTextContent(/^All deliveries$/);
   expect(request).toHaveBeenCalledWith(
     `${endpoint}/${archivedTeam.id}/deliveries?lane=all`,
     expect.anything(),
