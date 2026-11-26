@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { TimeDisplay } from "@/components/shared/time-display";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
@@ -11,9 +12,14 @@ import {
   factoryInboxSchema,
   type FactoryInbox,
   type FactoryInboxItem,
+  type FactoryInboxKind,
 } from "@/lib/factories/inbox-schema";
-import { workspaceInboxPath } from "@/lib/routes";
-import { exactSessionReviewHref } from "@/lib/sessions/review-link";
+import {
+  workspaceInboxPath,
+  workspaceSessionDetailPath,
+  workspaceSessionsPath,
+} from "@/lib/routes";
+import { sessionReviewQuery } from "@/lib/sessions/review-link";
 import {
   loadSupabaseBrowserClient,
   subscribeDeferredAuthenticatedChannel,
@@ -21,6 +27,11 @@ import {
 import { useSupabasePublicConfig } from "@/lib/supabase/public-config-provider";
 
 const ACCESS_RECHECK_MS = 30_000;
+const INBOX_VIEWS = [
+  { label: "All items", kind: undefined },
+  { label: "Reviews", kind: "review" },
+  { label: "Clarifications", kind: "clarification" },
+] as const;
 
 type InboxView =
   | { inbox: FactoryInbox; kind: "ready" }
@@ -58,6 +69,7 @@ export function FactoryInboxPage({
   factorySelector,
   initialInbox,
   initialNow,
+  kind,
   memberId,
   workspaceId,
   workspaceSlug,
@@ -67,6 +79,7 @@ export function FactoryInboxPage({
   factorySelector?: ReactNode;
   initialInbox: FactoryInbox | null;
   initialNow: string;
+  kind?: FactoryInboxKind;
   memberId: string;
   workspaceId: string;
   workspaceSlug: string;
@@ -76,7 +89,11 @@ export function FactoryInboxPage({
   const [view, setView] = useState<InboxView>(() =>
     initialInbox ? { inbox: initialInbox, kind: "ready" } : { kind: "unavailable" },
   );
+  const [manualRefresh, setManualRefresh] = useState<"idle" | "pending" | "success">("idle");
+  const manualRequest = useRef<symbol | null>(null);
   const inbox = view.kind === "ready" ? view.inbox : null;
+  const scope = { factory: factoryId ?? undefined, kind };
+  const returnTo = workspaceInboxPath(workspaceSlug, { ...scope, cursor: cursor ?? undefined });
 
   useEffect(() => {
     let active = true;
@@ -84,6 +101,7 @@ export function FactoryInboxPage({
     let lastVerifiedAt = Date.parse(initialNow);
     const query = new URLSearchParams({ workspaceId });
     if (factoryId) query.set("factoryId", factoryId);
+    if (kind) query.set("kind", kind);
     if (cursor) query.set("cursor", cursor);
 
     const key = `factory-inbox:${workspaceId}:${factoryId ?? "all"}`;
@@ -95,10 +113,19 @@ export function FactoryInboxPage({
       async refresh(signal) {
         const request = ++requestSequence;
         const isCurrent = () => active && request === requestSequence;
+        const manual = manualRequest.current;
+        const settleManual = (success: boolean) => {
+          if (!isCurrent() || !manual || manualRequest.current !== manual) return;
+          manualRequest.current = null;
+          setManualRefresh(success ? "success" : "idle");
+        };
         const hideIfCurrent = (kind: HiddenInboxKind) => {
           if (isCurrent()) setView({ kind });
         };
-        const clearIfCurrent = () => hideIfCurrent(isOnline() ? "checking" : "offline");
+        const clearIfCurrent = () => {
+          hideIfCurrent(isOnline() ? "checking" : "offline");
+          settleManual(false);
+        };
         signal.addEventListener("abort", clearIfCurrent, { once: true });
         // Hidden views move to checking while a read runs; fresh rows stay
         // visible so a revalidation never flashes the list empty.
@@ -117,6 +144,7 @@ export function FactoryInboxPage({
           if (isCurrent() && !signal.aborted) {
             lastVerifiedAt = Date.now();
             setView({ inbox: verified, kind: "ready" });
+            settleManual(true);
           }
         } catch (error) {
           if (isCurrent()) {
@@ -132,6 +160,7 @@ export function FactoryInboxPage({
           }
           throw error;
         } finally {
+          settleManual(false);
           signal.removeEventListener("abort", clearIfCurrent);
         }
       },
@@ -188,6 +217,8 @@ export function FactoryInboxPage({
       setView((current) => (current.kind === kind ? current : { kind }));
     }
     function hideOffline() {
+      manualRequest.current = null;
+      setManualRefresh("idle");
       hideSnapshot("offline");
     }
     const interval = window.setInterval(recheck, ACCESS_RECHECK_MS);
@@ -204,44 +235,117 @@ export function FactoryInboxPage({
       window.removeEventListener("offline", hideOffline);
       document.removeEventListener("visibilitychange", recheck);
     };
-  }, [config, cursor, factoryId, initialNow, memberId, recovery, workspaceId]);
+  }, [config, cursor, factoryId, initialNow, kind, memberId, recovery, workspaceId]);
 
+  const pending = manualRefresh === "pending";
+  const unavailableFactory = view.kind === "unavailable" && factoryId !== null;
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         actions={
           <>
-            {factorySelector}
-            <button className="ui-button" onClick={() => recovery.retry()} type="button">
-              Refresh
+            {factoryId === null || inbox ? factorySelector : null}
+            <button
+              aria-busy={pending}
+              className="ui-button"
+              disabled={pending || view.kind === "offline"}
+              onClick={() => {
+                if (manualRequest.current || !isOnline()) return;
+                manualRequest.current = Symbol();
+                setManualRefresh("pending");
+                recovery.retry();
+                recovery.invalidate();
+              }}
+              type="button"
+            >
+              <ActionButtonLabel idle="Refresh" pending={pending} pendingLabel="Refreshing…" />
             </button>
           </>
         }
         actionsRightOnDesktop
         title="Inbox"
       />
+      <p role="status" className="sr-only">
+        {pending
+          ? "Refreshing Inbox…"
+          : manualRefresh === "success" && inbox
+            ? "Inbox is up to date."
+            : ""}
+      </p>
       <section aria-labelledby="inbox-pending" className="ui-sheet">
         <div className="border-b border-border px-4 py-4 sm:px-5">
           <h2 className="text-sm font-semibold text-foreground" id="inbox-pending">
             Needs your attention
           </h2>
           {inbox ? (
-            <p aria-live="polite" className="mt-1 text-xs text-muted">
-              {inbox.counts.review.toLocaleString("en-US")} awaiting review
-              {" · "}
-              {inbox.counts.clarification.toLocaleString("en-US")}{" "}
-              {inbox.counts.clarification === 1 ? "clarification" : "clarifications"}
-            </p>
+            <nav aria-label="Inbox item type" className="mt-3 flex flex-wrap gap-2">
+              {INBOX_VIEWS.map(({ label, kind: option }) => {
+                const count = option
+                  ? inbox.counts[option]
+                  : inbox.counts.review + inbox.counts.clarification;
+                return (
+                  <Link
+                    aria-current={kind === option ? "page" : undefined}
+                    className="ui-button min-h-11 gap-2 aria-[current=page]:border-border-strong aria-[current=page]:bg-control-muted aria-[current=page]:font-semibold sm:min-h-9"
+                    href={workspaceInboxPath(workspaceSlug, { ...scope, kind: option })}
+                    key={label}
+                    prefetch={false}
+                    scroll={false}
+                  >
+                    {label}{" "}
+                    <span className="text-xs tabular-nums text-muted">
+                      {count.toLocaleString("en-US")}
+                    </span>
+                  </Link>
+                );
+              })}
+            </nav>
           ) : null}
         </div>
-        {view.kind !== "ready" ? (
+        {unavailableFactory ? (
+          <InboxScopeRecovery
+            kind={kind}
+            message="Factory unavailable."
+            workspaceSlug={workspaceSlug}
+          />
+        ) : view.kind !== "ready" ? (
           <p role="status" className="px-4 py-8 text-sm text-muted sm:px-5">
             {HIDDEN_INBOX_MESSAGES[view.kind]}
           </p>
         ) : view.inbox.items.length === 0 ? (
-          <p className="px-4 py-8 text-sm text-muted sm:px-5">
-            {cursor ? "No items on this page." : "You’re all caught up."}
-          </p>
+          factoryId ? (
+            <InboxScopeRecovery
+              kind={kind}
+              message={
+                cursor
+                  ? "No items on this page."
+                  : kind === "review"
+                    ? "No pending reviews in this factory."
+                    : kind === "clarification"
+                      ? "No pending clarifications in this factory."
+                      : "No pending reviews or clarifications in this factory."
+              }
+              workspaceSlug={workspaceSlug}
+            />
+          ) : cursor ? (
+            <p className="px-4 py-8 text-sm text-muted sm:px-5">No items on this page.</p>
+          ) : (
+            <div className="px-4 py-8 text-sm sm:px-5">
+              <p className="font-semibold text-foreground">
+                {kind === "review"
+                  ? "No pending reviews."
+                  : kind === "clarification"
+                    ? "No pending clarifications."
+                    : "You’re all caught up."}
+              </p>
+              <p className="mt-1 text-muted">
+                Reviews and clarification requests appear here when a session needs your attention.
+              </p>
+              <Link className="ui-button mt-4" href={workspaceSessionsPath(workspaceSlug)}>
+                View sessions
+              </Link>
+            </div>
+          )
         ) : (
           <ul className="divide-y divide-border">
             {view.inbox.items.map((item) => (
@@ -249,6 +353,7 @@ export function FactoryInboxPage({
                 initialNow={initialNow}
                 item={item}
                 key={item.sessionId}
+                returnTo={returnTo}
                 workspaceSlug={workspaceSlug}
               />
             ))}
@@ -262,7 +367,7 @@ export function FactoryInboxPage({
             {cursor ? (
               <Link
                 className="ui-button"
-                href={workspaceInboxPath(workspaceSlug, { factory: factoryId ?? undefined })}
+                href={workspaceInboxPath(workspaceSlug, scope)}
                 prefetch={false}
               >
                 Back to newest
@@ -272,8 +377,8 @@ export function FactoryInboxPage({
               <Link
                 className="ui-button"
                 href={workspaceInboxPath(workspaceSlug, {
+                  ...scope,
                   cursor: inbox.nextCursor,
-                  factory: factoryId ?? undefined,
                 })}
                 prefetch={false}
               >
@@ -287,13 +392,59 @@ export function FactoryInboxPage({
   );
 }
 
+export function FactoryInboxUnavailable({
+  factorySelector,
+  kind,
+  workspaceSlug,
+}: {
+  factorySelector: ReactNode;
+  kind?: FactoryInboxKind;
+  workspaceSlug: string;
+}) {
+  return (
+    <PageContainer className="pt-5 sm:pt-10">
+      <PageHeader actions={factorySelector} actionsRightOnDesktop title="Inbox" />
+      <section aria-label="Inbox availability" className="ui-sheet">
+        <InboxScopeRecovery
+          kind={kind}
+          message="Factory unavailable."
+          workspaceSlug={workspaceSlug}
+        />
+      </section>
+    </PageContainer>
+  );
+}
+
+function InboxScopeRecovery({
+  kind,
+  message,
+  workspaceSlug,
+}: {
+  kind?: FactoryInboxKind;
+  message: string;
+  workspaceSlug: string;
+}) {
+  return (
+    <div className="px-4 py-8 text-sm sm:px-5">
+      <p className="text-muted" role="status">
+        {message}
+      </p>
+      <Link className="ui-button mt-4" href={workspaceInboxPath(workspaceSlug, { kind })}>
+        View all factories
+      </Link>
+    </div>
+  );
+}
+
 function InboxRow({
   initialNow,
   item,
+  returnTo,
   workspaceSlug,
 }: {
   initialNow: string;
   item: FactoryInboxItem;
+  returnTo: string;
   workspaceSlug: string;
 }) {
   const clarification = item.kind === "clarification";
@@ -326,7 +477,10 @@ function InboxRow({
       <Link
         aria-label={`${action} for ${item.title}`}
         className="ui-button min-h-11 justify-self-start sm:min-h-9 sm:justify-self-end"
-        href={exactSessionReviewHref(workspaceSlug, item.sessionNumber, item)}
+        href={workspaceSessionDetailPath(workspaceSlug, item.sessionNumber, {
+          ...sessionReviewQuery(item),
+          returnTo,
+        })}
         prefetch={false}
       >
         {action}

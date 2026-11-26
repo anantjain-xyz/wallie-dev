@@ -22,6 +22,41 @@ function failure(error: string, status: number) {
   return Response.json({ error }, { status, headers });
 }
 
+function commandFailure(
+  action: "propose" | "correct" | "review" | "forget",
+  { code, message }: { code: string; message: string },
+) {
+  const status = factoryErrorStatus(code);
+  if (code === "42501")
+    return failure("Factory manager access is required to change memory.", status);
+  if (code === "P0011")
+    return failure("This factory is archived and its memory is read-only in Wallie.", status);
+  if (code === "22023" && message === "Factory memory expiry must be in the future.") {
+    return failure("Choose a future expiry, or leave it blank.", status);
+  }
+  if (action === "propose") {
+    if (status === 409)
+      return failure("This proposal was already imported. Search Memory for the note.", status);
+    if (status === 404)
+      return failure("This proposal is no longer available. Return to the source run.", status);
+    return failure("Could not import the memory proposal.", status);
+  }
+  if (
+    action === "review" &&
+    code === "PT409" &&
+    message === "Pending factory memory is unavailable or expired."
+  ) {
+    return failure(
+      "This revision expired or its note is unavailable. Save a correction before approving.",
+      status,
+    );
+  }
+  if (status === 409) return failure("This memory changed. Reload it before trying again.", status);
+  if (status === 404)
+    return failure("This memory is no longer available. Return to the memory list.", status);
+  return failure("Could not update the factory memory.", status);
+}
+
 async function readCommand(request: Request): Promise<unknown> {
   if (!request.body) return null;
   let size = 0;
@@ -151,8 +186,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       })
       .select(memoryColumns)
       .single();
-    if (error)
-      return failure("Could not import the memory proposal.", factoryErrorStatus(error.code));
+    if (error) return commandFailure(command.action, error);
     return Response.json({ memory: data }, { headers });
   }
 
@@ -179,8 +213,6 @@ export async function POST(request: Request, { params }: RouteContext) {
   )
     .select(memoryColumns)
     .single();
-  if (result.error) {
-    return failure("Could not update the factory memory.", factoryErrorStatus(result.error.code));
-  }
+  if (result.error) return commandFailure(command.action, result.error);
   return Response.json({ memory: result.data }, { headers });
 }

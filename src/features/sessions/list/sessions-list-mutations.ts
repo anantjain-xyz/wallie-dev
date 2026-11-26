@@ -14,11 +14,11 @@ export const SESSION_LIST_SORT_OPTIONS: {
   { key: "number", label: "Session number" },
 ];
 
-const SESSION_LIST_HREF_PARAM_KEYS = ["stage", "q", "scope", "sort", "cursor"] as const;
+const SESSION_LIST_HREF_PARAM_KEYS = ["stage", "q", "scope", "sort", "status", "cursor"] as const;
 
 export function buildSessionsListHref(
   base: string,
-  state: Pick<SessionListQueryState, "cursor" | "stageSlug" | "query" | "scope" | "sort">,
+  state: SessionListQueryState,
   preserveSearch?: string | URLSearchParams | null,
 ): string {
   const params = preserveSearch
@@ -33,16 +33,16 @@ export function buildSessionsListHref(
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.scope !== "active") params.set("scope", state.scope);
   if (state.sort !== "updated") params.set("sort", state.sort);
+  if (state.status) params.set("status", state.status);
   if (state.cursor) params.set("cursor", state.cursor);
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
 }
 
-/** Label for the next-page control; direction follows the active sort axis. */
-export function sessionsPaginationLabel(sort: SessionListSortKey): string {
-  if (sort === "oldest") return "Load newer sessions";
-  if (sort === "number") return "Load more sessions";
-  return "Load older sessions";
+export function sessionsPaginationDirection(sort: SessionListSortKey): string {
+  if (sort === "oldest") return "Newer updates";
+  if (sort === "number") return "Lower session numbers";
+  return "Older updates";
 }
 
 export function compareSessionsBySort(

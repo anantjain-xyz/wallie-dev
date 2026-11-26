@@ -256,7 +256,12 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
     await expect(factory).toHaveText("All factories");
     await expect(factory).toHaveAttribute("data-value", "all");
-    await expect(main.getByText("2 awaiting review · 0 clarifications")).toBeVisible();
+    const itemTypes = main.getByRole("navigation", { name: "Inbox item type" });
+    await expect(itemTypes.getByRole("link", { name: "All items 2" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(itemTypes.getByRole("link", { name: "Clarifications 0" })).toBeVisible();
     await expect(main.getByText(delegatedTitle, { exact: true })).toBeVisible();
     await expect(main.getByText("Directors only", { exact: true })).toHaveCount(0);
     await expect(main.getByText("Private draft", { exact: true })).toHaveCount(0);
@@ -270,6 +275,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     expect(new URL(originalHref, app).searchParams.get("artifactId")).toBe(
       defaultReview.artifact.id,
     );
+    expect(new URL(originalHref, app).searchParams.get("returnTo")).toBe(`${workspacePath}/inbox`);
     // Require the new item well before the periodic access recheck could update it.
     const replacement = await publishFixture(
       admin,
@@ -302,7 +308,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await approval.click();
     await expect(page.getByText("Review approved.", { exact: true })).toBeVisible();
     await page.goBack();
-    await expect(main.getByText("1 awaiting review · 0 clarifications")).toBeVisible();
+    await expect(itemTypes.getByRole("link", { name: "Reviews 1" })).toBeVisible();
     await expect(defaultLink).toHaveCount(0);
 
     await factory.click();
@@ -324,6 +330,30 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
       animations: "disabled",
       path: testInfo.outputPath("02-inbox-mobile-dark.png"),
     });
+    await itemTypes.getByRole("link", { name: "Clarifications 0" }).press("Enter");
+    await expect(itemTypes.getByRole("link", { name: "Clarifications 0" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(new URL(page.url()).searchParams.get("factory")).toBe(delegated.id);
+    await expect(main.getByText("No pending clarifications in this factory.")).toBeVisible();
+    await expect(main.getByRole("link", { name: "View all factories" })).toHaveAttribute(
+      "href",
+      `${workspacePath}/inbox?kind=clarification`,
+    );
+    await page.screenshot({
+      animations: "disabled",
+      path: testInfo.outputPath("03-inbox-mobile-filtered-empty.png"),
+    });
+    await itemTypes.getByRole("link", { name: "Reviews 1" }).press("Enter");
+    await expect(main.getByText(delegatedTitle, { exact: true })).toBeVisible();
+    const delegatedHref = await main
+      .getByRole("link", { name: `Open review for ${delegatedTitle}` })
+      .getAttribute("href");
+    if (!delegatedHref) throw new Error("Missing the filtered review link.");
+    expect(new URL(delegatedHref, app).searchParams.get("returnTo")).toBe(
+      `${workspacePath}/inbox?factory=${delegated.id}&kind=review`,
+    );
     await page.getByRole("button", { name: "Workspace navigation: Inbox" }).press("Enter");
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
     const drawerInbox = drawer.getByRole("link", { name: "Inbox", exact: true });
@@ -333,6 +363,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
 
     await context.setOffline(true);
     await expect(main.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
+    await expect(main.getByRole("button", { name: "Refresh" })).toBeDisabled();
     await expect(main.getByText(delegatedTitle, { exact: true })).toHaveCount(0);
     await write(admin.rpc("revoke_factory_membership", membership));
     await Promise.all([
@@ -342,9 +373,15 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
       ),
       context.setOffline(false),
     ]);
-    await expect(main.getByText("Inbox unavailable. Refresh to check your access.")).toBeVisible();
+    await expect(main.getByText("Factory unavailable.")).toBeVisible();
     await expect(main.getByText(delegatedTitle, { exact: true })).toHaveCount(0);
-    await expect(main.getByText(/awaiting review ·/)).toHaveCount(0);
+    await expect(itemTypes).toHaveCount(0);
+    await main.getByRole("link", { name: "View all factories" }).press("Enter");
+    await expect(factory).toHaveText("All factories");
+    await expect(itemTypes.getByRole("link", { name: "Reviews 0" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   } finally {
     if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
     for (const user of users) await write(admin.auth.admin.deleteUser(user));

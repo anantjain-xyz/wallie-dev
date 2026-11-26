@@ -83,6 +83,71 @@ for (const viewport of [
   });
 }
 
+for (const width of [320, 390]) {
+  test(`compact Pipeline keeps keyboard focus visible across factory stages at ${width}px`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/dev/pipeline-layout?aggregate=1");
+    const strip = page.getByRole("tablist", { name: "Pipeline stage" });
+    const tabs = strip.getByRole("tab");
+    await expect(tabs).toHaveCount(4);
+    await expect(tabs.first()).toHaveAccessibleName(
+      /Product engineering.*Plan the first production release/,
+    );
+    await expect(tabs.last()).toHaveAccessibleName(
+      /Customer tools.*Record the decision and publish/,
+    );
+    expect(await strip.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    await page.getByRole("combobox", { name: "Filter by status" }).focus();
+    await page.keyboard.press("Tab");
+    await expect(tabs.first()).toBeFocused();
+    const startY = await page.evaluate(() => scrollY);
+
+    for (const [key, position] of [
+      ["End", 3],
+      ["ArrowLeft", 2],
+      ["Home", 0],
+      ["ArrowRight", 1],
+    ] as const) {
+      await page.keyboard.press(key);
+      const tab = tabs.nth(position);
+      await expect(tab).toBeFocused();
+      await expect(tab).toHaveAttribute("aria-selected", "true");
+      const geometry = await tab.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const viewport = element.parentElement!.getBoundingClientRect();
+        return {
+          left: bounds.left - viewport.left,
+          right: viewport.right - bounds.right,
+          y: scrollY,
+        };
+      });
+      expect(geometry.left).toBeGreaterThanOrEqual(-1);
+      expect(geometry.right).toBeGreaterThanOrEqual(-1);
+      expect(geometry.y).toBe(startY);
+      expect((await layoutGeometry(page)).visibleLanes).toBe(1);
+      expect((await layoutGeometry(page)).horizontalOverflow).toBeLessThanOrEqual(1);
+      if (width === 390 && key === "End") {
+        await page.screenshot({ path: info.outputPath("pipeline-compact-focus.png") });
+      }
+    }
+  });
+}
+
+test("aggregate Pipeline labels factory ownership without changing card hierarchy", async ({
+  page,
+}, info) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/dev/pipeline-layout?aggregate=1");
+  const lane = page.getByRole("tabpanel", { name: "Review the generated release evidence" });
+  await expect(lane.getByText("Customer tools", { exact: true })).toBeVisible();
+  const card = lane.getByRole("article").first();
+  await expect(card.getByRole("heading", { level: 3 })).toBeVisible();
+  await expect(card.getByRole("link", { name: /^Review session / })).toBeVisible();
+  await page.screenshot({ path: info.outputPath("pipeline-aggregate-desktop.png") });
+});
+
 for (const viewport of [
   { width: 1024, height: 768 },
   { width: 1440, height: 900 },

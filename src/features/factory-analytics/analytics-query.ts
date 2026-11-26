@@ -88,6 +88,8 @@ const evidenceSelectionSchema = z.discriminatedUnion("metric", [
   }),
 ]);
 
+export const analyticsEnvironmentSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
+
 const querySchema = z.object({
   factory: z
     .string()
@@ -100,7 +102,7 @@ const querySchema = z.object({
   to: z.string().date().optional(),
   compare: z.literal("previous").optional(),
   dimension: analyticsDimensionSchema.default("source"),
-  environment: z.union([z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/), z.literal("")]).optional(),
+  environment: analyticsEnvironmentSchema.or(z.literal("")).optional(),
   metric: evidenceMetricSchema.optional(),
   period: periodSchema.optional(),
   facet: z.string().max(32).optional(),
@@ -119,6 +121,76 @@ export type AnalyticsQuery = AnalyticsWindow & {
   routingCanaryId?: string;
   routingAlertId?: string;
 };
+
+export type AnalyticsFilterErrors = Partial<
+  Record<"range" | "compare" | "dimension" | "environment" | "other", string | undefined>
+>;
+
+export function recoverAnalyticsFilters(search: Record<string, string | string[] | undefined>): {
+  query: AnalyticsQuery;
+  errors: AnalyticsFilterErrors;
+  dates?: { from: string; to: string };
+} {
+  const parsed = parseAnalyticsQuery(search);
+  if (parsed.success) return { query: parsed.data, errors: {} };
+
+  const { factory, from, to, compare, dimension, environment, routingCanary, routingAlert } =
+    search;
+  const datesOnly = parseAnalyticsQuery({ from, to });
+  const datesWithCompare = parseAnalyticsQuery({ from, to, compare });
+  const fields = querySchema.shape;
+  const safe = {
+    factory: fields.factory.safeParse(factory),
+    dimension: fields.dimension.safeParse(dimension),
+    environment: fields.environment.safeParse(environment),
+    routingCanary: fields.routingCanary.safeParse(routingCanary),
+    routingAlert: fields.routingAlert.safeParse(routingAlert),
+  };
+  const clean = parseAnalyticsQuery({
+    factory: safe.factory.success ? safe.factory.data : undefined,
+    from: datesOnly.success ? from : undefined,
+    to: datesOnly.success ? to : undefined,
+    compare:
+      datesWithCompare.success || (!datesOnly.success && compare === "previous")
+        ? compare
+        : undefined,
+    dimension: safe.dimension.success ? safe.dimension.data : undefined,
+    environment: safe.environment.success ? safe.environment.data : undefined,
+    routingCanary: safe.routingCanary.success ? safe.routingCanary.data : undefined,
+    routingAlert:
+      safe.routingCanary.success && safe.routingCanary.data && safe.routingAlert.success
+        ? safe.routingAlert.data
+        : undefined,
+  });
+  if (!clean.success) throw new Error("Could not recover analytics filter controls.");
+
+  const errors: AnalyticsFilterErrors = {
+    range: !datesOnly.success
+      ? "Choose a UTC range of 1 to 366 days. The end must be later than the start."
+      : undefined,
+    compare:
+      !fields.compare.safeParse(compare).success || (datesOnly.success && !datesWithCompare.success)
+        ? "The previous period is invalid for these dates. Adjust the range or leave comparison off."
+        : undefined,
+    dimension: !safe.dimension.success ? "Select a supported throughput breakdown." : undefined,
+    environment: !safe.environment.success
+      ? "Choose a deployment environment from the list."
+      : undefined,
+  };
+  if (!Object.values(errors).some(Boolean))
+    errors.other =
+      "The saved evidence or factory filter is invalid. Apply these reporting filters to continue.";
+  return {
+    query: clean.data,
+    errors,
+    dates: !datesOnly.success
+      ? {
+          from: typeof from === "string" && fields.from.safeParse(from).success ? from : "",
+          to: typeof to === "string" && fields.to.safeParse(to).success ? to : "",
+        }
+      : undefined,
+  };
+}
 
 function analyticsWindow(from: number, to: number): AnalyticsWindow {
   return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };

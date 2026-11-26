@@ -1,3 +1,4 @@
+import type { SessionDisplayStatus } from "@/features/sessions/display-status";
 import type {
   SessionFilterKey,
   SessionListQueryState,
@@ -16,7 +17,15 @@ export const SESSION_LIST_DEFAULT_FILTERS = {
   stageSlug: null,
 } as const satisfies Pick<SessionListQueryState, "scope" | "sort" | "stageSlug">;
 
-const SESSION_LIST_STICKY_PARAM_KEYS = ["scope", "stage", "sort"] as const;
+export const SESSION_LIST_STATUS_OPTIONS = [
+  "awaiting_review",
+  "in_progress",
+  "approved",
+  "rejected",
+  "failed",
+] as const satisfies readonly SessionDisplayStatus[];
+
+const SESSION_LIST_STICKY_PARAM_KEYS = ["scope", "stage", "sort", "status"] as const;
 
 function readSingle(searchParams: SessionListSearchParams, key: string): string | null {
   return readFirstValue(searchParams[key]) ?? null;
@@ -42,12 +51,16 @@ export function parseSessionListQueryState(
   // Stage filter is a free-form slug now (workspaces can define their own
   // stages); we surface whatever's in the URL and let the dashboard decide
   // what to render for unknown slugs.
+  const status = SESSION_LIST_STATUS_OPTIONS.find(
+    (option) => option === readSingle(searchParams, "status"),
+  );
   return {
     cursor: readSingle(searchParams, "cursor"),
     query: readSingle(searchParams, "q") ?? "",
     scope: parseSessionListScope(readSingle(searchParams, "scope")),
     sort: parseSessionListSort(readSingle(searchParams, "sort")),
     stageSlug: readSingle(searchParams, "stage"),
+    ...(status ? { status } : {}),
   };
 }
 
@@ -56,11 +69,12 @@ export function sessionListSearchHasStickyParams(search: URLSearchParams): boole
 }
 
 export function areDefaultSessionListFilters(
-  filters: Pick<SessionListQueryState, "scope" | "sort" | "stageSlug">,
+  filters: Pick<SessionListQueryState, "scope" | "sort" | "stageSlug" | "status">,
 ): boolean {
   return (
     filters.scope === SESSION_LIST_DEFAULT_SCOPE &&
     filters.sort === SESSION_LIST_DEFAULT_SORT &&
-    !filters.stageSlug
+    !filters.stageSlug &&
+    !filters.status
   );
 }

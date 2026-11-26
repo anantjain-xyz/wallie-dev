@@ -189,6 +189,15 @@ Factory managers use `GET` and `POST` at
 `GET` returns the schedule state, trial counts, known spend, outstanding
 reserves, and counts of attempts with unavailable spend.
 
+Freezing doesn't admit any trials. On a comparison for an active factory,
+open **Schedule API details** to get the scoped endpoint and, for a qualified
+comparison, its exact frozen inference connection revision. Use a signed-in
+factory manager session and start with `GET`. If no schedule is configured,
+review the frozen pins and an approved budget before sending `POST` with
+`Content-Type: application/json`. A successful `configure` activates the
+schedule immediately. If the exact pinned inputs are no longer available, do
+not substitute their current revisions; prepare a new comparison instead.
+
 | `POST` action | Behavior                                                                              |
 | ------------- | ------------------------------------------------------------------------------------- |
 | `configure`   | Save the schedule's pins and limits. An exact retry reads the existing schedule.      |
@@ -209,6 +218,25 @@ To run a qualified OpenAI comparison, configure `openai-responses-v1` with its
 pinned inference connection, a positive execution reserve, and a blocked
 replay policy. See [qualified live replay](./qualified-benchmark-replay.md).
 
+For `configure`, include these fields with explicitly approved values:
+
+| Field                     | What to send                                                            |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `action`                  | `"configure"`                                                           |
+| `runnerRevision`          | The runner that can use the exact frozen inputs                         |
+| `maxAdmittedTrials`       | An integer from 1 to 10,000, no higher than the approved trial count    |
+| `factoryConcurrencyLimit` | An integer from 1 to 100, set to the approved concurrency limit         |
+| `budgetLimitUsd`          | The approved admission budget for execution plus evaluation             |
+| `executionReserveUsd`     | Reserve per execution; positive for live replay and no more than budget |
+| `evaluationReserveUsd`    | Reserve per evaluation                                                  |
+
+The live runner also needs `inferenceConnectionRevision`. The fixture runner
+instead needs `sandboxConnectionRevision` and `taskFixtures` (one
+`{ "taskRevisionId": "...", "fixtureKey": "..." }` per eligible frozen task
+revision). Fixture replay isn't a substitute for qualified live execution.
+After configuring or resuming, use `GET` to confirm the state and inspect
+admission, held reserves, and unavailable costs.
+
 - Node and Workerd run the same bounded reconciliation. Admission reserves
   spend and enqueues the exact frozen trial identity in one transaction.
   Worker recovery retires interrupted attempts. Reconciliation can then
@@ -223,7 +251,8 @@ replay policy. See [qualified live replay](./qualified-benchmark-replay.md).
   attempt, including failures. An attempt that never starts releases its
   reserve. When a started attempt has unavailable spend, the full reserve
   stays held. Late charges can exceed the budget and leave no capacity for
-  further reservations.
+  further reservations. This is an admission limit, not a hard cap on provider
+  charges. Do not use it when a guaranteed spend ceiling is required.
 
 ## Score a frozen comparison
 

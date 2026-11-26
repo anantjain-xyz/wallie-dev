@@ -6,7 +6,13 @@ import { routingDraftEvidenceHrefs } from "@/features/factory-definition/routing
 import type { RoutingCanaryAlert } from "@/lib/model-routing/canary-alert";
 import { workspaceFactoryDefinitionPath } from "@/lib/routes";
 
-import { durationLabel, moneyFormat, numberFormat, timeLabel } from "./analytics-view-shared";
+import {
+  durationLabel,
+  moneyFormat,
+  numberFormat,
+  TechnicalDetails,
+  timeLabel,
+} from "./analytics-view-shared";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 2 });
 
@@ -33,12 +39,14 @@ export function RoutingCanaryAlertEvidence({
   alert,
   canManageFactory,
   factoryId,
+  frozenScorerRevision,
   liveReportHref,
   workspaceSlug,
 }: {
   alert: RoutingCanaryAlert;
   canManageFactory?: boolean;
   factoryId: string;
+  frozenScorerRevision?: number;
   liveReportHref?: string;
   workspaceSlug: string;
 }) {
@@ -85,13 +93,26 @@ export function RoutingCanaryAlertEvidence({
         />
         <MetadataItem label="Alert threshold" value={metric.threshold(alert.thresholdBps)} />
         <MetadataItem label="Threshold policy" value={`Revision ${alert.thresholdRevision}`} />
-        <MetadataItem label="Routing rule" value={alert.ruleId} monospace />
+        <MetadataItem label="Routing rule task class" value={canary.taskClassSlug} />
         <MetadataItem
           label="Frozen scorer revision"
-          value={alert.evidence.scorerRevisionId}
-          monospace
+          value={`${alert.evidence.scorerName} · ${
+            frozenScorerRevision === undefined
+              ? "Revision number unavailable"
+              : `Revision ${frozenScorerRevision}`
+          }`}
         />
       </MetadataList>
+      <TechnicalDetails>
+        <MetadataList>
+          <MetadataItem label="Routing rule ID" value={alert.ruleId} monospace />
+          <MetadataItem
+            label="Frozen scorer revision ID"
+            value={alert.evidence.scorerRevisionId}
+            monospace
+          />
+        </MetadataList>
+      </TechnicalDetails>
       <div className="space-y-2">
         <h4 className="type-label">Frozen benchmark evidence</h4>
         <p className="type-secondary text-muted">

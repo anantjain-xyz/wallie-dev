@@ -25,6 +25,7 @@ import { GET, POST } from "./route";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const PIPELINE_ID = "10000000-0000-4000-8000-000000000001";
 const STAGE_ID = "20000000-0000-4000-8000-000000000001";
+const FACTORY_ID = "40000000-0000-4000-8000-000000000001";
 
 function routeContext() {
   return { params: Promise.resolve({ workspaceId: WORKSPACE_ID }) };
@@ -37,8 +38,9 @@ function request(
     seenIds: ["30000000-0000-4000-8000-000000000001"],
     stageId: STAGE_ID,
   },
+  query = "",
 ) {
-  return new Request(`http://localhost/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard`, {
+  return new Request(`http://localhost/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard${query}`, {
     body: JSON.stringify(body),
     headers: { "content-type": "application/json" },
     method: "POST",
@@ -102,6 +104,27 @@ describe("POST /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
     expect(mocked.loadPipelineDashboardLanePage).not.toHaveBeenCalled();
   });
 
+  it("passes the same factory, search, and status to a subsequent lane page", async () => {
+    grantAccess();
+    mocked.decodePipelineDashboardCursor.mockReturnValue({
+      pipelineId: PIPELINE_ID,
+      stageId: STAGE_ID,
+    });
+    mocked.loadPipelineDashboardLanePage.mockResolvedValue({ cards: [], cursor: null });
+    const response = await POST(
+      request(undefined, `?factory=${FACTORY_ID}&q=PR%20%23419&status=failed`),
+      routeContext(),
+    );
+    expect(response.status).toBe(200);
+    expect(mocked.loadPipelineDashboardLanePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        factoryId: FACTORY_ID,
+        filters: { query: "PR #419", status: "failed" },
+        stageId: STAGE_ID,
+      }),
+    );
+  });
+
   it("does not query a lane when workspace access is denied", async () => {
     mocked.requireWorkspaceAccessById.mockResolvedValue({
       error: "Workspace not found.",
@@ -157,6 +180,37 @@ describe("GET /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
     expect(response.status).toBe(403);
     expect(mocked.loadPipelineDashboardSnapshot).not.toHaveBeenCalled();
   });
+
+  it("passes the filters with the authorized client", async () => {
+    grantAccess();
+    mocked.loadPipelineDashboardSnapshot.mockResolvedValue({ lanes: [] });
+    const response = await GET(
+      new Request(
+        `http://localhost/pipeline-dashboard?factory=${FACTORY_ID}&q=%20OP-353%20&status=awaiting_review`,
+      ),
+      routeContext(),
+    );
+    expect(response.status).toBe(200);
+    expect(mocked.loadPipelineDashboardSnapshot).toHaveBeenCalledWith({
+      factoryId: FACTORY_ID,
+      filters: { query: "OP-353", status: "awaiting_review" },
+      supabase: expect.any(Object),
+      workspaceId: WORKSPACE_ID,
+    });
+  });
+
+  it.each(["status=unknown", "q=first&q=second", `q=${"x".repeat(201)}`])(
+    "rejects invalid filters without querying the board (%s)",
+    async (query) => {
+      grantAccess();
+      const response = await GET(
+        new Request(`http://localhost/pipeline-dashboard?${query}`),
+        routeContext(),
+      );
+      expect(response.status).toBe(400);
+      expect(mocked.loadPipelineDashboardSnapshot).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns a failed recovery response when the snapshot query fails", async () => {
     grantAccess();

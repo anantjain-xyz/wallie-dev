@@ -117,7 +117,7 @@ describe("SessionsPage", () => {
   it("renders an accessible title edit affordance without removing row navigation", () => {
     const html = renderPage(makeSessionListData());
 
-    expect(html).toContain('href="/w/acme/sessions/7"');
+    expect(html).toContain('href="/w/acme/sessions/7?returnTo=');
     expect(html).toContain("session-list-row");
     expect(html).toContain("Open session #7: Editable Session");
     expect(html).toContain('aria-label="Actions for session #7"');
@@ -208,7 +208,7 @@ describe("SessionsPage", () => {
       ]),
     );
 
-    expect(html).toContain('href="/w/acme/sessions/7"');
+    expect(html).toContain('href="/w/acme/sessions/7?returnTo=');
     expect(html).not.toContain("absolute inset-0");
     expect(html).toContain("A long session title");
     expect(html).toContain("sessions-ledger-session-summary");
