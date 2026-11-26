@@ -151,7 +151,9 @@ export function VercelTargetPicker({
       className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (canSave && !disabled && !pending) onSave({ ...target, token: token.trim() });
+        if (!canSave || disabled || pending) return;
+        requestRef.current?.abort();
+        onSave({ ...target, token: token.trim() });
       }}
     >
       <h3 className="text-[13px] font-semibold text-foreground">Connect Vercel Sandbox</h3>

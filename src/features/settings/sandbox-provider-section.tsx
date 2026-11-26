@@ -260,16 +260,19 @@ export function SandboxProviderSection({
     ) : (
       <ProviderForm title="Daytona">
         <SecretInput
+          disabled={isPending}
           label="API key"
           onChange={(value) => setApiKeys((current) => ({ ...current, daytona: value }))}
           value={apiKeys.daytona}
         />
         <TextInput
+          disabled={isPending}
           label="API URL (optional)"
           onChange={(apiUrl) => setDaytonaDraft((current) => ({ ...current, apiUrl }))}
           value={daytonaApiUrl}
         />
         <TextInput
+          disabled={isPending}
           label="Target (optional)"
           onChange={(target) => setDaytonaDraft((current) => ({ ...current, target }))}
           value={daytonaTarget}
@@ -642,11 +645,13 @@ function ProviderForm({ children, title }: { children: ReactNode; title: string 
 }
 
 function TextInput({
+  disabled,
   label,
   onChange,
   type = "text",
   value,
 }: {
+  disabled?: boolean;
   label: string;
   onChange: (value: string) => void;
   type?: "password" | "text";
@@ -658,6 +663,7 @@ function TextInput({
       <input
         autoComplete="off"
         className="ui-input"
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         spellCheck={false}
         type={type}

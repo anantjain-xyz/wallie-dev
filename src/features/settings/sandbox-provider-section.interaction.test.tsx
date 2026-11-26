@@ -308,6 +308,43 @@ describe("SandboxProviderSection saves", () => {
       text: `${testCase.label} connection saved.`,
     });
   });
+
+  it("locks Daytona fields during a save and preserves the draft after failure", async () => {
+    const user = userEvent.setup();
+    let resolveSave!: (response: Response) => void;
+    const deferredSave = new Promise<Response>((resolve) => {
+      resolveSave = resolve;
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockReturnValue(deferredSave);
+    const { onDraftStateChange, onSettingsChange, setFlashMessage } = renderSection({
+      variant: "onboarding",
+    });
+
+    await user.click(screen.getByRole("radio", { name: /Daytona/ }));
+    const fields = [
+      [screen.getByLabelText("API key"), "synthetic-daytona-key"],
+      [screen.getByLabelText("API URL (optional)"), "https://daytona.example.test/api"],
+      [screen.getByLabelText("Target (optional)"), "draft-target"],
+    ] as const;
+    for (const [input, value] of fields) await user.type(input, value);
+
+    const save = screen.getByRole("button", { name: "Save connection" });
+    await user.click(save);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(save).toBeDisabled();
+    for (const [input] of fields) expect(input).toBeDisabled();
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: true, pending: true });
+
+    resolveSave(Response.json({ error: "Validation failed." }, { status: 422 }));
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(setFlashMessage).toHaveBeenCalledWith({ kind: "error", text: "Validation failed." });
+    expect(onSettingsChange).not.toHaveBeenCalled();
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: true, pending: false });
+    for (const [input, value] of fields) {
+      expect(input).toBeEnabled();
+      expect(input).toHaveValue(value);
+    }
+  });
 });
 
 describe("Vercel target discovery", () => {
