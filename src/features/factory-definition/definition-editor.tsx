@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { FactoryCapabilityProbe } from "@/features/factory-definition/capability-probe";
+import { DraftConflictReview } from "@/features/factory-definition/draft-conflict-review";
+import { sameDefinitionValue, type DraftInput } from "@/features/factory-definition/draft-review";
 import { FactoryExecutionProfilePanel } from "@/features/factory-definition/execution-profile-panel";
 import {
   draftSavedSchema,
@@ -17,6 +19,10 @@ import {
   type FactoryEditorHistory,
 } from "@/features/factory-definition/editor-requests";
 import { CandidateTestPanel } from "@/features/factory-definition/candidate-test-panel";
+import {
+  FactoryDefinitionSwitch,
+  type FactoryDefinitionSelection,
+} from "@/features/factory-definition/factory-definition-switch";
 import { FactoryMcpManifestInspector } from "@/features/factory-definition/mcp-manifest-inspector";
 import { FactoryRevisionHistory } from "@/features/factory-definition/revision-history";
 import {
@@ -67,15 +73,13 @@ type Selection = (
 ) & {
   test?: string;
 };
-type Input =
-  | { kind: "structured"; value: SerialFactoryDefinition }
-  | { kind: "json"; text: string };
 type Edit = {
-  input: Input;
+  input: DraftInput;
   original: SerialFactoryDefinition;
   activationNumber: number;
   draftId: string | null;
 };
+const recoverableEdits = new Map<string, Edit>();
 type Operation =
   | "reload"
   | "preview"
@@ -89,6 +93,10 @@ const activationSavedSchema = z.object({ activation: z.object({ revisionId: z.st
 
 function sourceText(source: SerialFactoryDefinition) {
   return JSON.stringify(source, null, 2);
+}
+
+function workingSource(snapshot: FactoryEditorSnapshot) {
+  return (snapshot.draft ?? snapshot.published ?? snapshot.baseline)?.source;
 }
 
 function credentialScopeFrom(
@@ -110,12 +118,12 @@ function credentialScopeFrom(
 
 function editFrom(
   snapshot: FactoryEditorSnapshot,
-  mode: Input["kind"] = "structured",
+  mode: DraftInput["kind"] = "structured",
   initialAgent?: AgentSelection,
   initialScorerRevisionId?: string,
 ): Edit | null {
   const document = snapshot.draft ?? snapshot.published;
-  const original = (document ?? snapshot.baseline)?.source;
+  const original = workingSource(snapshot);
   if (!original) return null;
   let value = { ...original };
   if (initialAgent) {
@@ -189,24 +197,26 @@ function errorText(error: unknown) {
 export function FactoryDefinitionEditor({
   factoryId,
   factoryName,
-  factorySelector,
+  factorySelection,
   initialAgent,
   initialScorerRevisionId,
   workspaceId,
   workspaceSlug,
   selection,
   repositories,
+  recoveryKey,
   referenceOptions,
 }: {
   factoryId?: string;
   factoryName?: string;
-  factorySelector?: ReactNode;
+  factorySelection?: FactoryDefinitionSelection;
   initialAgent?: AgentSelection;
   initialScorerRevisionId?: string;
   workspaceId: string;
   workspaceSlug: string;
   selection: Selection | null;
   repositories: readonly CapabilityRepository[];
+  recoveryKey?: string;
   referenceOptions?: FactoryEditorReferenceOptions;
 }) {
   const api = factoryId
@@ -235,13 +245,19 @@ export function FactoryDefinitionEditor({
   );
   const inFlight = useRef(false);
   const reloadButtonRef = useRef<HTMLButtonElement>(null);
+  const conflictReloadRef = useRef<HTMLButtonElement>(null);
+  const editControlsRef = useRef<HTMLDivElement>(null);
   const scrolledSelectionUrl = useRef<string | null>(null);
   const dirty = edit ? editChanged(edit) : false;
+  const latestSource = snapshot ? workingSource(snapshot) : undefined;
   const stale =
     edit !== null &&
     snapshot !== null &&
     (edit.activationNumber !== snapshot.activationNumber ||
-      edit.draftId !== (snapshot.draft?.id ?? null));
+      edit.draftId !== (snapshot.draft?.id ?? null) ||
+      (!edit.draftId &&
+        edit.activationNumber === 0 &&
+        !sameDefinitionValue(edit.original, latestSource)));
   const busy = loading || pending !== null;
   const locked = busy || conflict || stale;
   const conflictReason = stale
@@ -321,6 +337,26 @@ export function FactoryDefinitionEditor({
     (!selection?.test || anchorCandidate?.id === (requestedRevision ?? requestedDraft));
 
   useEffect(() => {
+    if (!dirty) return;
+    const preserveEdit = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = true;
+    };
+    window.addEventListener("beforeunload", preserveEdit);
+    return () => window.removeEventListener("beforeunload", preserveEdit);
+  }, [dirty]);
+
+  useEffect(() => {
+    if (!recoveryKey || !snapshot) return;
+    if (dirty && edit) recoverableEdits.set(recoveryKey, edit);
+    else recoverableEdits.delete(recoveryKey);
+  }, [dirty, edit, recoveryKey, snapshot]);
+
+  useEffect(() => {
+    if (conflict && !busy) conflictReloadRef.current?.focus();
+  }, [busy, conflict]);
+
+  useEffect(() => {
     const { hash, href } = window.location;
     const candidateAnchor = anchorReady && hash === "#candidate-tests";
     const rollbackAnchor =
@@ -354,24 +390,20 @@ export function FactoryDefinitionEditor({
         if (signal.aborted) return;
         setSnapshot(current.snapshot);
         setHistory(current.history);
+        const recovered = recoveryKey ? recoverableEdits.get(recoveryKey) : undefined;
         setEdit(
-          editFrom(
-            current.snapshot,
-            "structured",
-            initialAgentId && initialPromptRevisionId
-              ? { agentId: initialAgentId, promptRevisionId: initialPromptRevisionId }
-              : undefined,
-            initialScorerRevisionId,
-          ),
+          recovered ??
+            editFrom(
+              current.snapshot,
+              "structured",
+              initialAgentId && initialPromptRevisionId
+                ? { agentId: initialAgentId, promptRevisionId: initialPromptRevisionId }
+                : undefined,
+              initialScorerRevisionId,
+            ),
         );
-        const target = requestedRevision
-          ? { revision: requestedRevision, activation: requestedActivation }
-          : requestedDraft
-            ? { draft: requestedDraft }
-            : null;
-        if (target) {
-          const document = await readDefinition(editorApi, target, signal);
-          if (!signal.aborted) setSelected(document);
+        if (recovered) {
+          setFeedback({ kind: "info", text: "Your unsaved edits from this tab were restored." });
         }
       } catch (error) {
         if (!signal.aborted) setFeedback({ kind: "error", text: errorText(error) });
@@ -381,15 +413,32 @@ export function FactoryDefinitionEditor({
     })();
     return () => controller.abort();
   }, [
-    editorApi,
     initialAgentId,
     initialPromptRevisionId,
     initialScorerRevisionId,
     loadWorkspace,
-    requestedActivation,
-    requestedDraft,
-    requestedRevision,
+    recoveryKey,
   ]);
+
+  useEffect(() => {
+    const target = requestedRevision
+      ? { revision: requestedRevision, activation: requestedActivation }
+      : requestedDraft
+        ? { draft: requestedDraft }
+        : null;
+    if (!target) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    void readDefinition(editorApi, target, signal).then(
+      (document) => {
+        if (!signal.aborted) setSelected(document);
+      },
+      (error: unknown) => {
+        if (!signal.aborted) setFeedback({ kind: "error", text: errorText(error) });
+      },
+    );
+    return () => controller.abort();
+  }, [editorApi, requestedActivation, requestedDraft, requestedRevision]);
 
   async function run(operation: Operation, task: () => Promise<void>) {
     if (inFlight.current || loading) return;
@@ -401,7 +450,10 @@ export function FactoryDefinitionEditor({
       await task();
     } catch (error) {
       if (error instanceof FactoryEditorRequestError) {
-        if (error.status === 409) setConflict(true);
+        if (error.status === 409) {
+          setConflict(true);
+          setPreview(null);
+        }
         setDiagnostics(error.diagnostics);
       }
       setFeedback({ kind: "error", text: errorText(error) });
@@ -412,7 +464,7 @@ export function FactoryDefinitionEditor({
     }
   }
 
-  function replaceInput(input: Input) {
+  function replaceInput(input: DraftInput) {
     setEdit((current) => (current ? { ...current, input } : current));
     setPreview(null);
     setDiagnostics([]);
@@ -426,19 +478,16 @@ export function FactoryDefinitionEditor({
           ? { draft: selected.id }
           : { revision: selected.id, activation: selectedActivationNumber }
         : null;
-      const [current, refreshedSelection] = await Promise.all([
-        loadWorkspace(),
-        currentTarget ? readDefinition(editorApi, currentTarget) : null,
-      ]);
+      const current = await loadWorkspace();
       setSnapshot(current.snapshot);
       setHistory(current.history);
-      if (refreshedSelection) setSelected(refreshedSelection);
       setPreview(null);
       setConflict(false);
       if (!dirty) setEdit(editFrom(current.snapshot, edit?.input.kind));
       draftTests.refresh();
       revisionTests.refresh();
       refreshProfile();
+      if (currentTarget) setSelected(await readDefinition(editorApi, currentTarget));
     });
   }
 
@@ -451,7 +500,7 @@ export function FactoryDefinitionEditor({
     return content;
   }
 
-  async function changeMode(mode: Input["kind"]) {
+  async function changeMode(mode: DraftInput["kind"]) {
     if (!edit || edit.input.kind === mode) return;
     if (edit.input.kind === "structured") {
       replaceInput({ kind: "json", text: sourceText(edit.input.value) });
@@ -648,13 +697,33 @@ export function FactoryDefinitionEditor({
     return `${workspaceFactoryDefinitionPath(workspaceSlug, { ...query, factory: factoryId })}#candidate-tests`;
   }
 
-  function resetToLatest(keepEdits: boolean) {
+  function resetToLatest(source?: SerialFactoryDefinition) {
     if (!snapshot) return;
     const latest = editFrom(snapshot, edit?.input.kind);
-    setEdit(keepEdits && edit && latest ? { ...latest, input: edit.input } : latest);
+    setEdit(
+      source && latest
+        ? {
+            ...latest,
+            input:
+              latest.input.kind === "json"
+                ? { kind: "json", text: sourceText(source) }
+                : { kind: "structured", value: source },
+          }
+        : latest,
+    );
     setPreview(null);
     setDiagnostics([]);
-    setFeedback(null);
+    setFeedback(
+      source
+        ? {
+            kind: "info",
+            text: sameDefinitionValue(source, latest?.original)
+              ? "You’re up to date with the latest definition."
+              : "Reviewed edits applied. Save the draft to share them.",
+          }
+        : null,
+    );
+    editControlsRef.current?.focus();
   }
 
   function useCredentialBinding(id: string) {
@@ -688,7 +757,17 @@ export function FactoryDefinitionEditor({
         eyebrowAsPlain
         actions={
           <>
-            {factorySelector}
+            {factorySelection ? (
+              <FactoryDefinitionSwitch
+                disabled={busy}
+                dirty={dirty}
+                onDiscard={() => {
+                  if (recoveryKey) recoverableEdits.delete(recoveryKey);
+                  resetToLatest();
+                }}
+                selection={factorySelection}
+              />
+            ) : null}
             <button
               className="ui-button"
               disabled={busy}
@@ -733,43 +812,39 @@ export function FactoryDefinitionEditor({
             ))}
           </ul>
         ) : null}
-        {conflict && !stale ? (
-          <p className="type-secondary text-warning" role="status">
-            Reload the current definition to review the conflict.
-          </p>
-        ) : null}
-        {stale ? (
-          <div className="space-y-3 rounded-[6px] border border-warning/20 bg-warning-soft p-4">
-            <p className="text-sm text-foreground">
-              The current draft or activation changed. Your edits are still here. Review the latest
-              version before applying them.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="ui-button"
-                disabled={busy}
-                onClick={() => resetToLatest(false)}
-                type="button"
-              >
-                Discard edits
-              </button>
-              <button
-                className="ui-button"
-                disabled={busy}
-                onClick={() => resetToLatest(true)}
-                type="button"
-              >
-                Apply edits to latest draft
-              </button>
-            </div>
-          </div>
-        ) : null}
       </div>
       {snapshot ? (
         <div className="grid min-w-0 gap-10 xl:grid-cols-[minmax(0,1fr)_340px]">
           <div className="min-w-0 space-y-8">
             <PageSection anchorId="definition" title="Working definition">
               <div className="ui-sheet space-y-5 p-4 sm:p-5">
+                {conflict ? (
+                  <div className="space-y-2 rounded-[6px] border border-warning/20 bg-warning-soft p-4">
+                    <p className="type-secondary text-foreground">
+                      Reload the current definition to review the conflict. Reloading keeps your
+                      unsaved edits.
+                    </p>
+                    <button
+                      className="ui-button"
+                      disabled={busy}
+                      id="draft-conflict"
+                      onClick={() => void reload()}
+                      ref={conflictReloadRef}
+                      type="button"
+                    >
+                      Load latest for review
+                    </button>
+                  </div>
+                ) : stale && edit ? (
+                  <DraftConflictReview
+                    busy={busy}
+                    input={edit.input}
+                    latest={latestSource}
+                    onApply={resetToLatest}
+                    onDiscard={() => resetToLatest()}
+                    original={edit.original}
+                  />
+                ) : null}
                 <dl className="grid gap-3 break-all text-xs sm:grid-cols-2">
                   <div>
                     <dt className="text-muted">Published activation</dt>
@@ -851,7 +926,11 @@ export function FactoryDefinitionEditor({
                 />
                 {edit ? (
                   <>
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-y border-border py-3">
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-2 border-y border-border py-3"
+                      ref={editControlsRef}
+                      tabIndex={-1}
+                    >
                       <div
                         aria-label="Editing format"
                         className="flex flex-wrap gap-2"
@@ -976,6 +1055,14 @@ export function FactoryDefinitionEditor({
                         />
                       ) : null}
                     </div>
+                    {conflict || stale ? (
+                      <p className="type-secondary text-warning">
+                        <a className="underline underline-offset-2" href="#draft-conflict">
+                          {conflict ? "Load the latest definition" : "Review draft changes"}
+                        </a>{" "}
+                        before saving or validating.
+                      </p>
+                    ) : null}
                     <RoutingQualificationNotice
                       status={draft?.routingQualification}
                       subject="Draft"

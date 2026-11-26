@@ -16,12 +16,16 @@ function factoryOptionLabel(factory: FactorySelectionOption) {
 
 export function FactorySelector({
   allowAll = false,
+  disabled,
   factories,
+  onSwitch,
   resetParams,
   selectedValue,
 }: {
   allowAll?: boolean;
+  disabled?: boolean;
   factories: readonly FactorySelectionOption[];
+  onSwitch?: (navigate: () => void, factoryLabel: string) => void;
   resetParams?: readonly string[];
   selectedValue: string;
 }) {
@@ -41,10 +45,15 @@ export function FactorySelector({
 
   return (
     <Select
+      disabled={disabled}
       onValueChange={(value) => {
         if (value === effectiveValue || value === "unavailable") return;
         const href = factorySwitchHref(pathname, search.toString(), value, resetParams);
-        startTransition(() => router.push(href, { scroll: false }));
+        const navigate = () => startTransition(() => router.push(href, { scroll: false }));
+        if (onSwitch) {
+          const factory = factories.find((option) => option.id === value);
+          onSwitch(navigate, factory ? factoryOptionLabel(factory) : "All factories");
+        } else navigate();
       }}
       value={effectiveValue}
     >

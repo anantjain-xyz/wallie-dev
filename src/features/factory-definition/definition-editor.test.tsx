@@ -2,6 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { PortalRootProvider } from "@/components/ui/portal-root";
@@ -19,6 +20,17 @@ import {
 import { mcpManifestScopeIds, type FactoryMcpManifest } from "@/lib/factory-mcp/manifest";
 import type { FactorySecretBindingResponse } from "@/lib/factory-secret-bindings/contracts";
 import { modelRoutingPolicySchema } from "@/lib/model-routing/contracts";
+
+const navigation = vi.hoisted(() => ({
+  push: vi.fn(),
+  search: new URLSearchParams(),
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/w/acme/settings/factory-definition",
+  useRouter: () => ({ push: navigation.push }),
+  useSearchParams: () => navigation.search,
+}));
 
 const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const endpoint = `/api/workspaces/${id(1)}/factory-definition`;
@@ -320,6 +332,7 @@ function setup({
   repositories = [{ id: id(3), fullName: "acme/project", isArchived: false }],
   credentials,
   routingPreview,
+  editorProps,
 }: {
   selection?: Parameters<typeof FactoryDefinitionEditor>[0]["selection"];
   initialActivationNumber?: number;
@@ -329,6 +342,7 @@ function setup({
   repositories?: CapabilityRepository[];
   credentials?: FactorySecretBindingResponse;
   routingPreview?: (body: Record<string, unknown>) => Response;
+  editorProps?: Partial<Parameters<typeof FactoryDefinitionEditor>[0]>;
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
     activationNumber: initialActivationNumber,
@@ -518,16 +532,20 @@ function setup({
     return Response.json({ draft: { id: next.id } });
   });
 
-  render(
-    <FactoryDefinitionEditor
-      repositories={repositories}
-      selection={selection}
-      workspaceId={id(1)}
-      workspaceSlug="acme"
-    />,
-    { wrapper: PortalRootProvider },
-  );
+  const renderEditor = () =>
+    render(
+      <FactoryDefinitionEditor
+        repositories={repositories}
+        selection={selection}
+        workspaceId={id(1)}
+        workspaceSlug="acme"
+        {...editorProps}
+      />,
+      { wrapper: PortalRootProvider },
+    );
   return {
+    editor: renderEditor(),
+    renderEditor,
     requests,
     reads,
     capabilityReads,
@@ -547,10 +565,11 @@ function setup({
       snapshot = { ...snapshot, activationNumber: snapshot.activationNumber + 1 };
       if (refresh) fireEvent(window, new Event("focus"));
     },
-    updateDraft() {
-      const next = document(10, "draft", { ...source, operatingRulesMd: "Externally updated." });
+    updateDraft(change: Partial<SerialFactoryDefinition>, number = 10) {
+      const next = document(number, "draft", { ...(snapshot.draft?.source ?? source), ...change });
       snapshot = { ...snapshot, draft: next };
       records.set(next.id, next);
+      return next;
     },
   };
 }
@@ -558,6 +577,8 @@ function setup({
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  navigation.push.mockReset();
+  navigation.search = new URLSearchParams();
 });
 
 it("shows credential rotation status and saves only the selected binding reference", async () => {
@@ -684,25 +705,178 @@ it("round-trips source edits with scorer pins and publishes the exact saved draf
   });
 });
 
-it("retains conflicted input and reuses the newest write token only after explicit reapplication", async () => {
+it("preserves both operators' edits when they change different fields", async () => {
   const { requests, updateDraft } = setup();
   const model = await screen.findByRole("textbox", { name: "Model" });
   fireEvent.change(model, { target: { value: "gpt-5.6" } });
-  updateDraft();
+  const remote = updateDraft({ operatingRulesMd: "Externally updated." });
   fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
   await screen.findByText("The draft changed.");
+  expect(requests[0]?.body).toMatchObject({
+    expectedActivationNumber: 2,
+    expectedDraftId: draft.id,
+  });
   expect(model).toHaveValue("gpt-5.6");
-  fireEvent.click(screen.getByRole("button", { name: "Reload definition" }));
-  const apply = await screen.findByRole("button", { name: "Apply edits to latest draft" });
+  fireEvent.click(screen.getByRole("button", { name: "Load latest for review" }));
+  const review = await screen.findByRole("region", { name: "Review draft changes" });
+  expect(within(review).getByText("Operating rules · The latest edit will be kept.")).toBeVisible();
+  expect(
+    within(review).getByText("Agent model and provider · Your edit will be applied."),
+  ).toBeVisible();
+  expect(within(review).getByRole("heading")).toHaveFocus();
+  const apply = within(review).getByRole("button", { name: "Apply reviewed edits" });
   expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
   expect(model).toHaveValue("gpt-5.6");
   fireEvent.click(apply);
+  expect(requests).toHaveLength(1);
+  expect(screen.getByRole("textbox", { name: "Operating rules" })).toHaveValue(
+    "Externally updated.",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
   await screen.findByText("Draft saved.");
   expect(requests[1]?.body).toMatchObject({
-    expectedDraftId: id(10),
-    source: { value: { agent: { model: "gpt-5.6" } } },
+    expectedActivationNumber: 2,
+    expectedDraftId: remote.id,
+    source: { value: { agent: { model: "gpt-5.6" }, operatingRulesMd: "Externally updated." } },
   });
+});
+
+it.each([
+  ["Keep mine", "gpt-5.6"],
+  ["Keep latest", "gpt-5.4"],
+])("requires an explicit choice for a same-field conflict: %s", async (choice, modelValue) => {
+  const { requests, updateDraft } = setup();
+  const model = await screen.findByRole("textbox", { name: "Model" });
+  fireEvent.change(model, { target: { value: "gpt-5.6" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Operating rules" }), {
+    target: { value: "Local operating rules." },
+  });
+  const remote = updateDraft({ agent: { ...source.agent, model: "gpt-5.4" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Load latest for review" }));
+  const review = within(await screen.findByRole("region", { name: "Review draft changes" }));
+  const conflict = within(review.getByRole("group", { name: "Agent model and provider" }));
+  expect(conflict.getByText("gpt-5.4")).toBeVisible();
+  expect(conflict.getByText("gpt-5.6")).toBeVisible();
+  expect(conflict.getByRole("radio", { name: "Keep latest" })).not.toBeChecked();
+  expect(conflict.getByRole("radio", { name: "Keep mine" })).not.toBeChecked();
+  const apply = review.getByRole("button", { name: "Apply reviewed edits" });
+  expect(apply).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  fireEvent.click(conflict.getByRole("radio", { name: choice }));
+  fireEvent.click(apply);
+  expect(requests).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Draft saved.");
+  expect(requests[1]?.body).toMatchObject({
+    expectedDraftId: remote.id,
+    source: { value: { agent: { model: modelValue }, operatingRulesMd: "Local operating rules." } },
+  });
+});
+
+it("does not treat invalid raw JSON as a safe replay, and checks the token again after review", async () => {
+  const { requests, updateDraft } = setup();
+  await screen.findByRole("textbox", { name: "Model" });
+  fireEvent.click(screen.getByRole("button", { name: "JSON source" }));
+  const json = screen.getByRole("textbox", { name: "Definition JSON" });
+  const locallyEdited = { ...source, agent: { ...source.agent, model: "gpt-5.6" } };
+  const invalid = JSON.stringify(locallyEdited).replace(
+    '"model":"gpt-5.6"',
+    '"model":"ignored","model":"gpt-5.6"',
+  );
+  fireEvent.change(json, { target: { value: invalid } });
+  const remote = updateDraft({ operatingRulesMd: "First external edit." });
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Load latest for review" }));
+  const review = within(await screen.findByRole("region", { name: "Review draft changes" }));
+  expect(review.getByText(/duplicate object key/)).toBeVisible();
+  expect(review.getByRole("button", { name: "Apply reviewed edits" })).toBeDisabled();
+  expect(json).toHaveValue(invalid);
+  fireEvent.change(json, { target: { value: JSON.stringify(locallyEdited) } });
+  fireEvent.click(review.getByRole("button", { name: "Apply reviewed edits" }));
+  updateDraft({ operatingRulesMd: "Second external edit." }, 12);
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByRole("button", { name: "Load latest for review" });
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  expect(requests[1]?.body).toMatchObject({ expectedDraftId: remote.id });
+  fireEvent.click(screen.getByRole("button", { name: "Load latest for review" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Apply reviewed edits" }));
+  const reviewed = (json as HTMLTextAreaElement).value;
+  expect(JSON.parse(reviewed)).toMatchObject({
+    operatingRulesMd: "Second external edit.",
+    agent: { model: "gpt-5.6" },
+  });
+});
+
+it("keeps a dirty factory open until the operator discards its unsaved edits", async () => {
+  navigation.search = new URLSearchParams(
+    `factory=${id(9)}&restoreFrom=2&activation=1&revision=${previous.id}`,
+  );
+  const user = userEvent.setup();
+  const { editor, renderEditor, requests } = setup({
+    editorProps: {
+      factorySelection: {
+        selectedValue: id(9),
+        resetParams: ["restoreFrom", "activation", "revision"],
+        factories: [
+          { id: id(9), name: "Release factory", isDefault: true, status: "active" },
+          { id: id(13), name: "Support factory", isDefault: false, status: "active" },
+        ],
+      },
+      recoveryKey: "confirmed-discard",
+    },
+  });
+  const model = await screen.findByRole("textbox", { name: "Model" });
+  const selector = screen.getByRole("combobox", { name: "Factory" });
+  fireEvent.change(model, { target: { value: "gpt-5.6" } });
+  async function attemptSwitch() {
+    await user.click(selector);
+    await user.click(await screen.findByRole("option", { name: "Support factory" }));
+    return within(
+      await screen.findByRole("alertdialog", { name: "Switch factories without saving?" }),
+    );
+  }
+  const dialog = await attemptSwitch();
+  expect(dialog.getByText(/Switching to Support factory/)).toBeVisible();
+  expect(dialog.getByRole("button", { name: "Stay" })).toHaveFocus();
+  expect(navigation.push).not.toHaveBeenCalled();
+  await user.click(dialog.getByRole("button", { name: "Stay" }));
+  await waitFor(() => expect(selector).toHaveFocus());
+  expect(model).toHaveValue("gpt-5.6");
+  expect(navigation.push).not.toHaveBeenCalled();
+  const reopened = await attemptSwitch();
+  await user.click(reopened.getByRole("button", { name: "Discard and switch" }));
+  expect(navigation.push).toHaveBeenCalledExactlyOnceWith(
+    `/w/acme/settings/factory-definition?factory=${id(13)}`,
+    { scroll: false },
+  );
+  expect(requests).toHaveLength(0);
+  editor.unmount();
+  renderEditor();
+  expect(await screen.findByRole("textbox", { name: "Model" })).toHaveValue(source.agent.model);
+});
+
+it("restores edits after client navigation and reviews against the newly loaded draft", async () => {
+  const { editor, renderEditor, updateDraft } = setup({
+    editorProps: { recoveryKey: "tab-return" },
+  });
+  fireEvent.change(await screen.findByRole("textbox", { name: "Model" }), {
+    target: { value: "gpt-5.6" },
+  });
+  const leave = new Event("beforeunload", { cancelable: true });
+  fireEvent(window, leave);
+  expect(leave.defaultPrevented).toBe(true);
+  editor.unmount();
+  updateDraft({ operatingRulesMd: "Saved while away." });
+  renderEditor();
+  expect(await screen.findByRole("textbox", { name: "Model" })).toHaveValue("gpt-5.6");
+  expect(screen.getByText("Your unsaved edits from this tab were restored.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Discard my edits" }));
+  expect(screen.getByRole("textbox", { name: "Operating rules" })).toHaveValue("Saved while away.");
+  const cleanLeave = new Event("beforeunload", { cancelable: true });
+  fireEvent(window, cleanLeave);
+  expect(cleanLeave.defaultPrevented).toBe(false);
 });
 
 it("activates an immutable selected revision using the displayed activation guard", async () => {
@@ -956,7 +1130,7 @@ it("explains a newer activation and preserves unsaved input when the reviewer re
   const model = screen.getByRole("textbox", { name: "Model" });
   fireEvent.change(model, { target: { value: "gpt-5.6" } });
   fireEvent.click(screen.getByRole("button", { name: "Reload definition" }));
-  expect(await screen.findByRole("button", { name: "Apply edits to latest draft" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Apply reviewed edits" })).toBeVisible();
   expect(model).toHaveValue("gpt-5.6");
   expect(requests).toHaveLength(0);
 });
