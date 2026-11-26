@@ -40,7 +40,9 @@ export function useConnectorCatalog(endpoint: string, query: string | null, find
     const params = new URLSearchParams(query);
     const targets = findIds ? findIds.split(",") : [];
     async function read() {
-      let merged: ConnectorCatalogResponse | null = null;
+      let lastPage: ConnectorCatalogResponse | undefined;
+      let resources: ConnectorCatalogOption[] = [];
+      let tenantId: string | undefined;
       let after = cursor;
       const seen = new Set<string>();
       for (let page = 0; page < 6; page++) {
@@ -55,22 +57,17 @@ export function useConnectorCatalog(endpoint: string, query: string | null, find
         if (
           data.provider !== params.get("provider") ||
           data.kind !== params.get("kind") ||
-          (merged && merged.tenant.id !== data.tenant.id)
+          (tenantId !== undefined && tenantId !== data.tenant.id)
         )
           throw new Error("Connector catalog scope changed.");
-        merged = {
-          ...data,
-          resources: mergeOptions(merged?.resources ?? [], data.resources),
-        };
+        tenantId = data.tenant.id;
+        resources = mergeOptions(resources, data.resources);
+        lastPage = data;
         after = data.nextCursor;
-        if (
-          cursor ||
-          !after ||
-          targets.every((id) => merged?.resources.some((item) => item.id === id))
-        )
+        if (cursor || !after || targets.every((id) => resources.some((item) => item.id === id)))
           break;
       }
-      return merged;
+      return lastPage ? { ...lastPage, resources } : null;
     }
 
     void read().then(

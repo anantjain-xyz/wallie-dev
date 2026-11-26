@@ -60,7 +60,12 @@ export const connectorCatalogQuerySchema = z.union([
     cursor: cursor.optional(),
   }),
   z.strictObject({
-    provider: z.enum(["linear", "slack"]),
+    provider: z.literal("linear"),
+    kind: z.literal("resource"),
+    resourceId: uuid,
+  }),
+  z.strictObject({
+    provider: z.literal("slack"),
     kind: z.literal("resource"),
     resourceId: uuid,
   }),
