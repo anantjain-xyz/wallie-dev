@@ -54,6 +54,17 @@ export class RunTranscriptResetError extends Error {
   }
 }
 
+export class RunTranscriptReadError extends Error {
+  constructor() {
+    super("The transcript could not be read right now.");
+    this.name = "RunTranscriptReadError";
+  }
+}
+
+function accessWasDenied(status: number, code: string) {
+  return status === 401 || status === 403 || code === "42501" || code === "P0002";
+}
+
 export function loadRunTranscript(input: Input): Promise<RunTranscriptPage | null> {
   return loadScopedRunTranscript({ ...input, readOwner: () => readOwner(input) });
 }
@@ -100,8 +111,21 @@ export async function loadScopedRunTranscript(
         ? query.gt("sequence", cursor.sequence)
         : query.lt("sequence", cursor.sequence);
     }
-    const { data, error } = await (input.signal ? query.abortSignal(input.signal) : query);
-    if (error) throw error;
+    const { data, error, status } = await (input.signal ? query.abortSignal(input.signal) : query);
+    if (error) {
+      if (accessWasDenied(status, error.code)) return null;
+      if ([0, 502, 503, 504].includes(status) || /^(08|53|57P0[123]|57014)/.test(error.code)) {
+        input.signal?.throwIfAborted();
+        const current = await input.readOwner();
+        if (!current) return null;
+        if (current.run_id !== scope.runId || (current.attempt_count ?? null) !== attemptCount)
+          throw new RunTranscriptResetError();
+        if (current.transcript_expired_at)
+          return emptyPage(scope, current.status, current.transcript_expired_at);
+        throw new RunTranscriptReadError();
+      }
+      throw error;
+    }
     const rows = data ?? [];
     hasMore = rows.length > limit;
     const pageRows = rows.slice(0, limit);
@@ -174,12 +198,12 @@ function isTerminal(status: RunTranscriptPage["runStatus"]): boolean {
 }
 
 async function readOwner(input: Input): Promise<RunTranscriptOwner | null> {
-  const { data, error } = await input.supabase.rpc("list_workspace_run_catalog", {
+  const { data, error, status } = await input.supabase.rpc("list_workspace_run_catalog", {
     p_workspace_id: input.workspaceId,
     p_run_id: input.runId,
     p_limit: 1,
   });
-  if (error?.code === "P0002") return null;
+  if (error && accessWasDenied(status, error.code)) return null;
   if (error) throw error;
   return data?.[0] ?? null;
 }

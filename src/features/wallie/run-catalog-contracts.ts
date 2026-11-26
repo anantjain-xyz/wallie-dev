@@ -17,6 +17,8 @@ export const runCatalogFiltersSchema = z.object({
   status: z.enum(Constants.public.Enums.agent_run_status).optional(),
   provider: z.enum(AGENT_PROVIDERS).optional(),
   stageId: z.string().uuid().optional(),
+  agentId: z.string().uuid().optional(),
+  agentPromptRevisionId: z.string().uuid().optional(),
 });
 
 export const runCatalogQuerySchema = runCatalogFiltersSchema
@@ -24,7 +26,7 @@ export const runCatalogQuerySchema = runCatalogFiltersSchema
     cursor: z
       .string()
       .min(1)
-      .max(512)
+      .max(768)
       .regex(/^[A-Za-z0-9_-]+$/)
       .optional(),
     limit: z
@@ -34,7 +36,10 @@ export const runCatalogQuerySchema = runCatalogFiltersSchema
       .pipe(z.number().int().max(RUN_CATALOG_MAX_PAGE_SIZE))
       .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ agentId, agentPromptRevisionId }) => Boolean(agentId) === Boolean(agentPromptRevisionId),
+  );
 
 export type RunCatalogFilters = z.infer<typeof runCatalogFiltersSchema>;
 export type RunCatalogQuery = z.output<typeof runCatalogQuerySchema>;
