@@ -448,11 +448,13 @@ function OutboundForm({
             <>
               <PolicyChoice
                 catalog={teams}
+                custom
                 empty="Choose a team"
                 error={errors.team}
                 id={`${id}-team`}
                 label="Linear team"
                 onChange={(value) => {
+                  if (value === teamId) return;
                   setSelectedTeam(value);
                   setFromStateId("");
                   setToStateId("");
@@ -519,14 +521,16 @@ function PolicyChoice({
   value,
 }: {
   catalog: Catalog;
+  custom?: boolean;
   disabled?: boolean;
   empty: string;
   error?: string;
   id: string;
   label: string;
   onChange: (value: string) => void;
+  required?: boolean;
   value: string;
-} & ({ custom: true; required?: never } | { custom?: false; required?: boolean })) {
+}) {
   const catalogOptions = choices(catalog);
   const missing = value !== "" && !catalogOptions.some((item) => item.id === value);
   const options: SelectOption[] = [
@@ -540,6 +544,7 @@ function PolicyChoice({
   const fieldProps = {
     "aria-describedby": error ? `${id}-error` : undefined,
     "aria-invalid": error ? true : undefined,
+    "aria-required": required,
     disabled,
     id,
     label,
@@ -556,11 +561,7 @@ function PolicyChoice({
           wrap
         />
       ) : (
-        <ConnectorSelect
-          {...fieldProps}
-          aria-required={required}
-          onChange={(event) => onChange(event.target.value)}
-        >
+        <ConnectorSelect {...fieldProps} onChange={(event) => onChange(event.target.value)}>
           {options.map((item) => (
             <option disabled={item.disabled} key={item.value} value={item.value}>
               {item.label}
