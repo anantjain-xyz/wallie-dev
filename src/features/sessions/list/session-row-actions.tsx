@@ -2,7 +2,7 @@
 
 import { useChangeMotion } from "@/components/ui/use-change-motion";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
@@ -79,6 +79,8 @@ export function SessionRowIsland({
   const router = useRouter();
   const { dismissToast, pushToast } = useOptionalToast();
   const visibility = useSessionsLedgerVisibility();
+  const hideSession = visibility?.hideSession;
+  const showSession = visibility?.showSession;
   const archiveInFlightRef = useRef(false);
   const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const titleLinkRef = useRef<HTMLAnchorElement | null>(null);
@@ -86,7 +88,6 @@ export function SessionRowIsland({
   const [titleOverride, setTitleOverride] = useState<TitleOverride | null>(null);
   const [draftTitle, setDraftTitle] = useState(session.title);
   const [archiveOverride, setArchiveOverride] = useState<ArchiveOverride | null>(null);
-  const [locallyHidden, setLocallyHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -101,28 +102,32 @@ export function SessionRowIsland({
   const displayTitle = resolveOptimisticTitle(session, titleOverride);
   const { archivedAt, phaseStatus } = resolveOptimisticArchive(session, archiveOverride);
   const isArchived = Boolean(archivedAt);
+  const hiddenFromCurrentScope =
+    (scope !== "archived" && archivePending === "archive") ||
+    (scope === "all" && isArchived && session.archivedAt === null) ||
+    (scope === "active" && isArchived) ||
+    (scope === "archived" && (archivePending === "unarchive" || !isArchived));
 
-  function setRowHidden(hidden: boolean) {
-    setLocallyHidden(hidden);
-    if (hidden) {
-      requestAnimationFrame(() => {
-        if (document.activeElement === document.body) {
-          document.getElementById("sessions-search")?.focus();
-        }
-      });
-    }
-    if (!visibility) return;
-    if (hidden) visibility.hideSession(session.id);
-    else visibility.showSession(session.id);
-  }
+  useLayoutEffect(() => {
+    if (!hiddenFromCurrentScope) return;
+    hideSession?.(session.id);
+    const frame = requestAnimationFrame(() => {
+      if (document.activeElement === document.body) {
+        document.getElementById("sessions-search")?.focus();
+      }
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      showSession?.(session.id);
+    };
+  }, [hiddenFromCurrentScope, hideSession, session.id, showSession]);
 
   function requestArchive() {
-    if (archiveInFlightRef.current || locallyHidden) return;
+    if (archiveInFlightRef.current || hiddenFromCurrentScope) return;
 
     archiveInFlightRef.current = true;
     setArchivePending("archive");
     setArchiveDialogOpen(false);
-    setRowHidden(true);
     setArchiveError(null);
     const archivePromise = archiveSessionFromClient({ sessionId: session.id });
 
@@ -142,7 +147,6 @@ export function SessionRowIsland({
         const latestSession = latestSessionRef.current;
         if (!shouldApplyArchiveResult(result, latestSession, archivedAtAtMutationStart)) {
           setArchiveOverride(null);
-          setRowHidden(false);
           return;
         }
 
@@ -155,7 +159,6 @@ export function SessionRowIsland({
               phaseStatus: result.phaseStatus,
             }),
           );
-          setRowHidden(false);
           pushToast({
             priority: "polite",
             title: `Session #${session.number} remains active.`,
@@ -189,7 +192,6 @@ export function SessionRowIsland({
                     !shouldApplyArchiveResult(undoResult, latestAfterUndo, archivedAtBeforeUndo)
                   ) {
                     setArchiveOverride(null);
-                    setRowHidden(false);
                     archiveInFlightRef.current = false;
                     return;
                   }
@@ -199,7 +201,6 @@ export function SessionRowIsland({
                       phaseStatus: undoResult.phaseStatus,
                     }),
                   );
-                  setRowHidden(false);
                   archiveInFlightRef.current = false;
                   pushToast({
                     priority: "polite",
@@ -231,7 +232,6 @@ export function SessionRowIsland({
       .catch((errorValue) => {
         archiveInFlightRef.current = false;
         setArchivePending(null);
-        setRowHidden(false);
         dismissToast(pendingToastId);
         pushToast({
           description:
@@ -254,16 +254,12 @@ export function SessionRowIsland({
         phaseStatus,
       }),
     );
-    if (scope === "archived") {
-      setRowHidden(true);
-    }
 
     try {
       const result = await unarchiveSessionFromClient({ sessionId: session.id });
       const latestSession = latestSessionRef.current;
       if (!shouldApplyArchiveResult(result, latestSession, authoritativeAtStart.archivedAt)) {
         setArchiveOverride(null);
-        setRowHidden(false);
         return;
       }
       setArchiveOverride(
@@ -272,11 +268,6 @@ export function SessionRowIsland({
           phaseStatus: result.phaseStatus,
         }),
       );
-      if (scope === "archived" && result.archivedAt === null) {
-        // stay hidden from archived scope
-      } else {
-        setRowHidden(false);
-      }
       pushToast({
         priority: "polite",
         title: `Session #${session.number} unarchived.`,
@@ -289,7 +280,6 @@ export function SessionRowIsland({
       const message =
         errorValue instanceof Error ? errorValue.message : "Failed to unarchive session.";
       setArchiveOverride(null);
-      setRowHidden(false);
       // Toast survives even if this island was unmounted while the last archived row was hidden.
       pushToast({
         description: message,
@@ -394,11 +384,6 @@ export function SessionRowIsland({
     event.preventDefault();
     void saveTitle();
   }
-
-  const hiddenFromCurrentScope =
-    locallyHidden ||
-    (scope === "active" && Boolean(archivedAt)) ||
-    (scope === "archived" && !archivedAt);
 
   const motionRef = useChangeMotion<HTMLDivElement>(hiddenFromCurrentScope ? "hidden" : "visible");
 

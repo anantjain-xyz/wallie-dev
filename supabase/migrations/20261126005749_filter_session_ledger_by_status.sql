@@ -337,13 +337,12 @@ begin
         jsonb_build_object('count', 0, 'name', ps.name, 'position', ps.position, 'slug', ps.slug)
       )
       from public.pipeline_stages ps
-      where ps.slug = v_stage_slug and exists (
-        select 1
-        from public.sessions s
-        where s.workspace_id = v_workspace_id
-          and s.factory_id = any(v_factory_ids)
-          and s.current_stage_id = ps.id
-      )
+      join public.pipelines pipeline
+        on pipeline.id = ps.pipeline_id
+       and pipeline.workspace_id = ps.workspace_id
+      where pipeline.workspace_id = v_workspace_id
+        and pipeline.factory_id = any(v_factory_ids)
+        and ps.slug = v_stage_slug
       order by ps.updated_at desc, ps.created_at desc, ps.id desc
       limit 1
     ), '[]'::jsonb)

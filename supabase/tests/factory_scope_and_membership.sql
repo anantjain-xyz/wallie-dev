@@ -183,7 +183,9 @@ values
   ('55000000-1100-4000-8000-000000000001', '55000000-0000-4000-8000-000000000001',
     '55000000-1000-4000-8000-000000000001', 1, 'plan', 'Plan'),
   ('55000000-1100-4000-8000-000000000002', '55000000-0000-4000-8000-000000000001',
-    '55000000-1000-4000-8000-000000000002', 1, 'plan', 'Plan');
+    '55000000-1000-4000-8000-000000000002', 1, 'plan', 'Plan'),
+  ('55000000-1100-4000-8000-000000000003', '55000000-0000-4000-8000-000000000001',
+    '55000000-1000-4000-8000-000000000002', 2, 'payments-review', 'Payments review');
 
 insert into public.github_installations(
   id, workspace_id, installation_id, installation_url, app_id, target_type, target_name, permissions
@@ -538,6 +540,22 @@ select is(
   ) -> 'scopeFacets' -> 'all',
   '2'::jsonb,
   'session facets count the selected factory before pagination'
+);
+select is(
+  public.get_session_list_page('factory-scope-primary', search_query => '#999999',
+    target_factory_id => (select factory_id from scope_fixtures where slug = 'payments'),
+    stage_filter_slug => 'payments-review'
+  )->'stageFacets',
+  '[{"count":0,"name":"Payments review","position":2,"slug":"payments-review"}]'::jsonb,
+  'an unused stage is named in the selected authorized factory'
+);
+select is(
+  public.get_session_list_page('factory-scope-primary', search_query => '#999999',
+    target_factory_id => (select factory_id from scope_fixtures where slug = 'default'),
+    stage_filter_slug => 'payments-review'
+  )->'stageFacets',
+  '[]'::jsonb,
+  'the zero-count facet does not use metadata from an authorized but unselected sibling factory'
 );
 select is(
   (select sum((lane ->> 'totalCount')::integer) from jsonb_array_elements(
