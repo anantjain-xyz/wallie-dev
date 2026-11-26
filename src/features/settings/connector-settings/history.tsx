@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
+import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -16,7 +18,6 @@ import {
 import { workspaceSessionDetailPath } from "@/lib/routes";
 
 import { connectorCommand, readConnectorResponse } from "./request";
-import { ConnectorSelect } from "./select";
 
 const kindLabel: Record<ConnectorDeliveryRow["kind"], string> = {
   github_admission: "GitHub work intake",
@@ -78,19 +79,22 @@ export function ConnectorDeliveryHistory({
     <section className="space-y-3" aria-label="Delivery history">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <h3 className="text-sm font-semibold text-foreground">Delivery history</h3>
-        <ConnectorSelect
-          className="space-y-1 text-xs font-medium text-muted"
+        <SelectField
+          align="end"
+          className="w-36 max-w-full space-y-1"
           label="Direction"
-          onChange={(event) => {
-            const value = event.target.value;
+          labelClassName="text-xs text-muted"
+          onValueChange={(value) => {
             if (value === "ingress" || value === "outbound" || value === "all") setLane(value);
           }}
+          options={[
+            { label: "All deliveries", value: "all" },
+            { label: "Ingress", value: "ingress" },
+            { label: "Outbound", value: "outbound" },
+          ]}
+          triggerClassName={`gap-1.5 px-2.5 ${FILTER_CONTROL_CLASS}`}
           value={lane}
-        >
-          <option value="all">All deliveries</option>
-          <option value="ingress">Ingress</option>
-          <option value="outbound">Outbound</option>
-        </ConnectorSelect>
+        />
       </div>
       <DeliveryPage endpoint={endpoint} key={lane} lane={lane} workspaceSlug={workspaceSlug} />
     </section>
