@@ -72,6 +72,7 @@ type CreateSessionDialogProps = {
   creationFactoryId?: string;
   creationFactoryName?: string;
   onClose: () => void;
+  onCloseAutoFocus?: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
   onReopen?: () => void;
   open: boolean;
@@ -151,6 +152,7 @@ function CreateSessionDialogBody({
   creationFactoryId,
   creationFactoryName,
   onClose,
+  onCloseAutoFocus,
   onPreviewChange,
   onReopen,
   onReset,
@@ -877,6 +879,7 @@ function CreateSessionDialogBody({
         }
         dismissible={!isSubmitting && !hasActiveAttachmentOperation}
         title="Start a new session"
+        onCloseAutoFocus={onCloseAutoFocus}
         onOpenAutoFocus={(event) => {
           if (errorMessage) {
             event.preventDefault();

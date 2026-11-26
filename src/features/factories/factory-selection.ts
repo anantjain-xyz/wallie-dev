@@ -97,6 +97,7 @@ export const BASE_FACTORY_SWITCH_RESET_PARAMS = [
   "stageId",
   "sessionId",
   "create",
+  "returnTo",
   "after",
 ] as const;
 

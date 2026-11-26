@@ -311,8 +311,9 @@ export async function loadRunInspectorData(
       throw error;
     });
   if (
-    transcript &&
-    (run.status !== transcript.runStatus || run.attemptCount !== transcript.attemptCount)
+    !transcript ||
+    run.status !== transcript.runStatus ||
+    run.attemptCount !== transcript.attemptCount
   ) {
     run = await loadRun();
     if (!run) notFound();

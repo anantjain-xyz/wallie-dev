@@ -22,11 +22,18 @@ export const slackConnectorSetupSchema = z.strictObject({
       id: uuid,
       teamId: slackTeamIdSchema,
       teamName: z.string().min(1).max(256),
+      teamDomain: z.string().min(1).max(256).optional(),
       generation,
       status: z.enum(["connected", "disconnected", "credential_unavailable"]),
       grantedScopes: z.array(scope).max(100),
       missingScopes: z.array(scope).max(100),
-      linkedActor: z.strictObject({ id: uuid, userId: slackUserIdSchema }).nullable(),
+      linkedActor: z
+        .strictObject({
+          id: uuid,
+          userId: slackUserIdSchema,
+          displayName: z.string().min(1).max(256).optional(),
+        })
+        .nullable(),
     }),
   ),
 });

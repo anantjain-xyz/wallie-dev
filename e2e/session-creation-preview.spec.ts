@@ -5,7 +5,33 @@ import { signIn } from "./helpers/auth";
 
 const workspacePath = "/w/acme-corp";
 
-test("workspace-logo navigation wins while its route response is delayed", async ({ page }) => {
+test("cancel and browser Back return from the named launcher to the original factory view", async ({
+  page,
+}) => {
+  const origin = `${workspacePath}/activity?factory=all#main-content`;
+  await page.goto(origin);
+
+  const launcher = page.getByRole("link", { name: /^New session in / });
+  await expect(launcher).toHaveAttribute(
+    "href",
+    new RegExp(`returnTo=${encodeURIComponent(origin)}$`),
+  );
+  await launcher.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Start a new session" });
+  await expect(dialog).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("returnTo")).toBe(origin);
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(origin);
+  await expect(launcher).toBeFocused();
+
+  await launcher.press("Enter");
+  await expect(dialog).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(origin);
+  await expect(dialog).toBeHidden();
+});
+
+test("workspace switcher navigation wins while its route response is delayed", async ({ page }) => {
   const createGate = deferred();
   const navigationGate = deferred();
   await page.route(`**${workspacePath}?*`, async (route) => {
@@ -29,10 +55,13 @@ test("workspace-logo navigation wins while its route response is delayed", async
       canonicalRequests.push(request.url());
   });
   await page.getByRole("button", { name: "New session" }).click();
-  await page.getByLabel("Prompt", { exact: true }).fill("Respect workspace-logo navigation intent");
+  await page
+    .getByLabel("Prompt", { exact: true })
+    .fill("Respect workspace switcher navigation intent");
   await page.getByRole("button", { name: "Start session" }).click();
   await expect(page.locator("[data-session-creation]")).toBeVisible();
-  await page.getByRole("link", { name: "Acme Corp", exact: true }).click();
+  await page.getByRole("button", { name: "Switch workspace: Acme Corp", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Acme Corp Current workspace", exact: true }).click();
   createGate.release();
   await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
   expect(canonicalRequests).toHaveLength(0);

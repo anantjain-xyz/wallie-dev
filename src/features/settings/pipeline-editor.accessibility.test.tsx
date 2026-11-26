@@ -7,8 +7,9 @@ import axe from "axe-core";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
-import { PipelineEditor } from "@/features/settings/pipeline-editor";
+import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
 import type { PipelineConfiguration } from "@/features/sessions/types";
+import { PipelineEditor } from "@/features/settings/pipeline-editor";
 
 const memberId = "00000000-0000-4000-8000-000000000021";
 
@@ -93,6 +94,7 @@ afterEach(() => {
 function renderEditor(
   onPipelineSaved?: (pipeline: PipelineConfiguration) => void,
   pipelineValue: PipelineConfiguration = pipeline,
+  members: WorkspaceMemberSummary[] = workspaceMembers,
 ) {
   return render(
     <OverlayProvider>
@@ -102,7 +104,7 @@ function renderEditor(
           onPipelineSaved={onPipelineSaved}
           pipeline={pipelineValue}
           workspaceId="00000000-0000-4000-8000-000000000002"
-          workspaceMembers={workspaceMembers}
+          workspaceMembers={members}
         />
       </main>
     </OverlayProvider>,
@@ -110,6 +112,38 @@ function renderEditor(
 }
 
 describe("PipelineEditor accessibility", () => {
+  it("retains unnamed saved approvers and omits unnamed members from new assignments", async () => {
+    const user = userEvent.setup();
+    const secondApproverId = "00000000-0000-4000-8000-000000000022";
+    const unassignedId = "00000000-0000-4000-8000-000000000023";
+    const unnamed = { ...workspaceMembers[0]!, fullName: null, email: null };
+    renderEditor(
+      undefined,
+      {
+        ...pipeline,
+        stages: [
+          { ...pipeline.stages[0]!, approverMemberIds: [memberId, secondApproverId] },
+          pipeline.stages[1]!,
+        ],
+      },
+      [unnamed, { ...unnamed, id: secondApproverId }, { ...unnamed, id: unassignedId }],
+    );
+
+    await user.click(screen.getByRole("button", { name: "Approvers 2 members" }));
+    expect(screen.getByRole("checkbox", { name: "Unnamed member 1 (owner)" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Unnamed member 2 (owner)" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Unnamed member 3 (owner)" })).toBeNull();
+    expect(screen.queryByText(unassignedId)).not.toBeInTheDocument();
+    expect(screen.getAllByText(memberId)[0]).not.toBeVisible();
+    await user.click(screen.getAllByText("Unnamed approver details")[0]!);
+    const firstId = screen.getAllByText(memberId)[0]!;
+    const secondId = screen.getByText(secondApproverId);
+    expect(firstId).toBeVisible();
+    expect(secondId).toBeVisible();
+    expect(firstId.closest("li")).toHaveTextContent(`Unnamed member 1: ${memberId}`);
+    expect(secondId.closest("li")).toHaveTextContent(`Unnamed member 2: ${secondApproverId}`);
+  });
+
   it("labels every stage field and supports keyboard approver selection", async () => {
     const user = userEvent.setup();
     renderEditor();

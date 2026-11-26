@@ -115,9 +115,9 @@ insert into public.pipeline_stages(id, workspace_id, pipeline_id, slug, name, po
 insert into public.sessions(id, workspace_id, number, title, pipeline_id, current_stage_id) values
   ('55200000-5000-4000-8000-000000000001', '55200000-1000-4000-8000-000000000001', 1, 'Custom execution',
     '55200000-3000-4000-8000-000000000001', '55200000-4000-4000-8000-000000000001');
-insert into public.agent_runs(id, workspace_id, session_id, stage_id, run_type, model_provider, model_name) values
+insert into public.agent_runs(id, workspace_id, session_id, stage_id, run_type, model_provider, model_name, created_at) values
   ('55200000-6000-4000-8000-000000000001', '55200000-1000-4000-8000-000000000001',
-    '55200000-5000-4000-8000-000000000001', '55200000-4000-4000-8000-000000000001', 'research', 'codex', 'gpt-5.5');
+    '55200000-5000-4000-8000-000000000001', '55200000-4000-4000-8000-000000000001', 'research', 'codex', 'gpt-5.5', clock_timestamp());
 select is((select agent_id from public.agent_runs where id = '55200000-6000-4000-8000-000000000001'),
   (select id from agent_fixture where key = 'implementation'), 'a custom stage executes through the default implementation identity');
 select is((select agent_prompt_revision_id from public.agent_runs where id = '55200000-6000-4000-8000-000000000001'),
@@ -148,9 +148,9 @@ insert into public.sessions(id, workspace_id, number, title, pipeline_id, curren
     '55200000-3000-4000-8000-000000000001', '55200000-4000-4000-8000-000000000001',
     'pinned', '55200000-7000-4000-8000-000000000001', true);
 set local role service_role;
-select lives_ok($sql$insert into public.agent_runs(id, workspace_id, session_id, stage_id, run_type, model_provider, model_name)
+select lives_ok($sql$insert into public.agent_runs(id, workspace_id, session_id, stage_id, run_type, model_provider, model_name, created_at)
   values ('55200000-6000-4000-8000-000000000002', '55200000-1000-4000-8000-000000000001',
-    '55200000-5000-4000-8000-000000000002', '55200000-4000-4000-8000-000000000001', 'research', 'codex', 'gpt-5.5')$sql$,
+    '55200000-5000-4000-8000-000000000002', '55200000-4000-4000-8000-000000000001', 'research', 'codex', 'gpt-5.5', clock_timestamp())$sql$,
   'service-role execution can insert a run with the exact compiled agent snapshot');
 select is((select agent_prompt_revision_id from public.agent_runs
   where id = '55200000-6000-4000-8000-000000000002'),

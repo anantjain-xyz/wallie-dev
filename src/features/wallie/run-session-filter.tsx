@@ -47,7 +47,7 @@ export function RunSessionFilter({
           if (controller.signal.aborted) return;
           setFailedQuery(null);
           setResult({ query, options });
-          setActive(query && options.length ? 1 : 0);
+          setActive(query ? (options.length ? 1 : -1) : 0);
         } catch {
           if (!controller.signal.aborted) {
             setResult(null);
@@ -116,7 +116,7 @@ export function RunSessionFilter({
             close();
           } else if (event.key === "Enter" && open) {
             event.preventDefault();
-            if (!query || (!loading && !failed && active > 0)) {
+            if (!query || (!loading && !failed)) {
               const option = options[active];
               if (option) choose(option);
             }
