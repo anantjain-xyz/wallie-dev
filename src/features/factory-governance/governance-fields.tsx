@@ -18,15 +18,15 @@ export function GovernanceSelect({
   choices,
   search,
   ...props
-}: Omit<ComponentProps<typeof SelectField>, "options" | "label"> & {
+}: Omit<ComponentProps<typeof SelectField>, "options" | "label" | "defaultValue" | "value"> & {
   choices: GovernanceChoice[];
   label: string;
   search?: boolean;
+  value: string;
 }) {
   const [filter, setFilter] = useState("");
-  const active = props.value ?? props.defaultValue;
   const options = choices.filter(
-    ({ id, label }) => id === active || matchesGovernanceSearch(label, filter),
+    ({ id, label }) => id === props.value || matchesGovernanceSearch(label, filter),
   );
   return (
     <div className="min-w-0 space-y-2">

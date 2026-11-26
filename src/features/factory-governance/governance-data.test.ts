@@ -182,3 +182,78 @@ it("resolves off-page principals with factory scope independently of the picker 
   ]);
   expect(requests.filter((url) => url.pathname.endsWith("/service_principals"))).toHaveLength(3);
 });
+
+it.each([
+  { failingTable: null, entries: [] },
+  { failingTable: "factory_machine_tokens", entries: [] },
+  { failingTable: "factory_oauth_client_bindings", entries: ["Machine token: Release job"] },
+])(
+  "retains focused grant dependency evidence when $failingTable fails",
+  async ({ failingTable, entries }) => {
+    const grant = {
+      id: fixtureId(2100),
+      service_principal_id: fixtureId(25),
+      github_repository_id: fixtureId(2101),
+      read_context_repository_ids: [],
+      tool_ids: [],
+      execution_policy_revision_id: fixtureId(2102),
+      version: 2,
+      revoked_at: null,
+      expires_at: "2099-01-01T00:00:00Z",
+    };
+    const dependencyReads: string[] = [];
+    const credentialReads: string[] = [];
+    const supabase = createClient<Database>("https://governance.example.test", "viewer-fixture", {
+      auth: { persistSession: false },
+      global: {
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          const table = url.pathname.split("/").at(-1);
+          if (table === "factory_execution_grants") return Response.json([grant]);
+          if (table === "read_factory_credential_ownership") credentialReads.push(url.pathname);
+          if (
+            (table === "factory_machine_tokens" || table === "factory_oauth_client_bindings") &&
+            url.searchParams.get("execution_grant_id")?.startsWith("in.")
+          ) {
+            dependencyReads.push(table);
+            expect(url.searchParams.get("execution_grant_id")).toBe(`in.(${grant.id})`);
+            expect(url.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+            expect(url.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+            expect(new Headers(init?.headers).get("authorization")).toBe("Bearer viewer-fixture");
+            if (table === failingTable) {
+              return Response.json(
+                { message: "Synthetic dependency read failed" },
+                { status: 403 },
+              );
+            }
+            if (table === "factory_machine_tokens" && entries.length) {
+              return Response.json([
+                {
+                  id: fixtureId(2110),
+                  name: "Release job",
+                  execution_grant_id: grant.id,
+                  execution_grant_version: grant.version,
+                  expires_at: null,
+                },
+              ]);
+            }
+          }
+          return Response.json([]);
+        },
+      },
+    });
+    const data = await loadGovernance(governanceScope(supabase), {
+      source: { kind: "grant", id: grant.id },
+    });
+    expect(data.bindings).toEqual([]);
+    expect(credentialReads).toEqual([]);
+    expect(dependencyReads.sort()).toEqual([
+      "factory_machine_tokens",
+      "factory_oauth_client_bindings",
+    ]);
+    expect(data.evidence.dependencies[grant.id]).toEqual({
+      entries,
+      readFailed: Boolean(failingTable),
+    });
+  },
+);

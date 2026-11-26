@@ -24,7 +24,7 @@ type Grant = Pick<
 
 const uuid = z.string().uuid();
 
-export async function readGovernanceIds<T>(
+async function readGovernanceIdResults<T>(
   values: Array<string | undefined>,
   query: (ids: string[]) => PromiseLike<{ data: T[] | null; error: unknown }>,
 ) {
@@ -32,8 +32,22 @@ export async function readGovernanceIds<T>(
   const groups = Array.from({ length: Math.ceil(ids.length / 75) }, (_, index) =>
     ids.slice(index * 75, (index + 1) * 75),
   );
-  const results = await Promise.all(groups.map(query));
-  return results.flatMap((result) => result.data ?? []);
+  const results = await Promise.all(
+    groups.map(async (group) => ({ ids: group, result: await query(group) })),
+  );
+  return {
+    rows: results.flatMap(({ result }) => (result.error ? [] : (result.data ?? []))),
+    failedIds: new Set(
+      results.flatMap(({ ids, result }) => (result.error || result.data === null ? ids : [])),
+    ),
+  };
+}
+
+export async function readGovernanceIds<T>(
+  values: Array<string | undefined>,
+  query: (ids: string[]) => PromiseLike<{ data: T[] | null; error: unknown }>,
+) {
+  return (await readGovernanceIdResults(values, query)).rows;
 }
 
 export function governancePolicy(
@@ -126,7 +140,7 @@ export async function loadGovernanceEvidence(
           .eq("workspace_id", workspaceId)
           .in("id", ids),
     ),
-    readGovernanceIds(activeIds, (ids) =>
+    readGovernanceIdResults(activeIds, (ids) =>
       supabase
         .from("factory_machine_tokens")
         .select("id, name, execution_grant_id, execution_grant_version, expires_at")
@@ -136,7 +150,7 @@ export async function loadGovernanceEvidence(
         .in("execution_grant_id", ids)
         .order("id"),
     ),
-    readGovernanceIds(activeIds, (ids) =>
+    readGovernanceIdResults(activeIds, (ids) =>
       supabase
         .from("factory_oauth_client_bindings")
         .select(
@@ -234,36 +248,40 @@ export async function loadGovernanceEvidence(
     ),
   ]);
 
-  const dependencies = Object.fromEntries(
-    active.map((grant) => [
-      grant.id,
-      [
-        ...tokens
-          .filter(
-            (row) =>
-              row.execution_grant_id === grant.id &&
-              row.execution_grant_version === grant.version &&
-              (!row.expires_at || Date.parse(row.expires_at) > asOf),
-          )
-          .map(({ name }) => `Machine token: ${name}`),
-        ...registrations
-          .filter(
-            (row) =>
-              row.execution_grant_id === grant.id &&
-              row.execution_grant_version === grant.version &&
-              row.factory_oauth_clients &&
-              !row.factory_oauth_clients.revoked_at,
-          )
-          .map((row) => `OAuth client: ${row.factory_oauth_clients?.name}`),
-        ...bindings
-          .filter((row) => row.grantId === grant.id && !row.revokedAt)
-          .map(
-            (row) =>
-              `Credential binding: ${agents.find(({ id }) => id === row.agentId)?.name ?? "Agent unavailable"} · ${row.provider}`,
-          ),
-      ],
-    ]),
-  );
+  const dependencies: Partial<Record<string, { entries: string[]; readFailed: boolean }>> =
+    Object.fromEntries(
+      active.map((grant) => [
+        grant.id,
+        {
+          readFailed: tokens.failedIds.has(grant.id) || registrations.failedIds.has(grant.id),
+          entries: [
+            ...tokens.rows
+              .filter(
+                (row) =>
+                  row.execution_grant_id === grant.id &&
+                  row.execution_grant_version === grant.version &&
+                  (!row.expires_at || Date.parse(row.expires_at) > asOf),
+              )
+              .map(({ name }) => `Machine token: ${name}`),
+            ...registrations.rows
+              .filter(
+                (row) =>
+                  row.execution_grant_id === grant.id &&
+                  row.execution_grant_version === grant.version &&
+                  row.factory_oauth_clients &&
+                  !row.factory_oauth_clients.revoked_at,
+              )
+              .map((row) => `OAuth client: ${row.factory_oauth_clients?.name}`),
+            ...bindings
+              .filter((row) => row.grantId === grant.id && !row.revokedAt)
+              .map(
+                (row) =>
+                  `Credential binding: ${agents.find(({ id }) => id === row.agentId)?.name ?? "Agent unavailable"} · ${row.provider}`,
+              ),
+          ],
+        },
+      ]),
+    );
 
   return {
     agents,

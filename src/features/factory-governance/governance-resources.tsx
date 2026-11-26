@@ -106,6 +106,7 @@ export function GrantCard({
   const repository = (id: string) => repositoryName(data, id) ?? "Repository unavailable";
   const policy = data.evidence.policies.find(({ id }) => id === grant.execution_policy_revision_id);
   const title = grantName(data, grant);
+  const dependencyPreview = data.evidence.dependencies[grant.id];
   const principal = <PrincipalLink scope={scope} data={data} id={grant.service_principal_id} />;
   const ids = [
     ["Grant ID", grant.id],
@@ -141,8 +142,15 @@ export function GrantCard({
             <RevokeGrant
               key={grant.version}
               dependencies={[
-                ...new Set([...(data.evidence.dependencies[grant.id] ?? []), ...eventDependencies]),
+                ...new Set([...(dependencyPreview?.entries ?? []), ...eventDependencies]),
               ]}
+              dependencyLookup={
+                dependencyPreview
+                  ? dependencyPreview.readFailed
+                    ? "failed"
+                    : "checked"
+                  : "not-checked"
+              }
               grantId={grant.id}
               pinned={authority?.grantVersion === grant.version}
               scope={{

@@ -538,6 +538,7 @@ export function RevokeGrant({
   target,
   pinned,
   dependencies,
+  dependencyLookup,
 }: {
   scope: Scope;
   grantId: string;
@@ -545,6 +546,7 @@ export function RevokeGrant({
   target: string;
   pinned: boolean;
   dependencies: string[];
+  dependencyLookup: "checked" | "failed" | "not-checked";
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -614,7 +616,23 @@ export function RevokeGrant({
           Dependent machine tokens, OAuth factory access, and event subscriptions can stop working.
           Revocation can’t be undone.
         </p>
-        {dependencies.length > 0 && <p>Visible dependencies: {dependencies.join("; ")}.</p>}
+        {dependencyLookup === "not-checked" ? (
+          <p>Dependency details weren’t checked for this grant.</p>
+        ) : (
+          <>
+            <p>
+              This preview is partial. It only includes credential bindings loaded on this page.
+            </p>
+            {dependencyLookup === "failed" && (
+              <p>Couldn’t load some machine token or OAuth dependency information.</p>
+            )}
+          </>
+        )}
+        {dependencies.length > 0 ? (
+          <p>Visible dependencies: {dependencies.join("; ")}.</p>
+        ) : dependencyLookup === "checked" ? (
+          <p>No dependencies found in this preview.</p>
+        ) : null}
       </div>
       <label className="mt-4 block min-w-0 space-y-1.5">
         <span className="type-label text-foreground">Reason (optional)</span>

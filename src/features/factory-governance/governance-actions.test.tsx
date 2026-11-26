@@ -149,6 +149,7 @@ it.each([true, false])(
     mount(
       <RevokeGrant
         dependencies={["Machine token: Release job"]}
+        dependencyLookup="checked"
         grantId={id(6)}
         pinned={pinned}
         scope={scope}
@@ -160,6 +161,7 @@ it.each([true, false])(
     const dialog = within(screen.getByRole("alertdialog"));
     expect(dialog.getByText(/revokes v3 for Release runner · example\/releases/)).toBeVisible();
     expect(dialog.getByText(/Machine token: Release job/)).toBeVisible();
+    expect(dialog.getByText(/only includes credential bindings loaded on this page/)).toBeVisible();
     expect(Boolean(dialog.queryByText(/published definition uses this version/))).toBe(pinned);
     await userEvent.type(
       dialog.getByRole("textbox", { name: "Reason (optional)" }),
@@ -180,7 +182,90 @@ it.each([true, false])(
   },
 );
 
+it.each(["checked", "failed"] as const)(
+  "describes an empty partial dependency preview distinctly for a %s lookup",
+  (dependencyLookup) => {
+    mount(
+      <RevokeGrant
+        dependencies={[]}
+        dependencyLookup={dependencyLookup}
+        grantId={id(6)}
+        pinned={false}
+        scope={scope}
+        target="Release runner"
+        version={3}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Revoke grant" }));
+    const dialog = within(screen.getByRole("alertdialog"));
+    expect(dialog.getByText(/This preview is partial/)).toBeVisible();
+    expect(Boolean(dialog.queryByText(/No dependencies found in this preview/))).toBe(
+      dependencyLookup === "checked",
+    );
+    expect(Boolean(dialog.queryByText(/Couldn’t load some machine token or OAuth/))).toBe(
+      dependencyLookup === "failed",
+    );
+  },
+);
+
 type SubscriptionSettings = React.ComponentProps<typeof GovernanceEventSubscriptions>["data"];
+
+it("keeps the selected authorization visible and submits its exact ID after filtering", async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+    Response.json({ signingSecret: "synthetic-signing-fixture" }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const { container } = mount(
+    <GovernanceEventSubscriptions
+      data={{
+        authorizations: Array.from({ length: 9 }, (_, index) => ({
+          credential_id: id(20 + index),
+          credential_kind: "machine_token" as const,
+          credential_name: `Credential ${index + 1}`,
+          service_principal_id: id(6),
+          scopeLabel: "Release runner · example/releases · Grant v3",
+        })),
+        subscriptions: [],
+      }}
+      endpoint="/mock-subscriptions"
+    />,
+  );
+  const authorization = screen.getByRole("combobox", { name: "Authorization" });
+  fireEvent.click(authorization);
+  fireEvent.click(await screen.findByRole("option", { name: /^Credential 2 ·/ }));
+  fireEvent.change(screen.getByRole("searchbox", { name: "Filter authorization options" }), {
+    target: { value: "Credential 9" },
+  });
+  expect(authorization).toHaveTextContent("Credential 2 · Machine token");
+  fireEvent.click(authorization);
+  expect(screen.getByRole("option", { name: /^Credential 2 ·/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("option", { name: /^Credential 9 ·/ })).toBeVisible();
+  expect(screen.queryByRole("option", { name: /^Credential 1 ·/ })).not.toBeInTheDocument();
+  fireEvent.keyDown(authorization, { key: "Escape" });
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Release receiver" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "HTTPS endpoint" }), {
+    target: { value: "https://receiver.example.test" },
+  });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Review approved" }));
+  fireEvent.submit(container.querySelector("form")!);
+  await screen.findByRole("region", { name: "Signing secret" });
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+    action: "create",
+    name: "Release receiver",
+    destination: "https://receiver.example.test",
+    credentialKind: "machine_token",
+    credentialId: id(21),
+    eventTypes: ["review.approved"],
+  });
+  expect(authorization).toHaveTextContent("Choose an authorization");
+});
+
 function subscriptions(authorized: boolean): SubscriptionSettings {
   return {
     authorizations: [],

@@ -119,6 +119,7 @@ function EventSubscriptionForm({
   const form = useRef<HTMLFormElement>(null);
   const name = useRef<HTMLInputElement>(null);
   const copyButton = useRef<HTMLButtonElement>(null);
+  const [authority, setAuthority] = useState("");
   const [feedback, setFeedback] = useState<FlashMessage | null>(null);
   const [signingSecret, setSigningSecret] = useState<string | null>(null);
   const action = useApiAction<{ signingSecret: string }, [FactoryEventSubscriptionCommand]>({
@@ -128,6 +129,7 @@ function EventSubscriptionForm({
       "Subscription created. Configure your receiver and verify ownership to start delivery.",
     onSuccess: ({ signingSecret }) => {
       setSigningSecret(signingSecret);
+      setAuthority("");
       form.current?.reset();
       router.refresh();
     },
@@ -233,13 +235,14 @@ function EventSubscriptionForm({
                 id: `${authorization.credential_kind}:${authorization.credential_id}`,
                 label: `${authorization.credential_name} · ${credentialKindLabel(authorization.credential_kind)} · ${authorization.scopeLabel}`,
               }))}
-              defaultValue=""
               emptyOption={{ disabled: true, label: "Choose an authorization", value: "" }}
               label="Authorization"
               labelClassName="type-label text-foreground"
               name="authority"
+              onValueChange={setAuthority}
               required
               search
+              value={authority}
               wrap
             />
             <fieldset className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
