@@ -14861,6 +14861,8 @@ export type Database = {
       }
       list_workspace_run_catalog: {
         Args: {
+          p_agent_id?: string
+          p_agent_prompt_revision_id?: string
           p_before_created_at?: string
           p_before_id?: string
           p_factory_id?: string
@@ -14878,6 +14880,7 @@ export type Database = {
           capture_interrupted: boolean
           cost_provenance: string
           created_at: string
+          factory_id: string
           failure_receipt: string
           finished_at: string
           has_events: boolean
@@ -14886,6 +14889,7 @@ export type Database = {
           last_activity_at: string
           model_name: string
           model_provider: string
+          newer_run_id: string
           output_tokens: number
           run_id: string
           session_id: string
@@ -14894,6 +14898,7 @@ export type Database = {
           source_recovery_required: boolean
           stage_id: string
           stage_name: string
+          stage_ordinal: number
           started_at: string
           status: Database["public"]["Enums"]["agent_run_status"]
           token_provenance: string

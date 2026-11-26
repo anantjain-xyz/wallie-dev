@@ -166,6 +166,27 @@ select is((select count(*) from public.factory_agents), 2::bigint,
   'a factory member reads only its default and named agent identities');
 select is((select count(*) from public.factory_agent_prompt_revisions), 3::bigint,
   'prompt history hides restricted and foreign factories');
+select is((
+  select catalog.run_id from public.factory_agent_prompt_revisions prompt
+  cross join lateral public.list_workspace_run_catalog(prompt.workspace_id,
+    p_factory_id => prompt.factory_id, p_agent_id => prompt.agent_id,
+    p_agent_prompt_revision_id => prompt.id, p_limit => 1) catalog
+  where prompt.prompt_md = 'Check repository conventions.'
+), '55200000-6000-4000-8000-000000000002'::uuid,
+  'a factory member can inspect the exact pinned named prompt revision');
+select is((
+  select count(*) from public.factory_agent_prompt_revisions prompt
+  join public.factory_agents agent on agent.factory_id = prompt.factory_id and agent.is_default
+  cross join lateral public.list_workspace_run_catalog(prompt.workspace_id,
+    p_agent_id => agent.id, p_agent_prompt_revision_id => prompt.id) catalog
+  where prompt.prompt_md = 'Check repository conventions.'
+), 0::bigint, 'a prompt revision from a different agent does not match a run');
+select is((
+  select count(*) from public.factory_agent_prompt_revisions prompt
+  cross join lateral public.list_workspace_run_catalog(prompt.workspace_id,
+    p_agent_id => prompt.agent_id, p_agent_prompt_revision_id => prompt.id) catalog
+  where prompt.revision_number = 1 and prompt.prompt_md = ''
+), 0::bigint, 'legacy default pins do not appear as actual prompt revision usage');
 reset role;
 set local request.jwt.claim.role = 'service_role';
 select public.archive_factory('55200000-1000-4000-8000-000000000001',

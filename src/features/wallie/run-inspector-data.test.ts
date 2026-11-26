@@ -12,7 +12,7 @@ import {
   loadRunInspectorRoutingDecision,
   loadRunInspectorSkills,
 } from "@/features/wallie/run-inspector-data";
-import { RunTranscriptResetError } from "@/features/wallie/run-transcript";
+import { RunTranscriptReadError, RunTranscriptResetError } from "@/features/wallie/run-transcript";
 import type { Database } from "@/lib/supabase/database.types";
 
 const mocks = vi.hoisted(() => ({
@@ -38,12 +38,14 @@ vi.mock("@/features/wallie/run-catalog", () => ({
 }));
 vi.mock("@/features/wallie/run-transcript", () => ({
   loadRunTranscript: mocks.transcript,
+  RunTranscriptReadError: class extends Error {},
   RunTranscriptResetError: class extends Error {},
 }));
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const run = {
   id: "00000000-0000-4000-8000-000000000002",
+  factoryId: workspaceId,
   sessionId: "00000000-0000-4000-8000-000000000003",
   attemptCount: 4,
   sessionNumber: 42,
@@ -432,8 +434,15 @@ describe("run inspector composition", () => {
       supabase: input.supabase,
       workspace: { id: workspaceId, slug: "wallie" },
     });
-    mocks.factories.mockResolvedValue([{ id: workspaceId, status: factoryStatus }]);
-    mocks.catalog.mockResolvedValue({ ...run, status: "canceled", interrupted: false });
+    mocks.factories.mockResolvedValue([
+      { id: workspaceId, status: factoryStatus, canManage: role !== "member" },
+    ]);
+    mocks.catalog.mockResolvedValue({
+      ...run,
+      status: "canceled",
+      interrupted: false,
+      finishedAt: "2026-11-14T20:00:00Z",
+    });
     mocks.transcript.mockResolvedValue({
       runId: run.id,
       attemptCount: run.attemptCount,
@@ -454,8 +463,17 @@ describe("run inspector composition", () => {
       prepare(role, factoryStatus);
       const data = await loadRunInspectorData("wallie", run.id);
       expect(data.canOpenRoutingPolicy).toBe(canOpen);
+      expect(data.canCaptureBenchmark).toBe(canOpen);
     },
   );
+
+  it("does not offer benchmark capture for an unfinished run, even to a manager", async () => {
+    prepare("owner");
+    mocks.catalog.mockResolvedValue({ ...run, status: "running", finishedAt: null });
+    mocks.transcript.mockResolvedValue({ runStatus: "running", attemptCount: run.attemptCount });
+    const data = await loadRunInspectorData("wallie", run.id);
+    expect(data.canCaptureBenchmark).toBe(false);
+  });
 
   it("uses the newest exact transcript status so a cancellation between reads is not revived", async () => {
     const { input } = prepare();
@@ -513,6 +531,19 @@ describe("run inspector composition", () => {
     prepare();
     mocks.transcript.mockResolvedValue(null);
     await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("isolates a known transcript read failure while retaining the authorized run and evidence", async () => {
+    prepare();
+    mocks.transcript.mockRejectedValueOnce(new RunTranscriptReadError());
+    const data = await loadRunInspectorData("wallie", run.id);
+    expect(data).toMatchObject({
+      run: { id: run.id },
+      artifact: { id: artifactId },
+      transcript: null,
+    });
+    mocks.transcript.mockRejectedValueOnce(new Error("Unexpected read failure"));
+    await expect(loadRunInspectorData("wallie", run.id)).rejects.toThrow("Unexpected read failure");
   });
 
   it("restarts an initial transcript once when capture begins during the read", async () => {

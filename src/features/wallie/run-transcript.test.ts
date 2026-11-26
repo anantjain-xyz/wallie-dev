@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   loadRunTranscript,
   RunTranscriptCursorError,
+  RunTranscriptReadError,
   RunTranscriptResetError,
 } from "./run-transcript";
 import { RUN_TRANSCRIPT_ENTRY_BYTES, runTranscriptQuerySchema } from "./run-transcript-contracts";
@@ -19,11 +20,15 @@ const owner: {
   transcript_expired_at?: string;
 } = { run_id: runId, attempt_count: 2, status: "running" };
 
-function client(pages: unknown[][] = [], currentOwner = owner) {
+function client(
+  pages: (unknown[] | { data: null; error: { code: string }; status: number })[] = [],
+  currentOwner = owner,
+) {
   const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
   const rpc = vi.fn().mockResolvedValue({ data: [currentOwner], error: null });
   const from = vi.fn((table: string) => {
-    const result = { data: pages.shift() ?? [], error: null };
+    const next = pages.shift() ?? [];
+    const result = Array.isArray(next) ? { data: next, error: null, status: 200 } : next;
     const builder = {
       select: (value: string) => record("select", value),
       eq: (key: string, value: unknown) => record("eq", key, value),
@@ -60,6 +65,24 @@ function event(sequence: number, overrides: Record<string, unknown> = {}) {
   };
 }
 describe("run transcript pages", () => {
+  it("only isolates a transient event read after rechecking the exact owner", async () => {
+    const transient = { data: null, error: { code: "57014" }, status: 500 } as const;
+    const readable = client([transient]);
+    await expect(loadRunTranscript(readable.input)).rejects.toBeInstanceOf(RunTranscriptReadError);
+    expect(readable.rpc).toHaveBeenCalledTimes(2);
+
+    const revoked = client([transient]);
+    revoked.rpc.mockResolvedValueOnce({ data: [owner], error: null }).mockResolvedValueOnce({
+      data: [],
+      error: null,
+    });
+    await expect(loadRunTranscript(revoked.input)).resolves.toBeNull();
+  });
+
+  it("treats event permission errors as unavailable rather than an isolated read failure", async () => {
+    const test = client([{ data: null, error: { code: "42501" }, status: 403 }]);
+    await expect(loadRunTranscript(test.input)).resolves.toBeNull();
+  });
   it("returns an explicit expiry receipt without reading transcript bodies", async () => {
     const test = client([], {
       ...owner,

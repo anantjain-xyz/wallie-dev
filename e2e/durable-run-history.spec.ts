@@ -250,7 +250,7 @@ test("reopens an exact retained run after browser closure and worker restart", a
       const exactRun = inspected
         .getByRole("list", { name: "Runs" })
         .getByRole("link", { name: /^Inspect run for session / })
-        .and(inspected.locator(`a[href="${runPath}"]`));
+        .and(inspected.locator(`a[href="${runPath}"], a[href^="${runPath}?fromRuns="]`));
       await expect(exactRun).toHaveCount(1);
       await exactRun.click();
       await expect(

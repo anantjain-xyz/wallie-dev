@@ -35,11 +35,14 @@ const recovery: RunCatalogRecovery = {
 };
 const run: WorkspaceRunCatalogItem = {
   id: "00000000-0000-4000-8000-000000000002",
+  factoryId: workspaceId,
   sessionId: "00000000-0000-4000-8000-000000000003",
   sessionNumber: 42,
   sessionTitle: "Build workspace run inspector",
   sessionRunHref: "/w/wallie/sessions/42#wallie-run-00000000-0000-4000-8000-000000000002",
   attemptCount: 4,
+  stageOrdinal: 6,
+  newerRunId: null,
   stageId: "00000000-0000-4000-8000-000000000004",
   stageName: "Build",
   modelProvider: "codex",
@@ -139,6 +142,7 @@ function show(
   executionProfile?: RunInspectorExecutionProfile,
   routingDecision?: RunInspectorRoutingDecision,
   canOpenRoutingPolicy = false,
+  navigation: { newerRunHref?: string; returnTo?: { href: string; label: string } } = {},
 ) {
   return render(
     <RunInspector
@@ -146,12 +150,22 @@ function show(
       canOpenRoutingPolicy={canOpenRoutingPolicy}
       executionProfile={executionProfile}
       initialNow={now}
+      names={{
+        agents: { [run.id]: "Release agent" },
+        members: {
+          [run.sessionId]: { label: "Riley · Member", active: true },
+          [workspaceId]: { label: "Morgan · Former member", active: false },
+        },
+        principals: {},
+        promptRevisionNumber: 3,
+      }}
       routingDecision={routingDecision}
       run={{ ...run, ...changes }}
       skills={skills}
       workspaceId={workspaceId}
       workspaceSlug="wallie"
       transcript={<p>Exact attempt activity</p>}
+      {...navigation}
     />,
   );
 }
@@ -181,13 +195,15 @@ describe("RunInspector", () => {
     const { decision, benchmarkEvidence } = historicalDecision.receipt;
     expect(routing.getByText("Original verification")).toBeTruthy();
     expect(routing.getByText("Primary configuration")).toBeTruthy();
+    expect(routing.getByText("Shadow only — not applied")).toBeTruthy();
+    expect(routing.getByRole("heading", { name: "Would select" })).toBeTruthy();
     expect(routing.getByText(decision.ruleId)).toBeTruthy();
     expect(routing.getByText("openai/gpt-5.5")).toBeTruthy();
     expect(routing.getByText("Release accuracy")).toBeTruthy();
     expect(routing.getByText("92%")).toBeTruthy();
     expect(screen.getByText(/actual-execution-model/)).toBeTruthy();
     expect(
-      routing.getByRole("link", { name: decision.policyRevisionId }).getAttribute("href"),
+      routing.getByRole("link", { name: "Open recorded policy revision" }).getAttribute("href"),
     ).toBe(
       `/w/wallie/settings/factory-definition?factory=${workspaceId}&revision=${decision.policyRevisionId}`,
     );
@@ -213,7 +229,7 @@ describe("RunInspector", () => {
     const routing = routingPanel();
     const { policyRevisionId } = historicalDecision.receipt.decision;
     expect(routing.getByText(policyRevisionId)).toBeTruthy();
-    expect(routing.queryByRole("link", { name: policyRevisionId })).toBeNull();
+    expect(routing.queryByRole("link", { name: "Open recorded policy revision" })).toBeNull();
     expect(routing.getByRole("link", { name: "Open exact comparison configuration" })).toBeTruthy();
     expect(routing.getByRole("link", { name: "Open frozen suite revision" })).toBeTruthy();
   });
@@ -238,6 +254,7 @@ describe("RunInspector", () => {
     const routing = routingPanel();
     expect(routing.getByText("Override recorded")).toBeTruthy();
     expect(routing.getByText("Use the approved backup for this one session.")).toBeTruthy();
+    expect(routing.getByText("Morgan · Former member")).toBeTruthy();
     expect(routing.getByText(workspaceId)).toBeTruthy();
     expect(routing.getByText("openai/gpt-4.1")).toBeTruthy();
     expect(routing.getByText("openai/gpt-5.5")).toBeTruthy();
@@ -299,22 +316,28 @@ describe("RunInspector", () => {
     expect(screen.getByRole("heading", { name: "Recorded execution profile" })).toBeTruthy();
     expect(screen.getByText("claude-sonnet-4-5")).toBeTruthy();
     expect(screen.getByText("Workerd")).toBeTruthy();
-    expect(screen.getByText(`Member · ${workspaceId}`)).toBeTruthy();
-    expect(screen.getByRole("link", { name: run.id }).getAttribute("href")).toBe(
+    expect(screen.getByText("Morgan · Former member")).toBeTruthy();
+    expect(screen.getByText("Release agent")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open prompt revision 3" }).getAttribute("href")).toBe(
       `/w/wallie/agents/${run.id}?factory=${workspaceId}&revision=${artifact.id}`,
     );
-    expect(screen.getByRole("link", { name: run.sessionId }).getAttribute("href")).toBe(
-      `/w/wallie/activity?factory=${workspaceId}&actor=${run.sessionId}`,
-    );
+    expect(
+      screen
+        .getByRole("link", { name: "View invoking member activity: Riley · Member" })
+        .getAttribute("href"),
+    ).toBe(`/w/wallie/activity?factory=${workspaceId}&actor=${run.sessionId}`);
     expect(screen.queryByText(/current-catalog-model/)).toBeNull();
   });
   it("shows the durable attempt, source session and exact accepted artifact link", () => {
-    show({}, artifact);
+    const href = "/w/wallie/runs?status=error&cursor=opaque&factory=all";
+    show({}, artifact, undefined, undefined, undefined, false, {
+      returnTo: { href, label: "Back to filtered runs" },
+    });
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(run.sessionTitle);
-    expect(screen.getByText("Build · Attempt 4")).toBeTruthy();
+    expect(screen.getByText("Build · Attempt 6")).toBeTruthy();
     expect(screen.getByText(run.id)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "← Runs" }).getAttribute("href")).toBe(
-      "/w/wallie/runs",
+    expect(screen.getByRole("link", { name: /Back to filtered runs/ }).getAttribute("href")).toBe(
+      href,
     );
     expect(
       screen.getByRole("link", { name: `#42 · ${run.sessionTitle}` }).getAttribute("href"),
@@ -323,6 +346,12 @@ describe("RunInspector", () => {
       artifact.href,
     );
     expect(screen.getByText("Exact attempt activity")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "View transcript" }).getAttribute("href")).toBe(
+      "#run-transcript",
+    );
+    expect(screen.getByRole("link", { name: "Inspect run evidence" }).getAttribute("href")).toBe(
+      "#run-evidence",
+    );
     expect(screen.getByText("Cost unavailable")).toBeTruthy();
     expect(screen.queryByText("$0.00")).toBeNull();
   });
@@ -373,16 +402,30 @@ describe("RunInspector", () => {
   });
 
   it("keeps cancellation visible even when a newer attempt exists", () => {
-    show({
-      status: "canceled",
-      recovery: {
-        ...recovery,
-        queue: { state: "superseded", status: "running", attemptCount: 5, scheduledAt: now },
+    const nextId = "00000000-0000-4000-8000-000000000006";
+    const next = `/w/wallie/runs/${nextId}`;
+    show(
+      {
+        status: "canceled",
+        newerRunId: nextId,
+        recovery: {
+          ...recovery,
+          queue: { state: "superseded", status: "running", attemptCount: 5, scheduledAt: now },
+        },
       },
-    });
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      { newerRunHref: next },
+    );
     expect(screen.getByLabelText("Canceled. Work was canceled.")).toBeTruthy();
     expect(screen.getByText("This attempt was canceled.")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "A newer attempt exists" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Inspect next attempt" }).getAttribute("href")).toBe(
+      next,
+    );
     expect(screen.queryByLabelText("Running. Work is in progress.")).toBeNull();
   });
 
@@ -400,6 +443,7 @@ describe("RunInspector", () => {
       screen.getByText("The agent process exited unsuccessfully before completing the run."),
     ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Retry scheduled" })).toBeTruthy();
+    expect(screen.getByText(/Scheduled for/).querySelector("time")?.dateTime).toBe(now);
   });
 
   it("distinguishes pending publication from a retry", () => {
@@ -434,7 +478,7 @@ describe("RunInspector", () => {
 
   it("keeps unrecorded attempt and artifact uncertainty explicit", () => {
     show({ attemptCount: null, recovery: null }, { kind: "unrecorded" });
-    expect(screen.getByText("Build · Attempt not recorded")).toBeTruthy();
+    expect(screen.getByText("Build · Attempt 6")).toBeTruthy();
     expect(screen.getByText("An exact artifact link was not recorded for this run.")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Recovery details unavailable" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Open artifact" })).toBeNull();
