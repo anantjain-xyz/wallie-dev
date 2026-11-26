@@ -1269,6 +1269,124 @@ describe("PipelinePageClient", () => {
     expect(screen.queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
   });
 
+  it("rebuilds the loaded filtered window from fresh scoped pages after a realtime change", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const factoryId = "60000000-0000-4000-8000-000000000001";
+    const first = card(3, PLAN_STAGE_ID, { title: "Ticket A" });
+    const renamed = card(2, PLAN_STAGE_ID, { title: "Ticket B" });
+    const replacement = card(1, PLAN_STAGE_ID, { title: "Ticket C" });
+    const data = { ...initialData([first, renamed, replacement], []), factoryId };
+    const lane = data.lanes[0]!;
+    const continuation = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ lanes: [{ ...lane, cards: [first] }] }))
+      .mockResolvedValueOnce(Response.json({ lane: { ...lane, cards: [renamed] } }))
+      .mockResolvedValueOnce(
+        Response.json({
+          lanes: [{ ...lane, cards: [first], cursor: "fresh-cursor", totalCount: 2 }],
+        }),
+      )
+      .mockImplementationOnce(() => continuation.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient initialData={data} />);
+    await act(async () => vi.dynamicImportSettled());
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: "Ticket" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    const loadMore = () =>
+      screen.getByRole<HTMLButtonElement>("button", { name: "Load more Plan sessions" });
+    await act(async () => {
+      fireEvent.click(loadMore());
+    });
+    expect(screen.getByText("Ticket B")).toBeTruthy();
+    expect(screen.queryByText("Ticket C")).toBeNull();
+
+    act(() => {
+      supabase.getSessionsHandler()!({
+        eventType: "UPDATE",
+        new: {
+          ...sessionRow({
+            ...renamed,
+            title: "No longer matches",
+            updatedAt: "2026-07-18T06:00:00Z",
+          }),
+          factory_id: factoryId,
+        },
+      });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(screen.getByText("Ticket B")).toBeTruthy();
+    expect(loadMore().disabled).toBe(true);
+    fireEvent.click(loadMore());
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const href = `/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard?factory=${factoryId}&q=Ticket`;
+    expect(fetchMock.mock.calls.map(([url, options]) => [url, options?.method ?? "GET"])).toEqual([
+      [href, "GET"],
+      [href, "POST"],
+      [href, "GET"],
+      [href, "POST"],
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
+      cursor: "fresh-cursor",
+      pipelineId: PIPELINE_ID,
+      seenIds: [first.id],
+      stageId: PLAN_STAGE_ID,
+    });
+
+    await act(async () => {
+      continuation.resolve(
+        Response.json({ lane: { ...lane, cards: [replacement], cursor: null, totalCount: 2 } }),
+      );
+    });
+    expect(screen.getByText("Ticket A")).toBeTruthy();
+    expect(screen.queryByText("Ticket B")).toBeNull();
+    expect(screen.getByText("Ticket C")).toBeTruthy();
+    expect(screen.getByText("2 matching sessions")).toBeTruthy();
+  });
+
+  it("waits for active paging before refreshing a filtered board from new server props", async () => {
+    vi.useFakeTimers();
+    const first = card(2, PLAN_STAGE_ID);
+    const second = card(1, PLAN_STAGE_ID);
+    const data = initialData([first], []);
+    const lane = data.lanes[0]!;
+    const pendingPage = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ lanes: [lane] }))
+      .mockImplementationOnce(() => pendingPage.promise)
+      .mockResolvedValueOnce(
+        Response.json({ lanes: [{ ...lane, cards: [{ ...first, title: "Updated session" }] }] }),
+      )
+      .mockResolvedValueOnce(Response.json({ lane: { ...lane, cards: [second], cursor: null } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<PipelinePageClient enableRealtime={false} initialData={data} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: "Session" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    fireEvent.click(screen.getByRole("button", { name: "Load more Plan sessions" }));
+    view.rerender(<PipelinePageClient enableRealtime={false} initialData={initialData()} />);
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Session 1")).toBeNull();
+
+    await act(async () => {
+      pendingPage.resolve(Response.json({ lane: { ...lane, cards: [second], cursor: null } }));
+    });
+    expect(screen.getByText("Session 1")).toBeTruthy();
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(screen.getByText("Updated session")).toBeTruthy();
+    expect(screen.getByText("Session 1")).toBeTruthy();
+  });
+
   it("exposes a realtime insert after an exhausted full lane through lane-local pagination", async () => {
     const supabase = installSupabaseMock();
     const inserted = card(99, BUILD_STAGE_ID);
@@ -1584,7 +1702,7 @@ describe("PipelinePageClient", () => {
       screen.getByText("Filtering sessions…", { selector: '[aria-hidden="true"]' }),
     ).toBeTruthy();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(fetchMock.mock.calls[0]?.[0]).toContain("?q=op-353");
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("?q=OP-353");
     fireEvent.change(search, { target: { value: "Beta" } });
     expect(await screen.findByText("Beta item")).toBeTruthy();
     expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
@@ -1601,5 +1719,23 @@ describe("PipelinePageClient", () => {
     expect((search as HTMLInputElement).value).toBe("");
     expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
     await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(3));
+  });
+
+  it("sends a maximum-length Unicode query without expanding it through client case folding", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ lanes: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient enableRealtime={false} initialData={initialData()} />);
+
+    const query = `${"A".repeat(199)}İ`;
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: query },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost").searchParams.get("q"),
+    ).toBe(query);
   });
 });

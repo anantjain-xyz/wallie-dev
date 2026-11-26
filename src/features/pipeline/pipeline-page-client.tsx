@@ -156,6 +156,51 @@ function canReuseCachedLaneVisibleCards(
   return true;
 }
 
+async function fetchPipelineLanePage(
+  href: string,
+  lane: PipelineBoardLane,
+  {
+    current,
+    leaveUnavailableWorkspace,
+    signal,
+  }: {
+    current: () => boolean;
+    leaveUnavailableWorkspace: (status: number) => void;
+    signal: AbortSignal;
+  },
+) {
+  const response = await fetch(href, {
+    body: JSON.stringify({
+      cursor: lane.cursor,
+      pipelineId: lane.pipeline.id,
+      seenIds: lane.cardIds,
+      stageId: lane.id,
+    }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+    signal,
+  });
+  if (!current()) return;
+  if ([401, 403].includes(response.status)) {
+    leaveUnavailableWorkspace(response.status);
+    return;
+  }
+  const payload = (await response.json()) as {
+    code?: string;
+    error?: string;
+    lane?: PipelineDashboardLanePage;
+  };
+  if (!current()) return;
+  if (!response.ok && payload.code === "workspace_unavailable") {
+    leaveUnavailableWorkspace(response.status);
+    return;
+  }
+  if (!response.ok || !payload.lane || pipelineLaneKey(payload.lane) !== pipelineLaneKey(lane)) {
+    throw new Error(payload.error ?? "Failed to load more sessions.");
+  }
+  return payload.lane;
+}
+
 export function summarizeLaneStatuses(
   cards: readonly PipelineDashboardCard[],
 ): { count: number; label: string; value: StatusValue }[] {
@@ -234,23 +279,30 @@ function PipelinePageContent({
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
-  const filtersActive = normalizedSearchQuery.length > 0 || statusFilter !== "all";
+  const trimmedSearchQuery = searchQuery.trim();
+  const filtersActive = trimmedSearchQuery.length > 0 || statusFilter !== "all";
   const filterHref = useMemo(() => {
     if (!filtersActive) return null;
     const params = new URLSearchParams();
     if (factoryId) params.set("factory", factoryId);
-    if (normalizedSearchQuery) params.set("q", normalizedSearchQuery);
+    if (trimmedSearchQuery) params.set("q", trimmedSearchQuery);
     if (statusFilter !== "all") params.set("status", statusFilter);
     return `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard?${params}`;
-  }, [factoryId, filtersActive, initialData.workspace.id, normalizedSearchQuery, statusFilter]);
+  }, [factoryId, filtersActive, initialData.workspace.id, statusFilter, trimmedSearchQuery]);
   const filterHrefRef = useRef(filterHref);
   filterHrefRef.current = filterHref;
-  const [filterResult, setFilterResult] = useState<{ href: string; board: PipelineBoardState }>();
-  const [filterError, setFilterError] = useState<string | null>(null);
+  const [filterResult, setFilterResult] = useState<{
+    href: string;
+    revision: number;
+    board?: PipelineBoardState;
+    failed?: boolean;
+  }>();
   const [filterRevision, invalidateFilters] = useReducer((revision: number) => revision + 1, 0);
-  const filteredBoard = filterResult?.href === filterHref ? filterResult?.board : undefined;
-  const filtersPending = filtersActive && !filteredBoard && filterError !== filterHref;
+  const matchingFilterResult = filterResult?.href === filterHref ? filterResult : undefined;
+  const filteredBoard = matchingFilterResult?.board;
+  const filterRefreshPending = !!filterHref && matchingFilterResult?.revision !== filterRevision;
+  const filtersPending = filterRefreshPending && !filteredBoard;
+  const filterFailed = matchingFilterResult?.failed && !filterRefreshPending;
   const board = filteredBoard ?? unfilteredBoard;
   const [hasObservedSession, setHasObservedSession] = useState(false);
   const [recoveredOnboarding, setRecoveredOnboarding] = useState<{
@@ -297,16 +349,19 @@ function PipelinePageContent({
     loadingLaneKeyRef.current = null;
     setLoadingLaneKey(null);
     setLaneErrors({});
-    setFilterError(null);
     setFilterResult(undefined);
   }, [filterHref]);
 
   useEffect(() => {
-    if (!filterHref || accessLost) return;
+    if (!filterHref || !filterRefreshPending || accessLost || loadingLaneKey) return;
     const controller = new AbortController();
     const { signal } = controller;
     const timer = window.setTimeout(async () => {
-      const current = () => !signal.aborted && filterHrefRef.current === filterHref;
+      const current = () =>
+        !signal.aborted && !accessLostRef.current && filterHrefRef.current === filterHref;
+      if (!current() || loadingLaneKeyRef.current) return;
+      const previous =
+        visibleBoardRef.current !== boardRef.current ? visibleBoardRef.current : null;
       try {
         const response = await fetch(filterHref, { cache: "no-store", signal });
         if (!current()) return;
@@ -317,30 +372,60 @@ function PipelinePageContent({
         if (!response.ok) throw new Error("Failed to filter the Pipeline.");
         const snapshot = (await response.json()) as Pick<PipelineDashboardData, "lanes">;
         if (!current()) return;
-        const nextBoard = createPipelineBoardState(snapshot.lanes);
+        let nextBoard = createPipelineBoardState(snapshot.lanes);
+        const previousDepths = new Map<string, number>(
+          previous?.lanes.map((lane) => [pipelineLaneKey(lane), lane.cardIds.length]),
+        );
+        for (let index = 0; index < nextBoard.lanes.length; index++) {
+          let lane = nextBoard.lanes[index]!;
+          const depth = previousDepths.get(pipelineLaneKey(lane)) ?? 0;
+          while (lane.cursor && lane.cardIds.length < depth) {
+            const page = await fetchPipelineLanePage(filterHref, lane, {
+              current,
+              leaveUnavailableWorkspace,
+              signal,
+            });
+            if (!page || !current()) return;
+            nextBoard = pipelineBoardReducer(nextBoard, { page, type: "append-page" });
+            const nextLane = nextBoard.lanes[index]!;
+            if (nextLane.cardIds.length <= lane.cardIds.length) break;
+            lane = nextLane;
+          }
+        }
         const match = nextBoard.lanes.find((lane) => lane.totalCount > 0);
-        startTransition(() => {
+        if (!previous && match) {
           setActiveLaneKey((key) => {
-            if (visibleBoardRef.current !== boardRef.current) return key;
-            if (
-              !match ||
-              nextBoard.lanes.some((lane) => pipelineLaneKey(lane) === key && lane.totalCount > 0)
+            return nextBoard.lanes.some(
+              (lane) => pipelineLaneKey(lane) === key && lane.totalCount > 0,
             )
-              return key;
-            return pipelineLaneKey(match);
+              ? key
+              : pipelineLaneKey(match);
           });
-          setFilterResult({ href: filterHref, board: nextBoard });
-          setFilterError(null);
-        });
+        }
+        setFilterResult({ href: filterHref, revision: filterRevision, board: nextBoard });
       } catch {
-        if (current()) setFilterError(filterHref);
+        if (current()) {
+          setFilterResult((result) => ({
+            href: filterHref,
+            revision: filterRevision,
+            board: result?.href === filterHref ? result.board : undefined,
+            failed: true,
+          }));
+        }
       }
     }, FILTER_DEBOUNCE_MS);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [accessLost, filterHref, filterRevision, leaveUnavailableWorkspace]);
+  }, [
+    accessLost,
+    filterHref,
+    filterRefreshPending,
+    filterRevision,
+    leaveUnavailableWorkspace,
+    loadingLaneKey,
+  ]);
 
   const refreshBoard = useCallback(
     async (signal: AbortSignal) => {
@@ -395,6 +480,7 @@ function PipelinePageContent({
   useEffect(() => {
     if (initialLanesRef.current === initialData.lanes) return;
     initialLanesRef.current = initialData.lanes;
+    if (filterHrefRef.current) invalidateFilters();
     const invalidated = new Set(invalidatedCardIds.current);
     startTransition(() => {
       dispatch({ invalidatedCardIds: invalidated, lanes: initialData.lanes, type: "reconcile" });
@@ -710,7 +796,7 @@ function PipelinePageContent({
     async (requestedLaneKey: string) => {
       if (
         accessLostRef.current ||
-        filtersPending ||
+        filterRefreshPending ||
         loadingLaneKeyRef.current ||
         refreshInFlight.current ||
         refreshPending
@@ -722,6 +808,8 @@ function PipelinePageContent({
       if (!lane?.cursor) return;
 
       const controller = new AbortController();
+      const { signal } = controller;
+      const current = () => !signal.aborted && filterHrefRef.current === filterHref;
       pageController.current = controller;
       const revision = eventRevision.current;
       loadingLaneKeyRef.current = requestedLaneKey;
@@ -729,49 +817,21 @@ function PipelinePageContent({
       setLaneErrors((current) => ({ ...current, [requestedLaneKey]: "" }));
 
       try {
-        const response = await fetch(filterHref ?? dashboardHref, {
-          body: JSON.stringify({
-            cursor: lane.cursor,
-            pipelineId: lane.pipeline.id,
-            seenIds: lane.cardIds,
-            stageId: lane.id,
-          }),
-          headers: { "content-type": "application/json" },
-          method: "POST",
-          signal: controller.signal,
+        const page = await fetchPipelineLanePage(filterHref ?? dashboardHref, lane, {
+          current,
+          leaveUnavailableWorkspace,
+          signal,
         });
-        if (controller.signal.aborted || filterHrefRef.current !== filterHref) return;
-        if ([401, 403].includes(response.status)) {
-          leaveUnavailableWorkspace(response.status);
-          return;
-        }
-        const payload = (await response.json()) as {
-          code?: string;
-          error?: string;
-          lane?: PipelineDashboardLanePage;
-        };
-
-        if (controller.signal.aborted || filterHrefRef.current !== filterHref) return;
-        if (!response.ok && payload.code === "workspace_unavailable") {
-          leaveUnavailableWorkspace(response.status);
-          return;
-        }
-
-        if (!response.ok || !payload.lane) {
-          throw new Error(payload.error ?? "Failed to load more sessions.");
-        }
-
-        if (controller.signal.aborted) return;
+        if (!page || !current()) return;
         // A bounded page cannot reconstruct counts/ownership changed mid-read.
         // Reject that snapshot instead of resurrecting deleted or moved cards.
         if (eventRevision.current !== revision) {
           recovery.invalidate();
           return;
         }
-        const page = payload.lane;
         if (filterHref) {
           setFilterResult((current) =>
-            current?.href === filterHref
+            current?.href === filterHref && current.board
               ? {
                   ...current,
                   board: pipelineBoardReducer(current.board, { page, type: "append-page" }),
@@ -782,7 +842,7 @@ function PipelinePageContent({
           dispatch({ page, type: "append-page" });
         }
       } catch (error) {
-        if (controller.signal.aborted) return;
+        if (!current()) return;
         setLaneErrors((current) => ({
           ...current,
           [requestedLaneKey]:
@@ -799,7 +859,7 @@ function PipelinePageContent({
     [
       dashboardHref,
       filterHref,
-      filtersPending,
+      filterRefreshPending,
       leaveUnavailableWorkspace,
       recovery,
       refreshPending,
@@ -912,19 +972,12 @@ function PipelinePageContent({
             setStatusFilter={setStatusFilter}
           />
         ) : null}
-        {filtersActive && filterError === filterHref ? (
+        {filterFailed ? (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <p className="text-sm text-danger" role="alert">
               {filteredBoard ? "Couldn’t refresh matching sessions." : "Couldn’t filter sessions."}
             </p>
-            <button
-              className="ui-button"
-              onClick={() => {
-                setFilterError(null);
-                invalidateFilters();
-              }}
-              type="button"
-            >
+            <button className="ui-button" onClick={() => invalidateFilters()} type="button">
               Try again
             </button>
           </div>
@@ -1035,7 +1088,7 @@ function PipelinePageContent({
                     error={laneErrors[key]}
                     filtersActive={filtersActive}
                     initialNow={renderNow}
-                    isLoading={refreshPending || loadingLaneKey === key}
+                    isLoading={refreshPending || filterRefreshPending || loadingLaneKey === key}
                     isMobileActive={activeLaneKey === key}
                     lane={lane}
                     context={laneContext(lane, initialData.aggregateFactories)}

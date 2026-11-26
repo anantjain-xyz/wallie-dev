@@ -121,7 +121,14 @@ select pg_temp.pipeline_board_lane(public.get_filtered_pipeline_dashboard_page(
 )) as lane
 from pipeline_scope s cross join pipeline_results r where s.is_default;
 select is((select page_one ->> 'totalCount' from pipeline_results), '28', 'the first page reports the full matching total');
-select isnt((select page_one -> 'cursor' from pipeline_results), 'null'::jsonb, 'a filtered lane with more matches returns a cursor');
+select is(
+  (select page_one -> 'cursor' from pipeline_results),
+  jsonb_build_object(
+    'pipelineId', '46000000-0003-4000-8000-000000000001',
+    'stageId', '46000000-0004-4000-8000-000000000001'
+  ),
+  'a filtered lane with more matches returns its continuation cursor'
+);
 select is((select lane ->> 'totalCount' from pipeline_next_page), '28', 'the next filtered page keeps the full matching total');
 select is((select jsonb_array_length(lane -> 'cards') from pipeline_next_page), 3, 'the lane continuation returns the remaining matches');
 select is((select lane -> 'cards' -> 2 ->> 'number' from pipeline_next_page), '1', 'the filtered continuation preserves ordering');
