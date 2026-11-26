@@ -1,5 +1,6 @@
 import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 import type { Enums } from "@/lib/supabase/database.types";
+import type { SessionDisplayStatus } from "@/features/sessions/display-status";
 
 // Sessions used to be pinned to a hardcoded phase enum. They now reference a
 // workspace's pipeline by id and advance through pipeline_stages by `position`.
@@ -139,6 +140,7 @@ export type SessionListQueryState = {
   scope: SessionFilterKey;
   sort: SessionListSortKey;
   stageSlug: string | null;
+  status?: SessionDisplayStatus;
 };
 
 export function deriveSessionTitleFromPrompt(prompt: string): string {

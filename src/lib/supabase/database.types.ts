@@ -14055,6 +14055,7 @@ export type Database = {
           session_scope?: string
           sort_key?: string
           stage_filter_slug?: string
+          status_filter?: string
           target_factory_id?: string
           target_workspace_slug: string
         }
