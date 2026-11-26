@@ -1,3 +1,6 @@
+import { SESSION_LIST_STATUS_OPTIONS } from "@/features/sessions/list/sessions-list-query-state";
+import { factoryInboxKindSchema } from "@/lib/factories/inbox-schema";
+import { parseSessionBrowseReturn } from "@/lib/sessions/browse-return";
 import { sessionReviewReturnPath } from "@/lib/sessions/review-link";
 
 export const WORKSPACE_RETURN_HEADER = "x-wallie-workspace-return";
@@ -5,16 +8,10 @@ export const SESSION_SEARCH_RESUME_PARAM = "resumeSearch";
 
 const origin = "https://wallie.invalid";
 const maxPathLength = 4_096;
-const sessionsQuery = ["factory", "scope", "stage", "sort", "q", "cursor"];
-const sessionsAuthQuery = [
-  "factory",
-  "scope",
-  "stage",
-  "sort",
-  "cursor",
-  SESSION_SEARCH_RESUME_PARAM,
-];
-const inboxQuery = ["factory", "cursor"];
+const sessionsQuery = ["factory", "scope", "stage", "sort", "status", "cursor"];
+const sessionsBrowseQuery = [...sessionsQuery, "q"];
+const sessionsAuthQuery = [...sessionsQuery, SESSION_SEARCH_RESUME_PARAM];
+const inboxQuery = ["factory", "kind", "cursor"];
 const sessionDetailQuery = [
   "artifactStage",
   "artifactId",
@@ -22,7 +19,6 @@ const sessionDetailQuery = [
   "reviewStageId",
   "reviewRevision",
   "clarificationId",
-  "returnTo",
 ];
 
 function localUrl(path: string | null | undefined) {
@@ -57,17 +53,27 @@ export function workspaceListReturnPath(
     listPath === `${base}/sessions`
       ? auth
         ? sessionsAuthQuery
-        : sessionsQuery
+        : sessionsBrowseQuery
       : listPath === `${base}/inbox`
         ? inboxQuery
         : null;
   if (!keys) return;
   const query = queryFor(url, keys);
-  if (auth && listPath === `${base}/sessions`) {
-    const markers = query.getAll(SESSION_SEARCH_RESUME_PARAM);
-    if (markers.length !== 1 || !isSessionSearchMarker(markers[0])) {
-      query.delete(SESSION_SEARCH_RESUME_PARAM);
+  if (listPath === `${base}/sessions`) {
+    const status = SESSION_LIST_STATUS_OPTIONS.find((option) => option === query.get("status"));
+    if (status) query.set("status", status);
+    else query.delete("status");
+    if (auth) {
+      const markers = query.getAll(SESSION_SEARCH_RESUME_PARAM);
+      if (markers.length !== 1 || !isSessionSearchMarker(markers[0])) {
+        query.delete(SESSION_SEARCH_RESUME_PARAM);
+      }
     }
+  } else if (
+    query.getAll("kind").length !== 1 ||
+    !factoryInboxKindSchema.safeParse(query.get("kind")).success
+  ) {
+    query.delete("kind");
   }
   return boundedPath(listPath, query);
 }
@@ -84,12 +90,20 @@ export function workspaceReturnPath(value: string | null | undefined, expectedSl
   if (list) return list;
 
   if (/^sessions\/[1-9][0-9]*\/?$/.test(route)) {
-    const exact = sessionReviewReturnPath(url, slug);
-    const returnTo = workspaceListReturnPath(url.searchParams.get("returnTo"), slug, true);
+    const reviewSearch = new URLSearchParams(url.searchParams);
+    const rawReturn = reviewSearch.getAll("returnTo");
+    reviewSearch.delete("returnTo");
+    const exact = sessionReviewReturnPath(
+      { pathname: url.pathname, searchParams: reviewSearch },
+      slug,
+    );
+    const returnTo =
+      rawReturn.length === 1
+        ? workspaceListReturnPath(parseSessionBrowseReturn(slug, rawReturn[0])?.href, slug, true)
+        : undefined;
     const query = exact
       ? new URLSearchParams(exact.split("?")[1])
       : queryFor(url, sessionDetailQuery);
-    query.delete("returnTo");
     if (returnTo) query.set("returnTo", returnTo);
     return boundedPath(url.pathname, query);
   }

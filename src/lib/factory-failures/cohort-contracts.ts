@@ -41,6 +41,9 @@ const cohortMember = z.object({
   run_id: id,
   session_id: id,
   run_attempt_count: z.number().int().positive(),
+  session_title: z.string().nullable(),
+  session_number: count.nullable(),
+  stage_name: z.string().nullable(),
   observed_at: z.string().datetime({ offset: true }),
   configuration: z.object({
     definition_revision_id: id.nullable(),
@@ -62,6 +65,8 @@ const cohortMember = z.object({
       kind: z.literal("validation"),
       validation_run_id: id,
       validation_record_key: z.string().nullable(),
+      target_commit_sha: z.string().nullable(),
+      target_tree_sha: z.string().nullable(),
       evidence_state: evidenceState,
     }),
   ]),
@@ -70,6 +75,7 @@ const cohortMember = z.object({
 export const failureCohortListSchema = z.object({
   cohorts: z.array(summary),
   next_cohort_id: id.nullable(),
+  cursor_unavailable: z.boolean(),
 });
 
 export const failureCohortDetailSchema = z.object({
@@ -77,6 +83,7 @@ export const failureCohortDetailSchema = z.object({
   members: z.array(cohortMember),
   next_member_id: id.nullable(),
   membership_digest: digest.nullable(),
+  split_groups: z.array(z.object({ id, side: z.enum(["selected", "remaining"]) })),
 });
 
 const filterFields = z.object({
@@ -84,16 +91,43 @@ const filterFields = z.object({
   revision: id.optional(),
   disposition: disposition.optional(),
   after: id.optional(),
+  order: z.literal("failures").optional(),
 });
 
-export function parseFailureCohortQuery(query: Record<string, string | string[] | undefined>) {
+type SearchParams = Record<string, string | string[] | undefined>;
+
+export function parseFailureCohortQuery(query: SearchParams) {
   return filterFields.safeParse({
     symptom: query.symptom || undefined,
     revision: query.revision || undefined,
     disposition: query.disposition || undefined,
     after: query.after || undefined,
+    order: query.order || undefined,
   });
 }
+
+export function parseFailureCohortEvidenceQuery(query: SearchParams) {
+  return z
+    .object({
+      runSearch: z.string().trim().max(120).optional(),
+      observedOn: z.string().date().optional(),
+    })
+    .safeParse({
+      runSearch: query.runSearch || undefined,
+      observedOn: query.observedOn || undefined,
+    });
+}
+
+export const failureRevisionOptionSchema = z.object({
+  id,
+  label: z.string(),
+  detail: z.string(),
+});
+
+export const failureRevisionPageSchema = z.object({
+  options: z.array(failureRevisionOptionSchema),
+  next: id.nullable(),
+});
 
 const reviewFields = {
   expectedRevision: count.max(2_147_483_647),
@@ -132,3 +166,5 @@ export type FailureCohortSummary = z.infer<typeof summary>;
 export type FailureCohortMember = z.infer<typeof cohortMember>;
 export type FailureCohortDetail = z.infer<typeof failureCohortDetailSchema>;
 export type FailureCohortReview = z.infer<typeof failureCohortReviewSchema>;
+export type FailureRevisionOption = z.infer<typeof failureRevisionOptionSchema>;
+export type FailureRevisionPage = z.infer<typeof failureRevisionPageSchema>;

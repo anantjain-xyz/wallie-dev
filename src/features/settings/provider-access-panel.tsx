@@ -24,6 +24,7 @@ type ProviderAccessPanelProps = {
   sandboxConnectionHref?: string;
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
+  selectedModel?: string;
   variant?: "card" | "embedded";
   workspaceId?: string;
 };
@@ -77,6 +78,7 @@ export function ProviderAccessPanel({
   sandboxConnectionHref,
   sandboxConnectionLabel,
   sandboxConnectionReady,
+  selectedModel,
   variant = "card",
   workspaceId,
 }: ProviderAccessPanelProps) {
@@ -152,6 +154,7 @@ export function ProviderAccessPanel({
           <OpenCodeConnectionPanel
             initialStatus={initialOpenCodeStatus}
             onStatusChange={onOpenCodeStatusChange}
+            selectedModel={selectedModel}
           />
         </div>
       );

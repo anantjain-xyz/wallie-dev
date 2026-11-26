@@ -2,9 +2,17 @@ import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import {
   loadAnalyticsEvidence,
   loadAnalyticsPeriods,
+  loadDeploymentEnvironments,
 } from "@/features/factory-analytics/analytics-data";
-import { parseAnalyticsQuery } from "@/features/factory-analytics/analytics-query";
-import { analyticsCohortHref } from "@/features/factory-analytics/analytics-view-shared";
+import { loadAnalyticsLabels } from "@/features/factory-analytics/analytics-labels";
+import {
+  analyticsCoreFields,
+  analyticsEvidenceFields,
+  analyticsFieldsHref,
+  analyticsScorerFields,
+} from "@/features/factory-analytics/analytics-navigation";
+import { recoverAnalyticsFilters } from "@/features/factory-analytics/analytics-query";
+import { AnalyticsReportingFilters } from "@/features/factory-analytics/analytics-reporting-filters";
 import { RoutingCanaryComparison } from "@/features/factory-analytics/routing-canary-comparison";
 import { loadRoutingCanaryComparison } from "@/features/factory-analytics/routing-canary-data";
 import { resolveAnalyticsFactory } from "@/features/factories/factory-selection";
@@ -39,6 +47,7 @@ const ANALYTICS_FACTORY_RESET_PARAMS = [
   "beforeCohortPolicy",
   "routingCanary",
   "routingAlert",
+  "cursor",
 ] as const;
 
 export default async function AnalyticsPage({
@@ -49,39 +58,8 @@ export default async function AnalyticsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const parsed = parseAnalyticsQuery(search);
+  const { query, errors, dates } = recoverAnalyticsFilters(search);
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
-  if (!parsed.success) {
-    const fallbackFactory = resolveAnalyticsFactory(factories, search.factory);
-    return (
-      <PageContainer>
-        <PageHeader
-          actions={
-            <FactorySelector
-              factories={factories}
-              resetParams={ANALYTICS_FACTORY_RESET_PARAMS}
-              selectedValue={fallbackFactory?.id ?? "unavailable"}
-            />
-          }
-          actionsRightOnDesktop
-          title="Analytics"
-        />
-        <section className="ui-sheet space-y-3 px-6 py-8">
-          <h2 className="type-section-title">Invalid analytics filters</h2>
-          <p className="type-secondary text-muted">
-            Use a date range of 1 to 366 days and supported filters.
-          </p>
-          <a
-            className="type-secondary font-medium underline"
-            href={workspaceAnalyticsPath(workspaceSlug)}
-          >
-            Reset analytics filters
-          </a>
-        </section>
-      </PageContainer>
-    );
-  }
-  const query = parsed.data;
   const { currentMember, supabase, workspace } =
     await loadAuthenticatedWorkspaceContext(workspaceSlug);
   const factory = resolveAnalyticsFactory(factories, query.factoryId);
@@ -101,15 +79,44 @@ export default async function AnalyticsPage({
     );
 
   const scope = { supabase, workspaceId: workspace.id, factoryId: factory.id, query };
-  const trendQuery = parseScorerTrendQuery(search, {
+  const path = workspaceAnalyticsPath(workspaceSlug);
+  const reportingWindow = {
     from: query.from.slice(0, 10),
     to: query.to.slice(0, 10),
-  });
+  };
+  const trendQuery = parseScorerTrendQuery({ ...search, ...reportingWindow });
+  const scorerFields = analyticsScorerFields(trendQuery);
+  const coreFields = analyticsCoreFields(factory.id, query);
+  const evidenceFields = analyticsEvidenceFields(query.evidence);
+  const environmentsRead = loadDeploymentEnvironments(scope);
+  const factorySelector = (
+    <FactorySelector
+      factories={factories}
+      resetParams={ANALYTICS_FACTORY_RESET_PARAMS}
+      selectedValue={factory.id}
+    />
+  );
+  if (Object.values(errors).some(Boolean)) {
+    return (
+      <PageContainer>
+        <PageHeader actions={factorySelector} actionsRightOnDesktop title="Analytics" />
+        <AnalyticsReportingFilters
+          action={path}
+          dates={dates}
+          environments={await environmentsRead}
+          errors={errors}
+          factoryId={factory.id}
+          query={query}
+          scorerFields={scorerFields}
+        />
+      </PageContainer>
+    );
+  }
   const unavailableCanary = {
     kind: "unavailable",
     alertRequested: Boolean(query.routingAlertId),
   } as const;
-  const [periods, evidence, trend, canary] = await Promise.all([
+  const [periods, evidence, trend, canary, environments] = await Promise.all([
     loadAnalyticsPeriods(scope),
     loadAnalyticsEvidence(scope),
     trendQuery ? loadScoreTrendPanel(supabase, scope, trendQuery).catch(() => null) : null,
@@ -122,27 +129,31 @@ export default async function AnalyticsPage({
       : query.routingCanaryId
         ? unavailableCanary
         : null,
+    environmentsRead,
   ]);
   const latestAlert = canary?.kind === "ready" ? canary.latestAlert : undefined;
+  const labels = await loadAnalyticsLabels(
+    scope,
+    [periods.primary, periods.comparison],
+    evidence?.status === "ready" ? evidence.data : null,
+  );
+  const canaryHref = (override: Record<string, string | undefined>) =>
+    analyticsFieldsHref(path, { ...coreFields, ...evidenceFields, ...scorerFields, ...override }) +
+    "#routing-canary";
   const latestAlertHref = latestAlert
-    ? `${analyticsCohortHref(workspace.slug, factory.id, { ...query, routingCanaryId: latestAlert.canaryId, routingAlertId: latestAlert.id })}#routing-canary`
+    ? canaryHref({ routingCanary: latestAlert.canaryId, routingAlert: latestAlert.id })
     : undefined;
   const liveReportHref =
-    canary?.kind === "retained"
-      ? `${analyticsCohortHref(workspace.slug, factory.id, { ...query, routingAlertId: undefined })}#routing-canary`
-      : undefined;
+    canary?.kind === "retained" ? canaryHref({ routingAlert: undefined }) : undefined;
   return (
     <AnalyticsView
       workspaceId={workspace.id}
       workspaceSlug={workspace.slug}
       factory={factory}
-      factorySelector={
-        <FactorySelector
-          factories={factories}
-          resetParams={ANALYTICS_FACTORY_RESET_PARAMS}
-          selectedValue={factory.id}
-        />
-      }
+      factorySelector={factorySelector}
+      environments={environments}
+      labels={labels}
+      scorerFields={scorerFields}
       query={query}
       periods={periods}
       evidence={evidence}
@@ -161,16 +172,10 @@ export default async function AnalyticsPage({
       scorerTrends={
         <ScorerTrends
           data={trend}
-          path={workspaceAnalyticsPath(workspaceSlug)}
-          preserved={{
-            factory: factory.id,
-            dimension: query.dimension,
-            environment: query.environment ?? undefined,
-            compare: query.comparison ? "previous" : undefined,
-            routingCanary: query.routingCanaryId,
-            routingAlert: query.routingAlertId,
-          }}
+          path={path}
+          preserved={{ ...coreFields, ...evidenceFields }}
           query={trendQuery}
+          reportingWindow={reportingWindow}
           selectRevision
           workspaceSlug={workspace.slug}
         />

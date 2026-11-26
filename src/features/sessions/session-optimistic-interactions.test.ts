@@ -45,6 +45,7 @@ const mocked = vi.hoisted(() => {
   return {
     channel,
     fetch: vi.fn(),
+    prefetch: vi.fn(),
     push: vi.fn(),
     refresh: vi.fn(),
     removeChannel: vi.fn(),
@@ -54,7 +55,12 @@ const mocked = vi.hoisted(() => {
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/w/acme/sessions/7",
-  useRouter: () => ({ push: mocked.push, refresh: mocked.refresh, replace: mocked.replace }),
+  useRouter: () => ({
+    prefetch: mocked.prefetch,
+    push: mocked.push,
+    refresh: mocked.refresh,
+    replace: mocked.replace,
+  }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -515,6 +521,53 @@ describe("optimistic session interactions", () => {
     // Toast description + inline archiveError both surface the failure once the row restores.
     expect(screen.getAllByText("Network down", { exact: true }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
+  });
+
+  it("restores the last archived row when a newer re-archive replaces optimistic unarchive", async () => {
+    const archivedAt = "2026-07-17T12:00:00.000Z";
+    const rearchivedAt = "2026-07-17T14:00:00.000Z";
+    const archived = { ...session, archivedAt, updatedAt: archivedAt };
+    let releaseUnarchive!: () => void;
+    mocked.fetch.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseUnarchive = () =>
+            resolve(
+              Response.json({
+                archivedAt: null,
+                id: session.id,
+                phaseStatus: session.phaseStatus,
+                updatedAt: "2026-07-17T13:00:00.000Z",
+              }),
+            );
+        }),
+    );
+    const view = render(listView(makeListData(archived, "archived")));
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unarchive session" }));
+    view.rerender(
+      listView(makeListData({ ...archived, updatedAt: "2026-07-17T12:30:00.000Z" }, "archived")),
+    );
+    expect(screen.getByText("No sessions on this page")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
+
+    await act(async () => releaseUnarchive());
+    expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
+
+    view.rerender(
+      listView(
+        makeListData(
+          { ...archived, archivedAt: rearchivedAt, updatedAt: rearchivedAt },
+          "archived",
+        ),
+      ),
+    );
+    expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
+    expect(screen.getByLabelText(/^Archived\./)).toBeTruthy();
+    expect(screen.queryByText("No sessions on this page")).toBeNull();
   });
 
   it("restores the optimistic row when the archive response is already active", async () => {

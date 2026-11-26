@@ -12,10 +12,10 @@ import type { Database } from "@/lib/supabase/database.types";
 
 export type RoutingCanaryComparisonState =
   | { kind: "ready"; report: RoutingCanaryReport; latestAlert?: RoutingCanaryAlert }
-  | { kind: "retained"; alert: RoutingCanaryAlert }
+  | { kind: "retained"; alert: RoutingCanaryAlert; frozenScorerRevision?: number }
   | { kind: "unavailable"; alertRequested?: boolean };
 
-type Client = Pick<SupabaseClient<Database>, "rpc">;
+type Client = Pick<SupabaseClient<Database>, "rpc" | "from">;
 type Scope = { workspaceId: string; factoryId: string };
 
 async function readAlert(client: Client, scope: Scope, canaryId: string, alertId?: string) {
@@ -37,7 +37,17 @@ export async function loadRoutingCanaryComparison(
   const { canaryId, alertId } = scope;
   if (alertId) {
     const alert = canaryId ? await readAlert(client, scope, canaryId, alertId) : null;
-    return alert ? { kind: "retained", alert } : { kind: "unavailable", alertRequested: true };
+    if (!alert) return { kind: "unavailable", alertRequested: true };
+    const scorerRevision = await Promise.resolve(
+      client
+        .from("factory_scorer_revisions")
+        .select("revision_number")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("factory_id", scope.factoryId)
+        .eq("id", alert.evidence.scorerRevisionId)
+        .maybeSingle(),
+    ).catch(() => null);
+    return { kind: "retained", alert, frozenScorerRevision: scorerRevision?.data?.revision_number };
   }
 
   const { data, error } = await client.rpc("get_factory_routing_canary_report", {

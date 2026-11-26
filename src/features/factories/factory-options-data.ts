@@ -15,7 +15,7 @@ export const loadWorkspaceFactoryOptions = cache(
     const { data, error } = await supabase
       .from("factories")
       .select(
-        "id, name, is_default, status, factory_members!factory_members_workspace_factory_fkey(role)",
+        "id, name, slug, is_default, status, factory_members!factory_members_workspace_factory_fkey(role)",
       )
       .eq("workspace_id", workspace.id)
       .eq("factory_members.member_id", currentMember.id)
@@ -31,6 +31,7 @@ export const loadWorkspaceFactoryOptions = cache(
       canManage: workspaceOperator || (activeHuman && factory.factory_members.length > 0),
       id: factory.id,
       name: factory.name,
+      slug: factory.slug,
       isDefault: factory.is_default,
       status: factory.status === "archived" ? "archived" : "active",
     }));

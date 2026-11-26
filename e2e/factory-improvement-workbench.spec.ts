@@ -115,6 +115,13 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await signInViaMagicLink(page, cohortPath, { baseURL: fixture.app, email: fixture.ownerEmail });
     await expect(page.getByRole("heading", { name: "Reconciliation quality" })).toBeVisible();
 
+    await page.goto(`${workspacePath}/improvements?factory=${fixture.factoryId}`);
+    await expect(main.getByText(/Proposals are based on completed diagnoses/)).toBeVisible();
+    await expect(
+      main.getByRole("link", { name: "View failure groups", exact: true }),
+    ).toHaveAttribute("href", `${workspacePath}/failure-groups?factory=${fixture.factoryId}`);
+    await page.goto(cohortPath);
+
     const compiled = await page.request.post(proposalsEndpoint, {
       headers,
       data: { ...command, requestId: randomUUID() },
@@ -140,6 +147,15 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await page.getByRole("link", { name: "View improvements", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`cohort=${source.cohortId}`));
     await expect(page.getByRole("heading", { name: "Improvements", exact: true })).toBeVisible();
+    await expect(
+      main.getByRole("link", { name: "Failure group: Reconciliation quality", exact: true }),
+    ).toBeVisible();
+    await main.getByLabel("Review state").selectOption("dismissed");
+    await main.getByRole("button", { name: "Apply filter" }).click();
+    await expect(main.getByText("No improvement proposals match this review state.")).toBeVisible();
+    await main.getByLabel("Review state").selectOption("open");
+    await main.getByRole("button", { name: "Apply filter" }).click();
+    await expect(page).toHaveURL(/reviewState=open/);
     const proposal = main.getByRole("link", { name: rationale, exact: true });
     await expect(proposal).toBeVisible();
     const firstPath = z.string().parse(await proposal.getAttribute("href"));
@@ -151,9 +167,22 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await expect(
       page.getByRole("link", { name: "Back to improvements", exact: true }),
     ).toHaveAttribute("href", new RegExp(`cohort=${source.cohortId}`));
+    await expect(
+      page.getByRole("link", { name: "Back to improvements", exact: true }),
+    ).toHaveAttribute("href", /reviewState=open/);
     await page.goto(firstPath, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Evidence and attribution" })).toBeVisible();
     await expect(main.getByText("Inconclusive evidence", { exact: true })).toBeVisible();
+    await expect(
+      main.locator("#benchmark-qualification").getByText("Not run", { exact: true }),
+    ).toBeVisible();
+    const runLink = main
+      .getByRole("list", { name: "Cited run evidence" })
+      .getByRole("link", { name: /Session #\d+.*Attempt 1/ });
+    await expect(runLink).toHaveAttribute(
+      "href",
+      `${workspacePath}/runs/${source.runId}?attempt=1`,
+    );
     const evaluation = main.getByRole("link", { name: "Open evaluation", exact: true });
     const evaluationPath = z.string().parse(await evaluation.getAttribute("href"));
     expect(evaluationPath).toContain(
@@ -265,7 +294,9 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     let second: z.infer<typeof proposalResponse>["proposal"];
     try {
       await stale.goto(firstPath, { waitUntil: "domcontentloaded" });
-      await expect(stale.getByRole("button", { name: "Investigate", exact: true })).toBeVisible();
+      await expect(
+        stale.getByRole("button", { name: "Mark for investigation", exact: true }),
+      ).toBeVisible();
       const nextResponse = await page.request.post(proposalsEndpoint, {
         headers,
         data: {
@@ -288,7 +319,7 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
       await stale
         .getByRole("textbox", { name: "Review note" })
         .fill("This note was written for revision one.");
-      await stale.getByRole("button", { name: "Investigate", exact: true }).click();
+      await stale.getByRole("button", { name: "Mark for investigation", exact: true }).click();
       await expect(stale.locator("#discussion").getByRole("alert")).toContainText(
         /changed|latest|reload/i,
       );
@@ -296,7 +327,22 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
       await expect(
         stale.getByText("Discussion for an earlier revision.", { exact: true }),
       ).toBeVisible();
-      await expect(stale.getByRole("button", { name: "Investigate", exact: true })).toHaveCount(0);
+      await expect(
+        stale.getByRole("button", { name: "Mark for investigation", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        stale.getByRole("textbox", { name: "Unsubmitted note · Revision 1" }),
+      ).toHaveValue("This note was written for revision one.");
+      await stale
+        .locator("#discussion")
+        .getByRole("link", { name: "Open latest revision", exact: true })
+        .click();
+      await expect(stale.getByRole("textbox", { name: "Review note", exact: true })).toHaveValue(
+        "",
+      );
+      await expect(
+        stale.getByRole("textbox", { name: "Unsubmitted note · Revision 1" }),
+      ).toHaveValue("This note was written for revision one.");
     } finally {
       await stale.close();
     }
@@ -311,7 +357,19 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await page
       .getByRole("textbox", { name: "Review note" })
       .fill("Retain the evidence and close this proposal.");
-    await page.getByRole("button", { name: "Dismiss proposal", exact: true }).click();
+    const dismiss = page.getByRole("button", { name: "Dismiss proposal", exact: true });
+    await dismiss.press("Enter");
+    const dialog = page.getByRole("alertdialog", { name: "Dismiss this revision?" });
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+    await expect(dialog).toContainText("prevents publication of revision 2");
+    await capture(page, info, "07-dismiss-confirmation-dark-mobile");
+    await page.keyboard.press("Escape");
+    await expect(dismiss).toBeFocused();
+    await expect(page.getByRole("textbox", { name: "Review note" })).toHaveValue(
+      "Retain the evidence and close this proposal.",
+    );
+    await dismiss.press("Enter");
+    await dialog.getByRole("button", { name: "Dismiss revision", exact: true }).press("Enter");
     await expect(
       main
         .getByRole("region", { name: "Proposal summary" })
@@ -355,6 +413,7 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
           .getByText("Dismissed", { exact: true }),
       ).toBeVisible();
       await expect(readerMain.getByText("Evidence unavailable", { exact: true })).toBeVisible();
+      await expect(readerMain.locator("#benchmark-qualification")).toHaveCount(0);
       await expect(
         readerMain.getByRole("link", { name: "Open evaluation", exact: true }),
       ).toHaveCount(0);

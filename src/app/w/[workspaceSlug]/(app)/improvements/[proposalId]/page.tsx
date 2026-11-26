@@ -4,9 +4,10 @@ import { z } from "zod";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
-import { FactorySemanticDiffComparison } from "@/features/factory-definition/semantic-diff";
 import { ImprovementAdoption } from "@/features/factory-proposals/improvement-adoption";
+import { ImprovementDiff } from "@/features/factory-proposals/improvement-diff";
 import { ImprovementEvidence } from "@/features/factory-proposals/improvement-evidence";
+import { ImprovementQualification } from "@/features/factory-proposals/improvement-qualification";
 import { ImprovementReviewForm } from "@/features/factory-proposals/improvement-review-form";
 import { loadImprovementScope } from "@/features/factory-proposals/improvement-scope";
 import {
@@ -16,6 +17,7 @@ import {
 } from "@/features/factory-proposals/improvement-status";
 import { diagnosisReceiptSchema } from "@/lib/factory-diagnosis/contracts";
 import { factoryProposalUuidSchema } from "@/lib/factory-proposals/contracts";
+import { proposalReviewDispositionSchema } from "@/lib/factory-proposals/workbench-contracts";
 import { readImprovementWorkbench } from "@/lib/factory-proposals/workbench";
 import { workspaceImprovementPath, workspaceImprovementsPath } from "@/lib/routes";
 
@@ -43,6 +45,7 @@ export default async function ImprovementPage({
   const revision = factoryProposalUuidSchema.optional().safeParse(search.revision);
   const before = reviewCursor.safeParse(search.before);
   const cohort = factoryProposalUuidSchema.optional().safeParse(search.cohort);
+  const reviewState = proposalReviewDispositionSchema.safeParse(search.reviewState);
   const factoryQuery = { factory: scope.factoryId };
   const data =
     revision.success && before.success && cohort.success
@@ -55,6 +58,7 @@ export default async function ImprovementPage({
   const listQuery = {
     ...factoryQuery,
     cohort: cohort.success && cohort.data === data?.cohortId ? cohort.data : undefined,
+    reviewState: reviewState.data,
   };
   const back = (
     <Link
@@ -89,6 +93,7 @@ export default async function ImprovementPage({
       : null;
 
   const historical = proposal.revisionId !== latestRevisionId;
+  const dismissed = review.disposition === "dismissed";
   const revisionHref = (revisionId: string, cursor?: number) =>
     workspaceImprovementPath(workspaceSlug, proposal.proposalId, {
       ...listQuery,
@@ -96,6 +101,7 @@ export default async function ImprovementPage({
       before: cursor,
     });
   const endpoint = `/api/workspaces/${scope.workspaceId}/factories/${scope.factoryId}/improvement-proposals/${proposal.proposalId}/review`;
+  const latestRevisionHref = revisionHref(latestRevisionId);
 
   return (
     <PageContainer>
@@ -163,7 +169,8 @@ export default async function ImprovementPage({
           diagnosis={retainedDiagnosis}
           diagnosisId={proposal.diagnosisId}
           cohortId={cohortId}
-          scope={{ workspaceSlug, workspaceId: scope.workspaceId, factoryId: scope.factoryId }}
+          scope={scope}
+          workspaceSlug={workspaceSlug}
         />
 
         <PageSection anchorId="candidate-diff" title="Candidate diff">
@@ -192,11 +199,7 @@ export default async function ImprovementPage({
               </p>
             ) : null}
             {proposal.status === "compiled" ? (
-              <FactorySemanticDiffComparison
-                comparison={proposal.diff}
-                beforeLabel={proposal.baseCurrent ? "Active configuration" : "Recorded base"}
-                afterLabel="Proposed configuration"
-              />
+              <ImprovementDiff proposal={proposal} scope={scope} />
             ) : (
               <ul
                 className="divide-y divide-border rounded-md border border-border"
@@ -219,12 +222,21 @@ export default async function ImprovementPage({
           </div>
         </PageSection>
 
+        <ImprovementQualification
+          scope={scope}
+          workspaceSlug={workspaceSlug}
+          proposalId={proposal.proposalId}
+          proposalRevisionId={proposal.revisionId}
+        />
+
         <ImprovementAdoption
           scope={scope}
           workspaceSlug={workspaceSlug}
           proposalId={proposal.proposalId}
           proposalRevisionId={proposal.revisionId}
           historical={historical}
+          dismissed={dismissed}
+          latestRevisionHref={latestRevisionHref}
         />
 
         <PageSection anchorId="discussion" title="Discussion">
@@ -232,10 +244,22 @@ export default async function ImprovementPage({
             {historical ? (
               <div className="flex flex-wrap items-center gap-2">
                 <p className="type-secondary text-muted">Discussion for an earlier revision.</p>
-                <Link className="ui-button" href={revisionHref(latestRevisionId)}>
+                <Link className="ui-button" href={latestRevisionHref}>
                   Open latest revision
                 </Link>
               </div>
+            ) : dismissed ? (
+              <p className="type-secondary text-muted">
+                Review is closed because this revision was dismissed. Previous discussion is kept.
+              </p>
+            ) : scope.factory.status === "archived" ? (
+              <p className="type-secondary text-muted">
+                This factory is archived. Its discussion is read-only.
+              </p>
+            ) : !review.canReview ? (
+              <p className="type-secondary text-muted">
+                Only factory managers can add to this discussion.
+              </p>
             ) : null}
             {review.events.length ? (
               <ol
@@ -247,7 +271,7 @@ export default async function ImprovementPage({
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                       <ReviewEventLabel action={event.action} />
                       <span className="type-annotation text-muted [overflow-wrap:anywhere]">
-                        {event.actorName || `Member ${event.actorMemberId.slice(0, 8)}`}
+                        {event.actorName || "Member name unavailable"}
                       </span>
                       <ImprovementTime instant={event.createdAt} />
                     </div>
@@ -283,12 +307,13 @@ export default async function ImprovementPage({
               </nav>
             ) : null}
             <ImprovementReviewForm
-              key={`${scope.reviewerMemberId}:${proposal.revisionId}`}
+              key={`${scope.reviewerMemberId}:${proposal.proposalId}`}
               endpoint={endpoint}
               proposalRevisionId={proposal.revisionId}
+              revisionNumber={proposal.revisionNumber}
               reviewerMemberId={scope.reviewerMemberId}
               reviewVersion={review.version}
-              canReview={review.canReview && !historical && review.disposition !== "dismissed"}
+              canReview={review.canReview && !historical && !dismissed}
             />
           </div>
         </PageSection>

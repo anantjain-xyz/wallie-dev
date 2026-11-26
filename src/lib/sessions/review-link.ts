@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { workspaceSessionDetailPath } from "@/lib/routes";
+import { parseSessionBrowseReturn } from "./browse-return";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -106,7 +107,17 @@ export function sessionReviewReturnPath(
     }),
   );
   const parsed = parseSessionReviewTarget(query);
+  const [rawReturn, duplicateReturn] = url.searchParams.getAll("returnTo");
+  const returnTo =
+    duplicateReturn === undefined
+      ? parseSessionBrowseReturn(workspaceSlug, rawReturn)?.href
+      : undefined;
   return parsed.kind === "exact"
-    ? workspaceSessionDetailPath(workspaceSlug, sessionNumber, sessionReviewQuery(parsed.target))
-    : undefined;
+    ? workspaceSessionDetailPath(workspaceSlug, sessionNumber, {
+        ...sessionReviewQuery(parsed.target),
+        returnTo,
+      })
+    : parsed.kind === "ordinary" && returnTo
+      ? workspaceSessionDetailPath(workspaceSlug, sessionNumber, { returnTo })
+      : undefined;
 }

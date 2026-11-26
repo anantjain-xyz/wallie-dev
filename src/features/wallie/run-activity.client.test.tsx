@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -91,7 +92,7 @@ describe("concise run activity", () => {
     expect(screen.getByText("Working").classList.contains("activity-shimmer")).toBe(true);
     expect(screen.getByText("Running a command")).toBeTruthy();
     expect(screen.queryByText("pnpm check")).toBeNull();
-    expect(screen.getByText("View full log")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "View full log", expanded: false })).toBeVisible();
     expect(screen.queryByLabelText("Tool payload")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
     expect(props.onCancel).toHaveBeenCalledWith("run");
@@ -108,6 +109,30 @@ describe("concise run activity", () => {
     view.rerender(<WallieRunCard {...props} connectionState="reconnecting" />);
     expect(view.container.querySelector(".activity-shimmer")).toBeNull();
     expect(screen.getByText("Reconnecting to live updates…")).toBeTruthy();
+  });
+
+  it("copies the exact run ID from technical details without reading it in the log button name", async () => {
+    const props = cardProps();
+    const id = "55555555-5555-4555-8555-555555555555";
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(window, "navigator", "get").mockReturnValue(
+      Object.create(navigator, {
+        clipboard: { value: { writeText } },
+      }),
+    );
+    try {
+      render(<WallieRunCard {...props} isExpanded run={{ ...props.run, id }} />);
+      expect(screen.getByRole("button", { name: "Hide full log", expanded: true })).toHaveAttribute(
+        "aria-controls",
+        `wallie-run-details-${id}`,
+      );
+      fireEvent.click(screen.getByText("Run details"));
+      fireEvent.click(screen.getByRole("button", { name: "Copy run ID" }));
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(id);
+      expect(await screen.findByText("Run ID copied.")).toBeVisible();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("keeps the recorded cause and recovery available with activity collapsed", () => {

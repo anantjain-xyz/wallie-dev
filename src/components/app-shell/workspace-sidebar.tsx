@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ComponentProps, ReactNode, Ref } from "react";
+import { useId, type ComponentProps, type ReactNode, type Ref } from "react";
 
 import { WorkspaceNavigation } from "@/components/app-shell/navigation-motion";
 import { workspaceNavSections, type WorkspaceNavItem } from "@/lib/routes";
@@ -62,7 +62,7 @@ type WorkspaceNavLinksProps = {
   ) => Pick<
     ComponentProps<typeof Link>,
     "href" | "onClick" | "onFocus" | "onPointerEnter" | "prefetch"
-  >;
+  > & { scopeNote?: string };
   items: WorkspaceNavItem[];
 };
 
@@ -72,6 +72,7 @@ export function WorkspaceNavLinks({
   items,
   mobile = false,
 }: WorkspaceNavLinksProps & { mobile?: boolean }) {
+  const descriptionId = useId();
   return workspaceNavSections.map((section) => {
     const sectionItems = items.filter((item) => item.section === section);
     if (sectionItems.length === 0) return null;
@@ -83,12 +84,15 @@ export function WorkspaceNavLinks({
         <ul aria-label={footer ? undefined : section} className="space-y-0.5">
           {sectionItems.map((item) => {
             const active = item.id === activeItem?.id;
+            const { scopeNote, ...linkProps } = getLinkProps(item);
+            const noteId = `${descriptionId}-${item.id}`;
 
             return (
               <li key={item.id}>
                 <Link
-                  {...getLinkProps(item)}
+                  {...linkProps}
                   aria-current={active ? "page" : undefined}
+                  aria-describedby={scopeNote ? noteId : undefined}
                   className={cn(
                     "ui-shell-nav-link w-full min-w-0 gap-2.5",
                     active && "ui-shell-nav-link-active",
@@ -98,7 +102,18 @@ export function WorkspaceNavLinks({
                   <NavigationIcon>
                     <path d={navIconPaths[item.id]} />
                   </NavigationIcon>
-                  <span className="min-w-0 break-words">{item.label}</span>
+                  <span className="min-w-0 [overflow-wrap:anywhere]">
+                    {item.label}
+                    {scopeNote ? (
+                      <span
+                        aria-hidden="true"
+                        id={noteId}
+                        className="block type-annotation text-muted"
+                      >
+                        {scopeNote}
+                      </span>
+                    ) : null}
+                  </span>
                 </Link>
               </li>
             );

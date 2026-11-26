@@ -542,7 +542,7 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
       path: testInfo.outputPath("03-oauth-connection.png"),
       fullPage: true,
     });
-    await connections.getByRole("button", { name: "Disconnect client", exact: true }).click();
+    await connections.getByRole("button", { name: /^Disconnect client: / }).click();
     const dialog = memberPage.getByRole("alertdialog");
     const disconnected = memberPage.waitForResponse(
       (response) =>
@@ -552,7 +552,7 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
     await dialog.getByRole("button", { name: "Disconnect client", exact: true }).click();
     expect((await disconnected).status()).toBe(200);
     await expect(dialog).toHaveCount(0);
-    await expect(connections.getByRole("button", { name: "Disconnect client" })).toHaveCount(0);
+    await expect(connections.getByRole("button", { name: /^Disconnect client: / })).toHaveCount(0);
     expect((await readScope(active.access_token)).data).toBeNull();
     await memberPage.screenshot({
       path: testInfo.outputPath("04-oauth-disconnected.png"),

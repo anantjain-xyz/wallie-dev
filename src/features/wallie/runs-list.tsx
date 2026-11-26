@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 
+import { formatUtcTimestamp } from "@/components/shared/time-format";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Status, agentRunStatusValue } from "@/components/ui/status";
@@ -13,52 +14,27 @@ import {
   runCatalogActivityLabel,
   runCatalogCostLabel,
   runCatalogRecoveryLabel,
+  runFromListHref,
   runsListHasFilters,
   runsListPageHref,
 } from "@/features/wallie/runs-list-state";
-import { workspaceRunDetailPath, workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
+import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
 
 export function RunsList({
   data,
   initialNow,
   factoryQuery,
+  factoryName,
   factorySelector,
 }: {
   data: RunsListData;
   initialNow: string;
   factoryQuery?: string;
+  factoryName?: string;
   factorySelector?: ReactNode;
 }) {
   const { workspaceSlug, query, state } = data;
   const runs = state.kind === "ready" ? state.page.runs : [];
-  const sessions = [
-    ...new Map(
-      runs.map((run) => [
-        run.sessionId,
-        {
-          id: run.sessionId,
-          label: `#${run.sessionNumber} ${run.sessionTitle}`,
-        },
-      ]),
-    ).values(),
-  ];
-  const stages = [
-    ...new Map(
-      runs.flatMap((run) =>
-        run.stageId
-          ? [
-              [
-                run.stageId,
-                {
-                  id: run.stageId,
-                  label: run.stageName ?? "Unnamed stage",
-                },
-              ] as const,
-            ]
-          : [],
-      ),
-    ).values(),
-  ];
   const latestHref = runsListPageHref(workspaceSlug, query, undefined, factoryQuery);
   const sessionsHref = withFactoryQuery(workspaceSessionsPath(workspaceSlug), factoryQuery);
 
@@ -72,7 +48,11 @@ export function RunsList({
           </>
         }
         actionsRightOnDesktop
-        description="Every execution attempt across your workspace. Open a run to inspect its activity and outcome."
+        description={
+          factoryName
+            ? `Execution attempts in ${factoryName}. Open a run to inspect its outcome and activity.`
+            : "Execution attempts across all factories you can access. Open a run to inspect its outcome and activity."
+        }
         eyebrow={
           <Link className="hover:text-foreground" href={sessionsHref}>
             ← Sessions
@@ -85,8 +65,10 @@ export function RunsList({
         key={JSON.stringify({ factoryQuery, query })}
         factoryQuery={factoryQuery}
         query={query}
-        sessions={sessions}
-        stages={stages}
+        sessionOption={data.sessionOption}
+        stages={data.stages}
+        promptFilterLabel={data.promptFilterLabel}
+        workspaceId={data.workspaceId}
         workspaceSlug={workspaceSlug}
       />
 
@@ -156,7 +138,7 @@ export function RunsList({
                 key={run.id}
                 initialNow={initialNow}
                 run={run}
-                workspaceSlug={workspaceSlug}
+                href={runFromListHref(workspaceSlug, run.id, query, factoryQuery)}
               />
             ))}
           </ol>
@@ -192,26 +174,30 @@ export function RunsList({
 
 function RunListRow({
   run,
-  workspaceSlug,
+  href,
   initialNow,
 }: {
   run: WorkspaceRunCatalogItem;
-  workspaceSlug: string;
+  href: string;
   initialNow: string;
 }) {
   const recovery = runCatalogRecoveryLabel(run);
+  const retryAt =
+    run.recovery?.queue.state === "retry_scheduled" ? run.recovery.queue.scheduledAt : null;
+  const attemptLabel = run.stageOrdinal === null ? null : `Attempt ${run.stageOrdinal}`;
   return (
     <li className="grid min-w-0 gap-4 px-4 py-5 sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto] sm:px-5">
       <div className="min-w-0">
         <Link
           className="text-[14px] font-semibold leading-6 text-foreground hover:underline [overflow-wrap:anywhere]"
-          href={workspaceRunDetailPath(workspaceSlug, run.id)}
+          href={href}
+          prefetch={false}
         >
           {run.sessionTitle}
           <span className="sr-only">
             {" "}
             — {run.stageName ?? "Session"},{" "}
-            {run.attemptCount === null ? "unassigned attempt" : `attempt ${run.attemptCount}`}
+            {attemptLabel?.toLowerCase() ?? `created ${formatUtcTimestamp(run.createdAt)}`}
           </span>
         </Link>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
@@ -222,10 +208,25 @@ function RunListRow({
           <span>{run.stageName ?? "Session run"}</span>
           <span aria-hidden="true">·</span>
           <span>
-            {run.attemptCount === null ? "Attempt not assigned" : `Attempt ${run.attemptCount}`}
+            {attemptLabel ?? <TimeDisplay initialNow={initialNow} value={run.createdAt} />}
           </span>
         </div>
-        {recovery ? <p className="mt-2 text-xs text-warning">{recovery}</p> : null}
+        {run.status === "error" ? (
+          <p className="mt-2 text-xs text-foreground">
+            {run.failure?.categoryLabel ?? "Cause not recorded"}
+          </p>
+        ) : null}
+        {recovery ? (
+          <p className="mt-2 text-xs text-warning">
+            {recovery}
+            {retryAt ? (
+              <>
+                {" "}
+                · <TimeDisplay initialNow={initialNow} value={retryAt} />
+              </>
+            ) : null}
+          </p>
+        ) : null}
       </div>
       <div className="min-w-0 space-y-2">
         <Status
@@ -247,8 +248,9 @@ function RunListRow({
         <p className="tabular-nums">{runCatalogCostLabel(run)}</p>
         <Link
           className="inline-flex min-h-9 items-center text-foreground underline-offset-4 hover:underline"
-          href={workspaceRunDetailPath(workspaceSlug, run.id)}
-          aria-label={`Inspect run for session ${run.sessionNumber}, ${run.stageName ?? "session"}, attempt ${run.attemptCount ?? "not assigned"}`}
+          href={href}
+          prefetch={false}
+          aria-label={`Inspect run for session ${run.sessionNumber}, ${run.stageName ?? "session"}, ${attemptLabel?.toLowerCase() ?? `created ${formatUtcTimestamp(run.createdAt)}`}`}
         >
           Inspect run →
         </Link>

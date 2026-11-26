@@ -132,11 +132,12 @@ export const workflowReferencePageSchema = z.discriminatedUnion("catalog", [
   }),
 ]);
 const workflowEditorChoicesSchema = z.strictObject({
-  prompts: referenceChoices,
-  approvers: referenceChoices,
-  profiles: profileChoices,
-  writers: writerChoices,
+  prompts: referenceChoice.array(),
+  approvers: referenceChoice.array(),
+  profiles: profileChoice.array(),
+  writers: writerChoice.array(),
   grant: z.strictObject({ id, version: z.number().int().positive().safe() }).nullable(),
+  grantRepository: z.string().optional(),
   templateSource: z
     .strictObject({
       label: z.string(),

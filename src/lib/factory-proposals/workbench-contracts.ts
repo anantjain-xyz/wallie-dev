@@ -44,5 +44,6 @@ export const proposalReviewSaveSchema = z.object({
 });
 
 export type ProposalReviewAction = z.infer<typeof reviewAction>;
+export type ProposalReviewDisposition = z.infer<typeof proposalReviewDispositionSchema>;
 export type ProposalReviewEvent = z.infer<typeof proposalReviewEventSchema>;
 export type ProposalReviewCommand = z.infer<typeof proposalReviewCommandSchema>;

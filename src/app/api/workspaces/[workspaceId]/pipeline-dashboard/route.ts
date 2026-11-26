@@ -7,6 +7,7 @@ import {
   loadPipelineDashboardLanePage,
   loadPipelineDashboardSnapshot,
 } from "@/features/pipeline/data";
+import { PIPELINE_SEARCH_MAX_LENGTH, PIPELINE_STATUS_FILTERS } from "@/features/pipeline/types";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 type RouteContext = {
@@ -20,11 +21,19 @@ const requestSchema = z.object({
   stageId: z.string().uuid(),
 });
 
-const factoryIdSchema = z.string().uuid().optional();
+const querySchema = z.object({
+  factory: z.string().uuid().optional(),
+  q: z.string().trim().max(PIPELINE_SEARCH_MAX_LENGTH).default(""),
+  status: z.enum(PIPELINE_STATUS_FILTERS).default("all"),
+});
 
-function readFactoryId(request: Request) {
-  const params = new URL(request.url).searchParams.getAll("factory");
-  return factoryIdSchema.safeParse(params.length > 1 ? params : params[0]);
+function readQuery(request: Request) {
+  const params = new URL(request.url).searchParams;
+  const read = (key: string) => {
+    const values = params.getAll(key);
+    return values.length > 1 ? values : values[0];
+  };
+  return querySchema.safeParse({ factory: read("factory"), q: read("q"), status: read("status") });
 }
 
 export async function GET(request: Request, context: RouteContext) {
@@ -36,13 +45,15 @@ export async function GET(request: Request, context: RouteContext) {
       { status: access.status },
     );
   }
-  const factoryId = readFactoryId(request);
-  if (!factoryId.success) return invalidFactory();
+  const query = readQuery(request);
+  if (!query.success) return invalidQuery(query.error);
+  const { factory, q, status } = query.data;
   try {
     const snapshot = await loadPipelineDashboardSnapshot({
+      ...(factory ? { factoryId: factory } : {}),
+      ...(q || status !== "all" ? { filters: { query: q, status } } : {}),
       supabase: access.context.supabase,
       workspaceId,
-      ...(factoryId.data ? { factoryId: factoryId.data } : {}),
     });
     return NextResponse.json(snapshot, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
@@ -64,8 +75,9 @@ export async function POST(request: Request, context: RouteContext) {
 
   const body = await request.json().catch(() => null);
   const parsed = requestSchema.safeParse(body);
-  const factoryId = readFactoryId(request);
-  if (!factoryId.success) return invalidFactory();
+  const query = readQuery(request);
+  if (!query.success) return invalidQuery(query.error);
+  const { factory, q, status } = query.data;
 
   if (!parsed.success) {
     return NextResponse.json({ error: "A valid lane cursor is required." }, { status: 400 });
@@ -82,7 +94,8 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const lane = await loadPipelineDashboardLanePage({
-      ...(factoryId.data ? { factoryId: factoryId.data } : {}),
+      ...(factory ? { factoryId: factory } : {}),
+      ...(q || status !== "all" ? { filters: { query: q, status } } : {}),
       pipelineId: parsed.data.pipelineId,
       seenIds: parsed.data.seenIds,
       stageId: parsed.data.stageId,
@@ -104,8 +117,15 @@ export async function POST(request: Request, context: RouteContext) {
   }
 }
 
-function invalidFactory() {
-  return NextResponse.json({ error: "A valid factory is required." }, { status: 400 });
+function invalidQuery(error: z.ZodError) {
+  return NextResponse.json(
+    {
+      error: error.issues.some((issue) => issue.path[0] === "factory")
+        ? "A valid factory is required."
+        : "A valid Pipeline search and status are required.",
+    },
+    { status: 400 },
+  );
 }
 
 function workspaceUnavailable() {

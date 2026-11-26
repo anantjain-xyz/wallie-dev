@@ -69,9 +69,16 @@ test("Overview matches Analytics, keeps projection controls scoped, and exposes 
     await page.getByRole("button", { name: "Apply filters", exact: true }).click();
     await expect(page).toHaveURL(/[?&]compare=previous(?:&|$)/);
     await expect(view).toBeVisible();
+    await expect(
+      page.getByText("Flow and delivery data is current.", { exact: true }),
+    ).toBeVisible();
     await expect(health.getByText("Current", { exact: true })).toBeVisible();
+    await expect(health.getByText("Lifecycle capture began", { exact: true })).toBeHidden();
+    const healthSummary = health.locator("summary");
+    await healthSummary.press("Enter");
     await expect(health.getByText("Lifecycle capture began", { exact: true })).toBeVisible();
     await expect(health.getByRole("button", { name: "Pause projection" })).toHaveCount(0);
+    await healthSummary.press("Enter");
     await expect(page.getByRole("link", { name: "Open Inbox" })).toHaveAttribute(
       "href",
       `${workspace}/inbox?factory=${fixture.factoryId}`,
@@ -98,6 +105,10 @@ test("Overview matches Analytics, keeps projection controls scoped, and exposes 
         .getByRole("region", { name: "Pull request throughput" })
         .getByRole("link", { name: /^Observed canonical merges, Current period, 1$/ }),
     ).toBeVisible();
+    await expect(page.getByRole("link", { name: "See throughput breakdown" })).toHaveAttribute(
+      "href",
+      `${analytics}#throughput-title`,
+    );
     await expect(page.getByRole("region", { name: "Revert rate" })).toContainText(
       "No covered mature merges",
     );
@@ -128,6 +139,31 @@ test("Overview matches Analytics, keeps projection controls scoped, and exposes 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(overview);
+    await page.getByLabel("To date", { exact: true }).fill(fixture.from);
+    await page.getByLabel("Deployment environment", { exact: true }).fill("Production");
+    await page.getByRole("button", { name: "Apply filters", exact: true }).click();
+    await expect(page.getByLabel("To date", { exact: true })).toHaveValue(fixture.from);
+    await expect(page.getByLabel("To date", { exact: true })).toHaveAccessibleDescription(
+      "Choose an end date 1 to 366 days after the start date.",
+    );
+    await expect(page.getByLabel("Deployment environment", { exact: true })).toHaveValue(
+      "Production",
+    );
+    await expect(
+      page.getByLabel("Deployment environment", { exact: true }),
+    ).toHaveAccessibleDescription(/lowercase letters or numbers/);
+    const reset = page.getByRole("link", { name: "Reset Overview filters" });
+    await expect(reset).toHaveAttribute(
+      "href",
+      `${workspace}/overview?factory=${fixture.factoryId}`,
+    );
+    await reset.click();
+    await expect(view).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveAttribute(
+      "data-value",
+      fixture.factoryId,
+    );
+    await page.goto(overview);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     const menu = page.getByRole("button", { name: "Workspace navigation: Overview" });
     await menu.press("Enter");
@@ -146,9 +182,11 @@ test("Overview matches Analytics, keeps projection controls scoped, and exposes 
     const ownerClock = owner.getByRole("region", { name: "Time to delivery" });
     await fixture.observePendingRequest();
     await owner.reload();
+    await expect(owner.getByText(/Flow and delivery data is delayed/)).toBeVisible();
     await expect(ownerHealth.getByText("Updating", { exact: true })).toBeVisible();
     await expect(ownerClock).toContainText("The previous snapshot may be stale");
     await expect(ownerClock.getByRole("link")).toHaveCount(0);
+    await ownerHealth.locator("summary").press("Enter");
     await owner.getByRole("button", { name: "Pause projection" }).click();
     await expect(ownerHealth.getByText("Paused", { exact: true })).toBeVisible();
     await expect(ownerClock).toContainText("Data unavailable. Projection paused.");
@@ -165,6 +203,7 @@ test("Overview matches Analytics, keeps projection controls scoped, and exposes 
     await expect(ownerHealth.getByText("Paused", { exact: true })).toHaveCount(0);
     await fixture.drainProjections();
     await owner.reload();
+    await ownerHealth.locator("summary").press("Enter");
     await expect(ownerHealth.getByText("Completed", { exact: true })).toBeVisible();
     await expect(
       ownerClock.getByRole("link", { name: /^Request to deployment, Current period, 4 h/ }),

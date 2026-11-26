@@ -9,6 +9,13 @@ import {
   type WorkspaceRunCatalogPage,
 } from "@/features/wallie/run-catalog";
 import type { RunCatalogQuery } from "@/features/wallie/run-catalog-contracts";
+import {
+  loadRunPromptFilterLabel,
+  loadRunSessionOptions,
+  loadRunStageOptions,
+  type RunSessionOption,
+  type RunStageOption,
+} from "@/features/wallie/runs-list-options";
 import { parseRunsListQuery, type RunsListSearchParams } from "@/features/wallie/runs-list-state";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 
@@ -17,9 +24,13 @@ export type RunsListState =
   | { kind: "invalid-query" | "invalid-cursor" | "error" };
 
 export type RunsListData = {
+  workspaceId: string;
   workspaceSlug: string;
   query: RunCatalogQuery;
   state: RunsListState;
+  sessionOption?: RunSessionOption | null;
+  stages?: RunStageOption[] | null;
+  promptFilterLabel?: string | null;
 };
 
 export async function loadRunsListData(
@@ -29,17 +40,31 @@ export async function loadRunsListData(
 ): Promise<RunsListData> {
   const { supabase, workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
   const parsed = parseRunsListQuery(searchParams);
-  if (!parsed.success) {
-    return { workspaceSlug: workspace.slug, query: {}, state: { kind: "invalid-query" } };
-  }
-  const common = { workspaceSlug: workspace.slug, query: parsed.data };
+  const scope = { supabase, workspaceId: workspace.id, factoryId };
+  const query = parsed.data ?? {};
+  const [sessionOption, stages, promptFilterLabel] = await Promise.all([
+    query.sessionId
+      ? loadRunSessionOptions(scope, { sessionId: query.sessionId })
+          .then(([option]) => option ?? null)
+          .catch(() => null)
+      : null,
+    loadRunStageOptions(scope).catch(() => null),
+    loadRunPromptFilterLabel(scope, query).catch(() => null),
+  ]);
+  const common = {
+    workspaceId: workspace.id,
+    workspaceSlug: workspace.slug,
+    query,
+    sessionOption,
+    stages,
+    promptFilterLabel,
+  };
+  if (!parsed.success) return { ...common, state: { kind: "invalid-query" } };
   try {
     const page = await loadWorkspaceRunCatalogPage({
-      supabase,
-      workspaceId: workspace.id,
+      ...scope,
       workspaceSlug: workspace.slug,
       query: parsed.data,
-      ...(factoryId ? { factoryId } : {}),
     });
     return { ...common, state: { kind: "ready", page } };
   } catch (error) {

@@ -96,7 +96,7 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     renderCommandBar();
 
-    await user.click(screen.getByRole("radio", { name: "All 5" }));
+    await user.click(screen.getByRole("radio", { name: "All sessions 5" }));
 
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
     expect(readSessionListPreferences("acme")).toEqual({
@@ -111,22 +111,41 @@ describe("SessionsCommandBar sticky filters", () => {
 
     const scope = screen.getByRole("radiogroup", { name: "Session scope" });
     expect(scope).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("tabIndex", "0");
+    expect(screen.getByRole("radio", { name: "Not archived 3" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("radio", { name: "Not archived 3" })).toHaveAttribute("tabIndex", "0");
     expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveAttribute(
       "aria-checked",
       "false",
     );
     expect(screen.getByRole("radio", { name: "Archived 2" })).toHaveAttribute("tabIndex", "-1");
-    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("tabIndex", "-1");
+    expect(screen.getByRole("radio", { name: "All sessions 5" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(screen.getByRole("radio", { name: "All sessions 5" })).toHaveAttribute("tabIndex", "-1");
+  });
+
+  it("changes status without losing the applied search or carrying the cursor", async () => {
+    const user = userEvent.setup();
+    setListUrl("q=%2342&scope=archived&cursor=old");
+    renderCommandBar({ ...defaultQueryState, query: "#42", scope: "archived", cursor: "old" });
+
+    await user.click(screen.getByRole("combobox", { name: "Filter by status" }));
+    await user.click(screen.getByRole("option", { name: "Failed" }));
+    expect(mocked.push).toHaveBeenLastCalledWith(
+      "/w/acme/sessions?q=%2342&scope=archived&status=failed",
+      { scroll: false },
+    );
   });
 
   it("moves and selects scope radios with arrow keys", async () => {
     const user = userEvent.setup();
     renderCommandBar();
 
-    const active = screen.getByRole("radio", { name: "Active 3" });
+    const active = screen.getByRole("radio", { name: "Not archived 3" });
     active.focus();
     expect(active).toHaveFocus();
 
@@ -140,7 +159,7 @@ describe("SessionsCommandBar sticky filters", () => {
     await user.keyboard("{ArrowDown}");
 
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
-    expect(screen.getByRole("radio", { name: "All 5" })).toHaveFocus();
+    expect(screen.getByRole("radio", { name: "All sessions 5" })).toHaveFocus();
 
     await user.keyboard("{ArrowUp}");
 
@@ -152,7 +171,7 @@ describe("SessionsCommandBar sticky filters", () => {
     await user.keyboard("{End}");
 
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?scope=all", { scroll: false });
-    expect(screen.getByRole("radio", { name: "All 5" })).toHaveFocus();
+    expect(screen.getByRole("radio", { name: "All sessions 5" })).toHaveFocus();
   });
 
   it("exposes server-resolved filters in the URL without a second navigation", async () => {
@@ -164,7 +183,10 @@ describe("SessionsCommandBar sticky filters", () => {
     renderCommandBar({ ...defaultQueryState, scope: "all", sort: "oldest", stageSlug: "build" });
 
     await waitFor(() => expect(window.location.search).toBe("?stage=build&scope=all&sort=oldest"));
-    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "All sessions 5" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(mocked.replace).not.toHaveBeenCalled();
     expect(mocked.push).not.toHaveBeenCalled();
   });
@@ -183,7 +205,10 @@ describe("SessionsCommandBar sticky filters", () => {
     expect(document.cookie).toContain(sessionListPreferencesCookieName("acme"));
     expect(mocked.replace).not.toHaveBeenCalled();
     expect(mocked.push).not.toHaveBeenCalled();
-    expect(screen.getByRole("radio", { name: "Active 3" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Not archived 3" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("does not expose a resumed search when synchronizing saved filters", () => {
@@ -209,7 +234,10 @@ describe("SessionsCommandBar sticky filters", () => {
       "true",
     );
     expect(mocked.replace).not.toHaveBeenCalled();
-    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: "All sessions 5" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
   });
 
   it("writes defaults on Clear and pushes the bare sessions path", async () => {
@@ -237,7 +265,9 @@ describe("SessionsCommandBar sticky filters", () => {
     renderCommandBar({ ...defaultQueryState, scope: "all" });
 
     await user.type(
-      screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+      screen.getByRole("searchbox", {
+        name: "Search sessions by title, prompt, session number, or Linear issue key",
+      }),
       "auth{Enter}",
     );
 
@@ -272,7 +302,9 @@ describe("SessionsCommandBar sticky filters", () => {
 
     expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
     await user.type(
-      screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+      screen.getByRole("searchbox", {
+        name: "Search sessions by title, prompt, session number, or Linear issue key",
+      }),
       "#42",
     );
 
@@ -299,7 +331,7 @@ describe("SessionsCommandBar sticky filters", () => {
       };
       const { rerenderQueryState } = renderCommandBar(filters);
       const search = screen.getByRole("searchbox", {
-        name: "Search prompts, titles, or Linear IDs",
+        name: "Search sessions by title, prompt, session number, or Linear issue key",
       });
       await user.type(search, "auth");
 
@@ -357,7 +389,7 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     renderCommandBar({ ...defaultQueryState, query: "auth" });
     const search = screen.getByRole("searchbox", {
-      name: "Search prompts, titles, or Linear IDs",
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
     });
 
     await user.clear(search);
@@ -374,7 +406,7 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     renderCommandBar({ ...defaultQueryState, scope: "all", stageSlug: "build" });
     const search = screen.getByRole("searchbox", {
-      name: "Search prompts, titles, or Linear IDs",
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
     });
     await user.type(search, "draft");
 
@@ -385,7 +417,10 @@ describe("SessionsCommandBar sticky filters", () => {
     expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
       "Press Enter to search.",
     );
-    expect(screen.getByRole("radio", { name: "All 5" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "All sessions 5" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(screen.getByRole("combobox", { name: "Filter by stage" })).toHaveTextContent("Build");
     expect(mocked.push).not.toHaveBeenCalled();
   });
@@ -408,10 +443,14 @@ describe("SessionsCommandBar sticky filters", () => {
       { scroll: false },
     );
     expect(
-      screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+      screen.getByRole("searchbox", {
+        name: "Search sessions by title, prompt, session number, or Linear issue key",
+      }),
     ).toHaveValue("");
     expect(
-      screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+      screen.getByRole("searchbox", {
+        name: "Search sessions by title, prompt, session number, or Linear issue key",
+      }),
     ).toHaveFocus();
   });
 
@@ -419,7 +458,7 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     renderCommandBar({ ...defaultQueryState, query: "auth", scope: "all" });
     const search = screen.getByRole("searchbox", {
-      name: "Search prompts, titles, or Linear IDs",
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
     });
 
     await user.clear(search);
@@ -441,7 +480,9 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     renderCommandBar({ ...defaultQueryState, scope: "all", sort: "oldest", stageSlug: "build" });
     await user.type(
-      screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+      screen.getByRole("searchbox", {
+        name: "Search sessions by title, prompt, session number, or Linear issue key",
+      }),
       "draft",
     );
 
@@ -449,7 +490,9 @@ describe("SessionsCommandBar sticky filters", () => {
 
     expect(mocked.push).toHaveBeenCalledExactlyOnceWith("/w/acme/sessions", { scroll: false });
     expect(
-      screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+      screen.getByRole("searchbox", {
+        name: "Search sessions by title, prompt, session number, or Linear issue key",
+      }),
     ).toHaveValue("");
   });
 
@@ -457,7 +500,7 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     const { rerenderQueryState } = renderCommandBar({ ...defaultQueryState, query: "new" });
     const search = screen.getByRole("searchbox", {
-      name: "Search prompts, titles, or Linear IDs",
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
     });
     await user.click(search);
 
@@ -480,7 +523,7 @@ describe("SessionsCommandBar sticky filters", () => {
       const user = userEvent.setup();
       const { rerenderQueryState } = renderCommandBar();
       const search = screen.getByRole("searchbox", {
-        name: "Search prompts, titles, or Linear IDs",
+        name: "Search sessions by title, prompt, session number, or Linear issue key",
       });
       await user.type(search, "discarded");
       await user.click(screen.getByRole("button", { name: action }));
@@ -504,7 +547,7 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     const { rerenderQueryState } = renderCommandBar();
     const search = screen.getByRole("searchbox", {
-      name: "Search prompts, titles, or Linear IDs",
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
     });
     await user.type(search, "auth{Enter}entication");
 
@@ -524,7 +567,7 @@ describe("SessionsCommandBar sticky filters", () => {
     const user = userEvent.setup();
     const { rerenderQueryState } = renderCommandBar();
     const search = screen.getByRole("searchbox", {
-      name: "Search prompts, titles, or Linear IDs",
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
     });
     await user.type(search, "auth{Enter}entication");
 

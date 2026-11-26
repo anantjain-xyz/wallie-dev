@@ -21,6 +21,7 @@ import {
 import { CommandBar } from "@/components/ui/page-shell";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Select, SelectContent, SelectItem } from "@/components/ui/select";
+import { resolveStatusDefinition } from "@/components/ui/status";
 import type { SessionScopeFacets, SessionStageFacet } from "@/features/sessions/list/data";
 import {
   SESSION_LIST_SORT_OPTIONS,
@@ -32,6 +33,7 @@ import {
 } from "@/features/sessions/list/sessions-list-preferences";
 import {
   SESSION_LIST_DEFAULT_FILTERS,
+  SESSION_LIST_STATUS_OPTIONS,
   areDefaultSessionListFilters,
   sessionListSearchHasStickyParams,
 } from "@/features/sessions/list/sessions-list-query-state";
@@ -46,6 +48,7 @@ import { cn } from "@/lib/utils";
 import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-return-path";
 
 export type SessionsCommandBarProps = {
+  factoryName?: string;
   factoryQuery?: string;
   queryState: SessionListQueryState;
   scopeFacets: SessionScopeFacets;
@@ -54,25 +57,26 @@ export type SessionsCommandBarProps = {
 };
 
 const SCOPE_OPTIONS: { key: SessionFilterKey; label: string }[] = [
-  { key: "active", label: "Active" },
+  { key: "active", label: "Not archived" },
   { key: "archived", label: "Archived" },
-  { key: "all", label: "All" },
+  { key: "all", label: "All sessions" },
 ];
 
-const DEFAULT_QUERY_STATE: Pick<
-  SessionListQueryState,
-  "cursor" | "query" | "scope" | "sort" | "stageSlug"
-> = {
+const DEFAULT_QUERY_STATE: SessionListQueryState = {
   cursor: null,
   query: "",
+  status: undefined,
   ...SESSION_LIST_DEFAULT_FILTERS,
 };
+
+const SEARCH_HINT = "Title, prompt, session #42, or Linear OP-517";
 
 function hasActiveFilters(queryState: SessionListQueryState) {
   return queryState.query.trim().length > 0 || !areDefaultSessionListFilters(queryState);
 }
 
 export function SessionsCommandBar({
+  factoryName,
   factoryQuery,
   queryState,
   scopeFacets,
@@ -109,6 +113,7 @@ export function SessionsCommandBar({
   const appliedSearchSummary = queryState.query.trim()
     ? `Results for “${queryState.query.trim()}”`
     : "";
+  const scopeLabel = SCOPE_OPTIONS.find((option) => option.key === queryState.scope)?.label;
 
   useEffect(() => {
     if (!isPending) latestQueryRef.current = queryState;
@@ -146,6 +151,7 @@ export function SessionsCommandBar({
       scope: next.scope !== undefined ? next.scope : current.scope,
       sort: next.sort !== undefined ? next.sort : current.sort,
       stageSlug: next.stageSlug !== undefined ? next.stageSlug : current.stageSlug,
+      status: "status" in next ? next.status : current.status,
     };
     latestQueryRef.current = merged;
     if (factoryQuery === undefined) {
@@ -234,7 +240,8 @@ export function SessionsCommandBar({
   const stageValueLabel = useMemo(() => {
     if (!optimisticQuery.stageSlug) return "All stages";
     return (
-      stageGroups.order.find((stage) => stage.slug === optimisticQuery.stageSlug)?.name ?? "Stage"
+      stageGroups.order.find((stage) => stage.slug === optimisticQuery.stageSlug)?.name ??
+      "Selected stage"
     );
   }, [optimisticQuery.stageSlug, stageGroups.order]);
 
@@ -299,8 +306,10 @@ export function SessionsCommandBar({
             className="h-9 min-h-9 text-sm md:h-9 md:text-[13px]"
             value={search.draft}
             onChange={(event) => setSearch({ ...search, draft: event.target.value })}
-            aria-label="Search prompts, titles, or Linear IDs"
-            description="Search prompts, titles, session numbers, or Linear IDs."
+            aria-label="Search sessions by title, prompt, session number, or Linear issue key"
+            autoComplete="off"
+            description={SEARCH_HINT}
+            name="q"
           />
           {search.draft || optimisticQuery.query ? (
             <button
@@ -352,6 +361,34 @@ export function SessionsCommandBar({
           </Select>
 
           <Select
+            value={optimisticQuery.status ?? "__all__"}
+            onValueChange={(value) =>
+              updateQueryState({
+                status: SESSION_LIST_STATUS_OPTIONS.find((option) => option === value),
+              })
+            }
+          >
+            <FilterSelectTrigger
+              accessibleLabel="Filter by status"
+              className="h-9 min-h-9 min-w-0 max-w-[10rem] px-2 text-sm md:h-9 md:max-w-[12rem] md:text-[13px]"
+            >
+              <span className="truncate">
+                {optimisticQuery.status
+                  ? resolveStatusDefinition(optimisticQuery.status).label
+                  : "All statuses"}
+              </span>
+            </FilterSelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All statuses</SelectItem>
+              {SESSION_LIST_STATUS_OPTIONS.map((status) => (
+                <SelectItem key={status} value={status}>
+                  {resolveStatusDefinition(status).label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
             value={optimisticQuery.sort}
             onValueChange={(nextValue) =>
               updateQueryState({ sort: nextValue as SessionListSortKey })
@@ -379,6 +416,16 @@ export function SessionsCommandBar({
             />
           ) : null}
         </div>
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+        <p aria-hidden="true">{SEARCH_HINT}</p>
+        <p className="min-w-0 [overflow-wrap:anywhere]">
+          Scope:{" "}
+          {factoryName ?? (factoryQuery === "all" ? "All accessible factories" : "This factory")}
+          {" · "}
+          {scopeLabel}
+          {factoryQuery === "all" ? " · Choose a factory to use row actions." : null}
+        </p>
       </div>
       <div
         role="status"
