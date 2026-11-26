@@ -27,11 +27,13 @@ describe("SettingsPage", () => {
     const setupData = new Promise<never>(() => undefined);
     const usage = new Promise<never>(() => undefined);
     const workspaceInvitations = new Promise<never>(() => undefined);
+    const workspaceProfile = new Promise<never>(() => undefined);
     mocked.loadSettingsPageData.mockResolvedValue({
       initialData: Promise.resolve(initialData),
       setupData,
       usage,
       workspaceInvitations,
+      workspaceProfile,
     });
 
     const element = (await SettingsPage({
@@ -40,6 +42,7 @@ describe("SettingsPage", () => {
         category: "workspace",
         github: "connected",
         afterOAuthGrant: "56800000-0000-4000-8000-000000000001",
+        oauthView: "history",
       }),
     })) as ReactElement;
 
@@ -53,12 +56,14 @@ describe("SettingsPage", () => {
       personalConnections: {
         props: {
           afterOAuthGrant: "56800000-0000-4000-8000-000000000001",
+          history: true,
           workspaceSlug: "northwind",
         },
       },
       setupData,
       usage,
       workspaceInvitations,
+      workspaceProfile,
     });
   });
 });

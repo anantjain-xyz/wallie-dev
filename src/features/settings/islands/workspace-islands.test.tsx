@@ -18,19 +18,6 @@ vi.mock("@/features/settings/workspace-avatar-section", () => ({
     </button>
   ),
 }));
-vi.mock("@/features/settings/workspace-members-section", () => ({
-  WorkspaceMembersSection: ({
-    initialInvitations,
-    workspaceMembers,
-  }: {
-    initialInvitations: unknown[];
-    workspaceMembers: unknown[];
-  }) => (
-    <p>
-      Members island: {workspaceMembers.length} member, {initialInvitations.length} invitation
-    </p>
-  ),
-}));
 vi.mock("@/features/settings/danger-zone-section", () => ({
   DangerZoneSection: ({
     canDelete,
@@ -45,11 +32,10 @@ vi.mock("@/features/settings/danger-zone-section", () => ({
   ),
 }));
 
-import type { SettingsInitialData, SettingsPageData } from "@/features/settings/data";
+import type { SettingsInitialData } from "@/features/settings/data";
 import {
   DangerActionsIsland,
   WorkspaceIdentityIsland,
-  WorkspaceMembersIsland,
 } from "@/features/settings/islands/workspace-islands";
 
 function initialData(role: "member" | "owner" = "owner"): SettingsInitialData {
@@ -68,21 +54,16 @@ function initialData(role: "member" | "owner" = "owner"): SettingsInitialData {
 }
 
 describe("Settings workspace islands", () => {
-  it("keeps identity, members, and danger-zone state isolated and synchronized", () => {
-    const data = {
-      ...initialData(),
-      workspaceMembers: [{ id: "member-1" }],
-    } as SettingsPageData;
+  it("synchronizes a workspace rename with the deletion confirmation", () => {
+    const data = initialData();
 
     render(
       <>
         <WorkspaceIdentityIsland initialData={data} />
-        <WorkspaceMembersIsland initialData={data} invitations={[{} as never]} />
         <DangerActionsIsland initialData={data} />
       </>,
     );
 
-    expect(screen.getByText("Members island: 1 member, 1 invitation")).toBeInTheDocument();
     expect(screen.getByText("Danger zone: Acme, owner")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Workspace Acme" }));
