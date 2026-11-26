@@ -92,13 +92,17 @@ export type SettingsSetupData = Omit<
 
 export type SettingsWorkspaceProfile = { avatarUrl: string | null; fullName: string | null };
 
+export type WorkspaceInvitationsSnapshot = { asOf: number; invitations: WorkspaceInvitation[] };
+
 export type SettingsPageDataLoader = {
   initialData: Promise<SettingsInitialData>;
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
-  workspaceInvitations: Promise<WorkspaceInvitation[]>;
+  workspaceInvitations: Promise<WorkspaceInvitationsSnapshot>;
   workspaceProfile?: Promise<SettingsWorkspaceProfile>;
 };
+
+const EMPTY_INVITATIONS: WorkspaceInvitationsSnapshot = { asOf: 0, invitations: [] };
 
 async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceInvitation[]> {
   const admin = createSupabaseAdminClient();
@@ -452,13 +456,14 @@ export async function loadSettingsPageData(
 
     const workspaceInvitations =
       category && category !== "workspace"
-        ? Promise.resolve([])
+        ? Promise.resolve(EMPTY_INVITATIONS)
         : withServerTiming(
             "settings.section.invitations",
             { workspaceId: workspace.id },
             async (sectionTiming) => {
-              if (!canManage) return [];
-              return sectionTiming.segment(
+              if (!canManage) return EMPTY_INVITATIONS;
+              const asOf = Date.now();
+              const invitations = await sectionTiming.segment(
                 "pending-invitations",
                 () => loadWorkspaceInvitations(workspace.id),
                 (invitations) => ({
@@ -466,6 +471,7 @@ export async function loadSettingsPageData(
                   rows: invitations.length,
                 }),
               );
+              return { asOf, invitations };
             },
           );
 

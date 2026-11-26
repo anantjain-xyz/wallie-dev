@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -8,6 +8,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { DangerZoneSection } from "@/features/settings/danger-zone-section";
+import type { WorkspaceInvitationsSnapshot } from "@/features/settings/data";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
@@ -15,6 +16,7 @@ import { WorkspaceInvitationsSection } from "@/features/settings/workspace-invit
 import { WorkspaceProfileSection } from "@/features/settings/workspace-profile-section";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
 import { maxProfileAvatarBytes } from "@/lib/storage/profile-avatar-contracts";
+import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
 const refresh = vi.fn();
 
@@ -24,6 +26,28 @@ vi.mock("next/navigation", () => ({
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const timestamp = "2026-07-17T12:00:00.000Z";
+const asOf = Date.parse(timestamp);
+const pendingInvitation: WorkspaceInvitation = {
+  acceptedAt: null,
+  acceptedByMemberId: null,
+  createdAt: timestamp,
+  email: "invitee@example.com",
+  expiresAt: timestamp,
+  fullName: "Invitee Person",
+  id: "invitation-1",
+  invitedByMemberId: "owner-1",
+  lastSentAt: timestamp,
+  revokedAt: null,
+  role: "member",
+  status: "pending",
+  updatedAt: timestamp,
+  workspaceId,
+};
+const resentInvitation: WorkspaceInvitation = {
+  ...pendingInvitation,
+  expiresAt: "2026-07-18T12:00:00.000Z",
+  updatedAt: "2026-07-17T12:00:00.000002Z",
+};
 const axeOptions = { rules: { "color-contrast": { enabled: false } } };
 const axeTestTimeout = 15_000;
 
@@ -73,6 +97,7 @@ beforeAll(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   refresh.mockClear();
   document.body.removeAttribute("data-scroll-locked");
@@ -88,25 +113,7 @@ function renderSettingsDestructiveFlows() {
         initialProfile={{ avatarUrl: "https://provider.example/owner.png", fullName: "Owner" }}
       />
       <WorkspaceInvitationsSection
-        asOf={Date.parse(timestamp)}
-        initialInvitations={[
-          {
-            acceptedAt: null,
-            acceptedByMemberId: null,
-            createdAt: timestamp,
-            email: "invitee@example.com",
-            expiresAt: timestamp,
-            fullName: "Invitee Person",
-            id: "invitation-1",
-            invitedByMemberId: "owner-1",
-            lastSentAt: timestamp,
-            revokedAt: null,
-            role: "member",
-            status: "pending",
-            updatedAt: timestamp,
-            workspaceId,
-          },
-        ]}
+        snapshot={{ asOf, invitations: [pendingInvitation] }}
         workspaceId={workspaceId}
       />
       <WorkspaceMembersSection
@@ -169,6 +176,14 @@ function renderSettingsDestructiveFlows() {
         workspaceId={workspaceId}
       />
     </OverlayProvider>,
+  );
+}
+
+function invitationsView(snapshot: WorkspaceInvitationsSnapshot) {
+  return (
+    <OverlayProvider>
+      <WorkspaceInvitationsSection snapshot={snapshot} workspaceId={workspaceId} />
+    </OverlayProvider>
   );
 }
 
@@ -240,7 +255,7 @@ describe("destructive settings dialogs", () => {
     await user.click(screen.getByRole("button", { name: "Remove Ada (ada.second@example.com)" }));
     const removeDialog = await screen.findByRole("alertdialog", { name: "Remove Ada?" });
     expect(removeDialog).toHaveAccessibleDescription(
-      expect.stringContaining("ada.second@example.com"),
+      "ada.second@example.com Removing this member revokes their workspace access immediately. You can re-invite them later.",
     );
     await user.click(within(removeDialog).getByRole("button", { name: "Remove member" }));
     expect(fetchMock).toHaveBeenCalledWith(`/api/workspaces/${workspaceId}/members/member-2`, {
@@ -254,20 +269,9 @@ describe("destructive settings dialogs", () => {
 
   it("marks the invitation expired at its deadline and sends a new link to that recipient", async () => {
     const user = userEvent.setup();
-    const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({
-        invitation: {
-          id: "invitation-1",
-          email: "invitee@example.com",
-          fullName: "Invitee Person",
-          expiresAt,
-          lastSentAt: timestamp,
-          role: "member",
-          status: "pending",
-        },
-      }),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ invitation: resentInvitation }));
     renderSettingsDestructiveFlows();
 
     expect(screen.getByText("Expired")).toBeVisible();
@@ -281,6 +285,131 @@ describe("destructive settings dialogs", () => {
       await screen.findByRole("button", { name: "Resend for invitee@example.com" }),
     ).toBeVisible();
     expect(screen.queryByText("Expired")).not.toBeInTheDocument();
+  });
+
+  it("updates the list from refresh without overwriting a newer resend", async () => {
+    const user = userEvent.setup();
+    const initial = { asOf, invitations: [pendingInvitation] };
+    const extraInvitation = {
+      ...pendingInvitation,
+      id: "invitation-2",
+      email: "another@example.com",
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ invitation: resentInvitation }),
+    );
+    const { rerender } = render(invitationsView(initial));
+    await user.click(screen.getByRole("button", { name: "Send new link for invitee@example.com" }));
+    await screen.findByRole("button", { name: "Resend for invitee@example.com" });
+
+    rerender(
+      invitationsView({
+        asOf: asOf + 1,
+        invitations: [
+          { ...pendingInvitation, updatedAt: "2026-07-17T12:00:00.000001Z" },
+          extraInvitation,
+        ],
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Resend for invitee@example.com" })).toBeVisible();
+    expect(screen.getByText("another@example.com")).toBeVisible();
+
+    rerender(invitationsView({ asOf: asOf + 2, invitations: [extraInvitation] }));
+    expect(screen.queryByText("invitee@example.com")).not.toBeInTheDocument();
+    rerender(invitationsView(initial));
+    expect(screen.queryByText("invitee@example.com")).not.toBeInTheDocument();
+    expect(screen.getByText("another@example.com")).toBeVisible();
+  });
+
+  it("does not restore an invitation when an older resend response arrives after a refresh", async () => {
+    const user = userEvent.setup();
+    const request = Promise.withResolvers<Response>();
+    vi.spyOn(globalThis, "fetch").mockReturnValue(request.promise);
+    const { rerender } = render(invitationsView({ asOf, invitations: [pendingInvitation] }));
+
+    await user.click(screen.getByRole("button", { name: "Send new link for invitee@example.com" }));
+    rerender(invitationsView({ asOf: asOf + 1, invitations: [] }));
+    expect(screen.getByText("No pending invitations.")).toBeVisible();
+    request.resolve(Response.json({ invitation: resentInvitation }));
+
+    expect(await screen.findByText("Invitation resent to invitee@example.com.")).toBeVisible();
+    expect(screen.getByText("No pending invitations.")).toBeVisible();
+  });
+
+  it("does not restore a revoked invitation from a refresh already in flight", async () => {
+    const user = userEvent.setup();
+    const revokedAt = new Date(asOf + 2).toISOString();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        invitation: { ...pendingInvitation, status: "revoked", revokedAt, updatedAt: revokedAt },
+      }),
+    );
+    const { rerender } = render(invitationsView({ asOf, invitations: [pendingInvitation] }));
+    await user.click(
+      screen.getByRole("button", { name: "Revoke invitation for invitee@example.com" }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Revoke invitee@example.com's invitation?",
+    });
+    expect(dialog).toHaveAccessibleDescription(
+      "Revoking the invitation for invitee@example.com prevents that invitation link from granting workspace access.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Revoke invitation" }));
+    await screen.findByText("No pending invitations.");
+
+    rerender(invitationsView({ asOf: asOf + 1, invitations: [pendingInvitation] }));
+    expect(screen.getByText("No pending invitations.")).toBeVisible();
+  });
+
+  it("uses elapsed server-relative time for expiry even if the browser clock changes", () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(asOf + 86_400_000);
+    const deadline = asOf + 1_000;
+    const invitation = { ...pendingInvitation, expiresAt: new Date(deadline).toISOString() };
+    const { rerender } = render(invitationsView({ asOf, invitations: [invitation] }));
+
+    expect(screen.getByRole("button", { name: "Resend for invitee@example.com" })).toBeVisible();
+    act(() => vi.advanceTimersByTime(999));
+    vi.setSystemTime(asOf - 86_400_000);
+    expect(screen.getByRole("button", { name: "Resend for invitee@example.com" })).toBeVisible();
+    act(() => vi.advanceTimersByTime(1));
+    expect(
+      screen.getByRole("button", { name: "Send new link for invitee@example.com" }),
+    ).toBeVisible();
+
+    rerender(
+      invitationsView({
+        asOf: deadline + 10_000,
+        invitations: [{ ...invitation, expiresAt: new Date(deadline + 11_000).toISOString() }],
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Resend for invitee@example.com" })).toBeVisible();
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(
+      screen.getByRole("button", { name: "Send new link for invitee@example.com" }),
+    ).toBeVisible();
+  });
+
+  it("preserves an invitation draft across refresh but disables submit during a resend", async () => {
+    const user = userEvent.setup();
+    const request = Promise.withResolvers<Response>();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockReturnValue(request.promise);
+    const { rerender } = render(invitationsView({ asOf, invitations: [pendingInvitation] }));
+
+    await user.click(screen.getByRole("button", { name: "Send new link for invitee@example.com" }));
+    await user.click(screen.getByRole("button", { name: "Invite member" }));
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Another Person");
+    await user.type(screen.getByRole("textbox", { name: "Email" }), "another@example.com");
+    rerender(invitationsView({ asOf: asOf + 1, invitations: [pendingInvitation] }));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Another Person");
+    expect(screen.getByRole("textbox", { name: "Email" })).toHaveValue("another@example.com");
+
+    const send = screen.getByRole("button", { name: "Send invitation" });
+    expect(send).toBeDisabled();
+    await user.click(send);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    request.resolve(Response.json({ invitation: resentInvitation }));
+    await waitFor(() => expect(send).toBeEnabled());
   });
 
   it("offers a retry named for the unavailable workspace subsection", async () => {

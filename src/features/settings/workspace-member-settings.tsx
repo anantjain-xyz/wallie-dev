@@ -4,13 +4,13 @@ import type {
   SettingsInitialData,
   SettingsSetupData,
   SettingsWorkspaceProfile,
+  WorkspaceInvitationsSnapshot,
 } from "@/features/settings/data";
 import { Section } from "@/features/settings/settings-ui";
 import { WorkspaceInvitationsSection } from "@/features/settings/workspace-invitations-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
 import { WorkspaceProfileSection } from "@/features/settings/workspace-profile-section";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
-import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
 async function WorkspaceSettingsRead<T>({
   data,
@@ -45,7 +45,7 @@ export function WorkspaceMemberSettings({
   setup,
 }: {
   initialData: SettingsInitialData;
-  invitations: Promise<WorkspaceInvitation[]>;
+  invitations: Promise<WorkspaceInvitationsSnapshot>;
   profile?: Promise<SettingsWorkspaceProfile>;
   setup: Promise<SettingsSetupData>;
 }) {
@@ -97,12 +97,8 @@ export function WorkspaceMemberSettings({
                   <WorkspaceSettingsLoadError label="pending invitations" />
                 </InvitationPlaceholder>
               }
-              render={(rows) => (
-                <WorkspaceInvitationsSection
-                  asOf={Date.now()}
-                  initialInvitations={rows}
-                  workspaceId={workspace.id}
-                />
+              render={(snapshot) => (
+                <WorkspaceInvitationsSection snapshot={snapshot} workspaceId={workspace.id} />
               )}
             />
           </Suspense>

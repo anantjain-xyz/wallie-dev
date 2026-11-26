@@ -194,8 +194,9 @@ export function WorkspaceMembersSection({
                               {member.email}
                             </span>
                           ) : null}
-                          Removing this member revokes their workspace access immediately. You can
-                          re-invite them later.
+                          {
+                            " Removing this member revokes their workspace access immediately. You can re-invite them later."
+                          }
                         </>
                       }
                       errorMessage={memberPendingRemoval?.id === member.id ? dialogError : null}
@@ -247,7 +248,7 @@ export function WorkspaceMembersSection({
                     {memberRoleTarget.email}
                   </span>
                 ) : null}
-                {`Choose ${memberDisplayName(memberRoleTarget)}'s access. Changing an admin to member removes workspace management access.`}
+                {` Choose ${memberDisplayName(memberRoleTarget)}'s access. Changing an admin to member removes workspace management access.`}
               </>
             ) : (
               "Choose this member's workspace access."

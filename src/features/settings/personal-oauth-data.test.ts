@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadPersonalOAuthConnections } from "@/features/settings/personal-oauth-data";
@@ -19,10 +19,14 @@ const grant = {
   factory_oauth_grant_bindings: [{ factory_id: "factory-1", scopes: ["sessions:read"] }],
 };
 
+function queryParams(input: Parameters<typeof globalThis.fetch>[0]) {
+  return new URL(input instanceof Request ? input.url : input).searchParams;
+}
+
 function setup() {
-  const fetch = vi.fn<(url: string) => Promise<Response>>();
-  const supabase = createClient<Database>("https://supabase.example.test", "mock-key", {
-    auth: { autoRefreshToken: false, persistSession: false },
+  const fetch = vi.fn<typeof globalThis.fetch>();
+  const supabase = createServerClient<Database>("https://supabase.example.test", "mock-key", {
+    cookies: { getAll: () => [], setAll: () => undefined },
     global: { fetch },
   });
   return { fetch, supabase };
@@ -44,8 +48,8 @@ describe("workspace personal OAuth connections", () => {
       workspaceId,
     });
 
-    const [cursorQuery, pageQuery, factoryQuery] = fetch.mock.calls.map(
-      ([url]) => new URL(url).searchParams,
+    const [cursorQuery, pageQuery, factoryQuery] = fetch.mock.calls.map(([input]) =>
+      queryParams(input),
     );
     for (const query of [cursorQuery, pageQuery]) {
       expect(query.get("workspace_id")).toBe(`eq.${workspaceId}`);
@@ -90,7 +94,7 @@ describe("workspace personal OAuth connections", () => {
       workspaceId,
     });
 
-    const query = new URL(fetch.mock.calls[0][0]).searchParams;
+    const query = queryParams(fetch.mock.calls[0][0]);
     expect(query.get("or")).toMatch(/^\(revoked_at.not.is.null,expires_at.lte\..*\)$/);
     expect(query.get("order")).toBe("created_at.desc,id.desc");
     expect(query.get("limit")).toBe("21");

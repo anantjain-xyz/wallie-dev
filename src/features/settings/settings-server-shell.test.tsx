@@ -82,7 +82,7 @@ function settingsCategory(
       hasEstimatedTokens: false,
       hasEstimatedCost: false,
     }),
-    workspaceInvitations: Promise.resolve([]),
+    workspaceInvitations: Promise.resolve({ asOf: 0, invitations: [] }),
     workspaceProfile: Promise.resolve({ avatarUrl: null, fullName: "Alex" }),
     ...overrides,
   });
@@ -161,9 +161,12 @@ describe("Settings server shell", () => {
       expect(html).toContain(">Members<");
       expect(html.replaceAll(/<!--.*?-->/g, "")).toContain("Loading active members…");
     } finally {
-      setup.resolve({ workspaceMembers: [] } as SettingsSetupData);
-      reader.releaseLock();
-      await new Response(stream).arrayBuffer();
+      setup.resolve(await settingsCategory("workspace").props.setupData);
+      try {
+        while (!(await reader.read()).done) continue;
+      } finally {
+        reader.releaseLock();
+      }
     }
   });
 

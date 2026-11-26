@@ -5,6 +5,7 @@ import type {
   SettingsPageData,
   SettingsSetupData,
   SettingsWorkspaceProfile,
+  WorkspaceInvitationsSnapshot,
   WorkspaceUsageData,
 } from "@/features/settings/data";
 import {
@@ -30,7 +31,6 @@ import type { SettingsCategory } from "@/features/settings/settings-categories";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
 import { WorkspaceMemberSettings } from "@/features/settings/workspace-member-settings";
 import { workspaceFactoryDefinitionPath } from "@/lib/routes";
-import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
 type SettingsServerShellProps = {
   automationPreview?: ReactNode;
@@ -41,7 +41,7 @@ type SettingsServerShellProps = {
   searchState: { codexStatus: string | null; githubStatus: string | null };
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
-  workspaceInvitations: Promise<WorkspaceInvitation[]>;
+  workspaceInvitations: Promise<WorkspaceInvitationsSnapshot>;
   workspaceProfile?: Promise<SettingsWorkspaceProfile>;
 };
 

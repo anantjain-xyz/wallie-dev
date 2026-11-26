@@ -271,7 +271,7 @@ describe("loadSettingsPageData", () => {
 
     const loader = await loadSettingsPageData(workspace.slug);
 
-    await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    await expect(loader.workspaceInvitations).resolves.toEqual({ asOf: 0, invitations: [] });
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
     await Promise.all([loader.initialData, loader.setupData, loader.usage]);
   });
@@ -304,7 +304,7 @@ describe("loadSettingsPageData", () => {
       hasEstimatedTokens: false,
       hasEstimatedCost: false,
     });
-    await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    await expect(loader.workspaceInvitations).resolves.toEqual({ asOf: 0, invitations: [] });
     expect(mocked.createWorkspaceOnboardingSnapshot).toHaveBeenCalledTimes(1);
     expect(supabase.rpc).not.toHaveBeenCalled();
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
@@ -367,7 +367,7 @@ describe("loadSettingsPageData", () => {
       rateLimits: [{ description: "Paid calls", endpoint: "agent", max: 4, windowMs: 60_000 }],
       workspaceMembers: [],
     });
-    await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    await expect(loader.workspaceInvitations).resolves.toEqual({ asOf: 0, invitations: [] });
     await expect(loader.usage).resolves.toMatchObject({
       totalCostUsd: 2.5,
       totalInputTokens: 500,
@@ -460,7 +460,10 @@ describe("loadSettingsPageData", () => {
         },
       ],
     });
-    await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    await expect(loader.workspaceInvitations).resolves.toEqual({
+      asOf: expect.any(Number),
+      invitations: [],
+    });
     await expect(loader.workspaceProfile).resolves.toEqual({
       avatarUrl: "https://cdn.example.com/ada.png",
       fullName: "Ada Lovelace",

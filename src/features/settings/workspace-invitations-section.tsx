@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
@@ -9,6 +9,7 @@ import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confi
 import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { SelectField } from "@/components/ui/select";
 import { Status } from "@/components/ui/status";
+import type { WorkspaceInvitationsSnapshot } from "@/features/settings/data";
 import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
 import { dateFormatter } from "@/features/settings/settings-ui";
 import { readResponseJson } from "@/features/settings/use-api-action";
@@ -24,29 +25,29 @@ function formatDate(value: string | null) {
   return dateFormatter.format(new Date(value));
 }
 
-function upsertInvitation(
-  invitations: WorkspaceInvitation[],
-  invitation: WorkspaceInvitation,
-): WorkspaceInvitation[] {
-  return [
-    invitation,
-    ...invitations.filter((existingInvitation) => existingInvitation.id !== invitation.id),
-  ].filter((existingInvitation) => existingInvitation.status === "pending");
+function rowTime(timestamp: string) {
+  const subMilliseconds = timestamp.match(/\.\d{3}(\d+)/)?.[1];
+  return Date.parse(timestamp) + (subMilliseconds ? Number(`0.${subMilliseconds}`) : 0);
+}
+
+function isNewerMutation(snapshot: WorkspaceInvitationsSnapshot, mutation: WorkspaceInvitation) {
+  const observed = snapshot.invitations.find(({ id }) => id === mutation.id);
+  const updatedAt = rowTime(mutation.updatedAt);
+  return observed ? updatedAt > rowTime(observed.updatedAt) : updatedAt >= snapshot.asOf;
 }
 
 export function WorkspaceInvitationsSection({
-  asOf,
-  initialInvitations,
+  snapshot,
   workspaceId,
 }: {
-  asOf: number;
-  initialInvitations: WorkspaceInvitation[];
+  snapshot: WorkspaceInvitationsSnapshot;
   workspaceId: string;
 }) {
   const { feedback, setMessage: setFlashMessage } = useIslandFeedback();
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
-  const [invitations, setInvitations] = useState(initialInvitations);
+  const [latestSnapshot, setLatestSnapshot] = useState(snapshot);
+  const [mutations, setMutations] = useState<WorkspaceInvitation[]>([]);
   const [role, setRole] = useState<WorkspaceInvitationRole>("member");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const busyActionRef = useRef<string | null>(null);
@@ -55,21 +56,46 @@ export function WorkspaceInvitationsSection({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [invitationPendingRevocation, setInvitationPendingRevocation] =
     useState<WorkspaceInvitation | null>(null);
+  const { asOf } = latestSnapshot;
   const [elapsedUntil, setElapsedUntil] = useState(asOf);
+  const serverOffset = useRef(-Infinity);
   const now = Math.max(asOf, elapsedUntil);
 
+  if (snapshot !== latestSnapshot && snapshot.asOf >= asOf) {
+    setLatestSnapshot(snapshot);
+    setMutations(mutations.filter((mutation) => isNewerMutation(snapshot, mutation)));
+  }
+
+  const invitations = useMemo(() => {
+    const newerMutations = mutations.filter((mutation) =>
+      isNewerMutation(latestSnapshot, mutation),
+    );
+    const overriddenIds = new Set(newerMutations.map(({ id }) => id));
+    return [
+      ...newerMutations.filter(({ status }) => status === "pending"),
+      ...latestSnapshot.invitations.filter(({ id }) => !overriddenIds.has(id)),
+    ];
+  }, [latestSnapshot, mutations]);
+
   useEffect(() => {
+    const observedAt = performance.now();
+    serverOffset.current = Math.max(serverOffset.current, asOf - observedAt);
+    const serverNow = serverOffset.current + observedAt;
     const nextExpiry = invitations.reduce((soonest, invitation) => {
       const expires = Date.parse(invitation.expiresAt);
       return expires > now ? Math.min(soonest, expires) : soonest;
     }, Infinity);
     if (!Number.isFinite(nextExpiry)) return;
     const timeout = window.setTimeout(
-      () => setElapsedUntil(Date.now()),
-      Math.min(Math.max(0, nextExpiry - Date.now()), 2_147_483_647),
+      () => setElapsedUntil(serverOffset.current + performance.now()),
+      Math.min(Math.max(1, Math.ceil(nextExpiry - serverNow)), 2_147_483_647),
     );
     return () => window.clearTimeout(timeout);
-  }, [invitations, now]);
+  }, [asOf, invitations, now]);
+
+  function recordMutation(invitation: WorkspaceInvitation) {
+    setMutations((current) => [invitation, ...current.filter(({ id }) => id !== invitation.id)]);
+  }
 
   function beginAction(action: string) {
     if (busyActionRef.current) return false;
@@ -96,9 +122,7 @@ export function WorkspaceInvitationsSection({
       });
       const payload = await readResponseJson<WorkspaceInvitationResponse>(response);
 
-      setInvitations((currentInvitations) =>
-        upsertInvitation(currentInvitations, payload.invitation),
-      );
+      recordMutation(payload.invitation);
       setEmail("");
       setFullName("");
       setRole("member");
@@ -126,9 +150,7 @@ export function WorkspaceInvitationsSection({
       );
       const payload = await readResponseJson<WorkspaceInvitationResponse>(response);
 
-      setInvitations((currentInvitations) =>
-        upsertInvitation(currentInvitations, payload.invitation),
-      );
+      recordMutation(payload.invitation);
       setFlashMessage({
         kind: "success",
         text: `Invitation resent to ${payload.invitation.email}.`,
@@ -153,9 +175,7 @@ export function WorkspaceInvitationsSection({
       });
       const payload = await readResponseJson<WorkspaceInvitationResponse>(response);
 
-      setInvitations((currentInvitations) =>
-        currentInvitations.filter((invitation) => invitation.id !== payload.invitation.id),
-      );
+      recordMutation(payload.invitation);
       setFlashMessage({
         kind: "success",
         text: `Invitation revoked for ${payload.invitation.email}.`,
@@ -247,7 +267,7 @@ export function WorkspaceInvitationsSection({
                 </button>
                 <button
                   className="ui-button-primary"
-                  disabled={busyAction === "create" || !email.trim() || !fullName.trim()}
+                  disabled={busyAction !== null || !email.trim() || !fullName.trim()}
                   type="submit"
                 >
                   <ActionButtonLabel
@@ -320,8 +340,8 @@ export function WorkspaceInvitationsSection({
                     actionLabel="Revoke invitation"
                     description={
                       <>
-                        Revoking the invitation for <strong>{invitation.email}</strong>
-                        prevents that invitation link from granting workspace access.
+                        Revoking the invitation for <strong>{invitation.email}</strong> prevents
+                        that invitation link from granting workspace access.
                       </>
                     }
                     errorMessage={
