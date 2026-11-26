@@ -4,6 +4,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import type { z } from "zod/v4";
 
 import { MultiSelectField } from "@/components/ui/multi-select-field";
+import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -14,7 +15,6 @@ import {
   linearOutboundConfigSchema,
   linearPolicyRevisionSchema,
 } from "@/lib/connectors/linear-policy-contracts";
-import type { ConnectorCatalogOption } from "@/lib/connectors/setup-contracts";
 
 import { CatalogStatus, ResourceIdDetails, useConnectorCatalog } from "./catalog";
 import { connectorCommand, readConnectorResponse } from "./request";
@@ -292,6 +292,7 @@ function DiscoveryForm({
       <ResourceIdDetails ids={unknownStates} label="Unverified state ID" />
       <PolicyChoice
         catalog={labels}
+        custom
         empty="No label filter"
         error={errors.label}
         id={`${id}-label`}
@@ -507,6 +508,7 @@ function OutboundForm({
 
 function PolicyChoice({
   catalog,
+  custom,
   disabled,
   empty,
   error,
@@ -523,42 +525,61 @@ function PolicyChoice({
   id: string;
   label: string;
   onChange: (value: string) => void;
-  required?: boolean;
   value: string;
-}) {
-  const options: ConnectorCatalogOption[] = choices(catalog);
-  const missing = value !== "" && !options.some((item) => item.id === value);
+} & ({ custom: true; required?: never } | { custom?: false; required?: boolean })) {
+  const catalogOptions = choices(catalog);
+  const missing = value !== "" && !catalogOptions.some((item) => item.id === value);
+  const options: SelectOption[] = [
+    { value: "", label: empty },
+    ...(missing ? [{ value, label: pendingChoice(catalog), disabled: true }] : []),
+    ...catalogOptions.map((item) => ({
+      value: item.id,
+      label: item.description ? `${item.label} · ${item.description}` : item.label,
+    })),
+  ];
+  const fieldProps = {
+    "aria-describedby": error ? `${id}-error` : undefined,
+    "aria-invalid": error ? true : undefined,
+    disabled,
+    id,
+    label,
+    value,
+  };
   return (
     <div className="space-y-1.5">
-      <ConnectorSelect
-        aria-describedby={error ? `${id}-error` : undefined}
-        aria-invalid={error ? true : undefined}
-        aria-required={required}
-        disabled={disabled}
-        id={id}
-        label={label}
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
-      >
-        <option value="">{empty}</option>
-        {missing ? (
-          <option value={value} disabled>
-            {pendingChoice(catalog)}
-          </option>
-        ) : null}
-        {options.map((item) => (
-          <option key={item.id} value={item.id}>
-            {item.label}
-            {item.description ? ` · ${item.description}` : ""}
-          </option>
-        ))}
-      </ConnectorSelect>
+      {custom ? (
+        <SelectField
+          {...fieldProps}
+          className="max-w-xs"
+          onValueChange={onChange}
+          options={options}
+          wrap
+        />
+      ) : (
+        <ConnectorSelect
+          {...fieldProps}
+          aria-required={required}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          {options.map((item) => (
+            <option disabled={item.disabled} key={item.value} value={item.value}>
+              {item.label}
+            </option>
+          ))}
+        </ConnectorSelect>
+      )}
       {error ? (
         <p className="text-xs font-medium text-danger" id={`${id}-error`}>
           {error}
         </p>
       ) : null}
-      {missing ? <ResourceIdDetails ids={[value]} label="Saved provider ID" /> : null}
+      {missing ? (
+        <ResourceIdDetails
+          ids={[value]}
+          label="Saved provider ID"
+          summaryTabIndex={custom ? 0 : undefined}
+        />
+      ) : null}
     </div>
   );
 }

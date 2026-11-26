@@ -142,14 +142,16 @@ export function CatalogStatus({
 export function ResourceIdDetails({
   ids,
   label = "Provider ID",
+  summaryTabIndex,
 }: {
   ids: string[];
   label?: string;
+  summaryTabIndex?: number;
 }) {
   if (ids.length === 0) return null;
   return (
     <details className="text-xs text-muted">
-      <summary className="cursor-pointer">
+      <summary className="cursor-pointer" tabIndex={summaryTabIndex}>
         {label}
         {ids.length > 1 ? "s" : ""}
       </summary>
