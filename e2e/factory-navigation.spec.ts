@@ -47,6 +47,8 @@ async function seedFactoryWork(
     count,
     firstNumber,
     actorMemberId,
+    runActorMemberId = actorMemberId,
+    runStatus = () => "success",
   }: {
     workspaceId: string;
     factoryId: string;
@@ -55,6 +57,8 @@ async function seedFactoryWork(
     count: number;
     firstNumber: number;
     actorMemberId?: string;
+    runActorMemberId?: string;
+    runStatus?: (index: number) => Database["public"]["Enums"]["agent_run_status"];
   },
 ) {
   const pipeline = isDefault
@@ -123,17 +127,17 @@ async function seedFactoryWork(
   );
   await write(
     admin.from("agent_runs").insert(
-      sessions.map((session): Database["public"]["Tables"]["agent_runs"]["Insert"] => ({
+      sessions.map((session, index): Database["public"]["Tables"]["agent_runs"]["Insert"] => ({
         agent_id: implementation.agent_id,
         agent_prompt_revision_id: implementation.id,
         workspace_id: workspaceId,
         session_id: session.id,
         stage_id: stage.id,
-        triggered_by_member_id: actorMemberId,
+        triggered_by_member_id: runActorMemberId,
         model_name: "gpt-5.5",
         model_provider: "codex",
         run_type: "research",
-        status: "success",
+        status: runStatus(index),
       })),
     ),
   );
@@ -166,6 +170,172 @@ async function capture(page: Page, info: TestInfo, name: string) {
   await page.screenshot({ animations: "disabled", caret: "hide", fullPage: true, path });
   await info.attach(name, { contentType: "image/png", path });
 }
+
+test("Activity searches actors and pages filtered results within factory access", async ({
+  page,
+  baseURL,
+}, info) => {
+  test.skip(
+    process.env.WALLIE_FACTORY_QUALIFICATION !== "1",
+    "Requires a disposable local Supabase stack.",
+  );
+  const app = localUrl(baseURL);
+  const url = localUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!key) throw new Error("Export the disposable local Supabase keys.");
+  const admin = createClient<Database>(url, key, { auth: { persistSession: false } });
+  const slug = `activity-nav-${randomUUID().slice(0, 8)}`;
+  const ownerEmail = `${slug}-owner@example.test`;
+  const memberEmail = `${slug}-member@example.test`;
+  const ownerId = await createUser(admin, ownerEmail);
+  let memberId: string | undefined;
+  let workspaceId: string | undefined;
+  try {
+    memberId = await createUser(admin, memberEmail);
+    const workspace = await read(
+      admin.rpc("create_workspace", {
+        actor_user_id: ownerId,
+        actor_email: ownerEmail,
+        requested_slug: slug,
+        workspace_name: "Activity qualification",
+      }),
+    );
+    workspaceId = workspace.id;
+    const [actor, hiddenActor] = await read(
+      admin
+        .from("workspace_members")
+        .insert([
+          {
+            workspace_id: workspace.id,
+            user_id: memberId,
+            email: memberEmail,
+            full_name: "Jamie Sample",
+            username: "jamie",
+            kind: "human",
+            role: "member",
+          },
+          {
+            workspace_id: workspace.id,
+            full_name: "Private automation",
+            kind: "system",
+            role: "agent",
+          },
+        ])
+        .select("id,kind"),
+    );
+    if (actor?.kind !== "human" || hiddenActor?.kind !== "system")
+      throw new Error("Missing Activity actors.");
+    await write(
+      admin
+        .from("workspace_onboarding")
+        .update({ status: "completed", completed_at: new Date().toISOString() })
+        .eq("workspace_id", workspace.id),
+    );
+    const visible = await read(
+      admin
+        .from("factories")
+        .select("id")
+        .eq("workspace_id", workspace.id)
+        .eq("is_default", true)
+        .single(),
+    );
+    const restricted = await read(
+      admin.rpc("create_factory", {
+        p_workspace_id: workspace.id,
+        p_actor_user_id: ownerId,
+        p_name: "Restricted factory",
+        p_slug: "restricted-factory",
+      }),
+    );
+    await seedFactoryWork(admin, {
+      workspaceId: workspace.id,
+      factoryId: visible.id,
+      isDefault: true,
+      title: "Activity fixture",
+      count: 13,
+      firstNumber: 1,
+      actorMemberId: actor.id,
+      runStatus: (index) => (index === 0 ? "success" : "error"),
+    });
+    await seedFactoryWork(admin, {
+      workspaceId: workspace.id,
+      factoryId: restricted.id,
+      isDefault: false,
+      title: "Restricted record",
+      count: 1,
+      firstNumber: 14,
+      runActorMemberId: hiddenActor.id,
+    });
+
+    const activityPath = `/w/${workspace.slug}/activity`;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await signInViaMagicLink(page, `${activityPath}?factory=${visible.id}`, {
+      baseURL: app,
+      email: memberEmail,
+    });
+    const actorTrigger = page.getByRole("button", { name: /^Actor:/ });
+    await actorTrigger.press("Enter");
+    const dialog = page.getByRole("dialog", { name: "Filter by actor" });
+    const search = dialog.getByRole("searchbox", { name: "Search actors" });
+    await expect(search).toBeFocused();
+    await search.fill("@jamie");
+    await dialog.getByRole("link", { name: "Jamie Sample (@jamie)" }).press("Enter");
+    await expect(actorTrigger).toHaveText("Actor: Jamie Sample (@jamie)");
+    const runs = page.getByRole("region", { name: "Runs", exact: true });
+    const sessions = page.getByRole("region", { name: "Sessions", exact: true });
+    await selectDropdownOption(runs.getByRole("combobox", { name: "Status" }), "error");
+    await expect(runs.getByText(/12 runs match/)).toBeVisible();
+    await expect(sessions.getByText(/13 sessions match/)).toBeVisible();
+    await expect(runs.getByText("Failed", { exact: true })).toHaveCount(10);
+    await expect(runs.getByText("Complete", { exact: true })).toHaveCount(0);
+    await capture(page, info, "activity-desktop-filtered");
+
+    const runTitles = () =>
+      runs
+        .locator("li a")
+        .filter({ hasText: /^Activity fixture session/ })
+        .allTextContents();
+    const latestTitles = await runTitles();
+    await runs.getByRole("link", { name: "Older runs" }).press("Enter");
+    await expect(page).toHaveURL(/runsBefore=/);
+    expect(new URL(page.url()).searchParams.get("actor")).toBe(actor.id);
+    expect(new URL(page.url()).searchParams.get("factory")).toBe(visible.id);
+    expect(new URL(page.url()).searchParams.get("status")).toBe("error");
+    await expect(runs.getByText(/12 runs match · Showing 2 older/)).toBeVisible();
+    await expect(sessions.getByText(/13 sessions match · Showing 10 latest/)).toBeVisible();
+    expect((await runTitles()).every((title) => !latestTitles.includes(title))).toBe(true);
+    await page.goBack();
+    await expect(runs.getByText(/12 runs match · Showing 10 latest/)).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await capture(page, info, "activity-mobile-filtered");
+    await selectDropdownOption(runs.getByRole("combobox", { name: "Status" }), "canceled");
+    await expect(runs.getByText("No runs match these filters.")).toBeVisible();
+    await expect(actorTrigger).toHaveText("Actor: Jamie Sample (@jamie)");
+    await runs.getByRole("link", { name: "Clear status filter" }).click();
+    await expect(runs.getByText(/13 runs match/)).toBeVisible();
+
+    await page.goto(`${activityPath}?factory=${restricted.id}`);
+    await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
+    await page.getByRole("link", { name: "Show activity for all accessible factories" }).click();
+    await actorTrigger.press("Enter");
+    await search.fill("Private automation");
+    await expect(dialog.getByText("No named actors match.")).toBeVisible();
+    await search.press("Escape");
+    await expect(actorTrigger).toBeFocused();
+    await page.goto(`${activityPath}?actor=${hiddenActor.id}`);
+    await expect(actorTrigger).toHaveText("Actor: Actor unavailable");
+    await expect(runs.getByText("No runs match these filters.")).toBeVisible();
+  } finally {
+    if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
+    if (memberId) await write(admin.auth.admin.deleteUser(memberId));
+    await write(admin.auth.admin.deleteUser(ownerId));
+  }
+});
 
 test("factory navigation scopes lists, resets incompatible filters, and hides restricted factories", async ({
   page,
@@ -433,8 +603,8 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await capture(page, info, "07-activity-mobile-dark");
 
     await page.goto(`${activityPath}?factory=all&actor=${randomUUID()}`);
-    await expect(main.getByText("No sessions in this scope.", { exact: true })).toBeVisible();
-    await expect(main.getByText("No runs in this scope.", { exact: true })).toBeVisible();
+    await expect(main.getByText("No sessions match these filters.", { exact: true })).toBeVisible();
+    await expect(main.getByText("No runs match these filters.", { exact: true })).toBeVisible();
 
     await page.goto(`${activityPath}?factory=${restrictedFactory.id}`);
     await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
