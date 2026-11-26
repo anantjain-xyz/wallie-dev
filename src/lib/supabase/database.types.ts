@@ -12807,6 +12807,40 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      curate_factory_benchmark_suite: {
+        Args: {
+          p_actor_user_id: string
+          p_allow_empty?: boolean
+          p_expected_revision_id?: string
+          p_factory_id: string
+          p_name: string
+          p_preserve_selection?: boolean
+          p_preview_task_revision_ids?: string[]
+          p_purpose: string
+          p_selection_tags?: string[]
+          p_suite_id?: string
+          p_task_revision_ids?: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          name: string
+          purpose: string
+          revision_number: number
+          selection_tags: string[] | null
+          suite_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_suite_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       decide_factory_oauth_authorization: {
         Args: {
           p_actor_session_id: string
@@ -14444,6 +14478,23 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      list_factory_benchmark_suites: {
+        Args: {
+          p_after?: string
+          p_factory_id: string
+          p_name?: string
+          p_purpose?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          name: string
+          purpose: string
+          revision_number: number
+          suite_id: string
+          task_count: number
+        }[]
       }
       list_factory_bindable_workspace_secrets: {
         Args: {
