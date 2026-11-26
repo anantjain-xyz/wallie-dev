@@ -112,6 +112,56 @@ it("keeps later choices on a same-base reload and preserves the saved missing pr
   expect(prompt).toHaveAttribute("data-value", laterPrompt.id);
 });
 
+it.each([
+  {
+    catalog: "prompts",
+    label: "prompt revisions",
+    field: "Agent prompt revision",
+    item: laterPrompt,
+  },
+  {
+    catalog: "profiles",
+    label: "execution profiles",
+    field: "Delegated execution profile",
+    item: { id: id(9), label: "Later execution profile", digest },
+  },
+])(
+  "uses a fresh $catalog cursor after reloading a previously exhausted catalog",
+  async ({ catalog, label, field, item }) => {
+    const exhausted = { ...choices, nextCursors: { ...choices.nextCursors, prompts: null } };
+    const freshCursor = { ...promptCursor, id: id(10) };
+    const fetch = vi.fn(async (url: string) =>
+      url.endsWith("?includeChoices=true")
+        ? Response.json({
+            snapshot: initial,
+            choices: {
+              ...exhausted,
+              nextCursors: { ...exhausted.nextCursors, [catalog]: freshCursor },
+            },
+          })
+        : Response.json({ catalog, items: [item], nextCursor: null }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    openEditor(initial, exhausted);
+
+    const name = `Load more ${label}`;
+    expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load current draft" }));
+    await screen.findByText("Current draft loaded.");
+    fireEvent.click(screen.getByRole("button", { name }));
+    await screen.findByText(`More ${label} loaded.`);
+    const query = new URLSearchParams({
+      catalog,
+      afterId: freshCursor.id,
+      afterCreatedAt: freshCursor.createdAt,
+    });
+    expect(fetch).toHaveBeenCalledWith(`${endpoint}?${query}`, { cache: "no-store" });
+    expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("combobox", { name: field }));
+    expect(screen.getByRole("option", { name: item.label })).toBeInTheDocument();
+  },
+);
+
 it("uses the new exact grant after loading a draft with a switched base activation", async () => {
   const nextGrant = { id: id(9), version: 2 };
   const nextBase = { activationId: id(10), revisionId: id(11), digest: "b".repeat(64) };

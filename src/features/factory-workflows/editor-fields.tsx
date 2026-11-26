@@ -550,21 +550,21 @@ function RouteFields({
   const path = ["routePolicy", "nodes", id];
   const change = (update: Partial<typeof route>) =>
     edit(setNodeRoute(graph, id, { ...route, ...update }));
-  const targets = new Map(
-    graph.edges
-      .filter(({ from, to }) => from === id && to !== id)
-      .map((edge) => [edge.to, edge.kind]),
-  );
+  const routeTargets = new Set<string>();
+  const loopTargets = new Set<string>();
+  for (const { from, to, kind } of graph.edges) {
+    if (from !== id || to === id) continue;
+    if (kind === "route") routeTargets.add(to);
+    if (kind === "loop") loopTargets.add(to);
+  }
   const nodeChoices = nodeOptions(graph.nodes, choices.prompts);
-  const allowedTargets = nodeChoices.filter(({ id }) => {
-    const kind = targets.get(id);
-    return (
-      (kind === "route" || kind === "loop") &&
-      !(route.fallback.kind === "route" && route.fallback.destinationId === id)
-    );
-  });
+  const allowedTargets = nodeChoices.filter(
+    ({ id }) =>
+      (routeTargets.has(id) || loopTargets.has(id)) &&
+      !(route.fallback.kind === "route" && route.fallback.destinationId === id),
+  );
   const fallbackTargets = nodeChoices.filter(
-    ({ id }) => targets.get(id) === "route" && !route.allowedDestinationIds.includes(id),
+    ({ id }) => routeTargets.has(id) && !route.allowedDestinationIds.includes(id),
   );
   const transitionHelp =
     graph.nodes.length < 2 ? (

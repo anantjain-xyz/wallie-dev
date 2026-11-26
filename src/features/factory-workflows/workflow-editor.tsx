@@ -299,11 +299,6 @@ function refreshReferenceChoices(
     ...latest,
     prompts: keepPaged("prompts", previous.prompts, latest.prompts),
     profiles: keepPaged("profiles", previous.profiles, latest.profiles),
-    nextCursors: {
-      ...latest.nextCursors,
-      prompts: previous.nextCursors.prompts,
-      profiles: previous.nextCursors.profiles,
-    },
   };
 }
 

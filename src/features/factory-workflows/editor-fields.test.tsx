@@ -240,7 +240,7 @@ it("shows a branch agent's exact secondary grant until the join removes its assi
   expect(grant()).toHaveAttribute("data-value", primaryGrant.id);
 });
 
-it("limits route choices to connected targets and never defaults to an allowed destination", () => {
+it("keeps connected route and loop choices when provisional Next edges share their targets", () => {
   render(
     <Inspector
       node={0}
@@ -258,6 +258,10 @@ it("limits route choices to connected targets and never defaults to an allowed d
           { id: "selected", from: "route", to: "selected", kind: "route" },
           { id: "destination", from: "route", to: "destination", kind: "route" },
           { id: "loop", from: "route", to: "loop", kind: "loop", maxTraversals: 1 },
+          { id: "next-allowed", from: "route", to: "selected", kind: "next" },
+          { id: "next-fallback", from: "route", to: "destination", kind: "next" },
+          { id: "next-loop", from: "route", to: "loop", kind: "next" },
+          { id: "next-only", from: "route", to: "unrelated", kind: "next" },
         ],
         routePolicy: {
           maxNodeVisits: 8,
@@ -279,6 +283,9 @@ it("limits route choices to connected targets and never defaults to an allowed d
       .getAllByRole("option")
       .map((option) => (option as HTMLOptionElement).value),
   ).toEqual(["selected", "destination", "loop"]);
+  expect(
+    within(allowed).queryByRole("option", { name: /no longer eligible/i }),
+  ).not.toBeInTheDocument();
   choose("Fallback", "Send to a step");
   const fallback = screen.getByRole("combobox", { name: "Fallback destination" });
   expect(fallback).toHaveAttribute("data-value", "destination");
