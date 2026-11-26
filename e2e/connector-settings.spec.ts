@@ -658,6 +658,11 @@ test("GitHub intake keeps independent rules for each request source", async ({
     const pullRequest = sourceOptions.getByRole("option", { name: "Pull request", exact: true });
     const disableIssue = ruleOwner.panel.getByRole("button", { name: "Disable issue intake" });
     const label = ruleOwner.panel.getByRole("combobox", { name: "Intake label", exact: true });
+    const labelOptions = ruleOwner.page.getByRole("listbox", { name: "Intake label", exact: true });
+    const alternateLabel = labelOptions.getByRole("option", {
+      name: "Alternate intake",
+      exact: true,
+    });
     const save = ruleOwner.panel.getByRole("button", { name: "Save intake label", exact: true });
 
     await expect(source).toHaveText("Issue");
@@ -672,11 +677,25 @@ test("GitHub intake keeps independent rules for each request source", async ({
     await expect(source).toHaveAttribute("data-value", "issue");
 
     await ruleOwner.panel.getByRole("button", { name: "Edit intake label", exact: true }).click();
-    await expect(label).toHaveValue(issueLabelId);
-    await label.selectOption(draftLabelId);
+    await expect(label).toHaveAttribute("data-value", issueLabelId);
+    await label.press("Enter");
+    await expect(
+      labelOptions.getByRole("option", { name: "Issue intake", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await ruleOwner.page.keyboard.press("End");
+    await expect(alternateLabel).toBeFocused();
+    await ruleOwner.page.keyboard.press("Escape");
+    await expect(labelOptions).toHaveCount(0);
+    await expect(label).toBeFocused();
+    await expect(label).toHaveAttribute("data-value", issueLabelId);
+    await expect(save).toBeDisabled();
+    await label.press("Enter");
+    await ruleOwner.page.keyboard.press("End");
+    await ruleOwner.page.keyboard.press("Enter");
+    await expect(label).toBeFocused();
     await source.click();
     await issue.click();
-    await expect(label).toHaveValue(draftLabelId);
+    await expect(label).toHaveAttribute("data-value", draftLabelId);
     await expect(save).toBeEnabled();
 
     await source.press("Enter");
@@ -684,13 +703,14 @@ test("GitHub intake keeps independent rules for each request source", async ({
     await ruleOwner.page.keyboard.press("Enter");
     await expect(source).toBeFocused();
     await expect(source).toHaveAttribute("data-value", "pull_request");
-    await expect(label).toHaveValue(pullRequestLabelId);
+    await expect(label).toHaveAttribute("data-value", pullRequestLabelId);
     await expect(save).toBeDisabled();
     await expect(ruleOwner.page).toHaveURL(settingsUrl);
     expect(writes).toEqual([]);
 
     const saveError = "The fixture rejected the intake label.";
-    await label.selectOption(draftLabelId);
+    await label.click();
+    await alternateLabel.click();
     await ruleOwner.page.route(
       setupUrl,
       (route) => route.fulfill({ status: 409, json: { error: saveError } }),
@@ -711,13 +731,13 @@ test("GitHub intake keeps independent rules for each request source", async ({
 
     await source.click();
     await issue.click();
-    await expect(label).toHaveValue(issueLabelId);
+    await expect(label).toHaveAttribute("data-value", issueLabelId);
     await expect(save).toBeDisabled();
     await expect(ruleOwner.panel.getByText(saveError, { exact: true })).toHaveCount(0);
     await expect(disableIssue).toBeVisible();
     await source.click();
     await pullRequest.click();
-    await expect(label).toHaveValue(pullRequestLabelId);
+    await expect(label).toHaveAttribute("data-value", pullRequestLabelId);
     await expect(save).toBeDisabled();
     expect(writes).toHaveLength(1);
 
@@ -753,7 +773,7 @@ test("GitHub intake keeps independent rules for each request source", async ({
     await source.click();
     await issue.click();
     await expect(source).toHaveAttribute("data-value", "issue");
-    await expect(label).toHaveValue(issueLabelId);
+    await expect(label).toHaveAttribute("data-value", issueLabelId);
     await expect(ruleOwner.page).toHaveURL(settingsUrl);
     expect(writes).toHaveLength(2);
     await expect(disableIssue).toBeVisible();
