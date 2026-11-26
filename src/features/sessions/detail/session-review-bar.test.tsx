@@ -145,15 +145,17 @@ describe("SessionReviewBar", () => {
     expect(await within(dialog).findByText("Thread resolved.")).toBeInTheDocument();
     expect(fetcher).toHaveBeenCalledWith(
       "/api/sessions/session-1/reviews/first",
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({
-          expectedRevision: 3,
-          status: "resolved",
-          reason: "Verified against the current material.",
-        }),
-      }),
+      expect.objectContaining({ method: "PATCH" }),
     );
+    const patch = fetcher.mock.calls.find(
+      ([url, init]) => url === threadPath && init?.method === "PATCH",
+    );
+    expect(JSON.parse(String(patch?.[1]?.body))).toEqual({
+      expectedRevision: 3,
+      status: "resolved",
+      reason: "Verified against the current material.",
+      requestId: expect.any(String),
+    });
     view.rerender(
       <OverlayProvider>
         <SessionReviewBar

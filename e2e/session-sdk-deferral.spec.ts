@@ -109,12 +109,15 @@ test("review and activity work while the SDK loads, then authenticated recovery 
     releaseApproval = resolve;
   });
   let approvalRequested = false;
-  await page.route("**/api/sessions/*/approval-review", async (route) => {
-    const response = await route.fetch();
-    approvalRequested = true;
-    await approvalGate;
-    await route.fulfill({ response });
-  });
+  await page.route(
+    /\/api\/sessions\/[^/]+\/approval-review\?include=blockingTarget$/,
+    async (route) => {
+      const response = await route.fetch();
+      approvalRequested = true;
+      await approvalGate;
+      await route.fulfill({ response });
+    },
+  );
   try {
     await page.goto(sessionsPath);
     await page.getByRole("link", { name: `Open session #1001: ${sessionTitle}` }).click();

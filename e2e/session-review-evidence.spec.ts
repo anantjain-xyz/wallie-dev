@@ -192,7 +192,7 @@ async function mockReadiness(
   await page.route(/\/api\/sessions\/[^/]+\/review-evidence$/, (route) =>
     route.fulfill({ json: { delivery } }),
   );
-  await page.route(/\/api\/sessions\/[^/]+\/approval-review$/, (route) =>
+  await page.route(/\/api\/sessions\/[^/]+\/approval-review\?include=blockingTarget$/, (route) =>
     route.fulfill({
       json: {
         reviewRevision: 7,
@@ -317,17 +317,20 @@ test("gated approval follows refreshed verification from blocked to ready and ba
     }
     return route.fulfill({ json });
   });
-  await page.route(/\/api\/sessions\/[^/]+\/approval-review$/, async (route) => {
-    const current = state;
-    await gate;
-    await route.fulfill({
-      json: {
-        reviewRevision: 7,
-        blockingCount: 0,
-        delivery: { required: true, state: current, blockers: [] },
-      },
-    });
-  });
+  await page.route(
+    /\/api\/sessions\/[^/]+\/approval-review\?include=blockingTarget$/,
+    async (route) => {
+      const current = state;
+      await gate;
+      await route.fulfill({
+        json: {
+          reviewRevision: 7,
+          blockingCount: 0,
+          delivery: { required: true, state: current, blockers: [] },
+        },
+      });
+    },
+  );
   await signIn(page, sessionPath);
   const approve = page.getByRole("button", { name: "Approve stage" });
   await expect(page.getByText("PR delivery readiness: Blocked.")).toBeVisible();

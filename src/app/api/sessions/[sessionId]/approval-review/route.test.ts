@@ -40,7 +40,7 @@ it("counts every open blocker in the authenticated session, including earlier ar
     session: { id: sessionId, workspace_id: "workspace", artifact_review_revision: 9 },
     supabase: { from },
   });
-  const response = await GET(new Request("http://localhost"), params);
+  const response = await GET(new Request("http://localhost?include=blockingTarget"), params);
   expect(await response.json()).toEqual({
     reviewRevision: 9,
     blockingCount: 3,
@@ -64,6 +64,17 @@ it("counts every open blocker in the authenticated session, including earlier ar
     ["id", { ascending: true }],
   ]);
   expect(query.limit).toHaveBeenCalledWith(1);
+});
+it("preserves the count-only response for existing clients even with a blocker", async () => {
+  const query = reviewQuery(1, [earlierThread]);
+  mocks.loadReviewContext.mockResolvedValue({
+    session: { id: sessionId, workspace_id: "workspace", artifact_review_revision: 9 },
+    supabase: { from: vi.fn(() => query) },
+  });
+  const response = await GET(new Request("http://localhost"), params);
+  expect(await response.json()).toEqual({ reviewRevision: 9, blockingCount: 1 });
+  expect(query.select).toHaveBeenCalledWith(expect.any(String), { count: "exact", head: true });
+  expect(query.limit).not.toHaveBeenCalled();
 });
 it("exposes the server-owned delivery readiness for the final approval gate", async () => {
   const query = reviewQuery(0);
@@ -89,7 +100,6 @@ it("exposes the server-owned delivery readiness for the final approval gate", as
   expect(await response.json()).toEqual({
     reviewRevision: 4,
     blockingCount: 0,
-    blockingTarget: null,
     delivery: {
       required: true,
       state: "blocked",
@@ -109,7 +119,7 @@ it("omits delivery readiness when the evaluator cannot resolve the policy", asyn
     supabase: { from: vi.fn(() => query) },
   });
   mocks.evaluateSessionPrReadiness.mockRejectedValue(new Error("policy unavailable"));
-  const response = await GET(new Request("http://localhost"), params);
+  const response = await GET(new Request("http://localhost?include=blockingTarget"), params);
   expect(await response.json()).toEqual({
     reviewRevision: 2,
     blockingCount: 0,

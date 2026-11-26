@@ -40,9 +40,12 @@ it("fails closed until a current review count is confirmed, and refreshes withou
   );
   await act(() => result.current.refresh());
   expect(result.current.value).toEqual({ reviewRevision: 6, blockingCount: 0 });
-  expect(fetcher).toHaveBeenCalledWith("/api/sessions/session/approval-review", {
-    cache: "no-store",
-  });
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/sessions/session/approval-review?include=blockingTarget",
+    {
+      cache: "no-store",
+    },
+  );
 });
 
 it("rejects unavailable or malformed evidence and permits a recovery refresh", async () => {
@@ -127,6 +130,45 @@ it("rechecks on each accepted verification change and ignores an older answer", 
   await waitFor(() => expect(result.current.value?.delivery?.state).toBe("blocked"));
   await act(async () => finishReady(snapshot(ready)));
   expect(result.current.value?.delivery?.state).toBe("blocked");
+});
+
+it("refreshes current verification when a blocking transition finishes after the key changes", async () => {
+  const blocked = {
+    reviewRevision: 7,
+    blockingCount: 1,
+    delivery: { required: true, state: "blocked", blockers: [] },
+  };
+  const ready = {
+    reviewRevision: 8,
+    blockingCount: 0,
+    delivery: { required: true, state: "ready", blockers: [] },
+  };
+  let finishOlderRead!: (response: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(blocked))
+      .mockReturnValueOnce(
+        new Promise<Response>((resolve) => {
+          finishOlderRead = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(Response.json(ready)),
+  );
+  const { result, rerender } = renderHook(
+    ({ verification }) => useApprovalReview("session", "artifact", verification),
+    { initialProps: { verification: "observation-1" } },
+  );
+  await waitFor(() => expect(result.current.value).toEqual(blocked));
+  const refreshAfterTransition = result.current.refresh;
+  rerender({ verification: "observation-2" });
+  expect(result.current.value).toBeNull();
+  await act(() => refreshAfterTransition());
+  expect(result.current.value).toEqual(ready);
+  expect(result.current.confirmedRevision).toBe(8);
+  await act(async () => finishOlderRead(Response.json(blocked)));
+  expect(result.current.value).toEqual(ready);
 });
 
 function realtimeClient() {

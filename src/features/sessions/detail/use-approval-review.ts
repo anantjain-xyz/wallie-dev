@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
   loadSupabaseBrowserClient,
@@ -61,13 +61,19 @@ export function useApprovalReview(
     error: string | null;
   } | null>(null);
   const sequence = useRef(0);
+  const target = useRef<{ key: string; scope: string; sessionId: string } | null>(null);
   const scope = `${sessionId}:${artifactId}`;
   const key = `${scope}:${verificationKey ?? ""}`;
-  const invalidate = useCallback(() => {
-    sequence.current += 1;
-  }, []);
+  useLayoutEffect(() => {
+    target.current = sessionId && artifactId ? { key, scope, sessionId } : null;
+    return () => {
+      target.current = null;
+      sequence.current += 1;
+    };
+  }, [artifactId, key, scope, sessionId]);
   const refresh = useCallback(async () => {
-    if (!sessionId || !artifactId) return;
+    if (!target.current) return;
+    const { key, scope, sessionId } = target.current;
     const request = ++sequence.current;
     setState((prev) => ({
       key,
@@ -77,9 +83,10 @@ export function useApprovalReview(
       error: null,
     }));
     try {
-      const response = await fetch(`/api/sessions/${sessionId}/approval-review`, {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/api/sessions/${sessionId}/approval-review?include=blockingTarget`,
+        { cache: "no-store" },
+      );
       const parsed = approvalReviewSchema.safeParse(await response.json());
       if (!response.ok || !parsed.success) throw new Error("Review state unavailable.");
       const value = parsed.data;
@@ -95,15 +102,12 @@ export function useApprovalReview(
           error: "Could not confirm blocking requests. Refresh review before approving.",
         });
     }
-  }, [artifactId, key, scope, sessionId]);
+  }, []);
   useEffect(() => {
     void refresh();
     window.addEventListener("focus", refresh);
-    return () => {
-      invalidate();
-      window.removeEventListener("focus", refresh);
-    };
-  }, [invalidate, refresh]);
+    return () => window.removeEventListener("focus", refresh);
+  }, [key, refresh]);
   useEffect(() => {
     if (!config || !sessionId || !artifactId) return;
     return recovery.register({

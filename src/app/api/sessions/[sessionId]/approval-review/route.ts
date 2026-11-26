@@ -10,7 +10,7 @@ export const preferredRegion = "home";
 
 /** Capture the token before the count: concurrent changes invalidate approval. */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ sessionId: string }> },
 ) {
   try {
@@ -19,19 +19,27 @@ export async function GET(
     const reviewRevision = session.artifact_review_revision;
     if (!Number.isSafeInteger(reviewRevision) || reviewRevision < 0)
       throw new Error("Review revision cannot be represented safely.");
+    const includeBlockingTarget =
+      new URL(request.url).searchParams.get("include") === "blockingTarget";
+    const blockers = supabase
+      .from("artifact_review_threads")
+      .select("id, artifact_id, artifact_version, stage_slug", {
+        count: "exact",
+        head: !includeBlockingTarget,
+      })
+      .eq("workspace_id", session.workspace_id)
+      .eq("session_id", session.id)
+      .eq("kind", "blocking")
+      .eq("status", "open");
     // Readiness is server-owned and derived only from stored observations; the
     // reviewer sees it, and approval still re-validates it under the lock.
     const [countResult, delivery] = await Promise.all([
-      supabase
-        .from("artifact_review_threads")
-        .select("id, artifact_id, artifact_version, stage_slug", { count: "exact" })
-        .eq("workspace_id", session.workspace_id)
-        .eq("session_id", session.id)
-        .eq("kind", "blocking")
-        .eq("status", "open")
-        .order("created_at", { ascending: true })
-        .order("id", { ascending: true })
-        .limit(1),
+      includeBlockingTarget
+        ? blockers
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .limit(1)
+        : blockers,
       evaluateSessionPrReadiness(supabase, session.id, { record: false }).catch(() => null),
     ]);
     const { count, data, error } = countResult;
@@ -40,14 +48,18 @@ export async function GET(
     return reviewJson({
       reviewRevision,
       blockingCount: count,
-      blockingTarget: first
+      ...(includeBlockingTarget
         ? {
-            threadId: first.id,
-            artifactId: first.artifact_id,
-            artifactVersion: first.artifact_version,
-            stageSlug: first.stage_slug,
+            blockingTarget: first
+              ? {
+                  threadId: first.id,
+                  artifactId: first.artifact_id,
+                  artifactVersion: first.artifact_version,
+                  stageSlug: first.stage_slug,
+                }
+              : null,
           }
-        : null,
+        : {}),
       ...(delivery
         ? {
             delivery: {

@@ -497,7 +497,7 @@ describe("SessionDetailPageClient", () => {
         const url = String(input);
         if (url.endsWith("/phase-action"))
           return Promise.resolve(Response.json({ error: "Review is stale." }, { status: 409 }));
-        if (url.endsWith("/approval-review"))
+        if (url.endsWith("/approval-review?include=blockingTarget"))
           return Promise.resolve(
             Response.json({ reviewRevision: 7, blockingCount: 0, delivery: null }),
           );
