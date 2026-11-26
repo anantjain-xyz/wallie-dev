@@ -1269,6 +1269,125 @@ describe("PipelinePageClient", () => {
     expect(screen.queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
   });
 
+  it("starts search and publishes refreshed results while realtime events keep arriving", async () => {
+    vi.useFakeTimers();
+    const supabase = installSupabaseMock();
+    const session = card(1, PLAN_STAGE_ID);
+    const data = initialData([session], []);
+    const lane = data.lanes[0]!;
+    const firstSearch = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(() => firstSearch.promise)
+      .mockResolvedValueOnce(
+        Response.json({ lanes: [{ ...lane, cards: [{ ...session, title: "Ticket refreshed" }] }] }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PipelinePageClient initialData={data} />);
+    await act(async () => vi.dynamicImportSettled());
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: "Ticket" },
+    });
+    const emitRunChange = () =>
+      act(() => {
+        supabase.getAgentRunsHandler()!({
+          eventType: "UPDATE",
+          new: { id: "run-1", session_id: session.id, status: "running" },
+        });
+      });
+
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    emitRunChange();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    emitRunChange();
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    emitRunChange();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+    await act(async () => {
+      firstSearch.resolve(
+        Response.json({ lanes: [{ ...lane, cards: [{ ...session, title: "Ticket found" }] }] }),
+      );
+    });
+    expect(screen.getByText("Ticket found")).toBeTruthy();
+
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    emitRunChange();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(50));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Ticket refreshed")).toBeTruthy();
+    expect(screen.queryByText("Ticket found")).toBeNull();
+  });
+
+  it("keeps a failed filtered refresh visible but only pages from a successful retry", async () => {
+    vi.useFakeTimers();
+    const oldCard = card(1, PLAN_STAGE_ID, { title: "Ticket before refresh" });
+    const freshCard = card(2, PLAN_STAGE_ID, { title: "Ticket refreshed" });
+    const nextCard = card(3, PLAN_STAGE_ID, { title: "Ticket continuation" });
+    const data = initialData([oldCard], []);
+    const lane = data.lanes[0]!;
+    const freshLane = { ...lane, cards: [freshCard], cursor: "fresh-cursor" };
+    const retry = deferredResponse();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ lanes: [lane] }))
+      .mockResolvedValueOnce(Response.json({ error: "Temporary failure" }, { status: 500 }))
+      .mockImplementationOnce(() => retry.promise)
+      .mockResolvedValueOnce(
+        Response.json({ lane: { ...freshLane, cards: [nextCard], cursor: null } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<PipelinePageClient enableRealtime={false} initialData={data} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+      target: { value: "Ticket" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    view.rerender(
+      <PipelinePageClient enableRealtime={false} initialData={initialData([freshCard], [])} />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    const loadMore = () =>
+      screen.getByRole<HTMLButtonElement>("button", { name: "Load more Plan sessions" });
+
+    expect(screen.getByText("Ticket before refresh")).toBeTruthy();
+    expect(
+      screen.getByText("Couldn’t refresh matching sessions.", { selector: '[role="alert"]' }),
+    ).toBeTruthy();
+    expect(loadMore().disabled).toBe(true);
+    expect(loadMore().textContent).toBe("Load more (1 of 2)");
+    fireEvent.click(loadMore());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(loadMore().disabled).toBe(true);
+    expect(screen.getByText("Ticket before refresh")).toBeTruthy();
+    await act(async () => {
+      retry.resolve(Response.json({ lanes: [freshLane] }));
+    });
+    expect(screen.queryByText("Couldn’t refresh matching sessions.")).toBeNull();
+    expect(screen.queryByText("Ticket before refresh")).toBeNull();
+    expect(screen.getByText("Ticket refreshed")).toBeTruthy();
+    expect(loadMore().disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(loadMore());
+    });
+    expect(screen.getByText("Ticket continuation")).toBeTruthy();
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
+      cursor: "fresh-cursor",
+      pipelineId: PIPELINE_ID,
+      seenIds: [freshCard.id],
+      stageId: PLAN_STAGE_ID,
+    });
+  });
+
   it("rebuilds the loaded filtered window from fresh scoped pages after a realtime change", async () => {
     vi.useFakeTimers();
     const supabase = installSupabaseMock();

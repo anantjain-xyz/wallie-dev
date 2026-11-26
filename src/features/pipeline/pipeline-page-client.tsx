@@ -86,13 +86,14 @@ type PendingCardFocus = {
 };
 
 type DashboardCardStatus = SessionDisplayStatus;
+type LanePaginationState = "idle" | "loading" | "blocked";
 type StatusFilter = PipelineStatusFilter;
 
 const CARD_FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const LANE_MIN_WIDTH_PX = 280;
 const ISOLATED_RENDER_NOW = "1970-01-01T00:00:00.000Z";
-const FILTER_DEBOUNCE_MS = 200;
+const FILTER_REQUEST_DELAY_MS = 200;
 const PipelineCardActivation = createContext<RefObject<AbortController | null> | null>(null);
 
 const STATUS_FILTER_OPTIONS: { key: StatusFilter; label: string }[] = [
@@ -298,11 +299,15 @@ function PipelinePageContent({
     failed?: boolean;
   }>();
   const [filterRevision, invalidateFilters] = useReducer((revision: number) => revision + 1, 0);
+  const filterRevisionRef = useRef(filterRevision);
+  filterRevisionRef.current = filterRevision;
   const matchingFilterResult = filterResult?.href === filterHref ? filterResult : undefined;
   const filteredBoard = matchingFilterResult?.board;
-  const filterRefreshPending = !!filterHref && matchingFilterResult?.revision !== filterRevision;
+  const settledFilterRevision = matchingFilterResult?.revision;
+  const filterRefreshPending = !!filterHref && settledFilterRevision !== filterRevision;
   const filtersPending = filterRefreshPending && !filteredBoard;
-  const filterFailed = matchingFilterResult?.failed && !filterRefreshPending;
+  const filterFailed = !!matchingFilterResult?.failed && !filterRefreshPending;
+  const filterPagingBlocked = filterRefreshPending || filterFailed;
   const board = filteredBoard ?? unfilteredBoard;
   const [hasObservedSession, setHasObservedSession] = useState(false);
   const [recoveredOnboarding, setRecoveredOnboarding] = useState<{
@@ -359,7 +364,9 @@ function PipelinePageContent({
     const timer = window.setTimeout(async () => {
       const current = () =>
         !signal.aborted && !accessLostRef.current && filterHrefRef.current === filterHref;
-      if (!current() || loadingLaneKeyRef.current) return;
+      const requestRevision = filterRevisionRef.current;
+      if (!current() || loadingLaneKeyRef.current || requestRevision === settledFilterRevision)
+        return;
       const previous =
         visibleBoardRef.current !== boardRef.current ? visibleBoardRef.current : null;
       try {
@@ -402,18 +409,18 @@ function PipelinePageContent({
               : pipelineLaneKey(match);
           });
         }
-        setFilterResult({ href: filterHref, revision: filterRevision, board: nextBoard });
+        setFilterResult({ href: filterHref, revision: requestRevision, board: nextBoard });
       } catch {
         if (current()) {
           setFilterResult((result) => ({
             href: filterHref,
-            revision: filterRevision,
+            revision: requestRevision,
             board: result?.href === filterHref ? result.board : undefined,
             failed: true,
           }));
         }
       }
-    }, FILTER_DEBOUNCE_MS);
+    }, FILTER_REQUEST_DELAY_MS);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
@@ -422,9 +429,9 @@ function PipelinePageContent({
     accessLost,
     filterHref,
     filterRefreshPending,
-    filterRevision,
     leaveUnavailableWorkspace,
     loadingLaneKey,
+    settledFilterRevision,
   ]);
 
   const refreshBoard = useCallback(
@@ -796,7 +803,7 @@ function PipelinePageContent({
     async (requestedLaneKey: string) => {
       if (
         accessLostRef.current ||
-        filterRefreshPending ||
+        filterPagingBlocked ||
         loadingLaneKeyRef.current ||
         refreshInFlight.current ||
         refreshPending
@@ -859,7 +866,7 @@ function PipelinePageContent({
     [
       dashboardHref,
       filterHref,
-      filterRefreshPending,
+      filterPagingBlocked,
       leaveUnavailableWorkspace,
       recovery,
       refreshPending,
@@ -1088,11 +1095,17 @@ function PipelinePageContent({
                     error={laneErrors[key]}
                     filtersActive={filtersActive}
                     initialNow={renderNow}
-                    isLoading={refreshPending || filterRefreshPending || loadingLaneKey === key}
                     isMobileActive={activeLaneKey === key}
                     lane={lane}
                     context={laneContext(lane, initialData.aggregateFactories)}
                     onLoadMore={loadMore}
+                    paginationState={
+                      refreshPending || filterRefreshPending || loadingLaneKey === key
+                        ? "loading"
+                        : filterFailed
+                          ? "blocked"
+                          : "idle"
+                    }
                     visibleCards={visibleCards}
                     workspaceSlug={initialData.workspace.slug}
                   />
@@ -1172,10 +1185,10 @@ type PipelineLaneProps = {
   error: string | undefined;
   filtersActive: boolean;
   initialNow: string;
-  isLoading: boolean;
   isMobileActive: boolean;
   lane: PipelineBoardLane;
   onLoadMore: (laneKey: string) => Promise<void>;
+  paginationState: LanePaginationState;
   visibleCards: PipelineDashboardCard[];
   workspaceSlug: string;
 };
@@ -1186,10 +1199,10 @@ const PipelineLane = memo(
     error,
     filtersActive,
     initialNow,
-    isLoading,
     isMobileActive,
     lane,
     onLoadMore,
+    paginationState,
     visibleCards,
     workspaceSlug,
   }: PipelineLaneProps) {
@@ -1280,11 +1293,11 @@ const PipelineLane = memo(
           <PipelineLanePagination
             cursor={lane.cursor}
             error={error}
-            isLoading={isLoading}
             laneKey={key}
             laneName={lane.name}
             loadedCount={lane.cardIds.length}
             onLoadMore={onLoadMore}
+            state={paginationState}
             totalCount={lane.totalCount}
           />
         </div>
@@ -1296,10 +1309,10 @@ const PipelineLane = memo(
     previous.error === next.error &&
     previous.filtersActive === next.filtersActive &&
     previous.initialNow === next.initialNow &&
-    previous.isLoading === next.isLoading &&
     previous.isMobileActive === next.isMobileActive &&
     previous.lane === next.lane &&
     previous.onLoadMore === next.onLoadMore &&
+    previous.paginationState === next.paginationState &&
     previous.visibleCards === next.visibleCards &&
     previous.workspaceSlug === next.workspaceSlug,
 );
@@ -1307,20 +1320,20 @@ const PipelineLane = memo(
 const PipelineLanePagination = memo(function PipelineLanePagination({
   cursor,
   error,
-  isLoading,
   laneKey,
   laneName,
   loadedCount,
   onLoadMore,
+  state,
   totalCount,
 }: {
   cursor: string | null;
   error: string | undefined;
-  isLoading: boolean;
   laneKey: string;
   laneName: string;
   loadedCount: number;
   onLoadMore: (laneKey: string) => Promise<void>;
+  state: LanePaginationState;
   totalCount: number;
 }) {
   if (!cursor && !error) return null;
@@ -1336,11 +1349,11 @@ const PipelineLanePagination = memo(function PipelineLanePagination({
         <button
           aria-label={`Load more ${laneName} sessions`}
           className="ui-button w-full"
-          disabled={isLoading}
+          disabled={state !== "idle"}
           onClick={() => void onLoadMore(laneKey)}
           type="button"
         >
-          {isLoading ? "Loading…" : `Load more (${loadedCount} of ${totalCount})`}
+          {state === "loading" ? "Loading…" : `Load more (${loadedCount} of ${totalCount})`}
         </button>
       ) : null}
     </div>
