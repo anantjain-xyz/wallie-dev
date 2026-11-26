@@ -61,17 +61,20 @@ export function ConfigState({ missingKeys, title }: { missingKeys: string[]; tit
   );
 }
 
-function formatTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
-  return String(count);
-}
+const runCount = new Intl.NumberFormat();
+const tokenCount = new Intl.NumberFormat(undefined, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+const usdCost = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
 
 function UsageCell({ label, note, value }: { label: string; note?: string; value: string }) {
   return (
     <div className="flex flex-col gap-1 px-5 py-4">
       <span className="text-xs font-medium text-muted">{label}</span>
-      <span className="text-[20px] font-semibold tracking-tight text-foreground">{value}</span>
+      <span className="text-[20px] font-semibold tabular-nums tracking-tight text-foreground">
+        {value}
+      </span>
       {note ? <span className="text-xs text-muted">{note}</span> : null}
     </div>
   );
@@ -90,48 +93,52 @@ function metricNote(
 }
 
 export function UsageSummary({ usage }: { usage: WorkspaceUsageData }) {
+  const empty = usage.totalRuns === 0 && !usage.tokensUnavailable && !usage.costUnavailable;
   const input =
     usage.totalInputTokens === null
       ? "Unavailable"
-      : `${formatTokens(usage.totalInputTokens)}${usage.tokensUnavailable ? "+" : ""}`;
+      : `${tokenCount.format(usage.totalInputTokens)}${usage.tokensUnavailable ? "+" : ""}`;
   const output =
     usage.totalOutputTokens === null
       ? "Unavailable"
-      : `${formatTokens(usage.totalOutputTokens)}${usage.tokensUnavailable ? "+" : ""}`;
+      : `${tokenCount.format(usage.totalOutputTokens)}${usage.tokensUnavailable ? "+" : ""}`;
   const cost =
     usage.totalCostUsd === null
       ? "Unavailable"
-      : `$${usage.totalCostUsd.toFixed(2)}${usage.costUnavailable ? "+" : ""}`;
+      : `${usdCost.format(usage.totalCostUsd)}${usage.costUnavailable ? "+" : ""}`;
   return (
-    <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet sm:grid-cols-4 sm:divide-y-0">
-      <UsageCell label="Total runs" value={String(usage.totalRuns)} />
-      <UsageCell
-        label="Input tokens"
-        note={metricNote(
-          usage.tokensUnavailable,
-          usage.hasEstimatedTokens,
-          usage.totalInputTokens !== null,
-        )}
-        value={input}
-      />
-      <UsageCell
-        label="Output tokens"
-        note={metricNote(
-          usage.tokensUnavailable,
-          usage.hasEstimatedTokens,
-          usage.totalOutputTokens !== null,
-        )}
-        value={output}
-      />
-      <UsageCell
-        label="Total cost"
-        note={metricNote(
-          usage.costUnavailable,
-          usage.hasEstimatedCost,
-          usage.totalCostUsd !== null,
-        )}
-        value={cost}
-      />
+    <div>
+      {empty ? <p className="mb-2 text-sm text-muted">No runs have started yet.</p> : null}
+      <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet sm:grid-cols-4 sm:divide-y-0">
+        <UsageCell label="Runs started" value={runCount.format(usage.totalRuns)} />
+        <UsageCell
+          label="Input tokens"
+          note={metricNote(
+            usage.tokensUnavailable,
+            usage.hasEstimatedTokens,
+            usage.totalInputTokens !== null,
+          )}
+          value={input}
+        />
+        <UsageCell
+          label="Output tokens"
+          note={metricNote(
+            usage.tokensUnavailable,
+            usage.hasEstimatedTokens,
+            usage.totalOutputTokens !== null,
+          )}
+          value={output}
+        />
+        <UsageCell
+          label="Run cost (USD)"
+          note={metricNote(
+            usage.costUnavailable,
+            usage.hasEstimatedCost,
+            usage.totalCostUsd !== null,
+          )}
+          value={cost}
+        />
+      </div>
     </div>
   );
 }

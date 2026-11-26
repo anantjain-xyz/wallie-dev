@@ -1,5 +1,6 @@
 import { Suspense, type ReactNode } from "react";
 
+import { AdvancedRateLimits } from "@/features/settings/advanced-rate-limits";
 import type {
   SettingsInitialData,
   SettingsPageData,
@@ -174,7 +175,7 @@ async function UsageSection({ usage }: { usage: Promise<WorkspaceUsageData> }) {
   return (
     <Section
       anchorId="usage"
-      tagline="Aggregate token usage and costs across all agent runs in this workspace."
+      tagline="All time · Runs that started in this workspace, including failed runs. Run costs reflect reported or estimated usage, not a provider bill."
       title="Usage"
     >
       <UsageSummary usage={result.value} />
@@ -191,25 +192,10 @@ async function AdvancedDetails({ initialData, setupData }: SettingsServerShellPr
   return (
     <Section
       anchorId="rate-limits"
-      tagline="Per-endpoint caps protecting sandbox spawns and paid LLM calls."
+      tagline="Configured request caps are read-only. They don’t show how many requests you have left."
       title="Rate limits"
     >
-      <ul className="ui-sheet divide-y divide-border">
-        {data.rateLimits.map((limit) => (
-          <li
-            className="flex flex-col justify-between gap-2 px-5 py-4 sm:flex-row sm:gap-4"
-            key={limit.endpoint}
-          >
-            <div className="min-w-0">
-              <code className="break-all font-mono text-xs text-foreground">{limit.endpoint}</code>
-              <p className="mt-1 text-xs text-muted">{limit.description}</p>
-            </div>
-            <span className="shrink-0 font-mono type-annotation text-muted">
-              {limit.max} / {Math.round(limit.windowMs / 1000)}s
-            </span>
-          </li>
-        ))}
-      </ul>
+      <AdvancedRateLimits limits={data.rateLimits} />
     </Section>
   );
 }
@@ -231,10 +217,14 @@ function AdvancedCategory(props: SettingsServerShellProps) {
           </Section>
           <Section
             anchorId="maintenance"
-            tagline="Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes."
+            tagline="Recover stalled work and refresh linked Linear and GitHub state."
             title="Maintenance"
           >
-            <MaintenanceIsland canManage workspaceId={props.initialData.workspace.id} />
+            <MaintenanceIsland
+              canManage
+              workspaceId={props.initialData.workspace.id}
+              workspaceName={props.initialData.workspace.name}
+            />
           </Section>
         </>
       ) : null}

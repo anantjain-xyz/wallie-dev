@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SettingsPageData } from "@/features/settings/data";
@@ -12,7 +12,7 @@ import {
   registerSettingsDataReplayConsumer,
   replaySettingsDataChanges,
 } from "@/features/settings/settings-island-events";
-import type { MaintenanceTickResponse } from "@/lib/maintenance/service";
+import type { MaintenanceTickResponse } from "@/lib/maintenance/contracts";
 
 vi.mock("@/features/settings/verify-setup-section", () => ({
   VerifySetupSection: ({ data }: { data: SettingsPageData }) => (
@@ -25,8 +25,6 @@ vi.mock("@/features/settings/verify-setup-section", () => ({
 const maintenanceResult: MaintenanceTickResponse = {
   githubVerification: { checked: 0, refreshed: 0, failed: 0 },
   cleanup: {
-    activeProviderSandboxCount: 0,
-    reapedSandboxIds: [],
     retriedJobIds: [],
     stalledRunIds: [],
     stoppedSandboxIds: [],
@@ -47,27 +45,98 @@ describe("MaintenanceIsland", () => {
   it("keeps the maintenance result separated from the usage summary", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(maintenanceResult)));
 
-    render(<MaintenanceIsland canManage workspaceId="workspace-1" />);
+    render(<MaintenanceIsland canManage workspaceId="workspace-1" workspaceName="Acme Lab" />);
 
+    expect(screen.getByText("Acme Lab")).toBeInTheDocument();
+    expect(screen.getByText(/worker handles orphaned sandboxes separately/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Run maintenance" }));
 
     const result = await screen.findByRole("status");
-    expect(result).toHaveTextContent("Maintenance complete. No stuck work.");
+    expect(result).toHaveTextContent("Maintenance pass finished.");
     expect(screen.queryByText("Processing")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Maintenance" })).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(
-        "Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes.",
-      ),
-    ).not.toBeInTheDocument();
     expect(document.getElementById("maintenance")).toBeNull();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Run maintenance" })).toBeEnabled(),
     );
   });
 
+  it("reports known counts alongside failures, throttling, and bounded results", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          ...maintenanceResult,
+          cleanup: null,
+          reconciliation: { checked: 4, canceled: 2, rateLimited: true },
+          githubVerification: { checked: 3, refreshed: 1, failed: 1, limited: true },
+        }),
+      ),
+    );
+    render(<MaintenanceIsland canManage workspaceId="workspace-1" workspaceName="Acme Lab" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Run maintenance" }));
+
+    const result = await screen.findByRole("status");
+    expect(result).toHaveTextContent("Maintenance returned partial results.");
+    expect(result).toHaveTextContent("Stalled-job recovery did not finish.");
+    expect(result).toHaveTextContent("Linear paused checks because of its rate limit.");
+    expect(result).toHaveTextContent("GitHub verification failed for 1 pull request.");
+    expect(result).toHaveTextContent("Some GitHub checks could not be saved.");
+    expect(result).toHaveTextContent("GitHub reached its per-run limit.");
+    expect(screen.queryByText("Jobs queued for retry")).not.toBeInTheDocument();
+    const archiveCell = screen.getByText("Linear-linked sessions archived").parentElement!;
+    expect(within(archiveCell).getByText("2")).toBeInTheDocument();
+  });
+
+  it("shows completed GitHub refreshes even when the batch did not finish", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          ...maintenanceResult,
+          githubVerification: { checked: 1, refreshed: 1, failed: 0, incomplete: true },
+        }),
+      ),
+    );
+    render(<MaintenanceIsland canManage workspaceId="workspace-1" workspaceName="Acme Lab" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Run maintenance" }));
+
+    const result = await screen.findByRole("status");
+    expect(result).toHaveTextContent("Maintenance returned partial results.");
+    expect(result).toHaveTextContent("GitHub verification did not finish.");
+    const refreshedCell = screen.getByText("GitHub checks refreshed").parentElement!;
+    expect(within(refreshedCell).getByText("1")).toBeInTheDocument();
+  });
+
+  it("clears the old cards when a rerun starts and does not show them after a failure", async () => {
+    const request = vi.fn().mockResolvedValueOnce(Response.json(maintenanceResult));
+    let finish!: (response: Response) => void;
+    request.mockReturnValueOnce(
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    vi.stubGlobal("fetch", request);
+    render(<MaintenanceIsland canManage workspaceId="workspace-1" workspaceName="Acme Lab" />);
+
+    const run = screen.getByRole("button", { name: "Run maintenance" });
+    fireEvent.click(run);
+    expect(await screen.findByText("Jobs queued for retry")).toBeInTheDocument();
+    fireEvent.click(run);
+    expect(run).toHaveTextContent("Running…");
+    expect(screen.queryByText("Jobs queued for retry")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    finish(Response.json({ error: "Rate limit exceeded. Please retry later." }, { status: 429 }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Please retry later");
+    expect(screen.queryByText("Jobs queued for retry")).not.toBeInTheDocument();
+  });
+
   it("does not add an empty spacing wrapper for non-managers", () => {
-    const { container } = render(<MaintenanceIsland canManage={false} workspaceId="workspace-1" />);
+    const { container } = render(
+      <MaintenanceIsland canManage={false} workspaceId="workspace-1" workspaceName="Acme Lab" />,
+    );
 
     expect(container).toBeEmptyDOMElement();
   });
