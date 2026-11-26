@@ -465,9 +465,29 @@ test("qualified operators can inspect and retry exact connector receipts from Se
     expect(linearBefore).toMatchObject({ status: "unknown", uncertain: true, canRetry: true });
 
     await selectProviderResource(manager.panel, "GitHub", fixture.githubResourceId);
-    await manager.panel
-      .getByRole("combobox", { name: "Direction", exact: true })
-      .selectOption("ingress");
+    const direction = manager.panel.getByRole("combobox", { name: "Direction", exact: true });
+    const directionOptions = manager.page.getByRole("listbox", { name: "Direction", exact: true });
+    const allDeliveries = directionOptions.getByRole("option", {
+      name: "All deliveries",
+      exact: true,
+    });
+    await expect(direction).toHaveText("All deliveries");
+    await direction.press("ArrowDown");
+    await expect(allDeliveries).toBeFocused();
+    await expect(allDeliveries).toHaveAttribute("aria-selected", "true");
+    await manager.page.keyboard.press("Escape");
+    await expect(directionOptions).toHaveCount(0);
+    await expect(direction).toBeFocused();
+
+    await direction.press("ArrowDown");
+    await allDeliveries.press("ArrowDown");
+    const [ingress] = await Promise.all([
+      manager.page.waitForResponse(`${app}${githubHistory}?lane=ingress`),
+      manager.page.keyboard.press("Enter"),
+    ]);
+    expect(ingress.ok()).toBe(true);
+    await expect(direction).toHaveText("Ingress");
+    await expect(direction).toBeFocused();
     await expect(manager.panel.getByText("Rejected", { exact: true })).toBeVisible();
     await expect(manager.panel.getByText(/^Outbound delivery/)).toHaveCount(0);
     await provePaginationRecovers(manager.page, manager.panel, githubHistory);
@@ -486,9 +506,14 @@ test("qualified operators can inspect and retry exact connector receipts from Se
     await expect(
       manager.panel.getByText("Linear routing and outcomes", { exact: true }),
     ).toHaveCount(0);
-    await manager.panel
-      .getByRole("combobox", { name: "Direction", exact: true })
-      .selectOption("outbound");
+    await expect(direction).toHaveText("All deliveries");
+    await direction.click();
+    const [outbound] = await Promise.all([
+      manager.page.waitForResponse(`${app}${linearHistory}?lane=outbound`),
+      directionOptions.getByRole("option", { name: "Outbound", exact: true }).click(),
+    ]);
+    expect(outbound.ok()).toBe(true);
+    await expect(direction).toHaveText("Outbound");
     await proveStaleModeRefreshes(manager.page, manager.panel, linearHistory, linearRetry);
     expect(
       findDelivery(await readHistory(manager.page, linearHistory), fixture.linearRetryId),
@@ -506,6 +531,16 @@ test("qualified operators can inspect and retry exact connector receipts from Se
     });
     expectAdvancedRetryTime(linearBefore.nextAttemptAt, observingDelivery.nextAttemptAt);
     await screenshot(manager.page, "retry-mobile-dark");
+
+    await direction.click();
+    const [all] = await Promise.all([
+      manager.page.waitForResponse(`${app}${linearHistory}?lane=all`),
+      allDeliveries.click(),
+    ]);
+    expect(all.ok()).toBe(true);
+    await expect(direction).toHaveText("All deliveries");
+    await expect(manager.panel.getByText(/^Linear issue intake/u)).toBeVisible();
+    await expect(manager.panel.getByText("Provider status check scheduled.")).toHaveCount(0);
 
     const admin = createClient<Database>(supabase, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
