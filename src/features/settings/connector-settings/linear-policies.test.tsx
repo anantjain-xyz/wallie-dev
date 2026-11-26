@@ -70,6 +70,7 @@ function fixture({
   failLabels = false,
   savedState = starting.id,
   savedFromState = "",
+  savedToState = starting.id,
   teams = [team],
 } = {}) {
   let labelReads = 0;
@@ -94,7 +95,7 @@ function fixture({
         mappingRevision: 4,
         commentsEnabled: true,
         statusMapping: savedFromState
-          ? { teamId: team.id, fromStateId: savedFromState, toStateId: starting.id }
+          ? { teamId: team.id, fromStateId: savedFromState, toStateId: savedToState }
           : null,
       });
     const query = new URL(path, "https://wallie.test").searchParams;
@@ -280,17 +281,32 @@ it("preselects the sole project team and focuses the destination for a duplicate
 
   const from = screen.getByRole("combobox", { name: "From state" });
   const to = screen.getByRole("combobox", { name: "To state" });
-  await within(to).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
   const teamChoice = screen.getByRole("combobox", { name: "Linear team" });
+  const save = screen.getByRole("button", { name: "Save outcomes" });
   expect(teamChoice).toHaveAttribute("data-value", team.id);
   expect(teamChoice).toHaveTextContent("Platform · PLAT");
   for (const choice of [teamChoice, from, to]) expect(choice).toBeRequired();
   expect(fetchMock.mock.calls.some(([url]) => url.includes(`teamId=${team.id}`))).toBe(true);
   await user.click(from);
+  await screen.findByRole("option", { name: "In progress · Platform (PLAT) · started" });
   await user.keyboard("{ArrowDown}{Enter}");
-  await user.selectOptions(to, starting.id);
-  await user.click(screen.getByRole("button", { name: "Save outcomes" }));
+  expect(to.closest("form")?.checkValidity()).toBe(true);
+  await user.click(save);
   expect(to).toHaveFocus();
+  expect(to).toHaveAccessibleDescription("Choose an available destination state.");
+
+  await user.click(to);
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(to).toHaveFocus();
+  expect(to).toHaveAttribute("data-value", starting.id);
+  expect(to).toHaveTextContent("In progress · Platform (PLAT) · started");
+  expect(to).not.toHaveAttribute("aria-invalid");
+  expect(writes).toEqual([]);
+
+  await user.click(save);
+  expect(to).toHaveFocus();
+  expect(to).toHaveAttribute("aria-invalid", "true");
+  expect(to).toHaveAttribute("aria-describedby", `${to.id}-error`);
   expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
   expect(writes).toEqual([]);
 
@@ -299,11 +315,26 @@ it("preselects the sole project team and focuses the destination for a duplicate
   await user.keyboard("{Enter}");
   expect(teamChoice).toHaveFocus();
   expect(from).toHaveAttribute("data-value", starting.id);
-  expect(to).toHaveValue(starting.id);
+  expect(to).toHaveAttribute("data-value", starting.id);
   expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
 
-  await user.selectOptions(to, ending.id);
-  await user.click(screen.getByRole("button", { name: "Save outcomes" }));
+  await user.click(to);
+  expect(
+    screen.getByRole("option", { name: "In progress · Platform (PLAT) · started", selected: true }),
+  ).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(to).toHaveFocus();
+  expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
+
+  await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+  expect(to).toHaveFocus();
+  expect(to).toHaveAttribute("data-value", ending.id);
+  expect(to).toHaveTextContent("Done · Platform (PLAT) · completed");
+  expect(to).not.toHaveAttribute("aria-invalid");
+  expect(to).not.toHaveAttribute("aria-describedby");
+  expect(from).toHaveAttribute("data-value", starting.id);
+  expect(writes).toEqual([]);
+  await user.click(save);
   await screen.findByText("Linear outcomes saved.");
   expect(writes).toEqual([
     {
@@ -353,11 +384,13 @@ it("validates the team on Save and resets the state choices and errors when the 
   expect(picker).toHaveFocus();
   expect(picker).toHaveAttribute("data-value", team.id);
   for (const choice of [picker, from, to]) expect(choice).not.toHaveAttribute("aria-invalid");
-  await within(to).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
+  expect(to).toBeEnabled();
   await user.click(from);
+  await screen.findByRole("option", { name: "In progress · Platform (PLAT) · started" });
   await user.keyboard("{ArrowDown}{Enter}");
   expect(from).toHaveAttribute("data-value", starting.id);
-  await user.selectOptions(to, starting.id);
+  await user.click(to);
+  await user.click(screen.getByRole("option", { name: "In progress · Platform (PLAT) · started" }));
   await user.click(save);
   expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
 
@@ -370,9 +403,14 @@ it("validates the team on Save and resets the state choices and errors when the 
   await user.keyboard("{ArrowDown}{Enter}");
   expect(picker).toHaveAttribute("data-value", alternateTeam.id);
   expect(from).toHaveAttribute("data-value", "");
-  expect(to).toHaveValue("");
+  expect(to).toHaveAttribute("data-value", "");
   expect(to).not.toHaveAttribute("aria-invalid");
-  await within(to).findByRole("option", { name: "In review · Product (PROD) · started" });
+  await user.click(to);
+  const toOptions = within(screen.getByRole("listbox", { name: "To state" }));
+  await toOptions.findByRole("option", { name: "Shipped · Product (PROD) · completed" });
+  expect(toOptions.queryByRole("option", { name: /Platform/u })).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(to).toHaveFocus();
   const stateScopes = fetchMock.mock.calls
     .map(([path]) => new URL(path, "https://wallie.test").searchParams)
     .filter((query) => query.get("kind") === "state" && query.has("teamId"))
@@ -390,7 +428,8 @@ it("validates the team on Save and resets the state choices and errors when the 
   await user.click(
     fromOptions.getByRole("option", { name: "In review · Product (PROD) · started" }),
   );
-  await user.selectOptions(to, alternateEnding.id);
+  await user.click(to);
+  await user.click(screen.getByRole("option", { name: "Shipped · Product (PROD) · completed" }));
   await user.click(save);
   await screen.findByText("Linear outcomes saved.");
   expect(writes).toEqual([
@@ -421,14 +460,14 @@ it("keeps the unavailable starting ID and clears both errors only when From chan
   const from = await screen.findByRole("combobox", { name: "From state" });
   const to = screen.getByRole("combobox", { name: "To state" });
   const save = screen.getByRole("button", { name: "Save outcomes" });
-  await within(to).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
+  await within(to).findByText("In progress · Platform (PLAT) · started");
   expect(from).toHaveAttribute("data-value", savedStateId);
   expect(from).toHaveTextContent("Unavailable — choose a replacement");
   expect(from.id).toMatch(/-from$/u);
   expect(from).toBeRequired();
   expect(from).not.toHaveAttribute("aria-invalid");
   expect(from.closest("form")?.checkValidity()).toBe(true);
-  expect(to).toHaveValue(starting.id);
+  expect(to).toHaveAttribute("data-value", starting.id);
 
   await user.click(from);
   const listbox = screen.getByRole("listbox", { name: "From state" });
@@ -446,7 +485,8 @@ it("keeps the unavailable starting ID and clears both errors only when From chan
   await user.click(details);
   expect(screen.getByText(savedStateId)).toBeVisible();
 
-  await user.selectOptions(to, "");
+  await user.click(to);
+  await user.click(screen.getByRole("option", { name: "Choose a state" }));
   await user.click(save);
   expect(from).toHaveFocus();
   expect(from).toHaveAttribute("aria-invalid", "true");
@@ -460,14 +500,15 @@ it("keeps the unavailable starting ID and clears both errors only when From chan
   expect(from).toHaveAttribute("data-value", starting.id);
   expect(from).toHaveTextContent("In progress · Platform (PLAT) · started");
   for (const choice of [from, to]) expect(choice).not.toHaveAttribute("aria-invalid");
-  expect(to).toHaveValue("");
+  expect(to).toHaveAttribute("data-value", "");
 
   await user.click(save);
   expect(to).toHaveFocus();
   expect(to).toHaveAccessibleDescription("Choose an available destination state.");
   expect(writes).toEqual([]);
 
-  await user.selectOptions(to, starting.id);
+  await user.click(to);
+  await user.click(screen.getByRole("option", { name: "In progress · Platform (PLAT) · started" }));
   await user.click(save);
   expect(to).toHaveFocus();
   expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
@@ -477,7 +518,7 @@ it("keeps the unavailable starting ID and clears both errors only when From chan
   expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
   await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
   expect(to).not.toHaveAttribute("aria-invalid");
-  expect(to).toHaveValue(starting.id);
+  expect(to).toHaveAttribute("data-value", starting.id);
   expect(writes).toEqual([]);
 
   await user.click(save);
@@ -493,4 +534,38 @@ it("keeps the unavailable starting ID and clears both errors only when From chan
       },
     },
   ]);
+});
+
+it("keeps an unavailable destination selected and validates it only on Save", async () => {
+  const writes = fixture({ savedFromState: starting.id, savedToState: savedStateId });
+  const user = userEvent.setup();
+  render(
+    <LinearConnectorPolicies factoryEndpoint={endpoint} onChanged={vi.fn()} resource={resource} />,
+  );
+  await user.click(screen.getByText("Linear routing and outcomes"));
+
+  const to = await screen.findByRole("combobox", { name: "To state" });
+  const save = screen.getByRole("button", { name: "Save outcomes" });
+  await within(to).findByText("Unavailable — choose a replacement");
+  expect(to.id).toMatch(/-to$/u);
+  expect(to).toHaveAttribute("data-value", savedStateId);
+  expect(to).toBeRequired();
+  expect(to).not.toHaveAttribute("aria-invalid");
+  expect(to.closest("form")?.checkValidity()).toBe(true);
+
+  await user.click(to);
+  expect(
+    screen.getByRole("option", { name: "Unavailable — choose a replacement", selected: true }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Tab}");
+  const details = screen.getByText("Saved provider ID");
+  expect(details).toHaveFocus();
+  await user.click(details);
+  expect(screen.getByText(savedStateId)).toBeVisible();
+  expect(writes).toEqual([]);
+
+  await user.click(save);
+  expect(to).toHaveFocus();
+  expect(to).toHaveAccessibleDescription("Choose an available destination state.");
+  expect(writes).toEqual([]);
 });
