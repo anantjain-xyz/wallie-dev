@@ -244,6 +244,7 @@ export function FactoryDefinitionEditor({
     [refreshProfile],
   );
   const inFlight = useRef(false);
+  const urlSelectionRequest = useRef<AbortController | null>(null);
   const reloadButtonRef = useRef<HTMLButtonElement>(null);
   const conflictReloadRef = useRef<HTMLButtonElement>(null);
   const editControlsRef = useRef<HTMLDivElement>(null);
@@ -428,6 +429,7 @@ export function FactoryDefinitionEditor({
         : null;
     if (!target) return;
     const controller = new AbortController();
+    urlSelectionRequest.current = controller;
     const { signal } = controller;
     void readDefinition(editorApi, target, signal).then(
       (document) => {
@@ -437,7 +439,10 @@ export function FactoryDefinitionEditor({
         if (!signal.aborted) setFeedback({ kind: "error", text: errorText(error) });
       },
     );
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      urlSelectionRequest.current = null;
+    };
   }, [editorApi, requestedActivation, requestedDraft, requestedRevision]);
 
   async function run(operation: Operation, task: () => Promise<void>) {
@@ -619,6 +624,7 @@ export function FactoryDefinitionEditor({
     activationNumber: activation,
   }: FactoryEditorActivation) {
     await run("select", async () => {
+      urlSelectionRequest.current?.abort();
       const document = await readDefinition(editorApi, { revision: revisionId, activation });
       setSelected({ ...document, activationNumber: activation });
       setPreview(null);
@@ -1138,7 +1144,10 @@ export function FactoryDefinitionEditor({
                 <button
                   className="ui-button mb-3"
                   disabled={busy}
-                  onClick={() => setSelected(null)}
+                  onClick={() => {
+                    urlSelectionRequest.current?.abort();
+                    setSelected(null);
+                  }}
                   type="button"
                 >
                   Clear revision selection

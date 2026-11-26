@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -333,6 +333,7 @@ function setup({
   credentials,
   routingPreview,
   editorProps,
+  readSelection,
 }: {
   selection?: Parameters<typeof FactoryDefinitionEditor>[0]["selection"];
   initialActivationNumber?: number;
@@ -343,6 +344,10 @@ function setup({
   credentials?: FactorySecretBindingResponse;
   routingPreview?: (body: Record<string, unknown>) => Response;
   editorProps?: Partial<Parameters<typeof FactoryDefinitionEditor>[0]>;
+  readSelection?: (
+    query: URLSearchParams,
+    signal: RequestInit["signal"],
+  ) => Promise<Response> | undefined;
 } = {}) {
   let snapshot: FactoryEditorSnapshot = {
     activationNumber: initialActivationNumber,
@@ -459,6 +464,8 @@ function setup({
         });
       }
       const selection = searchParams.get("revisionId") ?? searchParams.get("draftId");
+      const deferred = selection ? readSelection?.(searchParams, options?.signal) : undefined;
+      if (deferred) return deferred;
       return Response.json(selection ? { document: records.get(selection) } : { snapshot });
     }
 
@@ -909,6 +916,35 @@ it("keeps a proposal rollback link pinned when Settings loads a newer active rev
   expect(tests.getByRole("button", { name: "Retest configuration" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Roll back to this revision" })).toBeDisabled();
   expect(requests).toHaveLength(0);
+});
+
+it("keeps the manually selected activation when an earlier URL response arrives late", async () => {
+  const linkedResponse = Promise.withResolvers<Response>();
+  const linkedRequest = vi.fn();
+  setup({
+    selection: { revision: published.id, activation: 2 },
+    readSelection(query, signal) {
+      if (query.get("revisionId") !== published.id) return;
+      linkedRequest(query.get("activationNumber"), signal);
+      return linkedResponse.promise;
+    },
+  });
+  const manual = await screen.findByRole("button", { name: /^Activation #1,/ });
+  expect(linkedRequest).toHaveBeenCalledExactlyOnceWith("2", expect.any(AbortSignal));
+  fireEvent.click(manual);
+  await waitFor(() => expect(manual).toHaveAttribute("aria-pressed", "true"));
+
+  await act(async () => {
+    linkedResponse.resolve(Response.json({ document: { ...published, activationNumber: 2 } }));
+    await linkedResponse.promise;
+  });
+
+  expect(linkedRequest.mock.calls[0]?.[1]?.aborted).toBe(true);
+  expect(manual).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: /^Activation #2,/ })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
 });
 
 it("shows stale qualification and disables reviewed activation despite passing smoke", async () => {
