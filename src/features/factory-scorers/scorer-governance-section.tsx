@@ -19,7 +19,12 @@ import {
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
 import { CalibrationForm, ScorerPauseControl } from "./scorer-governance-controls";
-import { runAttemptHref } from "./run-evaluation-governance";
+import {
+  calibrationCaseHref,
+  calibrationCaseName,
+  calibrationCaseVerdict,
+} from "./scorer-calibration-case";
+import { ScorerDraftLink } from "./scorer-draft-guard";
 import { scoreNumber } from "./score-outcome";
 
 const id = z
@@ -124,6 +129,8 @@ function PauseHistory({
 function ScorerHealth({
   pause,
   stats,
+  hasCohorts,
+  scorerRevisionNumber,
   endpoint,
   canEdit,
   beforePauseRevision,
@@ -131,6 +138,8 @@ function ScorerHealth({
 }: {
   pause: ScorerPauseHistory | null;
   stats?: ScoreMetrics;
+  hasCohorts?: boolean;
+  scorerRevisionNumber: number;
   endpoint: string;
   canEdit: boolean;
   beforePauseRevision?: number;
@@ -147,6 +156,7 @@ function ScorerHealth({
     <PageSection
       anchorId="scorer-health"
       title="Scorer health"
+      tagline={`Sampling cohort metrics · Rubric revision ${scorerRevisionNumber}`}
       statusBadge={
         pause ? (
           <Status
@@ -178,14 +188,25 @@ function ScorerHealth({
           </dl>
         ) : (
           <p className="type-secondary text-muted">
-            Select a sampling cohort to see health metrics for this revision.
+            {hasCohorts === false
+              ? "No sampling cohorts for this revision yet."
+              : hasCohorts
+                ? "Select a sampling cohort to see health metrics for this revision."
+                : "Sampling cohort metrics are unavailable."}
           </p>
         )}
         {pause ? (
           <>
-            <p className="type-secondary text-muted">
-              Pausing skips new admissions and holds queued work. Active attempts can finish.
-            </p>
+            <div className="space-y-1">
+              <p className="type-label">
+                Evaluation admission · All rubric revisions in this factory
+              </p>
+              <p className="type-secondary text-muted">
+                Pausing skips new sampled evaluations for this scorer and holds queued work and
+                retries. Active attempts can finish. Production runs continue. Resuming admits
+                future samples and releases held work.
+              </p>
+            </div>
             {canEdit ? <ScorerPauseControl endpoint={endpoint} pause={pause} /> : null}
             <PauseHistory state={pause} beforeRevision={beforePauseRevision} path={historyPath} />
           </>
@@ -210,6 +231,7 @@ function CalibrationSection({
   path,
   endpoint,
   scorerRevisionId,
+  scorerRevisionNumber,
   workspaceSlug,
   scorerId,
   factoryId,
@@ -220,6 +242,7 @@ function CalibrationSection({
   path: string;
   endpoint: string;
   scorerRevisionId: string;
+  scorerRevisionNumber: number;
   workspaceSlug: string;
   scorerId: string;
   factoryId: string;
@@ -263,7 +286,7 @@ function CalibrationSection({
                           {scoreNumber.format(version.adjudication_ids.length)}{" "}
                           {version.adjudication_ids.length === 1 ? "case" : "cases"}
                         </p>
-                        <Link
+                        <ScorerDraftLink
                           className="type-secondary block text-accent underline underline-offset-4"
                           href={workspaceScorerDetailPath(workspaceSlug, scorerId, {
                             factory: factoryId,
@@ -272,28 +295,38 @@ function CalibrationSection({
                           prefetch={false}
                         >
                           Pinned rubric · Revision {version.scorer_revision_number}
-                        </Link>
+                        </ScorerDraftLink>
                         <details className="type-secondary text-muted">
                           <summary className="cursor-pointer">Inspect calibration cases</summary>
                           <ul className="mt-2 space-y-1">
-                            {version.case_refs.map((reference, index) => (
-                              <li key={reference.adjudication_id}>
-                                <Link
-                                  className="text-accent underline underline-offset-4"
-                                  href={runAttemptHref(
-                                    workspaceSlug,
-                                    reference.run_id,
-                                    reference.attempt_id,
-                                    undefined,
-                                    `adjudication-${reference.adjudication_id}`,
-                                    { evaluationAdjudication: reference.adjudication_id },
+                            {version.case_refs.map((reference, index) => {
+                              const name = calibrationCaseName(
+                                reference,
+                                `Saved case ${index + 1} · Details unavailable`,
+                              );
+                              const verdict = calibrationCaseVerdict(reference);
+                              return (
+                                <li className="break-words" key={reference.adjudication_id}>
+                                  {reference.run_id && reference.attempt_id ? (
+                                    <ScorerDraftLink
+                                      className="text-accent underline underline-offset-4"
+                                      href={calibrationCaseHref(
+                                        workspaceSlug,
+                                        reference.adjudication_id,
+                                        reference.run_id,
+                                        reference.attempt_id,
+                                      )}
+                                      prefetch={false}
+                                    >
+                                      {name}
+                                    </ScorerDraftLink>
+                                  ) : (
+                                    name
                                   )}
-                                  prefetch={false}
-                                >
-                                  Open case {index + 1}
-                                </Link>
-                              </li>
-                            ))}
+                                  {verdict ? <p className="type-annotation">{verdict}</p> : null}
+                                </li>
+                              );
+                            })}
                           </ul>
                         </details>
                       </div>
@@ -365,6 +398,10 @@ function CalibrationSection({
             <h3 className="type-label font-semibold">
               {setId ? "Draft next version" : "New calibration set"}
             </h3>
+            <p className="type-secondary text-muted">
+              Uses rubric revision {latest?.scorer_revision_number ?? scorerRevisionNumber}
+              {latest ? " · Existing sets keep their original rubric pin." : "."}
+            </p>
             <CalibrationForm
               key={latest?.set_id ?? "new"}
               endpoint={endpoint}
@@ -375,6 +412,7 @@ function CalibrationSection({
                 next_before_candidate_id: data.next_before_candidate_id,
               }}
               scorerRevisionId={scorerRevisionId}
+              workspaceSlug={workspaceSlug}
             />
           </div>
         ) : null}
@@ -411,18 +449,22 @@ export function ScorerGovernanceSection({
   scope,
   scorerId,
   scorerRevisionId,
+  scorerRevisionNumber,
   workspaceSlug,
   canEdit,
   stats,
+  hasCohorts,
   path,
   data,
 }: {
   scope: ScorerGovernanceScope;
   scorerId: string;
   scorerRevisionId: string;
+  scorerRevisionNumber: number;
   workspaceSlug: string;
   canEdit: boolean;
   stats?: ScoreMetrics;
+  hasCohorts?: boolean;
   path: string;
   data: Awaited<ReturnType<typeof loadScorerGovernanceData>>;
 }) {
@@ -433,6 +475,8 @@ export function ScorerGovernanceSection({
       <ScorerHealth
         pause={pause}
         stats={stats}
+        hasCohorts={hasCohorts}
+        scorerRevisionNumber={scorerRevisionNumber}
         endpoint={endpoint}
         canEdit={canEdit}
         beforePauseRevision={beforePauseRevision}
@@ -444,6 +488,7 @@ export function ScorerGovernanceSection({
         path={path}
         endpoint={endpoint}
         scorerRevisionId={scorerRevisionId}
+        scorerRevisionNumber={scorerRevisionNumber}
         workspaceSlug={workspaceSlug}
         scorerId={scorerId}
         factoryId={scope.factoryId}

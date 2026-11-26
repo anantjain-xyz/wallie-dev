@@ -33,7 +33,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   const command = await readScorerCommand(
     request,
     createFactoryScorerSchema,
-    "Enter a name, an identifier, and a valid scorer rubric.",
+    "Enter a name and a valid scorer rubric. A custom identifier is optional.",
   );
   if (!command.ok) return command.response;
   try {

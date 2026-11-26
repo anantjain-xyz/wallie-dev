@@ -50,6 +50,7 @@ test("an operator authors, binds, and revisits exact scorer revisions", async ({
     await create.focus();
     await page.keyboard.press("Enter");
     await page.getByLabel("Scorer name", { exact: true }).fill("Invoice verification");
+    await page.getByText("Advanced", { exact: true }).click();
     await page.getByLabel("Identifier", { exact: true }).fill("invoice-verification");
     await page.getByLabel("Rubric", { exact: true }).fill(firstRubric);
     await page.getByRole("checkbox", { name: "Validation report", exact: true }).check();
@@ -86,6 +87,11 @@ test("an operator authors, binds, and revisits exact scorer revisions", async ({
     await expect(
       page.getByRole("heading", { name: "Invoice verification", exact: true }),
     ).toBeVisible();
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Revision 1 published. The active factory binding is unchanged." }),
+    ).toBeVisible();
     const detail = page.url();
     const concurrent = await page.context().newPage();
     try {
@@ -100,6 +106,15 @@ test("an operator authors, binds, and revisits exact scorer revisions", async ({
       await expect(concurrent.getByRole("link", { name: "Reload latest revision" })).toBeVisible();
       await expect(editableRubric).toHaveValue(pendingRubric);
       await capture(concurrent, info, "03-scorer-revision-conflict");
+      await concurrent.getByRole("link", { name: "Reload latest revision" }).click();
+      await concurrent.getByRole("button", { name: "Keep editing" }).click();
+      await expect(editableRubric).toHaveValue(pendingRubric);
+      await concurrent.getByRole("link", { name: "Reload latest revision" }).click();
+      await concurrent.getByRole("button", { name: "Discard changes" }).click();
+      await expect(editableRubric).toHaveValue(secondRubric);
+      await expect(
+        concurrent.getByRole("heading", { name: "Revision 2", exact: true }),
+      ).toBeVisible();
     } finally {
       await concurrent.close();
     }
@@ -115,7 +130,9 @@ test("an operator authors, binds, and revisits exact scorer revisions", async ({
     await capture(page, info, "04-scorer-historical-mobile-dark");
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.getByRole("link", { name: "Configure binding", exact: true }).click();
+    await page
+      .getByRole("link", { name: "Bind revision 1 in Factory Definition", exact: true })
+      .click();
     await expect(
       page.getByRole("button", { name: "Remove Invoice verification · Revision 1" }),
     ).toBeVisible();
@@ -129,6 +146,64 @@ test("an operator authors, binds, and revisits exact scorer revisions", async ({
       bindings.getByRole("link", { name: "Invoice verification · Revision 1" }),
     ).toBeVisible();
     await capture(page, info, "05-factory-scorer-binding-dark");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("search finds scorer names and identifiers beyond the first library page", async ({
+  baseURL,
+  page,
+}) => {
+  test.skip(process.env.WALLIE_FACTORY_SCORERS_E2E !== "1", "Requires disposable local Supabase.");
+  test.setTimeout(120_000);
+  const fixture = await seedFactoryAnalytics(baseURL);
+  const library = `/w/${fixture.slug}/scorers?factory=${fixture.factoryId}`;
+  const api = `/api/workspaces/${fixture.workspaceId}/factories/${fixture.factoryId}/scorers`;
+  const definition = {
+    schemaVersion: 1,
+    rubric: "Check that the retained report documents the expected behavior.",
+    requiredEvidence: ["validation_report"],
+    scoring: { kind: "boolean", passValue: true },
+  };
+  try {
+    await signInViaMagicLink(page, library, { baseURL: fixture.app, email: fixture.ownerEmail });
+    const names = Array.from(
+      { length: 31 },
+      (_, i) => `Library scorer ${String(i + 1).padStart(2, "0")}`,
+    );
+    for (let offset = 0; offset < names.length; offset += 5) {
+      const batch = await Promise.all(
+        names.slice(offset, offset + 5).map((name) =>
+          page.request.post(api, {
+            data: {
+              name,
+              definition,
+              ...(name.endsWith("31") ? { slug: "verification-final" } : {}),
+            },
+          }),
+        ),
+      );
+      expect(batch.every((response) => response.status() === 201)).toBe(true);
+    }
+    await page.goto(library);
+    await expect(page.getByRole("link", { name: names[30]!, exact: true })).toHaveCount(0);
+    const query = page.getByRole("searchbox", { name: "Search this factory’s scorers" });
+    await query.fill("library scorer");
+    await query.press("Enter");
+    await page.getByRole("link", { name: "More scorers" }).click();
+    await expect(query).toHaveValue("library scorer");
+    const lastScorer = page.getByRole("link", { name: names[30]!, exact: true });
+    await expect(lastScorer).toBeVisible();
+    await expect(lastScorer.locator("..")).toContainText("Validation report · Boolean");
+    await query.fill("verification-final");
+    await query.press("Enter");
+    await expect(lastScorer).toBeVisible();
+    await query.fill("not in this factory");
+    await query.press("Enter");
+    await expect(
+      page.getByText("No scorers match this search in the selected factory."),
+    ).toBeVisible();
   } finally {
     await fixture.cleanup();
   }
