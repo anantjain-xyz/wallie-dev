@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { SelectField } from "@/components/ui/select";
 import type {
   VercelProjectOption,
   VercelSandboxConnectionPreview,
@@ -221,25 +222,23 @@ export function VercelTargetPicker({
             Find teams
           </button>
           {teams?.length ? (
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-foreground">Team</span>
-              <select
-                className="ui-input"
-                disabled={disabled}
-                name="vercel-team"
-                onChange={(event) =>
-                  chooseTeam(event.target.value, event.target.value === connection?.teamId)
-                }
-                value={teamId}
-              >
-                <option value="">Choose a team</option>
-                {teams.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name === item.slug ? item.slug : `${item.name} · ${item.slug}`}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SelectField
+              disabled={disabled}
+              emptyOption={{ label: "Choose a team", value: "" }}
+              label="Team"
+              labelClassName="text-xs"
+              name="vercel-team"
+              onValueChange={(nextTeamId) => {
+                if (nextTeamId !== teamId)
+                  chooseTeam(nextTeamId, nextTeamId === connection?.teamId);
+              }}
+              options={teams.map((item) => ({
+                label: item.name === item.slug ? item.slug : `${item.name} · ${item.slug}`,
+                value: item.id,
+              }))}
+              value={teamId}
+              wrap
+            />
           ) : null}
           {team && projects?.length ? (
             <label className="block space-y-1.5">
