@@ -14721,6 +14721,7 @@ export type Database = {
           p_cohort_id?: string
           p_factory_id: string
           p_limit?: number
+          p_review_state?: string
           p_workspace_id: string
         }
         Returns: Json

@@ -129,6 +129,10 @@ export async function ImprovementOutcomes({
           <p className="type-secondary text-muted">
             Observed through <ImprovementTime instant={outcomes.observedAt} />
           </p>
+          <p className="type-secondary text-muted">
+            The baseline and adopted groups ran in different periods. These observations don’t
+            establish that the configuration caused the difference.
+          </p>
           {reasons.includes("insufficient_completed_sessions") ? (
             <p className="type-secondary text-muted">
               At least {count(outcomes.minimumCompleted)} completed sessions in each cohort are
@@ -193,7 +197,15 @@ export async function ImprovementOutcomes({
             <Link className="ui-button" href={`${rollbackPath}#candidate-tests`} prefetch={false}>
               Review rollback
             </Link>
-          ) : null}
+          ) : (
+            <p className="type-secondary text-muted">
+              {scope.factory.status !== "active"
+                ? "Rollback is unavailable for an archived factory."
+                : !scope.workspaceOperator
+                  ? "A workspace owner or admin can review rollback."
+                  : "The adopted activation is no longer current. Review the active factory definition before restoring a baseline."}
+            </p>
+          )}
         </div>
       </div>
     </PageSection>

@@ -1,6 +1,6 @@
 import { Status, type StatusValue } from "@/components/ui/status";
 
-const dispositions = {
+export const improvementReviewStates = {
   open: { value: "awaiting_review", label: "Open" },
   investigate: { value: "needs_attention", label: "Investigate" },
   revise: { value: "rejected", label: "Revision requested" },
@@ -9,7 +9,7 @@ const dispositions = {
 
 const reviewActions = {
   comment: "Commented",
-  investigate: "Requested investigation",
+  investigate: "Marked for investigation",
   revise: "Requested revision",
   dismiss: "Dismissed",
 };
@@ -34,7 +34,7 @@ export function ImprovementStatus({
   baseCurrent,
 }: {
   status: "compiled" | "invalid";
-  disposition: keyof typeof dispositions;
+  disposition: keyof typeof improvementReviewStates;
   baseCurrent: boolean;
 }) {
   return (
@@ -45,7 +45,7 @@ export function ImprovementStatus({
         label={status === "compiled" ? "Compiled" : "Invalid candidate"}
       />
       {!baseCurrent ? <Status compact value="needs_attention" label="Stale base" /> : null}
-      <Status compact {...dispositions[disposition]} />
+      <Status compact {...improvementReviewStates[disposition]} />
     </div>
   );
 }
