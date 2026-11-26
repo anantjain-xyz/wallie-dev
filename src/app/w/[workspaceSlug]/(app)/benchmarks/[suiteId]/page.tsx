@@ -80,12 +80,13 @@ export default async function BenchmarkSuitePage({
   const { selected, latest, editable, members, latestTasks, choices, revisions, nextBefore } =
     detail;
   const [comparisonOptions, comparisons] = await Promise.all([
-    comparing
+    comparing && members.length > 0
       ? loadBenchmarkExperimentAxes({
           workspaceId,
           factoryId: factory.id,
           suiteRevisionId: selected.id,
           supabase: scope.supabase,
+          admin: createSupabaseAdminClient(),
         })
       : null,
     factory.canManage
@@ -128,7 +129,7 @@ export default async function BenchmarkSuitePage({
         actionsRightOnDesktop
         actions={
           <>
-            {scope.canEdit ? (
+            {scope.canEdit && members.length > 0 ? (
               <Link
                 className="ui-button ui-button-primary"
                 href={`${suitePath({ revision: selected.id, compare: "1" })}#compare-configurations`}
@@ -157,19 +158,26 @@ export default async function BenchmarkSuitePage({
               : "Only factory managers can edit benchmark suites."}
           </p>
         ) : null}
-        {comparisonOptions ? (
+        {comparing ? (
           <PageSection anchorId="compare-configurations" title="Compare configurations">
-            <BenchmarkComparisonForm
-              key={`${factory.id}:${selected.id}`}
-              workspaceId={workspaceId}
-              workspaceSlug={workspaceSlug}
-              factoryId={factory.id}
-              suiteId={selected.suite_id}
-              suiteRevisionId={selected.id}
-              suiteRevisionNumber={selected.revision_number}
-              taskCount={members.length}
-              options={comparisonOptions}
-            />
+            {comparisonOptions ? (
+              <BenchmarkComparisonForm
+                key={`${factory.id}:${selected.id}`}
+                workspaceId={workspaceId}
+                workspaceSlug={workspaceSlug}
+                factoryId={factory.id}
+                suiteId={selected.suite_id}
+                suiteRevisionId={selected.id}
+                suiteRevisionNumber={selected.revision_number}
+                taskCount={members.length}
+                options={comparisonOptions}
+              />
+            ) : (
+              <p className="ui-sheet type-secondary px-4 py-5 text-muted sm:px-5">
+                Revision {selected.revision_number} has no frozen tasks. Save a suite revision with
+                at least one task before comparing configurations.
+              </p>
+            )}
           </PageSection>
         ) : null}
         {comparisons ? (
@@ -201,8 +209,11 @@ export default async function BenchmarkSuitePage({
                       </Link>
                       <p className="type-annotation text-muted">
                         {comparison.counts.planned} planned · {comparison.counts.terminal} finished
-                        · {comparison.counts.pending} pending · {comparison.counts.excluded}{" "}
-                        excluded
+                        ·{" "}
+                        {comparison.scheduleState === "unconfigured"
+                          ? "Not scheduled"
+                          : `${comparison.counts.pending} pending`}{" "}
+                        · {comparison.counts.excluded} excluded
                       </p>
                     </li>
                   ))}

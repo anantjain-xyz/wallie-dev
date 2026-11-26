@@ -26,9 +26,10 @@ for (const width of [1440, 390]) {
     for (const [id, cause] of explanations) {
       const card = page.locator(`[data-failure-scenario="${id}"]`);
       await expect(card).toContainText(cause);
-      await expect(
-        card.getByRole("button", { name: /Build run,.*activity: Failed/ }),
-      ).toHaveAttribute("aria-expanded", "false");
+      await expect(card.getByRole("button", { name: "View full log" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
     }
     const success = page.locator('[data-failure-scenario="success"]');
     await expect(success).toContainText("Completed");

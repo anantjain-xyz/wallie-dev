@@ -95,9 +95,17 @@ test("the frozen frontier explains comparable measured cost, repeats and exclusi
     storagePaths = seeded.storagePaths;
     const comparisonPath = `${benchmarks}/${seeded.suiteId}/comparisons/${experimentId}?factory=${fixture.factoryId}&scorerRevisionId=${seeded.accuracyScorerRevisionId}`;
     const endpoint = `/api/workspaces/${fixture.workspaceId}/factories/${fixture.factoryId}/benchmarks/experiments/${experimentId}/frontier?scorerRevisionId=${seeded.accuracyScorerRevisionId}`;
+    const section = page.locator("#cost-quality-frontier");
+    await page.goto(comparisonPath.split("&scorerRevisionId=")[0]);
+    await expect(
+      section.getByRole("heading", { name: "Choose the scorer for this decision" }),
+    ).toBeVisible();
+    await expect(
+      section.getByRole("table", { name: "Frontier configuration results" }),
+    ).toHaveCount(0);
+    await expect(section.getByRole("button", { name: "Apply to routing" })).toHaveCount(0);
     await page.goto(comparisonPath);
 
-    const section = page.locator("#cost-quality-frontier");
     await expect(section.getByRole("heading", { name: "Cost and quality frontier" })).toBeVisible();
     const response = await page.request.get(endpoint);
     expect(response.ok()).toBe(true);

@@ -3,6 +3,8 @@ import { z } from "zod";
 const id = z.string().uuid();
 const occurredAt = z.string().datetime({ offset: true });
 
+export const factoryInboxKindSchema = z.enum(["review", "clarification"]);
+
 const factoryInboxItemSchema = z
   .object({
     sessionId: id,
@@ -30,6 +32,7 @@ const factoryInboxItemSchema = z
 export const factoryInboxQuerySchema = z.object({
   workspaceId: id,
   factoryId: id.optional(),
+  kind: factoryInboxKindSchema.optional(),
   cursor: z.string().min(1).max(180).optional(),
 });
 
@@ -55,3 +58,4 @@ export const factoryInboxSchema = z.object({
 
 export type FactoryInbox = z.infer<typeof factoryInboxSchema>;
 export type FactoryInboxItem = z.infer<typeof factoryInboxItemSchema>;
+export type FactoryInboxKind = z.infer<typeof factoryInboxKindSchema>;

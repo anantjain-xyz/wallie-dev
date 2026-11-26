@@ -7,7 +7,13 @@ import type {
   BenchmarkComparison,
   BenchmarkComparisonTrial,
 } from "@/lib/factory-benchmarks/comparison-contracts";
+import { benchmarkScorerLabel } from "@/lib/factory-benchmarks/comparison-labels";
 
+import {
+  BenchmarkComparisonSchedule,
+  type BenchmarkScheduleHandoff,
+} from "./benchmark-comparison-schedule";
+import { BenchmarkComparisonTrialFocus } from "./benchmark-comparison-trial-focus";
 import {
   benchmarkCandidateRole,
   benchmarkHarnessNames,
@@ -161,6 +167,16 @@ function Pin({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+function ScorerLabel({ scorer, revisionId }: { scorer?: Scorer; revisionId: string }) {
+  if (scorer) return benchmarkScorerLabel(scorer.name, scorer.revisionNumber);
+  return (
+    <details>
+      <summary className="cursor-pointer">Scorer revision unavailable</summary>
+      <code className="type-annotation [overflow-wrap:anywhere]">{revisionId}</code>
+    </details>
+  );
+}
+
 function CandidatePins({ candidate }: { candidate: Candidate }) {
   return (
     <details className="mt-2">
@@ -204,9 +220,9 @@ function QualityBreakdown({
           const scorer = scorers.get(dimension.scorerRevisionId);
           return (
             <li className="space-y-1 py-2 first:pt-0" key={dimension.scorerRevisionId}>
-              <p className="font-medium">
-                {scorer ? `${scorer.name} · r${scorer.revisionNumber}` : dimension.scorerRevisionId}
-              </p>
+              <div className="font-medium">
+                <ScorerLabel scorer={scorer} revisionId={dimension.scorerRevisionId} />
+              </div>
               <p className="text-muted">
                 {dimension.pass} passed / {dimension.denominator} eligible
               </p>
@@ -235,11 +251,13 @@ function QualityBreakdown({
 
 function Configurations({
   candidates,
+  definitionLabels,
   scorers,
   firstHref,
   nextHref,
 }: {
   candidates: BenchmarkComparison["candidates"];
+  definitionLabels: Readonly<Record<string, string>>;
   scorers: ReadonlyMap<string, Scorer>;
   firstHref?: string;
   nextHref?: string;
@@ -279,6 +297,14 @@ function Configurations({
                     <p className="text-muted">
                       {benchmarkRuntimeNames[candidate.plannedRuntime] ?? candidate.plannedRuntime}
                     </p>
+                    <p>
+                      {definitionLabels[
+                        `${candidate.definitionRevisionId}:${candidate.definitionDigest}`
+                      ] ?? "Factory revision details unavailable"}
+                    </p>
+                    {candidate.toolchain ? (
+                      <p className="text-muted">{candidate.toolchain}</p>
+                    ) : null}
                     <CandidatePins candidate={candidate} />
                   </th>
                   <td className="space-y-3 px-4 py-4 sm:px-5">
@@ -332,19 +358,22 @@ function Configurations({
 
 function TrialRows({
   rows,
+  pageKey,
   scorers,
   trialHref,
   firstHref,
   nextHref,
 }: {
   rows: BenchmarkComparison["trialRows"];
+  pageKey: string;
   trialHref: (trialId: string) => string;
   scorers: ReadonlyMap<string, Scorer>;
   firstHref?: string;
   nextHref?: string;
 }) {
   return (
-    <PageSection anchorId="comparison-trials" title="Trials">
+    <PageSection anchorId="comparison-trials" className="scroll-mt-24" title="Trials">
+      <BenchmarkComparisonTrialFocus pageKey={pageKey} />
       <div className="ui-sheet min-w-0">
         {rows.length ? (
           <table className="type-secondary w-full table-fixed text-left [overflow-wrap:anywhere]">
@@ -366,8 +395,9 @@ function TrialRows({
                   <tr className="border-t border-border align-top" key={trial.trialId}>
                     <th className="space-y-1 px-4 py-3 font-normal sm:px-5" scope="row">
                       <Link
-                        className="type-label underline decoration-border underline-offset-4 hover:text-accent"
+                        className="type-label scroll-mt-24 underline decoration-border underline-offset-4 hover:text-accent"
                         href={trialHref(trial.trialId)}
+                        id={`trial-${trial.trialId}`}
                         prefetch={false}
                       >
                         {trial.task.name}
@@ -422,11 +452,18 @@ function TrialRows({
                       </details>
                     </th>
                     <td className="space-y-1.5 px-4 py-3 sm:px-5">
-                      <Status {...status} />
+                      <Status
+                        {...status}
+                        label={
+                          trial.reason === "schedule_unconfigured" ? "Not scheduled" : status.label
+                        }
+                      />
                       {trial.eligibilityReason ? (
                         <p className="text-muted">{trial.eligibilityReason}</p>
                       ) : null}
-                      {trial.reason && trial.reason !== trial.eligibilityReason ? (
+                      {trial.reason &&
+                      trial.reason !== "schedule_unconfigured" &&
+                      trial.reason !== trial.eligibilityReason ? (
                         <p className="text-muted">{benchmarkReasonLabel(trial.reason)}</p>
                       ) : null}
                       {trial.deadlineElapsed && trial.status !== "timed_out" ? (
@@ -448,15 +485,17 @@ function TrialRows({
                           <ul className="mt-2 space-y-2">
                             {trial.scores.map((score) => {
                               const scorer = scorers.get(score.scorerRevisionId);
-                              const label = scorer
-                                ? `${scorer.name} · r${scorer.revisionNumber}`
-                                : score.scorerRevisionId;
                               return (
                                 <li key={score.scorerRevisionId}>
-                                  <p>
-                                    {label} · {qualityLabels[score.status]}
+                                  <div>
+                                    <ScorerLabel
+                                      scorer={scorer}
+                                      revisionId={score.scorerRevisionId}
+                                    />
+                                    {" · "}
+                                    {qualityLabels[score.status]}
                                     {score.score ? ` · ${String(score.score.value)}` : null}
-                                  </p>
+                                  </div>
                                   {score.reason ? (
                                     <p className="text-muted">
                                       {benchmarkReasonLabel(score.reason)}
@@ -501,6 +540,10 @@ function TrialRows({
 
 export function BenchmarkComparisonResults({
   comparison,
+  definitionLabels,
+  policyLabel,
+  scheduleHandoff,
+  trialPageKey,
   frontier,
   trialHref,
   firstTrialsHref,
@@ -509,6 +552,10 @@ export function BenchmarkComparisonResults({
   nextConfigurationsHref,
 }: {
   comparison: BenchmarkComparison;
+  definitionLabels: Readonly<Record<string, string>>;
+  policyLabel: string;
+  scheduleHandoff?: BenchmarkScheduleHandoff;
+  trialPageKey: string;
   frontier?: ReactNode;
   trialHref: (trialId: string) => string;
   firstTrialsHref?: string;
@@ -523,6 +570,7 @@ export function BenchmarkComparisonResults({
     <>
       <PageSection title="Comparison summary">
         <div className="ui-sheet type-secondary divide-y divide-border">
+          <BenchmarkComparisonSchedule state={comparison.scheduleState} handoff={scheduleHandoff} />
           <div className="space-y-3 px-4 py-4 sm:px-5">
             <TrialCounts counts={counts} />
             <SpendBreakdown spend={spend} />
@@ -530,10 +578,7 @@ export function BenchmarkComparisonResults({
           <div className="px-4 py-4 sm:px-5">
             <MetadataList>
               <MetadataItem label="Suite revision" value={`Revision ${suite.revisionNumber}`} />
-              <MetadataItem
-                label="Schedule"
-                value={benchmarkReasonLabel(comparison.scheduleState)}
-              />
+              <MetadataItem label="Replay policy" value={policyLabel} />
               <MetadataItem label="Repetitions" value={comparison.repetitions} />
               <MetadataItem label="Configurations" value={comparison.candidateCount} />
               <MetadataItem
@@ -557,7 +602,7 @@ export function BenchmarkComparisonResults({
                 {scorers.map((scorer) => (
                   <Pin
                     key={scorer.id}
-                    label={`${scorer.name} · r${scorer.revisionNumber}`}
+                    label={benchmarkScorerLabel(scorer.name, scorer.revisionNumber)}
                     value={`${scorer.id} · SHA-256 ${scorer.definitionDigest}`}
                   />
                 ))}
@@ -570,12 +615,14 @@ export function BenchmarkComparisonResults({
       {frontier}
       <Configurations
         candidates={candidates}
+        definitionLabels={definitionLabels}
         scorers={scorerByRevision}
         firstHref={firstConfigurationsHref}
         nextHref={nextConfigurationsHref}
       />
       <TrialRows
         rows={comparison.trialRows}
+        pageKey={trialPageKey}
         trialHref={trialHref}
         scorers={scorerByRevision}
         firstHref={firstTrialsHref}

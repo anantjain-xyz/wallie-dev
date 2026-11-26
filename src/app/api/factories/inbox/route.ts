@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const { workspaceId, factoryId, cursor } = query.data;
+    const { workspaceId, factoryId, kind, cursor } = query.data;
     const access = await requireWorkspaceAccessById(workspaceId);
     if (!access.ok) {
       return Response.json({ error: access.error }, { status: access.status, headers });
@@ -24,6 +24,7 @@ export async function GET(request: Request) {
       supabase: access.context.supabase,
       workspaceId: access.context.workspace.id,
       factoryId,
+      kind,
       cursor,
     });
     return inbox
