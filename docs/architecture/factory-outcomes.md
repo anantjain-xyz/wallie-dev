@@ -192,7 +192,8 @@ immediately preceding period of equal length.
 | Delivery cost, PR throughput, and reverts | Canonical PR merge time. Each metric applies its own verified evidence rules.        |
 | Operating cost                            | Attempt start time for the numerator and canonical PR merge time for the denominator |
 
-The chart and corresponding table open the same evidence. Phase, sample
+Each outcome table combines values and comparison bars with a single link to
+the exact evidence per value. Phase, sample
 status, attribution, and revert filters apply before pagination. Cost ratios
 link separately to the contributing attempts and the exact observed merges.
 Projection freshness and capture boundaries are reported with the results.

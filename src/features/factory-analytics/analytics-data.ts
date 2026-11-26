@@ -11,6 +11,7 @@ import {
   type AnalyticsEvidenceSelection,
   type AnalyticsQuery,
   type AnalyticsWindow,
+  analyticsEnvironmentSchema,
   analyticsDeliveryStatusSchema,
   analyticsDimensionSchema,
   analyticsFlowPhaseSchema,
@@ -180,6 +181,22 @@ async function read<T>(
     return { status: "unavailable" };
   }
   return { status: "unavailable" };
+}
+
+export async function loadDeploymentEnvironments({
+  supabase,
+  workspaceId,
+  factoryId,
+}: Omit<AnalyticsContext, "query">) {
+  const result = await read(
+    () =>
+      supabase.rpc("list_factory_analytics_deployment_environments", {
+        p_workspace_id: workspaceId,
+        p_factory_id: factoryId,
+      }),
+    z.array(analyticsEnvironmentSchema),
+  );
+  return result.status === "ready" ? result.data : null;
 }
 
 async function loadAnalyticsPeriod(

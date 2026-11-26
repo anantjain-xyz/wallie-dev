@@ -1,18 +1,21 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { isValidElement, type ReactNode } from "react";
 
 import type {
   AnalyticsEvidence as Evidence,
   loadAnalyticsEvidence,
 } from "@/features/factory-analytics/analytics-data";
 import type { AnalyticsQuery } from "@/features/factory-analytics/analytics-query";
+import { type AnalyticsLabels, throughputLabel } from "./analytics-labels";
 import {
   type AnalyticsHref,
   dimensionLabels,
   durationLabel,
   evidenceTitles,
+  metricPanelIds,
   moneyFormat,
   periodLabels,
+  TechnicalDetails,
   timeLabel,
   windowLabel,
 } from "@/features/factory-analytics/analytics-view-shared";
@@ -23,6 +26,8 @@ type EvidenceRow = {
   key: string;
   sessionId: string;
   runId?: string | null;
+  attempt?: number | null;
+  runContext?: string;
   title: string;
   details: Detail[];
   extra?: ReactNode;
@@ -36,20 +41,47 @@ type EvidenceItem<T extends Evidence["metric"]> = Evidence extends infer Page
   : never;
 
 function sourceId(value: string | null | undefined) {
-  return value ? <code className="break-all font-mono">{value}</code> : null;
+  return value ? <SourceReference ids={[value]} /> : null;
 }
 
 function sourceIds(ids: readonly string[]) {
-  return ids.length > 0 ? (
+  return ids.length ? <SourceReference ids={ids} /> : null;
+}
+
+function SourceReference({ ids }: { ids: readonly string[] }) {
+  return ids.length === 1 ? (
+    <code className="break-all font-mono">{ids[0]}</code>
+  ) : (
     <ul className="space-y-1">
       {ids.map((id) => (
-        <li key={id}>{sourceId(id)}</li>
+        <li key={id}>
+          <code className="break-all font-mono">{id}</code>
+        </li>
       ))}
     </ul>
-  ) : null;
+  );
 }
 
 function Details({ values }: { values: readonly Detail[] }) {
+  const readable: Detail[] = [];
+  const technical: Detail[] = [];
+  for (const item of values) {
+    if (item[1] == null) continue;
+    (isValidElement(item[1]) && item[1].type === SourceReference ? technical : readable).push(item);
+  }
+  return (
+    <>
+      {readable.length > 0 && <DetailList values={readable} />}
+      {technical.length > 0 && (
+        <TechnicalDetails>
+          <DetailList values={technical} />
+        </TechnicalDetails>
+      )}
+    </>
+  );
+}
+
+function DetailList({ values }: { values: readonly Detail[] }) {
   return (
     <dl className="space-y-1">
       {values.map(([label, value]) =>
@@ -64,6 +96,33 @@ function Details({ values }: { values: readonly Detail[] }) {
         ),
       )}
     </dl>
+  );
+}
+
+function RunLink({
+  runId,
+  attempt,
+  stage,
+  context,
+  workspaceSlug,
+}: {
+  runId: string;
+  attempt?: number | null;
+  stage?: string;
+  context?: string;
+  workspaceSlug: string;
+}) {
+  const recordedAttempt = attempt != null && attempt > 0 ? attempt : undefined;
+  return (
+    <Link
+      className="break-words underline underline-offset-4"
+      href={workspaceRunDetailPath(workspaceSlug, runId, { attempt: recordedAttempt })}
+      prefetch={false}
+    >
+      {["Open run", recordedAttempt ? `attempt ${recordedAttempt}` : null, stage, context]
+        .filter(Boolean)
+        .join(" · ")}
+    </Link>
   );
 }
 
@@ -91,7 +150,11 @@ function evidenceStatus(status: string) {
   return statusLabels[status] ?? status;
 }
 
-function flowRow(item: EvidenceItem<"flow">, workspaceSlug: string): EvidenceRow {
+function flowRow(
+  item: EvidenceItem<"flow">,
+  workspaceSlug: string,
+  labels: AnalyticsLabels,
+): EvidenceRow {
   return {
     key: `${item.sessionId}-${item.phase}-${item.sourceStartedAt}-${item.sourceEndedAt}`,
     sessionId: item.sessionId,
@@ -120,16 +183,16 @@ function flowRow(item: EvidenceItem<"flow">, workspaceSlug: string): EvidenceRow
                   [
                     "Run",
                     observation.runId && (
-                      <Link
-                        className="break-all underline"
-                        href={workspaceRunDetailPath(workspaceSlug, observation.runId)}
-                        prefetch={false}
-                      >
-                        Run {observation.runId}
-                      </Link>
+                      <RunLink
+                        attempt={observation.attemptCount}
+                        context={timeLabel(observation.occurredAt)}
+                        runId={observation.runId}
+                        stage={labels.runStages.get(observation.runId)}
+                        workspaceSlug={workspaceSlug}
+                      />
                     ),
                   ],
-                  ["Attempt", observation.attemptCount],
+                  ["Run ID", sourceId(observation.runId)],
                   ["Artifact ID", sourceId(observation.artifactId)],
                 ]}
               />
@@ -167,6 +230,8 @@ function costRow(item: EvidenceItem<"delivery-cost">): EvidenceRow {
     key: item.runId,
     sessionId: item.sessionId,
     runId: item.runId,
+    attempt: item.attemptCount,
+    runContext: evidenceStatus(item.runStatus),
     title:
       item.costUsd === null
         ? evidenceStatus(item.costState)
@@ -202,12 +267,22 @@ function costMergeRow(item: EvidenceItem<"cost-merges">): EvidenceRow {
   };
 }
 
-function throughputRow(item: EvidenceItem<"throughput">): EvidenceRow {
+function throughputRow(
+  item: EvidenceItem<"throughput">,
+  dimension: AnalyticsQuery["dimension"],
+  labels: AnalyticsLabels,
+): EvidenceRow {
+  const actorKey = item.invokingActorServicePrincipalId
+    ? `service:${item.invokingActorServicePrincipalId}`
+    : item.invokingActorMemberId
+      ? `member:${item.invokingActorMemberId}`
+      : null;
   return {
     key: `${item.mergeId}-${item.runId}-${item.attemptCount}`,
     sessionId: item.sessionId,
     runId: item.runId,
-    title: `PR #${item.pullRequestNumber} · ${item.bucketLabel}`,
+    attempt: item.attemptCount,
+    title: `PR #${item.pullRequestNumber} · ${throughputLabel(labels.buckets, dimension, item.bucketKey, item.bucketLabel)}`,
     details: [
       ["Provider merge time", timeLabel(item.mergedAt)],
       ["Canonical merge ID", sourceId(item.mergeId)],
@@ -215,6 +290,7 @@ function throughputRow(item: EvidenceItem<"throughput">): EvidenceRow {
       ["Repository ID", sourceId(item.repositoryId)],
       ["Attempt", item.attemptCount],
       ["Request source", item.requestSource],
+      ["Requested by", actorKey && throughputLabel(labels.buckets, "person", actorKey, "Unknown")],
       ["Request receipt", sourceId(item.requestSourceReceiptId)],
       ["Invoking member", sourceId(item.invokingActorMemberId)],
       ["Invoking service principal", sourceId(item.invokingActorServicePrincipalId)],
@@ -226,7 +302,12 @@ function throughputRow(item: EvidenceItem<"throughput">): EvidenceRow {
       ["Model", item.modelName],
       ["Harness", item.harness],
       ["Worker runtime", item.workerRuntime],
-      ["Definition revision", sourceId(item.definitionRevisionId)],
+      [
+        "Definition revision",
+        item.definitionRevisionId &&
+          throughputLabel(labels.buckets, "definition", item.definitionRevisionId, "Unknown"),
+      ],
+      ["Definition revision ID", sourceId(item.definitionRevisionId)],
       ["Definition digest", sourceId(item.definitionDigest)],
     ],
   };
@@ -303,10 +384,15 @@ function revertRow(item: EvidenceItem<"revert">): EvidenceRow {
   };
 }
 
-function getRows(evidence: Evidence, workspaceSlug: string) {
+function getRows(
+  evidence: Evidence,
+  workspaceSlug: string,
+  dimension: AnalyticsQuery["dimension"],
+  labels: AnalyticsLabels,
+) {
   switch (evidence.metric) {
     case "flow":
-      return evidence.items.map((item) => flowRow(item, workspaceSlug));
+      return evidence.items.map((item) => flowRow(item, workspaceSlug, labels));
     case "merge":
     case "deployment":
       return evidence.items.map(deliveryRow);
@@ -316,7 +402,7 @@ function getRows(evidence: Evidence, workspaceSlug: string) {
     case "cost-merges":
       return evidence.items.map(costMergeRow);
     case "throughput":
-      return evidence.items.map(throughputRow);
+      return evidence.items.map((item) => throughputRow(item, dimension, labels));
     case "revert":
       return evidence.items.map(revertRow);
   }
@@ -327,26 +413,35 @@ export function AnalyticsEvidence({
   query,
   evidence,
   href,
+  labels,
   workspaceSlug,
 }: {
   bucketLabel: string | undefined;
   query: AnalyticsQuery;
   evidence: Awaited<ReturnType<typeof loadAnalyticsEvidence>>;
   href: AnalyticsHref;
+  labels: AnalyticsLabels;
   workspaceSlug: string;
 }) {
   const selection = query.evidence;
   if (!selection) return null;
   const result = evidence?.status === "ready" ? evidence.data : null;
-  const rows = result ? getRows(result, workspaceSlug) : [];
+  const rows = result ? getRows(result, workspaceSlug, query.dimension, labels) : [];
   const window = selection.period === "compare" && query.comparison ? query.comparison : query;
   const facet = "facet" in selection ? selection.facet : null;
-  const bucket =
-    selection.metric === "throughput" && selection.bucket
-      ? (bucketLabel ??
-        (result?.metric === "throughput" ? result.items[0]?.bucketLabel : null) ??
-        selection.bucket)
-      : null;
+  const selectedBucket = selection.metric === "throughput" ? selection.bucket : undefined;
+  const retainedBucket = result?.metric === "throughput" ? result.items[0] : undefined;
+  const bucket = selectedBucket
+    ? (bucketLabel ??
+      (retainedBucket
+        ? throughputLabel(
+            labels.buckets,
+            query.dimension,
+            retainedBucket.bucketKey,
+            retainedBucket.bucketLabel,
+          )
+        : "Selected breakdown no longer available"))
+    : null;
 
   return (
     <section
@@ -373,16 +468,32 @@ export function AnalyticsEvidence({
               Credential and budget details are restricted to factory managers.
             </p>
           )}
+          {selectedBucket && (
+            <TechnicalDetails>
+              <code className="break-all">{selectedBucket}</code>
+            </TechnicalDetails>
+          )}
         </div>
-        <Link className="ui-button px-3 py-2 text-sm" href={href()} prefetch={false}>
+        <Link
+          className="ui-button px-3 py-2 text-sm"
+          href={href() + "#" + metricPanelIds[selection.metric]}
+          prefetch={false}
+        >
           Close evidence
         </Link>
       </header>
       {!result || rows.length === 0 ? (
         <p className="type-secondary border-t border-border p-4 text-muted sm:px-6">
-          {result
-            ? "No retained facts match this selection."
-            : "Evidence unavailable. Retry the current selection."}
+          {result ? (
+            "No retained facts match this selection."
+          ) : (
+            <>
+              Evidence unavailable.{" "}
+              <a className="text-accent underline underline-offset-4" href={href(selection)}>
+                Try again
+              </a>
+            </>
+          )}
         </p>
       ) : (
         <div className="overflow-x-auto border-t border-border">
@@ -405,7 +516,7 @@ export function AnalyticsEvidence({
                   <tr className="border-t border-border align-top" key={row.key}>
                     <th className="px-4 py-3 font-medium sm:px-6" scope="row">
                       {number === undefined ? (
-                        sourceId(row.sessionId)
+                        "Session details unavailable"
                       ) : (
                         <Link
                           className="underline"
@@ -417,19 +528,25 @@ export function AnalyticsEvidence({
                       )}
                       {row.runId && (
                         <div className="mt-1">
-                          <Link
-                            className="break-all underline"
-                            href={workspaceRunDetailPath(workspaceSlug, row.runId)}
-                            prefetch={false}
-                          >
-                            Run {row.runId}
-                          </Link>
+                          <RunLink
+                            attempt={row.attempt}
+                            context={row.runContext}
+                            runId={row.runId}
+                            stage={labels.runStages.get(row.runId)}
+                            workspaceSlug={workspaceSlug}
+                          />
                         </div>
                       )}
                     </th>
                     <td className="space-y-2 px-4 py-3 sm:px-6">
                       <p className="break-words font-medium">{row.title}</p>
-                      <Details values={row.details} />
+                      <Details
+                        values={[
+                          ...row.details,
+                          ["Session ID", sourceId(row.sessionId)],
+                          ["Run ID", sourceId(row.runId)],
+                        ]}
+                      />
                       {row.extra}
                     </td>
                   </tr>
