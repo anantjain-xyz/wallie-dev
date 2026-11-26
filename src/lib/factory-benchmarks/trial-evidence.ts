@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import {
   loadScopedRunTranscript,
-  RunTranscriptEventsError,
+  RunTranscriptReadError,
   RunTranscriptResetError,
 } from "@/features/wallie/run-transcript";
 import type { RunTranscriptQuery } from "@/features/wallie/run-transcript-contracts";
@@ -122,10 +122,17 @@ export async function readBenchmarkTrialPageEvidence(
       initial = false;
       return detail;
     });
+    if (
+      !transcript &&
+      detail.trial.started &&
+      detail.output.availability !== "withheld" &&
+      detail.output.owner
+    )
+      detail = await read();
     return { detail, transcript };
   } catch (error) {
-    if (error instanceof RunTranscriptEventsError) detail = await read();
-    else if (!(error instanceof RunTranscriptResetError)) throw error;
+    if (!(error instanceof RunTranscriptReadError || error instanceof RunTranscriptResetError))
+      throw error;
     return {
       detail,
       transcript:

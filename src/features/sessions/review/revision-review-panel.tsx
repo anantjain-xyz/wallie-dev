@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TimeDisplay } from "@/components/shared/time-display";
-import { timestampMs } from "@/components/shared/time-format";
+import { formatLocalizedTimestamp, timestampMs } from "@/components/shared/time-format";
 import { SelectField } from "@/components/ui/select";
 import type { SessionArtifactMetadata } from "@/features/sessions/types";
 import { reviewArtifactLink } from "./artifact-review-link";
@@ -88,12 +88,27 @@ export function RevisionReviewPanel({
   const detailSequence = useRef(0);
   if (view === "brief" && selectedBeforeId !== null) setSelectedBeforeId(null);
 
-  const previous = versions?.find((row) => row.version < version);
-  const previousId =
-    previous?.id &&
-    !versions?.some((row) => row.version === previous.version && row.id !== previous.id)
-      ? previous.id
-      : "";
+  const predecessors = versions?.filter((row) => row.version === version - 1) ?? [];
+  const previous = predecessors.length === 1 ? predecessors[0] : null;
+  const previousId = previous?.id ?? "";
+  const compareOptions = (versions ?? []).flatMap((row) =>
+    row.id && row.id !== artifactId
+      ? [
+          {
+            label: [
+              `Version ${row.version}`,
+              formatLocalizedTimestamp(row.createdAt),
+              `Attempt ${row.attempt}`,
+              row.authorLabel,
+              row.changesRequested ? "Changes requested" : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            value: row.id,
+          },
+        ]
+      : [],
+  );
   const beforeId = (view === "compare" ? selectedBeforeId : null) ?? previousId;
   const compareError = beforeError?.id === beforeId ? beforeError.message : null;
   useEffect(
@@ -273,9 +288,11 @@ export function RevisionReviewPanel({
     } else if (!previousId) {
       content = (
         <p className="text-sm text-muted">
-          {previous
-            ? "The previous revision is ambiguous. Select an artifact in Compare versions."
-            : "No earlier version."}
+          {predecessors.length > 1
+            ? "More than one artifact has the previous version number. Choose one by date and attempt in Compare versions."
+            : compareOptions.length
+              ? "No exact previous version is available. Choose an artifact in Compare versions."
+              : "No earlier version is available to compare."}
         </p>
       );
     } else if (comparison?.kind === "complete_sources") {
@@ -375,16 +392,20 @@ export function RevisionReviewPanel({
           label={`Compare version ${version} with`}
           labelClassName="text-xs font-normal"
           onValueChange={setSelectedBeforeId}
-          options={(versions ?? [])
-            .filter((row) => row.id && row.id !== artifactId)
-            .map((row) => ({
-              label: `Version ${row.version} · ${row.authorLabel} · ${row.id!.slice(0, 8)}`,
-              value: row.id!,
-            }))}
+          options={compareOptions}
           triggerClassName="min-h-11 text-xs"
           value={beforeId}
           wrap
         />
+        {versions && !previousId ? (
+          <p className="text-xs text-muted">
+            {predecessors.length > 1
+              ? "Choose a version by its date and attempt. More than one artifact has the previous version number."
+              : compareOptions.length
+                ? "No exact previous version is available. Choose another recorded version."
+                : "No other recorded version is available to compare."}
+          </p>
+        ) : null}
         {compareError ? (
           <p role="alert" className="text-xs text-danger">
             {compareError} Use Refresh review to retry.

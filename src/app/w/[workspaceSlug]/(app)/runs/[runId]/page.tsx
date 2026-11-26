@@ -6,6 +6,9 @@ import { RunScoreSection } from "@/features/factory-scorers/run-score-section";
 import { RunInspector } from "@/features/wallie/run-inspector";
 import { loadRunInspectorData } from "@/features/wallie/run-inspector-data";
 import { RunTranscriptLive } from "@/features/wallie/run-transcript-live";
+import { RunsListRefresh } from "@/features/wallie/runs-list-filters";
+import { runListReturn } from "@/features/wallie/runs-list-state";
+import { workspaceRunDetailPath } from "@/lib/routes";
 
 const executionProfileAttempt = z
   .string()
@@ -25,16 +28,18 @@ export default async function RunInspectorPage({
   const attempt = executionProfileAttempt.safeParse(query.attempt);
   if (!attempt.success) notFound();
   const data = await loadRunInspectorData(workspaceSlug, runId, attempt.data);
-  const canCaptureBenchmark =
-    (data.run.status === "success" ||
-      data.run.status === "error" ||
-      data.run.status === "canceled") &&
-    (data.frozenContext.kind !== "recorded" || data.frozenContext.context.canManage);
+  const returnTo = runListReturn(data.workspaceSlug, query.fromRuns);
+  const newerRunHref = data.run.newerRunId
+    ? workspaceRunDetailPath(data.workspaceSlug, data.run.newerRunId) +
+      (returnTo && typeof query.fromRuns === "string"
+        ? `?${new URLSearchParams({ fromRuns: query.fromRuns })}`
+        : "")
+    : undefined;
   return (
     <RunInspector
       artifact={data.artifact}
       benchmarkCapture={
-        canCaptureBenchmark ? (
+        data.canCaptureBenchmark ? (
           <CaptureBenchmarkRun
             key={data.run.id}
             workspaceId={data.workspaceId}
@@ -59,6 +64,9 @@ export default async function RunInspectorPage({
       }
       memoryProposalHref={data.memoryProposalHref}
       mcp={data.mcp}
+      names={data.names}
+      newerRunHref={newerRunHref}
+      returnTo={returnTo}
       initialNow={new Date().toISOString()}
       routingDecision={data.routingDecision}
       run={data.run}
@@ -67,11 +75,27 @@ export default async function RunInspectorPage({
       workspaceSlug={data.workspaceSlug}
       workflowInspection={data.workflowInspection ?? undefined}
       transcript={
-        <RunTranscriptLive
-          initialPage={data.transcript}
-          runId={data.run.id}
-          workspaceId={data.workspaceId}
-        />
+        data.transcript ? (
+          <RunTranscriptLive
+            key={`${data.run.id}:${data.transcript.attemptCount}`}
+            initialPage={data.transcript}
+            runId={data.run.id}
+            workspaceId={data.workspaceId}
+          />
+        ) : (
+          <section
+            className="ui-sheet space-y-3 p-4 sm:p-6"
+            aria-labelledby="transcript-unavailable"
+          >
+            <h2 id="transcript-unavailable" className="type-heading text-foreground">
+              Transcript
+            </h2>
+            <p className="type-body text-muted">
+              The transcript couldn’t load. The run outcome and other evidence are still available.
+            </p>
+            <RunsListRefresh label="Try again" />
+          </section>
+        )
       }
     />
   );

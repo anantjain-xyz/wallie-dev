@@ -42,6 +42,7 @@ export default async function WorkflowEditorPage({
     pageScope,
     snapshot.baseDefinition,
     snapshot.template,
+    snapshot.selectedDraftGraph ?? snapshot.graph,
   );
   return (
     <WorkflowEditor
@@ -50,6 +51,7 @@ export default async function WorkflowEditorPage({
       choices={choices}
       workspaceSlug={workspaceSlug}
       factoryId={factoryId}
+      recoveryOwner={pageScope.user.id}
       endpoint={workflowAuthoringApiPath(workspaceId, factoryId, workflow.data)}
     />
   );

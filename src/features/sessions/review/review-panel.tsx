@@ -47,6 +47,7 @@ export type ArtifactReviewPanelProps = {
   readOnlyReason?: ReviewSessionReadOnlyReason | null;
   anchor: ArtifactSourceAnchor | null;
   onClearAnchor: () => void;
+  onBlockingChange?: () => void;
   onClose?: () => void;
   openerRef?: RefObject<HTMLElement | null>;
   inline?: {
@@ -139,6 +140,7 @@ export function ArtifactReviewPanel({
   readOnlyReason: parentReadOnlyReason = null,
   anchor,
   onClearAnchor,
+  onBlockingChange,
   onClose,
   openerRef,
   inline,
@@ -607,6 +609,7 @@ export function ArtifactReviewPanel({
     );
     setReason("");
     setAnnouncement(status === "open" ? "Thread reopened." : `Thread ${status}.`);
+    if (result.thread.kind === "blocking") onBlockingChange?.();
     void loadThreads();
   }
 

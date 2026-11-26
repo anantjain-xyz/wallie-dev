@@ -8,6 +8,7 @@ import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { BenchmarkComparisonExports } from "@/features/factory-benchmarks/benchmark-comparison-exports";
 import { BenchmarkComparisonFrontier } from "@/features/factory-benchmarks/benchmark-comparison-frontier";
 import { BenchmarkComparisonResults } from "@/features/factory-benchmarks/benchmark-comparison-results";
+import { comparisonScheduleHandoff } from "@/features/factory-benchmarks/benchmark-comparison-schedule";
 import { loadBenchmarkScope } from "@/features/factory-benchmarks/suites-data";
 import {
   isWorkspaceOperator,
@@ -24,6 +25,8 @@ import {
   benchmarkComparisonIdSchema,
   benchmarkComparisonQuerySchema,
 } from "@/lib/factory-benchmarks/comparison-contracts";
+import { benchmarkReplayPolicyLabels } from "@/lib/factory-benchmarks/comparison-labels";
+import { loadBenchmarkDefinitionChoices } from "@/lib/factory-benchmarks/experiment-axes";
 import {
   benchmarkFrontierQuerySchema,
   type BenchmarkFrontierQuery,
@@ -150,6 +153,49 @@ export default async function BenchmarkComparisonPage({
   });
   if (comparison.suite.id !== suiteId || frontier.suite.id !== suiteId) notFound();
 
+  const fetchSchedulePins =
+    scope.canEdit && comparison.scheduleState === "unconfigured" && comparison.counts.eligible > 0;
+  const [definitions, policy, schedulePins] = await Promise.all([
+    loadBenchmarkDefinitionChoices({
+      supabase: scope.supabase,
+      workspaceId,
+      factoryId: factory.id,
+      revisionIds: [
+        ...new Set(comparison.candidates.map(({ definitionRevisionId }) => definitionRevisionId)),
+      ],
+      frozenAt: comparison.createdAt,
+    }),
+    scope.supabase
+      .from("factory_benchmark_replay_policy_revisions")
+      .select("revision_number,profile")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factory.id)
+      .eq("id", comparison.policyRevisionId)
+      .eq("policy_digest", comparison.policyDigest)
+      .maybeSingle(),
+    fetchSchedulePins
+      ? scope.supabase
+          .from("factory_benchmark_experiment_candidates")
+          .select(
+            "qualification_id,worker_runtime,live_inference_connection_revision,sandbox_connection_revision",
+          )
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factory.id)
+          .eq("experiment_id", comparison.experimentId)
+          .limit(100)
+      : null,
+  ]);
+  if (policy.error) throw policy.error;
+  if (schedulePins?.error) throw schedulePins.error;
+  const scheduleHandoff = comparisonScheduleHandoff({
+    canConfigure: scope.canEdit,
+    comparison,
+    endpoint: `/api/workspaces/${workspaceId}/factories/${factory.id}/benchmarks/experiments/${comparison.experimentId}/schedule`,
+    policyProfile: policy.data?.profile,
+    pins: schedulePins?.data ?? undefined,
+  });
+  const requiresScorerChoice =
+    comparison.scorers.length > 1 && !frontierQuery.data.scorerRevisionId;
   const resultCursors = {
     factory: factory.id,
     afterTrialId: trials.data.afterTrialId,
@@ -188,19 +234,35 @@ export default async function BenchmarkComparisonPage({
         eyebrowAsPlain
         actionsRightOnDesktop
         actions={
-          <Link className="ui-button" href="#result-exports">
-            Result exports
-          </Link>
+          <>
+            <Link className="ui-button" href="#comparison-trials">
+              Inspect trials
+            </Link>
+            <Link className="ui-button" href="#result-exports">
+              Result exports
+            </Link>
+          </>
         }
       />
       <div className="space-y-8">
         <BenchmarkComparisonResults
           comparison={comparison}
+          definitionLabels={Object.fromEntries(
+            definitions.map(({ id, digest, label }) => [`${id}:${digest}`, label]),
+          )}
+          policyLabel={
+            policy.data
+              ? `Revision ${policy.data.revision_number} · ${benchmarkReplayPolicyLabels[policy.data.profile]}`
+              : "Replay policy revision unavailable"
+          }
+          scheduleHandoff={scheduleHandoff}
+          trialPageKey={`${experimentId}:${trials.data.afterTrialId ?? ""}`}
           frontier={
             <BenchmarkComparisonFrontier
               frontier={frontier}
               action={`${workspaceBenchmarkComparisonPath(workspaceSlug, suiteId, experimentId)}#cost-quality-frontier`}
               preservedQuery={resultCursors}
+              requiresScorerChoice={requiresScorerChoice}
               routingDraft={
                 isWorkspaceOperator(access.currentMember)
                   ? { workspaceId, workspaceSlug, factoryId: factory.id }
@@ -223,6 +285,14 @@ export default async function BenchmarkComparisonPage({
               factory: factory.id,
               afterTrialId: trials.data.afterTrialId,
               afterCandidateKey: trials.data.afterCandidateKey,
+              scorerRevisionId: frontierQuery.data.scorerRevisionId,
+              qualityFloorPercent:
+                typeof query.qualityFloorPercent === "string"
+                  ? query.qualityFloorPercent
+                  : undefined,
+              minResolvedTrials:
+                typeof query.minResolvedTrials === "string" ? query.minResolvedTrials : undefined,
+              afterFrontierCandidateKey: frontierQuery.data.afterCandidateKey,
             })
           }
           firstTrialsHref={

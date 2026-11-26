@@ -209,8 +209,9 @@ test("previews a saved routing policy and displays its historical decision after
         timeout: 75_000,
       });
       await expect(inspected.getByText("Primary configuration", { exact: true })).toBeVisible();
+      await expect(inspected.getByText("Shadow only — not applied", { exact: true })).toBeVisible();
       await expect(
-        inspected.getByRole("link", { name: historical.policyRevisionId }),
+        inspected.getByRole("link", { name: "Open recorded policy revision" }),
       ).toHaveAttribute("href", new RegExp(`[?&]revision=${historical.policyRevisionId}(?:&|$)`));
       await expect(
         inspected.getByRole("link", { name: "Open exact comparison configuration" }),

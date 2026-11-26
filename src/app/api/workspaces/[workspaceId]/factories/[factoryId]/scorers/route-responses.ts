@@ -52,7 +52,11 @@ export function scorerWriteFailure(error: unknown) {
   };
   const message = code && Object.hasOwn(messages, code) ? messages[code] : undefined;
   return Response.json(
-    { error: message ?? "Could not publish the scorer revision." },
+    {
+      error: message ?? "Could not publish the scorer revision.",
+      ...(code === "23505" ? { code: "identifier_in_use" } : {}),
+      ...(code === "PT409" ? { code: "stale_revision" } : {}),
+    },
     { status: factoryErrorStatus(code), headers },
   );
 }

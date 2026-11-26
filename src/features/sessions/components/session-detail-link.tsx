@@ -59,7 +59,8 @@ function sessionDetailPrefetchHasBody(entry: PerformanceResourceTiming) {
   return entry.responseEnd > 0 && (entry.decodedBodySize > 0 || entry.transferSize > 0);
 }
 
-function waitForSessionDetailPrefetch(href: string, intentStartedAt: number) {
+function waitForSessionDetailPrefetch(href: string, intentStartedAt: number, signal?: AbortSignal) {
+  if (signal?.aborted || typeof PerformanceObserver === "undefined") return Promise.resolve();
   return new Promise<void>((resolve) => {
     let quietTimer = 0;
     let settled = false;
@@ -69,6 +70,7 @@ function waitForSessionDetailPrefetch(href: string, intentStartedAt: number) {
       observeResponses(list.getEntries());
     });
     observer.observe({ type: "resource", buffered: true });
+    signal?.addEventListener("abort", finish, { once: true });
     observeResponses(performance.getEntriesByType("resource"));
 
     function observeResponses(entries: PerformanceEntry[]) {
@@ -101,7 +103,9 @@ function waitForSessionDetailPrefetch(href: string, intentStartedAt: number) {
       window.clearTimeout(timeout);
       window.clearTimeout(quietTimer);
       observer.disconnect();
-      requestAnimationFrame(() => resolve());
+      signal?.removeEventListener("abort", finish);
+      if (signal?.aborted) resolve();
+      else requestAnimationFrame(() => resolve());
     }
   });
 }
@@ -124,12 +128,17 @@ type SessionDetailLinkProps = Omit<
   onFocus?: FocusEventHandler<HTMLAnchorElement>;
   onPointerDown?: PointerEventHandler<HTMLAnchorElement>;
   onPointerEnter?: PointerEventHandler<HTMLAnchorElement>;
+  onDeferredNavigation?: (
+    wait: (signal: AbortSignal) => Promise<void>,
+    navigate: () => void,
+  ) => void;
   trackSessionsToDetail?: boolean;
 };
 
 export function SessionDetailLink({
   href,
   onClick,
+  onDeferredNavigation,
   onFocus,
   onPointerDown,
   onPointerEnter,
@@ -173,11 +182,16 @@ export function SessionDetailLink({
         }
         event.preventDefault();
         const destination = href;
-        void waitForSessionDetailPrefetch(destination, prefetchedHrefs.get(destination)!).then(
-          () => {
-            router.push(destination);
-          },
-        );
+        const startedAt = prefetchedHrefs.get(destination)!;
+        const navigate = () => router.push(destination);
+        if (onDeferredNavigation) {
+          onDeferredNavigation(
+            (signal) => waitForSessionDetailPrefetch(destination, startedAt, signal),
+            navigate,
+          );
+        } else {
+          void waitForSessionDetailPrefetch(destination, startedAt).then(navigate);
+        }
       }}
       onFocus={(event) => {
         onFocus?.(event);

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -8,6 +9,11 @@ import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
+import {
+  benchmarkPublicationTime,
+  benchmarkReplayPolicyLabels,
+  benchmarkScorerLabel,
+} from "@/lib/factory-benchmarks/comparison-labels";
 import {
   benchmarkAxisSnapshotSchema,
   freezeBenchmarkAxesRequestSchema,
@@ -27,7 +33,7 @@ type Selection = {
   modelKey: string;
   harness: string;
   workerRuntime: string;
-  qualificationId: string;
+  profileKey: string;
 };
 
 const blankSelection: Selection = {
@@ -35,7 +41,7 @@ const blankSelection: Selection = {
   modelKey: "",
   harness: "",
   workerRuntime: "",
-  qualificationId: "",
+  profileKey: "",
 };
 
 type Definition = BenchmarkAxisCatalog["definitions"][number];
@@ -43,7 +49,7 @@ type Profile = BenchmarkAxisCatalog["profiles"][number];
 type ScorerRevision = BenchmarkAxisCatalog["scorerRevisions"][number];
 type Option = { value: string; label: string };
 type Axis = {
-  name: Exclude<keyof Selection, "qualificationId">;
+  name: Exclude<keyof Selection, "profileKey">;
   label: string;
   options: Option[];
 };
@@ -56,11 +62,6 @@ const harnessLabels: Record<string, string> = {
 };
 
 const runtimeLabels: Record<string, string> = { node: "Node.js", workerd: "Cloudflare Workers" };
-const policyLabels = {
-  blocked: "Blocked",
-  recorded_fixtures: "Recorded fixtures",
-  isolated_test: "Isolated test",
-};
 const comparisonDraftSchema = freezeBenchmarkAxesRequestSchema.omit({ experimentId: true });
 const evaluationBudgetFormat = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -69,11 +70,26 @@ const evaluationBudgetFormat = new Intl.NumberFormat("en-US", {
 });
 
 function scorerRevisionLabel({ scorerName, revisionNumber }: ScorerRevision) {
-  return `${scorerName} · Revision ${revisionNumber}`;
+  return benchmarkScorerLabel(scorerName, revisionNumber);
 }
 
 function axisOptions(values: string[], labels: Record<string, string> = {}): Option[] {
   return [...new Set(values)].sort().map((value) => ({ value, label: labels[value] ?? value }));
+}
+
+function profileKey(profile: Profile) {
+  return `${profile.id}:${profile.toolchainDigest}`;
+}
+
+function profileLabel(profile: Profile) {
+  return [
+    profile.toolchain,
+    profile.connectionName ? `Vercel · ${profile.connectionName}` : "Vercel sandbox",
+    profile.checkedAt ? `Checked ${benchmarkPublicationTime(profile.checkedAt)}` : null,
+    profile.unavailableReason,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function resolveSelection(options: BenchmarkAxisCatalog, selection: Selection) {
@@ -86,23 +102,42 @@ function resolveSelection(options: BenchmarkAxisCatalog, selection: Selection) {
       profile.definitionIds.includes(selection.definitionRevisionId),
   );
   const available = profiles.filter(({ unavailableReason }) => unavailableReason === null);
-  const profile =
-    available.length === 1 && !selection.qualificationId
-      ? available[0]
-      : available.find(({ id }) => id === selection.qualificationId);
+  const profile = definition
+    ? available.find((choice) => profileKey(choice) === selection.profileKey)
+    : undefined;
 
+  if (!definition && selection.definitionRevisionId) {
+    return {
+      definition,
+      profiles,
+      profile,
+      reason: "This factory revision is unavailable. Select another revision.",
+    };
+  }
   if (!definition || !selection.modelKey || !selection.harness || !selection.workerRuntime) {
     return { definition, profiles, profile, reason: null };
   }
 
-  const unavailable = profiles.find(({ id }) => id === selection.qualificationId);
-  const reason = profiles.length
-    ? (unavailable?.unavailableReason ??
-      (available.length
-        ? null
-        : profiles.flatMap(({ unavailableReason }) => unavailableReason ?? []).join(" ")))
-    : `${runtimeLabels[selection.workerRuntime]} has no qualified ${harnessLabels[selection.harness]} toolchain for this model and factory revision.`;
+  const selected = profiles.find((choice) => profileKey(choice) === selection.profileKey);
+  let reason = null;
+  if (selection.profileKey && !profile) {
+    reason =
+      selected?.unavailableReason ??
+      "The selected toolchain changed or is unavailable. Select an exact toolchain again.";
+  } else if (!profiles.length) {
+    reason = `${runtimeLabels[selection.workerRuntime]} has no qualified ${harnessLabels[selection.harness]} toolchain for this model and factory revision.`;
+  } else if (!available.length) {
+    reason = profiles.flatMap(({ unavailableReason }) => unavailableReason ?? []).join(" ");
+  }
   return { definition, profiles, profile, reason };
+}
+
+function selectAxes(options: BenchmarkAxisCatalog, selection: Selection) {
+  const next = { ...selection, profileKey: "" };
+  const available = resolveSelection(options, next).profiles.filter(
+    ({ unavailableReason }) => unavailableReason === null,
+  );
+  return available.length === 1 ? { ...next, profileKey: profileKey(available[0]) } : next;
 }
 
 function ExactPins({ definition, profile }: { definition: Definition; profile: Profile }) {
@@ -135,7 +170,7 @@ function ExactPins({ definition, profile }: { definition: Definition; profile: P
           <dd>{profile.toolchain}</dd>
         </div>
         <div>
-          <dt className="text-muted">Capability report SHA-256</dt>
+          <dt className="text-muted">Toolchain SHA-256</dt>
           <dd className="font-mono">{profile.toolchainDigest}</dd>
         </div>
         <div>
@@ -150,14 +185,18 @@ function ExactPins({ definition, profile }: { definition: Definition; profile: P
 function CandidateFields({
   label,
   axes,
+  catalog,
   selection,
   resolved,
+  currentRevision,
   onChange,
 }: {
   label: string;
   axes: Axis[];
+  catalog: BenchmarkAxisCatalog;
   selection: Selection;
   resolved: ReturnType<typeof resolveSelection>;
+  currentRevision?: Definition;
   onChange: (selection: Selection) => void;
 }) {
   const statusId = useId();
@@ -177,29 +216,46 @@ function CandidateFields({
           labelClassName="type-label"
           onValueChange={(value) => {
             if (value === selection[name]) return;
-            onChange({ ...selection, [name]: value, qualificationId: "" });
+            onChange(selectAxes(catalog, { ...selection, [name]: value }));
           }}
           options={options}
           required
+          fallbackLabel={
+            name === "definitionRevisionId" ? "Selected revision unavailable" : undefined
+          }
           value={selection[name]}
           wrap
         />
       ))}
-      {profiles.length > 1 ? (
+      {currentRevision && currentRevision.id !== selection.definitionRevisionId ? (
+        <button
+          className="ui-button"
+          onClick={() =>
+            onChange(
+              selectAxes(catalog, { ...selection, definitionRevisionId: currentRevision.id }),
+            )
+          }
+          type="button"
+        >
+          Use current revision
+        </button>
+      ) : null}
+      {profiles.length > 1 || (!profile && profiles.length > 0) ? (
         <SelectField
           className="space-y-1"
           emptyOption={{ label: "Select a toolchain", value: "" }}
           label="Qualified toolchain"
           labelClassName="type-label"
           onValueChange={(value) => {
-            if (value === (profile?.id ?? selection.qualificationId)) return;
-            onChange({ ...selection, qualificationId: value });
+            if (value === selection.profileKey) return;
+            onChange({ ...selection, profileKey: value });
           }}
           options={profiles.map((choice) => ({
-            label: `${choice.toolchain} · ${choice.sandboxProvider} · ${choice.id.slice(0, 8)}${choice.unavailableReason ? " · Unavailable" : ""}`,
-            value: choice.id,
+            disabled: choice.unavailableReason !== null,
+            label: profileLabel(choice),
+            value: profileKey(choice),
           }))}
-          value={profile?.id ?? selection.qualificationId}
+          value={profile ? selection.profileKey : ""}
           wrap
         />
       ) : null}
@@ -210,7 +266,7 @@ function CandidateFields({
       >
         {reason ??
           (profile
-            ? `Capability check passed · ${profile.toolchain}`
+            ? `Capability check passed · ${profileLabel(profile)}`
             : profiles.length
               ? "Select a qualified toolchain to continue."
               : "Choose the four axes to check compatibility.")}
@@ -311,6 +367,7 @@ export function BenchmarkComparisonForm({
   taskCount: number;
   options: BenchmarkAxisCatalog;
 }) {
+  const router = useRouter();
   const policyHelpId = useId();
   const [baseline, setBaseline] = useState(blankSelection);
   const [candidate, setCandidate] = useState(blankSelection);
@@ -333,9 +390,24 @@ export function BenchmarkComparisonForm({
 
   const baselineResult = resolveSelection(options, baseline);
   const candidateResult = resolveSelection(options, candidate);
+  const policyAvailable = options.policies.some(({ id }) => id === policyRevisionId);
+  const unavailableScorers = [...selectedScorers].filter(
+    (selected) => !options.scorerRevisions.some(({ id }) => id === selected),
+  );
+  const current = options.definitions.find(({ isCurrent }) => isCurrent);
+  const currentBaseline =
+    current &&
+    resolveSelection(options, {
+      ...baseline,
+      definitionRevisionId: current.id,
+      profileKey: "",
+    }).profiles.some(({ unavailableReason }) => unavailableReason === null)
+      ? current
+      : undefined;
   const sameConfiguration =
     !!baselineResult.profile &&
     baselineResult.profile.id === candidateResult.profile?.id &&
+    baselineResult.profile.workerRuntime === candidateResult.profile?.workerRuntime &&
     baseline.definitionRevisionId === candidate.definitionRevisionId;
   const axes: Axis[] = [
     {
@@ -356,7 +428,10 @@ export function BenchmarkComparisonForm({
     {
       name: "definitionRevisionId",
       label: "Factory revision",
-      options: options.definitions.map(({ id, label }) => ({ value: id, label })),
+      options: options.definitions.map(({ id, label, isCurrent }) => ({
+        value: id,
+        label: isCurrent ? `Current · ${label}` : label,
+      })),
     },
   ];
   const comparesMultipleAxes =
@@ -365,7 +440,8 @@ export function BenchmarkComparisonForm({
     axes.filter(({ name }) => baseline[name] !== candidate[name]).length > 1;
 
   const canFreeze =
-    !!(baselineResult.profile && candidateResult.profile && policyRevisionId && taskCount) &&
+    !!(baselineResult.profile && candidateResult.profile && policyAvailable && taskCount > 0) &&
+    unavailableScorers.length === 0 &&
     !sameConfiguration &&
     !receipt;
 
@@ -391,11 +467,13 @@ export function BenchmarkComparisonForm({
           definitionRevisionId: baseline.definitionRevisionId,
           qualificationId: baselineResult.profile.id,
           workerRuntime: baselineResult.profile.workerRuntime,
+          expectedToolchainDigest: baselineResult.profile.toolchainDigest,
         },
         {
           definitionRevisionId: candidate.definitionRevisionId,
           qualificationId: candidateResult.profile.id,
           workerRuntime: candidateResult.profile.workerRuntime,
+          expectedToolchainDigest: candidateResult.profile.toolchainDigest,
         },
       ],
       repetitions: Number(fields.get("repetitions")),
@@ -439,7 +517,9 @@ export function BenchmarkComparisonForm({
           Suite revision {suiteRevisionNumber} · {taskCount} {taskCount === 1 ? "task" : "tasks"}
         </p>
         <p className="type-secondary text-muted">
-          Both configurations use the same saved task inputs.
+          {taskCount > 0
+            ? "Both configurations use the same saved task inputs. Freezing does not start trials."
+            : "An empty suite can be saved, but needs at least one frozen task to compare configurations."}
         </p>
       </div>
       <fieldset aria-busy={action.isBusy} className="min-w-0 space-y-4" disabled={action.isBusy}>
@@ -453,8 +533,10 @@ export function BenchmarkComparisonForm({
           <CandidateFields
             label="Baseline"
             axes={axes}
+            catalog={options}
             selection={baseline}
             resolved={baselineResult}
+            currentRevision={currentBaseline}
             onChange={(next) => {
               clearFormFeedback();
               setBaseline(next);
@@ -463,6 +545,7 @@ export function BenchmarkComparisonForm({
           <CandidateFields
             label="Candidate"
             axes={axes}
+            catalog={options}
             selection={candidate}
             resolved={candidateResult}
             onChange={(next) => {
@@ -493,21 +576,45 @@ export function BenchmarkComparisonForm({
             setPolicyRevisionId(value);
           }}
           options={options.policies.map(({ id, profile, revisionNumber }) => ({
-            label: `Revision ${revisionNumber} · ${policyLabels[profile]}`,
+            label: `Revision ${revisionNumber} · ${benchmarkReplayPolicyLabels[profile]}`,
             value: id,
           }))}
           required
+          fallbackLabel="Selected policy unavailable"
           value={policyRevisionId}
           wrap
         />
         <p className="type-secondary text-muted" id={policyHelpId}>
-          Freezing saves a trial plan. The replay policy controls execution.
+          {policyRevisionId && !policyAvailable
+            ? "The selected replay policy revision is unavailable. Select a policy revision again."
+            : "The replay policy controls which tools execution can use."}
         </p>
         <ScoringFields
           revisions={options.scorerRevisions}
           selected={selectedScorers}
           onSelect={selectScorer}
         />
+        {unavailableScorers.length ? (
+          <div className="space-y-2">
+            <p className="type-secondary text-danger" role="status">
+              One or more selected scorer revisions are unavailable. No replacement has been
+              selected.
+            </p>
+            <button
+              className="ui-button"
+              onClick={() => {
+                clearFormFeedback();
+                setSelectedScorers(
+                  (scorers) =>
+                    new Set([...scorers].filter((id) => !unavailableScorers.includes(id))),
+                );
+              }}
+              type="button"
+            >
+              Remove unavailable scorer selections
+            </button>
+          </div>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block min-w-0 space-y-1">
             <span className="type-label">Repetitions</span>
@@ -547,6 +654,11 @@ export function BenchmarkComparisonForm({
           </label>
         </div>
         <InlineActionMessage message={message} />
+        {message?.kind === "error" ? (
+          <button className="ui-button" type="button" onClick={() => router.refresh()}>
+            Refresh comparison choices
+          </button>
+        ) : null}
         {sameConfiguration ? (
           <p aria-live="polite" className="type-secondary text-danger">
             Choose a different configuration for the candidate.
@@ -559,11 +671,11 @@ export function BenchmarkComparisonForm({
           >
             <p className="type-label text-success">Comparison frozen</p>
             <p className="type-secondary">
+              Trials haven’t started. View the comparison for scheduling prerequisites.
+            </p>
+            <p className="type-secondary">
               {receipt.materializedTrialCount} planned · {receipt.eligibleTrialCount} eligible ·{" "}
               {receipt.ineligibleTrialCount} ineligible
-            </p>
-            <p className="type-secondary text-muted">
-              Experiment <span className="font-mono">{receipt.experimentId}</span>
             </p>
             <Link
               className="ui-button mt-2 w-fit"
@@ -582,11 +694,29 @@ export function BenchmarkComparisonForm({
                 <ul aria-label="Frozen scorer revisions" className="list-disc pl-4">
                   {receipt.evaluation.scorerRevisionIds.map((id) => {
                     const scorer = options.scorerRevisions.find((revision) => revision.id === id);
-                    return <li key={id}>{scorer ? scorerRevisionLabel(scorer) : id}</li>;
+                    return (
+                      <li key={id}>
+                        {scorer ? scorerRevisionLabel(scorer) : "Scorer revision unavailable"}
+                      </li>
+                    );
                   })}
                 </ul>
               </div>
             ) : null}
+            <details className="type-secondary text-muted">
+              <summary className="cursor-pointer">Technical details</summary>
+              <p>
+                Experiment <span className="font-mono">{receipt.experimentId}</span>
+              </p>
+              {receipt.evaluation ? (
+                <p>
+                  Scorer revision IDs:{" "}
+                  <span className="font-mono">
+                    {receipt.evaluation.scorerRevisionIds.join(", ")}
+                  </span>
+                </p>
+              ) : null}
+            </details>
           </div>
         ) : null}
         <button className="ui-button ui-button-primary" disabled={!canFreeze} type="submit">

@@ -113,7 +113,7 @@ function evidence(): BenchmarkTrialEvidence {
   };
 }
 
-type DatabaseResponse = { data: unknown; error: { code: string } | null };
+type DatabaseResponse = { data: unknown; error: { code: string } | null; status?: number };
 function query(response: DatabaseResponse) {
   return {
     select: vi.fn().mockReturnThis(),
@@ -134,7 +134,7 @@ function fixture(
     denyAfter?: number;
     wrongTree?: boolean;
     wrongKey?: boolean;
-    eventFailure?: boolean;
+    eventError?: "57014" | "42501";
     secondDetail?: (detail: BenchmarkTrialEvidence) => BenchmarkTrialEvidence;
     artifactText?: string;
     artifactDigest?: string;
@@ -176,8 +176,9 @@ function fixture(
   };
   const queries = {
     agent_run_events: query({
-      data: options.eventFailure ? null : [],
-      error: options.eventFailure ? { code: "synthetic_timeout" } : null,
+      data: options.eventError ? null : [],
+      error: options.eventError ? { code: options.eventError } : null,
+      status: options.eventError === "42501" ? 403 : options.eventError ? 500 : 200,
     }),
     factory_benchmark_trial_results: query({
       data: {
@@ -247,7 +248,7 @@ beforeEach(() => {
 
 describe("benchmark trial page transcript isolation", () => {
   it("keeps the authorized diff and scores when the events query fails", async () => {
-    const { scope, detail, admin } = fixture({ eventFailure: true });
+    const { scope, detail, admin } = fixture({ eventError: "57014" });
     const patch = "+approved change";
     detail.diff = { availability: "available", patch, sha256: hash(patch) };
     addScore(detail);
@@ -274,10 +275,10 @@ describe("benchmark trial page transcript isolation", () => {
     });
   });
 
-  it.each([false, true])(
+  it.each([undefined, "57014", "42501"] as const)(
     "fails closed when access is revoked during a read (event error: %s)",
-    async (eventFailure) => {
-      const { scope, detail } = fixture({ eventFailure, denyAfter: 1 });
+    async (eventError) => {
+      const { scope, detail } = fixture({ eventError, denyAfter: 1 });
       await expect(readBenchmarkTrialPageEvidence(scope, detail.suite.id)).rejects.toMatchObject({
         status: 403,
       });

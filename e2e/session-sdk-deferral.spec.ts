@@ -109,12 +109,15 @@ test("review and activity work while the SDK loads, then authenticated recovery 
     releaseApproval = resolve;
   });
   let approvalRequested = false;
-  await page.route("**/api/sessions/*/approval-review", async (route) => {
-    const response = await route.fetch();
-    approvalRequested = true;
-    await approvalGate;
-    await route.fulfill({ response });
-  });
+  await page.route(
+    /\/api\/sessions\/[^/]+\/approval-review\?include=blockingTarget$/,
+    async (route) => {
+      const response = await route.fetch();
+      approvalRequested = true;
+      await approvalGate;
+      await route.fulfill({ response });
+    },
+  );
   try {
     await page.goto(sessionsPath);
     await page.getByRole("link", { name: `Open session #1001: ${sessionTitle}` }).click();
@@ -131,12 +134,13 @@ test("review and activity work while the SDK loads, then authenticated recovery 
     expect(await approvalResponse.json()).toEqual({
       reviewRevision: expect.any(Number),
       blockingCount: 0,
+      blockingTarget: null,
     });
     await expectReviewReady(page);
     expect(fixture.joins).toHaveLength(0);
 
     const activity = page.getByRole("region", { name: "Session runs", exact: true });
-    const disclosure = activity.getByRole("button", { name: /run activity: Completed/ }).first();
+    const disclosure = activity.getByRole("button", { name: /^Completed .* run Attempt/ }).first();
     await expect(disclosure).toBeVisible();
     await disclosure.click();
     await expect(disclosure).toHaveAttribute("aria-expanded", "true");

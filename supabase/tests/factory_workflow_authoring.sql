@@ -137,6 +137,37 @@ select is((select pg_temp.op655_publish('second',933,(result->>'draftId')::uuid)
 select throws_ok($$select pg_temp.op655_publish('second',934,(result->>'draftId')::uuid) from op655_draft_second$$,
   'PT409','The workflow draft or published activation changed.','a second publisher with a different request cannot republish the same emitted draft');
 
+select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),
+  pg_temp.op651_id(1600),'Workflow with long history') from op655_scope;
+do $$
+declare
+  workflow uuid := pg_temp.op651_id(1600);
+  prior uuid;
+  activation uuid;
+begin
+  for revision in 1..23 loop
+    prior := (pg_temp.op655_save('second',1600+revision,prior,activation,p_workflow=>workflow)->>'draftId')::uuid;
+    if revision = 2 then
+      activation := (pg_temp.op655_publish('second',1650,prior,p_workflow=>workflow)->>'activationId')::uuid;
+    end if;
+  end loop;
+end;
+$$;
+select set_config('request.jwt.claim.role','authenticated',true);
+select set_config('request.jwt.claim.sub',pg_temp.op651_id(910)::text,true);
+select is(
+  (select array_agg((item.value->>'revision')::integer order by item.position)
+   from op655_scope scope
+   join internal.factory_workflow_authoring_drafts oldest
+     on oldest.workflow_id=pg_temp.op651_id(1600) and oldest.revision_number=1
+   cross join lateral jsonb_array_elements(public.read_factory_workflow_authoring(
+     scope.workspace_id,scope.factory_id,oldest.workflow_id,oldest.id)->'recentDrafts')
+     with ordinality item(value,position)),
+  array[23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,2,1],
+  'history stays bounded and labels the exact live and selected draft outside the first twenty');
+select set_config('request.jwt.claim.role','service_role',true);
+select set_config('request.jwt.claim.sub',pg_temp.op651_id(1)::text,true);
+
 select public.create_factory_workflow_authoring(workspace_id,factory_id,pg_temp.op651_id(910),pg_temp.op651_id(904),
   'Exact review workflow') from op655_scope;
 create temp table op655_foreign_factory as

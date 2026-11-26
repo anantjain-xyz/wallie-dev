@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ActivityRow, FactoryActivityData } from "@/features/factory-activity/activity-data";
@@ -18,7 +19,7 @@ const session: ActivityRow = {
   href: "/w/wallie/sessions/42",
   title: "Qualify research",
   description: "#42",
-  occurredAt: capturedAt,
+  time: capturedAt,
   factory,
   actor,
   status: "complete",
@@ -28,25 +29,35 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("factory activity", () => {
   it("pairs an exact count with canonical session, factory, and recorded actor links", () => {
     const data: FactoryActivityData = {
-      sessions: { kind: "available", count: 18, rows: [session] },
+      sessions: {
+        kind: "available",
+        count: 18,
+        rows: [session],
+        olderQuery: { factory: "all", sessionsBefore: "example" },
+      },
       runs: { kind: "available", count: 0, rows: [] },
       capturedAt,
     };
     render(
       <FactoryActivityPage
+        actorLabel="All actors"
         data={data}
-        factory={{ id: "all", label: "All factories" }}
+        query={{ factory: "all" }}
         workspaceSlug="wallie"
       />,
     );
 
     const sessions = within(screen.getByRole("region", { name: "Sessions" }));
-    expect(sessions.getByText("18 sessions in this scope · Showing 1 most recent")).toBeTruthy();
+    expect(sessions.getByText("18 sessions in this scope · Showing 1 latest")).toBeTruthy();
+    expect(sessions.getByText("Most recently updated first")).toBeTruthy();
+    expect(sessions.getByText(/Last updated/)).toBeTruthy();
+    expect(sessions.getByText("Current status:")).toBeTruthy();
     expect(sessions.getByRole("link", { name: "Qualify research" }).getAttribute("href")).toBe(
       "/w/wallie/sessions/42",
     );
@@ -59,29 +70,69 @@ describe("factory activity", () => {
     expect(sessions.getByRole("link", { name: "View sessions" }).getAttribute("href")).toBe(
       "/w/wallie/sessions?factory=all&scope=all",
     );
-    expect(screen.getByText("No runs in this scope.")).toBeTruthy();
+    expect(sessions.getByRole("link", { name: "Older sessions" }).getAttribute("href")).toBe(
+      "/w/wallie/activity?factory=all&sessionsBefore=example#activity-sessions",
+    );
+    expect(screen.getByText("No runs yet.")).toBeTruthy();
   });
 
   it("keeps unavailable and zero counts distinct and can clear only the actor filter", () => {
     render(
       <FactoryActivityPage
-        actorId={actor.id}
+        actorLabel="Actor unavailable"
         data={{
           sessions: { kind: "unavailable" },
           runs: { kind: "available", count: 0, rows: [] },
           capturedAt,
         }}
-        factory={{ id: factory.id, label: factory.name }}
+        query={{ factory: factory.id, actor: actor.id, status: "error" }}
         workspaceSlug="wallie"
       />,
     );
 
-    expect(screen.getByText("Sessions activity is unavailable.")).toBeTruthy();
+    expect(screen.getByText(/Sessions activity is unavailable. Use Refresh/)).toBeTruthy();
     expect(screen.queryByText("0 sessions in this scope")).toBeNull();
-    expect(screen.getByText("0 runs in this scope")).toBeTruthy();
+    expect(screen.getByText("No runs match these filters.")).toBeTruthy();
+    expect(screen.getByText("0 runs match")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Actor: Actor unavailable" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Clear actor filter" }).getAttribute("href")).toBe(
-      "/w/wallie/activity?factory=" + factory.id,
+      `/w/wallie/activity?factory=${factory.id}&status=error`,
     );
+  });
+
+  it("searches named actors without losing status and restores trigger focus on Escape", async () => {
+    const request = vi.fn(async () =>
+      Response.json({ actors: [{ ...actor, label: "Sam Roberts (@sam)" }], hasMore: false }),
+    );
+    vi.stubGlobal("fetch", request);
+    const user = userEvent.setup();
+    render(
+      <PortalRootProvider>
+        <FactoryActivityPage
+          actorLabel="All actors"
+          data={{ sessions: { kind: "unavailable" }, runs: { kind: "unavailable" }, capturedAt }}
+          query={{ factory: factory.id, status: "error", runsBefore: "example" }}
+          workspaceSlug="wallie"
+        />
+      </PortalRootProvider>,
+    );
+    const trigger = screen.getByRole("button", { name: "Actor: All actors" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = within(await screen.findByRole("dialog", { name: "Filter by actor" }));
+    const input = dialog.getByRole("searchbox", { name: "Search actors" });
+    expect(document.activeElement).toBe(input);
+    await user.type(input, "@sam");
+    const choice = await dialog.findByRole("link", { name: "Sam Roberts (@sam)" });
+    expect(request).toHaveBeenLastCalledWith(
+      `/w/wallie/activity/actors?factory=${factory.id}&q=sam`,
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expect(choice.getAttribute("href")).toBe(
+      `/w/wallie/activity?factory=${factory.id}&status=error&actor=${actor.id}`,
+    );
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("marks the displayed snapshot stale as it ages and resets freshness on refresh", () => {
@@ -99,3 +150,4 @@ describe("factory activity", () => {
     expect(screen.queryByText(/snapshot is stale/)).toBeNull();
   });
 });
+import { PortalRootProvider } from "@/components/ui/portal-root";
