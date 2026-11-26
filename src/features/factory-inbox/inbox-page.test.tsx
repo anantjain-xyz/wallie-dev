@@ -5,8 +5,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RecoverySource } from "@/features/wallie/realtime-recovery";
-import type { FactoryInbox } from "@/lib/factories/inbox-schema";
-import { FactoryInboxPage } from "./inbox-page";
+import type { FactoryInbox, FactoryInboxKind } from "@/lib/factories/inbox-schema";
+import { FactoryInboxPage, FactoryInboxUnavailable } from "./inbox-page";
 
 const recovery = vi.hoisted(() => ({
   register: vi.fn<(source: RecoverySource) => () => void>(() => () => {}),
@@ -44,13 +44,18 @@ const review = {
   hasBlockingFeedback: true,
 } as const;
 
-function renderInbox(inbox: FactoryInbox | null, initialNow = happenedAt) {
+function renderInbox(
+  inbox: FactoryInbox | null,
+  initialNow = happenedAt,
+  scope: { cursor?: string; kind?: FactoryInboxKind; allFactories?: boolean } = {},
+) {
   return render(
     <FactoryInboxPage
-      cursor={null}
-      factoryId={factoryId}
+      cursor={scope.cursor ?? null}
+      factoryId={scope.allFactories ? null : factoryId}
       initialInbox={inbox}
       initialNow={initialNow}
+      kind={scope.kind}
       memberId="88888888-8888-4888-8888-888888888888"
       workspaceId={workspaceId}
       workspaceSlug="acme"
@@ -89,21 +94,128 @@ describe("FactoryInboxPage", () => {
       nextCursor: null,
     });
 
-    expect(screen.getByText("1 awaiting review · 1 clarification")).toBeVisible();
+    expect(screen.getByRole("link", { name: "All items 2" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Reviews 1" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Clarifications 1" })).toBeVisible();
     expect(screen.getByText("Blocking feedback")).toBeVisible();
     expect(screen.getAllByText("Payments · Verify · Version 3")).toHaveLength(2);
     expect(screen.getAllByText(/Release agent/)).toHaveLength(2);
     const reviewLink = screen.getByRole("link", { name: "Open review for Payment integration" });
     expect(reviewLink).toHaveAttribute(
       "href",
-      `/w/acme/sessions/22?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7`,
+      `/w/acme/sessions/22?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&returnTo=${encodeURIComponent(`/w/acme/inbox?factory=${factoryId}`)}`,
     );
     expect(
       screen.getByRole("link", { name: "Answer clarification for Confirm the rollout" }),
     ).toHaveAttribute(
       "href",
-      `/w/acme/sessions/23?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&clarificationId=${clarificationId}`,
+      `/w/acme/sessions/23?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&clarificationId=${clarificationId}&returnTo=${encodeURIComponent(`/w/acme/inbox?factory=${factoryId}`)}`,
     );
+  });
+
+  it("preserves the filter and cursor on the exact handoff and resets only the cursor when changing views", async () => {
+    const snapshot = {
+      items: [review],
+      counts: { review: 27, clarification: 1 },
+      nextCursor: "next",
+    };
+    const fetchInbox = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(snapshot));
+    renderInbox(snapshot, happenedAt, { cursor: "current", kind: "review" });
+
+    const inbox = `/w/acme/inbox?factory=${factoryId}`;
+    const href = screen.getByRole("link", { name: /Open review/ }).getAttribute("href")!;
+    expect(new URL(href, "http://localhost").searchParams.get("returnTo")).toBe(
+      `${inbox}&kind=review&cursor=current`,
+    );
+    expect(screen.getByRole("link", { name: "Reviews 27" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Clarifications 1" })).toHaveAttribute(
+      "href",
+      `${inbox}&kind=clarification`,
+    );
+    expect(screen.getByRole("link", { name: "All items 28" })).toHaveAttribute("href", inbox);
+    expect(screen.getByRole("link", { name: "Next page" })).toHaveAttribute(
+      "href",
+      `${inbox}&kind=review&cursor=next`,
+    );
+    expect(screen.getByRole("link", { name: "Back to newest" })).toHaveAttribute(
+      "href",
+      `${inbox}&kind=review`,
+    );
+    const signal = new AbortController().signal;
+    await act(() => recoverySource().refresh(signal));
+    expect(fetchInbox).toHaveBeenCalledWith(
+      `/api/factories/inbox?workspaceId=${workspaceId}&factoryId=${factoryId}&kind=review&cursor=current`,
+      { cache: "no-store", signal },
+    );
+  });
+
+  it("offers separate recovery for an empty factory, older page and all-factory queue", () => {
+    const view = renderInbox(empty, happenedAt, { cursor: "older", kind: "clarification" });
+    expect(screen.getByText("No items on this page.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Back to newest" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "View all factories" })).toHaveAttribute(
+      "href",
+      "/w/acme/inbox?kind=clarification",
+    );
+    view.unmount();
+    renderInbox(empty, happenedAt, { allFactories: true });
+    expect(screen.getByText("You’re all caught up.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "View sessions" })).toHaveAttribute(
+      "href",
+      "/w/acme/sessions",
+    );
+  });
+
+  it("offers an in-Inbox exit from an unavailable initial selection", () => {
+    render(<FactoryInboxUnavailable factorySelector={null} kind="review" workspaceSlug="acme" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Factory unavailable.");
+    expect(screen.getByRole("link", { name: "View all factories" })).toHaveAttribute(
+      "href",
+      "/w/acme/inbox?kind=review",
+    );
+  });
+
+  it("acknowledges only the manual read, keeps rows visible, and prevents duplicate refreshes", async () => {
+    const snapshot = { items: [review], counts: { review: 1, clarification: 0 }, nextCursor: null };
+    const automatic = Promise.withResolvers<Response>();
+    const manual = Promise.withResolvers<Response>();
+    vi.spyOn(globalThis, "fetch")
+      .mockReturnValueOnce(automatic.promise)
+      .mockReturnValueOnce(manual.promise);
+    renderInbox(snapshot);
+    const source = recoverySource();
+    const signal = new AbortController().signal;
+
+    let background!: Promise<void>;
+    await act(async () => {
+      background = source.refresh(signal);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    const button = screen.getByRole("button", { name: "Refreshing…" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Refreshing Inbox…");
+    fireEvent.click(button);
+    expect(recovery.retry).toHaveBeenCalledOnce();
+    automatic.resolve(Response.json(snapshot));
+    await act(() => background);
+    expect(button).toBeDisabled();
+    expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
+
+    let requested!: Promise<void>;
+    await act(async () => {
+      requested = source.refresh(signal);
+    });
+    manual.resolve(Response.json(snapshot));
+    await act(() => requested);
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Inbox is up to date.");
   });
 
   it("replaces rows and counts with fresh scoped reads and clears them if access is denied", async () => {
@@ -128,15 +240,15 @@ describe("FactoryInboxPage", () => {
       { cache: "no-store", signal },
     );
     expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
-    expect(screen.getByText("You’re all caught up.")).toBeVisible();
+    expect(screen.getByText("No pending reviews or clarifications in this factory.")).toBeVisible();
     await act(() => source.refresh(signal));
     expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
     await act(async () => {
       await expect(source.refresh(signal)).rejects.toThrow("Inbox unavailable.");
     });
     expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
-    expect(screen.queryByText("1 awaiting review · 0 clarifications")).toBeNull();
-    expect(screen.getByText("Inbox unavailable. Refresh to check your access.")).toBeVisible();
+    expect(screen.queryByRole("navigation", { name: "Inbox item type" })).toBeNull();
+    expect(screen.getByText("Factory unavailable.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect(recovery.retry).toHaveBeenCalledOnce();
   });
@@ -164,7 +276,7 @@ describe("FactoryInboxPage", () => {
       await first;
     });
     expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
-    expect(screen.getByText("1 awaiting review · 0 clarifications")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Reviews 1" })).toBeVisible();
   });
 
   it("hides rows and counts behind a checking state when the access check is stale", () => {
@@ -179,7 +291,7 @@ describe("FactoryInboxPage", () => {
 
     expect(screen.getByText("Checking Inbox access…")).toBeVisible();
     expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
-    expect(screen.queryByText("1 awaiting review · 0 clarifications")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Inbox item type" })).toBeNull();
     expect(recovery.invalidate).toHaveBeenCalled();
   });
 
@@ -191,8 +303,9 @@ describe("FactoryInboxPage", () => {
     });
 
     expect(screen.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
     expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
-    expect(screen.queryByText("1 awaiting review · 0 clarifications")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Inbox item type" })).toBeNull();
   });
 
   it("hides server-rendered rows when mounting while offline", () => {
@@ -200,7 +313,7 @@ describe("FactoryInboxPage", () => {
     renderInbox({ items: [review], counts: { review: 1, clarification: 0 }, nextCursor: null });
 
     expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
-    expect(screen.queryByText("1 awaiting review · 0 clarifications")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Inbox item type" })).toBeNull();
     expect(screen.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
   });
 
@@ -210,7 +323,7 @@ describe("FactoryInboxPage", () => {
 
     expect(screen.getByText("You’re offline. Reconnect to refresh your Inbox.")).toBeVisible();
     expect(screen.queryByText("Checking Inbox access…")).toBeNull();
-    expect(screen.queryByText("Inbox unavailable. Refresh to check your access.")).toBeNull();
+    expect(screen.queryByText("Factory unavailable.")).toBeNull();
     expect(recovery.invalidate).toHaveBeenCalledTimes(1);
 
     act(() => {
@@ -254,7 +367,7 @@ describe("FactoryInboxPage", () => {
           "Inbox unavailable.",
         );
       });
-      expect(screen.getByText("Inbox unavailable. Refresh to check your access.")).toBeVisible();
+      expect(screen.getByText("Factory unavailable.")).toBeVisible();
       expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
     },
   );
@@ -278,11 +391,11 @@ describe("FactoryInboxPage", () => {
       );
     });
     expect(screen.getByText("Couldn’t load Inbox. Refresh to try again.")).toBeVisible();
-    expect(screen.queryByText("Inbox unavailable. Refresh to check your access.")).toBeNull();
+    expect(screen.queryByText("Factory unavailable.")).toBeNull();
 
     await act(() => source.refresh(new AbortController().signal));
     expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
-    expect(screen.getByText("1 awaiting review · 0 clarifications")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Reviews 1" })).toBeVisible();
   });
 
   it("keeps fresh rows visible while a refresh revalidates, then updates them", async () => {
@@ -296,12 +409,12 @@ describe("FactoryInboxPage", () => {
       refresh = source.refresh(new AbortController().signal);
     });
     expect(screen.getByRole("heading", { name: review.title })).toBeVisible();
-    expect(screen.getByText("1 awaiting review · 0 clarifications")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Reviews 1" })).toBeVisible();
     expect(screen.queryByText("Checking Inbox access…")).toBeNull();
 
     pending.resolve(Response.json(empty));
     await act(() => refresh);
-    expect(screen.getByText("You’re all caught up.")).toBeVisible();
+    expect(screen.getByText("No pending reviews or clarifications in this factory.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: review.title })).toBeNull();
   });
 
@@ -311,7 +424,7 @@ describe("FactoryInboxPage", () => {
     renderInbox(null);
     const source = recoverySource();
 
-    expect(screen.getByText("Inbox unavailable. Refresh to check your access.")).toBeVisible();
+    expect(screen.getByText("Factory unavailable.")).toBeVisible();
 
     let refresh!: Promise<void>;
     await act(async () => {

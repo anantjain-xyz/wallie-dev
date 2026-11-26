@@ -159,6 +159,38 @@ select ok((select inbox.snapshot->'items'->0 @> jsonb_build_object(
   'the Inbox uses the exact question and source without carrying the clarification answer or body');
 set local request.jwt.claim.role='service_role';
 
+insert into public.sessions(id,workspace_id,factory_id,number,title,pipeline_id,current_stage_id,phase_status)
+select pg_temp.spec_id(n),pg_temp.spec_id(2),pg_temp.spec_factory(),n,'Newer review ' || n,
+  pg_temp.spec_id(10),pg_temp.spec_id(11),'awaiting_review'
+from generate_series(1001,1026) n;
+insert into public.session_selected_stages(session_id,workspace_id,stage_id)
+select id,workspace_id,current_stage_id from public.sessions where workspace_id=pg_temp.spec_id(2)
+  and number between 1001 and 1026 on conflict do nothing;
+insert into public.session_artifacts(id,workspace_id,session_id,stage_id,stage_slug,version,artifact_json,created_at)
+select pg_temp.spec_id(number+100),workspace_id,id,current_stage_id,'investigate',1,'"Newer review"'::jsonb,
+  (select created_at + interval '1 minute' from first_question)
+from public.sessions where workspace_id=pg_temp.spec_id(2) and number between 1001 and 1026;
+update public.sessions set current_artifact_id=pg_temp.spec_id(number+100),current_artifact_version=1
+where workspace_id=pg_temp.spec_id(2) and number between 1001 and 1026;
+set local request.jwt.claim.role='authenticated';
+select ok((public.get_factory_inbox(pg_temp.spec_id(2),pg_temp.spec_factory())->'next') <> 'null'::jsonb,
+  'the mixed queue spans more than one page');
+select is((select count(*) from jsonb_array_elements(
+  public.get_factory_inbox(pg_temp.spec_id(2),pg_temp.spec_factory())->'items') item
+  where item->>'kind'='clarification'),0::bigint,'newer reviews fill page one of the mixed queue');
+create temp table filtered_clarification_inbox as
+select public.get_factory_inbox(pg_temp.spec_id(2),pg_temp.spec_factory(),p_kind=>'clarification') snapshot;
+select is((select snapshot->'items' from filtered_clarification_inbox),
+  (select snapshot->'items' from clarification_inbox),
+  'filtering before pagination surfaces the older clarification with its exact target');
+select is((select snapshot->'counts' from filtered_clarification_inbox),
+  '{"review":26,"clarification":1}'::jsonb,'filter counts cover the entire permitted factory queue');
+select is((select snapshot->'next' from filtered_clarification_inbox),'null'::jsonb,
+  'the clarification filter does not show a next page for review-only rows');
+set local request.jwt.claim.role='service_role';
+update public.sessions set archived_at=now()
+where workspace_id=pg_temp.spec_id(2) and number between 1001 and 1026;
+
 select throws_ok($q$select * from first_question question cross join lateral public.approve_session_stage(
   question.session_id,question.workspace_id,question.stage_id,question.artifact_id,question.artifact_version,
   pg_temp.spec_id(3),'codex','gpt-5.5','code',0)$q$, 'PT423',
