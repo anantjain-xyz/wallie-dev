@@ -164,8 +164,28 @@ test("previews a saved routing policy and displays its historical decision after
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
       await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-      await slug.fill(previewPayload.taskClassSlug);
+      await slug.fill("deliv");
+      await slug.evaluate((input) => input.scrollIntoView({ block: "center" }));
+      const suggestions = page.getByRole("listbox", { name: "Task class suggestions" });
+      await expect(
+        suggestions.getByRole("option", { name: previewPayload.taskClassSlug, exact: true }),
+      ).toBeVisible();
+      await slug.press("ArrowDown");
+      const screenshot = info.outputPath("model-routing-preview-suggestions-mobile-dark.png");
+      await page.screenshot({ path: screenshot, animations: "disabled", caret: "hide" });
+      await info.attach("model-routing-preview-suggestions-mobile-dark", {
+        path: screenshot,
+        contentType: "image/png",
+      });
+      await slug.press("Enter");
+      await expect(slug).toHaveValue(previewPayload.taskClassSlug);
+      await expect(slug).toBeFocused();
+      await expect(suggestions).toBeHidden();
+      const request = page.waitForRequest(
+        (request) => request.url().endsWith(previewEndpoint) && request.method() === "POST",
+      );
       await previewButton.click();
+      expect((await request).postDataJSON()).toEqual(previewPayload);
       await expect(
         preview.getByRole("heading", { name: "Primary configuration selected" }),
       ).toBeVisible({ timeout: 75_000 });

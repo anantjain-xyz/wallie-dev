@@ -1374,8 +1374,60 @@ it("opens a permalink at a specific saved test receipt and scrolls to it after l
   }
 });
 
-it("previews the current saved draft for configured and unmatched slugs", async () => {
+it("suggests deduped task class and stage slugs without submitting on selection", async () => {
+  const user = userEvent.setup();
   const { requests } = setup({
+    initialDraft: document(6, "draft", {
+      ...routingPolicyDraft.source,
+      modelRouting: modelRoutingPolicySchema.parse({
+        ...routingPolicyDraft.source.modelRouting,
+        taskClasses: [
+          { id: id(82), slug: "delivery", name: "Delivery" },
+          { id: id(70), slug: "plan", name: "Planning" },
+        ],
+      }),
+      stages: [...source.stages, { ...source.stages[0], id: id(8), slug: "build", name: "Build" }],
+    }),
+  });
+  const panel = within(await screen.findByRole("region", { name: "Routing preview" }));
+  const input = panel.getByRole("combobox", { name: "Task class slug" });
+  expect(input).toHaveValue("plan");
+  fireEvent.click(panel.getByRole("button", { name: "Preview routing" }));
+  expect(await panel.findByRole("heading", { name: "No routing policy" })).toBeVisible();
+
+  await user.click(input);
+  const list = within(screen.getByRole("listbox", { name: "Task class suggestions" }));
+  expect(list.getAllByRole("option").map(({ textContent }) => textContent)).toEqual([
+    "delivery",
+    "plan",
+    "build",
+  ]);
+  expect(list.getByRole("option", { name: "plan", selected: true })).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("listbox", { name: "Task class suggestions" })).not.toBeInTheDocument();
+  expect(input).toHaveFocus();
+
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(input).toHaveValue("delivery");
+  expect(input).toHaveFocus();
+  expect(panel.queryByRole("heading", { name: "No routing policy" })).not.toBeInTheDocument();
+
+  await user.clear(input);
+  await user.type(input, "UI");
+  const filtered = within(screen.getByRole("listbox", { name: "Task class suggestions" }));
+  expect(filtered.getAllByRole("option")).toEqual([
+    filtered.getByRole("option", { name: "build" }),
+  ]);
+  await user.click(filtered.getByRole("option", { name: "build" }));
+  expect(input).toHaveValue("build");
+  expect(input).toHaveFocus();
+  expect(requests.filter(({ path }) => path === `${endpoint}/routing-preview`)).toHaveLength(1);
+});
+
+it("previews the current saved draft for configured and unmatched slugs", async () => {
+  const user = userEvent.setup();
+  const { requests } = setup({
+    initialDraft: routingPolicyDraft,
     routingPreview: ({ taskClassSlug }) =>
       Response.json({
         draftId: draft.id,
@@ -1418,8 +1470,12 @@ it("previews the current saved draft for configured and unmatched slugs", async 
   const input = panel.getByRole("combobox", { name: "Task class slug" });
   const preview = panel.getByRole("button", { name: "Preview routing" });
   expect(input).toHaveValue("plan");
+  expect(input).toBeRequired();
+  expect(input).toHaveAttribute("maxlength", "64");
 
   fireEvent.click(preview);
+  expect(input).toBeDisabled();
+  expect(preview).toBeDisabled();
   expect(
     await panel.findByRole("heading", { name: "Primary configuration selected" }),
   ).toBeVisible();
@@ -1429,18 +1485,37 @@ it("previews the current saved draft for configured and unmatched slugs", async 
     body: { expectedActivationNumber: 2, draftId: draft.id, taskClassSlug: "plan" },
   });
 
-  fireEvent.change(input, { target: { value: "unmatched" } });
+  await user.clear(input);
+  await user.type(input, " unmatched ");
   expect(panel.queryByRole("heading", { name: "Primary configuration selected" })).toBeNull();
-  fireEvent.click(preview);
+  expect(screen.queryByRole("listbox", { name: "Task class suggestions" })).not.toBeInTheDocument();
+  await user.keyboard("{Enter}");
   expect(await panel.findByRole("heading", { name: "Escalated" })).toBeVisible();
   expect(panel.getByText("No task class matches this slug.")).toBeVisible();
+  expect(requests).toContainEqual({
+    path: endpoint + "/routing-preview",
+    body: { expectedActivationNumber: 2, draftId: draft.id, taskClassSlug: "unmatched" },
+  });
 
   fireEvent.change(screen.getByRole("textbox", { name: "Operating rules" }), {
     target: { value: "Unsaved draft edit" },
   });
+  expect(input).toBeDisabled();
   expect(preview).toBeDisabled();
   expect(panel.getByText("Save draft changes before previewing routing.")).toBeVisible();
   expect(panel.queryByRole("heading", { name: "Escalated" })).toBeNull();
+});
+
+it("discards a routing preview response for a different draft digest", async () => {
+  setup({
+    routingPreview: () =>
+      Response.json({ draftId: draft.id, draftDigest: "a".repeat(64), decision: null }),
+  });
+  const panel = within(await screen.findByRole("region", { name: "Routing preview" }));
+  fireEvent.click(panel.getByRole("button", { name: "Preview routing" }));
+  expect(await panel.findByRole("alert")).toHaveTextContent(
+    "The draft or active definition changed. Reload the definition and preview again.",
+  );
 });
 
 it.each([

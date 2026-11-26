@@ -1,6 +1,7 @@
-import { useId, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { EditableCombobox } from "@/components/ui/editable-combobox";
 import { MetadataItem, MetadataList, PageSection } from "@/components/ui/page-shell";
 import { AGENT_PROVIDER_LABELS } from "@/components/shared/agent-provider-options";
 import type { FactoryEditorDocument } from "@/lib/factory-definitions/editor-contracts";
@@ -90,13 +91,17 @@ export function FactoryRoutingPreview({
   disabledReason: string | null;
   draft: FactoryEditorDocument | null;
 }) {
-  const optionsId = useId();
   const [taskClassSlug, setTaskClassSlug] = useState(draft?.source.stages[0]?.slug ?? "");
   const [state, setState] = useState<PreviewState>({ kind: "idle" });
   const suggestions = new Set([
     ...(draft?.source.modelRouting?.taskClasses.map(({ slug }) => slug) ?? []),
     ...(draft?.source.stages.map(({ slug }) => slug) ?? []),
   ]);
+  const query = taskClassSlug.trim().toLowerCase();
+  const filter = suggestions.has(query) ? "" : query;
+  const options = [...suggestions]
+    .filter((slug) => slug.includes(filter))
+    .map((slug) => ({ label: slug, value: slug }));
   const pending = state.kind === "loading";
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -157,25 +162,21 @@ export function FactoryRoutingPreview({
             >
               <label className="block min-w-0 space-y-1.5">
                 <span className="text-[13px] font-medium">Task class slug</span>
-                <input
-                  className="ui-input"
+                <EditableCombobox
                   disabled={disabled || pending}
-                  list={optionsId}
+                  listboxLabel="Task class suggestions"
                   maxLength={routingPreviewRequestSchema.shape.taskClassSlug.maxLength ?? undefined}
-                  onChange={(event) => {
-                    setTaskClassSlug(event.target.value);
+                  onValueChange={(value) => {
+                    if (value === taskClassSlug) return;
+                    setTaskClassSlug(value);
                     setState({ kind: "idle" });
                   }}
+                  options={options}
                   required
-                  type="text"
+                  selectedValue={taskClassSlug}
                   value={taskClassSlug}
                 />
               </label>
-              <datalist id={optionsId}>
-                {[...suggestions].map((slug) => (
-                  <option key={slug} value={slug} />
-                ))}
-              </datalist>
               <button
                 className="ui-button justify-self-start"
                 disabled={disabled || pending}
