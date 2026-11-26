@@ -116,8 +116,13 @@ async function selectProviderResource(panel: Locator, provider: Provider, resour
     .getByRole("option", { name: provider, exact: true })
     .click();
   const resourcePicker = panel.getByRole("combobox", { name: "Provider resource", exact: true });
-  await expect(resourcePicker).toBeVisible();
-  await resourcePicker.selectOption(resourceId);
+  await resourcePicker.click();
+  await panel
+    .page()
+    .getByRole("listbox", { name: "Provider resource", exact: true })
+    .locator(`[role="option"][data-value="${resourceId}"]`)
+    .click();
+  await expect(resourcePicker).toHaveAttribute("data-value", resourceId);
 }
 
 async function screenshot(page: Page, name: string) {

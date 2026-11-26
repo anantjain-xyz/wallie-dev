@@ -240,24 +240,24 @@ function ProviderResources({
           </ConnectorSelect>
         ) : null}
         {resource ? (
-          <ConnectorSelect
-            className="block max-w-xl space-y-1.5 text-sm font-medium text-foreground"
+          <SelectField
+            className="max-w-xl"
             label="Provider resource"
-            onChange={(event) => {
+            onValueChange={(resourceId) => {
+              if (resourceId === resource.id) return;
               rememberResourceName();
-              setSelected(event.target.value);
+              setSelected(resourceId);
             }}
+            options={resources.map((item) => {
+              const name =
+                (item.id === resource.id ? verifiedName : undefined) ??
+                knownNames[item.id] ??
+                resourceLabel(item);
+              return { label: item.enabled ? name : `${name} (disabled)`, value: item.id };
+            })}
             value={resource.id}
-          >
-            {resources.map((item) => (
-              <option key={item.id} value={item.id}>
-                {(item.id === resource.id ? verifiedName : undefined) ??
-                  knownNames[item.id] ??
-                  resourceLabel(item)}
-                {item.enabled ? "" : " (disabled)"}
-              </option>
-            ))}
-          </ConnectorSelect>
+            wrap
+          />
         ) : (
           <p className="text-sm text-muted">
             No {providerLabel[provider]} resources mapped to this factory.
