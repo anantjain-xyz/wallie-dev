@@ -66,7 +66,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function fixture({ failLabels = false, savedState = starting.id, teams = [team] } = {}) {
+function fixture({
+  failLabels = false,
+  savedState = starting.id,
+  savedFromState = "",
+  teams = [team],
+} = {}) {
   let labelReads = 0;
   const writes: Array<{ url: string; command: unknown }> = [];
   fetchMock.mockImplementation(async (path, init) => {
@@ -88,7 +93,9 @@ function fixture({ failLabels = false, savedState = starting.id, teams = [team] 
         revision: 2,
         mappingRevision: 4,
         commentsEnabled: true,
-        statusMapping: null,
+        statusMapping: savedFromState
+          ? { teamId: team.id, fromStateId: savedFromState, toStateId: starting.id }
+          : null,
       });
     const query = new URL(path, "https://wallie.test").searchParams;
     expect(query.get("resourceId")).toBe(resource.id);
@@ -273,13 +280,14 @@ it("preselects the sole project team and focuses the destination for a duplicate
 
   const from = screen.getByRole("combobox", { name: "From state" });
   const to = screen.getByRole("combobox", { name: "To state" });
-  await within(from).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
+  await within(to).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
   const teamChoice = screen.getByRole("combobox", { name: "Linear team" });
   expect(teamChoice).toHaveAttribute("data-value", team.id);
   expect(teamChoice).toHaveTextContent("Platform · PLAT");
   for (const choice of [teamChoice, from, to]) expect(choice).toBeRequired();
   expect(fetchMock.mock.calls.some(([url]) => url.includes(`teamId=${team.id}`))).toBe(true);
-  await user.selectOptions(from, starting.id);
+  await user.click(from);
+  await user.keyboard("{ArrowDown}{Enter}");
   await user.selectOptions(to, starting.id);
   await user.click(screen.getByRole("button", { name: "Save outcomes" }));
   expect(to).toHaveFocus();
@@ -290,7 +298,7 @@ it("preselects the sole project team and focuses the destination for a duplicate
   expect(screen.getByRole("option", { name: "Platform · PLAT", selected: true })).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(teamChoice).toHaveFocus();
-  expect(from).toHaveValue(starting.id);
+  expect(from).toHaveAttribute("data-value", starting.id);
   expect(to).toHaveValue(starting.id);
   expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
 
@@ -345,8 +353,10 @@ it("validates the team on Save and resets the state choices and errors when the 
   expect(picker).toHaveFocus();
   expect(picker).toHaveAttribute("data-value", team.id);
   for (const choice of [picker, from, to]) expect(choice).not.toHaveAttribute("aria-invalid");
-  await within(from).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
-  await user.selectOptions(from, starting.id);
+  await within(to).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
+  await user.click(from);
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(from).toHaveAttribute("data-value", starting.id);
   await user.selectOptions(to, starting.id);
   await user.click(save);
   expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
@@ -359,11 +369,10 @@ it("validates the team on Save and resets the state choices and errors when the 
   await user.click(picker);
   await user.keyboard("{ArrowDown}{Enter}");
   expect(picker).toHaveAttribute("data-value", alternateTeam.id);
-  expect(from).toHaveValue("");
+  expect(from).toHaveAttribute("data-value", "");
   expect(to).toHaveValue("");
   expect(to).not.toHaveAttribute("aria-invalid");
-  await within(from).findByRole("option", { name: "In review · Product (PROD) · started" });
-  expect(within(from).queryByRole("option", { name: /In progress/u })).not.toBeInTheDocument();
+  await within(to).findByRole("option", { name: "In review · Product (PROD) · started" });
   const stateScopes = fetchMock.mock.calls
     .map(([path]) => new URL(path, "https://wallie.test").searchParams)
     .filter((query) => query.get("kind") === "state" && query.has("teamId"))
@@ -375,7 +384,12 @@ it("validates the team on Save and resets the state choices and errors when the 
   expect(from).toHaveFocus();
   expect(from).toHaveAccessibleDescription("Choose an available starting state.");
   expect(writes).toEqual([]);
-  await user.selectOptions(from, alternateStarting.id);
+  await user.keyboard("{ArrowDown}");
+  const fromOptions = within(screen.getByRole("listbox", { name: "From state" }));
+  expect(fromOptions.queryByRole("option", { name: /In progress/u })).not.toBeInTheDocument();
+  await user.click(
+    fromOptions.getByRole("option", { name: "In review · Product (PROD) · started" }),
+  );
   await user.selectOptions(to, alternateEnding.id);
   await user.click(save);
   await screen.findByText("Linear outcomes saved.");
@@ -391,6 +405,86 @@ it("validates the team on Save and resets the state choices and errors when the 
           fromStateId: alternateStarting.id,
           toStateId: alternateEnding.id,
         },
+      },
+    },
+  ]);
+});
+
+it("keeps the unavailable starting ID and clears both errors only when From changes", async () => {
+  const writes = fixture({ savedFromState: savedStateId });
+  const user = userEvent.setup();
+  render(
+    <LinearConnectorPolicies factoryEndpoint={endpoint} onChanged={vi.fn()} resource={resource} />,
+  );
+  await user.click(screen.getByText("Linear routing and outcomes"));
+
+  const from = await screen.findByRole("combobox", { name: "From state" });
+  const to = screen.getByRole("combobox", { name: "To state" });
+  const save = screen.getByRole("button", { name: "Save outcomes" });
+  await within(to).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
+  expect(from).toHaveAttribute("data-value", savedStateId);
+  expect(from).toHaveTextContent("Unavailable — choose a replacement");
+  expect(from.id).toMatch(/-from$/u);
+  expect(from).toBeRequired();
+  expect(from).not.toHaveAttribute("aria-invalid");
+  expect(from.closest("form")?.checkValidity()).toBe(true);
+  expect(to).toHaveValue(starting.id);
+
+  await user.click(from);
+  const listbox = screen.getByRole("listbox", { name: "From state" });
+  expect(
+    within(listbox).getByRole("option", {
+      name: "Unavailable — choose a replacement",
+      selected: true,
+    }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Escape}");
+  expect(from).toHaveFocus();
+  await user.keyboard("{ArrowDown}{Tab}");
+  const details = screen.getByText("Saved provider ID");
+  expect(details).toHaveFocus();
+  await user.click(details);
+  expect(screen.getByText(savedStateId)).toBeVisible();
+
+  await user.selectOptions(to, "");
+  await user.click(save);
+  expect(from).toHaveFocus();
+  expect(from).toHaveAttribute("aria-invalid", "true");
+  expect(from).toHaveAttribute("aria-describedby", `${from.id}-error`);
+  expect(from).toHaveAccessibleDescription("Choose an available starting state.");
+  expect(to).toHaveAccessibleDescription("Choose an available destination state.");
+  expect(writes).toEqual([]);
+
+  await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+  expect(from).toHaveFocus();
+  expect(from).toHaveAttribute("data-value", starting.id);
+  expect(from).toHaveTextContent("In progress · Platform (PLAT) · started");
+  for (const choice of [from, to]) expect(choice).not.toHaveAttribute("aria-invalid");
+  expect(to).toHaveValue("");
+
+  await user.selectOptions(to, starting.id);
+  await user.click(save);
+  expect(to).toHaveFocus();
+  expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
+  await user.click(from);
+  await user.keyboard("{Enter}");
+  expect(from).toHaveFocus();
+  expect(to).toHaveAccessibleDescription("Choose a different state from the starting state.");
+  await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+  expect(to).not.toHaveAttribute("aria-invalid");
+  expect(to).toHaveValue(starting.id);
+  expect(writes).toEqual([]);
+
+  await user.click(save);
+  await screen.findByText("Linear outcomes saved.");
+  expect(writes).toEqual([
+    {
+      url: `${endpoint}/linear-outbound/${resource.id}`,
+      command: {
+        commentsEnabled: true,
+        expectedRevision: 2,
+        mappingRevision: 4,
+        statusMapping: { teamId: team.id, fromStateId: ending.id, toStateId: starting.id },
       },
     },
   ]);
