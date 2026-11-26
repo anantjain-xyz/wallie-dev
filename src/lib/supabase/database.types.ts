@@ -13785,6 +13785,7 @@ export type Database = {
           p_before_artifact_id?: string
           p_before_at?: string
           p_factory_id?: string
+          p_kind?: string
           p_workspace_id: string
         }
         Returns: Json
