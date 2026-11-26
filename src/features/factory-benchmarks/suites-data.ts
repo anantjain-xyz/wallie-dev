@@ -1,9 +1,11 @@
 import "server-only";
 
+import { z } from "zod";
+
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { resolveFactorySelection } from "@/features/factories/factory-selection";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
-import type { Tables } from "@/lib/supabase/database.types";
+import type { Json, Tables } from "@/lib/supabase/database.types";
 
 const suiteFields = "id,suite_id,name,purpose,revision_number,selection_tags,created_at";
 const taskFields =
@@ -22,7 +24,27 @@ export type BenchmarkTaskRevision = Pick<
   | "acceptance_criteria"
   | "eligibility_reason"
 >;
-export type BenchmarkTaskChoice = BenchmarkTaskRevision & { sourceRunId: string };
+export type BenchmarkTaskSource = {
+  runId: string;
+  title: string;
+  stage: string | null;
+  createdAt: string;
+  attempt?: number;
+  commit?: string;
+};
+export type BenchmarkTaskChoice = BenchmarkTaskRevision & { source: BenchmarkTaskSource | null };
+
+type TaskWithProvenance = BenchmarkTaskRevision & {
+  sourceRunId: string;
+  provenance: Json;
+};
+const sourceProvenance = z.object({
+  attempt: z.number().int().positive().nullish(),
+  inputSha: z
+    .string()
+    .regex(/^[a-f0-9]{40}$/i)
+    .nullish(),
+});
 
 export async function loadBenchmarkScope(
   workspaceSlug: string,
@@ -58,38 +80,44 @@ export async function loadBenchmarkScope(
 
 type Scope = NonNullable<Awaited<ReturnType<typeof loadBenchmarkScope>>>;
 
-export async function loadBenchmarkSuites(
-  { supabase, workspaceId, factory }: Scope,
-  after?: string,
-) {
-  const query = supabase
-    .from("factory_benchmark_suites")
-    .select(`id,factory_benchmark_suite_revisions(${suiteFields})`)
+export async function hasBenchmarkTasks({ supabase, workspaceId, factory }: Scope) {
+  const { data, error } = await supabase
+    .from("factory_benchmark_tasks")
+    .select("id")
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factory.id)
-    .order("id")
-    .order("revision_number", {
-      referencedTable: "factory_benchmark_suite_revisions",
-      ascending: false,
-    })
-    .limit(1, { referencedTable: "factory_benchmark_suite_revisions" })
-    .limit(pageSize + 1);
-  const { data, error } = await (after ? query.gt("id", after) : query);
+    .limit(1);
   if (error) throw error;
-  const page = data.slice(0, pageSize);
+  return data.length > 0;
+}
+
+export async function loadBenchmarkSuites(
+  { supabase, workspaceId, factory }: Scope,
+  { after, name, purpose }: { after?: string; name?: string; purpose?: string },
+) {
+  const { data, error } = await supabase.rpc("list_factory_benchmark_suites", {
+    p_workspace_id: workspaceId,
+    p_factory_id: factory.id,
+    ...(after ? { p_after: after } : {}),
+    ...(name ? { p_name: name } : {}),
+    ...(purpose ? { p_purpose: purpose } : {}),
+  });
+  if (error) throw error;
+  const suites = data.slice(0, pageSize);
   return {
-    suites: page.flatMap(({ factory_benchmark_suite_revisions: revisions }) => revisions),
-    nextAfter: data.length > pageSize ? page.at(-1)?.id : undefined,
+    suites,
+    nextAfter: data.length > pageSize ? suites.at(-1)?.suite_id : undefined,
   };
 }
 
-export async function loadBenchmarkTaskChoices({ supabase, workspaceId, factory }: Scope) {
-  const choices: BenchmarkTaskChoice[] = [];
+export async function loadBenchmarkTaskChoices(scope: Scope) {
+  const { supabase, workspaceId, factory } = scope;
+  const choices: TaskWithProvenance[] = [];
   let after: string | undefined;
   do {
     const query = supabase
       .from("factory_benchmark_tasks")
-      .select(`id,source_run_id,factory_benchmark_task_revisions(${taskFields})`)
+      .select(`id,source_run_id,source_provenance,factory_benchmark_task_revisions(${taskFields})`)
       .eq("workspace_id", workspaceId)
       .eq("factory_id", factory.id)
       .order("id")
@@ -102,23 +130,29 @@ export async function loadBenchmarkTaskChoices({ supabase, workspaceId, factory 
     const { data, error } = await (after ? query.gt("id", after) : query);
     if (error) throw error;
     choices.push(
-      ...data.flatMap(({ source_run_id, factory_benchmark_task_revisions: revisions }) =>
-        revisions.map((revision) => ({ ...revision, sourceRunId: source_run_id })),
+      ...data.flatMap(
+        ({ source_run_id, source_provenance, factory_benchmark_task_revisions: revisions }) =>
+          revisions.map((revision) => ({
+            ...revision,
+            sourceRunId: source_run_id,
+            provenance: source_provenance,
+          })),
       ),
     );
     after = data.length === scanPageSize ? data.at(-1)?.id : undefined;
   } while (after);
-  return choices.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return loadTaskSources(scope, choices);
 }
 
-async function loadBenchmarkMembers({ supabase, workspaceId, factory }: Scope, revisionId: string) {
-  const members: BenchmarkTaskChoice[] = [];
+async function loadBenchmarkMembers(scope: Scope, revisionId: string) {
+  const { supabase, workspaceId, factory } = scope;
+  const members: TaskWithProvenance[] = [];
   let after: string | undefined;
   do {
     const query = supabase
       .from("factory_benchmark_suite_members")
       .select(
-        `task_id,revision:factory_benchmark_task_revisions!inner(${taskFields},task:factory_benchmark_tasks!inner(source_run_id))`,
+        `task_id,revision:factory_benchmark_task_revisions!inner(${taskFields},task:factory_benchmark_tasks!inner(source_run_id,source_provenance))`,
       )
       .eq("workspace_id", workspaceId)
       .eq("factory_id", factory.id)
@@ -129,11 +163,56 @@ async function loadBenchmarkMembers({ supabase, workspaceId, factory }: Scope, r
     if (error) throw error;
     for (const { revision } of data) {
       const { task, ...member } = revision;
-      members.push({ ...member, sourceRunId: task.source_run_id });
+      members.push({
+        ...member,
+        sourceRunId: task.source_run_id,
+        provenance: task.source_provenance,
+      });
     }
     after = data.length === scanPageSize ? data.at(-1)?.task_id : undefined;
   } while (after);
-  return members.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return loadTaskSources(scope, members);
+}
+
+async function loadTaskSources(
+  { supabase, workspaceId, factory }: Scope,
+  tasks: TaskWithProvenance[],
+) {
+  const sources = new Map<string, Omit<BenchmarkTaskSource, "attempt" | "commit">>();
+  const runIds = [...new Set(tasks.map(({ sourceRunId }) => sourceRunId))];
+  for (let offset = 0; offset < runIds.length; offset += 50) {
+    const { data, error } = await supabase
+      .from("agent_runs")
+      .select("id,stage_name,stage_slug,created_at,sessions!inner(title,factory_id)")
+      .eq("workspace_id", workspaceId)
+      .eq("sessions.factory_id", factory.id)
+      .in("id", runIds.slice(offset, offset + 50));
+    if (error) throw error;
+    for (const { id, stage_name, stage_slug, created_at, sessions } of data) {
+      sources.set(id, {
+        runId: id,
+        stage: stage_name || stage_slug,
+        createdAt: created_at,
+        title: sessions.title,
+      });
+    }
+  }
+  return tasks
+    .map(({ sourceRunId, provenance, ...task }): BenchmarkTaskChoice => {
+      const source = sources.get(sourceRunId);
+      const pins = source ? sourceProvenance.safeParse(provenance).data : undefined;
+      return {
+        ...task,
+        name:
+          task.name === `Historical run ${sourceRunId.slice(0, 8)}`
+            ? (source?.title ?? "Historical run")
+            : task.name,
+        source: source
+          ? { ...source, attempt: pins?.attempt ?? undefined, commit: pins?.inputSha ?? undefined }
+          : null,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
 async function loadLatestMemberTasks(

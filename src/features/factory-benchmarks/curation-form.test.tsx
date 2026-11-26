@@ -4,11 +4,16 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { BenchmarkCatalogEditor } from "./benchmark-catalog-editor";
 import { SuiteCurationForm } from "./suite-curation-form";
 import { TaskCurationEditor } from "./task-curation-editor";
 
-const { push, refresh } = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push, refresh }) }));
+const { push, refresh, replace } = vi.hoisted(() => ({
+  push: vi.fn(),
+  refresh: vi.fn(),
+  replace: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push, refresh, replace }) }));
 
 const id = (suffix: number) => `61300000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 const scope = { workspaceId: id(1), factoryId: id(2), workspaceSlug: "acme" };
@@ -21,7 +26,13 @@ const task = {
   replay_eligibility: "eligible",
   acceptance_criteria: "Keep the author's original criteria.",
   eligibility_reason: null,
-  sourceRunId: id(10),
+  source: {
+    runId: id(10),
+    title: "April invoice import",
+    stage: "Review",
+    attempt: 2,
+    createdAt: "2026-11-23T00:00:00Z",
+  },
 };
 const latest = { ...task, id: id(5), revision_number: 2 };
 const draft = {
@@ -32,12 +43,14 @@ const draft = {
   selectionTags: ["ui"],
   members: [task],
 };
+const explicitDraft = { ...draft, selectionTags: null };
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   push.mockReset();
   refresh.mockReset();
+  replace.mockReset();
 });
 
 it.each([false, true])(
@@ -47,13 +60,13 @@ it.each([false, true])(
       Response.json({ suiteId: draft.suiteId, revisionId: id(8), revisionNumber: 2 }),
     );
     vi.stubGlobal("fetch", fetch);
-    render(<SuiteCurationForm {...scope} draft={draft} taskChoices={[latest]} />);
+    render(<SuiteCurationForm {...scope} draft={explicitDraft} taskChoices={[latest]} />);
     expect(screen.getByRole("radio", { name: "Choose tasks" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Include Invoice UI" })).toBeChecked();
     if (adopt)
       fireEvent.click(screen.getByRole("button", { name: "Use revision 2 for Invoice UI" }));
     fireEvent.click(screen.getByRole("button", { name: "Save suite" }));
-    await waitFor(() => expect(push).toHaveBeenCalledOnce());
+    await waitFor(() => expect(replace).toHaveBeenCalledOnce());
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
       suiteId: draft.suiteId,
       expectedRevisionId: draft.revisionId,
@@ -69,7 +82,7 @@ it("keeps the suite draft visible after a stale write", async () => {
     "fetch",
     vi.fn(async () => Response.json({ error: "The benchmark suite changed." }, { status: 409 })),
   );
-  render(<SuiteCurationForm {...scope} draft={draft} taskChoices={[latest]} />);
+  render(<SuiteCurationForm {...scope} draft={explicitDraft} taskChoices={[latest]} />);
   const name = screen.getByRole("textbox", { name: "Suite name" });
   fireEvent.change(name, { target: { value: "Updated suite draft" } });
   fireEvent.click(screen.getByRole("button", { name: "Use revision 2 for Invoice UI" }));
@@ -80,7 +93,7 @@ it("keeps the suite draft visible after a stale write", async () => {
   expect(screen.getByRole("button", { name: "Use revision 1 for Invoice UI" })).toBeVisible();
   expect(screen.getByRole("link", { name: "Reload latest revision" })).toBeVisible();
   expect(save).toBeDisabled();
-  expect(push).not.toHaveBeenCalled();
+  expect(replace).not.toHaveBeenCalled();
 });
 
 it("saves a holdout suite by normalized tags with a separately described input", async () => {
@@ -88,7 +101,7 @@ it("saves a holdout suite by normalized tags with a separately described input",
     Response.json({ suiteId: draft.suiteId, revisionId: id(8), revisionNumber: 1 }),
   );
   vi.stubGlobal("fetch", fetch);
-  render(<SuiteCurationForm {...scope} taskChoices={[latest]} />);
+  render(<SuiteCurationForm {...scope} taskChoices={[{ ...latest, tags: ["ui", "invoice"] }]} />);
   fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
     target: { value: "UI holdout" },
   });
@@ -96,14 +109,20 @@ it("saves a holdout suite by normalized tags with a separately described input",
   fireEvent.click(screen.getByRole("option", { name: "Holdout" }));
   fireEvent.click(screen.getByRole("radio", { name: "Match tags" }));
   fireEvent.change(screen.getByRole("textbox", { name: /^Selection tags$/ }), {
-    target: { value: " ui, invoice " },
+    target: { value: " UI, invoice " },
   });
+  fireEvent.click(screen.getByRole("radio", { name: "Choose tasks" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Match tags" }));
+  expect(screen.getByRole("textbox", { name: /^Selection tags$/ })).toHaveValue(" UI, invoice ");
+  expect(screen.getByRole("button", { name: "invoice", exact: true })).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("1 matching task");
+  expect(screen.getByText(/Revision 2 · Eligible/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Save suite" }));
-  await waitFor(() => expect(push).toHaveBeenCalledOnce());
+  await waitFor(() => expect(replace).toHaveBeenCalledOnce());
   expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
     name: "UI holdout",
     purpose: "holdout",
-    selection: { kind: "tags", tags: ["ui", "invoice"] },
+    selection: { kind: "tags", tags: ["ui", "invoice"], previewTaskRevisionIds: [latest.id] },
   });
 });
 
@@ -157,7 +176,8 @@ it("offers a way to reload an unavailable factory while preserving the new suite
   render(<SuiteCurationForm {...scope} taskChoices={[]} />);
   const name = screen.getByRole("textbox", { name: "Suite name" });
   fireEvent.change(name, { target: { value: "Unpublished suite" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save suite" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Save this suite without tasks/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Save empty suite" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("This factory is archived.");
   expect(name).toHaveValue("Unpublished suite");
   expect(screen.getByRole("link", { name: "Reload benchmark suites" })).toHaveAttribute(
@@ -178,13 +198,13 @@ it("keeps the selected revision and its review details after newer choices arriv
     replay_eligibility: "ineligible",
   };
   const { rerender } = render(
-    <SuiteCurationForm {...scope} draft={draft} taskChoices={[revised]} />,
+    <SuiteCurationForm {...scope} draft={explicitDraft} taskChoices={[revised]} />,
   );
   fireEvent.click(screen.getByRole("button", { name: "Use revision 2 for Invoice UI" }));
   rerender(
     <SuiteCurationForm
       {...scope}
-      draft={draft}
+      draft={explicitDraft}
       taskChoices={[{ ...latest, id: id(9), revision_number: 3 }]}
     />,
   );
@@ -192,9 +212,139 @@ it("keeps the selected revision and its review details after newer choices arriv
   expect(screen.getByText("The starting ref is unavailable.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Use revision 3 for Invoice UI" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Save suite" }));
-  await waitFor(() => expect(push).toHaveBeenCalledOnce());
+  await waitFor(() => expect(replace).toHaveBeenCalledOnce());
   expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).selection).toEqual({
     kind: "explicit",
     taskRevisionIds: [revised.id],
   });
+});
+
+it("keeps a frozen tag rule and the pinned task revisions on a rename", async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+    Response.json({ suiteId: draft.suiteId, revisionId: id(8), revisionNumber: 2 }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(<SuiteCurationForm {...scope} draft={draft} taskChoices={[latest]} />);
+  expect(screen.getByRole("radio", { name: "Keep frozen selection" })).toBeChecked();
+  expect(screen.getByText("Selection tags: ui")).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("1 frozen task");
+  expect(screen.getByText(/Revision 1 · Eligible/)).toBeVisible();
+  fireEvent.click(screen.getByText("Review Invoice UI"));
+  expect(
+    screen.getByRole("link", { name: "April invoice import · Review · Attempt 2" }),
+  ).toHaveAttribute("href", `/w/acme/runs/${id(10)}?attempt=2`);
+  fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+    target: { value: "Renamed suite" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save suite" }));
+  await waitFor(() =>
+    expect(replace).toHaveBeenCalledWith(
+      `/w/acme/benchmarks/${draft.suiteId}?factory=${scope.factoryId}&revision=${id(8)}#suite-membership`,
+    ),
+  );
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+    name: "Renamed suite",
+    suiteId: draft.suiteId,
+    expectedRevisionId: draft.revisionId,
+    selection: { kind: "preserve" },
+  });
+});
+
+it("requires an intentional empty save, and moving between modes clears consent", async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+    Response.json({ suiteId: draft.suiteId, revisionId: id(8), revisionNumber: 1 }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(<SuiteCurationForm {...scope} taskChoices={[latest]} />);
+  fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+    target: { value: "Future tasks" },
+  });
+  const consent = () => screen.getByRole("checkbox", { name: /Save this suite without tasks/ });
+  fireEvent.click(consent());
+  fireEvent.click(screen.getByRole("radio", { name: "Match tags" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Selection tags" }), {
+    target: { value: "unknown" },
+  });
+  expect(screen.getByText(/No tasks match all of these tags/)).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("0 matching tasks");
+  const save = screen.getByRole("button", { name: "Save empty suite" });
+  expect(consent()).not.toBeChecked();
+  expect(save).toBeDisabled();
+  expect(fetch).not.toHaveBeenCalled();
+  fireEvent.click(consent());
+  fireEvent.click(save);
+  await waitFor(() => expect(replace).toHaveBeenCalledOnce());
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+    allowEmpty: true,
+    selection: { kind: "tags", tags: ["unknown"], previewTaskRevisionIds: [] },
+  });
+});
+
+it("shows refresh deltas and keeps the draft when the server finds a changed match", async () => {
+  const dropped = { ...task, id: id(11), task_id: id(12), name: "Former match", source: null };
+  const restored = { ...latest, id: id(13), revision_number: 3 };
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json({ error: "Tag matches changed." }, { status: 412 }))
+    .mockResolvedValueOnce(
+      Response.json({ suiteId: draft.suiteId, revisionId: id(8), revisionNumber: 2 }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const taggedDraft = { ...draft, members: [task, dropped] };
+  const { rerender } = render(
+    <SuiteCurationForm {...scope} draft={taggedDraft} taskChoices={[latest]} />,
+  );
+  const name = screen.getByRole("textbox", { name: "Suite name" });
+  fireEvent.change(name, { target: { value: "Updated tag suite" } });
+  fireEvent.click(screen.getByRole("radio", { name: "Refresh tag matches" }));
+  expect(screen.getByRole("status")).toHaveTextContent("1 matching task · 2 previously frozen");
+  expect(screen.getByText(/Was revision 1/)).toBeVisible();
+  expect(screen.getByText("Would remove: Former match.")).toBeVisible();
+  const save = screen.getByRole("button", { name: "Save suite" });
+  fireEvent.click(save);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Tag matches changed.");
+  expect(name).toHaveValue("Updated tag suite");
+  expect(save).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
+  expect(refresh).toHaveBeenCalledOnce();
+  rerender(<SuiteCurationForm {...scope} draft={taggedDraft} taskChoices={[restored]} />);
+  expect(screen.getByText(/Revision 3 · Eligible/)).toBeVisible();
+  fireEvent.click(save);
+  await waitFor(() => expect(replace).toHaveBeenCalledOnce());
+  expect(
+    JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).selection.previewTaskRevisionIds,
+  ).toEqual([restored.id]);
+});
+
+it("guards switching a dirty draft and preserves the named filters after a confirmed switch", async () => {
+  const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+  vi.stubGlobal("confirm", confirm);
+  const catalogHref = `/w/acme/benchmarks?factory=${scope.factoryId}&q=invoice&purpose=holdout&after=${id(8)}`;
+  render(
+    <BenchmarkCatalogEditor
+      {...scope}
+      catalogHref={catalogHref}
+      taskChoices={[task]}
+      factories={[
+        { id: scope.factoryId, isDefault: true, name: "Primary", status: "active" },
+        { id: id(9), isDefault: false, name: "Secondary", status: "active" },
+      ]}
+    />,
+  );
+  expect(screen.getByRole("link", { name: "Cancel" })).toHaveAttribute("href", catalogHref);
+  const name = screen.getByRole("textbox", { name: "Suite name" });
+  expect(name).toHaveFocus();
+  fireEvent.change(name, { target: { value: "Draft invoice suite" } });
+  const change = () => {
+    fireEvent.click(screen.getByRole("combobox", { name: "Factory" }));
+    fireEvent.click(screen.getByRole("option", { name: "Secondary" }));
+  };
+  change();
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(push).not.toHaveBeenCalled();
+  expect(name).toHaveValue("Draft invoice suite");
+  change();
+  expect(push).toHaveBeenCalledWith(
+    `/w/acme/benchmarks?factory=${id(9)}&q=invoice&purpose=holdout`,
+  );
 });

@@ -23,6 +23,7 @@ const baseUrl = `http://factory.test/api/workspaces/${workspaceId}/factories/${f
 const createCommand = {
   name: "  UI regressions  ",
   purpose: "regression",
+  allowEmpty: true,
   selection: { kind: "explicit", taskRevisionIds: [] },
 };
 const suiteEdit = {
@@ -30,7 +31,11 @@ const suiteEdit = {
   expectedRevisionId: baseRevisionId,
   name: "Review holdout",
   purpose: "holdout",
-  selection: { kind: "tags", tags: ["  review  ", "triage"] },
+  selection: {
+    kind: "tags",
+    tags: ["  review  ", "triage"],
+    previewTaskRevisionIds: [baseRevisionId],
+  },
 };
 const taskEdit = {
   taskId,
@@ -76,7 +81,7 @@ function useDatabase({
         { status: 400 },
       );
     }
-    if (url.pathname.endsWith("/save_factory_benchmark_suite_revision")) {
+    if (url.pathname.endsWith("/curate_factory_benchmark_suite")) {
       const body = JSON.parse(String(init?.body));
       return Response.json({
         id: newRevisionId,
@@ -119,14 +124,25 @@ describe("benchmark suite and task mutations", () => {
     const { write } = useDatabase();
     const created = await saveSuite(post("suites", createCommand), { params });
     const edited = await saveSuite(post("suites", suiteEdit), { params });
+    const renamed = await saveSuite(
+      post("suites", { ...suiteEdit, name: "Renamed holdout", selection: { kind: "preserve" } }),
+      { params },
+    );
 
     expect(created.status).toBe(200);
     expect(created.headers.get("Cache-Control")).toBe("private, no-store");
     expect(await created.json()).toEqual({ suiteId, revisionId: newRevisionId, revisionNumber: 1 });
     expect(edited.status).toBe(200);
     expect(await edited.json()).toEqual({ suiteId, revisionId: newRevisionId, revisionNumber: 2 });
+    expect(renamed.status).toBe(200);
     expect(write.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-      { ...actor, p_name: "UI regressions", p_purpose: "regression", p_task_revision_ids: [] },
+      {
+        ...actor,
+        p_name: "UI regressions",
+        p_purpose: "regression",
+        p_task_revision_ids: [],
+        p_allow_empty: true,
+      },
       {
         ...actor,
         p_name: "Review holdout",
@@ -134,6 +150,15 @@ describe("benchmark suite and task mutations", () => {
         p_suite_id: suiteId,
         p_expected_revision_id: baseRevisionId,
         p_selection_tags: ["review", "triage"],
+        p_preview_task_revision_ids: [baseRevisionId],
+      },
+      {
+        ...actor,
+        p_name: "Renamed holdout",
+        p_purpose: "holdout",
+        p_suite_id: suiteId,
+        p_expected_revision_id: baseRevisionId,
+        p_preserve_selection: true,
       },
     ]);
   });
@@ -169,11 +194,16 @@ describe("benchmark suite and task mutations", () => {
   it("rejects missing expected revisions and client-supplied eligibility before writing", async () => {
     useDatabase();
     const missingBase = await saveSuite(post("suites", { ...createCommand, suiteId }), { params });
+    const noSelection = await saveSuite(
+      post("suites", { ...createCommand, selection: { kind: "preserve" } }),
+      { params },
+    );
     const spoofed = await saveTask(post("tasks", { ...taskEdit, replayEligibility: "eligible" }), {
       params,
     });
 
     expect(missingBase.status).toBe(400);
+    expect(noSelection.status).toBe(400);
     expect(spoofed.status).toBe(400);
     expect(mocks.admin).not.toHaveBeenCalled();
   });
@@ -230,5 +260,19 @@ describe("benchmark suite and task mutations", () => {
     expect(await response.json()).toEqual({
       error: "A selected benchmark task revision is unavailable in this factory.",
     });
+  });
+
+  it.each([
+    [
+      "PT412",
+      412,
+      "Tag matches changed while you were editing. Refresh the preview and review it before saving.",
+    ],
+    ["PT428", 428, "Confirm that you want to save a suite with no tasks."],
+  ] as const)("returns actionable selection feedback for %s", async (writeError, status, error) => {
+    useDatabase({ writeError });
+    const response = await saveSuite(post("suites", suiteEdit), { params });
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ error });
   });
 });
