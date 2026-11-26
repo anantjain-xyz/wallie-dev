@@ -38,7 +38,9 @@ test("a magic link completes sign-in back to the filtered Sessions list", async 
   );
   await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
   await expect(
-    page.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+    page.getByRole("searchbox", {
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
+    }),
   ).toHaveValue("example");
 });
 
