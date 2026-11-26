@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 
+import { EditableCombobox } from "@/components/ui/editable-combobox";
 import { SelectField } from "@/components/ui/select";
 import {
   factoryAutomationDefinitionSchema,
@@ -29,6 +30,17 @@ const scheduleOptions = [
   { value: "custom", label: "Custom cron" },
 ];
 
+const timeZoneOptions = [
+  "Etc/UTC",
+  "America/Los_Angeles",
+  "America/New_York",
+  "Europe/London",
+  "Europe/Berlin",
+  "Asia/Kolkata",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+].map((zone) => ({ value: zone, label: zone }));
+
 function scheduleDefaults(cron: string | undefined) {
   if (!cron) return { cadence: "daily", time: "09:00" };
   if (cron === "0 * * * *") return { cadence: "hourly", time: "09:00" };
@@ -51,10 +63,12 @@ function ScheduleFields({
   disabled: boolean;
 }) {
   const defaults = scheduleDefaults(initial?.cron);
-  const timezones = useId();
   const [cadence, setCadence] = useState(defaults.cadence);
   const [localTime, setLocalTime] = useState(defaults.time);
   const [customCron, setCustomCron] = useState(initial?.cron ?? "");
+  const [timeZone, setTimeZone] = useState(initial?.timeZone ?? "Etc/UTC");
+  const [filterTimeZones, setFilterTimeZones] = useState(false);
+  const timeZoneQuery = filterTimeZones ? timeZone.trim().toLowerCase() : "";
 
   return (
     <>
@@ -101,29 +115,29 @@ function ScheduleFields({
       ) : null}
       <label className="block min-w-0 space-y-1.5">
         <span className="type-label">Time zone</span>
-        <input
-          className="ui-input"
+        <EditableCombobox
+          listboxLabel="Time zone suggestions"
           name="timeZone"
-          list={timezones}
           maxLength={80}
           required
-          defaultValue={initial?.timeZone ?? "Etc/UTC"}
-          autoComplete="off"
+          disabled={disabled}
+          value={timeZone}
+          selectedValue={timeZone}
+          options={
+            timeZoneQuery
+              ? timeZoneOptions.filter(({ value }) => value.toLowerCase().includes(timeZoneQuery))
+              : timeZoneOptions
+          }
+          onOpenChange={(open) => {
+            if (!open) setFilterTimeZones(false);
+          }}
+          onValueChange={(value) => {
+            if (value === timeZone) return;
+            setTimeZone(value);
+            setFilterTimeZones(true);
+            changed();
+          }}
         />
-        <datalist id={timezones}>
-          {[
-            "Etc/UTC",
-            "America/Los_Angeles",
-            "America/New_York",
-            "Europe/London",
-            "Europe/Berlin",
-            "Asia/Kolkata",
-            "Asia/Tokyo",
-            "Australia/Sydney",
-          ].map((zone) => (
-            <option key={zone} value={zone} />
-          ))}
-        </datalist>
       </label>
     </>
   );

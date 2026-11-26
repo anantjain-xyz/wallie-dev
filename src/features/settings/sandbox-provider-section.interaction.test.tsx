@@ -381,7 +381,10 @@ describe("Vercel target discovery", () => {
     const form = team.closest("form")!;
     expect(team).toHaveTextContent("Northwind · northwind");
     expect(new FormData(form).get("vercel-team")).toBe("team_123");
-    expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("prj_123");
+    expect(await screen.findByRole("combobox", { name: "Project" })).toHaveTextContent(
+      "Wallie runner · northwind",
+    );
+    expect(new FormData(form).get("vercel-project")).toBe("prj_123");
 
     await user.click(screen.getByText("Team", { selector: "label" }));
     const listbox = screen.getByRole("listbox");
@@ -400,11 +403,31 @@ describe("Vercel target discovery", () => {
     expect(team).toHaveFocus();
     expect(team).toHaveTextContent("acme");
     expect(new FormData(form).get("vercel-team")).toBe("team_other");
-    expect(await screen.findByRole("option", { name: "Acme runner · acme" })).toBeInTheDocument();
+    const project = await screen.findByRole("combobox", { name: "Project" });
+    expect(project).toHaveTextContent("Acme runner · acme");
+    expect(new FormData(form).get("vercel-project")).toBe("prj_acme");
+    await user.click(screen.getByText("Project", { selector: "label" }));
+    const projectOptions = screen.getByRole("listbox", { name: "Project" });
     expect(
-      screen.queryByRole("option", { name: "Wallie runner · northwind" }),
+      within(projectOptions).getByRole("option", { name: "Acme runner · acme" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      within(projectOptions).queryByRole("option", { name: "Wallie runner · northwind" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("prj_acme");
+    await user.keyboard("{ArrowUp}{Escape}");
+    expect(projectOptions).not.toBeInTheDocument();
+    expect(project).toHaveFocus();
+    expect(new FormData(form).get("vercel-project")).toBe("prj_acme");
+
+    const save = screen.getByRole("button", { name: "Save connection" });
+    await user.keyboard("{Enter}{Home}{Enter}");
+    expect(project).toHaveTextContent("Choose a project");
+    expect(new FormData(form).get("vercel-project")).toBe("");
+    expect(save).toBeDisabled();
+    await user.keyboard("{Enter}{ArrowDown}{Enter}");
+    expect(project).toHaveFocus();
+    expect(project).toHaveTextContent("Acme runner · acme");
+    expect(new FormData(form).get("vercel-project")).toBe("prj_acme");
     expect(
       requests.mock.calls.map(([url, init]) => [
         url,
@@ -418,7 +441,7 @@ describe("Vercel target discovery", () => {
     ]);
     expect(onSettingsChange).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Save connection" }));
+    await user.click(save);
     expect(JSON.parse(requests.mock.calls[3]![1]!.body as string)).toEqual({
       projectId: "prj_acme",
       teamId: "team_other",
@@ -426,6 +449,8 @@ describe("Vercel target discovery", () => {
     });
     expect(team).toBeDisabled();
     expect(new FormData(form).has("vercel-team")).toBe(false);
+    expect(project).toBeDisabled();
+    expect(new FormData(form).has("vercel-project")).toBe(false);
     await user.click(team);
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
 
@@ -467,11 +492,17 @@ describe("Vercel target discovery", () => {
     await user.click(team);
     await user.click(screen.getByRole("option", { name: "acme" }));
     expect(staleSignal?.aborted).toBe(true);
-    expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("prj_acme");
+    expect(await screen.findByRole("combobox", { name: "Project" })).toHaveTextContent(
+      "Acme runner · acme",
+    );
+    expect(new FormData(team.closest("form")!).get("vercel-project")).toBe("prj_acme");
 
     const staleProjects = { projects: [{ id: "prj_stale", name: "Stale runner" }] };
     await act(async () => stale.resolve(Response.json(staleProjects)));
-    expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("prj_acme");
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent(
+      "Acme runner · acme",
+    );
+    expect(new FormData(team.closest("form")!).get("vercel-project")).toBe("prj_acme");
 
     await user.click(team);
     await user.click(screen.getByRole("option", { name: "Northwind · northwind" }));
@@ -514,7 +545,9 @@ describe("Vercel target discovery", () => {
     expect(await screen.findByRole("combobox", { name: "Team" })).toHaveTextContent(
       "Northwind · northwind",
     );
-    expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("prj_123");
+    const project = await screen.findByRole("combobox", { name: "Project" });
+    expect(project).toHaveTextContent("Wallie runner · northwind");
+    expect(new FormData(project.closest("form")!).get("vercel-project")).toBe("prj_123");
     expect(requests).toHaveBeenCalledTimes(3);
     expect(requests).toHaveBeenLastCalledWith(
       lookupUrl,
@@ -543,13 +576,25 @@ describe("Vercel target discovery", () => {
     await user.type(screen.getByLabelText("Token"), "synthetic-token");
     await user.click(screen.getByRole("button", { name: "Find teams" }));
     expect(await screen.findByText(/Saved project unavailable/)).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Save connection" })).toBeDisabled();
+    const project = screen.getByRole("combobox", { name: "Project" });
+    const save = screen.getByRole("button", { name: "Save connection" });
+    expect(project).toHaveTextContent("Choose a project");
+    expect(new FormData(project.closest("form")!).get("vercel-project")).toBe("");
+    expect(save).toBeDisabled();
+
+    await user.click(project);
+    await user.click(screen.getByRole("option", { name: "New runner · northwind" }));
+    expect(project).toHaveFocus();
+    expect(screen.queryByText(/Saved project unavailable/)).not.toBeInTheDocument();
+    expect(save).toBeEnabled();
+
     await user.click(screen.getByRole("button", { name: "Enter IDs manually" }));
+    expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Team ID from Team Settings/ })).toHaveAttribute(
       "href",
       expect.stringContaining("find-your-team-id"),
     );
+    expect(screen.getByLabelText("Team ID")).toHaveValue("team_123");
     expect(screen.getByLabelText("Project ID")).toHaveValue("prj_123");
     expect(requests).toHaveBeenCalledTimes(2);
     expect(onSettingsChange).not.toHaveBeenCalled();
