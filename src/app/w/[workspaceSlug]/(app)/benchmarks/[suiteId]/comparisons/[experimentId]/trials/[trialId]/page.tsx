@@ -11,10 +11,7 @@ import {
   benchmarkComparisonIdSchema,
   benchmarkComparisonQuerySchema,
 } from "@/lib/factory-benchmarks/comparison-contracts";
-import {
-  readBenchmarkTrialEvidence,
-  readBenchmarkTrialTranscript,
-} from "@/lib/factory-benchmarks/trial-evidence";
+import { readBenchmarkTrialPageEvidence } from "@/lib/factory-benchmarks/trial-evidence";
 import { workspaceBenchmarkComparisonPath } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -60,16 +57,14 @@ export default async function BenchmarkTrialPage({
     experimentId,
     trialId,
   };
-  const [detail, transcript] = await Promise.all([
-    readBenchmarkTrialEvidence(evidenceScope),
-    readBenchmarkTrialTranscript(evidenceScope),
-  ]).catch((error: unknown) => {
-    if (error instanceof BenchmarkComparisonError && [400, 403, 404].includes(error.status)) {
-      notFound();
-    }
-    throw error;
-  });
-  if (!detail || detail.suite.id !== suiteId) notFound();
+  const { detail, transcript } = await readBenchmarkTrialPageEvidence(evidenceScope, suiteId).catch(
+    (error: unknown) => {
+      if (error instanceof BenchmarkComparisonError && [400, 403, 404].includes(error.status)) {
+        notFound();
+      }
+      throw error;
+    },
+  );
 
   return (
     <BenchmarkTrialEvidenceView
@@ -80,7 +75,7 @@ export default async function BenchmarkTrialPage({
         factory: factory.id,
         afterTrialId: from.data.afterTrialId,
         afterCandidateKey: from.data.afterCandidateKey,
-      })}#comparison-trials`}
+      })}#trial-${trialId}`}
     />
   );
 }

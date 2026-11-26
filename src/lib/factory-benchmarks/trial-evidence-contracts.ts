@@ -47,6 +47,15 @@ export const trialEvidenceIdParamsSchema = z.object({
 });
 export const trialEvidenceMediaSideSchema = z.enum(["original", "output"]);
 export type TrialEvidenceMediaSide = z.infer<typeof trialEvidenceMediaSideSchema>;
+export const trialEvidenceCitationQuerySchema = z.strictObject({
+  scorerRevisionId: id,
+  resultDigest: digest,
+  index: z
+    .string()
+    .regex(/^[0-4]$/)
+    .transform(Number),
+});
+export type TrialEvidenceCitationQuery = z.output<typeof trialEvidenceCitationQuerySchema>;
 
 export const benchmarkTrialEvidenceSchema = z.strictObject({
   workspaceId: id,

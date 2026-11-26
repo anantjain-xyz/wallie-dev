@@ -93,6 +93,7 @@ test("refreshing an active benchmark trial updates its transcript and status", a
     });
     const refresh = page.getByRole("button", { name: "Refresh trial evidence" });
     await expect(refresh).toBeVisible();
+    await expect(page.getByText("Not available yet.").first()).toBeVisible();
     await expect(page.getByText("No activity has been recorded for this run.")).toBeVisible();
     const activity = "Verified the active trial’s new invoice step.";
     expect(
@@ -123,7 +124,9 @@ test("refreshing an active benchmark trial updates its transcript and status", a
       ),
     ).toBe(true);
     await refresh.press("Enter");
-    await expect(refresh).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: /^Failed$/ })).toBeVisible();
+    await expect(refresh).toBeFocused();
+    await expect(page.getByText("No accepted output.", { exact: true })).toBeVisible();
     await expect(page.getByText(activity, { exact: true })).toBeVisible();
     const transcript = page.getByRole("region", { name: "Transcript" });
     await expect(transcript.getByText("Failed", { exact: true })).toBeVisible();
@@ -250,10 +253,22 @@ test("a benchmark trial shares exact private evidence and rechecks access at del
       exact: true,
     });
     await expect(header).toBeVisible();
-    const back = page.getByRole("link", { name: /Comparison results/ });
-    if (prior) await expect(back).toHaveAttribute("href", new RegExp(`afterTrialId=${prior}`));
+    const back = page.getByRole("link", { name: "Back to trial results" });
+    await expect(back).toHaveCount(2);
+    await expect(back.first()).toHaveAttribute(
+      "href",
+      new RegExp(`#trial-${saved.successfulTrialId}$`),
+    );
+    await expect(back.last()).toHaveAttribute("href", (await back.first().getAttribute("href"))!);
+    if (prior)
+      await expect(back.first()).toHaveAttribute("href", new RegExp(`afterTrialId=${prior}`));
     await expect(page.getByText(input.commit, { exact: true }).first()).toBeVisible();
-    await expect(page.getByText(output.commit, { exact: true }).first()).toBeVisible();
+    await expect(
+      page
+        .locator("section")
+        .filter({ has: page.getByRole("heading", { name: "Output diff", exact: true }) })
+        .getByText(output.commit, { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByText("No browser evidence matches the original run’s accepted commit and tree."),
     ).toBeVisible();
@@ -263,6 +278,9 @@ test("a benchmark trial shares exact private evidence and rechecks access at del
     await expect(diff).toContainText("Invoice reconciled");
     await expect(
       page.getByText("The isolated invoice output preserves the saved total."),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Cited source isn’t viewable here.", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByText("Recorded invoice processing step 35 API_KEY=[redacted]", { exact: true }),
@@ -290,7 +308,7 @@ test("a benchmark trial shares exact private evidence and rechecks access at del
     await view.focus();
     await page.keyboard.press("Enter");
     const image = outputEvidence.getByRole("img", {
-      name: "Screenshot captured for invoice-preview",
+      name: "Screenshot captured for Output screenshot 1",
     });
     await expect(image).toBeVisible();
     await expect
@@ -326,6 +344,9 @@ test("a benchmark trial shares exact private evidence and rechecks access at del
       .getAttribute("href");
     expect(screenshotAnchor).toBe(`#output-browser-screenshot-${assetId}`);
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${trialPath}#output-browser-screenshot-${randomUUID()}`);
+    await expect(outputEvidence.getByText("The linked screenshot is unavailable.")).toBeVisible();
+    await expect(view).toBeVisible();
     await page.goto(`${trialPath}${screenshotAnchor}`);
     await expect(screenshots).toHaveAttribute("aria-expanded", "true");
     await outputEvidence.getByRole("button", { name: "View screenshot" }).press("Enter");
@@ -340,9 +361,7 @@ test("a benchmark trial shares exact private evidence and rechecks access at del
     await expect(
       page.getByRole("heading", { name: "Verify notification recovery", exact: true }),
     ).toBeVisible();
-    await expect(
-      page.getByText("This trial has no retained output.", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText("No accepted output.", { exact: true })).toBeVisible();
     await expect(
       page.getByText("An exact output diff was not retained for this trial.", { exact: true }),
     ).toBeVisible();
@@ -387,6 +406,11 @@ test("a benchmark trial shares exact private evidence and rechecks access at del
       );
       expect([403, 404]).toContain((await managerPage.request.get(evidence)).status());
       expect([403, 404]).toContain((await managerPage.request.get(assetUrl)).status());
+      await managerPage.goto(trialPath);
+      await expect(managerPage.getByRole("link", { name: "Back to Benchmarks" })).toBeVisible();
+      await expect(
+        managerPage.getByRole("heading", { name: "Verify invoice reconciliation" }),
+      ).toHaveCount(0);
     } finally {
       await viewer.close();
     }

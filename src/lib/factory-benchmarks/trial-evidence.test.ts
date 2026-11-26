@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { readBenchmarkTrialCitation } from "./trial-citation";
 import {
   readBenchmarkTrialEvidence,
   readBenchmarkTrialMedia,
   readBenchmarkTrialMediaAsset,
+  readBenchmarkTrialPageEvidence,
   type BenchmarkTrialEvidenceScope,
 } from "./trial-evidence";
 import type { BenchmarkTrialEvidence } from "./trial-evidence-contracts";
@@ -25,6 +28,14 @@ const tree = "b".repeat(40);
 const digest = "c".repeat(64);
 const assetId = uuid(11);
 const browserSessionId = uuid(12);
+const scorerRevisionId = uuid(17);
+const citationQuery = { scorerRevisionId, resultDigest: digest, index: 0 };
+const validationText = `{"key": "replay", "status": "passed", "treeSha": "${tree}", "commitSha": "${sha}"}`;
+const artifact = "First line\nCited line\nAnother private line";
+
+function hash(text: string) {
+  return createHash("sha256").update(text).digest("hex");
+}
 
 function evidence(): BenchmarkTrialEvidence {
   const noMedia = {
@@ -102,12 +113,14 @@ function evidence(): BenchmarkTrialEvidence {
   };
 }
 
-type DatabaseResponse = { data: unknown; error: { code: string } | null };
+type DatabaseResponse = { data: unknown; error: { code: string } | null; status?: number };
 function query(response: DatabaseResponse) {
   return {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     in: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
     abortSignal: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue(response),
     then(resolve: (value: DatabaseResponse) => unknown) {
@@ -116,7 +129,17 @@ function query(response: DatabaseResponse) {
   };
 }
 
-function fixture(options: { denyAfter?: number; wrongTree?: boolean; wrongKey?: boolean } = {}) {
+function fixture(
+  options: {
+    denyAfter?: number;
+    wrongTree?: boolean;
+    wrongKey?: boolean;
+    eventError?: "57014" | "42501";
+    secondDetail?: (detail: BenchmarkTrialEvidence) => BenchmarkTrialEvidence;
+    artifactText?: string;
+    artifactDigest?: string;
+  } = {},
+) {
   const detail = evidence();
   const png = {
     key: "preview",
@@ -152,6 +175,19 @@ function fixture(options: { denyAfter?: number; wrongTree?: boolean; wrongKey?: 
     },
   };
   const queries = {
+    agent_run_events: query({
+      data: options.eventError ? null : [],
+      error: options.eventError ? { code: options.eventError } : null,
+      status: options.eventError === "42501" ? 403 : options.eventError ? 500 : 200,
+    }),
+    factory_benchmark_trial_results: query({
+      data: {
+        artifact_markdown: options.artifactText ?? artifact,
+        artifact_sha256: options.artifactDigest ?? hash(options.artifactText ?? artifact),
+        validation_text: validationText,
+      },
+      error: null,
+    }),
     session_browser_verification_receipts: query({ data: receipt, error: null }),
     session_browser_verification_assets: query({
       data: {
@@ -170,7 +206,10 @@ function fixture(options: { denyAfter?: number; wrongTree?: boolean; wrongKey?: 
   const admin = {
     rpc: vi.fn(() => {
       const denied = ++reads > (options.denyAfter ?? Number.POSITIVE_INFINITY);
-      return query({ data: denied ? null : detail, error: denied ? { code: "42501" } : null });
+      return query({
+        data: denied ? null : reads > 1 ? (options.secondDetail?.(detail) ?? detail) : detail,
+        error: denied ? { code: "42501" } : null,
+      });
     }),
     from: vi.fn((table: keyof typeof queries) => queries[table]),
   };
@@ -182,12 +221,132 @@ function fixture(options: { denyAfter?: number; wrongTree?: boolean; wrongKey?: 
     trialId: uuid(6),
     actorUserId: uuid(16),
   };
-  return { scope, admin, queries };
+  return { scope, admin, queries, detail };
+}
+
+function addScore(detail: BenchmarkTrialEvidence) {
+  detail.scores.push({
+    scorerRevisionId,
+    scorerId: uuid(18),
+    name: "Fixture scorer",
+    revisionNumber: 1,
+    status: "pass",
+    reason: null,
+    score: { kind: "boolean", value: true },
+    explanation: "The evidence supports the score.",
+    evidenceAvailability: "available",
+    evidenceLocations: [
+      { kind: "artifact", location: { kind: "lines", startLine: 2, endLine: 2 } },
+    ],
+  });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   readScreenshot.mockResolvedValue({ status: "available", bytes: new Uint8Array([1, 2, 3]) });
+});
+
+describe("benchmark trial page transcript isolation", () => {
+  it("keeps the authorized diff and scores when the events query fails", async () => {
+    const { scope, detail, admin } = fixture({ eventError: "57014" });
+    const patch = "+approved change";
+    detail.diff = { availability: "available", patch, sha256: hash(patch) };
+    addScore(detail);
+    await expect(readBenchmarkTrialPageEvidence(scope, detail.suite.id)).resolves.toMatchObject({
+      detail: { diff: { patch }, scores: [{ status: "pass" }] },
+      transcript: "retry",
+    });
+    expect(admin.rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a settlement reset local and returns the rechecked trial evidence", async () => {
+    const { scope, detail } = fixture({
+      secondDetail: (detail) => ({
+        ...detail,
+        trial: { ...detail.trial, status: "failed" },
+        output: { ...detail.output, owner: { ...detail.output.owner!, runStatus: "error" } },
+      }),
+    });
+    detail.trial.status = "running";
+    detail.output.owner!.runStatus = "running";
+    await expect(readBenchmarkTrialPageEvidence(scope, detail.suite.id)).resolves.toMatchObject({
+      detail: { trial: { status: "failed" } },
+      transcript: "retry",
+    });
+  });
+
+  it.each([undefined, "57014", "42501"] as const)(
+    "fails closed when access is revoked during a read (event error: %s)",
+    async (eventError) => {
+      const { scope, detail } = fixture({ eventError, denyAfter: 1 });
+      await expect(readBenchmarkTrialPageEvidence(scope, detail.suite.id)).rejects.toMatchObject({
+        status: 403,
+      });
+    },
+  );
+
+  it("never queries events for a trial outside the route suite", async () => {
+    const { scope, admin } = fixture();
+    await expect(readBenchmarkTrialPageEvidence(scope, uuid(19))).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(admin.from).not.toHaveBeenCalled();
+  });
+});
+
+describe("benchmark trial citations", () => {
+  it("returns only the inclusive passage from the retained artifact", async () => {
+    const { scope, detail, queries } = fixture();
+    addScore(detail);
+    await expect(readBenchmarkTrialCitation(scope, citationQuery)).resolves.toEqual({
+      passage: "Cited line",
+    });
+    const result = queries.factory_benchmark_trial_results;
+    expect(result.eq).toHaveBeenCalledWith("run_id", uuid(14));
+    expect(result.eq).toHaveBeenCalledWith("output_tree_sha", tree);
+    expect(result.eq).toHaveBeenCalledWith("result_digest", digest);
+  });
+
+  it("preserves the validation text representation used by the judge", async () => {
+    const { scope, detail } = fixture();
+    addScore(detail);
+    detail.output.validation = { key: "replay", status: "passed", commitSha: sha, treeSha: tree };
+    detail.scores[0].evidenceLocations = [
+      { kind: "validation_report", location: { kind: "whole" } },
+    ];
+    await expect(readBenchmarkTrialCitation(scope, citationQuery)).resolves.toEqual({
+      passage: validationText,
+    });
+  });
+
+  it.each([
+    { artifactDigest: "d".repeat(64) },
+    { artifactText: "API_KEY=synthetic-private-key\nCited line" },
+    { artifactText: "First line only" },
+  ])("withholds an inexact, unsafe or out-of-bounds source (%j)", async (options) => {
+    const { scope, detail } = fixture(options);
+    addScore(detail);
+    await expect(readBenchmarkTrialCitation(scope, citationQuery)).resolves.toBeNull();
+  });
+
+  it("does not query source content for an unpinned or withheld citation", async () => {
+    const { scope, detail, admin } = fixture();
+    addScore(detail);
+    await expect(
+      readBenchmarkTrialCitation(scope, { ...citationQuery, resultDigest: "d".repeat(64) }),
+    ).resolves.toBeNull();
+    detail.scores[0].evidenceAvailability = "withheld";
+    await expect(readBenchmarkTrialCitation(scope, citationQuery)).resolves.toBeNull();
+    expect(admin.from).not.toHaveBeenCalled();
+  });
+
+  it("checks current manager access again before delivering the passage", async () => {
+    const { scope, detail } = fixture({ denyAfter: 1 });
+    addScore(detail);
+    await expect(readBenchmarkTrialCitation(scope, citationQuery)).rejects.toMatchObject({
+      status: 403,
+    });
+  });
 });
 
 describe("exact benchmark trial evidence", () => {
