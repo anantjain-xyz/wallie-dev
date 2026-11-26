@@ -1,12 +1,14 @@
 import "server-only";
 
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import { resolveFactorySelection } from "@/features/factories/factory-selection";
 import {
   isWorkspaceOperator,
   loadAuthenticatedWorkspaceContext,
 } from "@/features/workspaces/authenticated-context";
-import { listFactoryAgents, listFactoryAgentPromptRevisions } from "@/lib/factory-agents/service";
+import {
+  listFactoryAgentPromptRevisions,
+  searchFactoryAgentDirectory,
+} from "@/lib/factory-agents/service";
 import { resolveFactoryExecutionProfile } from "@/lib/factory-definitions/execution-profile";
 import { factoryWritableRepositoryIds } from "@/lib/factory-definitions/repository-bindings";
 import {
@@ -15,13 +17,15 @@ import {
 } from "@/lib/factory-definitions/storage";
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 
+import { resolveAgentFactory } from "./agent-navigation";
+
 export async function loadAgentPageScope(workspaceSlug: string, factoryQuery?: string | string[]) {
   const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
-  const selected = resolveFactorySelection(factories, factoryQuery);
-  if (selected.kind !== "factory") return null;
+  const selected = resolveAgentFactory(factories, factoryQuery);
+  if (selected.kind !== "factory") return { factories, selection: selected.kind, scope: null };
 
   const { factory } = selected;
   const operator = isWorkspaceOperator(currentMember);
@@ -43,16 +47,20 @@ export async function loadAgentPageScope(workspaceSlug: string, factoryQuery?: s
   if (membership?.error) throw membership.error;
 
   return {
-    workspaceId: workspace.id,
-    workspaceSlug: workspace.slug,
-    factory,
-    supabase,
-    canEditDefinition,
-    canEditPrompt: canEditDefinition || membership?.data?.role === "manager",
+    factories,
+    selection: selected.kind,
+    scope: {
+      workspaceId: workspace.id,
+      factory,
+      supabase,
+      canEditDefinition,
+      canEditPrompt: canEditDefinition || membership?.data?.role === "manager",
+    },
   };
 }
 
-type Scope = NonNullable<Awaited<ReturnType<typeof loadAgentPageScope>>>;
+type Scope = NonNullable<Awaited<ReturnType<typeof loadAgentPageScope>>["scope"]>;
+const promptRevisionColumns = "id, agent_id, revision_number, prompt_md, prompt_sha256, created_at";
 
 async function loadPublishedDefinition({ supabase, workspaceId, factory }: Scope) {
   const { data: activation, error: activationError } = await selectCurrentFactoryActivation(
@@ -73,7 +81,7 @@ async function loadPublishedDefinition({ supabase, workspaceId, factory }: Scope
     },
   );
   if (error) throw error;
-  if (!revision) return null;
+  if (!revision) throw new Error("The published factory definition is unavailable.");
 
   const definition = readVerifiedFactoryDefinition(
     revision.definition_json,
@@ -83,19 +91,24 @@ async function loadPublishedDefinition({ supabase, workspaceId, factory }: Scope
   return { definition, revisionId: revision.id };
 }
 
-export async function loadAgentsList(scope: Scope, afterId?: string) {
+export async function loadAgentsList(
+  scope: Scope,
+  { afterId, search }: { afterId?: string; search?: string },
+) {
   const [page, published] = await Promise.all([
-    listFactoryAgents(scope.supabase, {
+    searchFactoryAgentDirectory(scope.supabase, {
       workspaceId: scope.workspaceId,
       factoryId: scope.factory.id,
       limit: 30,
       afterId,
+      search,
     }),
     loadPublishedDefinition(scope),
   ]);
   return {
     ...page,
     implementationAgentId: published?.definition.implementationAgent?.agentId ?? null,
+    usesFactoryDefault: Boolean(published && !published.definition.implementationAgent),
   };
 }
 
@@ -115,37 +128,56 @@ export async function loadAgentDetail(
   if (!agent) return null;
 
   const agentScope = { workspaceId, factoryId: factory.id, agentId };
-  const [page, first, selected, published] = await Promise.all([
+  const scopedRevisions = () =>
+    supabase
+      .from("factory_agent_prompt_revisions")
+      .select(promptRevisionColumns)
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factory.id)
+      .eq("agent_id", agentId);
+  const [page, first, requested, published] = await Promise.all([
     listFactoryAgentPromptRevisions(supabase, {
       ...agentScope,
       limit: 20,
       beforeRevisionNumber: before,
     }),
     before ? listFactoryAgentPromptRevisions(supabase, { ...agentScope, limit: 1 }) : null,
-    revisionId
-      ? supabase
-          .from("factory_agent_prompt_revisions")
-          .select("id, agent_id, revision_number, prompt_md, prompt_sha256, created_at")
-          .eq("workspace_id", workspaceId)
-          .eq("factory_id", factory.id)
-          .eq("agent_id", agentId)
-          .eq("id", revisionId)
-          .maybeSingle()
-      : null,
+    revisionId ? scopedRevisions().eq("id", revisionId).maybeSingle() : null,
     loadPublishedDefinition(scope),
   ]);
-  if (selected?.error) throw selected.error;
-  if (revisionId && !selected?.data) return null;
+  if (requested?.error) throw requested.error;
+  if (revisionId && !requested?.data) return null;
 
-  const bindings =
-    published?.definition.implementationAgent?.agentId === agentId
-      ? await loadPublishedAgentBindings(scope, published)
-      : null;
+  const explicitBinding = published?.definition.implementationAgent;
+  const usesFactoryDefault = Boolean(published && !explicitBinding && agent.is_default);
+  const isPublishedAgent = explicitBinding?.agentId === agentId || usesFactoryDefault;
+  const bound = isPublishedAgent
+    ? (requested?.data?.id === explicitBinding?.promptRevisionId && requested?.data) ||
+      page.revisions.find((revision) =>
+        explicitBinding
+          ? revision.id === explicitBinding.promptRevisionId
+          : revision.revision_number === 1,
+      )
+    : null;
+  const [bindings, boundOutsidePage] = await Promise.all([
+    published && isPublishedAgent ? loadPublishedAgentBindings(scope, published) : null,
+    isPublishedAgent && !bound
+      ? (explicitBinding
+          ? scopedRevisions().eq("id", explicitBinding.promptRevisionId)
+          : scopedRevisions().eq("revision_number", 1)
+        ).maybeSingle()
+      : null,
+  ]);
+  if (boundOutsidePage?.error) throw boundOutsidePage.error;
+  const publishedPrompt = bound || boundOutsidePage?.data || null;
   return {
     agent,
     ...page,
     latest: (first ?? page).revisions[0] ?? null,
-    selected: selected?.data ?? page.revisions[0] ?? null,
+    selected: requested?.data ?? (!before ? publishedPrompt : null) ?? page.revisions[0] ?? null,
+    hasPublishedDefinition: Boolean(published),
+    usesFactoryDefault,
+    publishedPrompt,
     bindings,
   };
 }
@@ -158,7 +190,10 @@ async function loadPublishedAgentBindings(
   const { definition, revisionId } = published;
   const writes = factoryWritableRepositoryIds(definition);
   const reads = definition.readContextRepositoryIds ?? [];
-  const [repositories, skills] = await Promise.all([
+  const toolRefs = definition.mcpManifest?.servers ?? [];
+  const profile = resolveFactoryExecutionProfile(definition);
+  const authority = profile.credentialAuthority;
+  const [repositories, skills, grant, tools] = await Promise.all([
     supabase
       .from("github_repositories")
       .select("id, full_name")
@@ -173,14 +208,47 @@ async function loadPublishedAgentBindings(
           .eq("factory_id", factory.id)
           .in("id", definition.skillIds)
       : null,
+    authority.kind === "service"
+      ? supabase
+          .from("factory_execution_grants")
+          .select("version, revoked_at, expires_at, github_repository_id, service_principals(name)")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factory.id)
+          .eq("id", authority.grantId)
+          .maybeSingle()
+      : null,
+    toolRefs.length
+      ? supabase
+          .from("factory_mcp_servers")
+          .select("id, name")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factory.id)
+          .in(
+            "id",
+            toolRefs.map(({ serverId }) => serverId),
+          )
+      : null,
   ]);
   if (repositories.error) throw repositories.error;
   if (skills?.error) throw skills.error;
   const names = new Map(repositories.data.map((row) => [row.id, row.full_name]));
+  const toolNames = new Map(tools?.data?.map((row) => [row.id, row.name]));
+  const publishedGrant = grant?.data;
   return {
     revisionId,
-    promptRevisionId: definition.implementationAgent?.promptRevisionId ?? null,
-    profile: resolveFactoryExecutionProfile(definition),
+    profile,
+    grant: publishedGrant
+      ? {
+          principal: publishedGrant.service_principals?.name ?? null,
+          repository: names.get(publishedGrant.github_repository_id) ?? null,
+          version: publishedGrant.version,
+          status: publishedGrant.revoked_at
+            ? "Revoked"
+            : Date.parse(publishedGrant.expires_at) <= Date.now()
+              ? "Expired"
+              : null,
+        }
+      : null,
     repositories: {
       writable: writes.map((id) => ({ id, name: names.get(id) ?? "Repository unavailable" })),
       context: reads.map((id) => ({ id, name: names.get(id) ?? "Repository unavailable" })),
@@ -190,14 +258,13 @@ async function loadPublishedAgentBindings(
       version: row.revision_number,
       name: row.factory_skills.name,
     })),
-    tools: (definition.mcpManifest?.servers ?? []).map(
-      ({ serverId, serverSlug, revisionNumber, operations }) => ({
-        serverId,
-        serverSlug,
-        revisionNumber,
-        operations,
-      }),
-    ),
+    tools: toolRefs.map(({ serverId, serverSlug, revisionNumber, operations }) => ({
+      serverId,
+      serverSlug,
+      name: toolNames.get(serverId),
+      revisionNumber,
+      operations,
+    })),
   };
 }
 

@@ -9,6 +9,7 @@ import {
   listFactoryAgentPromptRevisions,
   listFactoryAgents,
   saveFactoryAgentPromptRevision,
+  searchFactoryAgentDirectory,
 } from "./service";
 
 const workspaceId = "55200000-0000-4000-8000-000000000001";
@@ -68,6 +69,69 @@ describe("named factory agent requests", () => {
         limit: 1,
       }),
     ).toEqual({ revisions: [{ id: revisionId, revision_number: 3 }], nextBeforeRevisionNumber: 3 });
+  });
+
+  it("searches names and slugs in the factory before a stable name-and-ID page", async () => {
+    const requests: URL[] = [];
+    const name = 'Release, "QA"';
+    const client = fixture(async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      requests.push(url);
+      expect(url.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+      expect(url.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+      if (url.searchParams.has("id")) return Response.json([{ name }]);
+      return Response.json([
+        { id: revisionId, name, slug: "release-qa-2" },
+        { id: actorUserId, name: "Research QA", slug: "research-qa" },
+      ]);
+    });
+    expect(
+      await searchFactoryAgentDirectory(client, {
+        workspaceId,
+        factoryId,
+        afterId: agentId,
+        search: "QA",
+        limit: 1,
+      }),
+    ).toEqual({
+      agents: [{ id: revisionId, name, slug: "release-qa-2" }],
+      nextAfterId: revisionId,
+    });
+    expect(requests[0].searchParams.get("id")).toBe(`eq.${agentId}`);
+    expect(requests[1].searchParams.get("order")).toBe("name.asc,id.asc");
+    expect(requests[1].searchParams.get("limit")).toBe("2");
+    const quoted = JSON.stringify(name);
+    expect(requests[1].searchParams.getAll("or")).toEqual([
+      '(name.imatch."QA",slug.imatch."QA")',
+      `(name.gt.${quoted},and(name.eq.${quoted},id.gt.${agentId}))`,
+    ]);
+  });
+
+  it("treats punctuation in search as literal and does not follow an unavailable cursor", async () => {
+    const requests: URL[] = [];
+    const client = fixture(async (input) => {
+      requests.push(new URL(input instanceof Request ? input.url : input));
+      return Response.json([]);
+    });
+    await searchFactoryAgentDirectory(client, {
+      workspaceId,
+      factoryId,
+      search: "Release (QA)*",
+      limit: 1,
+    });
+    const literal = JSON.stringify("Release \\(QA\\)\\*");
+    expect(requests[0].searchParams.get("or")).toBe(
+      `(name.imatch.${literal},slug.imatch.${literal})`,
+    );
+    expect(
+      await searchFactoryAgentDirectory(client, {
+        workspaceId,
+        factoryId,
+        afterId: agentId,
+        limit: 1,
+      }),
+    ).toEqual({ agents: [], nextAfterId: null });
+    expect(requests).toHaveLength(2);
   });
 
   it("creates immutable candidates with an explicit actor and optimistic revision", async () => {

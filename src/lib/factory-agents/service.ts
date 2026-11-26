@@ -41,6 +41,57 @@ export async function listFactoryAgents(
   };
 }
 
+function quoteAgentFilter(value: string) {
+  return `"${value.replace(/[\\"]/g, "\\$&")}"`;
+}
+
+export async function searchFactoryAgentDirectory(
+  client: Client,
+  {
+    workspaceId,
+    factoryId,
+    search,
+    afterId,
+    limit,
+  }: AgentScope & {
+    search?: string;
+    afterId?: string;
+    limit: number;
+  },
+) {
+  const scopedAgents = () => client.from("factory_agents");
+  const cursor = afterId
+    ? await scopedAgents()
+        .select("name")
+        .eq("workspace_id", workspaceId)
+        .eq("factory_id", factoryId)
+        .eq("id", afterId)
+        .maybeSingle()
+    : null;
+  if (cursor?.error) throw cursor.error;
+  if (afterId && !cursor?.data) return { agents: [], nextAfterId: null };
+
+  let query = scopedAgents()
+    .select("id, name, slug, is_default")
+    .eq("workspace_id", workspaceId)
+    .eq("factory_id", factoryId)
+    .order("name")
+    .order("id")
+    .limit(limit + 1);
+  if (search) {
+    const literal = quoteAgentFilter(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    query = query.or(`name.imatch.${literal},slug.imatch.${literal}`);
+  }
+  if (cursor?.data) {
+    const name = quoteAgentFilter(cursor.data.name);
+    query = query.or(`name.gt.${name},and(name.eq.${name},id.gt.${afterId})`);
+  }
+  const { data, error } = await query;
+  if (error) throw error;
+  const agents = data.slice(0, limit);
+  return { agents, nextAfterId: data.length > limit ? (agents.at(-1)?.id ?? null) : null };
+}
+
 export async function listFactoryAgentPromptRevisions(
   client: Client,
   input: AgentScope & { agentId: string; beforeRevisionNumber?: number; limit: number },
