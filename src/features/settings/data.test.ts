@@ -21,9 +21,7 @@ vi.mock("@/features/workspaces/authenticated-context", () => ({
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
-  describeRateLimits: () => [
-    { description: "Paid calls", endpoint: "agent", max: 4, windowMs: 60_000 },
-  ],
+  describeRateLimits: () => [{ scope: "agentRuns", endpoint: "agent", max: 4, windowMs: 60_000 }],
 }));
 
 vi.mock("@/lib/server-timing", () => ({
@@ -356,7 +354,7 @@ describe("loadSettingsPageData", () => {
       },
     });
     await expect(loader.setupData).resolves.toMatchObject({
-      rateLimits: [{ description: "Paid calls", endpoint: "agent", max: 4, windowMs: 60_000 }],
+      rateLimits: [{ scope: "agentRuns", endpoint: "agent", max: 4, windowMs: 60_000 }],
       workspaceMembers: [],
     });
     await expect(loader.workspaceInvitations).resolves.toEqual([]);
@@ -432,7 +430,7 @@ describe("loadSettingsPageData", () => {
       },
     });
     await expect(loader.setupData).resolves.toMatchObject({
-      rateLimits: [{ description: "Paid calls", endpoint: "agent", max: 4, windowMs: 60_000 }],
+      rateLimits: [{ scope: "agentRuns", endpoint: "agent", max: 4, windowMs: 60_000 }],
       workspaceMembers: [
         {
           avatarUrl: "https://cdn.example.com/ada.png",

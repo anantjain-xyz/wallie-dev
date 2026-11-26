@@ -8,7 +8,7 @@ import {
 } from "@/features/onboarding/data";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
-import { describeRateLimits } from "@/lib/rate-limit";
+import { describeRateLimits, type RateLimitScope } from "@/lib/rate-limit";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -45,7 +45,7 @@ type WorkspaceUsageRow = {
 
 export type RateLimitDisplay = {
   endpoint: string;
-  description: string;
+  scope: RateLimitScope;
   windowMs: number;
   max: number;
 };
@@ -138,8 +138,8 @@ function observeDeferredSection<T>(promise: Promise<T>): Promise<T> {
 
 function describeSettingsRateLimits(): RateLimitDisplay[] {
   return describeRateLimits().map((entry) => ({
-    description: entry.description,
     endpoint: entry.endpoint,
+    scope: entry.scope,
     max: entry.max,
     windowMs: entry.windowMs,
   }));

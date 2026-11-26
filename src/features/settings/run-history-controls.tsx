@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { readResponseJson, useApiAction } from "@/features/settings/use-api-action";
@@ -17,12 +18,26 @@ import {
 } from "@/lib/run-exports/contracts";
 
 const retentionFields = [
-  { key: "transcriptDays", label: "Transcript retention (days)" },
-  { key: "evidenceDays", label: "Validation evidence retention (days)" },
-  { key: "contextDays", label: "Historical context retention (days)" },
+  { key: "transcriptDays", label: "Transcript", content: "Transcripts" },
+  { key: "evidenceDays", label: "Validation evidence", content: "Validation evidence" },
+  { key: "contextDays", label: "Historical context", content: "Historical context" },
 ] as const;
 
 type RetentionDraft = Record<keyof RunRetention, string>;
+const retentionNumber = new Intl.NumberFormat();
+
+function formatLimit(days: number | null) {
+  if (days === null) return "Keep indefinitely";
+  return `${retentionNumber.format(days)} ${days === 1 ? "day" : "days"}`;
+}
+
+function tightenedFields(saved: RunRetention, next: RunRetention) {
+  return retentionFields.filter(({ key }) => {
+    const previous = saved[key];
+    const limit = next[key];
+    return limit !== null && (previous === null || limit < previous);
+  });
+}
 
 function toDraft(policy: RunRetention): RetentionDraft {
   return {
@@ -34,8 +49,12 @@ function toDraft(policy: RunRetention): RetentionDraft {
 
 function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void }) {
   const [draft, setDraft] = useState<RetentionDraft | null>(null);
+  const [savedPolicy, setSavedPolicy] = useState<RunRetention | null>(null);
+  const [policyToConfirm, setPolicyToConfirm] = useState<RunRetention | null>(null);
   const [revision, setRevision] = useState(0);
   const [message, setMessage] = useState<FlashMessage | null>(null);
+  const hintId = useId();
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -43,7 +62,10 @@ function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void 
       try {
         const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
         const { retention } = runRetentionResponseSchema.parse(await readResponseJson(response));
-        if (!controller.signal.aborted) setDraft(toDraft(retention));
+        if (!controller.signal.aborted) {
+          setSavedPolicy(retention);
+          setDraft(toDraft(retention));
+        }
       } catch {
         if (!controller.signal.aborted) {
           setMessage({ kind: "error", text: "Could not load run retention." });
@@ -55,25 +77,19 @@ function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void 
     return () => controller.abort();
   }, [url, revision]);
 
-  const save = useApiAction({
-    call: () => {
-      const policy = runRetentionSchema.safeParse({
-        transcriptDays: draft?.transcriptDays ? Number(draft.transcriptDays) : null,
-        evidenceDays: draft?.evidenceDays ? Number(draft.evidenceDays) : null,
-        contextDays: draft?.contextDays ? Number(draft.contextDays) : null,
-      });
-      if (!policy.success) {
-        return Response.json({ error: "Check the retention limits." }, { status: 400 });
-      }
-      return fetch(url, {
+  const save = useApiAction<unknown, [RunRetention]>({
+    call: (policy) =>
+      fetch(url, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(policy.data),
-      });
-    },
+        body: JSON.stringify(policy),
+      }),
     errorText: "Could not save run retention.",
     onSuccess: (payload) => {
-      setDraft(toDraft(runRetentionResponseSchema.parse(payload).retention));
+      const { retention } = runRetentionResponseSchema.parse(payload);
+      setSavedPolicy(retention);
+      setDraft(toDraft(retention));
+      setPolicyToConfirm(null);
       onSaved();
     },
     setFlashMessage: setMessage,
@@ -82,39 +98,61 @@ function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void 
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft) return;
+    if (!draft || !savedPolicy || policyToConfirm || save.isBusy) return;
     setMessage(null);
-    void save.run();
+    const policy = runRetentionSchema.safeParse({
+      transcriptDays: draft.transcriptDays === "" ? null : Number(draft.transcriptDays),
+      evidenceDays: draft.evidenceDays === "" ? null : Number(draft.evidenceDays),
+      contextDays: draft.contextDays === "" ? null : Number(draft.contextDays),
+    });
+    if (!policy.success) {
+      setMessage({ kind: "error", text: "Check the retention limits." });
+      return;
+    }
+    if (tightenedFields(savedPolicy, policy.data).length > 0) {
+      setPolicyToConfirm(policy.data);
+    } else {
+      void save.run(policy.data);
+    }
   }
+
+  const tightened =
+    savedPolicy && policyToConfirm ? tightenedFields(savedPolicy, policyToConfirm) : [];
+  const expiresExports = tightened.some(({ key }) => key !== "contextDays");
 
   return (
     <div className="space-y-4">
       <div className="space-y-1">
         <h3 className="text-[15px] font-semibold text-foreground">Retention</h3>
         <p className="max-w-2xl text-[13px] leading-5 text-muted">
-          Leave a limit blank to keep that content indefinitely. Validation retention protects
-          required evidence for unarchived sessions. Historical context retention permanently erases
-          older document revisions and unimported proposals from finished runs. Current document
-          bodies stay available while their source is active.
+          Validation retention protects required evidence for unarchived sessions. Historical
+          context retention permanently erases older document revisions and unimported proposals
+          from finished runs. Current document bodies stay available while their source is active.
         </p>
       </div>
       {draft ? (
         <form aria-label="Run retention" className="space-y-4" onSubmit={submit}>
+          <p className="text-[13px] text-muted" id={hintId}>
+            Enter 1–{retentionNumber.format(MAX_RUN_RETENTION_DAYS)} whole days, or leave blank to
+            keep indefinitely.
+          </p>
           <fieldset className="grid gap-4 sm:grid-cols-2" disabled={save.isBusy}>
             <legend className="sr-only">Retention limits</legend>
             {retentionFields.map(({ key, label }) => (
               <label className="block min-w-0 space-y-1.5 text-[13px] font-medium" key={key}>
-                <span>{label}</span>
+                <span>{label} retention (days)</span>
                 <input
+                  aria-describedby={hintId}
+                  autoComplete="off"
                   className="ui-input"
                   max={MAX_RUN_RETENTION_DAYS}
                   min={1}
+                  name={key}
                   onChange={(event) => {
                     const value = event.currentTarget.value;
                     setDraft((current) => current && { ...current, [key]: value });
                     setMessage(null);
                   }}
-                  placeholder="Keep indefinitely"
                   step={1}
                   type="number"
                   value={draft[key]}
@@ -122,7 +160,12 @@ function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void 
               </label>
             ))}
           </fieldset>
-          <button className="ui-button-primary" disabled={save.isBusy} type="submit">
+          <button
+            className="ui-button-primary"
+            disabled={save.isBusy}
+            ref={saveButtonRef}
+            type="submit"
+          >
             <ActionButtonLabel idle="Save retention" pending={save.isBusy} pendingLabel="Saving…" />
           </button>
         </form>
@@ -142,7 +185,48 @@ function RetentionControls({ url, onSaved }: { url: string; onSaved: () => void 
           Loading retention…
         </p>
       )}
-      <InlineActionMessage message={message} />
+      <InlineActionMessage message={policyToConfirm ? null : message} />
+      {policyToConfirm && savedPolicy ? (
+        <DestructiveConfirmationDialog
+          actionLabel="Apply retention limits"
+          description={
+            <>
+              Shorter limits apply to existing content. Wallie can permanently remove eligible
+              content older than the new limits.
+              {expiresExports
+                ? " This change immediately expires in-progress and completed workspace exports, including their download links."
+                : null}
+            </>
+          }
+          errorMessage={message?.kind === "error" ? message.text : null}
+          onConfirm={() => {
+            setMessage(null);
+            void save.run(policyToConfirm);
+          }}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPolicyToConfirm(null);
+              setMessage(null);
+            }
+          }}
+          open
+          pending={save.isBusy}
+          pendingLabel="Applying…"
+          restoreFocusRef={saveButtonRef}
+          title="Tighten retention limits?"
+        >
+          <ul className="space-y-2 border-t border-border pt-3 text-sm tabular-nums">
+            {tightened.map(({ key, content }) => (
+              <li key={key}>
+                <span className="font-medium text-foreground">{content}: </span>
+                <span className="text-muted">
+                  {formatLimit(savedPolicy[key])} → {formatLimit(policyToConfirm[key])}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </DestructiveConfirmationDialog>
+      ) : null}
     </div>
   );
 }

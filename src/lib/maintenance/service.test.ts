@@ -33,10 +33,6 @@ function setupDefaults() {
     stalledRunIds: ["run-stalled"],
     stoppedSandboxIds: ["sandbox-stalled"],
   });
-  mocked.reapOrphanSandboxes.mockResolvedValue({
-    activeProviderCount: 2,
-    reapedSandboxIds: ["sandbox-orphan"],
-  });
   mocked.reconcileLinearState.mockResolvedValue({
     canceled: 1,
     checked: 3,
@@ -65,14 +61,12 @@ describe("runMaintenanceTick", () => {
     expect(mocked.reconcileLinearState).toHaveBeenCalledWith(admin, {
       workspaceId: WORKSPACE_ID,
     });
-    expect(mocked.reapOrphanSandboxes).toHaveBeenCalledWith(admin);
+    expect(mocked.reapOrphanSandboxes).not.toHaveBeenCalled();
     expect(mocked.reconcileGitHubPrVerification).toHaveBeenCalledExactlyOnceWith(admin, {
       workspaceId: WORKSPACE_ID,
     });
     expect(result).toEqual({
       cleanup: {
-        activeProviderSandboxCount: 2,
-        reapedSandboxIds: ["sandbox-orphan"],
         retriedJobIds: ["job-retry"],
         stalledRunIds: ["run-stalled"],
         stoppedSandboxIds: ["sandbox-stalled"],
@@ -84,6 +78,34 @@ describe("runMaintenanceTick", () => {
         rateLimited: false,
       },
       githubVerification: { checked: 2, refreshed: 1, failed: 1 },
+    });
+  });
+
+  it("fails closed without a valid workspace before starting any check", async () => {
+    await expect(runMaintenanceTick({ admin: {} as never, workspaceId: "" })).rejects.toThrow(
+      "requires a valid workspace id",
+    );
+    for (const operation of Object.values(mocked)) expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("retains completed checks when one check throws and forwards incomplete results", async () => {
+    setupDefaults();
+    mocked.reconcileGitHubPrVerification.mockRejectedValueOnce(new Error("Refresh unavailable"));
+    mocked.reconcileLinearState.mockResolvedValueOnce({
+      canceled: 0,
+      checked: 1,
+      rateLimited: true,
+      incomplete: true,
+    });
+
+    const result = await runMaintenanceTick({ admin: {} as never, workspaceId: WORKSPACE_ID });
+    expect(result.cleanup?.retriedJobIds).toEqual(["job-retry"]);
+    expect(result.githubVerification).toBeNull();
+    expect(result.reconciliation).toEqual({
+      canceled: 0,
+      checked: 1,
+      rateLimited: true,
+      incomplete: true,
     });
   });
 });

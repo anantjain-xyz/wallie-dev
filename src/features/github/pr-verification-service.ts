@@ -28,6 +28,13 @@ const claimSchema = z.object({
   branch_name: z.string().min(1),
   base_branch: z.string().min(1),
 });
+const verificationBatchSize = 3;
+type VerificationBatchResult = {
+  checked: number;
+  refreshed: number;
+  failed: number;
+  limited?: true;
+};
 
 /** Independent, bounded intake: no agent job, artifact, or approval mutation. */
 export async function reconcileGitHubPrVerification(
@@ -36,8 +43,8 @@ export async function reconcileGitHubPrVerification(
     workspaceId?: string;
     input?: Record<string, string | undefined>;
   } = {},
-): Promise<{ checked: number; refreshed: number; failed: number }> {
-  const result = { checked: 0, refreshed: 0, failed: 0 };
+): Promise<VerificationBatchResult> {
+  const result: VerificationBatchResult = { checked: 0, refreshed: 0, failed: 0 };
   const signal = AbortSignal.timeout(40_000);
   const { error: enqueueError } = await admin
     .rpc("enqueue_due_github_pr_refreshes", {
@@ -46,7 +53,7 @@ export async function reconcileGitHubPrVerification(
     })
     .abortSignal(signal);
   if (enqueueError) throw new Error("GitHub refresh scheduling is unavailable.");
-  for (let count = 0; count < 3 && !signal.aborted; count++) {
+  for (let count = 0; count < verificationBatchSize && !signal.aborted; count++) {
     const { data, error } = await admin
       .rpc("claim_github_pr_refresh", {
         ...(options.workspaceId ? { p_workspace_id: options.workspaceId } : {}),
@@ -109,5 +116,6 @@ export async function reconcileGitHubPrVerification(
     if (accepted && !completion.p_error_code) result.refreshed++;
     if (accepted && completion.p_error_code) result.failed++;
   }
+  if (signal.aborted || result.checked === verificationBatchSize) result.limited = true;
   return result;
 }

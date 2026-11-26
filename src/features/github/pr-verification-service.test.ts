@@ -149,6 +149,7 @@ describe("bounded GitHub PR reconciliation", () => {
       checked: 3,
       refreshed: 3,
       failed: 0,
+      limited: true,
     });
     expect(mocks.collect).toHaveBeenCalledTimes(3);
   });

@@ -39,19 +39,17 @@ export function VerifySetupIsland({ initialData }: { initialData: SettingsPageDa
 export function MaintenanceIsland({
   canManage,
   workspaceId,
+  workspaceName,
 }: {
   canManage: boolean;
   workspaceId: string;
+  workspaceName: string;
 }) {
-  const { feedback, setMessage } = useIslandFeedback();
   if (!canManage) {
     return null;
   }
 
   return (
-    <>
-      {feedback}
-      <MaintenancePanel canManage setFlashMessage={setMessage} workspaceId={workspaceId} />
-    </>
+    <MaintenancePanel key={workspaceId} workspaceId={workspaceId} workspaceName={workspaceName} />
   );
 }

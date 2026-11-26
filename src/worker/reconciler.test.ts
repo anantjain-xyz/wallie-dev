@@ -174,6 +174,36 @@ beforeEach(() => {
 });
 
 describe("reconcileLinearState", () => {
+  it("distinguishes links skipped without a workspace connection from successful checks", async () => {
+    const { admin, rpc } = adminFor([session()], []);
+
+    await expect(
+      reconcileLinearState(admin as never, { workspaceId: "workspace-1" }),
+    ).resolves.toEqual({
+      checked: 0,
+      canceled: 0,
+      rateLimited: false,
+      skipped: true,
+    });
+    expect(mocks.observations).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("marks a scoped reconciliation incomplete when a provider read fails", async () => {
+    const { admin, rpc } = adminFor();
+    mocks.observations.mockRejectedValue(new Error("Linear read unavailable"));
+
+    await expect(
+      reconcileLinearState(admin as never, { workspaceId: "workspace-1" }),
+    ).resolves.toEqual({
+      checked: 0,
+      canceled: 0,
+      rateLimited: false,
+      incomplete: true,
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("passes source identity and both database snapshots to one atomic transition", async () => {
     const { admin, rpc } = adminFor();
     await expect(reconcileLinearState(admin as never)).resolves.toEqual({
