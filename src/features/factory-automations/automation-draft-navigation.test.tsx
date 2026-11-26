@@ -3,6 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import Link from "next/link";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { PortalRootProvider } from "@/components/ui/portal-root";
@@ -27,7 +28,9 @@ function Example() {
       <button type="button" onClick={() => setDirty(false)}>
         Mark saved
       </button>
-      <a href="/w/example/settings">Back to Settings</a>
+      <Link href="/w/example/settings" prefetch={false}>
+        Back to Settings
+      </Link>
       <AutomationRulePicker
         factoryId="current"
         selectedId="rule"
