@@ -20,8 +20,8 @@ type RouteContext = { params: Promise<{ workspaceId: string; factoryId: string }
 const sourceColumns =
   "id, workspace_id, factory_id, repository_id, github_installation_id, upstream_repository_id, grant_id, grant_version, file_path, status, current_revision_id, upstream_revision, upstream_updated_at, last_successful_sync_at, last_sync_attempt_at, deleted_at, created_at";
 
-function failure(error: string, status: number) {
-  return Response.json({ error }, { status, headers });
+function failure(error: string, status: number, detail?: { code: string }) {
+  return Response.json({ error, ...detail }, { status, headers });
 }
 
 async function readCommandBody(request: Request): Promise<unknown> {
@@ -97,6 +97,45 @@ export async function POST(request: Request, { params }: RouteContext) {
       })
       .select(sourceColumns)
       .single();
+    if (error?.code === "PT409") {
+      const scope = { workspace_id: context.workspaceId, factory_id: context.factoryId };
+      const viewer = context.access.supabase;
+      const repository = await viewer
+        .from("github_repositories")
+        .select("repo_id")
+        .match({ ...scope, id: command.repositoryId })
+        .maybeSingle();
+      const existing =
+        !repository.error && repository.data
+          ? await viewer
+              .from("factory_context_sources")
+              .select("id")
+              .match({
+                ...scope,
+                upstream_repository_id: repository.data.repo_id,
+                file_path: command.filePath,
+              })
+              .is("deleted_at", null)
+              .maybeSingle()
+          : null;
+      return Response.json(
+        {
+          code: "registration_conflict",
+          error:
+            "That path already has a source under a different connection or grant. Review that source before registering it again.",
+          ...(existing?.data && !existing.error ? { existingSourceId: existing.data.id } : {}),
+        },
+        { status: 409, headers },
+      );
+    }
+    if (error?.code === "42501")
+      return failure(
+        "Could not register under this grant. Check factory access and the repository’s read grant in Governance.",
+        403,
+        { code: "registration_access_unavailable" },
+      );
+    if (error?.code === "P0011")
+      return failure("This factory is archived and cannot register sources.", 409);
     if (error)
       return failure("Could not register the context source.", factoryErrorStatus(error.code));
     return Response.json({ source: data }, { headers });
@@ -117,6 +156,18 @@ export async function POST(request: Request, { params }: RouteContext) {
     .rpc("claim_factory_context_source_sync", sourceInput)
     .single();
   if (claimError) {
+    if (claimError.code === "PT409")
+      return failure("A sync is already running. Wait for it to finish, then refresh.", 409, {
+        code: "sync_in_progress",
+      });
+    if (claimError.code === "P0011")
+      return failure("This factory is archived and cannot sync sources.", 409, {
+        code: "factory_archived",
+      });
+    if (claimError.code === "P0002")
+      return failure("This source is unavailable. Return to All sources.", 404, {
+        code: "source_unavailable",
+      });
     return failure("Could not start the context sync.", factoryErrorStatus(claimError.code));
   }
   const validatedClaim = contextSourceSyncClaimSchema.safeParse(claim);
@@ -124,7 +175,15 @@ export async function POST(request: Request, { params }: RouteContext) {
   const sync = validatedClaim.data;
   if (sync.status !== "syncing") {
     return Response.json(
-      { sourceId: command.sourceId, status: sync.status },
+      {
+        sourceId: command.sourceId,
+        status: sync.status,
+        code: sync.status,
+        error:
+          sync.status === "deleted"
+            ? "This source was removed. Return to All sources."
+            : "This source’s exact grant or repository connection is unavailable. Review access in Governance.",
+      },
       { status: sync.status === "deleted" ? 410 : 403, headers },
     );
   }
@@ -150,7 +209,17 @@ export async function POST(request: Request, { params }: RouteContext) {
     })
     .select(sourceColumns)
     .single();
-  if (error)
-    return failure("Could not record the context sync outcome.", factoryErrorStatus(error.code));
+  if (error) {
+    const status = factoryErrorStatus(error.code);
+    if (status === 409 || status === 404)
+      return failure(
+        "The sync result could not be recorded. Refresh before trying again.",
+        status,
+        {
+          code: "sync_result_unavailable",
+        },
+      );
+    return failure("Could not record the context sync outcome.", status);
+  }
   return Response.json({ source: data }, { headers });
 }
