@@ -19,7 +19,9 @@ function switchAccount() {
   });
 }
 
-beforeEach(() => signOut.mockReset());
+beforeEach(() => {
+  signOut.mockReset();
+});
 
 it("switches only this browser session before continuing back to consent", async () => {
   signOut.mockResolvedValue({ error: null });
