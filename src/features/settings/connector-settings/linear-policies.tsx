@@ -19,7 +19,6 @@ import {
 import { CatalogStatus, ResourceIdDetails, useConnectorCatalog } from "./catalog";
 import { connectorCommand, readConnectorResponse } from "./request";
 import type { ConnectorResource } from "./resources";
-import { ConnectorSelect } from "./select";
 
 type Discovery = z.output<typeof linearDiscoveryConfigSchema>;
 type Outbound = z.output<typeof linearOutboundConfigSchema>;
@@ -292,7 +291,6 @@ function DiscoveryForm({
       <ResourceIdDetails ids={unknownStates} label="Unverified state ID" />
       <PolicyChoice
         catalog={labels}
-        custom
         empty="No label filter"
         error={errors.label}
         id={`${id}-label`}
@@ -448,7 +446,6 @@ function OutboundForm({
             <>
               <PolicyChoice
                 catalog={teams}
-                custom
                 empty="Choose a team"
                 error={errors.team}
                 id={`${id}-team`}
@@ -471,7 +468,6 @@ function OutboundForm({
           ) : null}
           <PolicyChoice
             catalog={states}
-            custom
             disabled={!validTeam}
             empty="Choose a state"
             error={errors.from}
@@ -493,6 +489,7 @@ function OutboundForm({
             id={`${id}-to`}
             label="To state"
             onChange={(value) => {
+              if (value === toStateId) return;
               setToStateId(value);
               setErrors((current) => ({ ...current, to: undefined }));
             }}
@@ -512,7 +509,6 @@ function OutboundForm({
 
 function PolicyChoice({
   catalog,
-  custom,
   disabled,
   empty,
   error,
@@ -523,7 +519,6 @@ function PolicyChoice({
   value,
 }: {
   catalog: Catalog;
-  custom?: boolean;
   disabled?: boolean;
   empty: string;
   error?: string;
@@ -543,45 +538,28 @@ function PolicyChoice({
       label: item.description ? `${item.label} · ${item.description}` : item.label,
     })),
   ];
-  const fieldProps = {
-    "aria-describedby": error ? `${id}-error` : undefined,
-    "aria-invalid": error ? true : undefined,
-    "aria-required": required,
-    disabled,
-    id,
-    label,
-    value,
-  };
   return (
     <div className="space-y-1.5">
-      {custom ? (
-        <SelectField
-          {...fieldProps}
-          className="max-w-xs"
-          onValueChange={onChange}
-          options={options}
-          wrap
-        />
-      ) : (
-        <ConnectorSelect {...fieldProps} onChange={(event) => onChange(event.target.value)}>
-          {options.map((item) => (
-            <option disabled={item.disabled} key={item.value} value={item.value}>
-              {item.label}
-            </option>
-          ))}
-        </ConnectorSelect>
-      )}
+      <SelectField
+        aria-describedby={error ? `${id}-error` : undefined}
+        aria-invalid={error ? true : undefined}
+        aria-required={required}
+        className="max-w-xs"
+        disabled={disabled}
+        id={id}
+        label={label}
+        onValueChange={onChange}
+        options={options}
+        value={value}
+        wrap
+      />
       {error ? (
         <p className="text-xs font-medium text-danger" id={`${id}-error`}>
           {error}
         </p>
       ) : null}
       {missing ? (
-        <ResourceIdDetails
-          ids={[value]}
-          label="Saved provider ID"
-          summaryTabIndex={custom ? 0 : undefined}
-        />
+        <ResourceIdDetails ids={[value]} label="Saved provider ID" summaryTabIndex={0} />
       ) : null}
     </div>
   );
