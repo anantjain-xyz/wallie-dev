@@ -103,11 +103,10 @@ function renderEditor(
 }
 
 function choose(field: string, option: string) {
-  fireEvent.click(screen.getByRole("combobox", { name: field, exact: true }));
+  fireEvent.click(screen.getByRole("combobox", { name: field }));
   fireEvent.click(
-    within(screen.getByRole("listbox", { name: field, exact: true })).getByRole("option", {
+    within(screen.getByRole("listbox", { name: field })).getByRole("option", {
       name: option,
-      exact: true,
     }),
   );
 }
@@ -397,7 +396,20 @@ describe("structured factory definition editor", () => {
 
 it("adds and orders routing classes and rules through the structured definition", () => {
   const benchmarksHref = "/w/test/benchmarks";
-  const { current } = renderEditor(initialDefinition, benchmarksHref);
+  const configuration = {
+    agentId: namedId(29),
+    definitionRevisionId: namedId(30),
+    experimentId: namedId(31),
+    qualificationId: namedId(32),
+    scorerRevisionId: namedId(33),
+    modelKey: "openai/gpt-5.5",
+    harness: "codex",
+    workerRuntime: "node",
+  } as const;
+  const label = "Builder · openai/gpt-5.5 · Delivery v3";
+  const { current } = renderEditor(initialDefinition, benchmarksHref, {
+    routing: [{ id: routingConfigurationKey(configuration), configuration, label }],
+  });
   const routing = within(screen.getByRole("region", { name: "Model routing" }));
   fireEvent.click(routing.getByRole("button", { name: "Add routing policy" }));
   const addClass = routing.getByRole("button", { name: "Add task class" });
@@ -439,15 +451,12 @@ it("adds and orders routing classes and rules through the structured definition"
       { name: "Use fallback" },
     ),
   );
-  const fallback = within(routing.getByRole("group", { name: "Rule fallback configuration" }));
-  fireEvent.change(fallback.getByRole("textbox", { name: "Model ID" }), {
-    target: { value: "openai/gpt-5.5" },
+  choose("Rule fallback configuration", label);
+  expect(current().modelRouting?.rules[0]?.constraints.qualityFloorBps).toBe(8_325);
+  expect(current().modelRouting?.rules[0]?.onUnavailable).toEqual({
+    kind: "fallback",
+    configuration,
   });
-  expect(current().modelRouting?.rules[0]).toMatchObject({
-    constraints: { qualityFloorBps: 8_325 },
-    onUnavailable: { kind: "fallback", configuration: { modelKey: "openai/gpt-5.5" } },
-  });
-  // Re-confirming the current fallback option must not reset the configured fallback model.
   fireEvent.click(routing.getByRole("combobox", { name: "When the primary is unavailable" }));
   fireEvent.click(
     within(screen.getByRole("listbox", { name: "When the primary is unavailable" })).getByRole(
@@ -455,9 +464,10 @@ it("adds and orders routing classes and rules through the structured definition"
       { name: "Use fallback" },
     ),
   );
-  expect(current().modelRouting?.rules[0]).toMatchObject({
-    constraints: { qualityFloorBps: 8_325 },
-    onUnavailable: { kind: "fallback", configuration: { modelKey: "openai/gpt-5.5" } },
+  expect(current().modelRouting?.rules[0]?.constraints.qualityFloorBps).toBe(8_325);
+  expect(current().modelRouting?.rules[0]?.onUnavailable).toEqual({
+    kind: "fallback",
+    configuration,
   });
   expect(current().modelRouting?.rules[1]?.onUnavailable).toEqual({ kind: "escalate" });
 

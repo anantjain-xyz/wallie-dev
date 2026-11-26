@@ -44,7 +44,7 @@ export function ContextDocumentsEditor({
   );
   const canPropose = proposed && !proposed.unavailable && eligibleOptions.includes(proposed);
 
-  function pin(reference: ContextDocumentReference) {
+  function pinDocument(reference: ContextDocumentReference) {
     const exists = value.some(({ sourceId }) => sourceId === reference.sourceId);
     if (exists)
       onChange(value.map((pin) => (pin.sourceId === reference.sourceId ? reference : pin)));
@@ -104,7 +104,7 @@ export function ContextDocumentsEditor({
               !canPropose ||
               (value.length >= 8 && !value.some(({ sourceId }) => sourceId === proposal.sourceId))
             }
-            onClick={() => pin(proposal)}
+            onClick={() => pinDocument(proposal)}
           >
             {value.some(({ sourceId }) => sourceId === proposal.sourceId)
               ? "Replace pin with requested revision"
@@ -143,7 +143,7 @@ export function ContextDocumentsEditor({
                     empty="Keep this revision"
                     unavailable="Context revision unavailable"
                     onChange={(revisionId) => {
-                      if (revisionId) pin({ ...pin, revisionId });
+                      if (revisionId) pinDocument({ ...pin, revisionId });
                     }}
                   />
                   <button
@@ -180,7 +180,7 @@ export function ContextDocumentsEditor({
         unavailable="Context revision unavailable"
         onChange={(id) => {
           const selected = eligibleOptions.find((option) => option.id === id);
-          if (selected?.sourceId) pin({ sourceId: selected.sourceId, revisionId: id });
+          if (selected?.sourceId) pinDocument({ sourceId: selected.sourceId, revisionId: id });
         }}
       />
     </section>
