@@ -1,21 +1,20 @@
 import { PageSection } from "@/components/ui/page-shell";
-import { previewFactoryAutomationSchedule } from "@/lib/factory-automations/schedule-service";
+import type { previewFactoryAutomationSchedule } from "@/lib/factory-automations/schedule-service";
 
-type Preview = typeof previewFactoryAutomationSchedule;
+export type AutomationScheduleEvidence = Awaited<
+  ReturnType<typeof previewFactoryAutomationSchedule>
+>;
 
-export async function AutomationSchedulePreview({
-  client,
-  input,
+export function AutomationSchedulePreview({
+  preview,
+  timeZone,
 }: {
-  client: Parameters<Preview>[0];
-  input: Parameters<Preview>[1];
+  preview: AutomationScheduleEvidence;
+  timeZone: string;
 }) {
-  const preview = await previewFactoryAutomationSchedule(client, input);
-  if (!preview) return null;
-
-  const formatter = preview.available
+  const formatter = preview?.available
     ? new Intl.DateTimeFormat("en-US", {
-        timeZone: input.timeZone,
+        timeZone,
         month: "short",
         day: "numeric",
         year: "numeric",
@@ -30,9 +29,13 @@ export async function AutomationSchedulePreview({
   }
 
   return (
-    <PageSection title="Schedule" tagline={input.timeZone}>
+    <PageSection title="Schedule" tagline={timeZone} anchorId="automation-schedule">
       <div className="ui-sheet min-w-0 space-y-4 p-4 text-sm sm:p-6">
-        {!preview.available ? (
+        {!preview ? (
+          <p className="text-danger" role="alert">
+            Could not load the schedule. Refresh this page to try again.
+          </p>
+        ) : !preview.available ? (
           <p className="text-danger">The schedule or timezone is unavailable.</p>
         ) : (
           <>

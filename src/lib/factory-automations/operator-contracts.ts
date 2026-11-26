@@ -28,6 +28,7 @@ const cursorTimestamp = timestamp
 export const automationHistoryCursorSchema = z.strictObject({ recordedAt: cursorTimestamp, id });
 const occurrenceIdentity = z.strictObject({
   id,
+  revisionId: id.optional(),
   revisionNumber: positiveInteger,
   triggerKind: automationTriggerKindSchema,
   attemptCount: z.number().int().min(0).max(5),
