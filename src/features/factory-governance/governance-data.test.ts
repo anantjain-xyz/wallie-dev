@@ -37,6 +37,24 @@ vi.mock("@/lib/factory-definitions/stored-definition", () => ({
   }),
 }));
 
+function governanceScope(supabase: ReturnType<typeof createClient<Database>>) {
+  return {
+    workspaceId,
+    actorUserId: fixtureId(2005),
+    actorMemberId: fixtureId(2006),
+    workspaceSlug: "wallie",
+    supabase,
+    factory: {
+      id: factoryId,
+      isDefault: false,
+      name: "Finance",
+      status: "active" as const,
+      canManage: true,
+    },
+    isOperator: true,
+  };
+}
+
 it("uses a scoped server cursor and resolves selected and published bindings independently", async () => {
   const requests: Database["public"]["Functions"]["read_factory_credential_ownership"]["Args"][] =
     [];
@@ -66,20 +84,7 @@ it("uses a scoped server cursor and resolves selected and published bindings ind
     },
   });
 
-  const governance = {
-    workspaceId,
-    actorUserId: fixtureId(2005),
-    workspaceSlug: "wallie",
-    supabase,
-    factory: {
-      id: factoryId,
-      isDefault: false,
-      name: "Finance",
-      status: "active" as const,
-      canManage: true,
-    },
-    isOperator: true,
-  };
+  const governance = governanceScope(supabase);
   const data = await loadGovernance(governance, { afterBinding: fixtureId(1000) });
 
   const ids = data.bindings.map(({ id }) => id);
@@ -107,4 +112,73 @@ it("uses a scoped server cursor and resolves selected and published bindings ind
   expect(focused.bindings.map(({ id }) => id)).toEqual([selectedBindingId]);
   expect(focused.selectedBindingId).toBe(selectedBindingId);
   expect(requests).toEqual([{ ...scope, p_binding_id: selectedBindingId }]);
+});
+
+it("resolves off-page principals with factory scope independently of the picker and list cursor", async () => {
+  const requests: URL[] = [];
+  const principalRows = Array.from({ length: 25 }, (_, index) => ({
+    id: fixtureId(index + 1),
+    name: `Runner ${index + 1}`,
+    slug: `runner-${index + 1}`,
+  }));
+  const grant = {
+    id: fixtureId(2100),
+    service_principal_id: fixtureId(25),
+    github_repository_id: fixtureId(2101),
+    read_context_repository_ids: [],
+    tool_ids: [],
+    execution_policy_revision_id: fixtureId(2102),
+    version: 2,
+    revoked_at: null,
+    expires_at: "2099-01-01T00:00:00Z",
+  };
+  const supabase = createClient<Database>("https://governance.example.test", "viewer-fixture", {
+    auth: { persistSession: false },
+    global: {
+      fetch: async (input, init) => {
+        const url = new URL(String(input));
+        const table = url.pathname.split("/").at(-1);
+        if (
+          ["service_principals", "factory_execution_grants", "github_repositories"].includes(
+            table ?? "",
+          )
+        ) {
+          requests.push(url);
+          expect(new Headers(init?.headers).get("authorization")).toBe("Bearer viewer-fixture");
+          expect(url.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
+          expect(url.searchParams.get("factory_id")).toBe(`eq.${factoryId}`);
+        }
+        switch (table) {
+          case "service_principals": {
+            const filter = url.searchParams.get("id");
+            if (filter?.startsWith("in.")) {
+              expect(filter).toBe(`in.(${fixtureId(25)})`);
+              return Response.json(principalRows.slice(-1));
+            }
+            return Response.json(principalRows.slice(0, Number(url.searchParams.get("limit"))));
+          }
+          case "factory_execution_grants":
+            return Response.json([grant]);
+          case "github_repositories":
+            return Response.json([
+              { id: grant.github_repository_id, full_name: "example/releases", is_archived: true },
+            ]);
+          default:
+            return Response.json([]);
+        }
+      },
+    },
+  });
+  const data = await loadGovernance(governanceScope(supabase), {});
+  expect(data.principalList.entries).toHaveLength(20);
+  expect(data.principalList.entries.map(({ id }) => id)).not.toContain(fixtureId(25));
+  expect(data.principalOptions).toContainEqual({
+    id: fixtureId(25),
+    label: "Runner 25 (runner-25)",
+  });
+  expect(data.evidence.principals).toEqual([principalRows[24]]);
+  expect(data.evidence.repositories).toEqual([
+    { id: grant.github_repository_id, full_name: "example/releases", is_archived: true },
+  ]);
+  expect(requests.filter((url) => url.pathname.endsWith("/service_principals"))).toHaveLength(3);
 });
