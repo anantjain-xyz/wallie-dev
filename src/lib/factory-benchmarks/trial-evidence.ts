@@ -2,7 +2,11 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
-import { loadScopedRunTranscript } from "@/features/wallie/run-transcript";
+import {
+  loadScopedRunTranscript,
+  RunTranscriptEventsError,
+  RunTranscriptResetError,
+} from "@/features/wallie/run-transcript";
 import type { RunTranscriptQuery } from "@/features/wallie/run-transcript-contracts";
 import { redactRunSensitiveText } from "@/lib/agent-runner/redact-sensitive-text";
 import {
@@ -73,13 +77,21 @@ export function readBenchmarkTrialTranscript(
   scope: BenchmarkTrialEvidenceScope,
   query?: RunTranscriptQuery,
 ) {
+  return readTrialTranscript(scope, () => readBenchmarkTrialEvidence(scope), query);
+}
+
+function readTrialTranscript(
+  scope: BenchmarkTrialEvidenceScope,
+  readEvidence: () => Promise<BenchmarkTrialEvidence>,
+  query?: RunTranscriptQuery,
+) {
   return loadScopedRunTranscript({
     supabase: scope.admin,
     workspaceId: scope.workspaceId,
     query,
     signal: scope.signal,
     async readOwner() {
-      const { output, trial } = await readBenchmarkTrialEvidence(scope);
+      const { output, trial } = await readEvidence();
       if (!trial.started || output.availability === "withheld" || !output.owner) return null;
       return {
         run_id: output.owner.runId,
@@ -89,6 +101,39 @@ export function readBenchmarkTrialTranscript(
       };
     },
   });
+}
+
+export async function readBenchmarkTrialPageEvidence(
+  scope: BenchmarkTrialEvidenceScope,
+  suiteId: string,
+) {
+  async function read() {
+    const detail = await readBenchmarkTrialEvidence(scope);
+    if (detail.suite.id !== suiteId)
+      throw new BenchmarkComparisonError(404, "The benchmark trial is unavailable.");
+    return detail;
+  }
+
+  let detail = await read();
+  let initial = true;
+  try {
+    const transcript = await readTrialTranscript(scope, async () => {
+      if (!initial) detail = await read();
+      initial = false;
+      return detail;
+    });
+    return { detail, transcript };
+  } catch (error) {
+    if (error instanceof RunTranscriptEventsError) detail = await read();
+    else if (!(error instanceof RunTranscriptResetError)) throw error;
+    return {
+      detail,
+      transcript:
+        detail.output.availability !== "withheld" && detail.output.owner
+          ? ("retry" as const)
+          : null,
+    };
+  }
 }
 
 function mediaOwner(trial: BenchmarkTrialEvidence, side: TrialEvidenceMediaSide) {

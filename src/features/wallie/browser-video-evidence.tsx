@@ -52,14 +52,14 @@ function formatOffset(milliseconds: number) {
   return `0:${String(seconds).padStart(Number.isInteger(seconds) ? 2 : 4, "0")}`;
 }
 
-function findingLabel(step: BrowserRecordingFinding) {
+function findingLabel(step: BrowserRecordingFinding, showTestId: boolean) {
   switch (step.action) {
     case "entry":
       return "Open fixture";
     case "click":
-      return `Click ${step.testId}`;
+      return showTestId ? `Click ${step.testId}` : "Click target";
     case "expectVisible":
-      return `Verify ${step.testId} is visible`;
+      return showTestId ? `Verify ${step.testId} is visible` : "Verify target is visible";
   }
 }
 
@@ -150,12 +150,13 @@ export function BrowserVideoInspector(scope: BrowserEvidenceInspectorProps) {
             aria-label="Browser recordings"
             className="min-w-0 divide-y divide-border border-y border-border"
           >
-            {recordings.map((record) => (
+            {recordings.map((record, index) => (
               <RecordingReceipt
                 key={record.key}
                 record={record}
                 evidence={evidence}
                 scope={scope}
+                number={index + 1}
                 citationAnchor={
                   linkedRecording === record && target?.citation ? locationHash.slice(1) : undefined
                 }
@@ -175,6 +176,7 @@ function RecordingReceipt({
   record,
   evidence,
   scope,
+  number,
   citationAnchor,
   offsetMs,
   findingHash,
@@ -183,6 +185,7 @@ function RecordingReceipt({
   record: BrowserVideoRecord;
   evidence: BrowserEvidenceReceipt;
   scope: BrowserEvidenceInspectorProps;
+  number: number;
   citationAnchor?: string;
   offsetMs?: number;
   findingHash?: string;
@@ -191,10 +194,80 @@ function RecordingReceipt({
   const captured = record.status === "captured" ? record : null;
   const steps = captured ? findingsFor(evidence, captured) : null;
   const [seekRequest, setSeekRequest] = useState(0);
+  const trial = scope.trial;
+  const label = trial
+    ? `${trial.side === "original" ? "Original" : "Output"} recording ${number}`
+    : record.key;
+  const capturedAt = captured?.startedAt ?? evidence.createdAt;
+  const receipt = (
+    <MetadataList className="[overflow-wrap:anywhere]">
+      {trial ? <MetadataItem label="Check key" monospace value={record.key} /> : null}
+      <MetadataItem
+        label="Fixture path"
+        monospace
+        value={<span className="break-all">{record.path}</span>}
+      />
+      <MetadataItem
+        label="Producing run"
+        monospace
+        value={<span className="break-all">{evidence.runId}</span>}
+      />
+      <MetadataItem label="Attempt" value={evidence.attemptCount} />
+      <MetadataItem
+        label="Validated commit"
+        monospace
+        value={<span className="break-all">{evidence.commitSha}</span>}
+      />
+      <MetadataItem
+        label="Validation tree"
+        monospace
+        value={<span className="break-all">{evidence.treeSha}</span>}
+      />
+      {captured ? (
+        <>
+          <MetadataItem
+            label="Started"
+            value={<TimeDisplay value={captured.startedAt} initialNow={captured.startedAt} />}
+          />
+          <MetadataItem
+            label="Completed"
+            value={<TimeDisplay value={captured.completedAt} initialNow={captured.completedAt} />}
+          />
+          <MetadataItem label="Duration" value={formatOffset(captured.manifest.durationMs)} />
+          {trial ? (
+            <MetadataItem label="Asset ID" monospace value={captured.manifest.assetId} />
+          ) : null}
+          <MetadataItem
+            label="SHA-256"
+            monospace
+            value={<span className="break-all">{captured.manifest.sha256}</span>}
+          />
+        </>
+      ) : (
+        <MetadataItem
+          label="Recorded"
+          value={<TimeDisplay value={evidence.createdAt} initialNow={evidence.createdAt} />}
+        />
+      )}
+      {trial &&
+        steps?.map((step) =>
+          step.action === "entry" ? null : (
+            <MetadataItem
+              key={step.offsetMs}
+              label={`Target test ID · ${formatOffset(step.offsetMs)}`}
+              value={step.testId}
+              monospace
+            />
+          ),
+        )}
+    </MetadataList>
+  );
   return (
     <li className="min-w-0 scroll-mt-24 space-y-3 py-3" id={citationAnchor}>
-      <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
-        <p className="min-w-0 break-all text-sm font-semibold text-foreground">{record.key}</p>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <p className="min-w-0 text-sm font-semibold text-foreground [overflow-wrap:anywhere]">
+          {label}
+        </p>
         <span className="text-xs text-muted">
           {captured && steps
             ? "Complete capture"
@@ -203,57 +276,19 @@ function RecordingReceipt({
               : "Capture incomplete"}
         </span>
       </div>
-      <MetadataList>
-        <MetadataItem
-          label="Fixture path"
-          monospace
-          value={<span className="break-all">{record.path}</span>}
-        />
-        <MetadataItem
-          label="Producing run"
-          monospace
-          value={<span className="break-all">{evidence.runId}</span>}
-        />
-        <MetadataItem label="Attempt" value={evidence.attemptCount} />
-        <MetadataItem
-          label="Validated commit"
-          monospace
-          value={<span className="break-all">{evidence.commitSha}</span>}
-        />
-        <MetadataItem
-          label="Validation tree"
-          monospace
-          value={<span className="break-all">{evidence.treeSha}</span>}
-        />
-        {captured ? (
-          <>
-            <MetadataItem
-              label="Started"
-              value={<TimeDisplay value={captured.startedAt} initialNow={captured.startedAt} />}
-            />
-            <MetadataItem
-              label="Completed"
-              value={<TimeDisplay value={captured.completedAt} initialNow={captured.completedAt} />}
-            />
-            <MetadataItem label="Duration" value={formatOffset(captured.manifest.durationMs)} />
-            <MetadataItem
-              label="SHA-256"
-              monospace
-              value={<span className="break-all">{captured.manifest.sha256}</span>}
-            />
-          </>
-        ) : (
-          <MetadataItem
-            label="Recorded"
-            value={<TimeDisplay value={evidence.createdAt} initialNow={evidence.createdAt} />}
-          />
-        )}
-      </MetadataList>
+      {trial ? (
+        <p className="type-annotation text-muted">
+          Attempt {evidence.attemptCount} ·{" "}
+          <TimeDisplay value={capturedAt} initialNow={capturedAt} />
+        </p>
+      ) : (
+        receipt
+      )}
       {captured && steps ? (
         <>
           <RecordingPreview
             key={captured.manifest.assetId}
-            label={record.key}
+            label={label}
             manifest={captured.manifest}
             path={browserAssetPathForScope(
               scope,
@@ -293,7 +328,7 @@ function RecordingReceipt({
                     }}
                   >
                     <span className="shrink-0 font-mono">{formatOffset(step.offsetMs)}</span>
-                    <span className="min-w-0 wrap-anywhere">{findingLabel(step)}</span>
+                    <span className="min-w-0 wrap-anywhere">{findingLabel(step, !trial)}</span>
                   </a>
                 </li>
               );
@@ -305,6 +340,12 @@ function RecordingReceipt({
           {record.status === "captured" ? videoFailure.capture_failed : videoFailure[record.reason]}
         </p>
       )}
+      {trial ? (
+        <details className="rounded-md border border-border px-3 py-2">
+          <summary className="type-label cursor-pointer">Exact capture receipt</summary>
+          {receipt}
+        </details>
+      ) : null}
     </li>
   );
 }

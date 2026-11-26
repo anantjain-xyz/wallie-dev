@@ -54,6 +54,13 @@ export class RunTranscriptResetError extends Error {
   }
 }
 
+export class RunTranscriptEventsError extends Error {
+  constructor(cause: unknown) {
+    super("The transcript events could not be read.", { cause });
+    this.name = "RunTranscriptEventsError";
+  }
+}
+
 export function loadRunTranscript(input: Input): Promise<RunTranscriptPage | null> {
   return loadScopedRunTranscript({ ...input, readOwner: () => readOwner(input) });
 }
@@ -100,9 +107,15 @@ export async function loadScopedRunTranscript(
         ? query.gt("sequence", cursor.sequence)
         : query.lt("sequence", cursor.sequence);
     }
-    const { data, error } = await (input.signal ? query.abortSignal(input.signal) : query);
-    if (error) throw error;
-    const rows = data ?? [];
+    const rows = await Promise.resolve(input.signal ? query.abortSignal(input.signal) : query)
+      .then(({ data, error }) => {
+        if (error) throw error;
+        return data ?? [];
+      })
+      .catch((error: unknown) => {
+        input.signal?.throwIfAborted();
+        throw new RunTranscriptEventsError(error);
+      });
     hasMore = rows.length > limit;
     const pageRows = rows.slice(0, limit);
     if (!forward) pageRows.reverse();
