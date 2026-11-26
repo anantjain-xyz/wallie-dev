@@ -457,6 +457,7 @@ function OutboundForm({
                   setToStateId("");
                   setErrors({});
                 }}
+                required
                 value={teamId}
               />
               <CatalogStatus catalog={teams} label="project teams" />
@@ -476,6 +477,7 @@ function OutboundForm({
               setFromStateId(value);
               setErrors((current) => ({ ...current, from: undefined, to: undefined }));
             }}
+            required
             value={fromStateId}
           />
           <PolicyChoice
@@ -489,6 +491,7 @@ function OutboundForm({
               setToStateId(value);
               setErrors((current) => ({ ...current, to: undefined }));
             }}
+            required
             value={toStateId}
           />
           {validTeam ? <CatalogStatus catalog={states} label="outcome states" /> : null}
@@ -510,6 +513,7 @@ function PolicyChoice({
   id,
   label,
   onChange,
+  required,
   value,
 }: {
   catalog: Catalog;
@@ -519,6 +523,7 @@ function PolicyChoice({
   id: string;
   label: string;
   onChange: (value: string) => void;
+  required?: boolean;
   value: string;
 }) {
   const options: ConnectorCatalogOption[] = choices(catalog);
@@ -528,6 +533,7 @@ function PolicyChoice({
       <ConnectorSelect
         aria-describedby={error ? `${id}-error` : undefined}
         aria-invalid={error ? true : undefined}
+        aria-required={required}
         disabled={disabled}
         id={id}
         label={label}

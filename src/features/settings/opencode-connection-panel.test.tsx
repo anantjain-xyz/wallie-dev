@@ -26,6 +26,37 @@ describe("OpenCodeConnectionPanel", () => {
     expect(provider).toHaveValue("my-custom-provider");
   });
 
+  it("clears draft credentials when the model or manual override changes the provider", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const status = { checkedAt: "2099-08-30T00:00:00.000Z", connected: false };
+    const { rerender } = render(
+      <OpenCodeConnectionPanel initialStatus={status} selectedModel="openrouter/model-a" />,
+    );
+    const provider = screen.getByLabelText("Provider id");
+    const key = screen.getByLabelText("Provider API key");
+    const save = screen.getByRole("button", { name: "Save provider key" });
+    fireEvent.change(key, { target: { value: "example-openrouter-key" } });
+    rerender(<OpenCodeConnectionPanel initialStatus={status} selectedModel="openrouter/model-b" />);
+    expect(key).toHaveValue("example-openrouter-key");
+    expect(save).toBeEnabled();
+
+    rerender(
+      <OpenCodeConnectionPanel initialStatus={status} selectedModel="opencode-go/glm-5.3" />,
+    );
+    expect(provider).toHaveValue("opencode-go");
+    expect(key).toHaveValue("");
+    expect(save).toBeDisabled();
+    fireEvent.submit(key.closest("form")!);
+
+    fireEvent.change(key, { target: { value: "example-go-key" } });
+    fireEvent.change(provider, { target: { value: "openrouter" } });
+    expect(key).toHaveValue("");
+    expect(save).toBeDisabled();
+    fireEvent.submit(key.closest("form")!);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("renders server-loaded connected status without exposing a key", () => {
     render(
       <OpenCodeConnectionPanel

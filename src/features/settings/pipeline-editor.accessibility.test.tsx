@@ -114,16 +114,34 @@ function renderEditor(
 describe("PipelineEditor accessibility", () => {
   it("retains unnamed saved approvers and omits unnamed members from new assignments", async () => {
     const user = userEvent.setup();
-    const unassignedId = "00000000-0000-4000-8000-000000000022";
+    const secondApproverId = "00000000-0000-4000-8000-000000000022";
+    const unassignedId = "00000000-0000-4000-8000-000000000023";
     const unnamed = { ...workspaceMembers[0]!, fullName: null, email: null };
-    renderEditor(undefined, pipeline, [unnamed, { ...unnamed, id: unassignedId }]);
+    renderEditor(
+      undefined,
+      {
+        ...pipeline,
+        stages: [
+          { ...pipeline.stages[0]!, approverMemberIds: [memberId, secondApproverId] },
+          pipeline.stages[1]!,
+        ],
+      },
+      [unnamed, { ...unnamed, id: secondApproverId }, { ...unnamed, id: unassignedId }],
+    );
 
-    await user.click(screen.getAllByRole("button", { name: "Approvers 1 member" })[0]!);
-    expect(screen.getByRole("checkbox", { name: "Unnamed member (owner)" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Approvers 2 members" }));
+    expect(screen.getByRole("checkbox", { name: "Unnamed member 1 (owner)" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Unnamed member 2 (owner)" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Unnamed member 3 (owner)" })).toBeNull();
     expect(screen.queryByText(unassignedId)).not.toBeInTheDocument();
     expect(screen.getAllByText(memberId)[0]).not.toBeVisible();
     await user.click(screen.getAllByText("Unnamed approver details")[0]!);
-    expect(screen.getAllByText(memberId)[0]).toBeVisible();
+    const firstId = screen.getAllByText(memberId)[0]!;
+    const secondId = screen.getByText(secondApproverId);
+    expect(firstId).toBeVisible();
+    expect(secondId).toBeVisible();
+    expect(firstId.closest("li")).toHaveTextContent(`Unnamed member 1: ${memberId}`);
+    expect(secondId.closest("li")).toHaveTextContent(`Unnamed member 2: ${secondApproverId}`);
   });
 
   it("labels every stage field and supports keyboard approver selection", async () => {

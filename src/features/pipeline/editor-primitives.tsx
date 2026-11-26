@@ -611,13 +611,14 @@ export function StageRowEditor({
   const unnamedMembers = workspaceMembers.filter(
     (member) => !member.fullName?.trim() && !member.email?.trim(),
   );
-  const unnamedApprovers = unnamedMembers.filter((member) =>
-    stage.approverMemberIds.includes(member.id),
+  const unnamedApprovers = unnamedMembers.flatMap(({ id }, index) =>
+    stage.approverMemberIds.includes(id) ? [{ id, label: `Unnamed member ${index + 1}` }] : [],
   );
   const approverOptions = workspaceMembers.flatMap((member) => {
     const name = member.fullName?.trim();
     const email = member.email?.trim();
-    if (!name && !email && !stage.approverMemberIds.includes(member.id)) return [];
+    const label = name || email || unnamedApprovers.find(({ id }) => id === member.id)?.label;
+    if (!label) return [];
     const needsEmail =
       name &&
       email &&
@@ -625,7 +626,7 @@ export function StageRowEditor({
     return [
       {
         description: needsEmail ? `${email} · ${member.role}` : member.role,
-        label: name || email || "Unnamed member",
+        label,
         value: member.id,
       },
     ];
@@ -787,9 +788,9 @@ export function StageRowEditor({
                     <details className="text-xs text-muted">
                       <summary className="cursor-pointer">Unnamed approver details</summary>
                       <ul className="mt-1 space-y-1">
-                        {unnamedApprovers.map((member) => (
-                          <li className="break-all" key={member.id}>
-                            <code className="select-all">{member.id}</code>
+                        {unnamedApprovers.map(({ id, label }) => (
+                          <li className="break-all" key={id}>
+                            {label}: <code className="select-all">{id}</code>
                           </li>
                         ))}
                       </ul>
