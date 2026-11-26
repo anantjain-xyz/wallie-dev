@@ -265,7 +265,7 @@ export function automationDryRunApiPath(
 
 export function workspaceWorkflowsPath(
   workspaceSlug: string,
-  query?: { factory?: string; after?: string },
+  query?: { factory?: string; after?: string; q?: string },
 ) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/workflows`, query);
 }

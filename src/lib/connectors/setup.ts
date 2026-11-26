@@ -21,6 +21,7 @@ import {
 import { SlackProviderError } from "@/lib/connectors/slack/provider";
 import {
   readMappedSlackChannelCatalog,
+  readSlackConnectorSetup,
   SlackSetupFailure,
   verifyMappedSlackChannel,
 } from "@/lib/connectors/slack/setup";
@@ -124,7 +125,7 @@ async function mappedResource(admin: Admin, scope: Scope, resourceId: string) {
   const { data, error } = await admin
     .from("factory_connector_resources")
     .select(
-      "id, installation_id, provider, external_tenant_id, resource_kind, external_resource_id",
+      "id, installation_id, provider, external_tenant_id, resource_kind, external_resource_id, current_revision",
     )
     .eq("workspace_id", scope.p_workspace_id)
     .eq("factory_id", scope.p_factory_id)
@@ -209,10 +210,98 @@ export async function readConnectorCatalog(
 ): Promise<ConnectorCatalogResponse> {
   const signal = AbortSignal.timeout(connectorProviderTimeoutMs);
   if (query.provider === "slack") {
+    if (query.kind === "resource") {
+      const resource = await mappedResource(admin, scope, query.resourceId);
+      if (resource.provider !== "slack" || resource.resource_kind !== "channel")
+        throw new ConnectorSetupFailure(404, "Slack channel is unavailable in this factory.");
+      const { installations } = await readSlackConnectorSetup(admin, scope, true);
+      const installation = installations.find(
+        (item) =>
+          item.id === resource.installation_id &&
+          item.teamId === resource.external_tenant_id &&
+          item.status === "connected",
+      );
+      if (!installation) throw new ConnectorSetupFailure(409, "Slack workspace access changed.");
+      const channel = await verifyMappedSlackChannel(admin, scope, {
+        installationId: installation.id,
+        generation: installation.generation,
+        teamId: installation.teamId,
+        channelId: resource.external_resource_id,
+      });
+      return {
+        provider: "slack",
+        kind: "resource",
+        tenant: { id: installation.teamId, label: installation.teamName },
+        resources: [{ id: channel.id, label: `#${channel.name}` }],
+        nextCursor: null,
+      };
+    }
     const catalog = await readMappedSlackChannelCatalog(admin, scope, query);
     return { provider: "slack", kind: "channel", ...catalog };
   }
   if (query.provider === "linear") {
+    if ("resourceId" in query) {
+      const resource = await mappedResource(admin, scope, query.resourceId);
+      const kind = resource.resource_kind;
+      if (resource.provider !== "linear" || (kind !== "project" && kind !== "team"))
+        throw new ConnectorSetupFailure(404, "Linear resource is unavailable in this factory.");
+      const secret = await linearCredential(admin, scope);
+      const installation = await connectorInstallation(admin, scope, resource.installation_id);
+      const tenantId = resource.external_tenant_id;
+      if (
+        installation.provider !== "linear" ||
+        installation.external_tenant_id !== tenantId ||
+        installation.external_installation_id !== tenantId
+      )
+        throw new ConnectorSetupFailure(409, "Linear connector ownership changed.");
+      const linear = linearCatalogProvider(secret.encrypted_value, signal);
+      if (query.kind === "resource") {
+        const mapped = await linear.resource(kind, resource.external_resource_id);
+        if (mapped.resourceId !== resource.external_resource_id || mapped.tenantId !== tenantId)
+          throw new ConnectorProviderUnavailable("linear");
+        return {
+          provider: "linear",
+          kind: "resource",
+          tenant: { id: tenantId, label: mapped.tenantLabel },
+          resources: mapped.label ? [{ id: mapped.resourceId, label: mapped.label }] : [],
+          nextCursor: null,
+        };
+      }
+      const { data: mapping, error } = await admin
+        .from("factory_connector_mapping_revisions")
+        .select("enabled")
+        .eq("workspace_id", scope.p_workspace_id)
+        .eq("factory_id", scope.p_factory_id)
+        .eq("resource_id", resource.id)
+        .eq("revision", resource.current_revision)
+        .maybeSingle();
+      if (error) throw error;
+      if (!mapping?.enabled)
+        throw new ConnectorSetupFailure(409, "Enable the Linear resource before finding choices.");
+      const teams = await linear.mappedTeams(
+        kind,
+        resource.external_resource_id,
+        tenantId,
+        query.kind === "team" ? (query.cursor ?? null) : null,
+        query.kind === "team" ? connectorCatalogPageSize : 250,
+      );
+      if (query.kind === "team") return { provider: "linear", kind: "team", ...teams };
+      if (teams.nextCursor) throw new ConnectorProviderUnavailable("linear");
+      const teamId = query.kind === "state" ? query.teamId : undefined;
+      const teamIds = teams.resources.map((item) => item.id);
+      if (teamId && !teamIds.includes(teamId))
+        throw new ConnectorSetupFailure(422, "Choose a team associated with this Linear resource.");
+      const page =
+        query.kind === "state" && teamIds.length === 0
+          ? { resources: [], nextCursor: null }
+          : await linear.policyChoices(
+              query.kind,
+              tenantId,
+              teamId ? [teamId] : teamIds,
+              query.cursor ?? null,
+            );
+      return { provider: "linear", kind: query.kind, tenant: teams.tenant, ...page };
+    }
     const secret = await linearCredential(admin, scope);
     const catalog = await linearCatalogProvider(secret.encrypted_value, signal).catalog(
       query.kind,

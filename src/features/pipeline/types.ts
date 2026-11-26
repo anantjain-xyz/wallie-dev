@@ -3,6 +3,17 @@ import type { SessionPhaseStatus, SessionPullRequest } from "@/features/sessions
 import type { Enums } from "@/lib/supabase/database.types";
 
 export const PIPELINE_DASHBOARD_PAGE_SIZE = 25;
+export const PIPELINE_SEARCH_MAX_LENGTH = 200;
+export const PIPELINE_STATUS_FILTERS = [
+  "all",
+  "awaiting_review",
+  "in_progress",
+  "approved",
+  "rejected",
+  "failed",
+] as const;
+export type PipelineStatusFilter = (typeof PIPELINE_STATUS_FILTERS)[number];
+export type PipelineDashboardFilters = { query: string; status: PipelineStatusFilter };
 
 export type PipelineDashboardPullRequest = Pick<
   SessionPullRequest,
@@ -28,9 +39,11 @@ export type PipelineDashboardCard = {
 };
 
 export type PipelineDashboardLane = {
+  activeCount?: number;
   cards: PipelineDashboardCard[];
   cursor: string | null;
   description: string;
+  factoryName?: string;
   id: string;
   name: string;
   pipeline: {
@@ -54,6 +67,8 @@ export type PipelineBoardState = {
 };
 
 export type PipelineDashboardData = {
+  creationFactoryName?: string;
+  aggregateFactories?: boolean;
   factoryId?: string;
   showCreationOnboarding?: boolean;
   hasAnySession: boolean;

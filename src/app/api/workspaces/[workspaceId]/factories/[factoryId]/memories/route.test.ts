@@ -17,8 +17,9 @@ const scope = { p_workspace_id: workspaceId, p_factory_id: factoryId };
 
 function setup({
   databaseError,
+  databaseMessage = "Private diagnostic",
   hiddenFactory,
-}: { databaseError?: string; hiddenFactory?: boolean } = {}) {
+}: { databaseError?: string; databaseMessage?: string; hiddenFactory?: boolean } = {}) {
   const requests: Array<{ url: URL; args: unknown }> = [];
   const supabase = createClient<Database>("https://database.example.test", "user-key", {
     global: {
@@ -32,7 +33,7 @@ function setup({
           if (route.pathname.endsWith("/has_factory_run_memory_proposal"))
             return Response.json(true);
           return databaseError
-            ? Response.json({ code: databaseError, message: "Private diagnostic" }, { status: 400 })
+            ? Response.json({ code: databaseError, message: databaseMessage }, { status: 400 })
             : Response.json(memory);
         }
         expect(route.searchParams.get("workspace_id")).toBe(`eq.${workspaceId}`);
@@ -137,7 +138,9 @@ describe("factory memory management", () => {
       params,
     );
     expect(result.status).toBe(409);
-    expect(await result.text()).not.toContain("Private diagnostic");
+    expect(await result.json()).toEqual({
+      error: "This memory changed. Reload it before trying again.",
+    });
     expect(requests.at(-1)?.args).toEqual({
       ...scope,
       p_memory_id: memoryId,
@@ -145,6 +148,36 @@ describe("factory memory management", () => {
       p_expected_pending_revision_id: revisionId,
     });
   });
+
+  it.each([
+    [
+      "PT409",
+      "Pending factory memory is unavailable or expired.",
+      409,
+      "Save a correction before approving.",
+    ],
+    ["P0011", "Factory is archived.", 409, "its memory is read-only"],
+    ["42501", "Private diagnostic", 403, "Factory manager access is required"],
+  ])(
+    "returns actionable errors for review failures (%s)",
+    async (databaseError, databaseMessage, status, recovery) => {
+      setup({ databaseError, databaseMessage });
+      const result = await POST(
+        post({
+          action: "review",
+          memoryId,
+          decision: "approve",
+          expectedCurrentRevisionId: null,
+          expectedPendingRevisionId: revisionId,
+        }),
+        params,
+      );
+      expect(result.status).toBe(status);
+      const response = await result.json();
+      expect(response.error).toContain(recovery);
+      expect(response.error).not.toContain(databaseMessage);
+    },
+  );
 
   it("keeps forgotten provenance without reconstructing a deleted body", async () => {
     setup();

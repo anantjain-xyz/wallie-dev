@@ -37,6 +37,7 @@ export interface StallSweepResult {
   stalledJobIds: string[];
   stoppedSandboxIds: string[];
   retriedJobIds: string[];
+  incomplete?: true;
 }
 export interface StallSweepOptions {
   workspaceId?: string;
@@ -60,10 +61,11 @@ export async function sweepStalledRuns(
     retriedJobIds: [],
   };
   const jobs = await loadClaimedJobs(admin, options);
+  if (!jobs) return { ...result, incomplete: true };
   if (!jobs.length) return result;
   const now = Date.now();
   const freshWorkerJobIds = await loadFreshWorkerJobIds(admin, now);
-  if (!freshWorkerJobIds) return result;
+  if (!freshWorkerJobIds) return { ...result, incomplete: true };
   const candidates = jobs.filter((job) => !freshWorkerJobIds.has(job.id));
   if (!candidates.length) return result;
 
@@ -72,12 +74,15 @@ export async function sweepStalledRuns(
     loadRuns(
       admin,
       candidates.map((job) => job.id),
+      options.workspaceId,
     ),
     loadPinnedRecoverySettings(admin, candidates),
     loadStallTimeouts(admin, workspaceIds),
     loadMaxRetries(admin, workspaceIds),
   ]);
-  if (!runs || !pinnedSettings) return result;
+  if (!runs || !pinnedSettings || (options.workspaceId && (!stallTimeouts || !maxRetries))) {
+    return { ...result, incomplete: true };
+  }
   const runsByJob = new Map<string, RecoveryRun[]>();
   for (const run of runs) {
     if (!run.agent_job_id) continue;
@@ -96,12 +101,14 @@ export async function sweepStalledRuns(
         p_attempt_count: job.attempt_count,
         p_run_id: ownedRun.id,
       });
-      if (error)
+      if (error) {
+        result.incomplete = true;
         console.error("[stall-detector] failed to acknowledge published attempt", {
           error: error.message,
           jobId: job.id,
           runId: ownedRun.id,
         });
+      }
       continue;
     }
     // An owned terminal failure is already resolved transactionally. Legacy
@@ -109,12 +116,16 @@ export async function sweepStalledRuns(
     if (ownedRun && !isActiveRun(ownedRun)) continue;
     const pinned = pinnedSettings.get(job.id);
     const timeoutMs =
-      pinned?.stallTimeoutMs ?? stallTimeouts.get(job.workspace_id) ?? defaultStallTimeoutMs;
+      pinned?.stallTimeoutMs ?? stallTimeouts?.get(job.workspace_id) ?? defaultStallTimeoutMs;
     const activity = ownedRun
       ? (ownedRun.last_activity_at ?? ownedRun.created_at)
       : (job.started_at ?? job.created_at);
     const elapsed = now - Date.parse(activity);
-    if (!Number.isFinite(elapsed) || elapsed < timeoutMs) continue;
+    if (!Number.isFinite(elapsed)) {
+      result.incomplete = true;
+      continue;
+    }
+    if (elapsed < timeoutMs) continue;
     if (ownedRun) {
       const { data: publication, error: publicationError } = await admin
         .from("session_checkpoint_publications")
@@ -124,7 +135,10 @@ export async function sweepStalledRuns(
         .eq("attempt_count", job.attempt_count)
         .eq("workspace_id", job.workspace_id)
         .maybeSingle();
-      if (publicationError) continue;
+      if (publicationError) {
+        result.incomplete = true;
+        continue;
+      }
       if (
         publication &&
         ["pending", "claimed"].includes(publication.status) &&
@@ -141,9 +155,10 @@ export async function sweepStalledRuns(
       p_run_id: ownedRun?.id,
       p_error: reason,
       p_retry: true,
-      p_max_retries: pinned?.maxRetries ?? maxRetries.get(job.workspace_id) ?? DEFAULT_MAX_RETRIES,
+      p_max_retries: pinned?.maxRetries ?? maxRetries?.get(job.workspace_id) ?? DEFAULT_MAX_RETRIES,
     });
     if (error) {
+      result.incomplete = true;
       console.error("[stall-detector] failed to recover captured attempt", {
         error: error.message,
         jobId: job.id,
@@ -164,18 +179,30 @@ export async function sweepStalledRuns(
       : jobRuns.filter((run) => run.attempt_count === null && isActiveRun(run));
     for (const run of resolvedRuns) {
       result.stalledRunIds.push(run.id);
-      await insertRunErrorMessage(admin, run, reason);
-      if (run.sandbox_id && (await mayStopRetiredRun(admin, run))) {
-        if (await stopRunSandbox(admin, run, sandboxConnectionCache)) {
+      if (!(await insertRunErrorMessage(admin, run, reason))) result.incomplete = true;
+      if (!run.sandbox_id) continue;
+      const mayStop = await mayStopRetiredRun(admin, run);
+      if (mayStop === null) result.incomplete = true;
+      if (!mayStop) continue;
+      try {
+        const stopped = options.workspaceId
+          ? await stopRunSandbox(admin, run, sandboxConnectionCache, { throwOnError: true })
+          : await stopRunSandbox(admin, run, sandboxConnectionCache);
+        if (stopped) {
           result.stoppedSandboxIds.push(run.sandbox_id);
+        } else {
+          result.incomplete = true;
         }
+      } catch (error) {
+        if (!options.workspaceId) throw error;
+        result.incomplete = true;
       }
     }
   }
   return result;
 }
 
-async function mayStopRetiredRun(admin: AdminClient, run: RecoveryRun): Promise<boolean> {
+async function mayStopRetiredRun(admin: AdminClient, run: RecoveryRun): Promise<boolean | null> {
   // fail_stalled_session_job_attempt locked this run and made it terminal. The sole
   // true-marker writer requires status=running, so it cannot acquire retention
   // after this read. Never authorize cleanup from the earlier sweep snapshot.
@@ -187,8 +214,8 @@ async function mayStopRetiredRun(admin: AdminClient, run: RecoveryRun): Promise<
     .eq("id", run.id)
     .eq("workspace_id", run.workspace_id)
     .maybeSingle();
+  if (error) return null;
   return (
-    !error &&
     data !== null &&
     data.status === "error" &&
     !data.source_recovery_required &&
@@ -209,7 +236,7 @@ function isActiveRun(run: RecoveryRun) {
 async function loadClaimedJobs(
   admin: AdminClient,
   options: StallSweepOptions,
-): Promise<ClaimedJob[]> {
+): Promise<ClaimedJob[] | null> {
   const jobs: ClaimedJob[] = [];
   for (let offset = 0; ; offset += PAGE_SIZE) {
     const query = admin
@@ -222,23 +249,29 @@ async function loadClaimedJobs(
       .range(offset, offset + PAGE_SIZE - 1);
     if (error) {
       console.error("[stall-detector] failed to load claimed jobs", { error: error.message });
-      return [];
+      return null;
     }
     jobs.push(...(data ?? []));
     if (!data || data.length < PAGE_SIZE) return jobs;
   }
 }
 
-async function loadRuns(admin: AdminClient, jobIds: string[]): Promise<RecoveryRun[] | null> {
+async function loadRuns(
+  admin: AdminClient,
+  jobIds: string[],
+  workspaceId?: string,
+): Promise<RecoveryRun[] | null> {
   const runs: RecoveryRun[] = [];
   for (let batch = 0; batch < jobIds.length; batch += PAGE_SIZE) {
     for (let offset = 0; ; offset += PAGE_SIZE) {
-      const { data, error } = await admin
+      const query = admin
         .from("agent_runs")
         .select(
           "id, source_recovery_required, workspace_id, agent_job_id, attempt_count, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
         )
-        .in("agent_job_id", jobIds.slice(batch, batch + PAGE_SIZE))
+        .in("agent_job_id", jobIds.slice(batch, batch + PAGE_SIZE));
+      const scoped = workspaceId ? query.eq("workspace_id", workspaceId) : query;
+      const { data, error } = await scoped
         .order("id", { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1);
       if (error) {
@@ -292,6 +325,7 @@ async function insertRunErrorMessage(admin: AdminClient, run: RecoveryRun, reaso
       error: error.message,
       runId: run.id,
     });
+  return !error;
 }
 
 async function loadFreshWorkerJobIds(
@@ -315,7 +349,7 @@ async function loadFreshWorkerJobIds(
 async function loadStallTimeouts(
   admin: AdminClient,
   workspaceIds: string[],
-): Promise<Map<string, number>> {
+): Promise<Map<string, number> | null> {
   const result = new Map<string, number>();
 
   if (workspaceIds.length === 0) return result;
@@ -328,7 +362,7 @@ async function loadStallTimeouts(
 
   if (error) {
     console.error("[stall-detector] failed to load stall timeouts", { error: error.message });
-    return result;
+    return null;
   }
 
   for (const row of data ?? []) {
@@ -347,7 +381,7 @@ async function loadStallTimeouts(
 async function loadMaxRetries(
   admin: AdminClient,
   workspaceIds: string[],
-): Promise<Map<string, number>> {
+): Promise<Map<string, number> | null> {
   const result = new Map<string, number>();
 
   if (workspaceIds.length === 0) return result;
@@ -360,7 +394,7 @@ async function loadMaxRetries(
 
   if (error) {
     console.error("[stall-detector] failed to load max retries", { error: error.message });
-    return result;
+    return null;
   }
 
   for (const row of data ?? []) {

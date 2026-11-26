@@ -1,5 +1,8 @@
 import { factoryAutomationPathSchema } from "@/lib/factory-automations/contracts";
-import { automationDryRunRequestSchema } from "@/lib/factory-automations/dry-run-contracts";
+import {
+  automationDryRunNamesHeader,
+  automationDryRunRequestSchema,
+} from "@/lib/factory-automations/dry-run-contracts";
 import {
   automationError,
   automationResponse,
@@ -20,10 +23,38 @@ export async function POST(request: Request, { params }: Context) {
     if (!context.ok) return context.response;
     const input = await readAutomationCommand(request, automationDryRunRequestSchema);
     if (!input.ok) return input.response;
-    const result = await dryRunFactoryAutomation(context.access.supabase, path.data, input.command);
-    return result
-      ? automationResponse(result)
-      : automationResponse({ error: "Automation revision not found." }, 404);
+    const { supabase } = context.access;
+    const result = await dryRunFactoryAutomation(supabase, path.data, input.command);
+    if (!result) return automationResponse({ error: "Automation revision not found." }, 404);
+    if (request.headers.get(automationDryRunNamesHeader) !== "1") return automationResponse(result);
+    const signal = AbortSignal.timeout(3_000);
+    const [payer, policy] = await Promise.allSettled([
+      supabase
+        .from("workspace_members")
+        .select("full_name")
+        .eq("workspace_id", path.data.workspaceId)
+        .eq("id", result.budgetPayerMemberId)
+        .abortSignal(signal)
+        .maybeSingle(),
+      result.assignment.status === "eligible"
+        ? supabase
+            .from("execution_policy_revisions")
+            .select("revision")
+            .eq("workspace_id", path.data.workspaceId)
+            .eq("id", result.assignment.executionPolicyRevisionId)
+            .abortSignal(signal)
+            .maybeSingle()
+        : null,
+    ]);
+    return automationResponse({
+      ...result,
+      names: {
+        budgetPayer:
+          payer.status === "fulfilled" ? payer.value.data?.full_name?.trim() || null : null,
+        executionPolicyRevision:
+          policy.status === "fulfilled" ? (policy.value?.data?.revision ?? null) : null,
+      },
+    });
   } catch (error) {
     return automationError(error);
   }

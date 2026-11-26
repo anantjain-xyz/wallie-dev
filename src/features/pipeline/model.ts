@@ -110,8 +110,10 @@ function sameIds(left: string[], right: string[]) {
 
 function sameLaneMetadata(left: PipelineBoardLane, right: PipelineBoardLane) {
   return (
+    left.activeCount === right.activeCount &&
     left.cursor === right.cursor &&
     left.description === right.description &&
+    left.factoryName === right.factoryName &&
     left.id === right.id &&
     left.name === right.name &&
     left.pipeline.id === right.pipeline.id &&

@@ -277,6 +277,117 @@ reset role;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claim.sub = '';
 
+create function pg_temp.curate_benchmark_suite(
+  p_name text, p_base_key text default null, p_tags text[] default null,
+  p_preview uuid[] default null, p_allow_empty boolean default false,
+  p_preserve boolean default false, p_actor uuid default null,
+  p_purpose text default 'holdout', p_explicit uuid[] default null
+) returns public.factory_benchmark_suite_revisions language sql as $$
+  select revision.* from benchmark_scope scope left join benchmark_suite_keys base on base.key = p_base_key
+  cross join lateral public.curate_factory_benchmark_suite(scope.workspace_id, scope.factory_id,
+    coalesce(p_actor, scope.owner_id), p_name, p_purpose, base.suite_id, base.revision_id,
+    p_explicit, p_tags, p_preview, p_allow_empty, p_preserve) revision
+  where scope.key = 'primary'
+$$;
+
+select ok(not has_function_privilege('authenticated',
+  'public.curate_factory_benchmark_suite(uuid,uuid,uuid,text,text,uuid,uuid,uuid[],text[],uuid[],boolean,boolean)',
+  'EXECUTE'), 'guarded curation remains a privileged write');
+
+set local role service_role;
+select throws_ok($$select pg_temp.curate_benchmark_suite('Empty by accident', p_tags => array['missing'], p_preview => '{}')$$,
+  'PT428', null, 'a tag query cannot accidentally create an empty suite');
+select throws_ok($$select pg_temp.curate_benchmark_suite('Empty explicit', p_explicit => '{}')$$,
+  'PT428', null, 'an empty explicit selection also requires confirmation');
+select throws_ok($$select pg_temp.curate_benchmark_suite('Stale preview', p_tags => array['ui'],
+  p_preview => array(select revision_id from benchmark_task_keys where key in ('review-v1', 'ui-only')))$$,
+  'PT412', null, 'a changed task revision rejects a preview even when the match count is unchanged');
+select throws_ok($$select pg_temp.curate_benchmark_suite('Now matching', p_tags => array['ui'],
+  p_preview => '{}', p_allow_empty => true)$$, 'PT412', null,
+  'empty consent does not authorize freezing newly matching revisions');
+select throws_ok($$select pg_temp.curate_benchmark_suite('Cannot edit', p_base_key => 'tag-v2',
+  p_preserve => true, p_actor => pg_temp.benchmark_id(2))$$,
+  '42501', null, 'a read-only factory member cannot preserve membership by creating a revision');
+select throws_ok($$select pg_temp.curate_benchmark_suite('Stale rename', p_base_key => 'tag-v1', p_preserve => true)$$,
+  'PT409', null, 'preserving selection still requires the exact current revision');
+
+insert into benchmark_suite_keys
+select 'tag-refresh', revision.id, revision.suite_id
+from pg_temp.curate_benchmark_suite('Cannot find this past name', p_base_key => 'tag-v2', p_tags => array['UI'],
+  p_preview => array(select revision_id from benchmark_task_keys where key in ('review-v2', 'ui-only')),
+  p_purpose => 'regression') revision;
+
+insert into benchmark_task_keys
+select 'review-v3', revision.id, revision.task_id from pg_temp.edit_benchmark_task('review-v2', '{triage}') revision;
+
+insert into benchmark_suite_keys
+select 'tag-rename', revision.id, revision.suite_id
+from pg_temp.curate_benchmark_suite('Invoice %_ checks', p_base_key => 'tag-refresh', p_preserve => true) revision;
+
+insert into benchmark_suite_keys
+select 'intentional-empty', revision.id, revision.suite_id
+from pg_temp.curate_benchmark_suite('Invoice empty', p_tags => array['missing'], p_preview => '{}',
+  p_allow_empty => true) revision;
+
+do $$
+begin
+  for i in 1..34 loop
+    perform pg_temp.curate_benchmark_suite('A duplicate', p_explicit => '{}',
+      p_allow_empty => true, p_purpose => 'regression');
+  end loop;
+end;
+$$;
+reset role;
+
+select results_eq($$select name, purpose, selection_tags from public.factory_benchmark_suite_revisions
+  where id = (select revision_id from benchmark_suite_keys where key = 'tag-rename')$$,
+  $$select 'Invoice %_ checks'::text, 'holdout'::text, array['ui']$$,
+  'renaming and changing purpose preserves the original tag rule');
+select results_eq($$select task.key from public.factory_benchmark_suite_members member
+  join benchmark_task_keys task on task.revision_id = member.task_revision_id
+  where member.suite_revision_id = (select revision_id from benchmark_suite_keys where key = 'tag-rename')
+  order by task.key$$, $$values ('review-v2'), ('ui-only')$$,
+  'a metadata edit retains exact frozen tasks after new task revisions stop matching');
+select is((select count(*) from public.factory_benchmark_suite_members
+  where suite_revision_id = (select revision_id from benchmark_suite_keys where key = 'intentional-empty')),
+  0::bigint, 'explicit confirmation can freeze an empty tag-selected suite');
+
+grant select on benchmark_scope to authenticated;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '61100000-0000-4000-8000-000000000002';
+select results_eq($$select entry.name, entry.task_count from benchmark_scope scope
+  cross join lateral public.list_factory_benchmark_suites(scope.workspace_id, scope.factory_id, 'INVOICE', 'holdout') entry
+  where scope.key = 'primary'$$, $$values ('Invoice %_ checks', 2::bigint), ('Invoice empty', 0::bigint)$$,
+  'name and purpose filters apply before paging and show exact latest member counts');
+select results_eq($$select entry.name from benchmark_scope scope
+  cross join lateral public.list_factory_benchmark_suites(scope.workspace_id, scope.factory_id, '%_') entry
+  where scope.key = 'primary'$$, $$values ('Invoice %_ checks')$$,
+  'catalog search treats wildcard characters literally');
+select is((select count(*) from benchmark_scope scope
+  cross join lateral public.list_factory_benchmark_suites(scope.workspace_id, scope.factory_id, 'past name') entry
+  where scope.key = 'primary'), 0::bigint, 'only the current revision is searchable');
+select is((select count(*) from benchmark_scope scope
+  cross join lateral public.list_factory_benchmark_suites(scope.workspace_id, scope.factory_id) entry
+  where scope.key in ('sibling', 'foreign')), 0::bigint,
+  'catalog RLS conceals sibling factories and other workspaces');
+select is((select count(*) from benchmark_scope scope
+  cross join lateral public.list_factory_benchmark_suites(scope.workspace_id, scope.factory_id, 'duplicate') entry
+  where scope.key = 'primary'), 31::bigint, 'catalog returns one lookahead row');
+with duplicate_page as (
+  select entry.suite_id from benchmark_scope scope
+  cross join lateral public.list_factory_benchmark_suites(scope.workspace_id, scope.factory_id, 'duplicate') entry
+  where scope.key = 'primary' order by entry.suite_id limit 30
+)
+select is((select count(*) from benchmark_scope scope
+  cross join lateral public.list_factory_benchmark_suites(scope.workspace_id, scope.factory_id, 'duplicate',
+    p_after => (select suite_id from duplicate_page order by suite_id desc limit 1)) entry
+  where scope.key = 'primary' and entry.suite_id not in (select suite_id from duplicate_page)),
+  4::bigint, 'duplicate names page once each with the stable internal tie-breaker');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claim.sub = '';
+
 delete from public.workspaces where id = pg_temp.benchmark_id(11);
 select results_eq($$select workspace_id from public.factory_benchmark_tasks
     where workspace_id in (pg_temp.benchmark_id(11), pg_temp.benchmark_id(12))

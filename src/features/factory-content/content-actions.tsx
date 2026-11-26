@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useState, type FormEvent, type Ref } from "react";
+import { useCallback, useState, useTransition, type FormEvent, type Ref } from "react";
 import { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField } from "@/components/ui/select";
+import { useOptionalToast } from "@/components/ui/toast";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -21,6 +22,11 @@ type Scope = { workspaceId: string; workspaceSlug: string; factoryId: string };
 type ContextCommand = z.output<typeof contextSourceCommandSchema>;
 type MemoryCommand = z.output<typeof factoryMemoryCommandSchema>;
 const resultId = z.object({ id: z.string().uuid() });
+const pendingMemoryResult = z.object({
+  memory: resultId.extend({ pending_revision_id: z.string().uuid() }),
+});
+type MemoryListQuery = { q?: string; after?: string };
+
 const contextFailure = z.object({
   code: z.string(),
   existingSourceId: z.string().uuid().optional(),
@@ -32,15 +38,22 @@ function contextOptionValue(option: ContextRepositoryOption) {
   return `${option.repository_id}:${option.grant_id}:${option.grant_version}`;
 }
 
-function useContentCommand(scope: Scope, resource: "context-sources" | "memories") {
+function useContentCommand(
+  scope: Scope,
+  resource: "context-sources" | "memories",
+  memoryListQuery?: MemoryListQuery,
+) {
   const router = useRouter();
+  const { pushToast } = useOptionalToast();
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [contextRecovery, setContextRecovery] = useState<z.output<typeof contextFailure> | null>(
     null,
   );
+  const [pendingCommand, setPendingCommand] = useState<ContextCommand | MemoryCommand>();
   const action = useApiAction<unknown, [ContextCommand | MemoryCommand]>({
     call: async (command) => {
+      setPendingCommand(command);
       const response = await fetch(
         `/api/workspaces/${scope.workspaceId}/factories/${scope.factoryId}/${resource}`,
         {
@@ -49,34 +62,26 @@ function useContentCommand(scope: Scope, resource: "context-sources" | "memories
           body: JSON.stringify(command),
         },
       );
-      if (resource === "context-sources") {
-        if (!response.ok) {
-          const failure = contextFailure.safeParse(
-            await response
-              .clone()
-              .json()
-              .catch(() => null),
-          );
-          if (failure.success) {
-            setContextRecovery(failure.data);
-            if (
-              command.action === "sync" &&
-              ["access_revoked", "deleted", "source_unavailable", "factory_archived"].includes(
-                failure.data.code,
-              )
-            ) {
-              router.refresh();
-            }
+      if (resource === "context-sources" && !response.ok) {
+        const failure = contextFailure.safeParse(
+          await response
+            .clone()
+            .json()
+            .catch(() => null),
+        );
+        if (failure.success) {
+          setContextRecovery(failure.data);
+          if (
+            command.action === "sync" &&
+            ["access_revoked", "deleted", "source_unavailable", "factory_archived"].includes(
+              failure.data.code,
+            )
+          ) {
+            router.refresh();
           }
         }
-        return response;
       }
-      return response.status === 409
-        ? Response.json(
-            { error: "This item changed. Reload it before trying again." },
-            { status: 409 },
-          )
-        : response;
+      return response;
     },
     errorText: "Could not save the change.",
     setFlashMessage: setMessage,
@@ -90,15 +95,30 @@ function useContentCommand(scope: Scope, resource: "context-sources" | "memories
             source: parsed.source.id,
           }),
         );
-      } else if (command.action === "propose") {
-        const parsed = z.object({ memory: resultId }).parse(payload);
+      } else if (command.action === "propose" || command.action === "correct") {
+        const { memory } = pendingMemoryResult.parse(payload);
         router.push(
           workspaceMemoryPath(scope.workspaceSlug, {
             factory: scope.factoryId,
-            memory: parsed.memory.id,
+            ...memoryListQuery,
+            memory: memory.id,
+            revision: memory.pending_revision_id,
           }),
         );
+        pushToast({
+          title:
+            command.action === "propose" ? "Memory imported for review" : "Pending revision saved",
+          tone: "success",
+        });
       } else {
+        if (command.action === "review") {
+          pushToast({
+            title: command.decision === "approve" ? "Revision approved" : "Revision rejected",
+            tone: "success",
+          });
+        } else if (command.action === "forget") {
+          pushToast({ title: "Memory forgotten", tone: "success" });
+        }
         router.refresh();
         if (command.action === "sync") {
           const status = z.object({ source: z.object({ status: z.string() }) }).parse(payload)
@@ -143,7 +163,16 @@ function useContentCommand(scope: Scope, resource: "context-sources" | "memories
     if (resource === "context-sources") setContextRecovery(null);
     return action.run(command);
   };
-  return { ...action, run, message, setMessage, confirm, setConfirm, contextRecovery };
+  return {
+    ...action,
+    run,
+    message,
+    setMessage,
+    confirm,
+    setConfirm,
+    contextRecovery,
+    pendingCommand: action.isBusy ? pendingCommand : undefined,
+  };
 }
 
 export function ContextRegistration({
@@ -325,16 +354,33 @@ function ExpiryField({ inputRef }: { inputRef?: Ref<HTMLInputElement> }) {
   );
 }
 
+export function RetryMemoryProposal() {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  return (
+    <button
+      className="ui-button"
+      disabled={pending}
+      onClick={() => startTransition(() => router.refresh())}
+      type="button"
+    >
+      <ActionButtonLabel idle="Try again" pending={pending} pendingLabel="Checking…" />
+    </button>
+  );
+}
+
 export function MemoryProposalForm({
   scope,
   artifactId,
   artifactVersion,
+  listQuery,
 }: {
   scope: Scope;
   artifactId: string;
   artifactVersion: number;
+  listQuery: MemoryListQuery;
 }) {
-  const action = useContentCommand(scope, "memories");
+  const action = useContentCommand(scope, "memories", listQuery);
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -350,6 +396,14 @@ export function MemoryProposalForm({
         kind: "error",
         text: "Enter a title and a valid expiry, or leave expiry blank.",
       });
+      return;
+    }
+    if (
+      command.data.action === "propose" &&
+      command.data.expiresAt &&
+      Date.parse(command.data.expiresAt) <= Date.now()
+    ) {
+      action.setMessage({ kind: "error", text: "Choose a future expiry, or leave it blank." });
       return;
     }
     void action.run(command.data);
@@ -382,14 +436,20 @@ export function MemoryRevisionActions({
   body,
   expiresAt,
   canReview,
+  approvalBlockedReason,
+  listQuery,
 }: {
   scope: Scope;
   memory: MemoryIdentity;
   body: string | null;
   expiresAt: string | null;
   canReview: boolean;
+  approvalBlockedReason?: string;
+  listQuery: MemoryListQuery;
 }) {
-  const action = useContentCommand(scope, "memories");
+  const action = useContentCommand(scope, "memories", listQuery);
+  const pendingDecision =
+    action.pendingCommand?.action === "review" ? action.pendingCommand.decision : undefined;
   const expiryInput = useCallback(
     (input: HTMLInputElement | null) => {
       // A datetime-local control uses the browser timezone. Set its initial value after hydration.
@@ -421,23 +481,41 @@ export function MemoryRevisionActions({
       });
       return;
     }
+    if (
+      command.data.action === "correct" &&
+      command.data.expiresAt &&
+      Date.parse(command.data.expiresAt) <= Date.now()
+    ) {
+      action.setMessage({ kind: "error", text: "Choose a future expiry, or leave it blank." });
+      return;
+    }
     void action.run(command.data);
   }
   return (
     <div className="ui-sheet min-w-0 space-y-4 p-4 sm:p-5">
       <InlineActionMessage message={action.confirm ? null : action.message} />
+      {approvalBlockedReason && (
+        <p className="type-secondary text-muted" id="memory-approval-blocked">
+          {approvalBlockedReason}
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         {canReview && (
           <>
             <button
               className="ui-button ui-button-primary"
-              disabled={action.isBusy}
+              aria-describedby={approvalBlockedReason ? "memory-approval-blocked" : undefined}
+              disabled={action.isBusy || Boolean(approvalBlockedReason)}
               onClick={() =>
                 void action.run({ action: "review", ...expected, decision: "approve" })
               }
               type="button"
             >
-              Approve revision
+              <ActionButtonLabel
+                idle="Approve revision"
+                pending={pendingDecision === "approve"}
+                pendingLabel="Approving…"
+              />
             </button>
             <button
               className="ui-button"
@@ -445,7 +523,11 @@ export function MemoryRevisionActions({
               onClick={() => void action.run({ action: "review", ...expected, decision: "reject" })}
               type="button"
             >
-              Reject revision
+              <ActionButtonLabel
+                idle="Reject revision"
+                pending={pendingDecision === "reject"}
+                pendingLabel="Rejecting…"
+              />
             </button>
           </>
         )}
@@ -481,10 +563,14 @@ export function MemoryRevisionActions({
             />
           </label>
           <ExpiryField inputRef={expiryInput} />
-          <button className="ui-button" type="submit">
+          <p className="type-secondary text-muted" id="memory-correction-effect">
+            Saving withdraws any current approval. The new revision can’t be used in future runs
+            until it’s approved.
+          </p>
+          <button aria-describedby="memory-correction-effect" className="ui-button" type="submit">
             <ActionButtonLabel
               idle="Save pending revision"
-              pending={action.isBusy && !action.confirm}
+              pending={action.pendingCommand?.action === "correct"}
               pendingLabel="Saving…"
             />
           </button>

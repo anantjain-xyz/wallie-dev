@@ -89,6 +89,17 @@ It relies on provider TTL or operator cleanup.
 - The active connection cannot be disconnected before another provider is
   selected.
 
+**Vercel target discovery.** In onboarding or Settings → Sandbox, paste the
+Vercel token and choose **Find teams**, then select a named team and project.
+Lookup only lists targets accessible to that token; it does not save or replace
+the connection. If a restricted token can access the target but cannot list
+teams or projects, use **Enter IDs manually**. Copy the
+[Team ID](https://vercel.com/docs/accounts#find-your-team-id) from Team Settings →
+General and the
+[Project ID](https://vercel.com/docs/project-configuration/general-settings#project-id)
+from Project Settings → General. The save path still validates access to that
+exact project and its Sandbox API before replacing an existing connection.
+
 Run and capability-check ownership must record both provider and connection
 revision. Cleanup must use that pair so credential rotation cannot make an old
 resource appear to belong to a new connection.

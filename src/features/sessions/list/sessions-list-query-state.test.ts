@@ -17,6 +17,7 @@ describe("parseSessionListQueryState", () => {
         scope: "archived",
         sort: "oldest",
         stage: "build",
+        status: "failed",
       }),
     ).toEqual({
       cursor: "cursor-token",
@@ -24,6 +25,7 @@ describe("parseSessionListQueryState", () => {
       scope: "archived",
       sort: "oldest",
       stageSlug: "build",
+      status: "failed",
     });
   });
 
@@ -35,6 +37,7 @@ describe("parseSessionListQueryState", () => {
         scope: "unknown",
         sort: "bogus",
         stage: ["plan", "land"],
+        status: "archived",
       }),
     ).toEqual({
       cursor: "older",
@@ -73,6 +76,7 @@ describe("session list sticky query helpers", () => {
     expect(sessionListSearchHasStickyParams(new URLSearchParams("scope=active"))).toBe(true);
     expect(sessionListSearchHasStickyParams(new URLSearchParams("stage=build"))).toBe(true);
     expect(sessionListSearchHasStickyParams(new URLSearchParams("sort=updated"))).toBe(true);
+    expect(sessionListSearchHasStickyParams(new URLSearchParams("status=failed"))).toBe(true);
   });
 
   it("treats missing or empty stage as the default filter set", () => {

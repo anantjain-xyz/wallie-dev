@@ -250,7 +250,7 @@ test("reopens an exact retained run after browser closure and worker restart", a
       const exactRun = inspected
         .getByRole("list", { name: "Runs" })
         .getByRole("link", { name: /^Inspect run for session / })
-        .and(inspected.locator(`a[href="${runPath}"]`));
+        .and(inspected.locator(`a[href="${runPath}"], a[href^="${runPath}?fromRuns="]`));
       await expect(exactRun).toHaveCount(1);
       await exactRun.click();
       await expect(
@@ -331,7 +331,7 @@ test("reopens an exact retained run after browser closure and worker restart", a
       const sessionRun = inspected
         .getByRole("region", { name: "Session runs", exact: true })
         .locator(`[data-run-id="${run.runId}"]`);
-      const disclosure = sessionRun.getByRole("button", { name: /activity: Completed/ });
+      const disclosure = sessionRun.getByRole("button", { name: /^Completed .* run Attempt/ });
       await disclosure.click();
       const sessionActivity = sessionRun.getByRole("list", { name: "Run activity" });
       for (const text of [run.initialText, run.reconnectText]) {

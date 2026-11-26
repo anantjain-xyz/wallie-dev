@@ -37,10 +37,10 @@ function request() {
   });
 }
 
-function grantAccess() {
+function grantAccess(role: "owner" | "admin" = "owner") {
   mocked.requireWorkspaceAccessById.mockResolvedValue({
     context: {
-      currentMember: { id: "member-1", is_active: true, kind: "human", role: "owner" },
+      currentMember: { id: "member-1", is_active: true, kind: "human", role },
       supabase: {},
       user: { id: "user-1" },
       workspace: { id: WORKSPACE_ID, name: "Wallie", slug: "wallie" },
@@ -53,8 +53,6 @@ function maintenanceResult() {
   return {
     githubVerification: { checked: 2, refreshed: 1, failed: 1 },
     cleanup: {
-      activeProviderSandboxCount: 2,
-      reapedSandboxIds: ["sandbox-orphan"],
       retriedJobIds: ["job-retry"],
       stalledRunIds: ["run-stalled"],
       stoppedSandboxIds: ["sandbox-stalled"],
@@ -77,6 +75,7 @@ describe("POST /api/workspaces/[workspaceId]/maintenance/tick", () => {
     ["unauthenticated", "Sign in before managing workspace settings.", 401],
     ["non-member", "Workspace not found.", 404],
     ["non-admin", "Workspace admin access is required for this action.", 403],
+    ["workspace pending deletion", "Workspace deletion is in progress.", 409],
   ])("rejects %s callers", async (_label, error, status) => {
     mocked.requireWorkspaceAccessById.mockResolvedValue({ error, ok: false, status });
 
@@ -88,6 +87,7 @@ describe("POST /api/workspaces/[workspaceId]/maintenance/tick", () => {
       requireManager: true,
     });
     expect(mocked.runMaintenanceTick).not.toHaveBeenCalled();
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
   it("enforces the maintenance rate limit", async () => {
@@ -112,32 +112,36 @@ describe("POST /api/workspaces/[workspaceId]/maintenance/tick", () => {
     expect(response.status).toBe(429);
     expect(mocked.enforceRateLimit).toHaveBeenCalledWith("maintenance", `${WORKSPACE_ID}:user-1`);
     expect(mocked.runMaintenanceTick).not.toHaveBeenCalled();
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
-  it("runs a workspace-scoped maintenance tick and returns the summary", async () => {
-    grantAccess();
-    const admin = {};
-    const result = maintenanceResult();
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-    mocked.enforceRateLimit.mockResolvedValue({
-      response: null,
-      result: {
-        limit: 3,
-        remaining: 2,
-        resetMs: Date.now() + 60_000,
-        retryAfterSeconds: 0,
-        success: true,
-      },
-    });
-    mocked.runMaintenanceTick.mockResolvedValue(result);
+  it.each(["owner", "admin"] as const)(
+    "runs workspace-scoped maintenance for an %s",
+    async (role) => {
+      grantAccess(role);
+      const admin = {};
+      const result = maintenanceResult();
+      mocked.createSupabaseAdminClient.mockReturnValue(admin);
+      mocked.enforceRateLimit.mockResolvedValue({
+        response: null,
+        result: {
+          limit: 3,
+          remaining: 2,
+          resetMs: Date.now() + 60_000,
+          retryAfterSeconds: 0,
+          success: true,
+        },
+      });
+      mocked.runMaintenanceTick.mockResolvedValue(result);
 
-    const response = await POST(request(), routeContext());
+      const response = await POST(request(), routeContext());
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual(result);
-    expect(mocked.runMaintenanceTick).toHaveBeenCalledWith({
-      admin,
-      workspaceId: WORKSPACE_ID,
-    });
-  });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual(result);
+      expect(mocked.runMaintenanceTick).toHaveBeenCalledWith({
+        admin,
+        workspaceId: WORKSPACE_ID,
+      });
+    },
+  );
 });

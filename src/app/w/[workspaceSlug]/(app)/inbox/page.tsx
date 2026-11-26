@@ -6,10 +6,10 @@ import {
   resolveFactorySelection,
 } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
-import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
-import { FactoryInboxPage } from "@/features/factory-inbox/inbox-page";
+import { FactoryInboxPage, FactoryInboxUnavailable } from "@/features/factory-inbox/inbox-page";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { FactoryInboxCursorError, loadFactoryInbox } from "@/lib/factories/inbox";
+import { factoryInboxKindSchema } from "@/lib/factories/inbox-schema";
 
 export default async function InboxPage({
   params,
@@ -20,6 +20,7 @@ export default async function InboxPage({
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
   const factoryQuery = search[FACTORY_QUERY_PARAM] ?? "all";
+  const kind = factoryInboxKindSchema.safeParse(search.kind).data;
   const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
@@ -27,10 +28,12 @@ export default async function InboxPage({
   const selection = resolveFactorySelection(factories, factoryQuery);
   if (selection.kind === "unavailable")
     return (
-      <FactoryUnavailable
-        actions={<FactorySelector allowAll factories={factories} selectedValue="unavailable" />}
-        title="Inbox"
-        workspaceSlug={workspaceSlug}
+      <FactoryInboxUnavailable
+        factorySelector={
+          <FactorySelector allowAll factories={factories} selectedValue="unavailable" />
+        }
+        kind={kind}
+        workspaceSlug={workspace.slug}
       />
     );
 
@@ -41,6 +44,7 @@ export default async function InboxPage({
     supabase,
     workspaceId: workspace.id,
     factoryId,
+    kind,
     cursor,
   }).catch((error: unknown) => {
     if (error instanceof FactoryInboxCursorError) notFound();
@@ -49,7 +53,7 @@ export default async function InboxPage({
 
   return (
     <FactoryInboxPage
-      key={JSON.stringify([workspace.id, factoryId, cursor])}
+      key={JSON.stringify([workspace.id, factoryId, kind, cursor])}
       cursor={cursor}
       factoryId={factoryId}
       factorySelector={
@@ -57,6 +61,7 @@ export default async function InboxPage({
       }
       initialInbox={inbox}
       initialNow={new Date().toISOString()}
+      kind={kind}
       memberId={currentMember.id}
       workspaceId={workspace.id}
       workspaceSlug={workspace.slug}

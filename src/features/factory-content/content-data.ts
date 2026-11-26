@@ -26,6 +26,12 @@ const memoryQuery = z.strictObject({
   decision: uuid.optional(),
   proposal: uuid.optional(),
   version: z.coerce.number().int().positive().max(2_147_483_647).optional(),
+  q: z
+    .string()
+    .trim()
+    .max(120)
+    .refine((value) => !value.includes("\0"))
+    .optional(),
   after: uuid.optional(),
   before: z.coerce.number().int().positive().max(2_147_483_647).optional(),
 });
@@ -73,6 +79,28 @@ async function loadPublishedContext({ supabase, workspaceId, factory }: Governan
   if (stored.error || !verified) return undefined;
   return { documents: verified.contextDocuments ?? [], grant: verified.executionGrant };
 }
+
+type FactoryMemory = Pick<
+  Tables<"factory_memories">,
+  "id" | "forgotten_at" | "current_revision_id" | "pending_revision_id"
+>;
+
+export type MemoryEligibility =
+  | "eligible"
+  | "archived"
+  | "workspace-deleting"
+  | "forgotten"
+  | "awaiting-review"
+  | "no-approval"
+  | "expired"
+  | "note-unavailable";
+
+export type ProposalAvailability =
+  | "available"
+  | "unavailable"
+  | "archived"
+  | "access-required"
+  | "error";
 
 export async function loadContextPage(
   scope: GovernanceScope,
@@ -203,16 +231,76 @@ export async function loadContextPage(
   };
 }
 
-export async function loadMemoryPage(scope: GovernanceScope, query: z.output<typeof memoryQuery>) {
+async function loadMemoryEligibility(
+  scope: GovernanceScope,
+  memories: FactoryMemory[],
+  now: number,
+) {
+  const { supabase, workspaceId, factory } = scope;
+  const revisionIds = memories.flatMap(({ current_revision_id, pending_revision_id }) =>
+    current_revision_id ? [current_revision_id] : pending_revision_id ? [pending_revision_id] : [],
+  );
+  const [current, workspace] = await Promise.all([
+    revisionIds.length && factory.status === "active"
+      ? supabase
+          .from("factory_memory_revisions")
+          .select("id, expires_at, factory_memory_revision_bodies(revision_id)")
+          .match({ workspace_id: workspaceId, factory_id: factory.id })
+          .in("id", revisionIds)
+      : null,
+    memories.some(({ current_revision_id }) => current_revision_id) && factory.status === "active"
+      ? supabase.from("workspaces").select("deletion_requested_at").eq("id", workspaceId).single()
+      : null,
+  ]);
+  if (current?.error || workspace?.error) throw new Error("Could not load memory eligibility.");
+  const revisions = new Map(current?.data.map((revision) => [revision.id, revision]));
+
+  return (memory: FactoryMemory): MemoryEligibility => {
+    if (memory.forgotten_at) return "forgotten";
+    if (factory.status === "archived") return "archived";
+    if (workspace?.data.deletion_requested_at) return "workspace-deleting";
+    const revisionId = memory.current_revision_id ?? memory.pending_revision_id;
+    if (!revisionId) return "no-approval";
+    const revision = revisions.get(revisionId);
+    if (revision?.expires_at && Date.parse(revision.expires_at) <= now) return "expired";
+    if (!revision?.factory_memory_revision_bodies.length) return "note-unavailable";
+    return memory.current_revision_id ? "eligible" : "awaiting-review";
+  };
+}
+
+async function loadMemoryList(
+  scope: GovernanceScope,
+  query: z.output<typeof memoryQuery>,
+  now: number,
+) {
   const { supabase, workspaceId, factory } = scope;
   const owner = { workspace_id: workspaceId, factory_id: factory.id };
-  const memories = () => supabase.from("factory_memories").select(memoryColumns).match(owner);
-  const listQuery = memories()
-    .order("id")
+  const memories = () => supabase.from("factory_memories");
+  const list = memories()
+    .select("id, title, current_revision_id, pending_revision_id, forgotten_at")
+    .match(owner)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(limit + 1);
-  const [list, detail, proposal] = await Promise.all([
-    query.after ? listQuery.gt("id", query.after) : listQuery,
-    query.memory ? memories().eq("id", query.memory).maybeSingle() : null,
+  if (query.q) list.filter("title", "imatch", query.q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const [page, proposal] = await Promise.all([
+    (async () => {
+      if (query.after) {
+        const { data: cursor, error } = await memories()
+          .select("created_at")
+          .match(owner)
+          .eq("id", query.after)
+          .maybeSingle();
+        if (error) throw new Error("Could not load the factory memory page cursor.");
+        if (cursor) {
+          const { created_at: createdAt } = cursor;
+          list.or(
+            `created_at.lt.${createdAt},and(created_at.eq.${createdAt},id.lt.${query.after})`,
+          );
+        }
+      }
+      return list;
+    })(),
     query.proposal && query.version && factory.status === "active"
       ? supabase.rpc("has_factory_run_memory_proposal", {
           p_workspace_id: workspaceId,
@@ -222,12 +310,43 @@ export async function loadMemoryPage(scope: GovernanceScope, query: z.output<typ
         })
       : null,
   ]);
-  if (list.error || detail?.error) throw new Error("Could not load factory memory.");
-  const items = list.data.slice(0, limit);
-  const memory = detail?.data ?? null;
-  const page = { items, nextMemory: list.data.length > limit ? items.at(-1)?.id : undefined };
-  if (!memory) return { ...page, detail: null, proposalAvailable: proposal?.data === true };
+  const { data, error } = page;
+  if (error) throw new Error("Could not load factory memory.");
+  const items = data.slice(0, limit);
+  const getEligibility = await loadMemoryEligibility(scope, items, now);
+  const proposalAvailability: ProposalAvailability =
+    factory.status === "archived"
+      ? "archived"
+      : proposal?.error
+        ? proposal.error.code === "42501"
+          ? "access-required"
+          : "error"
+        : proposal?.data === true
+          ? "available"
+          : "unavailable";
+  return {
+    items: items.map((memory) => ({ ...memory, eligibility: getEligibility(memory) })),
+    nextMemory: data.length > limit ? items.at(-1)?.id : undefined,
+    proposalAvailability,
+  };
+}
 
+async function loadMemoryDetail(
+  scope: GovernanceScope,
+  query: z.output<typeof memoryQuery>,
+  memoryId: string,
+  now: number,
+) {
+  const { supabase, workspaceId, factory } = scope;
+  const owner = { workspace_id: workspaceId, factory_id: factory.id };
+  const { data: memory, error } = await supabase
+    .from("factory_memories")
+    .select(memoryColumns)
+    .match(owner)
+    .eq("id", memoryId)
+    .maybeSingle();
+  if (error) throw new Error("Could not load factory memory.");
+  if (!memory) return null;
   const family = { ...owner, memory_id: memory.id };
   const revisions = () =>
     supabase.from("factory_memory_revisions").select(memoryRevisionColumns).match(family);
@@ -237,31 +356,35 @@ export async function loadMemoryPage(scope: GovernanceScope, query: z.output<typ
   const historyQuery = revisions()
     .order("revision_number", { ascending: false })
     .limit(limit + 1);
-  const [history, explicit, requestedDecision, session, sourceArtifact] = await Promise.all([
-    query.before ? historyQuery.lt("revision_number", query.before) : historyQuery,
-    selected ? revisions().eq("id", selected).maybeSingle() : null,
-    query.decision && query.revision
-      ? events().eq("id", query.decision).eq("revision_id", query.revision).maybeSingle()
-      : null,
-    supabase
-      .from("sessions")
-      .select("number")
-      .match(owner)
-      .eq("id", memory.source_session_id)
-      .maybeSingle(),
-    supabase
-      .from("session_artifacts")
-      .select("stage_slug")
-      .eq("workspace_id", workspaceId)
-      .eq("session_id", memory.source_session_id)
-      .eq("id", memory.source_artifact_id)
-      .eq("version", memory.source_artifact_version)
-      .maybeSingle(),
-  ]);
-  if (history.error || explicit?.error || requestedDecision?.error) {
+  const [history, selectedRevision, requestedDecision, session, sourceArtifact, getEligibility] =
+    await Promise.all([
+      query.before ? historyQuery.lt("revision_number", query.before) : historyQuery,
+      selected
+        ? revisions().eq("id", selected).maybeSingle()
+        : revisions().order("revision_number", { ascending: false }).limit(1).maybeSingle(),
+      query.decision && query.revision
+        ? events().eq("id", query.decision).eq("revision_id", query.revision).maybeSingle()
+        : null,
+      supabase
+        .from("sessions")
+        .select("number")
+        .match(owner)
+        .eq("id", memory.source_session_id)
+        .maybeSingle(),
+      supabase
+        .from("session_artifacts")
+        .select("stage_slug")
+        .eq("workspace_id", workspaceId)
+        .eq("session_id", memory.source_session_id)
+        .eq("id", memory.source_artifact_id)
+        .eq("version", memory.source_artifact_version)
+        .maybeSingle(),
+      loadMemoryEligibility(scope, [memory], now),
+    ]);
+  if (history.error || selectedRevision.error || requestedDecision?.error) {
     throw new Error("Could not load memory revision history.");
   }
-  const revision = selected ? (explicit?.data ?? null) : (history.data[0] ?? null);
+  const revision = selectedRevision.data;
   const historyItems = history.data.slice(0, limit);
   const [body, decisions] = await Promise.all([
     revision && !memory.forgotten_at
@@ -282,19 +405,45 @@ export async function loadMemoryPage(scope: GovernanceScope, query: z.output<typ
   ]);
   if (body?.error || decisions?.error)
     throw new Error("Could not load the selected memory revision.");
+  const actorIds = [
+    ...new Set([
+      ...(decisions?.data ?? []).map(({ actor_member_id }) => actor_member_id),
+      ...(requestedDecision?.data ? [requestedDecision.data.actor_member_id] : []),
+    ]),
+  ];
+  const actors = actorIds.length
+    ? await supabase
+        .from("workspace_members")
+        .select("id, full_name, is_active")
+        .eq("workspace_id", workspaceId)
+        .eq("kind", "human")
+        .in("id", actorIds)
+    : null;
+  const actorNames = Object.fromEntries(
+    (actors?.data ?? []).map(({ id, full_name, is_active }) => [
+      id,
+      is_active ? full_name?.trim() || null : "Former member",
+    ]),
+  );
   return {
-    ...page,
-    proposalAvailable: proposal?.data === true,
-    detail: {
-      memory,
-      revision,
-      history: historyItems,
-      nextRevision: history.data.length > limit ? historyItems.at(-1)?.revision_number : undefined,
-      decisions: decisions?.data ?? [],
-      requestedDecision: requestedDecision?.data ?? null,
-      body: body?.data?.body_md ?? null,
-      sourceSessionNumber: session.data?.number ?? null,
-      sourceArtifactStage: sourceArtifact.data?.stage_slug ?? null,
-    },
+    memory,
+    eligibility: getEligibility(memory),
+    revision,
+    history: historyItems,
+    nextRevision: history.data.length > limit ? historyItems.at(-1)?.revision_number : undefined,
+    decisions: decisions?.data ?? [],
+    requestedDecision: requestedDecision?.data ?? null,
+    actorNames,
+    body: body?.data?.body_md ?? null,
+    sourceSessionNumber: session.data?.number ?? null,
+    sourceArtifactStage: sourceArtifact.data?.stage_slug ?? null,
   };
+}
+
+export async function loadMemoryPage(scope: GovernanceScope, query: z.output<typeof memoryQuery>) {
+  const now = Date.now();
+  const asOf = new Date(now).toISOString();
+  return query.memory
+    ? { asOf, detail: await loadMemoryDetail(scope, query, query.memory, now), list: null }
+    : { asOf, detail: null, list: await loadMemoryList(scope, query, now) };
 }

@@ -37,6 +37,9 @@ const nativeId = id(6);
 const repositoryId = id(7);
 const organization = { id: id(8), name: "Fixture organization" };
 const project = { id: id(9), name: "Fixture project" };
+const team = { id: id(13), name: "Platform", key: "PLAT" };
+const siblingTeam = { id: id(14), name: "Frontend", key: "WEB" };
+const workflowStateId = id(15);
 const secretId = id(10);
 const activationId = id(11);
 const grantId = id(12);
@@ -122,8 +125,10 @@ function fixture(role = "owner", provider: "github" | "linear" = "linear") {
         external_tenant_id: tenantId,
         resource_kind: provider === "github" ? "repository" : "project",
         external_resource_id: provider === "github" ? "84" : project.id,
+        current_revision: 2,
       },
     ],
+    factory_connector_mapping_revisions: [{ enabled: true }],
     factory_definition_activations: [{ revision_id: activationId }],
     factory_definition_revisions: [
       { definition_json: "published bytes", canonical_digest: "published digest" },
@@ -185,6 +190,19 @@ function githubRepositoryResponse(overrides: Partial<typeof canonicalGithubRepos
   });
 }
 
+function linearPage<T>(nodes: T[]) {
+  return { nodes, pageInfo: { endCursor: null, hasNextPage: false } };
+}
+
+function linearProjectTeams(teams = [team], tenant = organization) {
+  return Response.json({
+    data: {
+      organization: tenant,
+      project: { ...project, archivedAt: null, teams: linearPage(teams) },
+    },
+  });
+}
+
 describe("factory connector setup", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -199,13 +217,107 @@ describe("factory connector setup", () => {
     const { upstream } = fixture("member");
     const results = await Promise.all([
       catalog("provider=github"),
+      catalog(`provider=linear&kind=state&resourceId=${resourceId}`),
       setup({ action: "disconnect", installationId: connectorId, expectedGeneration: 7 }),
     ]);
-    expect(results.map((response) => response.status)).toEqual([403, 403]);
+    expect(results.map((response) => response.status)).toEqual([403, 403, 403]);
     expect(results[0]?.headers.get("Cache-Control")).toBe("private, no-store");
     expect(mock.admin).not.toHaveBeenCalled();
     expect(mock.github).not.toHaveBeenCalled();
     expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("lists named states only for the selected eligible project team", async () => {
+    const { upstream, read } = fixture("admin");
+    upstream.mockResolvedValueOnce(linearProjectTeams([team, siblingTeam])).mockResolvedValueOnce(
+      Response.json({
+        data: {
+          organization,
+          workflowStates: linearPage([
+            { id: workflowStateId, name: "In progress", team, type: "started" },
+          ]),
+        },
+      }),
+    );
+    const response = await catalog(
+      `provider=linear&kind=state&resourceId=${resourceId}&teamId=${team.id}`,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      provider: "linear",
+      kind: "state",
+      tenant: { id: organization.id, label: organization.name },
+      resources: [
+        {
+          id: workflowStateId,
+          label: "In progress",
+          description: "Platform (PLAT) · started",
+          teamId: team.id,
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(read("factory_connector_resources")?.get("factory_id")).toBe(`eq.${factoryId}`);
+    expect(read("factory_connector_mapping_revisions")?.get("revision")).toBe("eq.2");
+    expect(await new Request(...upstream.mock.calls[1]!).json()).toMatchObject({
+      variables: { filter: { team: { id: { in: [team.id] } } } },
+    });
+  });
+
+  it("returns eligible project teams with their keys and refuses a team outside the project", async () => {
+    const { upstream } = fixture();
+    upstream
+      .mockResolvedValueOnce(linearProjectTeams())
+      .mockResolvedValueOnce(linearProjectTeams());
+    const teams = await catalog(`provider=linear&kind=team&resourceId=${resourceId}`);
+    expect(teams.status).toBe(200);
+    expect(await teams.json()).toMatchObject({
+      resources: [{ id: team.id, label: "Platform", description: "PLAT" }],
+      nextCursor: null,
+    });
+    const response = await catalog(
+      `provider=linear&kind=state&resourceId=${resourceId}&teamId=${siblingTeam.id}`,
+    );
+    expect(response.status).toBe(422);
+    expect(upstream).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows workspace and mapped team labels but excludes label groups", async () => {
+    const { upstream } = fixture();
+    upstream.mockResolvedValueOnce(linearProjectTeams()).mockResolvedValueOnce(
+      Response.json({
+        data: {
+          organization,
+          issueLabels: linearPage([
+            { id: id(16), name: "Intake", team: null, isGroup: false },
+            { id: id(17), name: "Bug", team, isGroup: false },
+            { id: id(18), name: "Group", team, isGroup: true },
+          ]),
+        },
+      }),
+    );
+    const response = await catalog(`provider=linear&kind=label&resourceId=${resourceId}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      resources: [
+        { id: id(16), label: "Intake", description: "Linear workspace label" },
+        { id: id(17), label: "Bug", description: "Platform (PLAT)", teamId: team.id },
+      ],
+    });
+    expect(await new Request(...upstream.mock.calls[1]!).json()).toMatchObject({
+      variables: {
+        filter: { or: [{ team: { null: true } }, { team: { id: { in: [team.id] } } }] },
+      },
+    });
+  });
+
+  it("does not return choices if the authorized organization changed", async () => {
+    const { upstream } = fixture();
+    upstream.mockResolvedValueOnce(linearProjectTeams([team], { ...organization, id: id(19) }));
+    const response = await catalog(`provider=linear&kind=label&resourceId=${resourceId}`);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "Could not verify Linear access." });
+    expect(upstream).toHaveBeenCalledTimes(1);
   });
 
   it("returns only the verified Linear organization and scoped page options", async () => {

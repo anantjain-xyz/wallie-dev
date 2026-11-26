@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AnalyticsExportControls } from "./analytics-export-controls";
@@ -20,6 +20,8 @@ const filters = {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -32,7 +34,7 @@ describe("analytics export controls", () => {
       return Response.json({
         id: exportId,
         createdAt: "2026-11-19T00:00:00.123456Z",
-        expiresAt: "2026-11-20T00:00:00.123456Z",
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
       });
     });
     vi.stubGlobal("fetch", fetch);
@@ -61,5 +63,97 @@ describe("analytics export controls", () => {
     });
     expect(requests[0]).toEqual(requests[1]);
     expect(fetch).toHaveBeenCalledWith(path, expect.objectContaining({ method: "POST" }));
+  });
+  it.each(["expired", "unavailable"])("offers recovery for an %s snapshot", async (state) => {
+    const fetch = vi.fn(async (input: string) =>
+      input.endsWith("?format=json")
+        ? new Response(null, { status: 404 })
+        : Response.json({
+            id: exportId,
+            createdAt: "2026-11-19T00:00:00Z",
+            expiresAt: new Date(Date.now() + (state === "expired" ? -1 : 86_400_000)).toISOString(),
+          }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <AnalyticsExportControls workspaceId={workspaceId} factoryId={factoryId} filters={filters} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create export snapshot" }));
+    if (state === "unavailable") {
+      fireEvent.click(await screen.findByRole("link", { name: "Download JSON" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "This snapshot is no longer available",
+      );
+    } else {
+      expect(await screen.findByRole("status")).toHaveTextContent("Snapshot expired");
+    }
+    expect(screen.getByRole("button", { name: "Create a new snapshot" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Download CSV" })).not.toBeInTheDocument();
+  });
+  it("does not let a replaced receipt's expiry timer expire the new receipt", async () => {
+    const replacement = "58200000-0000-4000-8000-000000000004";
+    const now = Date.parse("2026-11-19T00:00:00Z");
+    vi.useFakeTimers({ now, toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const timers = vi.spyOn(window, "setTimeout");
+    const firstLifetime = 60_000;
+    const nextLifetime = 120_000;
+    const receipt = (id: string, lifetime: number) =>
+      Response.json({
+        id,
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + lifetime).toISOString(),
+      });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(receipt(exportId, firstLifetime))
+        .mockResolvedValueOnce(receipt(replacement, nextLifetime)),
+    );
+    render(
+      <AnalyticsExportControls workspaceId={workspaceId} factoryId={factoryId} filters={filters} />,
+    );
+    const capture = screen.getByRole("button", { name: "Create export snapshot" });
+    await act(async () => {
+      fireEvent.click(capture);
+    });
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
+      "href",
+      path + "/" + exportId + "?format=json",
+    );
+    const first = timers.mock.calls.find(([, delay]) => delay === firstLifetime)?.[0];
+    if (typeof first !== "function") throw new Error("First expiry callback was not scheduled");
+    await act(async () => {
+      fireEvent.click(capture);
+    });
+    const replacementHref = path + "/" + replacement + "?format=json";
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
+      "href",
+      replacementHref,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(firstLifetime);
+      first();
+    });
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
+      "href",
+      replacementHref,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(nextLifetime - firstLifetime - 1);
+    });
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute(
+      "href",
+      replacementHref,
+    );
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Snapshot expired");
+    expect(screen.getByRole("button", { name: "Create a new snapshot" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Download CSV" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Download JSON" })).not.toBeInTheDocument();
   });
 });

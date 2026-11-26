@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -9,6 +9,7 @@ import { useApiAction } from "@/features/settings/use-api-action";
 
 import {
   type AnalyticsExportFilters,
+  type AnalyticsExportFormat,
   type AnalyticsExportReceipt,
   analyticsExportReceiptSchema,
   factoryAnalyticsExportsPath,
@@ -33,10 +34,17 @@ export function AnalyticsExportControls({
   factoryId: string;
   filters: AnalyticsExportFilters;
 }) {
-  const [snapshot, setSnapshot] = useState<AnalyticsExportReceipt | null>(null);
+  const [capture, setCapture] = useState<{
+    receipt: AnalyticsExportReceipt;
+    expired: boolean;
+  } | null>(null);
+  const [snapshotUnavailable, setSnapshotUnavailable] = useState(false);
+  const [downloading, setDownloading] = useState<AnalyticsExportFormat | null>(null);
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const requestId = useRef<string | null>(null);
   const endpoint = factoryAnalyticsExportsPath(workspaceId, factoryId);
+  const snapshot = capture?.receipt ?? null;
+  const expired = capture?.expired ?? false;
 
   const action = useApiAction({
     call: async () => {
@@ -57,13 +65,76 @@ export function AnalyticsExportControls({
       if (!receipt.success)
         throw new Error("Could not read the export receipt. Retry the request.");
       requestId.current = null;
-      setSnapshot(receipt.data);
+      setCapture({
+        receipt: receipt.data,
+        expired: Date.parse(receipt.data.expiresAt) <= Date.now(),
+      });
+      setSnapshotUnavailable(false);
     },
     errorText: "Could not create the analytics export.",
     setFlashMessage: setMessage,
   });
 
+  useEffect(() => {
+    if (!snapshot || expired) return;
+    const timer = window.setTimeout(
+      () => {
+        setCapture((current) =>
+          current && current.receipt === snapshot ? { ...current, expired: true } : current,
+        );
+      },
+      Math.max(0, Date.parse(snapshot.expiresAt) - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [snapshot, expired]);
+
   const download = snapshot ? endpoint + "/" + encodeURIComponent(snapshot.id) : null;
+  async function downloadSnapshot(format: AnalyticsExportFormat) {
+    if (!snapshot || !download || downloading || action.isBusy) return;
+    if (Date.parse(snapshot.expiresAt) <= Date.now()) {
+      setCapture({ receipt: snapshot, expired: true });
+      return;
+    }
+    setDownloading(format);
+    setMessage(null);
+    let objectUrl: string | undefined;
+    try {
+      const response = await fetch(download + "?format=" + format, { cache: "no-store" });
+      if (response.redirected || [401, 403, 404, 410].includes(response.status)) {
+        setSnapshotUnavailable(true);
+        setMessage({
+          kind: "error",
+          text: "This snapshot is no longer available. Check your access or create a new snapshot.",
+        });
+        return;
+      }
+      if (response.status === 422 && format === "csv") {
+        setMessage({
+          kind: "error",
+          text: "This snapshot is too large for CSV. Download JSON instead.",
+        });
+        return;
+      }
+      if (!response.ok || !response.headers.get("Content-Disposition")?.startsWith("attachment;")) {
+        throw new Error("Download unavailable");
+      }
+      objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "wallie-analytics-" + snapshot.id + "." + format;
+      link.click();
+    } catch {
+      setMessage({
+        kind: "error",
+        text: "Could not download this snapshot. Try downloading again.",
+      });
+    } finally {
+      const url = objectUrl;
+      if (url) window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      setDownloading(null);
+    }
+  }
+
   return (
     <section
       aria-labelledby="analytics-export-heading"
@@ -75,12 +146,17 @@ export function AnalyticsExportControls({
             Export analytics
           </h2>
           <p className="type-secondary text-muted">
-            Save the applied date ranges, metric totals, and supporting observations.
+            Factory outcomes for the applied filters. Excludes scorer trends and routing canaries.
+            Selecting an evidence facet does not narrow the export.
+          </p>
+          <p className="type-label text-muted">
+            {filters.from} to {filters.to} UTC (end excluded) ·{" "}
+            {filters.compare ? "Includes previous period" : "Current period only"}
           </p>
         </div>
         <button
           className="ui-button px-3 py-2 text-sm"
-          disabled={action.isBusy}
+          disabled={action.isBusy || downloading !== null}
           onClick={() => {
             setMessage(null);
             void action.run();
@@ -88,32 +164,48 @@ export function AnalyticsExportControls({
           type="button"
         >
           <ActionButtonLabel
-            idle="Create export snapshot"
+            idle={
+              expired || snapshotUnavailable ? "Create a new snapshot" : "Create export snapshot"
+            }
             pending={action.isBusy}
             pendingLabel="Creating snapshot…"
           />
         </button>
       </div>
       <InlineActionMessage message={message} />
-      {snapshot && download && (
+      {snapshot && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-3">
           <p className="type-secondary text-muted" role="status">
-            Captured{" "}
-            <time dateTime={snapshot.createdAt}>
-              {dateTime.format(new Date(snapshot.createdAt))}
-            </time>
-            . Expires{" "}
-            <time dateTime={snapshot.expiresAt}>
-              {dateTime.format(new Date(snapshot.expiresAt))}
-            </time>
-            .
+            {expired ? "Snapshot expired. " : "Captured "}
+            {!expired && (
+              <>
+                <time dateTime={snapshot.createdAt}>
+                  {dateTime.format(new Date(snapshot.createdAt))}
+                </time>
+                . Expires{" "}
+                <time dateTime={snapshot.expiresAt}>
+                  {dateTime.format(new Date(snapshot.expiresAt))}
+                </time>
+                .
+              </>
+            )}
           </p>
-          <a className="ui-button px-3 py-2 text-sm" href={download + "?format=csv"}>
-            Download CSV
-          </a>
-          <a className="ui-button px-3 py-2 text-sm" href={download + "?format=json"}>
-            Download JSON
-          </a>
+          {!expired &&
+            !snapshotUnavailable &&
+            (["csv", "json"] as const).map((format) => (
+              <a
+                className="ui-button px-3 py-2 text-sm"
+                aria-disabled={downloading !== null || action.isBusy}
+                href={download + "?format=" + format}
+                key={format}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void downloadSnapshot(format);
+                }}
+              >
+                {downloading === format ? "Downloading…" : "Download " + format.toUpperCase()}
+              </a>
+            ))}
         </div>
       )}
     </section>

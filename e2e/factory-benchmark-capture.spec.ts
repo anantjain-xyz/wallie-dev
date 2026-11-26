@@ -48,8 +48,9 @@ test("a factory operator captures a historical run with explicit missing replay 
     const preview = dialog.getByRole("region", { name: "Snapshot preview", exact: true });
     await expect(preview.getByRole("heading", { name: "Snapshot preview" })).toBeVisible();
     await expect(
-      preview.getByText(`Historical run ${fixture.producingRunId.slice(0, 8)}`, { exact: true }),
+      preview.getByText(/^Historical run · #\d+ Ship invoice reconciliation · /),
     ).toBeVisible();
+    await expect(preview.getByText(fixture.producingRunId, { exact: true })).toBeVisible();
     await expect(preview.getByText("Ineligible for replay", { exact: true })).toBeVisible();
     await expect(
       preview.getByText("The original attempt inputs were not retained.", { exact: true }),
@@ -162,19 +163,14 @@ test("a factory operator captures a historical run with explicit missing replay 
       await expect(
         viewer.getByRole("heading", { name: "Ship invoice reconciliation" }),
       ).toBeVisible();
-      const denied = viewer.waitForResponse(
-        (response) =>
-          response.request().method() === "GET" && response.url().endsWith("/benchmark"),
-      );
-      await viewer.getByRole("button", { name: "Add to benchmark", exact: true }).click();
-      expect((await denied).status()).toBe(403);
-      const viewerDialog = viewer.getByRole("dialog", { name: "Add to benchmark", exact: true });
-      await expect(viewerDialog.getByRole("alert")).toContainText(
-        /permission to manage this factory/i,
-      );
       await expect(
-        viewerDialog.getByRole("region", { name: "Snapshot preview", exact: true }),
+        viewer.getByRole("button", { name: "Add to benchmark", exact: true }),
       ).toHaveCount(0);
+      const denied = await viewer.request.get(
+        `${fixture.app}/api/workspaces/${fixture.workspaceId}/runs/${fixture.producingRunId}/benchmark`,
+      );
+      expect(denied.status()).toBe(403);
+      expect(await denied.json()).toEqual({ error: expect.stringMatching(/permission|manage/i) });
     } finally {
       await viewer.close();
     }

@@ -21,6 +21,7 @@ type SettingsPageProps = {
     category?: string | string[];
     factory?: string | string[];
     afterOAuthGrant?: string | string[];
+    oauthView?: string | string[];
   }>;
 };
 
@@ -58,6 +59,7 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
         category === "workspace" ? (
           <PersonalOAuthConnections
             afterOAuthGrant={afterOAuthGrant}
+            history={resolvedSearchParams.oauthView === "history"}
             workspaceSlug={workspaceSlug}
           />
         ) : undefined
@@ -69,6 +71,7 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
       setupData={data.setupData}
       usage={data.usage}
       workspaceInvitations={data.workspaceInvitations}
+      workspaceProfile={data.workspaceProfile}
     />
   );
 }

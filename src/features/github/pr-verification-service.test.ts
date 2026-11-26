@@ -53,15 +53,26 @@ const claim = {
   base_branch: "main",
 };
 
-function setup(options: { claims?: unknown[]; accepted?: boolean; enqueueError?: boolean } = {}) {
+function setup(
+  options: {
+    claims?: unknown[];
+    accepted?: boolean;
+    enqueueError?: boolean;
+    claimErrorAt?: number;
+  } = {},
+) {
   const queue = [...(options.claims ?? [claim])];
+  let claimAttempts = 0;
   const rpc = vi.fn((name: string) => {
     let value: { data: unknown; error: unknown };
     if (name === "enqueue_due_github_pr_refreshes")
       value = { data: 1, error: options.enqueueError ? { message: "private" } : null };
-    else if (name === "claim_github_pr_refresh")
-      value = { data: queue.shift() ?? null, error: null };
-    else if (name === "finish_github_pr_refresh")
+    else if (name === "claim_github_pr_refresh") {
+      value =
+        ++claimAttempts === options.claimErrorAt
+          ? { data: null, error: { message: "Claim unavailable" } }
+          : { data: queue.shift() ?? null, error: null };
+    } else if (name === "finish_github_pr_refresh")
       value = { data: options.accepted ?? true, error: null };
     else throw new Error(`Unexpected RPC ${name}`);
     return { abortSignal: vi.fn().mockResolvedValue(value) };
@@ -149,6 +160,7 @@ describe("bounded GitHub PR reconciliation", () => {
       checked: 3,
       refreshed: 3,
       failed: 0,
+      limited: true,
     });
     expect(mocks.collect).toHaveBeenCalledTimes(3);
   });
@@ -176,5 +188,23 @@ describe("bounded GitHub PR reconciliation", () => {
     await expect(reconcileGitHubPrVerification(admin)).rejects.toThrow("scheduling is unavailable");
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(mocks.collect).not.toHaveBeenCalled();
+  });
+
+  it("keeps a completed refresh when the next workspace claim fails", async () => {
+    const { admin, rpc } = setup({ claimErrorAt: 2 });
+
+    await expect(reconcileGitHubPrVerification(admin, { workspaceId })).resolves.toEqual({
+      checked: 1,
+      refreshed: 1,
+      failed: 0,
+      incomplete: true,
+    });
+    expect(mocks.collect).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "enqueue_due_github_pr_refreshes",
+      "claim_github_pr_refresh",
+      "finish_github_pr_refresh",
+      "claim_github_pr_refresh",
+    ]);
   });
 });

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 
+import type { OnboardingStepDraftState } from "@/features/onboarding/steps/types";
 import type { SessionPipeline } from "@/features/sessions/types";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { LinearRoutingControls } from "@/features/settings/linear-routing-editor";
@@ -14,6 +15,7 @@ type OnboardingLinearStepProps = {
   linearRouting: LinearRoutingConfig;
   linearSecret: WorkspaceSecretPreview | null;
   onCompleted: (action: string) => Promise<void>;
+  onDraftStateChange?: (state: OnboardingStepDraftState) => void;
   onRefresh: (action: string) => Promise<void>;
   pipeline: SessionPipeline | null;
   workspaceId: string;
@@ -25,6 +27,7 @@ export function OnboardingLinearStep({
   linearRouting,
   linearSecret,
   onCompleted,
+  onDraftStateChange,
   onRefresh,
   pipeline,
   workspaceId,
@@ -85,6 +88,7 @@ export function OnboardingLinearStep({
         <div className="mt-4">
           <LinearRoutingControls
             canManage={canManage}
+            onDraftStateChange={onDraftStateChange}
             onSaved={async () => {
               setRoutingSavedSignature(stageSignature);
               await onRefresh("linear:routing");

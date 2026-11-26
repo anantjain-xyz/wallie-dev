@@ -10,21 +10,27 @@ import type { Database } from "@/lib/supabase/database.types";
 import {
   grantReferenceKey,
   referenceKind,
+  referenceSortsByRecency,
   routingConfigurationKey,
   type NamedReference,
   type NamedReferencesRequest,
   type ReferenceKind,
+  type SuggestionCursor,
 } from "./named-reference-contracts";
 import { readVerifiedFactoryDefinition } from "./stored-definition";
 
 type Query<T> = PromiseLike<{ data: T[] | null; error: unknown }> & {
   in(column: string, values: readonly string[]): Query<T>;
+  gt(column: string, value: string): Query<T>;
+  or(filters: string): Query<T>;
   order(column: string, options?: { ascending?: boolean }): Query<T>;
   range(from: number, to: number): Query<T>;
 };
-type Group = { options: NamedReference[]; next?: number };
+type Group = { options: NamedReference[]; next?: SuggestionCursor };
 type Client = SupabaseClient<Database>;
 const pageSize = 40;
+const joinedPageSize = 250;
+const maxJoinedRows = 10_000;
 
 async function rows<T>(query: PromiseLike<{ data: T[] | null; error: unknown }>) {
   const { data, error } = await query;
@@ -32,11 +38,28 @@ async function rows<T>(query: PromiseLike<{ data: T[] | null; error: unknown }>)
   return data ?? [];
 }
 
-async function byIds<T>(query: () => Query<T>, ids: readonly string[], column = "id") {
+async function byIds<T>(query: () => Query<T>, ids: readonly string[], joinedRowKey?: string) {
   const unique = [...new Set(ids)];
   const results: T[] = [];
   for (let i = 0; i < unique.length; i += pageSize) {
-    results.push(...(await rows(query().in(column, unique.slice(i, i + pageSize)))));
+    const batch = unique.slice(i, i + pageSize);
+    if (!joinedRowKey) {
+      results.push(...(await rows(query().in("id", batch))));
+      continue;
+    }
+    for (let offset = 0; ; offset += joinedPageSize) {
+      const page = await rows(
+        query()
+          .in("experiment_id", batch)
+          .order("experiment_id")
+          .order(joinedRowKey)
+          .range(offset, offset + joinedPageSize - 1),
+      );
+      if (offset + page.length > maxJoinedRows)
+        throw new Error("The benchmark reference lookup exceeded its row limit.");
+      results.push(...page);
+      if (page.length < joinedPageSize) break;
+    }
   }
   return results;
 }
@@ -54,13 +77,23 @@ export async function loadNamedFactoryReferences(
     byIds(() => client.from("github_repositories").select("id, full_name").match(scope), ids);
 
   async function group(kind: ReferenceKind): Promise<Group> {
-    let next: number | undefined;
-    async function read<T>(query: () => Query<T>, recent = false) {
+    let next: SuggestionCursor | undefined;
+    const recent = referenceSortsByRecency(kind);
+    async function read<T extends { id: string; created_at?: string }>(query: () => Query<T>) {
       if (request.mode === "pins") return byIds(query, request.ids[kind] ?? []);
-      const offset = request.mode === "more" ? request.offset : 0;
-      const ordered = recent ? query().order("created_at", { ascending: false }) : query();
-      const data = await rows(ordered.order("id").range(offset, offset + pageSize));
-      if (data.length > pageSize) next = offset + pageSize;
+      let suggestions = recent ? query().order("created_at", { ascending: false }) : query();
+      if (request.mode === "more") {
+        const { createdAt, id } = request.after;
+        suggestions = createdAt
+          ? suggestions.or(`created_at.lt.${createdAt},and(created_at.eq.${createdAt},id.gt.${id})`)
+          : suggestions.gt("id", id);
+      }
+      const data = await rows(suggestions.order("id").range(0, pageSize));
+      if (data.length > pageSize) {
+        const { id, created_at } = data[pageSize - 1];
+        if (recent && !created_at) throw new Error("Missing suggestion sort key.");
+        next = recent ? { id, createdAt: created_at } : { id };
+      }
       return data.slice(0, pageSize);
     }
     const finish = (options: NamedReference[]) => ({ options, next });
@@ -84,13 +117,11 @@ export async function loadNamedFactoryReferences(
         );
       }
       case "executionPolicy": {
-        const data = await read(
-          () =>
-            client
-              .from("execution_policy_revisions")
-              .select("id, revision, created_at, requirements")
-              .eq("workspace_id", workspaceId),
-          true,
+        const data = await read(() =>
+          client
+            .from("execution_policy_revisions")
+            .select("id, revision, created_at, requirements")
+            .eq("workspace_id", workspaceId),
         );
         return finish(
           data.map(({ id, revision, created_at, requirements }) => {
@@ -103,16 +134,14 @@ export async function loadNamedFactoryReferences(
         );
       }
       case "deliveryPolicy": {
-        const data = await read(
-          () =>
-            client
-              .from("delivery_policy_revisions")
-              .select(
-                "id, revision, created_at, requirements, pipeline_id, pipelines!inner(name, factory_id)",
-              )
-              .eq("workspace_id", workspaceId)
-              .eq("pipelines.factory_id", factoryId),
-          true,
+        const data = await read(() =>
+          client
+            .from("delivery_policy_revisions")
+            .select(
+              "id, revision, created_at, requirements, pipeline_id, pipelines!inner(name, factory_id)",
+            )
+            .eq("workspace_id", workspaceId)
+            .eq("pipelines.factory_id", factoryId),
         );
         return finish(
           data.map(({ id, revision, created_at, requirements, pipeline_id, pipelines }) => {
@@ -126,15 +155,13 @@ export async function loadNamedFactoryReferences(
         );
       }
       case "implementationAgent": {
-        const data = await read(
-          () =>
-            client
-              .from("factory_agent_prompt_revisions")
-              .select(
-                "id, agent_id, revision_number, created_at, factory_agents!inner(name, slug, is_default)",
-              )
-              .match(scope),
-          true,
+        const data = await read(() =>
+          client
+            .from("factory_agent_prompt_revisions")
+            .select(
+              "id, agent_id, revision_number, created_at, factory_agents!inner(name, slug, is_default)",
+            )
+            .match(scope),
         );
         return finish(
           data.map(({ id, revision_number, created_at, agent_id, factory_agents }) => ({
@@ -167,10 +194,10 @@ export async function loadNamedFactoryReferences(
         const data = await read(() => {
           const query = client
             .from("factory_skill_revisions")
-            .select("id, revision_number, revoked_at, factory_skills!inner(name)")
+            .select("id, revision_number, revoked_at, created_at, factory_skills!inner(name)")
             .match(scope);
           return picking ? query.is("revoked_at", null) : query;
-        }, true);
+        });
         return finish(
           data.map(({ id, revision_number, revoked_at, factory_skills }) => ({
             id,
@@ -180,13 +207,11 @@ export async function loadNamedFactoryReferences(
         );
       }
       case "scorers": {
-        const data = await read(
-          () =>
-            client
-              .from("factory_scorer_revisions")
-              .select("id, revision_number, factory_scorers!inner(name)")
-              .match(scope),
-          true,
+        const data = await read(() =>
+          client
+            .from("factory_scorer_revisions")
+            .select("id, revision_number, created_at, factory_scorers!inner(name)")
+            .match(scope),
         );
         return finish(
           data.map(({ id, revision_number, factory_scorers }) => ({
@@ -200,11 +225,11 @@ export async function loadNamedFactoryReferences(
           const query = client
             .from("factory_mcp_server_revisions")
             .select(
-              "id, revision_number, endpoint, auth_kind, operation_names, revoked_at, factory_mcp_servers!inner(name)",
+              "id, revision_number, endpoint, auth_kind, operation_names, revoked_at, created_at, factory_mcp_servers!inner(name)",
             )
             .match(scope);
           return picking ? query.is("revoked_at", null) : query;
-        }, true);
+        });
         return finish(
           data.flatMap(
             ({
@@ -239,7 +264,7 @@ export async function loadNamedFactoryReferences(
             )
             .match(scope);
           return picking ? query.is("revoked_at", null) : query;
-        }, true);
+        });
         const principals = await byIds(
           () => client.from("service_principals").select("id, name").match(scope),
           data.map(({ service_principal_id }) => service_principal_id),
@@ -316,7 +341,7 @@ export async function loadNamedFactoryReferences(
             )
             .match(scope);
           return picking ? query.is("content_purged_at", null) : query;
-        }, true);
+        });
         if (!data.length) return finish([]);
         const sourceIds = [...new Set(data.map(({ source_id }) => source_id))];
         const [repos, access] = await Promise.all([
@@ -352,15 +377,13 @@ export async function loadNamedFactoryReferences(
         );
       }
       case "routing": {
-        const experiments = await read(
-          () =>
-            client
-              .from("factory_benchmark_experiments")
-              .select(
-                "id, created_at, suite_revision_id, eligible_trial_count, materialized_trial_count",
-              )
-              .match(scope),
-          true,
+        const experiments = await read(() =>
+          client
+            .from("factory_benchmark_experiments")
+            .select(
+              "id, created_at, suite_revision_id, eligible_trial_count, materialized_trial_count",
+            )
+            .match(scope),
         );
         const experimentIds = experiments.map(({ id }) => id);
         const [candidates, suites, dimensions] = await Promise.all([
@@ -374,7 +397,7 @@ export async function loadNamedFactoryReferences(
                 .match(scope)
                 .not("qualification_id", "is", null),
             experimentIds,
-            "experiment_id",
+            "candidate_key",
           ),
           byIds(
             () =>
@@ -393,7 +416,7 @@ export async function loadNamedFactoryReferences(
                 )
                 .match(scope),
             experimentIds,
-            "experiment_id",
+            "scorer_revision_id",
           ),
         ]);
         const revisions = await byIds(
@@ -451,6 +474,7 @@ export async function loadNamedFactoryReferences(
             choices.set(id, {
               id,
               configuration,
+              labelOnly: !scorer,
               label: `${agent?.name ?? "Agent unavailable"} · ${configuration.modelKey} · ${suite?.name ?? "Suite unavailable"}${suite ? ` v${suite.revision_number}` : ""} · ${day(comparison.created_at)} · ${frozen ? `${frozen.factory_scorers.name} v${frozen.revision_number}` : "Scorer unavailable"}${!scorer ? " (implicit)" : ""} · ${configuration.harness} / ${configuration.workerRuntime} · ${candidate.candidate_key} · ${comparison.eligible_trial_count}/${comparison.materialized_trial_count} eligible trials`,
               unavailable: !agent || !suite || !frozen || comparison.eligible_trial_count === 0,
             });

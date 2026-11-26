@@ -186,6 +186,33 @@ function buildAdmin(
 beforeEach(() => mocked.stopRunSandbox.mockReset().mockResolvedValue(true));
 
 describe("sweepStalledRuns ownership recovery", () => {
+  it("does not retry or stop workspace jobs when recovery settings could not be read", async () => {
+    const { admin } = buildAdmin({ failRead: "workspace_agent_config" });
+    const result = await sweepStalledRuns(admin as never, TIMEOUT, { workspaceId: "ws-1" });
+    expect(result).toMatchObject({ incomplete: true, retriedJobIds: [], stalledRunIds: [] });
+    expect(admin.rpc).not.toHaveBeenCalled();
+    expect(mocked.stopRunSandbox).not.toHaveBeenCalled();
+  });
+
+  it("retains the recorded retry when an exact sandbox stop cannot finish", async () => {
+    const { admin } = buildAdmin();
+    mocked.stopRunSandbox.mockRejectedValueOnce(new Error("Stop unavailable"));
+
+    const result = await sweepStalledRuns(admin as never, TIMEOUT, { workspaceId: "ws-1" });
+    expect(result).toMatchObject({
+      incomplete: true,
+      retriedJobIds: ["job-1"],
+      stalledRunIds: ["run-1"],
+      stoppedSandboxIds: [],
+    });
+    expect(mocked.stopRunSandbox).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({ id: "run-1", workspace_id: "ws-1", sandbox_id: "sandbox-1" }),
+      expect.any(Map),
+      { throwOnError: true },
+    );
+  });
+
   it("leaves recent activity alone", async () => {
     const { admin } = buildAdmin({ runs: [run({ last_activity_at: freshTime() })] });
     expect((await sweepStalledRuns(admin as never, TIMEOUT)).stalledRunIds).toEqual([]);
@@ -253,6 +280,7 @@ describe("sweepStalledRuns ownership recovery", () => {
   it("fails closed when publication metadata cannot be read", async () => {
     const { admin, inserts } = buildAdmin({ failRead: "session_checkpoint_publications" });
     expect(await sweepStalledRuns(admin as never, TIMEOUT)).toEqual({
+      incomplete: true,
       stalledRunIds: [],
       stalledJobIds: [],
       stoppedSandboxIds: [],
@@ -488,6 +516,7 @@ describe("sweepStalledRuns ownership recovery", () => {
     const { admin, inserts } = buildAdmin({ rpcError: "RPC unavailable" });
     const result = await sweepStalledRuns(admin as never, TIMEOUT);
     expect(result).toEqual({
+      incomplete: true,
       stalledRunIds: [],
       stalledJobIds: [],
       stoppedSandboxIds: [],

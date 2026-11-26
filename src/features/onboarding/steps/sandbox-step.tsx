@@ -32,7 +32,7 @@ function updateSandboxSettingsInData(
         connectionRevision: active ? String(active.connectionRevision) : null,
         displayName:
           settings.activeProvider === "vercel"
-            ? (vercel?.projectName ?? vercel?.projectId ?? null)
+            ? (vercel?.projectName ?? (vercel ? "Connected project · name unavailable" : null))
             : settings.activeProvider === "e2b"
               ? (settings.connections.e2b?.apiKeyPreview ?? null)
               : (settings.connections.daytona?.target ??
@@ -69,7 +69,12 @@ function updateSandboxSettingsInData(
   };
 }
 
-export default function SandboxStep({ data, isSaving, onDataChange }: OnboardingStepProps) {
+export default function SandboxStep({
+  data,
+  isSaving,
+  onDataChange,
+  onDraftStateChange,
+}: OnboardingStepProps) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -94,6 +99,7 @@ export default function SandboxStep({ data, isSaving, onDataChange }: Onboarding
 
       <SandboxProviderSection
         canManage={data.canManage && !isSaving}
+        onDraftStateChange={onDraftStateChange}
         onSettingsChange={(settings) =>
           onDataChange((current) => updateSandboxSettingsInData(current, settings))
         }

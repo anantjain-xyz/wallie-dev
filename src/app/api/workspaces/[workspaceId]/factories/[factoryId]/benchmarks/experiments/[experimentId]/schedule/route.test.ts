@@ -152,6 +152,8 @@ describe("benchmark schedule route", () => {
 
   it.each([
     { ...live, executionReserveUsd: 0 },
+    { ...live, budgetLimitUsd: 0 },
+    { ...live, executionReserveUsd: 0.2, budgetLimitUsd: 0.1 },
     { ...live, taskFixtures: configure.taskFixtures },
     { ...live, sandboxConnectionRevision: configure.sandboxConnectionRevision },
     { ...live, apiKey: "synthetic-key" },
@@ -160,6 +162,21 @@ describe("benchmark schedule route", () => {
     setup(rpc);
     expect((await POST(post(command), context)).status).toBe(400);
     expect(rpc).not.toHaveBeenCalled();
+    expect(mocks.wake).not.toHaveBeenCalled();
+  });
+
+  it("does not wake a worker when the real authorization boundary rejects live configuration", async () => {
+    const rpc = vi.fn<typeof fetch>(async () =>
+      Response.json({ code: "42501", message: "private database diagnostic" }, { status: 403 }),
+    );
+    setup(rpc);
+
+    const response = await POST(post(live), context);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Factory manager access is required.",
+    });
     expect(mocks.wake).not.toHaveBeenCalled();
   });
 

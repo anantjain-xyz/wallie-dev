@@ -9,6 +9,7 @@ import {
 
 const id = z.string().uuid().toLowerCase();
 const revisionId = factoryAutomationReadQuerySchema.shape.revisionId.unwrap();
+export const automationDryRunNamesHeader = "X-Wallie-Automation-Names";
 
 const scheduledFor = z
   .string()
@@ -61,6 +62,12 @@ export const automationDryRunResponseSchema = z.strictObject({
     .min(1)
     .max(4),
   budgetPayerMemberId: id,
+  names: z
+    .strictObject({
+      budgetPayer: z.string().nullable(),
+      executionPolicyRevision: z.number().int().positive().safe().nullable(),
+    })
+    .optional(),
   assignment: z.discriminatedUnion("status", [
     z.strictObject({
       status: z.literal("eligible"),

@@ -95,6 +95,7 @@ function setup({ detail = false, missingGrantVersion = false } = {}) {
       workspaceId,
       workspaceSlug: "atlas",
       actorUserId: id(10),
+      actorMemberId: id(12),
       factory: { id: factoryId, name: "Design", isDefault: true, status: "active" as const },
       isOperator: false,
     },

@@ -18,8 +18,12 @@ const matched = {
   automationId,
   revisionId,
   matched: true,
-  checks: [{ field: "baseBranch", actual: "main", expected: ["main"], passed: true }],
+  checks: [
+    { field: "repositoryId", actual: repositoryId, expected: [repositoryId], passed: true },
+    { field: "baseBranch", actual: "main", expected: ["main"], passed: true },
+  ],
   budgetPayerMemberId,
+  names: { budgetPayer: "Avery Chen", executionPolicyRevision: 3 },
   assignment: {
     status: "eligible",
     agentName: "Release reviewer",
@@ -43,6 +47,7 @@ it("posts the exact revision and removes the prior decision when the event chang
       revisionId={revisionId}
       endpoint={endpoint}
       defaults={event}
+      repositories={[{ id: repositoryId, name: "example/app" }]}
     />,
   );
 
@@ -50,6 +55,9 @@ it("posts the exact revision and removes the prior decision when the event chang
   const decision = await screen.findByRole("region", { name: "Dry run results" });
   expect(within(decision).getByRole("heading", { name: "Event matches" })).toBeVisible();
   expect(within(decision).getByText("Release reviewer")).toBeVisible();
+  expect(within(decision).getByText("Actual example/app. Expected example/app.")).toBeVisible();
+  expect(within(decision).getByText("Avery Chen")).toBeVisible();
+  expect(within(decision).getByText("Workspace execution policy · Revision 3")).toBeVisible();
   expect(fetch).toHaveBeenCalledOnce();
   const [url, init] = fetch.mock.calls[0];
   expect(url).toBe(endpoint);
@@ -109,9 +117,33 @@ it("explains an invalid scheduled time before sending a preview request", async 
     />,
   );
 
-  await userEvent.setup().click(screen.getByRole("button", { name: "Run preview" }));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Check target eligibility" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Enter an ISO timestamp with seconds and a timezone",
   );
+  expect(screen.getByLabelText("Sample tick (ISO timestamp with time zone)")).toHaveFocus();
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it("reports schedule eligibility without claiming the sample matched the cron", async () => {
+  const fetch = vi.fn().mockResolvedValue(Response.json(matched));
+  vi.stubGlobal("fetch", fetch);
+  const event = { kind: "schedule", scheduledFor: "2030-01-07T09:00:00.000Z" } as const;
+  render(
+    <AutomationDryRunPanel
+      automationId={automationId}
+      revisionId={revisionId}
+      endpoint={endpoint}
+      defaults={event}
+    />,
+  );
+  expect(screen.getByLabelText("Sample tick (ISO timestamp with time zone)")).toHaveValue(
+    event.scheduledFor,
+  );
+  await userEvent.setup().click(screen.getByRole("button", { name: "Check target eligibility" }));
+  expect(
+    await screen.findByRole("heading", { name: "Target eligible for sample tick" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Event matches")).not.toBeInTheDocument();
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ revisionId, event });
 });

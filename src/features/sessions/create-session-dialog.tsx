@@ -72,15 +72,23 @@ type CreateSessionDialogProps = {
   creationFactoryId?: string;
   creationFactoryName?: string;
   onClose: () => void;
+  onCloseAutoFocus?: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
   onReopen?: () => void;
   open: boolean;
   userId: string;
   workspaceId: string;
   workspaceSlug: string;
+  workflowLaunchActivationId?: string | null;
 };
 
 type OverrideTarget = RoutingOverrideOptions["targets"][number];
+
+type SessionCreationAttempt = {
+  input: CreateSessionInput;
+  snapshot: PendingSessionSnapshot;
+  workflowLabel: string;
+};
 
 function routingTargetKey({ ruleId, target }: OverrideTarget) {
   return `${ruleId}:${target}`;
@@ -151,12 +159,14 @@ function CreateSessionDialogBody({
   creationFactoryId,
   creationFactoryName,
   onClose,
+  onCloseAutoFocus,
   onPreviewChange,
   onReopen,
   onReset,
   open,
   userId,
   workspaceId,
+  workflowLaunchActivationId,
 }: CreateSessionDialogProps & { onReset: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -174,11 +184,16 @@ function CreateSessionDialogBody({
   const sessionCommittedRef = useRef(false);
   const disposedRef = useRef(false);
   const imageDraftsRef = useRef<SessionImageDraft[]>([]);
-  const attemptRef = useRef<{ input: CreateSessionInput; snapshot: PendingSessionSnapshot } | null>(
-    null,
-  );
+  const attemptRef = useRef<SessionCreationAttempt | null>(null);
   const previewVisibleRef = useRef(false);
-  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [unconfirmedAttempt, setUnconfirmedAttempt] = useState<SessionCreationAttempt | null>(null);
+  const unconfirmed = unconfirmedAttempt !== null;
+  const workflowLaunchRequested = workflowLaunchActivationId !== undefined;
+  const workflowLaunchConflictsWithRetry =
+    workflowLaunchRequested &&
+    unconfirmed &&
+    (!workflowLaunchActivationId ||
+      workflowLaunchActivationId !== unconfirmedAttempt.input.workflowSelection?.activationId);
 
   const refreshImagesOnOpen = useEffectEvent(() => {
     clearRecoveryToast();
@@ -225,8 +240,14 @@ function CreateSessionDialogBody({
   }, [open, userId, workspaceId]);
 
   const [prompt, setPrompt] = useState("");
-  const [draftSpecification, setDraftSpecification] = useState(false);
-  const [workflowActivationId, setWorkflowActivationId] = useState("");
+  const [manualDraftSpecification, setDraftSpecification] = useState(false);
+  const draftSpecification = !workflowLaunchRequested && manualDraftSpecification;
+  const [manualWorkflowActivationId, setWorkflowActivationId] = useState("");
+  const workflowActivationId = unconfirmedAttempt
+    ? (unconfirmedAttempt.input.workflowSelection?.activationId ?? "")
+    : workflowLaunchRequested
+      ? (workflowLaunchActivationId ?? "")
+      : manualWorkflowActivationId;
   const [workflowCatalog, setWorkflowCatalog] = useState<{
     factoryId: string;
     definitionDigest: string;
@@ -244,9 +265,11 @@ function CreateSessionDialogBody({
   const [linearUrl, setLinearUrl] = useState("");
   const [githubRepositoryId, setGithubRepositoryId] = useState("");
   const [excludedStageIds, setExcludedStageIds] = useState<string[]>([]);
-  const [overrideChoice, setOverrideChoice] = useState<{ scope: string; target: string } | null>(
-    null,
-  );
+  const [manualOverrideChoice, setOverrideChoice] = useState<{
+    scope: string;
+    target: string;
+  } | null>(null);
+  const overrideChoice = workflowLaunchRequested ? null : manualOverrideChoice;
   const [overrideReason, setOverrideReason] = useState("");
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -558,7 +581,8 @@ function CreateSessionDialogBody({
   const workflow = eligibleWorkflowOptions.find(
     (option) => option.activationId === workflowActivationId,
   );
-  const workflowSelectionUnavailable = Boolean(workflowActivationId && !workflow);
+  const workflowSelectionUnavailable =
+    (workflowLaunchRequested || !!workflowActivationId) && !workflow;
   const overrideOptions = repositorySnapshot.data?.routingOverrideOptions;
   const overrideScope = JSON.stringify([
     overrideOptions?.activationNumber,
@@ -596,7 +620,7 @@ function CreateSessionDialogBody({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (submitInFlightRef.current) {
+    if (submitInFlightRef.current || workflowLaunchConflictsWithRetry) {
       return;
     }
 
@@ -628,7 +652,11 @@ function CreateSessionDialogBody({
 
     if (specificationUnavailable) return;
     if (workflowSelectionUnavailable) {
-      setErrorMessage("Choose a current published workflow or the default pipeline.");
+      setErrorMessage(
+        workflowLaunchRequested
+          ? "The requested publication is unavailable. Close and return to Workflows."
+          : "Choose a current published workflow or the default pipeline.",
+      );
       return;
     }
     if (overrideBlocksSubmission) {
@@ -667,7 +695,8 @@ function CreateSessionDialogBody({
       return;
     }
 
-    const attempt = {
+    const attempt: SessionCreationAttempt = {
+      workflowLabel: workflow?.label ?? defaultWorkflowOption.label,
       input: {
         attachmentIds: imageDrafts.map((image) => image.attachmentId!),
         ...(draftSpecification ? { draftSpecification: true } : {}),
@@ -739,7 +768,7 @@ function CreateSessionDialogBody({
     });
   }
 
-  async function submitAttempt(attempt: NonNullable<typeof attemptRef.current>) {
+  async function submitAttempt(attempt: SessionCreationAttempt) {
     clearRecoveryToast();
     attemptRef.current = attempt;
     setErrorMessage(null);
@@ -791,7 +820,7 @@ function CreateSessionDialogBody({
           ("code" in error &&
             (error.code === "session_options_changed" ||
               error.code === "session_attachments_changed")));
-      setUnconfirmed(!rejected);
+      setUnconfirmedAttempt(rejected ? null : attempt);
       if (rejected) attemptRef.current = null;
       if (isSessionOptionsChangedError(error)) {
         invalidateSessionRepositoryCache(workspaceId);
@@ -877,6 +906,7 @@ function CreateSessionDialogBody({
         }
         dismissible={!isSubmitting && !hasActiveAttachmentOperation}
         title="Start a new session"
+        onCloseAutoFocus={onCloseAutoFocus}
         onOpenAutoFocus={(event) => {
           if (errorMessage) {
             event.preventDefault();
@@ -1094,44 +1124,75 @@ function CreateSessionDialogBody({
               </div>
             ) : null}
 
-            {workflowOptions.length || workflowActivationId || workflowOptionsError ? (
+            {unconfirmed ||
+            workflowOptions.length ||
+            workflowActivationId ||
+            workflowOptionsError ||
+            workflowLaunchRequested ? (
               <div className="min-w-0 space-y-2">
-                <SelectField
-                  disabled={
-                    isSubmitting ||
-                    unconfirmed ||
-                    draftSpecification ||
-                    overrideChoice !== null ||
-                    ((!factoryDefinitionDigest ||
-                      repositorySnapshot.isStale ||
-                      !workflowRepositoryAvailable) &&
-                      !workflowActivationId)
-                  }
-                  emptyOption={defaultWorkflowOption}
-                  label="Workflow"
-                  labelClassName="text-sm font-medium"
-                  onValueChange={setWorkflowActivationId}
-                  options={[
-                    ...(workflowSelectionUnavailable
-                      ? [
-                          {
-                            disabled: true,
-                            label: "Choose a current workflow",
-                            value: workflowActivationId,
-                          },
-                        ]
-                      : []),
-                    ...eligibleWorkflowOptions.map(({ activationId, label }) => ({
-                      label,
-                      value: activationId,
-                    })),
-                  ]}
-                  value={workflowActivationId}
-                  wrap
-                />
-                {factoryDefinitionDigest &&
-                selectedGithubRepositoryId &&
-                !workflowRepositoryAvailable ? (
+                {unconfirmedAttempt || workflowLaunchRequested ? (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Workflow</p>
+                    <p className="type-secondary wrap-anywhere">
+                      {unconfirmedAttempt?.workflowLabel ??
+                        workflowOptions.find(
+                          ({ activationId }) => activationId === workflowActivationId,
+                        )?.label ??
+                        "Requested publication"}
+                    </p>
+                  </div>
+                ) : (
+                  <SelectField
+                    disabled={
+                      isSubmitting ||
+                      draftSpecification ||
+                      overrideChoice !== null ||
+                      ((!factoryDefinitionDigest ||
+                        repositorySnapshot.isStale ||
+                        !workflowRepositoryAvailable) &&
+                        !workflowActivationId)
+                    }
+                    emptyOption={defaultWorkflowOption}
+                    label="Workflow"
+                    labelClassName="text-sm font-medium"
+                    onValueChange={setWorkflowActivationId}
+                    options={[
+                      ...(workflowSelectionUnavailable
+                        ? [
+                            {
+                              disabled: true,
+                              label: "Choose a current workflow",
+                              value: workflowActivationId,
+                            },
+                          ]
+                        : []),
+                      ...eligibleWorkflowOptions.map(({ activationId, label }) => ({
+                        label,
+                        value: activationId,
+                      })),
+                    ]}
+                    value={workflowActivationId}
+                    wrap
+                  />
+                )}
+                {workflowLaunchConflictsWithRetry ? (
+                  <p className="type-secondary text-warning" role="status">
+                    Another request is unconfirmed. Close this link and reopen New session to retry
+                    that request first.
+                  </p>
+                ) : unconfirmed ? null : workflowLaunchActivationId === null ? (
+                  <p className="type-secondary text-warning" role="status">
+                    This workflow link is invalid. Close and start from Workflows again.
+                  </p>
+                ) : workflowLaunchRequested &&
+                  repositorySnapshot.data &&
+                  !defaultRepositoryAvailable ? (
+                  <p className="type-secondary text-warning" role="status">
+                    This workflow needs the factory’s default repository, which is unavailable.
+                  </p>
+                ) : factoryDefinitionDigest &&
+                  selectedGithubRepositoryId &&
+                  !workflowRepositoryAvailable ? (
                   <p className="type-secondary text-warning" role="status">
                     Choose the factory’s default repository to use a published workflow.
                   </p>
@@ -1148,14 +1209,19 @@ function CreateSessionDialogBody({
                   </p>
                 ) : workflowSelectionUnavailable ? (
                   <p className="type-secondary text-warning" role="status">
-                    {factoryDefinitionDigest && creationFactoryId && !currentWorkflowCatalog
-                      ? "Loading current workflows…"
-                      : "The selected workflow changed. Choose a current workflow or the default pipeline."}
+                    {workflowLaunchRequested &&
+                    (!repositorySnapshot.data || repositorySnapshot.isStale)
+                      ? "Checking the factory’s current session options…"
+                      : factoryDefinitionDigest && creationFactoryId && !currentWorkflowCatalog
+                        ? "Loading current workflows…"
+                        : workflowLaunchRequested
+                          ? "This publication is no longer available. Close and return to Workflows."
+                          : "The selected workflow changed. Choose a current workflow or the default pipeline."}
                   </p>
                 ) : null}
               </div>
             ) : null}
-            {canDraftSpecification || draftSpecification ? (
+            {!workflowLaunchRequested && (canDraftSpecification || draftSpecification) ? (
               <label className="flex min-h-11 cursor-pointer items-start gap-3 py-1 text-sm text-foreground">
                 <input
                   aria-describedby="session-specification-description"
@@ -1275,7 +1341,7 @@ function CreateSessionDialogBody({
               aria-keyshortcuts={SESSION_SUBMIT_KEY_SHORTCUTS}
               disabled={
                 unconfirmed
-                  ? isSubmitting
+                  ? isSubmitting || workflowLaunchConflictsWithRetry
                   : specificationUnavailable ||
                     workflowSelectionUnavailable ||
                     overrideBlocksSubmission ||

@@ -1,9 +1,12 @@
 import { Suspense, type ReactNode } from "react";
 
+import { AdvancedRateLimits } from "@/features/settings/advanced-rate-limits";
 import type {
   SettingsInitialData,
   SettingsPageData,
   SettingsSetupData,
+  SettingsWorkspaceProfile,
+  WorkspaceInvitationsSnapshot,
   WorkspaceUsageData,
 } from "@/features/settings/data";
 import {
@@ -22,14 +25,13 @@ import { PipelineIsland } from "@/features/settings/islands/pipeline-island";
 import {
   DangerActionsIsland,
   WorkspaceIdentityIsland,
-  WorkspaceMembersIsland,
 } from "@/features/settings/islands/workspace-islands";
 import { RunHistoryControls } from "@/features/settings/run-history-controls";
 import { SettingsCategoryNav } from "@/features/settings/settings-category-nav";
 import type { SettingsCategory } from "@/features/settings/settings-categories";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
+import { WorkspaceMemberSettings } from "@/features/settings/workspace-member-settings";
 import { workspaceFactoryDefinitionPath } from "@/lib/routes";
-import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
 type SettingsServerShellProps = {
   automationPreview?: ReactNode;
@@ -40,7 +42,8 @@ type SettingsServerShellProps = {
   searchState: { codexStatus: string | null; githubStatus: string | null };
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
-  workspaceInvitations: Promise<WorkspaceInvitation[]>;
+  workspaceInvitations: Promise<WorkspaceInvitationsSnapshot>;
+  workspaceProfile?: Promise<SettingsWorkspaceProfile>;
 };
 
 const EMPTY_USAGE: WorkspaceUsageData = {
@@ -172,7 +175,7 @@ async function UsageSection({ usage }: { usage: Promise<WorkspaceUsageData> }) {
   return (
     <Section
       anchorId="usage"
-      tagline="Aggregate token usage and costs across all agent runs in this workspace."
+      tagline="All time · Runs that started in this workspace, including failed runs. Run costs reflect reported or estimated usage, not a provider bill."
       title="Usage"
     >
       <UsageSummary usage={result.value} />
@@ -189,25 +192,10 @@ async function AdvancedDetails({ initialData, setupData }: SettingsServerShellPr
   return (
     <Section
       anchorId="rate-limits"
-      tagline="Per-endpoint caps protecting sandbox spawns and paid LLM calls."
+      tagline="Configured request caps are read-only. They don’t show how many requests you have left."
       title="Rate limits"
     >
-      <ul className="ui-sheet divide-y divide-border">
-        {data.rateLimits.map((limit) => (
-          <li
-            className="flex flex-col justify-between gap-2 px-5 py-4 sm:flex-row sm:gap-4"
-            key={limit.endpoint}
-          >
-            <div className="min-w-0">
-              <code className="break-all font-mono text-xs text-foreground">{limit.endpoint}</code>
-              <p className="mt-1 text-xs text-muted">{limit.description}</p>
-            </div>
-            <span className="shrink-0 font-mono type-annotation text-muted">
-              {limit.max} / {Math.round(limit.windowMs / 1000)}s
-            </span>
-          </li>
-        ))}
-      </ul>
+      <AdvancedRateLimits limits={data.rateLimits} />
     </Section>
   );
 }
@@ -229,10 +217,14 @@ function AdvancedCategory(props: SettingsServerShellProps) {
           </Section>
           <Section
             anchorId="maintenance"
-            tagline="Recover stale runs, reconcile Linear state, and clean up orphaned sandboxes."
+            tagline="Recover stalled work and refresh linked Linear and GitHub state."
             title="Maintenance"
           >
-            <MaintenanceIsland canManage workspaceId={props.initialData.workspace.id} />
+            <MaintenanceIsland
+              canManage
+              workspaceId={props.initialData.workspace.id}
+              workspaceName={props.initialData.workspace.name}
+            />
           </Section>
         </>
       ) : null}
@@ -243,31 +235,16 @@ function AdvancedCategory(props: SettingsServerShellProps) {
   );
 }
 
-async function MembersSection({
-  initialData,
-  setupData,
-  workspaceInvitations,
-}: SettingsServerShellProps) {
-  const result = await settle(Promise.all([setupData, workspaceInvitations]));
-  if (!result.ok) {
-    return <SettingsSectionError label="Members and invitations" />;
-  }
-  const [setup, invitations] = result.value;
-  return (
-    <WorkspaceMembersIsland
-      initialData={completeSettingsData(initialData, setup)}
-      invitations={invitations}
-    />
-  );
-}
-
 function WorkspaceCategory(props: SettingsServerShellProps) {
   return (
     <div className="space-y-16">
       <WorkspaceIdentityIsland initialData={props.initialData} />
-      <Suspense fallback={<SettingsSectionFallback label="members and invitations" />}>
-        <MembersSection {...props} />
-      </Suspense>
+      <WorkspaceMemberSettings
+        initialData={props.initialData}
+        invitations={props.workspaceInvitations}
+        profile={props.workspaceProfile}
+        setup={props.setupData}
+      />
       {props.personalConnections && (
         <Suspense
           fallback={

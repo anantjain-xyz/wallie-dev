@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import { BenchmarkComparisonForm } from "@/features/factory-benchmarks/benchmark-comparison-form";
+import { BenchmarkMembershipFocus } from "@/features/factory-benchmarks/benchmark-membership-focus";
+import { BenchmarkTaskSource } from "@/features/factory-benchmarks/benchmark-task-source";
 import {
   benchmarkEligibilityLabel,
   benchmarkPurposeLabel,
@@ -35,7 +37,6 @@ import {
   workspaceBenchmarkComparisonPath,
   workspaceBenchmarksPath,
   workspaceBenchmarkSuitePath,
-  workspaceRunDetailPath,
 } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -79,12 +80,13 @@ export default async function BenchmarkSuitePage({
   const { selected, latest, editable, members, latestTasks, choices, revisions, nextBefore } =
     detail;
   const [comparisonOptions, comparisons] = await Promise.all([
-    comparing
+    comparing && members.length > 0
       ? loadBenchmarkExperimentAxes({
           workspaceId,
           factoryId: factory.id,
           suiteRevisionId: selected.id,
           supabase: scope.supabase,
+          admin: createSupabaseAdminClient(),
         })
       : null,
     factory.canManage
@@ -127,7 +129,7 @@ export default async function BenchmarkSuitePage({
         actionsRightOnDesktop
         actions={
           <>
-            {scope.canEdit ? (
+            {scope.canEdit && members.length > 0 ? (
               <Link
                 className="ui-button ui-button-primary"
                 href={`${suitePath({ revision: selected.id, compare: "1" })}#compare-configurations`}
@@ -149,23 +151,41 @@ export default async function BenchmarkSuitePage({
         }
       />
       <div className="space-y-8">
-        {comparisonOptions ? (
+        {!scope.canEdit ? (
+          <p className="type-secondary text-muted">
+            {factory.status === "archived"
+              ? "This factory is archived. Existing suites are read-only."
+              : "Only factory managers can edit benchmark suites."}
+          </p>
+        ) : null}
+        {comparing ? (
           <PageSection anchorId="compare-configurations" title="Compare configurations">
-            <BenchmarkComparisonForm
-              key={`${factory.id}:${selected.id}`}
-              workspaceId={workspaceId}
-              workspaceSlug={workspaceSlug}
-              factoryId={factory.id}
-              suiteId={selected.suite_id}
-              suiteRevisionId={selected.id}
-              suiteRevisionNumber={selected.revision_number}
-              taskCount={members.length}
-              options={comparisonOptions}
-            />
+            {comparisonOptions ? (
+              <BenchmarkComparisonForm
+                key={`${factory.id}:${selected.id}`}
+                workspaceId={workspaceId}
+                workspaceSlug={workspaceSlug}
+                factoryId={factory.id}
+                suiteId={selected.suite_id}
+                suiteRevisionId={selected.id}
+                suiteRevisionNumber={selected.revision_number}
+                taskCount={members.length}
+                options={comparisonOptions}
+              />
+            ) : (
+              <p className="ui-sheet type-secondary px-4 py-5 text-muted sm:px-5">
+                Revision {selected.revision_number} has no frozen tasks. Save a suite revision with
+                at least one task before comparing configurations.
+              </p>
+            )}
           </PageSection>
         ) : null}
         {comparisons ? (
-          <PageSection anchorId="frozen-comparisons" title="Frozen comparisons">
+          <PageSection
+            anchorId="frozen-comparisons"
+            title="Frozen comparisons"
+            tagline={`Comparisons for Revision ${selected.revision_number}`}
+          >
             <div className="ui-sheet divide-y divide-border">
               {comparisons.items.length ? (
                 <ul className="divide-y divide-border">
@@ -189,15 +209,29 @@ export default async function BenchmarkSuitePage({
                       </Link>
                       <p className="type-annotation text-muted">
                         {comparison.counts.planned} planned · {comparison.counts.terminal} finished
-                        · {comparison.counts.pending} pending · {comparison.counts.excluded}{" "}
-                        excluded
+                        ·{" "}
+                        {comparison.scheduleState === "unconfigured"
+                          ? "Not scheduled"
+                          : `${comparison.counts.pending} pending`}{" "}
+                        · {comparison.counts.excluded} excluded
                       </p>
                     </li>
                   ))}
                 </ul>
               ) : (
                 <p className="type-secondary px-4 py-3 text-muted sm:px-5">
-                  No comparisons on this page.
+                  {comparisonPage.data.beforeExperimentId
+                    ? "No comparisons on this page."
+                    : "No comparisons were saved for this revision."}
+                  {!comparisonPage.data.beforeExperimentId && latest.revision_number > 1 ? (
+                    <>
+                      {" "}
+                      <Link className="underline underline-offset-4" href="#revision-history">
+                        Browse other revisions
+                      </Link>
+                      {" to find their comparisons."}
+                    </>
+                  ) : null}
                 </p>
               )}
               {comparisonPage.data.beforeExperimentId || comparisons.nextCursor ? (
@@ -233,6 +267,8 @@ export default async function BenchmarkSuitePage({
           </PageSection>
         ) : null}
         <PageSection
+          anchorId="suite-membership"
+          className="scroll-mt-24"
           title="Suite membership"
           statusBadge={
             <Status
@@ -241,6 +277,7 @@ export default async function BenchmarkSuitePage({
             />
           }
         >
+          <BenchmarkMembershipFocus key={selected.id} />
           <div className="ui-sheet divide-y divide-border">
             {selected.selection_tags ? (
               <p className="type-secondary px-4 py-3 text-muted [overflow-wrap:anywhere] sm:px-5">
@@ -280,12 +317,10 @@ export default async function BenchmarkSuitePage({
                             <MetadataItem
                               label="Source run"
                               value={
-                                <Link
-                                  className="underline underline-offset-4"
-                                  href={workspaceRunDetailPath(workspaceSlug, task.sourceRunId)}
-                                >
-                                  View source run
-                                </Link>
+                                <BenchmarkTaskSource
+                                  source={task.source}
+                                  workspaceSlug={workspaceSlug}
+                                />
                               }
                             />
                           </MetadataList>
@@ -316,19 +351,21 @@ export default async function BenchmarkSuitePage({
               </ul>
             ) : (
               <p className="type-secondary px-4 py-5 text-muted sm:px-5">
-                No tasks were saved in this revision.
+                No tasks were saved in this revision. Add tasks in a new revision before comparing
+                configurations.
               </p>
             )}
           </div>
         </PageSection>
         {editing ? (
-          <PageSection anchorId="edit-suite" title="Edit suite">
+          <PageSection anchorId="edit-suite" className="scroll-mt-24" title="Edit suite">
             <SuiteCurationForm
               key={selected.id}
               workspaceId={workspaceId}
               workspaceSlug={workspaceSlug}
               factoryId={factory.id}
               taskChoices={choices}
+              cancelHref={`${suitePath({ revision: selected.id, before: page.data.before })}#suite-membership`}
               draft={{
                 suiteId: selected.suite_id,
                 revisionId: selected.id,
@@ -340,7 +377,7 @@ export default async function BenchmarkSuitePage({
             />
           </PageSection>
         ) : null}
-        <PageSection title="Revision history">
+        <PageSection anchorId="revision-history" className="scroll-mt-24" title="Revision history">
           <div className="ui-sheet divide-y divide-border">
             {revisions.length ? (
               <ul className="divide-y divide-border">

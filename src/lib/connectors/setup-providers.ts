@@ -44,13 +44,26 @@ const githubLabel = z.object({
 });
 const githubToken = z.object({ token: z.string().min(1) });
 const linearNode = z.object({ id: z.uuid().toLowerCase(), name });
-const linearPage = z.object({
-  nodes: z.array(linearNode).max(connectorCatalogPageSize),
-  pageInfo: z.object({
-    hasNextPage: z.boolean(),
-    endCursor: z.string().min(1).max(1024).nullable(),
-  }),
+const linearTeam = linearNode.extend({ key: name });
+const linearMappedNode = linearNode.extend({ archivedAt: z.string().nullable() });
+const linearPageInfo = z.object({
+  hasNextPage: z.boolean(),
+  endCursor: z.string().min(1).max(1024).nullable(),
 });
+const linearPage = <T extends z.ZodType>(node: T, max = connectorCatalogPageSize) =>
+  z.object({ nodes: z.array(node).max(max), pageInfo: linearPageInfo });
+
+function nextLinearCursor(pageInfo: z.output<typeof linearPageInfo>, after: string | null) {
+  if (!pageInfo.hasNextPage) return null;
+  if (!pageInfo.endCursor || pageInfo.endCursor === after)
+    throw new ConnectorProviderUnavailable("linear");
+  return pageInfo.endCursor;
+}
+
+const teamFields = "id name key";
+function teamOption(team: z.output<typeof linearTeam>) {
+  return { id: team.id, label: team.name, description: team.key };
+}
 
 async function guardedProviderRead<T>(
   provider: ConnectorProviderUnavailable["provider"],
@@ -219,29 +232,26 @@ export function linearCatalogProvider(encryptedKey: string, signal: AbortSignal)
         `query ConnectorLinearCatalog($first: Int!, $after: String) {
           organization { id name }
           ${connection}(first: $first, after: $after) {
-            nodes { id name }
+            nodes { ${kind === "team" ? teamFields : "id name"} }
             pageInfo { hasNextPage endCursor }
           }
         }`,
         { first: connectorCatalogPageSize, after },
         z.object({
           organization: linearNode,
-          teams: linearPage.optional(),
-          projects: linearPage.optional(),
+          teams: linearPage(linearTeam).optional(),
+          projects: linearPage(linearNode).optional(),
         }),
       );
       const page = result[connection];
-      if (
-        !page ||
-        (page.pageInfo.hasNextPage &&
-          (!page.pageInfo.endCursor || page.pageInfo.endCursor === after))
-      ) {
-        throw new ConnectorProviderUnavailable("linear");
-      }
+      if (!page) throw new ConnectorProviderUnavailable("linear");
       return {
         tenant: { id: result.organization.id, label: result.organization.name },
-        resources: page.nodes.map((node) => ({ id: node.id, label: node.name })),
-        nextCursor: page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null,
+        resources:
+          kind === "team"
+            ? (result.teams?.nodes ?? []).map(teamOption)
+            : (result.projects?.nodes ?? []).map((node) => ({ id: node.id, label: node.name })),
+        nextCursor: nextLinearCursor(page.pageInfo, after),
       };
     },
     async resource(kind: LinearKind, id: string) {
@@ -257,7 +267,115 @@ export function linearCatalogProvider(encryptedKey: string, signal: AbortSignal)
           project: linearNode.nullish(),
         }),
       );
-      return { tenantId: result.organization.id, resourceId: result[kind]?.id ?? null };
+      return {
+        tenantId: result.organization.id,
+        resourceId: result[kind]?.id ?? null,
+        label: result[kind]?.name,
+        tenantLabel: result.organization.name,
+      };
+    },
+    async mappedTeams(
+      kind: LinearKind,
+      id: string,
+      tenantId: string,
+      after: string | null,
+      first: number,
+    ) {
+      const team = linearMappedNode.extend({ key: name, retiredAt: z.string().nullable() });
+      const result = await query(
+        kind === "team"
+          ? `query ConnectorLinearMappedTeam($id: String!) {
+              organization { id name }
+              team(id: $id) { ${teamFields} archivedAt retiredAt }
+            }`
+          : `query ConnectorLinearProjectTeams($id: String!, $first: Int!, $after: String) {
+              organization { id name }
+              project(id: $id) {
+                id name archivedAt
+                teams(first: $first, after: $after, filter: { retiredAt: { null: true } }) {
+                  nodes { ${teamFields} }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            }`,
+        kind === "team" ? { id } : { id, first, after },
+        z.object({
+          organization: linearNode,
+          team: team.nullish(),
+          project: linearMappedNode.extend({ teams: linearPage(linearTeam, first) }).nullish(),
+        }),
+      );
+      const mapped = result[kind];
+      if (
+        result.organization.id !== tenantId ||
+        mapped?.id !== id ||
+        mapped.archivedAt !== null ||
+        (result.team && result.team.retiredAt !== null)
+      )
+        throw new ConnectorProviderUnavailable("linear");
+      const teams = result.team ? [result.team] : (result.project?.teams.nodes ?? []);
+      return {
+        tenant: { id: result.organization.id, label: result.organization.name },
+        resources: teams.map(teamOption),
+        nextCursor: result.project ? nextLinearCursor(result.project.teams.pageInfo, after) : null,
+      };
+    },
+    async policyChoices(
+      kind: "state" | "label",
+      tenantId: string,
+      teamIds: string[],
+      after: string | null,
+    ) {
+      const isState = kind === "state";
+      const connection = isState ? "workflowStates" : "issueLabels";
+      const teamFilter = { team: { id: { in: teamIds } } };
+      const workspaceFilter = { team: { null: true } };
+      const filter = isState
+        ? teamFilter
+        : teamIds.length
+          ? { or: [workspaceFilter, teamFilter] }
+          : workspaceFilter;
+      const result = await query(
+        `query ConnectorLinearPolicyChoices(
+          $first: Int!, $after: String, $filter: ${isState ? "WorkflowStateFilter" : "IssueLabelFilter"}!
+        ) {
+          organization { id name }
+          ${connection}(first: $first, after: $after, filter: $filter) {
+            nodes { id name team { ${teamFields} } ${isState ? "type" : "isGroup"} }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+        { first: connectorCatalogPageSize, after, filter },
+        z.object({
+          organization: linearNode,
+          workflowStates: linearPage(
+            linearNode.extend({ team: linearTeam, type: name }),
+          ).optional(),
+          issueLabels: linearPage(
+            linearNode.extend({ team: linearTeam.nullable(), isGroup: z.boolean() }),
+          ).optional(),
+        }),
+      );
+      const page = result[connection];
+      if (
+        result.organization.id !== tenantId ||
+        !page ||
+        page.nodes.some((node) => node.team && !teamIds.includes(node.team.id))
+      )
+        throw new ConnectorProviderUnavailable("linear");
+      return {
+        resources: page.nodes
+          .filter((node) => !("isGroup" in node) || !node.isGroup)
+          .map((node) => ({
+            id: node.id,
+            label: node.name,
+            teamId: node.team?.id,
+            description: node.team
+              ? `${node.team.name} (${node.team.key})${"type" in node ? ` · ${node.type.replaceAll("_", " ")}` : ""}`
+              : "Linear workspace label",
+          })),
+        nextCursor: nextLinearCursor(page.pageInfo, after),
+      };
     },
   };
 }

@@ -119,7 +119,8 @@ select is(value->'nextCursor', jsonb_build_object('id', pg_temp.op651_id(406),
   'recordedAt', '2026-11-23T12:34:56.123456Z'::timestamptz),
   'the cursor is the last returned position with exact timestamp precision') from setup_first_page;
 select is(value#>'{occurrences,0}', jsonb_build_object(
-  'id', pg_temp.op651_id(425), 'revisionNumber', 1, 'triggerKind', 'issue-state', 'status', 'admitted',
+  'id', pg_temp.op651_id(425), 'revisionId', (select revision_id from setup_history_rule),
+  'revisionNumber', 1, 'triggerKind', 'issue-state', 'status', 'admitted',
   'reason', null, 'attemptCount', 1, 'recordedAt', '2026-11-23T12:34:56.123456Z'::timestamptz,
   'settledAt', '2026-11-23T12:35:00Z'::timestamptz, 'nextAttemptAt', null, 'sessionNumber', 901
 ), 'an admitted receipt includes the visible session number and only approved history fields') from setup_first_page;

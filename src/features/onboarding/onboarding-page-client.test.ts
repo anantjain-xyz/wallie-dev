@@ -1009,7 +1009,8 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
-    expect(html).toContain("Workspace has no default pipeline.");
+    expect(html).toContain("This workspace has no default pipeline.");
+    expect(html).toContain("Ask your workspace owner to contact Wallie support to restore it.");
     expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
@@ -1143,7 +1144,8 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Model identifier passed to the selected provider.");
     expect(html).toContain("Reasoning effort passed to the selected provider.");
     expect(html).toContain(">Provider</label>");
-    expect(html).toContain(">Model</span>");
+    expect(html).toContain(">Model</label>");
+    expect(html).toContain("Recommended · gpt-5.6-sol");
     expect(html).toContain(">Effort</label>");
     expect(html).not.toContain("Agent provider");
     expect(html).not.toContain("Agent model");

@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { PageSection } from "@/components/ui/page-shell";
 import { SelectField } from "@/components/ui/select";
+import { AnalyticsScorerSelectionForm } from "@/features/factory-analytics/analytics-scorer-selection-form";
 import type {
   ScoreCohort,
   ScoreMetrics,
@@ -422,6 +423,7 @@ export function ScorerTrends({
   path,
   preserved,
   selectRevision,
+  reportingWindow,
 }: {
   workspaceSlug: string;
   query: ScorerTrendQuery | null;
@@ -429,13 +431,15 @@ export function ScorerTrends({
   path: string;
   preserved: Fields;
   selectRevision?: boolean;
+  reportingWindow?: { from: string; to: string };
 }) {
   const unavailable = !query || !data;
   const trend = data?.trend;
   const revision = data?.revisionId;
   const revisions = data?.revisions ?? [];
   const cohorts = data?.cohorts ?? [];
-  const fields = query ? { ...preserved, from: query.from, to: query.to } : preserved;
+  const range = reportingWindow ?? query;
+  const fields = range ? { ...preserved, from: range.from, to: range.to } : preserved;
   const revisionField = selectRevision ? { scorerRevision: revision } : {};
   const revisionPage = {
     beforeRevisionAt: query?.beforeRevisionAt,
@@ -477,15 +481,52 @@ export function ScorerTrends({
   const defaultRevision = hasRevisionOption ? (revision ?? "") : "";
   const hasCohortOption = cohorts.some(({ policy_id }) => policy_id === data?.policyId);
   const defaultCohort = hasCohortOption ? (data?.policyId ?? "") : (cohorts[0]?.policy_id ?? "");
+  const SelectionForm = reportingWindow ? AnalyticsScorerSelectionForm : "form";
   return (
     <PageSection anchorId="scorer-trends" className="min-w-0" title="Scorer trends">
       <div className="min-w-0 space-y-4">
+        {reportingWindow && (
+          <p className="type-secondary text-muted">
+            Reporting range: {calendar.format(new Date(reportingWindow.from))} to{" "}
+            {calendar.format(new Date(reportingWindow.to))} UTC (end excluded).{" "}
+            <a className={linkClass} href="#analytics-filters">
+              Change reporting dates
+            </a>
+            {!unavailable &&
+              (query?.scorerRevision ||
+                query?.cohort ||
+                query?.beforeRevisionPolicy ||
+                query?.beforeCohortPolicy) && (
+                <>
+                  {" · "}
+                  <Link
+                    className={linkClass}
+                    href={withFields(path, fields, "scorer-trends")}
+                    prefetch={false}
+                  >
+                    Reset scorer filters
+                  </Link>
+                </>
+              )}
+          </p>
+        )}
         {unavailable ? (
           <p className="ui-sheet type-secondary px-4 py-4 text-muted sm:px-5">
             {query ? "Scorer trends are unavailable." : "The scorer filters are invalid."}{" "}
+            {reportingWindow && query && (
+              <>
+                <a
+                  className={linkClass}
+                  href={withFields(path, { ...query, ...fields }, "scorer-trends")}
+                >
+                  Try again
+                </a>
+                {" · "}
+              </>
+            )}
             <Link
               className={linkClass}
-              href={withFields(path, preserved, "scorer-trends")}
+              href={withFields(path, reportingWindow ? fields : preserved, "scorer-trends")}
               prefetch={false}
             >
               Reset scorer filters
@@ -497,10 +538,13 @@ export function ScorerTrends({
             {showRevisionOptions ? (
               <div className="space-y-3 px-4 py-4 sm:px-5">
                 {revisions.length ? (
-                  <form
+                  <SelectionForm
                     action={`${path}#scorer-trends`}
                     className="flex flex-wrap items-end gap-3"
                     method="get"
+                    {...(reportingWindow
+                      ? { unchanged: { name: "scorerRevision", value: revision } }
+                      : {})}
                   >
                     <HiddenFields values={fields} />
                     <SelectField
@@ -525,7 +569,7 @@ export function ScorerTrends({
                     <button className="ui-button" type="submit">
                       Show revision
                     </button>
-                  </form>
+                  </SelectionForm>
                 ) : null}
                 <OptionPages
                   label="scorer revisions"
@@ -548,13 +592,21 @@ export function ScorerTrends({
             {showCohortOptions ? (
               <div className="space-y-3 px-4 py-4 sm:px-5">
                 {cohorts.length ? (
-                  <form
+                  <SelectionForm
                     action={`${path}#scorer-trends`}
                     className="flex flex-wrap items-end gap-3"
                     method="get"
+                    {...(reportingWindow
+                      ? { unchanged: { name: "cohort", value: data.policyId } }
+                      : {})}
                   >
                     <HiddenFields
-                      values={{ ...preserved, ...revisionField, ...revisionPage, ...cohortPage }}
+                      values={{
+                        ...(reportingWindow ? fields : preserved),
+                        ...revisionField,
+                        ...revisionPage,
+                        ...cohortPage,
+                      }}
                     />
                     <SelectField
                       className="min-w-52 max-w-full"
@@ -569,30 +621,34 @@ export function ScorerTrends({
                       }))}
                       wrap
                     />
-                    <label className="type-label flex flex-col gap-1.5">
-                      From (UTC)
-                      <input
-                        className="ui-input"
-                        defaultValue={query.from}
-                        name="from"
-                        required
-                        type="date"
-                      />
-                    </label>
-                    <label className="type-label flex flex-col gap-1.5">
-                      To (exclusive)
-                      <input
-                        className="ui-input"
-                        defaultValue={query.to}
-                        name="to"
-                        required
-                        type="date"
-                      />
-                    </label>
+                    {!reportingWindow && (
+                      <>
+                        <label className="type-label flex flex-col gap-1.5">
+                          From (UTC)
+                          <input
+                            className="ui-input"
+                            defaultValue={query.from}
+                            name="from"
+                            required
+                            type="date"
+                          />
+                        </label>
+                        <label className="type-label flex flex-col gap-1.5">
+                          To (exclusive)
+                          <input
+                            className="ui-input"
+                            defaultValue={query.to}
+                            name="to"
+                            required
+                            type="date"
+                          />
+                        </label>
+                      </>
+                    )}
                     <button className="ui-button-primary h-9 px-3 text-sm" type="submit">
                       Apply scorer filters
                     </button>
-                  </form>
+                  </SelectionForm>
                 ) : null}
                 <OptionPages
                   label="sampling cohorts"

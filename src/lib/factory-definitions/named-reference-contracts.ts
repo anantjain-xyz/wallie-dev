@@ -23,11 +23,31 @@ export const referenceKind = z.enum([
   "routing",
 ]);
 export type ReferenceKind = z.infer<typeof referenceKind>;
+const recentReferenceKinds = new Set<ReferenceKind>([
+  "executionPolicy",
+  "deliveryPolicy",
+  "implementationAgent",
+  "skills",
+  "scorers",
+  "tools",
+  "bindings",
+  "context",
+  "routing",
+]);
+export function referenceSortsByRecency(kind: ReferenceKind) {
+  return recentReferenceKinds.has(kind);
+}
 const uuid = z.string().uuid().toLowerCase();
+const suggestionCursorSchema = z.strictObject({
+  id: uuid,
+  createdAt: z.string().max(40).datetime({ offset: true }).optional(),
+});
+export type SuggestionCursor = z.infer<typeof suggestionCursorSchema>;
 const optionSchema = z.object({
   id: z.string(),
   label: z.string(),
   unavailable: z.boolean().optional(),
+  labelOnly: z.boolean().optional(),
   aliases: z.array(z.string()).optional(),
   pipelineId: uuid.optional(),
   agentId: uuid.optional(),
@@ -47,22 +67,35 @@ export const namedReferencesResponseSchema = z.object({
     referenceKind,
     z.object({
       options: z.array(optionSchema),
-      next: z.number().int().nonnegative().optional(),
+      next: suggestionCursorSchema.optional(),
     }),
   ),
 });
-export const namedReferencesRequestSchema = z.discriminatedUnion("mode", [
-  z.strictObject({ mode: z.literal("initial") }),
-  z.strictObject({
-    mode: z.literal("more"),
-    kind: referenceKind,
-    offset: z.number().int().min(1).max(100_000),
-  }),
-  z.strictObject({
-    mode: z.literal("pins"),
-    ids: z.record(referenceKind, z.array(uuid).max(1600)),
-  }),
-]);
+export const namedReferencePinBatchSize = 1600;
+export const namedReferencesRequestSchema = z
+  .discriminatedUnion("mode", [
+    z.strictObject({ mode: z.literal("initial") }),
+    z.strictObject({
+      mode: z.literal("more"),
+      kind: referenceKind,
+      after: suggestionCursorSchema,
+    }),
+    z.strictObject({
+      mode: z.literal("pins"),
+      ids: z.record(referenceKind, z.array(uuid).max(namedReferencePinBatchSize)),
+    }),
+  ])
+  .superRefine((request, context) => {
+    if (
+      request.mode === "more" &&
+      referenceSortsByRecency(request.kind) !== (request.after.createdAt !== undefined)
+    )
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["after", "createdAt"],
+        message: "The cursor must match the suggestion order.",
+      });
+  });
 export type NamedReferencesRequest = z.infer<typeof namedReferencesRequestSchema>;
 
 export function routingConfigurations(policy: ModelRoutingPolicy | undefined) {

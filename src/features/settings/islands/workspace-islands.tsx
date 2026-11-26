@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from "react";
 
-import type { SettingsInitialData, SettingsPageData } from "@/features/settings/data";
+import type { SettingsInitialData } from "@/features/settings/data";
 import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
 import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-section";
-import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
-import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 import {
   dispatchSettingsEvent,
   SETTINGS_WORKSPACE_NAME_CHANGED,
@@ -27,29 +25,6 @@ export function WorkspaceIdentityIsland({ initialData }: { initialData: Settings
         }}
         setFlashMessage={setMessage}
         workspace={workspace}
-      />
-    </>
-  );
-}
-
-export function WorkspaceMembersIsland({
-  initialData,
-  invitations,
-}: {
-  initialData: SettingsPageData;
-  invitations: WorkspaceInvitation[];
-}) {
-  const { feedback, setMessage } = useIslandFeedback();
-  return (
-    <>
-      {feedback}
-      <WorkspaceMembersSection
-        canManage={initialData.canManage}
-        currentMemberId={initialData.currentMember.id}
-        initialInvitations={invitations}
-        setFlashMessage={setMessage}
-        workspaceId={initialData.workspace.id}
-        workspaceMembers={initialData.workspaceMembers}
       />
     </>
   );

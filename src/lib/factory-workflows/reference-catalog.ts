@@ -16,6 +16,7 @@ import {
   type WorkflowReferencePage,
   type WorkflowReferenceQuery,
 } from "./authoring-contracts";
+import { workflowEditorReferencePins } from "./editor-reference-pins";
 import type { WorkflowTemplateRevision } from "./workflow-templates";
 
 type CatalogScope = {
@@ -40,9 +41,28 @@ function olderReferenceFilter({ createdAt, id }: WorkflowDatedReferenceCursor) {
   return `created_at.lt.${createdAt},and(created_at.eq.${createdAt},id.lt.${id})`;
 }
 
+function exactPage<Row, Choice>(rows: Row[], choice: (row: Row) => Choice) {
+  return { items: rows.map(choice), nextCursor: null };
+}
+
+async function hydratePinned<Choice extends { id: string }>(
+  page: { items: Choice[] },
+  pins: Iterable<string>,
+  load: (ids: string[]) => Promise<{ items: Choice[] }>,
+) {
+  const loaded = new Set(page.items.map(({ id }) => id));
+  const missing = [...new Set(pins)].filter((id) => !loaded.has(id));
+  const items = [...page.items];
+  for (let offset = 0; offset < missing.length; offset += 64) {
+    items.push(...(await load(missing.slice(offset, offset + 64))).items);
+  }
+  return items;
+}
+
 async function loadPromptChoices(
   { supabase, workspaceId, factoryId }: CatalogScope,
   after?: WorkflowDatedReferenceCursor,
+  pinned?: string[],
 ) {
   const query = supabase
     .from("factory_agent_prompt_revisions")
@@ -50,100 +70,154 @@ async function loadPromptChoices(
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factoryId)
     .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(workflowReferencePageSize + 1);
-  const { data, error } = await (after ? query.or(olderReferenceFilter(after)) : query);
+    .order("id", { ascending: false });
+  const page = pinned ? query.in("id", pinned) : query.limit(workflowReferencePageSize + 1);
+  const { data, error } = await (after ? page.or(olderReferenceFilter(after)) : page);
   if (error) throw error;
-  return referencePage(
-    data,
-    (item) => ({
-      id: item.id,
-      label: `${item.factory_agents.name} · Revision ${item.revision_number}`,
-    }),
-    ({ id, created_at }) => ({ id, createdAt: created_at }),
-  );
+  const choice = (item: (typeof data)[number]) => ({
+    id: item.id,
+    label: `${item.factory_agents.name} · Revision ${item.revision_number}`,
+  });
+  return pinned
+    ? exactPage(data, choice)
+    : referencePage(data, choice, ({ id, created_at }) => ({ id, createdAt: created_at }));
 }
 
-async function loadApproverChoices({ supabase, workspaceId }: CatalogScope, afterId?: string) {
+async function loadApproverChoices(
+  { supabase, workspaceId }: CatalogScope,
+  afterId?: string,
+  pinned?: string[],
+) {
   const query = supabase
     .from("workspace_members")
     .select("id, full_name, username, email")
     .eq("workspace_id", workspaceId)
     .eq("kind", "human")
     .eq("is_active", true)
-    .order("id")
-    .limit(workflowReferencePageSize + 1);
-  const { data, error } = await (afterId ? query.gt("id", afterId) : query);
+    .order("id");
+  const page = pinned ? query.in("id", pinned) : query.limit(workflowReferencePageSize + 1);
+  const { data, error } = await (afterId ? page.gt("id", afterId) : page);
   if (error) throw error;
-  return referencePage(
-    data,
-    ({ id, full_name, username, email }) => ({
-      id,
-      label: full_name || username || email || id,
-    }),
-    ({ id }) => ({ id }),
-  );
+  const choice = ({ id, full_name, username, email }: (typeof data)[number]) => ({
+    id,
+    label:
+      [...new Set([full_name, username ? `@${username}` : email].filter(Boolean))].join(" · ") ||
+      "Unnamed workspace member",
+  });
+  return pinned ? exactPage(data, choice) : referencePage(data, choice, ({ id }) => ({ id }));
 }
 
 async function loadProfileChoices(
-  { supabase, workspaceId, factoryId }: CatalogScope,
+  scope: CatalogScope,
   after?: WorkflowDatedReferenceCursor,
   templateRepositoryId?: string,
+  pinned?: string[],
 ) {
-  const revisions = supabase.from("factory_definition_revisions");
-  const query = (
-    templateRepositoryId
-      ? revisions
-          .select(
-            "id, canonical_digest, created_at, definition_json, factory_definition_activations(id)",
-          )
-          .limit(1, { referencedTable: "factory_definition_activations" })
-      : revisions.select("id, canonical_digest, created_at")
-  )
+  const { supabase, workspaceId, factoryId } = scope;
+  const query = supabase
+    .from("factory_definition_revisions")
+    .select(
+      "id, canonical_digest, created_at, definition_json, factory_definition_activations(activation_number, created_at)",
+    )
     .eq("workspace_id", workspaceId)
     .eq("factory_id", factoryId)
+    .order("activation_number", {
+      ascending: false,
+      referencedTable: "factory_definition_activations",
+    })
+    .limit(1, { referencedTable: "factory_definition_activations" })
     .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(workflowReferencePageSize + 1);
-  const { data, error } = await (after ? query.or(olderReferenceFilter(after)) : query);
+    .order("id", { ascending: false });
+  const request = pinned ? query.in("id", pinned) : query.limit(workflowReferencePageSize + 1);
+  const { data, error } = await (after ? request.or(olderReferenceFilter(after)) : request);
   if (error) throw error;
-  return referencePage(
-    data,
-    (item) => {
-      const { id, canonical_digest, created_at } = item;
-      const definition =
-        "definition_json" in item &&
-        typeof item.definition_json === "string" &&
-        "factory_definition_activations" in item &&
-        Array.isArray(item.factory_definition_activations) &&
-        item.factory_definition_activations.length
-          ? readVerifiedFactoryDefinition(item.definition_json, canonical_digest)
-          : null;
-      const promptRevisionId = definition?.implementationAgent?.promptRevisionId;
+  const toCursor = ({ id, created_at }: (typeof data)[number]) => ({ id, createdAt: created_at });
+  const page = pinned ? exactPage(data, (row) => row) : referencePage(data, (row) => row, toCursor);
+  const profiles = page.items.flatMap((row) => {
+    const definition = readVerifiedFactoryDefinition(row.definition_json, row.canonical_digest);
+    return definition ? [{ row, definition }] : [];
+  });
+  const [prompts, repositories] = await Promise.all([
+    hydratePinned(
+      { items: [] as { id: string; label: string }[] },
+      profiles.flatMap(({ definition }) =>
+        definition.implementationAgent ? [definition.implementationAgent.promptRevisionId] : [],
+      ),
+      (ids) => loadPromptChoices(scope, undefined, ids),
+    ),
+    loadRepositoryNames(
+      scope,
+      profiles.map(({ definition }) => definition.repositoryId),
+    ),
+  ]);
+  const promptLabels = new Map(prompts.map(({ id, label }) => [id, label]));
+  return {
+    nextCursor: page.nextCursor,
+    items: profiles.map(({ row, definition }) => {
+      const activation = row.factory_definition_activations?.[0];
+      const promptRevisionId = definition.implementationAgent?.promptRevisionId;
       const templateRole =
-        definition?.repositoryId === templateRepositoryId &&
+        activation &&
+        definition.repositoryId === templateRepositoryId &&
         promptRevisionId &&
-        definition?.executionGrant &&
+        definition.executionGrant &&
         definition.credentialBindingId &&
         !definition.modelRouting
           ? { promptRevisionId, canRunForeman: definition.agent.provider === "codex" }
           : undefined;
+      const provider =
+        definition.agent.provider === "codex"
+          ? "Codex"
+          : definition.agent.provider === "claude-code"
+            ? "Claude Code"
+            : definition.agent.provider;
+      const name = (promptRevisionId && promptLabels.get(promptRevisionId)) || "Execution profile";
+      const date = activation?.created_at ?? row.created_at;
       return {
-        id,
-        digest: canonical_digest,
-        label: `${created_at.slice(0, 10)} · ${canonical_digest.slice(0, 10)}`,
+        id: row.id,
+        digest: row.canonical_digest,
+        label: [
+          name,
+          provider,
+          repositories.get(definition.repositoryId),
+          activation ? `Activation ${activation.activation_number}` : "Not activated",
+          date.slice(0, 10),
+        ]
+          .filter(Boolean)
+          .join(" · "),
         ...(templateRole ? { templateRole } : {}),
       };
-    },
-    ({ id, created_at }) => ({ id, createdAt: created_at }),
-  );
+    }),
+  };
+}
+
+async function loadRepositoryNames(
+  { supabase, workspaceId, factoryId }: CatalogScope,
+  ids: string[],
+  onlyActive = false,
+) {
+  const names = new Map<string, string>();
+  const repositories = [...new Set(ids)];
+  for (let offset = 0; offset < repositories.length; offset += 64) {
+    const query = supabase
+      .from("github_repositories")
+      .select("id, full_name")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factoryId)
+      .in("id", repositories.slice(offset, offset + 64));
+    const { data, error } = await (onlyActive ? query.eq("is_archived", false) : query);
+    if (error) throw error;
+    for (const { id, full_name } of data) names.set(id, full_name);
+  }
+  return names;
 }
 
 async function loadWriterChoices(
-  { supabase, workspaceId, factoryId }: CatalogScope,
+  scope: CatalogScope,
   base: WorkflowBaseDefinition | null,
   definition: ReturnType<typeof readVerifiedFactoryDefinition>,
   afterId?: string,
+  pinned?: string[],
 ) {
   if (
     !base ||
@@ -153,6 +227,7 @@ async function loadWriterChoices(
   ) {
     return { items: [], nextCursor: null };
   }
+  const { supabase, workspaceId, factoryId } = scope;
   const query = supabase
     .from("factory_execution_grants")
     .select("id, version, github_repository_id")
@@ -162,28 +237,22 @@ async function loadWriterChoices(
     .neq("github_repository_id", definition.repositoryId)
     .is("revoked_at", null)
     .gt("expires_at", new Date().toISOString())
-    .order("id")
-    .limit(workflowReferencePageSize + 1);
-  const { data, error } = await (afterId ? query.gt("id", afterId) : query);
+    .order("id");
+  const request = pinned ? query.in("id", pinned) : query.limit(workflowReferencePageSize + 1);
+  const { data, error } = await (afterId ? request.gt("id", afterId) : request);
   if (error) throw error;
-  const page = referencePage(
-    data,
-    (row) => row,
-    ({ id }) => ({ id, baseActivationId: base.activationId }),
+  const page = pinned
+    ? exactPage(data, (row) => row)
+    : referencePage(
+        data,
+        (row) => row,
+        ({ id }) => ({ id, baseActivationId: base.activationId }),
+      );
+  const byId = await loadRepositoryNames(
+    scope,
+    page.items.map(({ github_repository_id }) => github_repository_id),
+    true,
   );
-  if (!page.items.length) return { items: [], nextCursor: page.nextCursor };
-  const repositories = [
-    ...new Set(page.items.map(({ github_repository_id }) => github_repository_id)),
-  ];
-  const { data: names, error: repositoryError } = await supabase
-    .from("github_repositories")
-    .select("id, full_name")
-    .eq("workspace_id", workspaceId)
-    .eq("factory_id", factoryId)
-    .eq("is_archived", false)
-    .in("id", repositories);
-  if (repositoryError) throw repositoryError;
-  const byId = new Map(names.map(({ id, full_name }) => [id, full_name]));
   return {
     nextCursor: page.nextCursor,
     items: page.items.flatMap(({ id, version, github_repository_id: repositoryId }) => {
@@ -293,10 +362,29 @@ async function loadTemplateSource(
   };
 }
 
+export async function loadWorkflowTemplatePrerequisites(
+  scope: CatalogScope,
+  base: WorkflowBaseDefinition | null,
+) {
+  const definition = await loadWorkflowBaseDefinition(scope, base);
+  if (!definition) return { state: "no-definition" } as const;
+  const source = await loadTemplateSource(scope, definition, {
+    id: "product-delivery",
+    version: 1,
+  });
+  if (!source) return { state: "missing-references" } as const;
+  return {
+    state: "configured",
+    canDraftProductScope: source.canDraftProductScope,
+    hasRequiredEvidence: source.hasRequiredEvidence,
+  } as const;
+}
+
 export async function loadWorkflowEditorChoices(
   scope: CatalogScope,
   base: WorkflowBaseDefinition | null,
   template?: WorkflowTemplateRevision | null,
+  graph?: WorkflowGraphDefinition | null,
 ): Promise<WorkflowEditorCatalog> {
   const definition = loadWorkflowBaseDefinition(scope, base);
   const [prompts, approvers, profiles, baseChoices] = await Promise.all([
@@ -306,19 +394,46 @@ export async function loadWorkflowEditorChoices(
       ? definition.then((active) => loadProfileChoices(scope, undefined, active?.repositoryId))
       : loadProfileChoices(scope),
     definition.then(async (active) => {
-      const [writers, templateSource] = await Promise.all([
+      const [writers, templateSource, repositories] = await Promise.all([
         loadWriterChoices(scope, base, active),
         loadTemplateSource(scope, active, template),
+        loadRepositoryNames(scope, active?.executionGrant ? [active.repositoryId] : []),
       ]);
-      return { grant: active?.executionGrant ?? null, writers, templateSource };
+      return {
+        active,
+        writers,
+        templateSource,
+        grantRepository: active && repositories.get(active.repositoryId),
+      };
     }),
   ]);
+  const pins = workflowEditorReferencePins(graph);
+  const [promptItems, approverItems, profileItems, writerItems] = await Promise.all([
+    hydratePinned(prompts, pins.prompts, (ids) => loadPromptChoices(scope, undefined, ids)),
+    hydratePinned(
+      approvers,
+      [...pins.approvers, ...(baseChoices.templateSource?.approverMemberIds ?? [])],
+      (ids) => loadApproverChoices(scope, undefined, ids),
+    ),
+    hydratePinned(profiles, pins.profiles, (ids) =>
+      loadProfileChoices(
+        scope,
+        undefined,
+        template ? baseChoices.active?.repositoryId : undefined,
+        ids,
+      ),
+    ),
+    hydratePinned(baseChoices.writers, pins.writers, (ids) =>
+      loadWriterChoices(scope, base, baseChoices.active, undefined, ids),
+    ),
+  ]);
   return {
-    prompts: prompts.items,
-    approvers: approvers.items,
-    profiles: profiles.items,
-    grant: baseChoices.grant,
-    writers: baseChoices.writers.items,
+    prompts: promptItems,
+    approvers: approverItems,
+    profiles: profileItems,
+    grant: baseChoices.active?.executionGrant ?? null,
+    ...(baseChoices.grantRepository ? { grantRepository: baseChoices.grantRepository } : {}),
+    writers: writerItems,
     ...(baseChoices.templateSource ? { templateSource: baseChoices.templateSource } : {}),
     nextCursors: {
       prompts: prompts.nextCursor,

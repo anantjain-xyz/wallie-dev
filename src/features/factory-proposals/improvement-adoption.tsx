@@ -58,14 +58,40 @@ export async function ImprovementAdoption({
   proposalId,
   proposalRevisionId,
   historical,
+  dismissed,
+  latestRevisionHref,
 }: {
   scope: Scope;
   workspaceSlug: string;
   proposalId: string;
   proposalRevisionId: string;
   historical: boolean;
+  dismissed: boolean;
+  latestRevisionHref: string;
 }) {
-  if (!scope.factory.canManage) return null;
+  if (!scope.factory.canManage) {
+    return (
+      <PageSection anchorId="adoption" title="Adoption">
+        <p className="ui-sheet type-secondary p-4 text-muted sm:p-5">
+          Factory managers can view adoption receipts. A workspace owner or admin can adopt a
+          reviewed merge.
+        </p>
+      </PageSection>
+    );
+  }
+  const revisionBlocker = historical ? (
+    <>
+      This is an earlier revision.{" "}
+      <Link className="underline underline-offset-4" href={latestRevisionHref}>
+        Review the latest proposal revision
+      </Link>
+      .
+    </>
+  ) : dismissed ? (
+    "This revision was dismissed and can no longer be published or adopted."
+  ) : scope.factory.status !== "active" ? (
+    "This factory is archived. Its adoption history remains read-only."
+  ) : null;
   const { publication, adoption, missing } = await loadAdoptionReceipts(
     scope,
     proposalId,
@@ -90,7 +116,8 @@ export async function ImprovementAdoption({
         <p className="ui-sheet type-secondary p-4 text-muted sm:p-5">
           {missing
             ? "Could not load the adoption receipts. Reload to retry."
-            : "This revision has no GitHub publication."}
+            : (revisionBlocker ??
+              "This revision has no GitHub publication. Adoption requires a verified, reviewed merge.")}
         </p>
       </PageSection>
     );
@@ -101,7 +128,7 @@ export async function ImprovementAdoption({
     candidate,
     comparisons: { targeted, holdout },
   } = evidence;
-  const [{ data: suites }, { data: head }] = await Promise.all([
+  const [{ data: suites }, { data: head, error: headError }] = await Promise.all([
     scope.supabase
       .from("factory_benchmark_suite_revisions")
       .select("id, suite_id")
@@ -135,7 +162,7 @@ export async function ImprovementAdoption({
     !missing &&
     !adoption &&
     publication?.current &&
-    !historical &&
+    !revisionBlocker &&
     activeBase &&
     scope.workspaceOperator &&
     pull &&
@@ -229,11 +256,20 @@ export async function ImprovementAdoption({
           <p className="type-secondary text-muted">
             Could not load all adoption receipts. Reload to retry.
           </p>
-        ) : historical ? (
-          <p className="type-secondary text-muted">Publication for an earlier revision.</p>
-        ) : pull && (!publication?.current || !activeBase) ? (
+        ) : revisionBlocker ? (
+          <p className="type-secondary text-muted">{revisionBlocker}</p>
+        ) : headError ? (
           <p className="type-secondary text-muted">
-            The recorded base or proposal changed after publication.
+            Could not verify the active configuration. Reload to retry.
+          </p>
+        ) : publication && !publication.current ? (
+          <p className="type-secondary text-muted">
+            Publication is no longer current. Review the latest revision and the GitHub publication.
+          </p>
+        ) : !activeBase ? (
+          <p className="type-secondary text-muted">
+            The active configuration is no longer the recorded base. Review the current factory
+            definition.
           </p>
         ) : command ? (
           <>
@@ -245,7 +281,7 @@ export async function ImprovementAdoption({
               command={command}
             />
           </>
-        ) : pull ? (
+        ) : !scope.workspaceOperator ? (
           <p className="type-secondary text-muted">
             A workspace owner or admin can adopt the reviewed merge.
           </p>

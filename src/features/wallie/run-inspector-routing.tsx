@@ -3,6 +3,8 @@ import Link from "next/link";
 import { MetadataItem, MetadataList, PageSection } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import type { RunInspectorRoutingDecision } from "@/features/wallie/run-inspector-data";
+import type { RunInspectorNames } from "@/features/wallie/run-inspector-names";
+import { RunTechnicalDetails } from "@/features/wallie/run-technical-details";
 import { RUN_PROVIDER_LABELS } from "@/features/wallie/runs-list-state";
 import { routingDecisionReasonLabels } from "@/lib/model-routing/decision-contracts";
 import {
@@ -21,10 +23,14 @@ export function RunRoutingDecisionInspection({
   canOpenPolicy,
   result,
   workspaceSlug,
+  execution,
+  names,
 }: {
   canOpenPolicy: boolean;
   result: RunInspectorRoutingDecision;
   workspaceSlug: string;
+  execution?: { name: string; provider: string };
+  names?: RunInspectorNames;
 }) {
   if (result.kind !== "recorded") {
     return (
@@ -41,6 +47,7 @@ export function RunRoutingDecisionInspection({
   const { decision, factoryId, canManageFactory, taskClassName, benchmarkEvidence, override } =
     result.receipt;
   const selected = decision.disposition === "selected";
+  const shadow = decision.mode === "shadow";
   const evidence = canManageFactory ? benchmarkEvidence : null;
   const revisionPath = workspaceFactoryDefinitionPath(workspaceSlug, {
     factory: factoryId,
@@ -57,7 +64,9 @@ export function RunRoutingDecisionInspection({
           : "Shadow evaluation recorded at admission. The execution profile records what ran."
       }
       statusBadge={
-        override ? (
+        shadow ? (
+          <Status label="Shadow only — not applied" value="not_started" />
+        ) : override ? (
           <Status label="Override recorded" value="healthy" />
         ) : selected ? (
           <Status label={selectedSourceLabels[decision.source]} value="healthy" />
@@ -69,9 +78,16 @@ export function RunRoutingDecisionInspection({
       <div className="ui-sheet min-w-0 divide-y divide-border">
         <div className="p-4 sm:p-5">
           <MetadataList>
+            {execution ? (
+              <MetadataItem label="Ran with" value={`${execution.provider} · ${execution.name}`} />
+            ) : null}
+            {shadow && !selected ? (
+              <MetadataItem label="Shadow result" value="Would escalate" />
+            ) : null}
+            {shadow && selected ? (
+              <MetadataItem label="Suggested route" value={selectedSourceLabels[decision.source]} />
+            ) : null}
             <MetadataItem label="Task class" value={taskClassName ?? "Unmatched"} />
-            <MetadataItem label="Task class slug" value={decision.taskClassSlug ?? "Unrecorded"} />
-            <MetadataItem label="Rule ID" monospace value={decision.ruleId ?? "Unassigned"} />
             <MetadataItem label="Reason" value={routingDecisionReasonLabels[decision.reason]} />
             {decision.initialReason ? (
               <MetadataItem
@@ -81,7 +97,6 @@ export function RunRoutingDecisionInspection({
             ) : null}
             <MetadataItem
               label="Policy revision"
-              monospace
               value={
                 canOpenPolicy && canManageFactory ? (
                   <Link
@@ -89,20 +104,23 @@ export function RunRoutingDecisionInspection({
                     href={revisionPath}
                     prefetch={false}
                   >
-                    {decision.policyRevisionId}
+                    Open recorded policy revision
                   </Link>
                 ) : (
-                  decision.policyRevisionId
+                  "Recorded revision"
                 )
               }
             />
-            <MetadataItem label="Policy digest" monospace value={decision.policyDigest} />
           </MetadataList>
         </div>
         {selected ? (
           <div className="space-y-3 p-4 sm:p-5">
             <h3 className="type-label">
-              {override ? "Policy recommendation" : "Qualified configuration"}
+              {shadow
+                ? "Would select"
+                : override
+                  ? "Policy recommendation"
+                  : "Qualified configuration"}
             </h3>
             <MetadataList>
               <MetadataItem label="Model" value={decision.configuration.modelKey} />
@@ -118,19 +136,10 @@ export function RunRoutingDecisionInspection({
                 value={decision.configuration.workerRuntime === "node" ? "Node.js" : "Workerd"}
               />
               <MetadataItem
-                label="Implementation agent ID"
-                monospace
-                value={decision.configuration.agentId}
-              />
-              <MetadataItem
-                label="Definition revision ID"
-                monospace
-                value={decision.configuration.definitionRevisionId}
-              />
-              <MetadataItem
-                label="Qualification ID"
-                monospace
-                value={decision.configuration.qualificationId}
+                label="Implementation agent"
+                value={
+                  names?.agents[decision.configuration.agentId] ?? "Recorded agent unavailable"
+                }
               />
             </MetadataList>
           </div>
@@ -140,7 +149,12 @@ export function RunRoutingDecisionInspection({
             <h3 className="type-label">One-task override</h3>
             <MetadataList>
               <MetadataItem label="Reason" value={override.reason} />
-              <MetadataItem label="Actor member ID" monospace value={override.actorMemberId} />
+              <MetadataItem
+                label="Override by"
+                value={
+                  names?.members[override.actorMemberId]?.label ?? "Member details unavailable"
+                }
+              />
               <MetadataItem label="Selected target" value={selectedSourceLabels[override.target]} />
               <MetadataItem label="Model" value={override.configuration.modelKey} />
               <MetadataItem
@@ -151,11 +165,6 @@ export function RunRoutingDecisionInspection({
                 label="Worker runtime"
                 value={override.configuration.workerRuntime === "node" ? "Node.js" : "Workerd"}
               />
-              <MetadataItem
-                label="Benchmark candidate key"
-                monospace
-                value={override.benchmarkCandidateKey}
-              />
             </MetadataList>
           </div>
         ) : null}
@@ -163,25 +172,9 @@ export function RunRoutingDecisionInspection({
           <div className="space-y-3 p-4 sm:p-5">
             <h3 className="type-label">Benchmark justification</h3>
             <MetadataList>
-              <MetadataItem
-                label="Experiment ID"
-                monospace
-                value={decision.configuration.experimentId}
-              />
-              <MetadataItem
-                label="Candidate key"
-                monospace
-                value={decision.benchmarkCandidateKey}
-              />
-              {decision.configuration.scorerRevisionId ? (
-                <MetadataItem
-                  label="Scorer revision ID"
-                  monospace
-                  value={decision.configuration.scorerRevisionId}
-                />
-              ) : null}
               {evidence ? (
                 <>
+                  <MetadataItem label="Frozen suite" value={evidence.suite.name} />
                   <MetadataItem label="Scorer" value={evidence.scorerName} />
                   <MetadataItem
                     label="Measured pass rate"
@@ -241,6 +234,25 @@ export function RunRoutingDecisionInspection({
             )}
           </div>
         ) : null}
+        <RunTechnicalDetails
+          entries={[
+            ["Policy revision ID", decision.policyRevisionId],
+            ["Policy digest", decision.policyDigest],
+            ["Task class key", decision.taskClassSlug],
+            ["Rule ID", decision.ruleId],
+            ["Suggested agent ID", selected ? decision.configuration.agentId : null],
+            [
+              "Definition revision ID",
+              selected ? decision.configuration.definitionRevisionId : null,
+            ],
+            ["Qualification ID", selected ? decision.configuration.qualificationId : null],
+            ["Experiment ID", selected ? decision.configuration.experimentId : null],
+            ["Candidate key", selected ? decision.benchmarkCandidateKey : null],
+            ["Scorer revision ID", selected ? decision.configuration.scorerRevisionId : null],
+            ["Override actor ID", override?.actorMemberId],
+            ["Override candidate key", override?.benchmarkCandidateKey],
+          ]}
+        />
       </div>
     </PageSection>
   );

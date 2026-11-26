@@ -1,10 +1,12 @@
 import Link from "next/link";
-import { z } from "zod";
 
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
-import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import { FactorySelector } from "@/features/factories/factory-selector";
-import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
+import {
+  AgentDirectoryDraftScope,
+  AgentDirectoryFactorySelector,
+} from "@/features/factory-agents/agent-directory-draft";
+import { AgentFactoryRecovery } from "@/features/factory-agents/agent-factory-recovery";
+import { agentListQuery } from "@/features/factory-agents/agent-navigation";
 import { loadAgentPageScope, loadAgentsList } from "@/features/factory-agents/agent-pages-data";
 import { AgentPromptForm } from "@/features/factory-agents/agent-prompt-form";
 import { workspaceAgentDetailPath, workspaceAgentsPath } from "@/lib/routes";
@@ -14,37 +16,40 @@ export default async function AgentsPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ factory?: string | string[]; after?: string | string[] }>;
+  searchParams: Promise<{
+    factory?: string | string[];
+    after?: string | string[];
+    q?: string | string[];
+  }>;
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
-  const [scope, factories] = await Promise.all([
-    loadAgentPageScope(workspaceSlug, query.factory),
-    loadWorkspaceFactoryOptions(workspaceSlug),
-  ]);
+  const { scope, factories, selection } = await loadAgentPageScope(workspaceSlug, query.factory);
   if (!scope)
     return (
-      <FactoryUnavailable
-        actions={<FactorySelector factories={factories} selectedValue="unavailable" />}
-        title="Agents"
+      <AgentFactoryRecovery
+        choose={selection === "choose"}
+        factories={factories}
         workspaceSlug={workspaceSlug}
       />
     );
 
   const { factory, canEditPrompt, workspaceId } = scope;
-  const after = z.string().uuid().safeParse(query.after);
-  const { agents, nextAfterId, implementationAgentId } = await loadAgentsList(
+  const { q, after } = agentListQuery(query);
+  const { agents, nextAfterId, implementationAgentId, usesFactoryDefault } = await loadAgentsList(
     scope,
-    after.success ? after.data : undefined,
+    { afterId: after, search: q },
   );
   const factoryQuery = { factory: factory.id };
+  const directoryQuery = { ...factoryQuery, q };
 
-  return (
+  const directory = (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         title="Agents"
+        description="Agents are named sets of instructions. The published definition sets the execution harness, such as Codex or Claude Code."
         actions={
           <>
-            <FactorySelector factories={factories} selectedValue={factory.id} />
+            <AgentDirectoryFactorySelector factories={factories} selectedValue={factory.id} />
             {canEditPrompt ? (
               <Link className="ui-button ui-button-primary" href="#new-agent">
                 New agent
@@ -56,6 +61,36 @@ export default async function AgentsPage({
       />
       <div className="space-y-8">
         <section aria-label="Factory agents" className="ui-sheet divide-y divide-border">
+          <form
+            action={workspaceAgentsPath(workspaceSlug)}
+            className="flex flex-wrap items-end gap-2 px-4 py-4 sm:px-5"
+            key={`${factory.id}:${q ?? ""}`}
+            method="get"
+            role="search"
+          >
+            <input name="factory" type="hidden" value={factory.id} />
+            <label className="min-w-0 flex-1 basis-52 space-y-1.5">
+              <span className="block type-label text-foreground">
+                Search agents by name or slug
+              </span>
+              <input
+                autoComplete="off"
+                className="ui-input"
+                defaultValue={q}
+                maxLength={120}
+                name="q"
+                type="search"
+              />
+            </label>
+            <button className="ui-button" type="submit">
+              Search
+            </button>
+            {q && (
+              <Link className="ui-button" href={workspaceAgentsPath(workspaceSlug, factoryQuery)}>
+                Clear search
+              </Link>
+            )}
+          </form>
           {agents.length ? (
             <ul className="divide-y divide-border">
               {agents.map((agent) => (
@@ -66,34 +101,53 @@ export default async function AgentsPage({
                   <div className="min-w-0">
                     <Link
                       className="break-words font-semibold text-foreground underline-offset-4 hover:text-accent hover:underline"
-                      href={workspaceAgentDetailPath(workspaceSlug, agent.id, factoryQuery)}
+                      href={workspaceAgentDetailPath(workspaceSlug, agent.id, {
+                        ...directoryQuery,
+                        after,
+                      })}
                     >
                       {agent.name}
                     </Link>
                     <p className="type-annotation mt-1 break-words text-muted">{agent.slug}</p>
                   </div>
-                  {agent.id === implementationAgentId ? (
-                    <span className="type-label text-muted">Implementation agent</span>
-                  ) : agent.is_default ? (
-                    <span className="type-label text-muted">Factory default</span>
-                  ) : null}
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {(agent.id === implementationAgentId ||
+                      (usesFactoryDefault && agent.is_default)) && (
+                      <span className="type-label text-muted">Used by published definition</span>
+                    )}
+                    {agent.is_default && (
+                      <span className="type-label text-muted">Factory default</span>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="type-secondary px-4 py-5 text-muted sm:px-5">No agents on this page.</p>
+            <p className="type-secondary px-4 py-5 text-muted sm:px-5">
+              {after
+                ? "No more agents on this page."
+                : q
+                  ? "No matching agents."
+                  : "No agents in this factory yet."}
+            </p>
           )}
-          {after.success || nextAfterId ? (
+          {after || nextAfterId ? (
             <div className="flex flex-wrap gap-2 px-4 py-3 sm:px-5">
-              {after.success && (
-                <Link className="ui-button" href={workspaceAgentsPath(workspaceSlug, factoryQuery)}>
+              {after && (
+                <Link
+                  className="ui-button"
+                  href={workspaceAgentsPath(workspaceSlug, directoryQuery)}
+                >
                   First page
                 </Link>
               )}
               {nextAfterId && (
                 <Link
                   className="ui-button"
-                  href={workspaceAgentsPath(workspaceSlug, { ...factoryQuery, after: nextAfterId })}
+                  href={workspaceAgentsPath(workspaceSlug, {
+                    ...directoryQuery,
+                    after: nextAfterId,
+                  })}
                 >
                   More agents
                 </Link>
@@ -106,6 +160,7 @@ export default async function AgentsPage({
             <AgentPromptForm
               factoryId={factory.id}
               form={{ kind: "create" }}
+              key={factory.id}
               workspaceId={workspaceId}
               workspaceSlug={workspaceSlug}
             />
@@ -114,4 +169,5 @@ export default async function AgentsPage({
       </div>
     </PageContainer>
   );
+  return <AgentDirectoryDraftScope>{directory}</AgentDirectoryDraftScope>;
 }

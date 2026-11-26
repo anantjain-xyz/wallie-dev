@@ -458,13 +458,13 @@ export function StructuredFactoryDefinitionEditor({
             {mcpBindings.map((binding, index) => {
               const tool = findReference(toolOptions, binding.toolRevisionId);
               const permittedOperations =
-                tool?.operations?.filter(
-                  (operation) =>
-                    !grant?.unavailable &&
-                    grant?.toolIds?.includes(
-                      mcpOperationScopeId(binding.toolRevisionId, operation),
-                    ),
-                ) ?? [];
+                tool?.unavailable || grant?.unavailable
+                  ? []
+                  : (tool?.operations?.filter((operation) =>
+                      grant?.toolIds?.includes(
+                        mcpOperationScopeId(binding.toolRevisionId, operation),
+                      ),
+                    ) ?? []);
               const credentials = namedReferences?.options.bindings ?? [];
               const eligibleBinding = (option: (typeof credentials)[number]) =>
                 Boolean(
@@ -492,13 +492,14 @@ export function StructuredFactoryDefinitionEditor({
                           id === binding.toolRevisionId ||
                           !mcpBindings.some((other) => other.toolRevisionId === id),
                       )}
-                      onChange={(toolRevisionId) =>
+                      onChange={(toolRevisionId) => {
+                        if (toolRevisionId === binding.toolRevisionId) return;
                         updateTool(index, {
                           toolRevisionId,
                           operations: [],
                           secretBindingId: undefined,
-                        })
-                      }
+                        });
+                      }}
                       empty="Choose an approved tool revision"
                       unavailable="Tool revision unavailable"
                       disabled={disabled}
@@ -590,6 +591,7 @@ export function StructuredFactoryDefinitionEditor({
             label="Execution grant"
             options={grantOptions}
             onChange={(key) => {
+              if (key === grantKey) return;
               const next = findReference(grantOptions, key);
               if (key && (!next?.grantId || !next.version)) return;
               onChange({

@@ -32,6 +32,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("identifies the live revision and explains the scheduled consequence next to Resume", () => {
+  render(
+    <AutomationAdmissionPanel
+      activeRevision
+      initial={paused}
+      endpoint="/admission-control"
+      publishedRevision={2}
+      scheduleTimeZone="Etc/UTC"
+      catchUp={{ through: "2030-01-07T10:00:00Z", occurrenceAt: "2030-01-07T09:00:00Z" }}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Published revision 2 · Paused");
+  expect(screen.getByRole("button", { name: "Resume automation" })).toBeEnabled();
+  expect(screen.getByText("Resuming can retry pending occurrences.")).toBeVisible();
+  expect(screen.getByText(/One missed tick would be queued/)).toHaveTextContent("9:00 AM");
+});
+
 it("displays recovered control and later changes from the server for the same rule", () => {
   const { rerender } = render(panel(null));
   expect(screen.getByRole("alert")).toHaveTextContent("Could not load automation status");

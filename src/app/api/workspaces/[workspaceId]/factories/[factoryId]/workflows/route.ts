@@ -42,8 +42,16 @@ export async function POST(request: Request, { params }: Context) {
     const command = createWorkflowAuthoringSchema.safeParse(
       await readWorkflowAuthoringCommand(request),
     );
-    if (!command.success)
-      return workflowAuthoringResponse({ error: "Provide a workflow ID and name." }, 400);
+    if (!command.success) {
+      return workflowAuthoringResponse(
+        {
+          error: command.error.issues.some(({ path }) => path[0] === "displayName")
+            ? "Enter a workflow name between 1 and 120 characters."
+            : "The workflow request could not be created. Refresh the page and try again.",
+        },
+        400,
+      );
+    }
     const workflow = await createWorkflowAuthoring(
       createSupabaseAdminClient(),
       {

@@ -8,7 +8,7 @@ import {
 } from "@/features/onboarding/data";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
-import { describeRateLimits } from "@/lib/rate-limit";
+import { describeRateLimits, type RateLimitScope } from "@/lib/rate-limit";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -45,7 +45,7 @@ type WorkspaceUsageRow = {
 
 export type RateLimitDisplay = {
   endpoint: string;
-  description: string;
+  scope: RateLimitScope;
   windowMs: number;
   max: number;
 };
@@ -90,12 +90,19 @@ export type SettingsSetupData = Omit<
   "canManage" | "currentMember" | "github" | "usage" | "workspace" | "workspaceInvitations"
 >;
 
+export type SettingsWorkspaceProfile = { avatarUrl: string | null; fullName: string | null };
+
+export type WorkspaceInvitationsSnapshot = { asOf: number; invitations: WorkspaceInvitation[] };
+
 export type SettingsPageDataLoader = {
   initialData: Promise<SettingsInitialData>;
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
-  workspaceInvitations: Promise<WorkspaceInvitation[]>;
+  workspaceInvitations: Promise<WorkspaceInvitationsSnapshot>;
+  workspaceProfile?: Promise<SettingsWorkspaceProfile>;
 };
+
+const EMPTY_INVITATIONS: WorkspaceInvitationsSnapshot = { asOf: 0, invitations: [] };
 
 async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceInvitation[]> {
   const admin = createSupabaseAdminClient();
@@ -138,8 +145,8 @@ function observeDeferredSection<T>(promise: Promise<T>): Promise<T> {
 
 function describeSettingsRateLimits(): RateLimitDisplay[] {
   return describeRateLimits().map((entry) => ({
-    description: entry.description,
     endpoint: entry.endpoint,
+    scope: entry.scope,
     max: entry.max,
     windowMs: entry.windowMs,
   }));
@@ -312,7 +319,7 @@ export async function loadSettingsPageData(
         workspaceId: context.workspace.id,
       }),
     );
-    const { currentMember, supabase, workspace } = authenticatedContext;
+    const { currentMember, supabase, user, workspace } = authenticatedContext;
 
     if (!currentMember || !currentMember.is_active || currentMember.kind !== "human") {
       notFound();
@@ -449,13 +456,14 @@ export async function loadSettingsPageData(
 
     const workspaceInvitations =
       category && category !== "workspace"
-        ? Promise.resolve([])
+        ? Promise.resolve(EMPTY_INVITATIONS)
         : withServerTiming(
             "settings.section.invitations",
             { workspaceId: workspace.id },
             async (sectionTiming) => {
-              if (!canManage) return [];
-              return sectionTiming.segment(
+              if (!canManage) return EMPTY_INVITATIONS;
+              const asOf = Date.now();
+              const invitations = await sectionTiming.segment(
                 "pending-invitations",
                 () => loadWorkspaceInvitations(workspace.id),
                 (invitations) => ({
@@ -463,14 +471,35 @@ export async function loadSettingsPageData(
                   rows: invitations.length,
                 }),
               );
+              return { asOf, invitations };
             },
           );
+
+    const workspaceProfile =
+      category === "workspace"
+        ? observeDeferredSection(
+            withServerTiming(
+              "settings.section.profile",
+              { workspaceId: workspace.id },
+              async () => {
+                const { data, error } = await supabase
+                  .from("profiles")
+                  .select("full_name, avatar_url")
+                  .eq("id", user.id)
+                  .maybeSingle();
+                if (error) throw error;
+                return { avatarUrl: data?.avatar_url ?? null, fullName: data?.full_name ?? null };
+              },
+            ),
+          )
+        : undefined;
 
     return {
       initialData,
       setupData: observeDeferredSection(setupData),
       usage: observeDeferredSection(usage),
       workspaceInvitations: observeDeferredSection(workspaceInvitations),
+      workspaceProfile,
     };
   });
 }

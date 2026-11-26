@@ -86,7 +86,7 @@ describe("Sessions ledger server render", () => {
         }),
       ),
     );
-    expect(archivedOnlyDefault).toContain("No active sessions");
+    expect(archivedOnlyDefault).toContain("No unarchived sessions");
     expect(archivedOnlyDefault).not.toContain("No sessions yet");
     expect(archivedOnlyDefault).not.toContain("No matching sessions");
 
@@ -122,7 +122,9 @@ describe("Sessions ledger server render", () => {
         }),
       ),
     );
-    expect(paginated).toContain("Load older sessions");
+    expect(paginated).toContain("Older updates");
+    expect(paginated).toContain("Next page");
+    expect(paginated).toContain("First page");
     expect(paginated).toContain("cursor=cursor-token");
 
     const paginatedOldest = renderToStaticMarkup(
@@ -145,8 +147,24 @@ describe("Sessions ledger server render", () => {
         }),
       ),
     );
-    expect(paginatedOldest).toContain("Load newer sessions");
+    expect(paginatedOldest).toContain("Newer updates");
     expect(paginatedOldest).toContain("sort=oldest");
+  });
+
+  it("shows an absolute calendar date for an old update without adding a focus target", () => {
+    const data = makeData(2);
+    data.sessions[1].updatedAt = "2026-01-01T11:00:00.000Z";
+    const html = renderToStaticMarkup(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPage, { initialData: data, initialNow: "2026-06-07T11:30:00.000Z" }),
+      ),
+    );
+    expect(html).toContain("29m ago");
+    expect(html).toContain(">2026-01-01</time>");
+    expect(html).toContain('sessions-ledger-title-flow-updated">Updated <time');
+    expect(html).not.toContain("157d ago");
   });
 
   it("keeps static row text in SSR HTML for 50 rows without absolute overlay links", () => {
@@ -161,8 +179,8 @@ describe("Sessions ledger server render", () => {
     expect(html.match(/session-list-row/g)?.length).toBe(50);
     expect(html).toContain("Session 1");
     expect(html).toContain("Session 50");
-    expect(html).toContain('href="/w/acme/sessions/1"');
-    expect(html).toContain('href="/w/acme/sessions/50"');
+    expect(html).toContain('href="/w/acme/sessions/1?returnTo=');
+    expect(html).toContain('href="/w/acme/sessions/50?returnTo=');
     expect(html).not.toContain("absolute inset-0");
     expect(html).toContain("sessions-ledger-header");
     expect(html).toContain('role="table"');
@@ -234,7 +252,7 @@ describe("Sessions ledger server render", () => {
     expect(filtered).toContain("Clear filters");
     expect(filtered).toContain("scope=active");
     expect(filtered).toContain("factory=factory-9");
-    expect(filtered).not.toContain("q=deploy");
+    expect(filtered).toContain("q=deploy");
     expect(filtered).not.toContain("stage=plan");
 
     const filteredAllScope = renderPage(
@@ -280,7 +298,7 @@ describe("Sessions ledger server render", () => {
     );
     expect(allSliceEmpty).toContain("No sessions yet");
     expect(allSliceEmpty).toContain("View sessions across factories");
-    expect(allSliceEmpty).not.toContain("No active sessions");
+    expect(allSliceEmpty).not.toContain("No unarchived sessions");
     expect(allSliceEmpty).not.toContain("New session");
   });
 

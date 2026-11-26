@@ -14,6 +14,7 @@ import {
 import type { AutomationSetupOptions } from "@/lib/factory-automations/operator-contracts";
 import { factoryAutomationApiPath, workspaceAutomationPreviewPath } from "@/lib/routes";
 
+import { useAutomationDraftNavigation } from "./automation-draft-navigation";
 import { AutomationEditorFields, readAutomationDraft } from "./automation-editor-fields";
 import { rebaseAutomationDraft } from "./automation-editor-rebase";
 
@@ -51,6 +52,7 @@ function draftError(field: string | number | undefined) {
   if (field === "name") return "Enter a rule name of up to 120 characters.";
   if (field === "target" || field === "executionGrant")
     return "Choose an approved execution target.";
+  if (field === "stateIds") return "Choose at least one Linear state.";
   return "Check the trigger, filter values, and assigned target. Each filter must be unique.";
 }
 
@@ -63,6 +65,8 @@ export function AutomationEditor({
   initial,
   setup,
   setupFailed,
+  setupHref,
+  savedRepositoryName,
 }: {
   workspaceId: string;
   workspaceSlug: string;
@@ -72,11 +76,14 @@ export function AutomationEditor({
   initial?: Snapshot;
   setup: AutomationSetupOptions | null;
   setupFailed: boolean;
+  setupHref?: string;
+  savedRepositoryName?: string | null;
 }) {
   const router = useRouter();
+  const navigation = useAutomationDraftNavigation();
   const [snapshot, setSnapshot] = useState(initial);
   const [fields, setFields] = useState({ initial: initial?.revision.definition, reset: 0 });
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setEditorDirty] = useState(false);
   const [action, setAction] = useState<"saving" | "publishing" | "loading" | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [rebaseOptions, setRebaseOptions] = useState<RebaseOptions | null>(null);
@@ -91,6 +98,11 @@ export function AutomationEditor({
     snapshot && !dirty && snapshot.draftRevisionId !== snapshot.publishedRevisionId;
   const archived = Boolean(snapshot?.archivedAt);
   const comparedRule = rebaseOptions?.latest ?? snapshot;
+
+  function setDirty(value: boolean) {
+    setEditorDirty(value);
+    navigation.setDirty(value);
+  }
 
   function changed() {
     setDirty(true);
@@ -187,6 +199,7 @@ export function AutomationEditor({
         }
       }
       if (created.automationId !== automationId) throw new Error("Unexpected automation");
+      setDirty(false);
       router.replace(rulePath(created.automationId));
     });
   }
@@ -266,6 +279,37 @@ export function AutomationEditor({
     });
   }
 
+  const setupNotice = !setup?.assignment ? (
+    <div className="space-y-2 text-sm">
+      <p
+        role={setupFailed ? "alert" : undefined}
+        className={setupFailed ? "text-danger" : "text-muted"}
+      >
+        {setupFailed
+          ? "Could not check approved targets. Refresh this page to try again."
+          : setupHref
+            ? "No approved target is available. Review the published factory definition, its execution grant, and its credential binding."
+            : "No approved target is available. Ask a workspace owner or admin to check the published factory definition and its execution access."}
+      </p>
+      {!setupFailed && setupHref ? (
+        <Link href={setupHref} className="text-accent underline underline-offset-4">
+          Review Factory definition
+        </Link>
+      ) : null}
+    </div>
+  ) : null;
+
+  if (!canSave) {
+    return (
+      <PageSection
+        title="Set up a rule"
+        tagline="An approved execution target is required before you can create a rule."
+      >
+        <div className="ui-sheet p-4 sm:p-6">{setupNotice}</div>
+      </PageSection>
+    );
+  }
+
   return (
     <PageSection
       title={snapshot ? "Edit draft" : "Set up a rule"}
@@ -282,20 +326,12 @@ export function AutomationEditor({
         aria-busy={action !== null}
         className="ui-sheet min-w-0 space-y-5 p-4 sm:p-6"
       >
-        {!setup?.assignment ? (
-          <p
-            role={setupFailed ? "alert" : undefined}
-            className={setupFailed ? "text-sm text-danger" : "text-sm text-muted"}
-          >
-            {setupFailed
-              ? "Could not load approved targets. Refresh this page to try again."
-              : "Automation requires a published factory definition with a current execution grant and credential binding."}
-          </p>
-        ) : null}
+        {setupNotice}
         <AutomationEditorFields
           key={fields.reset}
           initial={fields.initial}
           setup={setup}
+          savedRepositoryName={savedRepositoryName}
           changed={changed}
           disabled={action !== null || archived || rebaseOptions !== null}
         />
@@ -326,9 +362,11 @@ export function AutomationEditor({
             </button>
           ) : null}
         </div>
-        {dirty && snapshot ? (
+        {dirty ? (
           <p className="text-xs text-muted">
-            Save draft changes before testing or publishing them.
+            {snapshot
+              ? "Unsaved changes. Dry run still uses the saved revision."
+              : "Unsaved changes. Save a draft to preview this rule."}
           </p>
         ) : null}
         {feedback?.kind === "success" ? (

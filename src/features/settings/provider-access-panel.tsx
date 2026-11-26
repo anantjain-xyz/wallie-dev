@@ -18,12 +18,14 @@ type ProviderAccessPanelProps = {
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
   onCursorStatusChange?: (status: CursorConnectionStatus) => void;
   onOpenCodeStatusChange?: (status: OpenCodeConnectionStatus) => void;
+  onOpenCodeDraftStateChange?: (state: { dirty: boolean; pending: boolean }) => void;
   onSandboxConnectionSelect?: () => void;
   provider: AgentProvider;
   returnTo?: string;
   sandboxConnectionHref?: string;
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
+  selectedModel?: string;
   variant?: "card" | "embedded";
   workspaceId?: string;
 };
@@ -71,12 +73,14 @@ export function ProviderAccessPanel({
   onCodexStatusChange,
   onCursorStatusChange,
   onOpenCodeStatusChange,
+  onOpenCodeDraftStateChange,
   onSandboxConnectionSelect,
   provider,
   returnTo,
   sandboxConnectionHref,
   sandboxConnectionLabel,
   sandboxConnectionReady,
+  selectedModel,
   variant = "card",
   workspaceId,
 }: ProviderAccessPanelProps) {
@@ -151,7 +155,9 @@ export function ProviderAccessPanel({
           </div>
           <OpenCodeConnectionPanel
             initialStatus={initialOpenCodeStatus}
+            onDraftStateChange={onOpenCodeDraftStateChange}
             onStatusChange={onOpenCodeStatusChange}
+            selectedModel={selectedModel}
           />
         </div>
       );

@@ -54,9 +54,9 @@ export default async function WorkspaceOnboardingPage() {
         className="mx-auto w-full max-w-[640px] flex-1 px-6 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-10 sm:px-8"
       >
         <PageHeader
-          eyebrow="Step 1 of 2"
+          eyebrow="Phase 1 of 2 · Create workspace"
           title="Create workspace"
-          description="Name your workspace, then connect GitHub and your agent to finish setup."
+          description="Name your workspace. Next, Set up workspace walks you through connecting a repository and execution access before you start a task."
         />
         <WorkspaceOnboardingForm />
       </main>

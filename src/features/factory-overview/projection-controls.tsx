@@ -3,15 +3,21 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import type { ProjectionAction } from "@/features/factory-overview/projection-health-contracts";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { InlineActionMessage } from "@/features/settings/settings-ui";
+import { toneClass } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 
 const confirmations = {
   pause: "Analytics projection paused.",
   resume: "Analytics projection resumed.",
   rebuild: "Rebuild requested.",
+} satisfies Record<ProjectionAction, string>;
+const pendingLabels = {
+  pause: "Pausing…",
+  resume: "Resuming…",
+  rebuild: "Requesting rebuild…",
 } satisfies Record<ProjectionAction, string>;
 
 export function ProjectionControls({
@@ -28,21 +34,30 @@ export function ProjectionControls({
   const router = useRouter();
   const [refreshing, startRefresh] = useTransition();
   const [message, setMessage] = useState<FlashMessage | null>(null);
+  const [actionInFlight, setActionInFlight] = useState<ProjectionAction | null>(null);
   const command = useApiAction<unknown, [ProjectionAction]>({
-    call: (action) =>
-      fetch(`/api/workspaces/${workspaceId}/factories/${factoryId}/projection-control`, {
+    call: (action) => {
+      setActionInFlight(action);
+      setMessage(null);
+      return fetch(`/api/workspaces/${workspaceId}/factories/${factoryId}/projection-control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
-      }),
+      });
+    },
     errorText: "Could not update the analytics projection.",
     successText: (_, [action]) => confirmations[action],
     setFlashMessage: setMessage,
     onSuccess: () => startRefresh(() => router.refresh()),
   });
   const busy = command.isBusy || refreshing;
+  const activeAction = busy ? actionInFlight : null;
+  const activeToggleAction =
+    activeAction === "pause" || activeAction === "resume" ? activeAction : null;
+  const toggleAction = paused ? "resume" : "pause";
+  const result = busy ? null : message;
   function run(action: ProjectionAction) {
-    setMessage(null);
+    if (busy || (rebuilding && action === "rebuild")) return;
     void command.run(action);
   }
 
@@ -50,23 +65,41 @@ export function ProjectionControls({
     <div className="space-y-2 border-t border-border px-4 py-3 sm:px-5">
       <div className="flex flex-wrap gap-2" aria-busy={busy}>
         <button
-          className="ui-button min-h-9 px-3 py-1.5 text-sm"
-          disabled={busy}
-          onClick={() => run(paused ? "resume" : "pause")}
+          aria-disabled={busy}
+          className="ui-button min-h-9 px-3 py-1.5 text-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+          onClick={() => run(toggleAction)}
           type="button"
         >
-          {paused ? "Resume projection" : "Pause projection"}
+          <ActionButtonLabel
+            idle={paused ? "Resume projection" : "Pause projection"}
+            pending={activeToggleAction !== null}
+            pendingLabel={pendingLabels[activeToggleAction ?? toggleAction]}
+          />
         </button>
         <button
-          className="ui-button min-h-9 px-3 py-1.5 text-sm"
-          disabled={busy || rebuilding}
+          aria-disabled={busy || rebuilding}
+          className="ui-button min-h-9 px-3 py-1.5 text-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
           onClick={() => run("rebuild")}
           type="button"
         >
-          Rebuild projection
+          <ActionButtonLabel
+            idle="Rebuild projection"
+            pending={activeAction === "rebuild"}
+            pendingLabel={pendingLabels.rebuild}
+          />
         </button>
       </div>
-      <InlineActionMessage message={message} />
+      <div
+        className={
+          result
+            ? `type-secondary rounded-md border px-3 py-2 ${toneClass(result.kind)}`
+            : undefined
+        }
+        role="status"
+      >
+        {result?.text ??
+          (activeAction && <span className="sr-only">{pendingLabels[activeAction]}</span>)}
+      </div>
     </div>
   );
 }

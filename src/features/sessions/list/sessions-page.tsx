@@ -12,12 +12,14 @@ import { SessionsLedger } from "@/features/sessions/list/session-row-actions";
 import { SessionsLedgerVisibilityProvider } from "@/features/sessions/list/sessions-ledger-visibility";
 import {
   buildSessionsListHref,
-  sessionsPaginationLabel,
+  sessionsPaginationDirection,
 } from "@/features/sessions/list/sessions-list-mutations";
 import type { SessionFilterKey, SessionListQueryState } from "@/features/sessions/types";
 import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
 
 type SessionsPageProps = {
+  factoryId?: string;
+  factoryName?: string;
   factoryQuery?: string;
   factorySelector?: ReactNode;
   initialData: SessionListPageData;
@@ -43,7 +45,8 @@ function resolveSessionsEmptyState(input: {
 }): SessionsEmptyResolution {
   const { aggregate, hasAnySession, queryState, showCreationOnboarding } = input;
   if (queryState.cursor) return { kind: "paged-out" };
-  if (queryState.query.trim() || queryState.stageSlug) return { kind: "filtered" };
+  if (queryState.query.trim() || queryState.stageSlug || queryState.status)
+    return { kind: "filtered" };
   if (!hasAnySession) {
     return showCreationOnboarding ? { kind: "first-run" } : { kind: "scope-empty", aggregate };
   }
@@ -66,7 +69,7 @@ function SessionsEmptyPanel({
     <div className="ui-sheet flex flex-col items-center border-dashed px-6 py-16 text-center">
       <p className="text-[14px] font-semibold text-foreground">{title}</p>
       <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">{body}</p>
-      {action ? <div className="mt-5">{action}</div> : null}
+      {action ? <div className="mt-5 flex flex-wrap justify-center gap-2">{action}</div> : null}
     </div>
   );
 }
@@ -86,6 +89,8 @@ function withExplicitScope(href: string, scope: SessionFilterKey) {
  * the only hydrated surfaces; row text/metadata/links render on the server.
  */
 export function SessionsPage({
+  factoryId,
+  factoryName,
   factoryQuery,
   factorySelector,
   initialData,
@@ -100,15 +105,14 @@ export function SessionsPage({
   const { queryState } = initialData;
   const aggregateScope = factoryQuery === "all";
 
-  function listHref(
-    state: Pick<SessionListQueryState, "cursor" | "query" | "scope" | "sort" | "stageSlug">,
-  ) {
+  function listHref(state: SessionListQueryState, factory = factoryQuery ?? factoryId) {
     return withFactoryQuery(
       withExplicitScope(buildSessionsListHref(basePath, state), state.scope),
-      factoryQuery,
+      factory,
     );
   }
 
+  const returnTo = listHref(queryState);
   const firstPageHref = listHref({ ...queryState, cursor: null });
   const clearFiltersScope = queryState.scope === "all" ? "all" : "active";
   const clearFiltersHref = listHref({
@@ -126,6 +130,12 @@ export function SessionsPage({
     stageSlug: null,
   });
   const acrossFactoriesHref = workspaceSessionsPath(workspaceSlug, { factory: "all" });
+  const canWiden =
+    !aggregateScope || queryState.scope !== "all" || queryState.stageSlug || queryState.status;
+  const widenedSearchHref = listHref(
+    { ...queryState, cursor: null, scope: "all", stageSlug: null, status: undefined },
+    "all",
+  );
 
   // A locally hidden last row is not an empty result set: later pages and other
   // slices can still hold sessions, so the fallback stays page-local.
@@ -173,11 +183,18 @@ export function SessionsPage({
         return (
           <SessionsEmptyPanel
             action={
-              <Link className="ui-button" href={clearFiltersHref}>
-                Clear filters
-              </Link>
+              <>
+                {canWiden ? (
+                  <Link className="ui-button" href={widenedSearchHref}>
+                    Search all sessions in accessible factories
+                  </Link>
+                ) : null}
+                <Link className="ui-button" href={clearFiltersHref}>
+                  Clear filters
+                </Link>
+              </>
             }
-            body="Adjust filters."
+            body="No sessions match the search and filters in this scope."
             title="No matching sessions"
           />
         );
@@ -205,7 +222,9 @@ export function SessionsPage({
                 ? "All sessions are archived."
                 : "No sessions are archived."
             }
-            title={resolution.scope === "active" ? "No active sessions" : "No archived sessions"}
+            title={
+              resolution.scope === "active" ? "No unarchived sessions" : "No archived sessions"
+            }
           />
         );
       case "scope-empty":
@@ -250,6 +269,7 @@ export function SessionsPage({
 
       <SessionsCommandBar
         key={factoryQuery ?? ""}
+        factoryName={factoryName}
         factoryQuery={factoryQuery}
         queryState={initialData.queryState}
         scopeFacets={initialData.scopeFacets}
@@ -266,6 +286,7 @@ export function SessionsPage({
             factoryQuery ?? "",
             initialData.queryState.scope,
             initialData.queryState.stageSlug ?? "",
+            initialData.queryState.status ?? "",
             initialData.queryState.query,
             initialData.queryState.sort,
             initialData.queryState.cursor ?? "",
@@ -278,6 +299,7 @@ export function SessionsPage({
                 key={session.id}
                 initialNow={renderNow}
                 readOnly={readOnly}
+                returnTo={returnTo}
                 scope={initialData.queryState.scope}
                 session={session}
                 workspaceSlug={workspaceSlug}
@@ -287,21 +309,37 @@ export function SessionsPage({
         </SessionsLedgerVisibilityProvider>
       )}
 
-      {initialData.hasMore && initialData.nextCursor ? (
-        <div className="mt-4 flex justify-center">
-          <Link
-            className="ui-button"
-            href={withFactoryQuery(
-              buildSessionsListHref(basePath, {
-                ...initialData.queryState,
-                cursor: initialData.nextCursor,
-              }),
-              factoryQuery,
-            )}
-          >
-            {sessionsPaginationLabel(initialData.queryState.sort)}
-          </Link>
-        </div>
+      {sessions.length > 0 && (queryState.cursor || initialData.nextCursor) ? (
+        <nav
+          aria-label="Session pages"
+          className="mt-4 flex flex-wrap items-center justify-between gap-2"
+        >
+          <p className="text-xs text-muted">
+            {queryState.cursor ? "Later page" : "First page"} · {sessions.length}{" "}
+            {sessions.length === 1 ? "session" : "sessions"}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {queryState.cursor ? (
+              <Link className="ui-button" href={firstPageHref}>
+                Back to first page
+              </Link>
+            ) : null}
+            {initialData.hasMore && initialData.nextCursor ? (
+              <>
+                <Link
+                  aria-describedby="sessions-next-page-direction"
+                  className="ui-button"
+                  href={listHref({ ...queryState, cursor: initialData.nextCursor })}
+                >
+                  Next page
+                </Link>
+                <span id="sessions-next-page-direction" className="text-xs text-muted">
+                  {sessionsPaginationDirection(queryState.sort)}
+                </span>
+              </>
+            ) : null}
+          </div>
+        </nav>
       ) : null}
     </PageContainer>
   );

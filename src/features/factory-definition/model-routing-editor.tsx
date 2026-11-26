@@ -159,7 +159,8 @@ function ConfigurationFields({
           unavailable="Qualification no longer available"
           onChange={(id) => {
             const option = findReference(options, id);
-            if (option?.configuration) onChange(option.configuration);
+            if (option?.configuration && !option.labelOnly && !option.unavailable)
+              onChange(option.configuration);
             if (!id) onChange(emptyConfiguration);
           }}
         />

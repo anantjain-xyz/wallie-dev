@@ -92,13 +92,12 @@ describe("Linear routing editor", () => {
     expect(html).toContain("→");
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
-    expect(html).toContain("Restart at build stage");
+    expect(html).toContain("Restart at Build");
     expect(html).toContain("Pause for manual merge");
     expect(html).toContain("Archive session");
     expect(html).toContain("Manual merge (no agent stage)");
     expect(html).toContain("Save routing");
     expect(html).toContain("build");
-    expect(html).toContain("land");
   });
 
   it("preserves unmatched saved stage slugs in the selector display", () => {
@@ -115,8 +114,9 @@ describe("Linear routing editor", () => {
     );
 
     expect(html).toContain('data-value="renamed-stage"');
-    expect(html).toContain(">renamed-stage</span>");
-    expect(html).toContain("Restart at renamed-stage stage");
+    expect(html).not.toContain(">renamed-stage</span>");
+    expect(html).toContain("Saved stage unavailable");
+    expect(html).toContain("Choose a replacement from the current pipeline before saving.");
   });
 
   it("shows configured automated landing behavior", () => {
@@ -129,6 +129,6 @@ describe("Linear routing editor", () => {
       }),
     );
 
-    expect(html).toContain("Route to land stage");
+    expect(html).toContain("Route to Land");
   });
 });
