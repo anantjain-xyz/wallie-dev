@@ -36,15 +36,27 @@ const directorySchema = z.object({
     .max(pageSize + 1),
 });
 
-export const directoryQuerySchema = z.object({
-  q: z.string().trim().max(120).optional(),
-  after: id.optional(),
-});
+const directorySearch = z
+  .string()
+  .trim()
+  .max(120)
+  .refine((text) => text.isWellFormed() && !text.includes("\0"))
+  .optional();
+
+export function parseWorkflowDirectoryQuery({ q, after }: { q?: unknown; after?: unknown }) {
+  const search = directorySearch.safeParse(q);
+  const cursor = id.optional().safeParse(after);
+  return {
+    q: search.success ? search.data : undefined,
+    after: search.success && cursor.success ? cursor.data : undefined,
+    needsReset: !search.success || !cursor.success,
+  };
+}
 
 export async function loadWorkflowDirectory(
   supabase: SupabaseClient<Database>,
   { workspaceId, factoryId }: { workspaceId: string; factoryId: string },
-  { q, after }: z.output<typeof directoryQuerySchema>,
+  { q, after }: { q?: string; after?: string },
 ) {
   const { data, error } = await supabase.rpc("list_factory_workflow_directory", {
     p_workspace_id: workspaceId,

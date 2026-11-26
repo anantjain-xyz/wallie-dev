@@ -1097,6 +1097,88 @@ describe("CreateSessionDialog accessibility", () => {
     },
   );
 
+  it("shows and replays the submitted workflow after the link and publication are gone", async () => {
+    const user = userEvent.setup();
+    const definitionDigest = "d".repeat(64);
+    const linked = {
+      workflowId: "00000000-0000-4000-8000-000000000011",
+      activationId: "00000000-0000-4000-8000-000000000012",
+      label: "Linked publication",
+    };
+    const manual = {
+      workflowId: "00000000-0000-4000-8000-000000000021",
+      activationId: "00000000-0000-4000-8000-000000000022",
+      label: "Manual publication",
+    };
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...draftOptions(),
+      factoryDefinitionDigest: definitionDigest,
+    });
+    clientMocks.createSessionFromClient
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ canonicalUrl: "/w/acme/sessions/42", number: 42 });
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ definitionDigest, options: [manual] }));
+    fetch.mockImplementationOnce(async () =>
+      Response.json({ definitionDigest, options: [linked, manual] }),
+    );
+    const onClose = vi.fn();
+    const dialog = (open: boolean, workflowLaunchActivationId?: string) => (
+      <OverlayProvider>
+        <CreateSessionDialog
+          creationFactoryId="factory-1"
+          onClose={onClose}
+          open={open}
+          userId="user-1"
+          workspaceId="workspace-1"
+          workspaceSlug="acme"
+          workflowLaunchActivationId={workflowLaunchActivationId}
+        />
+      </OverlayProvider>
+    );
+    try {
+      const { rerender } = render(dialog(true));
+      const workflow = await screen.findByRole("combobox", { name: "Workflow" });
+      await user.click(workflow);
+      await user.click(await screen.findByRole("option", { name: manual.label }));
+      expect(workflow).toHaveTextContent(manual.label);
+      await user.type(screen.getByLabelText("Prompt"), "Use the linked publication");
+
+      rerender(dialog(true, linked.activationId));
+      expect(screen.getByText(linked.label)).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      await screen.findByText(/Creation unconfirmed/);
+      const [original] = clientMocks.createSessionFromClient.mock.calls[0]!;
+      expect(original.workflowSelection).toEqual({
+        workflowId: linked.workflowId,
+        activationId: linked.activationId,
+      });
+
+      rerender(dialog(true, manual.activationId));
+      const blockedRetry = screen.getByRole("button", { name: "Retry creation" });
+      expect(blockedRetry).toBeDisabled();
+      expect(screen.getByText(/Another request is unconfirmed/)).toBeVisible();
+      fireEvent.submit(blockedRetry.closest("form")!);
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce();
+
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      expect(onClose).toHaveBeenCalledOnce();
+      rerender(dialog(false));
+      await act(async () => rerender(dialog(true)));
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(linked.label)).toBeVisible();
+      expect(screen.queryByText(manual.label)).not.toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: "Workflow" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Choose a current workflow/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Retry creation" }));
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledTimes(2);
+      expect(clientMocks.createSessionFromClient).toHaveBeenNthCalledWith(2, original);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   it("offers a published workflow only on its factory’s default repository", async () => {
     const user = userEvent.setup();
     const definitionDigest = "d".repeat(64);

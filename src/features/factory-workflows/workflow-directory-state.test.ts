@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   workflowDirectoryAvailability,
+  workflowDirectoryEmptyMessage,
   workflowTemplateBlocker,
   workflowTemplateLabel,
 } from "./workflow-directory-state";
@@ -26,6 +27,17 @@ describe("workflow directory availability", () => {
   it("uses the template’s human label and revision", () => {
     expect(workflowTemplateLabel({ id: "scoped-fix", version: 1 })).toBe("Scoped fix · v1");
     expect(workflowTemplateLabel(null)).toBe("Blank workflow");
+  });
+});
+
+describe("empty workflow directory pages", () => {
+  it.each([
+    [{}, "No workflows in this factory yet."],
+    [{ q: "release" }, "No workflows match that name in this factory."],
+    [{ after: "cursor" }, "No more workflows."],
+    [{ q: "release", after: "cursor" }, "No more workflows."],
+  ] as const)("describes empty results for %j", (query, message) => {
+    expect(workflowDirectoryEmptyMessage(query)).toBe(message);
   });
 });
 

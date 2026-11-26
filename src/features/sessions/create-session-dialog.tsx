@@ -84,6 +84,12 @@ type CreateSessionDialogProps = {
 
 type OverrideTarget = RoutingOverrideOptions["targets"][number];
 
+type SessionCreationAttempt = {
+  input: CreateSessionInput;
+  snapshot: PendingSessionSnapshot;
+  workflowLabel: string;
+};
+
 function routingTargetKey({ ruleId, target }: OverrideTarget) {
   return `${ruleId}:${target}`;
 }
@@ -178,17 +184,16 @@ function CreateSessionDialogBody({
   const sessionCommittedRef = useRef(false);
   const disposedRef = useRef(false);
   const imageDraftsRef = useRef<SessionImageDraft[]>([]);
-  const attemptRef = useRef<{ input: CreateSessionInput; snapshot: PendingSessionSnapshot } | null>(
-    null,
-  );
+  const attemptRef = useRef<SessionCreationAttempt | null>(null);
   const previewVisibleRef = useRef(false);
-  const [unconfirmedWorkflow, setUnconfirmedWorkflow] = useState<string | null>();
-  const unconfirmed = unconfirmedWorkflow !== undefined;
+  const [unconfirmedAttempt, setUnconfirmedAttempt] = useState<SessionCreationAttempt | null>(null);
+  const unconfirmed = unconfirmedAttempt !== null;
   const workflowLaunchRequested = workflowLaunchActivationId !== undefined;
   const workflowLaunchConflictsWithRetry =
     workflowLaunchRequested &&
     unconfirmed &&
-    (!workflowLaunchActivationId || workflowLaunchActivationId !== unconfirmedWorkflow);
+    (!workflowLaunchActivationId ||
+      workflowLaunchActivationId !== unconfirmedAttempt.input.workflowSelection?.activationId);
 
   const refreshImagesOnOpen = useEffectEvent(() => {
     clearRecoveryToast();
@@ -238,9 +243,11 @@ function CreateSessionDialogBody({
   const [manualDraftSpecification, setDraftSpecification] = useState(false);
   const draftSpecification = !workflowLaunchRequested && manualDraftSpecification;
   const [manualWorkflowActivationId, setWorkflowActivationId] = useState("");
-  const workflowActivationId = workflowLaunchRequested
-    ? (workflowLaunchActivationId ?? "")
-    : manualWorkflowActivationId;
+  const workflowActivationId = unconfirmedAttempt
+    ? (unconfirmedAttempt.input.workflowSelection?.activationId ?? "")
+    : workflowLaunchRequested
+      ? (workflowLaunchActivationId ?? "")
+      : manualWorkflowActivationId;
   const [workflowCatalog, setWorkflowCatalog] = useState<{
     factoryId: string;
     definitionDigest: string;
@@ -688,7 +695,8 @@ function CreateSessionDialogBody({
       return;
     }
 
-    const attempt = {
+    const attempt: SessionCreationAttempt = {
+      workflowLabel: workflow?.label ?? defaultWorkflowOption.label,
       input: {
         attachmentIds: imageDrafts.map((image) => image.attachmentId!),
         ...(draftSpecification ? { draftSpecification: true } : {}),
@@ -760,7 +768,7 @@ function CreateSessionDialogBody({
     });
   }
 
-  async function submitAttempt(attempt: NonNullable<typeof attemptRef.current>) {
+  async function submitAttempt(attempt: SessionCreationAttempt) {
     clearRecoveryToast();
     attemptRef.current = attempt;
     setErrorMessage(null);
@@ -812,9 +820,7 @@ function CreateSessionDialogBody({
           ("code" in error &&
             (error.code === "session_options_changed" ||
               error.code === "session_attachments_changed")));
-      setUnconfirmedWorkflow(
-        rejected ? undefined : (attempt.input.workflowSelection?.activationId ?? null),
-      );
+      setUnconfirmedAttempt(rejected ? null : attempt);
       if (rejected) attemptRef.current = null;
       if (isSessionOptionsChangedError(error)) {
         invalidateSessionRepositoryCache(workspaceId);
@@ -1118,25 +1124,27 @@ function CreateSessionDialogBody({
               </div>
             ) : null}
 
-            {workflowOptions.length ||
+            {unconfirmed ||
+            workflowOptions.length ||
             workflowActivationId ||
             workflowOptionsError ||
             workflowLaunchRequested ? (
               <div className="min-w-0 space-y-2">
-                {workflowLaunchRequested ? (
+                {unconfirmedAttempt || workflowLaunchRequested ? (
                   <div className="space-y-1">
                     <p className="text-sm font-medium">Workflow</p>
                     <p className="type-secondary wrap-anywhere">
-                      {workflowOptions.find(
-                        ({ activationId }) => activationId === workflowActivationId,
-                      )?.label ?? "Requested publication"}
+                      {unconfirmedAttempt?.workflowLabel ??
+                        workflowOptions.find(
+                          ({ activationId }) => activationId === workflowActivationId,
+                        )?.label ??
+                        "Requested publication"}
                     </p>
                   </div>
                 ) : (
                   <SelectField
                     disabled={
                       isSubmitting ||
-                      unconfirmed ||
                       draftSpecification ||
                       overrideChoice !== null ||
                       ((!factoryDefinitionDigest ||
@@ -1172,7 +1180,7 @@ function CreateSessionDialogBody({
                     Another request is unconfirmed. Close this link and reopen New session to retry
                     that request first.
                   </p>
-                ) : workflowLaunchActivationId === null ? (
+                ) : unconfirmed ? null : workflowLaunchActivationId === null ? (
                   <p className="type-secondary text-warning" role="status">
                     This workflow link is invalid. Close and start from Workflows again.
                   </p>

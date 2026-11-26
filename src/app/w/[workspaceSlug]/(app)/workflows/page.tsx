@@ -10,12 +10,16 @@ import { loadWorkflowAuthoringScope } from "@/features/factory-workflows/authori
 import { CreateWorkflowForm } from "@/features/factory-workflows/create-workflow-form";
 import {
   workflowDirectoryAvailability,
+  workflowDirectoryEmptyMessage,
   workflowTemplateLabel,
 } from "@/features/factory-workflows/workflow-directory-state";
 import { shouldShowOnboardingResumeCta } from "@/features/onboarding/resume";
 import { isWorkspaceOperator } from "@/features/workspaces/authenticated-context";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
-import { directoryQuerySchema, loadWorkflowDirectory } from "@/lib/factory-workflows/directory";
+import {
+  loadWorkflowDirectory,
+  parseWorkflowDirectoryQuery,
+} from "@/lib/factory-workflows/directory";
 import { loadWorkflowTemplatePrerequisites } from "@/lib/factory-workflows/reference-catalog";
 import {
   workflowAuthoringApiPath,
@@ -75,20 +79,15 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
       }
     />
   );
-  const selection = directoryQuerySchema.safeParse(query);
-  if (factory && !selection.success) {
-    redirect(workspaceWorkflowsPath(workspaceSlug, { factory: factory.id }));
+  const { q, after, needsReset } = parseWorkflowDirectoryQuery(query);
+  if (factory && needsReset) {
+    redirect(workspaceWorkflowsPath(workspaceSlug, { factory: factory.id, q: q || undefined }));
   }
 
-  const directory =
-    factory && selection.success
-      ? await loadWorkflowDirectory(
-          supabase,
-          { workspaceId, factoryId: factory.id },
-          selection.data,
-        )
-      : null;
-  if (!factory || !directory || !selection.success) {
+  const directory = factory
+    ? await loadWorkflowDirectory(supabase, { workspaceId, factoryId: factory.id }, { q, after })
+    : null;
+  if (!factory || !directory) {
     return (
       <PageContainer>
         {header}
@@ -119,7 +118,6 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
     loadWorkspaceLayoutContext(workspaceSlug),
   ]);
   const setupRequired = shouldShowOnboardingResumeCta(onboarding);
-  const { q, after } = selection.data;
   const directoryHref = workspaceWorkflowsPath(workspaceSlug, {
     factory: factoryId,
     ...(q ? { q } : {}),
@@ -280,9 +278,7 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
             </ul>
           ) : (
             <p className="type-secondary text-muted">
-              {q
-                ? "No workflows match that name in this factory."
-                : "No workflows in this factory yet."}
+              {workflowDirectoryEmptyMessage({ q, after })}
             </p>
           )}
           {(after && !directory.cursorUnavailable) || directory.nextAfterId ? (

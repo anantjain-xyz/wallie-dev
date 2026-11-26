@@ -35,6 +35,12 @@ export function workflowTemplateLabel(template: WorkflowTemplateRevision | null)
   return `${workflowTemplates.find(({ id }) => id === template.id)?.label} · v${template.version}`;
 }
 
+export function workflowDirectoryEmptyMessage({ q, after }: { q?: string; after?: string }) {
+  if (after) return "No more workflows.";
+  if (q) return "No workflows match that name in this factory.";
+  return "No workflows in this factory yet.";
+}
+
 export function workflowDirectoryAvailability(
   intake: "eligible" | "definition_changed" | "unavailable" | undefined,
   { isDefault, setupRequired }: { isDefault: boolean; setupRequired: boolean },
