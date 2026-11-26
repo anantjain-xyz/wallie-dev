@@ -200,7 +200,8 @@ select ok(public.get_session_list_page('session-search-private', search_query =>
 reset role;
 update public.sessions
 set current_stage_id = '51700000-0002-4000-8000-000000000002'
-where id = '51700000-0003-4000-8000-000000000042';
+where workspace_id = '51700000-0001-4000-8000-000000000001'
+  and current_stage_id = '51700000-0002-4000-8000-000000000001';
 set local role authenticated;
 
 with ledger as (
