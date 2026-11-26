@@ -122,6 +122,7 @@ it("keeps an unavailable saved state and retries labels without losing the intak
   await user.click(screen.getByRole("button", { name: "Retry issue labels lookup" }));
   const picker = screen.getByRole("combobox", { name: "Issue label (optional)" });
   await within(picker).findByRole("option", { name: "Wallie · Linear workspace label" });
+  expect(picker).not.toBeRequired();
   expect(picker).toHaveValue(label.id);
   await user.click(screen.getByRole("button", { name: "Save intake" }));
   await screen.findByText("Linear intake saved.");
@@ -154,7 +155,9 @@ it("preselects the sole project team and focuses the destination for a duplicate
   const from = screen.getByRole("combobox", { name: "From state" });
   const to = screen.getByRole("combobox", { name: "To state" });
   await within(from).findByRole("option", { name: "In progress · Platform (PLAT) · started" });
-  expect(screen.getByRole("combobox", { name: "Linear team" })).toHaveValue(team.id);
+  const teamChoice = screen.getByRole("combobox", { name: "Linear team" });
+  expect(teamChoice).toHaveValue(team.id);
+  for (const choice of [teamChoice, from, to]) expect(choice).toBeRequired();
   expect(fetchMock.mock.calls.some(([url]) => url.includes(`teamId=${team.id}`))).toBe(true);
   await user.selectOptions(from, starting.id);
   await user.selectOptions(to, starting.id);

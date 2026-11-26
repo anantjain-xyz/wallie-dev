@@ -97,6 +97,65 @@ it("shows granted and missing Slack permissions to a factory manager", async () 
   expect(screen.getByText("Missing Slack permissions chat:write")).toBeVisible();
 });
 
+it("drops stale Slack access after disconnect and reconnects with the current generation", async () => {
+  let disconnected = false;
+  request.mockImplementation(async (url, init) => {
+    const generation = disconnected ? 8 : 7;
+    const status = disconnected ? "disconnected" : "connected";
+    if (url === connectorEndpoint)
+      return Response.json({
+        canConfigure: true,
+        resources: [],
+        installations: [
+          {
+            id: installationId,
+            provider: "slack",
+            externalTenantId: teamId,
+            externalInstallationId: teamId,
+            generation,
+            status,
+          },
+        ],
+      });
+    if (url === `${connectorEndpoint}/setup`) {
+      disconnected = true;
+      return Response.json({ disconnected: true });
+    }
+    if (url === slackEndpoint && init?.method !== "POST")
+      return Response.json({
+        configured: true,
+        canConfigure: true,
+        installations: [{ ...installation, generation, status }],
+      });
+    return Response.json({ error: "Slack authorization expired." }, { status: 409 });
+  });
+  const user = userEvent.setup();
+  render(
+    <ConnectorResources
+      canManage
+      factoryId={factoryId}
+      workspaceId={workspaceId}
+      workspaceSlug="fixture"
+    />,
+    { wrapper: OverlayProvider },
+  );
+  expect(await screen.findByRole("button", { name: "Link my Slack account" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Disconnect connector" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Disconnect connector" }));
+
+  expect(await screen.findByText("Slack workspace disconnected.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Link my Slack account" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Reconnect Slack" }));
+  expect(postedCommands()).toEqual([
+    {
+      url: `${connectorEndpoint}/setup`,
+      body: { action: "disconnect", installationId, expectedGeneration: 7 },
+    },
+    { url: slackEndpoint, body: { action: "install", teamId, expectedGeneration: 8 } },
+  ]);
+});
+
 it("reconnects the named workspace directly and parses a new Slack web app link", async () => {
   request
     .mockResolvedValueOnce(

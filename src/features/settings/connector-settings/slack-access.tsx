@@ -79,10 +79,11 @@ function oauthReturnMessage(result: string | null): FlashMessage | null {
   }
 }
 
-export function useSlackConnectorSetup(endpoint: string | null) {
-  const [setup, setSetup] = useState<SlackSetup | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
+export function useSlackConnectorSetup(endpoint: string | null, installationScope = "") {
+  const [loaded, setLoaded] = useState<{ key: string; data: SlackSetup | null } | null>(null);
   const [reload, setReload] = useState(0);
+  const key = JSON.stringify([endpoint, installationScope, reload]);
+  const current = loaded?.key === key ? loaded : null;
 
   useEffect(() => {
     if (!endpoint) return;
@@ -91,23 +92,18 @@ export function useSlackConnectorSetup(endpoint: string | null) {
       .then((response) => readConnectorResponse(response, slackConnectorSetupSchema))
       .then((data) => {
         if (abort.signal.aborted) return;
-        setSetup(data);
-        setLoadFailed(false);
+        setLoaded({ key, data });
       })
       .catch(() => {
         if (abort.signal.aborted) return;
-        setSetup(null);
-        setLoadFailed(true);
+        setLoaded({ key, data: null });
       });
     return () => abort.abort();
-  }, [endpoint, reload]);
+  }, [endpoint, key]);
   return {
-    setup,
-    loadFailed,
-    refresh: () => {
-      setLoadFailed(false);
-      setReload((value) => value + 1);
-    },
+    setup: current?.data ?? null,
+    loadFailed: current?.data === null,
+    refresh: () => setReload((value) => value + 1),
   };
 }
 

@@ -165,12 +165,18 @@ function ProviderResources({
   const [selectedInstallation, setSelectedInstallation] = useState("");
   const [policyRevision, setPolicyRevision] = useState(0);
   const endpoint = `${factoryEndpoint}/connectors`;
-  const slackSetup = useSlackConnectorSetup(provider === "slack" ? endpoint : null);
   const providerResources = inventory.resources.filter(
     (resource) => resource.provider === provider,
   );
   const installations = inventory.installations.filter(
     (installation) => installation.provider === provider,
+  );
+  const slackSetup = useSlackConnectorSetup(
+    provider === "slack" && !refreshing ? endpoint : null,
+    installations
+      .map(({ id, status, generation }) => `${id}:${status}:${generation}`)
+      .sort()
+      .join(","),
   );
   const selectedResource =
     providerResources.find(({ id }) => id === selected) ?? providerResources[0];

@@ -51,10 +51,16 @@ export function OpenCodeConnectionPanel({
     providerOverride ??
     (modelProviderId !== OPENCODE_ZEN_PROVIDER_ID ? modelProviderId : undefined) ??
     "";
-  const [providerCredential, setProviderCredential] = useState("");
+  const trimmedProviderId = providerId.trim();
+  const [providerDraft, setProviderDraft] = useState({ providerId: trimmedProviderId, value: "" });
+  const sameProvider = providerDraft.providerId === trimmedProviderId;
+  if (!sameProvider) setProviderDraft({ providerId: trimmedProviderId, value: "" });
+  const providerCredential = sameProvider ? providerDraft.value : "";
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const saveProviderDisabled =
+    isBusy || trimmedProviderId.length === 0 || providerCredential.trim().length === 0;
   const { pushToast } = useOptionalToast();
   const onStatusChangeRef = useRef(onStatusChange);
 
@@ -136,7 +142,7 @@ export function OpenCodeConnectionPanel({
 
   const handleSaveProvider = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const trimmedProviderId = providerId.trim();
+    if (saveProviderDisabled) return;
     setIsBusy(true);
     setError(null);
     setNotice(null);
@@ -158,7 +164,7 @@ export function OpenCodeConnectionPanel({
       }
       await refresh();
       setProviderOverride(null);
-      setProviderCredential("");
+      setProviderDraft({ providerId: trimmedProviderId, value: "" });
       setNotice(`API key saved for ${trimmedProviderId}.`);
       pushToast({
         priority: "polite",
@@ -198,8 +204,6 @@ export function OpenCodeConnectionPanel({
   };
 
   const saveDisabled = isBusy || credential.trim().length === 0;
-  const saveProviderDisabled =
-    isBusy || providerId.trim().length === 0 || providerCredential.trim().length === 0;
   const providers = status?.providers ?? [];
 
   return (
@@ -336,7 +340,9 @@ export function OpenCodeConnectionPanel({
               autoComplete="off"
               className="ui-input font-mono text-[13px]"
               disabled={isBusy}
-              onChange={(event) => setProviderCredential(event.target.value)}
+              onChange={(event) =>
+                setProviderDraft({ providerId: trimmedProviderId, value: event.target.value })
+              }
               placeholder="sk-…"
               spellCheck={false}
               type="password"
