@@ -13,7 +13,6 @@ import { CatalogStatus, ResourceIdDetails, useConnectorCatalog } from "./catalog
 import { ConnectorDeliveryHistory } from "./history";
 import { LinearConnectorPolicies } from "./linear-policies";
 import { readConnectorResponse } from "./request";
-import { ConnectorSelect } from "./select";
 import { ConnectorSetup, GitHubRequestRule } from "./setup";
 import { SlackConnectorAccess, slackWorkspaceOption, useSlackConnectorSetup } from "./slack-access";
 
@@ -216,28 +215,29 @@ function ProviderResources({
     <div className="space-y-5">
       <div className="space-y-2">
         {provider === "slack" && installations.length > 1 ? (
-          <ConnectorSelect
+          <SelectField
+            className="max-w-xs"
+            fallbackLabel="Choose a workspace"
             label="Slack workspace"
-            onChange={(event) => {
+            onValueChange={(installationId) => {
+              if (installationId === installation?.id) return;
               rememberResourceName();
-              setSelectedInstallation(event.target.value);
+              setSelectedInstallation(installationId);
             }}
-            value={installation?.id ?? ""}
-          >
-            {!installation ? <option value="">Choose a workspace</option> : null}
-            {installations.map((item) => {
+            options={installations.map((item) => {
               const workspace = slackSetup.setup?.installations.find(
                 (entry) => entry.id === item.id,
               );
-              return (
-                <option key={item.id} value={item.id}>
-                  {workspace
-                    ? slackWorkspaceOption(workspace)
-                    : `${slackSetup.setup || slackSetup.loadFailed ? "Workspace name unavailable" : "Loading Slack workspace…"} · ${connectionStatusLabel[item.status]}`}
-                </option>
-              );
+              return {
+                label: workspace
+                  ? slackWorkspaceOption(workspace)
+                  : `${slackSetup.setup || slackSetup.loadFailed ? "Workspace name unavailable" : "Loading Slack workspace…"} · ${connectionStatusLabel[item.status]}`,
+                value: item.id,
+              };
             })}
-          </ConnectorSelect>
+            value={installation?.id ?? ""}
+            wrap
+          />
         ) : null}
         {resource ? (
           <SelectField
