@@ -1,6 +1,8 @@
 import Link from "next/link";
 
+import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { SelectField } from "@/components/ui/select";
 import { failureGroupTitle } from "@/features/factory-failures/failure-group-summary";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
@@ -101,22 +103,23 @@ export default async function ImprovementsPage({
           >
             <input name="factory" type="hidden" value={scope.factoryId} />
             {cohort.data ? <input name="cohort" type="hidden" value={cohort.data} /> : null}
-            <label className="type-label grid gap-1">
-              Review state
-              <select
-                key={reviewState.data ?? "all"}
-                className="ui-input"
-                defaultValue={reviewState.data ?? "all"}
-                name="reviewState"
-              >
-                <option value="all">All</option>
-                {proposalReviewDispositionSchema.options.map((state) => (
-                  <option key={state} value={state}>
-                    {improvementReviewStates[state].label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SelectField
+              className="w-52 max-w-full"
+              defaultValue={reviewState.data ?? "all"}
+              key={reviewState.data ?? "all"}
+              label="Review state"
+              labelClassName="type-label"
+              name="reviewState"
+              options={[
+                { label: "All", value: "all" },
+                ...proposalReviewDispositionSchema.options.map((value) => ({
+                  label: improvementReviewStates[value].label,
+                  value,
+                })),
+              ]}
+              triggerClassName={FILTER_CONTROL_CLASS}
+              wrap
+            />
             <button className="ui-button" type="submit">
               Apply filter
             </button>

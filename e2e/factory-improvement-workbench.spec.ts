@@ -12,6 +12,7 @@ import {
 } from "../src/lib/factory-proposals/workbench-contracts";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { selectDropdownOption } from "./helpers/select";
 
 const sourceSchema = z.object({
   cohortId: z.uuid(),
@@ -144,18 +145,57 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     expect(invalid.status(), JSON.stringify(invalidBody)).toBe(201);
     expect(proposalResponse.parse(invalidBody).proposal.status).toBe("invalid");
 
-    await page.getByRole("link", { name: "View improvements", exact: true }).click();
+    await page.getByRole("link", { name: "View proposals for this group", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`cohort=${source.cohortId}`));
     await expect(page.getByRole("heading", { name: "Improvements", exact: true })).toBeVisible();
     await expect(
       main.getByRole("link", { name: "Failure group: Reconciliation quality", exact: true }),
     ).toBeVisible();
-    await main.getByLabel("Review state").selectOption("dismissed");
-    await main.getByRole("button", { name: "Apply filter" }).click();
-    await expect(main.getByText("No improvement proposals match this review state.")).toBeVisible();
-    await main.getByLabel("Review state").selectOption("open");
-    await main.getByRole("button", { name: "Apply filter" }).click();
-    await expect(page).toHaveURL(/reviewState=open/);
+    await test.step("changes the review state only when the filter is applied", async () => {
+      const filter = main.getByRole("combobox", { name: "Review state", exact: true });
+      const listbox = page.getByRole("listbox", { name: "Review state", exact: true });
+      const apply = main.getByRole("button", { name: "Apply filter", exact: true });
+      const filterUrl = new URL(page.url());
+
+      await expect(filter).toHaveText("All");
+      await filter.press("ArrowDown");
+      await expect(listbox.getByRole("option")).toHaveText([
+        "All",
+        "Open",
+        "Investigate",
+        "Revision requested",
+        "Dismissed",
+      ]);
+      await expect(listbox.getByRole("option", { selected: true })).toHaveText("All");
+      await page.keyboard.press("ArrowDown");
+      await expect(listbox.getByRole("option", { name: "Open", exact: true })).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(listbox).toHaveCount(0);
+      await expect(filter).toBeFocused();
+      await expect(filter).toHaveText("All");
+
+      await selectDropdownOption(filter, "dismissed");
+      await expect(filter).toHaveText("Dismissed");
+      await expect(page).toHaveURL(filterUrl.href);
+      filterUrl.searchParams.set("reviewState", "dismissed");
+      await apply.click();
+      await expect(page).toHaveURL(filterUrl.href);
+      await expect(
+        main.getByText("No improvement proposals match this review state."),
+      ).toBeVisible();
+
+      await filter.press("ArrowDown");
+      await expect(listbox.getByRole("option", { selected: true })).toHaveText("Dismissed");
+      await page.keyboard.press("Home");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await expect(filter).toBeFocused();
+      await expect(filter).toHaveText("Open");
+      await expect(page).toHaveURL(filterUrl.href);
+      filterUrl.searchParams.set("reviewState", "open");
+      await apply.click();
+      await expect(page).toHaveURL(filterUrl.href);
+    });
     const proposal = main.getByRole("link", { name: rationale, exact: true });
     await expect(proposal).toBeVisible();
     const firstPath = z.string().parse(await proposal.getAttribute("href"));
