@@ -27,6 +27,7 @@ export const maintenanceTickResponseSchema = z.object({
       refreshed: count,
       failed: count,
       limited: z.literal(true).optional(),
+      incomplete: z.literal(true).optional(),
     })
     .nullable(),
 });

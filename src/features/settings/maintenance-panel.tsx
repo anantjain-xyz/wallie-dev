@@ -31,7 +31,8 @@ function resultMessage({
   if (!githubVerification) {
     issues.push("GitHub verification did not finish.");
   } else {
-    const { checked, failed, refreshed, limited } = githubVerification;
+    const { checked, failed, refreshed, limited, incomplete } = githubVerification;
+    if (incomplete) issues.push("GitHub verification did not finish.");
     if (failed) {
       issues.push(
         `GitHub verification failed for ${failed} ${failed === 1 ? "pull request" : "pull requests"}.`,

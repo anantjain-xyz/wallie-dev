@@ -89,6 +89,27 @@ describe("MaintenanceIsland", () => {
     expect(within(archiveCell).getByText("2")).toBeInTheDocument();
   });
 
+  it("shows completed GitHub refreshes even when the batch did not finish", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          ...maintenanceResult,
+          githubVerification: { checked: 1, refreshed: 1, failed: 0, incomplete: true },
+        }),
+      ),
+    );
+    render(<MaintenanceIsland canManage workspaceId="workspace-1" workspaceName="Acme Lab" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Run maintenance" }));
+
+    const result = await screen.findByRole("status");
+    expect(result).toHaveTextContent("Maintenance returned partial results.");
+    expect(result).toHaveTextContent("GitHub verification did not finish.");
+    const refreshedCell = screen.getByText("GitHub checks refreshed").parentElement!;
+    expect(within(refreshedCell).getByText("1")).toBeInTheDocument();
+  });
+
   it("clears the old cards when a rerun starts and does not show them after a failure", async () => {
     const request = vi.fn().mockResolvedValueOnce(Response.json(maintenanceResult));
     let finish!: (response: Response) => void;
