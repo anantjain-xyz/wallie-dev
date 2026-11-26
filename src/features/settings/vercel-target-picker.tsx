@@ -241,26 +241,23 @@ export function VercelTargetPicker({
             />
           ) : null}
           {team && projects?.length ? (
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-foreground">Project</span>
-              <select
-                className="ui-input"
-                disabled={disabled}
-                name="vercel-project"
-                onChange={(event) => {
-                  setProjectId(event.target.value);
-                  if (event.target.value) setSavedUnavailable(false);
-                }}
-                value={projectId}
-              >
-                <option value="">Choose a project</option>
-                {projects.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} · {team.slug}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SelectField
+              disabled={disabled}
+              emptyOption={{ label: "Choose a project", value: "" }}
+              label="Project"
+              labelClassName="text-xs"
+              name="vercel-project"
+              onValueChange={(nextProjectId) => {
+                setProjectId(nextProjectId);
+                if (nextProjectId) setSavedUnavailable(false);
+              }}
+              options={projects.map((item) => ({
+                label: `${item.name} · ${team.slug}`,
+                value: item.id,
+              }))}
+              value={projectId}
+              wrap
+            />
           ) : null}
           {pending ? (
             <p className="text-xs text-muted" role="status">
