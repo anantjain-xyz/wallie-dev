@@ -12,6 +12,7 @@ import {
   proposalReviewEventSchema,
   proposalReviewSaveSchema,
   type ProposalReviewCommand,
+  type ProposalReviewDisposition,
 } from "./workbench-contracts";
 
 type Client = Pick<SupabaseClient<Database>, "rpc">;
@@ -59,13 +60,18 @@ export type ImprovementWorkbench = z.infer<typeof workbenchSchema>;
 export async function listImprovementProposals(
   client: Client,
   { workspaceId, factoryId }: FactoryScope,
-  { after, cohortId }: { after?: string; cohortId?: string } = {},
+  {
+    after,
+    cohortId,
+    reviewState,
+  }: { after?: string; cohortId?: string; reviewState?: ProposalReviewDisposition } = {},
 ): Promise<ImprovementProposalList> {
   const { data, error } = await client.rpc("list_factory_improvement_workbench", {
     p_workspace_id: workspaceId,
     p_factory_id: factoryId,
     ...(after ? { p_after_proposal_id: after } : {}),
     ...(cohortId ? { p_cohort_id: cohortId } : {}),
+    ...(reviewState ? { p_review_state: reviewState } : {}),
   });
   if (error) throw error;
   return listSchema.parse(data);
