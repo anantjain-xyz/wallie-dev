@@ -50,8 +50,14 @@ export async function ImprovementDiff({
   proposal,
   scope,
 }: {
-  proposal: Extract<ImprovementWorkbench["proposal"], { status: "compiled" }>;
-  scope: NonNullable<Awaited<ReturnType<typeof loadImprovementScope>>>;
+  proposal: Pick<
+    Extract<ImprovementWorkbench["proposal"], { status: "compiled" }>,
+    "base" | "baseCurrent" | "candidate" | "diff"
+  >;
+  scope: Pick<
+    NonNullable<Awaited<ReturnType<typeof loadImprovementScope>>>,
+    "supabase" | "workspaceId" | "factoryId"
+  >;
 }) {
   const { supabase, workspaceId, factoryId } = scope;
   const diff = proposal.diff;
@@ -175,6 +181,7 @@ export async function ImprovementDiff({
     return [
       configuration.modelKey,
       configuration.harness,
+      configuration.workerRuntime === "node" ? "Node.js" : "Cloudflare Workers",
       agentNames.get(configuration.agentId) ?? "Agent name unavailable",
       target
         ? `Definition revision saved ${savedDate.format(new Date(target.created_at))} UTC`
