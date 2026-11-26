@@ -26,6 +26,7 @@ test("the narrow landing shows a static workflow before the provider lists", asy
   await page.setViewportSize({ width: 320, height: 800 });
   await page.clock.install();
   await page.goto("/");
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
   const workflow = page.getByRole("figure", { name: "Example workflow" });
   const agents = page.getByRole("list", { name: "Supported coding agents" });
   const sandboxes = page.getByRole("list", { name: "Supported sandboxes" });

@@ -49,9 +49,9 @@ export function LandingPage() {
         id="main-content"
         aria-labelledby="landing-title"
         tabIndex={-1}
-        className="flex flex-1 items-center py-10 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))] lg:px-10"
+        className="flex flex-1 items-center py-10 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] max-[360px]:pt-6 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))] lg:px-10"
       >
-        <div className="mx-auto grid w-full max-w-[1120px] gap-8 sm:gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
+        <div className="mx-auto grid w-full max-w-[1120px] gap-8 max-[360px]:gap-6 sm:gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
           <div>
             <h1
               id="landing-title"
@@ -63,7 +63,7 @@ export function LandingPage() {
               Describe the work. Review the plan. Let your coding agent build it in an isolated
               sandbox, with your team in control at every stage.
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="mt-8 flex flex-wrap items-center gap-3 max-[360px]:mt-6">
               <Link
                 href="/login"
                 aria-describedby="hosted-setup"
