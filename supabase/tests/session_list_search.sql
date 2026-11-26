@@ -157,10 +157,13 @@ select is(payload->'scopeFacets',
 select is(payload->'stageFacets',
   case scope
     when 'active' then '[{"count":1,"name":"Plan","position":1,"slug":"plan"},{"count":1,"name":"Build","position":2,"slug":"build"}]'::jsonb
-    when 'archived' then '[{"count":1,"name":"Build","position":2,"slug":"build"}]'::jsonb
+    when 'archived' then case stage
+      when 'plan' then '[{"count":1,"name":"Build","position":2,"slug":"build"},{"count":0,"name":"Plan","position":1,"slug":"plan"}]'::jsonb
+      else '[{"count":1,"name":"Build","position":2,"slug":"build"}]'::jsonb
+    end
     else '[{"count":1,"name":"Plan","position":1,"slug":"plan"},{"count":2,"name":"Build","position":2,"slug":"build"}]'::jsonb
   end,
-  format('%s/%s/%s stage counts honor scope and ignore stage', query, scope, coalesce(stage, 'all'))
+  format('%s/%s/%s stage counts honor scope and retain a selected stage at zero', query, scope, coalesce(stage, 'all'))
 ) from filtered_search;
 
 select is(
@@ -193,6 +196,26 @@ select is(jsonb_array_length(public.get_session_list_page('session-search-other'
   1, 'an accessible second workspace never includes the first workspace results');
 select ok(public.get_session_list_page('session-search-private', search_query => '#42') is null,
   'knowing a session number does not expose a workspace without membership');
+
+reset role;
+update public.sessions
+set current_stage_id = '51700000-0002-4000-8000-000000000002'
+where workspace_id = '51700000-0001-4000-8000-000000000001'
+  and current_stage_id = '51700000-0002-4000-8000-000000000001';
+set local role authenticated;
+
+with ledger as (
+  select public.get_session_list_page('session-search-fixture', stage_filter_slug => 'plan') payload
+)
+select is(payload->'sessions', '[]'::jsonb, 'the selected stage has no rows after its last session moves')
+from ledger
+union all
+select is(
+  (select facet from jsonb_array_elements(payload->'stageFacets') facet where facet->>'slug' = 'plan'),
+  '{"count":0,"name":"Plan","position":1,"slug":"plan"}'::jsonb,
+  'the last session leaving a configured stage does not erase its facet'
+)
+from ledger;
 
 select * from finish();
 rollback;

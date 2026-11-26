@@ -158,11 +158,11 @@ describe("Pipeline dashboard data", () => {
       lanes: [
         lane(),
         lane({ cards: [], id: VERIFY_STAGE_ID }),
-        lane({
-          cards: [card(1, VERIFY_STAGE_ID)],
-          id: VERIFY_STAGE_ID,
-          totalCount: 1,
-        }),
+        {
+          ...lane({ cards: [], id: VERIFY_STAGE_ID, totalCount: 0 }),
+          activeCount: 1,
+          factoryName: "Payments",
+        },
       ],
     }).lanes;
 
@@ -172,6 +172,7 @@ describe("Pipeline dashboard data", () => {
         new Set([VERIFY_STAGE_ID]),
       ),
     ).toEqual([active, occupiedArchived]);
+    expect(occupiedArchived?.factoryName).toBe("Payments");
   });
 
   it("starts onboarding, board, and session-history queries concurrently after auth", async () => {

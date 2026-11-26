@@ -9,7 +9,6 @@ import { readResponseJson } from "@/features/settings/use-api-action";
 type DeleteWorkspaceResponse = {
   deleted: boolean;
   redirectTo?: string;
-  message?: string;
 };
 
 type LeaveWorkspaceResponse = {
@@ -28,11 +27,15 @@ export function DangerZoneSection({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState("");
+  const [acceptedConfirmation, setAcceptedConfirmation] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const confirmationInputRef = useRef<HTMLInputElement>(null);
+  const deletionStarted = acceptedConfirmation !== null;
 
   async function deleteWorkspace(confirmation: string) {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setDialogError(null);
 
@@ -43,12 +46,12 @@ export function DangerZoneSection({
         method: "DELETE",
       });
       const payload = await readResponseJson<DeleteWorkspaceResponse>(response);
-      if (!payload.deleted || !payload.redirectTo) {
-        setDialogError(
-          payload.message ?? "Deleting… Cleanup continues automatically. Retry to check status.",
-        );
-        setBusy(false);
+      if (response.status === 202 && payload.deleted === false) {
+        setAcceptedConfirmation(confirmation);
         return;
+      }
+      if (!payload.deleted || !payload.redirectTo) {
+        throw new Error("Wallie could not confirm workspace deletion.");
       }
 
       // Full navigation: the current route belongs to a workspace that no longer
@@ -57,7 +60,9 @@ export function DangerZoneSection({
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Wallie could not delete this workspace.";
-      setDialogError(message);
+      setDialogError(deletionStarted ? `Could not retry cleanup. ${message}` : message);
+    } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -104,50 +109,76 @@ export function DangerZoneSection({
         {canDelete ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <h3 className="text-[14px] font-semibold text-foreground">Delete workspace</h3>
+              <h3 className="text-[14px] font-semibold text-foreground">
+                {deletionStarted ? "Deletion in progress" : "Delete workspace"}
+              </h3>
               <p className="mt-1 text-xs leading-5 text-muted">
-                Permanently delete{" "}
-                <span className="font-medium text-foreground">{workspaceName}</span> and all of its
-                data. This cannot be undone.
+                {deletionStarted ? (
+                  "Wallie will retry cleanup automatically."
+                ) : (
+                  <>
+                    Permanently delete{" "}
+                    <span className="font-medium text-foreground">{workspaceName}</span> and all of
+                    its data. This cannot be undone.
+                  </>
+                )}
               </p>
             </div>
             <DestructiveConfirmationDialog
-              actionDisabled={!confirmed}
-              actionLabel="Delete workspace"
+              actionDisabled={!deletionStarted && !confirmed}
+              actionLabel={deletionStarted ? "Retry cleanup" : "Delete workspace"}
+              cancelLabel={deletionStarted ? "Close" : "Cancel"}
               description={
-                <>
-                  This permanently deletes <strong>{workspaceName}</strong> and everything in it —
-                  members, sessions, artifacts, integrations, and secrets. This cannot be undone.
-                </>
+                deletionStarted ? (
+                  <>
+                    Wallie will retry cleanup for <strong>{workspaceName}</strong> automatically.
+                  </>
+                ) : (
+                  <>
+                    This permanently deletes <strong>{workspaceName}</strong> and everything in it —
+                    members, sessions, artifacts, integrations, and secrets. This cannot be undone.
+                  </>
+                )
               }
               errorMessage={dialogError}
-              initialFocusRef={confirmationInputRef}
-              onConfirm={() => void deleteWorkspace(confirmation)}
+              initialFocusRef={deletionStarted ? undefined : confirmationInputRef}
+              onConfirm={() => void deleteWorkspace(acceptedConfirmation ?? confirmation)}
               onOpenChange={handleOpenChange}
               open={dialogOpen}
               pending={busy}
-              pendingLabel="Deleting…"
-              title={`Delete ${workspaceName}?`}
+              pendingLabel={deletionStarted ? "Retrying cleanup…" : "Deleting…"}
+              title={deletionStarted ? "Deletion in progress" : `Delete ${workspaceName}?`}
               trigger={
-                <button className="ui-button-danger min-h-9 shrink-0" type="button">
-                  Delete workspace
+                <button
+                  className={`${deletionStarted ? "ui-button" : "ui-button-danger"} min-h-9 shrink-0`}
+                  type="button"
+                >
+                  {deletionStarted ? "View deletion progress" : "Delete workspace"}
                 </button>
               }
             >
-              <label className="block space-y-1.5">
-                <span className="text-[13px] font-medium text-foreground">
-                  Type <span className="font-mono">{workspaceName}</span> to confirm
-                </span>
-                <input
-                  ref={confirmationInputRef}
-                  autoComplete="off"
-                  className="ui-input"
-                  disabled={busy}
-                  onChange={(event) => setConfirmation(event.target.value)}
-                  spellCheck={false}
-                  value={confirmation}
-                />
-              </label>
+              <div
+                role="status"
+                className={deletionStarted ? "type-body text-foreground" : "sr-only"}
+              >
+                {deletionStarted ? "Deletion started. Closing this dialog won’t stop it." : null}
+              </div>
+              {!deletionStarted && (
+                <label className="block space-y-1.5">
+                  <span className="text-[13px] font-medium text-foreground">
+                    Type <span className="font-mono">{workspaceName}</span> to confirm
+                  </span>
+                  <input
+                    ref={confirmationInputRef}
+                    autoComplete="off"
+                    className="ui-input"
+                    disabled={busy}
+                    onChange={(event) => setConfirmation(event.target.value)}
+                    spellCheck={false}
+                    value={confirmation}
+                  />
+                </label>
+              )}
             </DestructiveConfirmationDialog>
           </div>
         ) : (

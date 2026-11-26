@@ -12,6 +12,51 @@ afterEach(() => {
 });
 
 describe("OpenCodeConnectionPanel", () => {
+  it("prefills the selected model's custom provider prefix without locking manual entry", () => {
+    const { rerender } = render(
+      <OpenCodeConnectionPanel
+        initialStatus={{ checkedAt: "2099-08-30T00:00:00.000Z", connected: false }}
+        selectedModel="openrouter/anthropic/claude-sonnet-4"
+      />,
+    );
+    const provider = screen.getByLabelText("Provider id");
+    expect(provider).toHaveValue("openrouter");
+    fireEvent.change(provider, { target: { value: "my-custom-provider" } });
+    rerender(<OpenCodeConnectionPanel selectedModel="opencode-go/glm-5.3" />);
+    expect(provider).toHaveValue("my-custom-provider");
+  });
+
+  it("clears draft credentials when the model or manual override changes the provider", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const status = { checkedAt: "2099-08-30T00:00:00.000Z", connected: false };
+    const { rerender } = render(
+      <OpenCodeConnectionPanel initialStatus={status} selectedModel="openrouter/model-a" />,
+    );
+    const provider = screen.getByLabelText("Provider id");
+    const key = screen.getByLabelText("Provider API key");
+    const save = screen.getByRole("button", { name: "Save provider key" });
+    fireEvent.change(key, { target: { value: "example-openrouter-key" } });
+    rerender(<OpenCodeConnectionPanel initialStatus={status} selectedModel="openrouter/model-b" />);
+    expect(key).toHaveValue("example-openrouter-key");
+    expect(save).toBeEnabled();
+
+    rerender(
+      <OpenCodeConnectionPanel initialStatus={status} selectedModel="opencode-go/glm-5.3" />,
+    );
+    expect(provider).toHaveValue("opencode-go");
+    expect(key).toHaveValue("");
+    expect(save).toBeDisabled();
+    fireEvent.submit(key.closest("form")!);
+
+    fireEvent.change(key, { target: { value: "example-go-key" } });
+    fireEvent.change(provider, { target: { value: "openrouter" } });
+    expect(key).toHaveValue("");
+    expect(save).toBeDisabled();
+    fireEvent.submit(key.closest("form")!);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("renders server-loaded connected status without exposing a key", () => {
     render(
       <OpenCodeConnectionPanel
@@ -62,6 +107,7 @@ describe("OpenCodeConnectionPanel", () => {
   });
 
   it("saves a custom provider key without echoing the secret", async () => {
+    const onDraftStateChange = vi.fn();
     const onStatusChange = vi.fn();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -91,22 +137,25 @@ describe("OpenCodeConnectionPanel", () => {
     render(
       <OpenCodeConnectionPanel
         initialStatus={{ checkedAt: "2099-08-30T00:00:00.000Z", connected: false, providers: [] }}
-        modelProviderId="opencode-go"
+        onDraftStateChange={onDraftStateChange}
         onStatusChange={onStatusChange}
       />,
     );
 
-    expect(screen.getByRole("combobox", { name: "Provider" })).toHaveValue("opencode-go");
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false });
+    fireEvent.change(screen.getByLabelText("Provider id"), { target: { value: "opencode-go" } });
     fireEvent.change(screen.getByLabelText("Provider API key"), {
       target: { value: "go-key-12345678901234567890" },
     });
+    expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: true, pending: false });
     fireEvent.click(screen.getByRole("button", { name: "Save provider key" }));
 
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "OpenCode Go credential actions" }),
-      ).toBeInTheDocument(),
+      expect(onDraftStateChange).toHaveBeenLastCalledWith({ dirty: false, pending: false }),
     );
+    expect(onDraftStateChange).toHaveBeenCalledWith({ dirty: true, pending: true });
+    expect(screen.getByText("opencode-go")).toBeInTheDocument();
+    expect(screen.getByText("OpenCode Go")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/opencode/providers/opencode-go", {
       body: JSON.stringify({ credential: "go-key-12345678901234567890" }),
       headers: { "Content-Type": "application/json" },

@@ -53,15 +53,15 @@ where session.workspace_id=pg_temp.inbox_id(10);
 update public.sessions session set current_artifact_id=pg_temp.inbox_id(200+number),current_artifact_version=1,
   artifact_review_revision=3 where session.workspace_id=pg_temp.inbox_id(10);
 
-create function pg_temp.inbox_snapshot(p_factory_id uuid default null, p_before jsonb default null)
+create function pg_temp.inbox_snapshot(p_factory_id uuid default null, p_before jsonb default null, p_kind text default null)
 returns jsonb language sql as $$
   select public.get_factory_inbox(pg_temp.inbox_id(10), p_factory_id,
-    (p_before->>'occurredAt')::timestamptz,(p_before->>'artifactId')::uuid)
+    (p_before->>'occurredAt')::timestamptz,(p_before->>'artifactId')::uuid,p_kind)
 $$;
 
-select ok(not has_function_privilege('anon','public.get_factory_inbox(uuid,uuid,timestamptz,uuid)','EXECUTE'),
+select ok(not has_function_privilege('anon','public.get_factory_inbox(uuid,uuid,timestamptz,uuid,text)','EXECUTE'),
   'anonymous callers cannot read Inbox counts');
-select ok(not has_function_privilege('service_role','public.get_factory_inbox(uuid,uuid,timestamptz,uuid)','EXECUTE'),
+select ok(not has_function_privilege('service_role','public.get_factory_inbox(uuid,uuid,timestamptz,uuid,text)','EXECUTE'),
   'the browser-only Inbox has no service-role entry point');
 
 set local role authenticated;
@@ -85,6 +85,15 @@ select ok((select snapshot->'items'->0 @> jsonb_build_object('stageId',pg_temp.i
   'each item carries the exact review point, context and action type');
 select is(pg_temp.inbox_snapshot((select id from inbox_factories where fixture='restricted')),null::jsonb,
   'an explicitly requested inaccessible factory reveals no counts');
+select is(pg_temp.inbox_snapshot((select id from inbox_factories where fixture='restricted'),p_kind=>'review'),
+  null::jsonb,'filtering an inaccessible factory still reveals no counts');
+select is(pg_temp.inbox_snapshot(p_before=>(select snapshot->'next' from first_inbox),p_kind=>'review'),
+  (select snapshot from second_inbox),'a filtered review cursor preserves ordering and exact targets');
+select is(pg_temp.inbox_snapshot(p_kind=>'clarification'),
+  '{"items":[],"counts":{"review":27,"clarification":0},"next":null}'::jsonb,
+  'an empty filter preserves authorized counts without advertising another page');
+select throws_ok(format('select public.get_factory_inbox(%L,p_kind=>%L)',pg_temp.inbox_id(10),'unknown'),
+  '22023','Invalid Inbox kind.','invalid filters are rejected');
 select throws_ok(format('select public.get_factory_inbox(%L,null,now(),null)',pg_temp.inbox_id(10)),
   '22023','Invalid Inbox cursor.','partial pagination bounds are rejected');
 

@@ -2,6 +2,9 @@ import Link from "next/link";
 import { z } from "zod";
 
 import { MetadataItem, MetadataList, PageSection } from "@/components/ui/page-shell";
+import { auditDetailSchema } from "./governance-audit-detail";
+import { CopyGovernanceId } from "./governance-fields";
+import { grantName, principalName, repositoryName, toolName } from "./governance-names";
 import type {
   GovernanceData,
   GovernanceScope,
@@ -13,10 +16,7 @@ import {
 } from "@/features/factory-governance/governance-resource-link";
 import type { FactoryAuditEvent } from "@/lib/factories/audit";
 import { factoryAuditSourceSchema, type FactoryAuditSource } from "@/lib/factories/audit-contracts";
-import {
-  factoryCommandLabels,
-  factoryCommandScopesSchema,
-} from "@/lib/factory-machine-tokens/contracts";
+import { factoryCommandLabels } from "@/lib/factory-machine-tokens/contracts";
 import { workspaceAgentDetailPath, workspaceGovernancePath } from "@/lib/routes";
 
 const auditActions = {
@@ -60,44 +60,15 @@ const auditActions = {
   },
 } as const;
 
-const auditDetailSchema = z.object({
-  id: z.string().optional(),
-  clientId: z.string().uuid().optional(),
-  oauthGrantId: z.string().uuid().optional(),
-  grantVersion: z.number().int().positive().safe().optional(),
-  scopes: factoryCommandScopesSchema.optional(),
-  reason: z.unknown().optional(),
-  bindingId: z.string().optional(),
-  name: z.string().optional(),
-  version: z.number().int().positive().safe().optional(),
-  service_principal_id: z.string().uuid().optional(),
-  servicePrincipalId: z.string().uuid().optional(),
-  executionGrantId: z.string().uuid().optional(),
-  grantId: z.string().uuid().optional(),
-  factoryAgentId: z.string().uuid().optional(),
-  agentId: z.string().uuid().optional(),
-  revisionId: z.string().uuid().optional(),
-  github_repository_id: z.string().uuid().optional(),
-  read_context_repository_ids: z.array(z.string()).optional(),
-  tool_ids: z.array(z.string()).optional(),
-  execution_policy_revision_id: z.string().uuid().optional(),
-  budget_payer_member_id: z.string().uuid().optional(),
-  expires_at: z.string().datetime({ offset: true }).optional(),
-  revocation_reason: z.string().nullable().optional(),
-});
-
 const oauthRevocationReasonSchema = z.enum(["disconnected", "refresh_reuse", "client_revoked"]);
 const oauthRevocationReasons = {
   disconnected: "Disconnected by a member",
   refresh_reuse: "Refresh credential reused",
   client_revoked: "Client registration revoked",
 };
-const resourceNames = {
-  grant: "Grant",
-  principal: "Service principal",
-  binding: "Credential binding",
-  "mcp-binding": "MCP credential binding",
-};
+function historicalName(name: string | undefined, kind: string) {
+  return name ? `${name} (current name)` : `Unresolved historical ${kind}`;
+}
 
 function AuditEventCard({
   data,
@@ -124,8 +95,56 @@ function AuditEventCard({
   const label = action?.label ?? "Governance operation";
   const linkProps = { factoryId: factory.id, workspaceSlug };
   const principalId = detail?.service_principal_id ?? detail?.servicePrincipalId;
-  const grantId = detail?.executionGrantId ?? detail?.grantId;
+  const grantId =
+    detail?.executionGrantId ??
+    detail?.grantId ??
+    (resource?.kind === "grant" ? resource.id : undefined);
   const agentId = detail?.factoryAgentId ?? detail?.agentId;
+  const grant = data.evidence.grants.find(({ id }) => id === grantId);
+  const agent = data.evidence.agents.find(({ id }) => id === agentId)?.name;
+  const client = data.evidence.clients.find(({ id }) => id === detail?.clientId)?.name;
+  const grantLabel =
+    detail?.service_principal_id && detail.github_repository_id
+      ? `${historicalName(principalName(data, detail.service_principal_id), "service principal")} · ${historicalName(repositoryName(data, detail.github_repository_id), "repository")}`
+      : grant
+        ? `${grantName(data, grant)} (current grant)`
+        : "Unresolved historical execution grant";
+  const resourceLabel =
+    resource?.kind === "principal"
+      ? (detail?.name ?? historicalName(principalName(data, resource.id), "service principal"))
+      : resource?.kind === "grant"
+        ? grantLabel
+        : resource?.kind === "binding"
+          ? [historicalName(agent, "agent"), detail?.agentProvider ?? "Credential binding"].join(
+              " · ",
+            )
+          : resource?.kind === "mcp-binding"
+            ? detail?.revisionId
+              ? historicalName(toolName(data, detail.revisionId), "MCP revision")
+              : "Unresolved historical MCP credential binding"
+            : detail?.clientId
+              ? historicalName(client, "OAuth client")
+              : "Resource unavailable";
+  const scopes = detail?.command_scopes ?? detail?.scopes;
+  const policy = data.evidence.policies.find(
+    ({ id }) => id === detail?.execution_policy_revision_id,
+  );
+  const technical = [
+    ["Event ID", event.id],
+    ["Actor ID", event.actor_member_id],
+    ["Resource ID", resource?.id],
+    ["Service principal ID", principalId],
+    ["Execution grant ID", grantId],
+    ["Agent ID", agentId],
+    ["OAuth client ID", detail?.clientId],
+    ["OAuth connection ID", detail?.oauthGrantId],
+    ["Tool revision ID", detail?.revisionId],
+    ["Budget payer ID", detail?.budget_payer_member_id],
+    ["Writable repository ID", detail?.github_repository_id],
+    ["Policy revision ID", detail?.execution_policy_revision_id],
+    ...(detail?.read_context_repository_ids ?? []).map((id) => ["Read-only repository ID", id]),
+    ...(detail?.tool_ids ?? []).map((id) => ["Tool operation ID", id]),
+  ];
   const oauthRevocationReason = oauthRevocationReasonSchema.safeParse(detail?.reason).data;
 
   return (
@@ -164,7 +183,7 @@ function AuditEventCard({
                 {...linkProps}
                 source={{ kind: "actor", id: event.actor_member_id }}
               >
-                {actor?.label ?? event.actor_member_id}
+                {actor?.label ?? "Unresolved historical workspace member"}
               </GovernanceResourceLink>
             ) : (
               "Unavailable"
@@ -176,12 +195,10 @@ function AuditEventCard({
           value={
             resource && resource.kind !== "event" && resource.kind !== "actor" ? (
               <GovernanceResourceLink {...linkProps} source={resource}>
-                {detail?.name ?? `${resourceNames[resource.kind]} ${resource.id.slice(0, 8)}`}
+                {resourceLabel}
               </GovernanceResourceLink>
-            ) : detail?.clientId ? (
-              `OAuth client ${detail.clientId.slice(0, 8)}`
             ) : (
-              "Unavailable"
+              resourceLabel
             )
           }
         />
@@ -200,23 +217,19 @@ function AuditEventCard({
         )}
         {focused && (
           <>
-            <MetadataItem label="Event ID" value={event.id} monospace />
-            {detail?.clientId && (
-              <MetadataItem label="OAuth client ID" value={detail.clientId} monospace />
-            )}
-            {detail?.oauthGrantId && (
-              <MetadataItem label="Connection ID" value={detail.oauthGrantId} monospace />
-            )}
-            {detail?.scopes && (
+            {scopes && (
               <MetadataItem
-                label="Command scopes"
-                value={detail.scopes.map((scope) => factoryCommandLabels[scope]).join(", ")}
+                label="Recorded command scopes"
+                value={scopes.map((scope) => factoryCommandLabels[scope]).join(", ") || "None"}
               />
             )}
             {detail?.id &&
               (event.action === "machine_token.issued" ||
                 event.action === "machine_token.revoked") && (
-                <MetadataItem label="Token ID" value={detail.id} monospace />
+                <MetadataItem
+                  label="Token ID"
+                  value={<CopyGovernanceId label="Token ID" value={detail.id} />}
+                />
               )}
             {principalId && (
               <MetadataItem
@@ -226,8 +239,7 @@ function AuditEventCard({
                     {...linkProps}
                     source={{ kind: "principal", id: principalId }}
                   >
-                    {data.principalList.entries.find(({ id }) => id === principalId)?.name ??
-                      principalId}
+                    {historicalName(principalName(data, principalId), "service principal")}
                   </GovernanceResourceLink>
                 }
               />
@@ -237,7 +249,7 @@ function AuditEventCard({
                 label="Execution grant"
                 value={
                   <GovernanceResourceLink {...linkProps} source={{ kind: "grant", id: grantId }}>
-                    Grant {grantId.slice(0, 8)}
+                    {grantLabel}
                   </GovernanceResourceLink>
                 }
               />
@@ -250,7 +262,7 @@ function AuditEventCard({
                     className="font-medium underline underline-offset-4"
                     href={workspaceAgentDetailPath(workspaceSlug, agentId, { factory: factory.id })}
                   >
-                    Agent {agentId.slice(0, 8)}
+                    {historicalName(agent, "agent")}
                   </Link>
                 }
               />
@@ -258,8 +270,7 @@ function AuditEventCard({
             {detail?.revisionId && (
               <MetadataItem
                 label="Recorded tool revision"
-                monospace
-                value={<span className="[overflow-wrap:anywhere]">{detail.revisionId}</span>}
+                value={historicalName(toolName(data, detail.revisionId), "tool revision")}
               />
             )}
             {detail?.budget_payer_member_id && (
@@ -270,8 +281,11 @@ function AuditEventCard({
                     {...linkProps}
                     source={{ kind: "actor", id: detail.budget_payer_member_id }}
                   >
-                    {data.memberOptions.find(({ id }) => id === detail.budget_payer_member_id)
-                      ?.label ?? detail.budget_payer_member_id}
+                    {historicalName(
+                      data.memberOptions.find(({ id }) => id === detail.budget_payer_member_id)
+                        ?.label,
+                      "budget payer",
+                    )}
                   </GovernanceResourceLink>
                 }
               />
@@ -279,41 +293,34 @@ function AuditEventCard({
             {detail?.github_repository_id && (
               <MetadataItem
                 label="Recorded writable repository"
-                value={
-                  <span className="[overflow-wrap:anywhere]">{detail.github_repository_id}</span>
-                }
-                monospace
+                value={historicalName(
+                  repositoryName(data, detail.github_repository_id),
+                  "repository",
+                )}
               />
             )}
             {detail?.read_context_repository_ids?.length ? (
               <MetadataItem
                 label="Recorded read-only repositories"
-                value={
-                  <span className="[overflow-wrap:anywhere]">
-                    {detail.read_context_repository_ids.join(", ")}
-                  </span>
-                }
-                monospace
+                value={detail.read_context_repository_ids
+                  .map((id) => historicalName(repositoryName(data, id), "repository"))
+                  .join(", ")}
               />
             ) : null}
             {detail?.tool_ids?.length ? (
               <MetadataItem
                 label="Recorded tool operations"
-                value={
-                  <span className="[overflow-wrap:anywhere]">{detail.tool_ids.join(", ")}</span>
-                }
-                monospace
+                value={detail.tool_ids
+                  .map((id) => historicalName(toolName(data, id), "tool operation"))
+                  .join(", ")}
               />
             ) : null}
             {detail?.execution_policy_revision_id && (
               <MetadataItem
                 label="Recorded policy revision"
                 value={
-                  <span className="[overflow-wrap:anywhere]">
-                    {detail.execution_policy_revision_id}
-                  </span>
+                  policy ? `Revision ${policy.revision}` : "Unresolved historical policy revision"
                 }
-                monospace
               />
             )}
             {detail?.expires_at && (
@@ -325,6 +332,22 @@ function AuditEventCard({
           </>
         )}
       </MetadataList>
+      {focused && (
+        <details>
+          <summary className="cursor-pointer type-label text-muted">Recorded identifiers</summary>
+          <MetadataList className="mt-2">
+            {technical.map(([label, id]) =>
+              label && id ? (
+                <MetadataItem
+                  key={`${label}:${id}`}
+                  label={label}
+                  value={<CopyGovernanceId label={label} value={id} />}
+                />
+              ) : null,
+            )}
+          </MetadataList>
+        </details>
+      )}
     </article>
   );
 }

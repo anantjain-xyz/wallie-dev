@@ -15,6 +15,7 @@ import {
   type ConnectorSetupResponse,
 } from "@/lib/connectors/setup-contracts";
 
+import { CatalogStatus, ResourceIdDetails, useConnectorCatalog } from "./catalog";
 import { connectorCommand } from "./request";
 import type { ConnectorInstallation, ConnectorProvider, ConnectorResource } from "./resources";
 import { ConnectorSelect } from "./select";
@@ -113,9 +114,10 @@ function CatalogChoices({
           value={selected}
         >
           <option value="">Choose an option</option>
-          {catalog.resources.map(({ id, label }) => (
+          {catalog.resources.map(({ id, label, description }) => (
             <option key={id} value={id}>
               {label}
+              {description ? ` · ${description}` : ""}
             </option>
           ))}
         </ConnectorSelect>
@@ -144,6 +146,7 @@ export function ConnectorSetup({
   installation,
   installations,
   onChanged,
+  onSelectMapped,
   provider,
   resource,
   resources,
@@ -153,6 +156,7 @@ export function ConnectorSetup({
   installation?: ConnectorInstallation;
   installations: ConnectorInstallation[];
   onChanged: (resourceId?: string) => void;
+  onSelectMapped?: (resourceId: string, name: string) => void;
   provider: ConnectorProvider;
   resource?: ConnectorResource;
   resources: ConnectorResource[];
@@ -229,6 +233,7 @@ export function ConnectorSetup({
             provider === "slack" ? `${kind}:${installation?.id}:${installation?.generation}` : kind
           }
           kind={kind}
+          onSelectMapped={onSelectMapped}
           provider={provider}
           resources={resources}
           run={action.run}
@@ -307,6 +312,7 @@ function MapResource({
   installation,
   installations,
   kind,
+  onSelectMapped,
   provider,
   resources,
   run,
@@ -317,6 +323,7 @@ function MapResource({
   installation?: ConnectorInstallation;
   installations: ConnectorInstallation[];
   kind: ResourceKind;
+  onSelectMapped?: (resourceId: string, name: string) => void;
   provider: ConnectorProvider;
   resources: ConnectorResource[];
   run: (command: ConnectorSetupCommand) => Promise<true | undefined>;
@@ -359,6 +366,10 @@ function MapResource({
 
   function map() {
     if (!option || !authority) return;
+    if (mapping?.enabled) {
+      onSelectMapped?.(mapping.id, option.label);
+      return;
+    }
     const command = connectorSetupCommandSchema.safeParse({
       action: "map",
       installationId: authority.id,
@@ -419,12 +430,16 @@ function MapResource({
               />
               <button
                 className="ui-button-primary"
-                disabled={disabled || busy || !option || Boolean(mapping?.enabled)}
+                disabled={
+                  disabled || busy || !option || Boolean(mapping?.enabled && !onSelectMapped)
+                }
                 onClick={map}
                 type="button"
               >
                 {mapping?.enabled
-                  ? "Already mapped"
+                  ? onSelectMapped
+                    ? "View mapped resource"
+                    : "Already mapped"
                   : mapping
                     ? "Enable mapping"
                     : "Map to factory"}
@@ -451,19 +466,41 @@ export function GitHubRequestRule({
   resource: ConnectorResource;
 }) {
   const [sourceKind, setSourceKind] = useState<"issue" | "pull_request">("issue");
+  const [editing, setEditing] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<IntakeConfirmation | null>(null);
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const ruleHeadingRef = useRef<HTMLHeadingElement>(null);
   const restoreFocusRef = useRef<HTMLElement>(null);
-  const { catalog, selected, option, setSelected, load, busy } = useCatalog(
-    endpoint,
-    new URLSearchParams({ provider: "github", kind: "label", resourceId: resource.id }).toString(),
-    setMessage,
-  );
   const action = useConnectorSetup(endpoint, setMessage, onChanged);
   const current = resource.githubRequests.find((rule) => rule.sourceKind === sourceKind);
+  const currentId = current ? String(current.labelId) : "";
+  const labels = useConnectorCatalog(
+    endpoint,
+    canManageLabels && (editing || resource.githubRequests.some((rule) => rule.enabled))
+      ? new URLSearchParams({
+          provider: "github",
+          kind: "label",
+          resourceId: resource.id,
+        }).toString()
+      : null,
+    resource.githubRequests
+      .filter((rule) => rule.enabled)
+      .map((rule) => rule.labelId)
+      .join(","),
+  );
+  const { catalog } = labels;
+  const savedLabel = catalog?.resources.find((item) => item.id === currentId);
+  const option = catalog?.resources.find((item) => item.id === (selected ?? currentId));
   const inactive = disabled || action.isBusy;
   const sourceLabel = sourceKind === "issue" ? "issue" : "pull request";
+  const savedLabelStatus = labels.loading
+    ? "Looking up the saved label…"
+    : labels.loadFailed || !canManageLabels
+      ? "Could not verify the saved label."
+      : catalog?.nextCursor
+        ? "Saved label hasn’t loaded yet. Load more repository labels."
+        : "Label unavailable — choose a replacement.";
 
   async function disableIntake() {
     if (!confirm) return;
@@ -484,6 +521,7 @@ export function GitHubRequestRule({
         disabled={inactive}
         onChange={(event) => {
           setSourceKind(event.target.value === "pull_request" ? "pull_request" : "issue");
+          setSelected(null);
           setMessage(null);
         }}
         value={sourceKind}
@@ -492,28 +530,41 @@ export function GitHubRequestRule({
         <option value="pull_request">Pull request</option>
       </ConnectorSelect>
       <p className="text-sm text-muted">
-        {current?.enabled
-          ? `Intake enabled for label ID ${current.labelId}.`
-          : "Intake is disabled for this request source."}
+        {current?.enabled ? (
+          savedLabel ? (
+            <>
+              Intake uses{" "}
+              <strong className="font-medium text-foreground">{savedLabel.label}</strong> for{" "}
+              {sourceLabel} requests{resource.label ? ` in ${resource.label}` : ""}.
+            </>
+          ) : (
+            savedLabelStatus
+          )
+        ) : (
+          "Intake is disabled for this request source."
+        )}
       </p>
+      {current?.enabled && !savedLabel ? (
+        <ResourceIdDetails ids={[currentId]} label="Saved label ID" />
+      ) : null}
       <div className="flex flex-wrap gap-2">
-        {canManageLabels ? (
+        {canManageLabels && !editing ? (
           <button
             className="ui-button"
-            disabled={inactive || busy}
+            disabled={inactive}
             onClick={() => {
               setMessage(null);
-              void load();
+              setEditing(true);
             }}
             type="button"
           >
-            {busy && !catalog ? "Loading labels…" : "Find repository labels"}
+            {current?.enabled ? "Edit intake label" : "Find repository labels"}
           </button>
         ) : null}
         {current?.enabled ? (
           <button
             className="ui-button"
-            disabled={inactive || busy}
+            disabled={inactive}
             onClick={(event) => {
               restoreFocusRef.current = event.currentTarget;
               setMessage(null);
@@ -530,20 +581,32 @@ export function GitHubRequestRule({
           </button>
         ) : null}
       </div>
-      {canManageLabels && catalog ? (
+      {canManageLabels && (editing || current?.enabled) ? (
+        <CatalogStatus catalog={labels} label="repository labels" />
+      ) : null}
+      {canManageLabels && editing && catalog ? (
         <div className="space-y-3">
-          <CatalogChoices
-            busy={busy}
-            catalog={catalog}
-            disabled={inactive}
+          <ConnectorSelect
             label="Intake label"
-            loadOlder={(cursor) => void load(cursor)}
-            onSelect={setSelected}
-            selected={selected}
-          />
+            disabled={inactive}
+            onChange={(event) => setSelected(event.target.value)}
+            value={selected ?? currentId}
+          >
+            <option value="">Choose a label</option>
+            {currentId && !savedLabel ? (
+              <option value={currentId} disabled>
+                {savedLabelStatus}
+              </option>
+            ) : null}
+            {catalog.resources.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </ConnectorSelect>
           <button
             className="ui-button-primary"
-            disabled={inactive || busy || !option}
+            disabled={inactive || !option || (current?.enabled && option.id === currentId)}
             onClick={() => {
               if (!option) return;
               setMessage(null);

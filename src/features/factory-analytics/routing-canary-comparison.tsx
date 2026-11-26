@@ -119,9 +119,10 @@ function CohortTitle({
       ) : (
         <span className="mt-1 block text-xs font-normal text-muted">{revision}</span>
       )}
-      <code className="type-annotation mt-1 block break-all font-normal text-muted">
-        {revisionId}
-      </code>
+      <details className="type-annotation mt-1 font-normal text-muted">
+        <summary className="cursor-pointer">Technical details</summary>
+        <code className="mt-1 block break-all">{revisionId}</code>
+      </details>
     </>
   );
 }
@@ -198,8 +199,9 @@ export function RoutingCanaryComparison({
           target
         </p>
         <p className="text-xs text-muted">
-          {timeLabel(window.from)} to {timeLabel(window.to)}. Observed as of{" "}
-          {timeLabel(window.asOf)}.
+          {state.kind === "retained" ? "Retained canary window" : "Live canary window"}:{" "}
+          {timeLabel(window.from)} to {timeLabel(window.to)}. Independent of the reporting dates.
+          Observed as of {timeLabel(window.asOf)}.
         </p>
         <p className="type-secondary text-muted">
           Minimum support of {count(canary.minimumSupport)} sessions per group.{" "}
@@ -233,6 +235,7 @@ export function RoutingCanaryComparison({
           alert={state.alert}
           canManageFactory={canManageFactory}
           factoryId={factoryId}
+          frozenScorerRevision={state.frozenScorerRevision}
           liveReportHref={liveReportHref}
           workspaceSlug={workspaceSlug}
         />

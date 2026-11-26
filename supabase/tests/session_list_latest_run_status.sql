@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(12);
+select no_plan();
 set local "request.jwt.claim.role" = 'service_role';
 set local "request.jwt.claim.sub" = 'a1b2c3d4-0001-4000-8000-000000000001';
 
@@ -73,6 +73,82 @@ select results_eq(
   $$ select s.id from sessions s join status_test_sessions t on t.session_id = s.id order by s.updated_at desc, s.id desc $$,
   'updated sort is preserved'
 );
-select ok(not has_function_privilege('anon', 'public.get_session_list_page(text,text,text,text,integer,timestamptz,uuid,text,integer,uuid)', 'EXECUTE'), 'anonymous callers remain denied');
+select ok(not has_function_privilege('anon', 'public.get_session_list_page(text,text,text,text,integer,timestamptz,uuid,text,integer,uuid,text)', 'EXECUTE'), 'anonymous callers remain denied');
+
+insert into public.sessions (
+  workspace_id, factory_id, pipeline_id, current_stage_id, number, title, prompt_md,
+  phase_status, archived_at
+)
+select s.workspace_id, s.factory_id, s.pipeline_id, s.current_stage_id, n,
+  'Ledger pagination fixture ' || n, 'status-page-fixture',
+  (case n when 151 then 'awaiting_review' when 152 then 'approved' else 'in_progress' end)::public.pipeline_phase_status,
+  case when n = 100 then now() end
+from public.sessions s
+join status_test_sessions t on s.id = t.session_id and t.i = 1
+cross join generate_series(100, 152) n;
+
+insert into public.agent_runs (
+  workspace_id, session_id, run_type, model_provider, model_name, status
+)
+select s.workspace_id, s.id, 'stage', 'codex', 'fixture', 'error'
+from public.sessions s
+where s.workspace_id = 'b1b2c3d4-0001-4000-8000-000000000001' and s.number between 100 and 150;
+
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = 'a1b2c3d4-0001-4000-8000-000000000001';
+
+create temp table failed_ledger as
+select public.get_session_list_page('acme-corp', search_query => 'status-page-fixture',
+  sort_key => 'number', status_filter => 'failed') as payload;
+select is(jsonb_array_length(payload->'sessions'), 50, 'filter fills the bounded page with matching status rows') from failed_ledger;
+select is(payload#>>'{sessions,0,number}', '150', 'statuses that sort ahead do not consume page slots') from failed_ledger;
+select is(payload#>>'{sessions,49,number}', '101', 'the last visible match is the cursor') from failed_ledger;
+select is(payload#>>'{sessions,49,latestRunStatus}', 'error', 'filter uses the same latest-run status as row rendering') from failed_ledger;
+select is(payload->>'hasMore', 'true', 'the extra failed row still sets hasMore') from failed_ledger;
+select is(payload->'scopeFacets', '{"active":50,"archived":1,"all":51}'::jsonb, 'scope counts include only matching status') from failed_ledger;
+select is(
+  public.get_session_list_page('acme-corp', search_query => 'status-page-fixture',
+    sort_key => 'number', status_filter => 'failed',
+    cursor_id => (payload#>>'{sessions,49,id}')::uuid,
+    cursor_number => (payload#>>'{sessions,49,number}')::integer
+  )#>>'{sessions,0,number}',
+  '100',
+  'filtered cursor continues to the archived match without duplicating rows'
+) from failed_ledger;
+select is(
+  public.get_session_list_page('acme-corp', search_query => '#100', session_scope => 'active', status_filter => 'failed')->'sessions',
+  '[]'::jsonb, 'a failed number match still obeys archive scope'
+);
+select is(
+  public.get_session_list_page('acme-corp', search_query => '#100', status_filter => 'failed')#>>'{sessions,0,number}',
+  '100', 'widening scope can find the same archived session number'
+);
+select is(
+  public.get_session_list_page('acme-corp', search_query => 'status-page-fixture', status_filter => 'awaiting_review')#>>'{sessions,0,number}',
+  '151', 'a session with no run matches its displayed pipeline status'
+);
+select is(
+  public.get_session_list_page('acme-corp', search_query => 'status-consistency-rpc-proof', status_filter => 'failed')#>>'{scopeFacets,all}',
+  '1', 'an older error followed by a retry does not match Failed'
+);
+select is(
+  public.get_session_list_page('acme-corp', search_query => 'no-ledger-match', status_filter => 'failed',
+    stage_filter_slug => payload#>>'{sessions,0,currentStageSlug}'
+  )#>>'{stageFacets,0,name}',
+  payload#>>'{sessions,0,currentStageName}',
+  'selected stage keeps its authorized name when no rows match'
+) from failed_ledger;
+select is(
+  public.get_session_list_page('acme-corp', search_query => 'status-page-fixture', status_filter => 'failed',
+    stage_filter_slug => 'unknown-stage-slug'
+  )#>>'{stageFacets,0,count}',
+  '51', 'an unknown selection does not replace the available stage facets'
+);
+select is(
+  public.get_session_list_page('status-other-workspace', status_filter => 'failed'),
+  null::jsonb, 'the filtered call still requires active workspace membership'
+);
+reset role;
 select * from finish();
 rollback;

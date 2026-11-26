@@ -192,7 +192,7 @@ async function mockReadiness(
   await page.route(/\/api\/sessions\/[^/]+\/review-evidence$/, (route) =>
     route.fulfill({ json: { delivery } }),
   );
-  await page.route(/\/api\/sessions\/[^/]+\/approval-review$/, (route) =>
+  await page.route(/\/api\/sessions\/[^/]+\/approval-review\?include=blockingTarget$/, (route) =>
     route.fulfill({
       json: {
         reviewRevision: 7,
@@ -279,6 +279,78 @@ test("readiness API failure is recoverable and refresh pending is visible", asyn
   );
   await page.getByRole("button", { name: "Refresh verification" }).click();
   await expect(page.getByText(/Verification queued/)).toBeVisible();
+});
+
+test("gated approval follows refreshed verification from blocked to ready and back", async ({
+  page,
+}) => {
+  let state: "ready" | "blocked" = "blocked";
+  let next = state as "ready" | "blocked";
+  let pending = false;
+  let observed = 0;
+  let gate = Promise.resolve();
+  let release = () => {};
+  const refreshTo = (target: typeof state) => {
+    next = target;
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  };
+  await page.route(/\/api\/sessions\/[^/]+\/pr-verification\/refresh$/, (route) => {
+    pending = true;
+    return route.fulfill({ status: 202, json: { queued: true } });
+  });
+  await page.route(/\/api\/sessions\/[^/]+\/review-evidence$/, (route) => {
+    const delivery = state === "ready" ? readyDelivery() : blockedDelivery();
+    const json = {
+      delivery: {
+        ...delivery,
+        artifactBlockingCount: 0,
+        refresh: { ...delivery.refresh, status: pending ? "pending" : "current" },
+        sourceObservationId: `44444444-4444-4444-8444-44444444444${observed}`,
+      },
+    };
+    if (pending) {
+      pending = false;
+      state = next;
+      observed += 1;
+    }
+    return route.fulfill({ json });
+  });
+  await page.route(
+    /\/api\/sessions\/[^/]+\/approval-review\?include=blockingTarget$/,
+    async (route) => {
+      const current = state;
+      await gate;
+      await route.fulfill({
+        json: {
+          reviewRevision: 7,
+          blockingCount: 0,
+          delivery: { required: true, state: current, blockers: [] },
+        },
+      });
+    },
+  );
+  await signIn(page, sessionPath);
+  const approve = page.getByRole("button", { name: "Approve stage" });
+  await expect(page.getByText("PR delivery readiness: Blocked.")).toBeVisible();
+  await expect(approve).toBeDisabled();
+
+  for (const target of ["ready", "blocked"] as const) {
+    refreshTo(target);
+    await page.getByRole("button", { name: "Refresh verification" }).click();
+    await expect(page.getByText("PR delivery readiness: Checking…")).toBeVisible();
+    await expect(approve).toBeDisabled();
+    await expect(
+      page.getByText(target === "ready" ? "Ready" : "Blocked", { exact: true }),
+    ).toBeVisible();
+    release();
+    if (target === "ready") await expect(approve).toBeEnabled();
+    else await expect(approve).toBeDisabled();
+    await expect(
+      page.getByText(`PR delivery readiness: ${target === "ready" ? "Ready" : "Blocked"}.`),
+    ).toBeVisible();
+  }
 });
 
 test("390px layout keeps the readiness panel and diff controls usable", async ({

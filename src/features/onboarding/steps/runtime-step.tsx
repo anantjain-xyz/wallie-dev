@@ -44,7 +44,6 @@ import {
   getRecommendedAgentConfigDefault,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
-  parseOpenCodeModelId,
   stallTimeoutMinutesToMs,
   type AgentProvider,
 } from "@/lib/agent-config/contracts";
@@ -987,10 +986,10 @@ export default function RuntimeStep({
             onOpenCodeStatusChange={handleOpenCodeStatusChange}
             onOpenCodeDraftStateChange={setOpenCodeDraft}
             onSandboxConnectionSelect={() => onSelectStep("sandbox")}
-            openCodeModelProviderId={parseOpenCodeModelId(drafts.agent_model)?.providerId}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
             sandboxConnectionHref={sandboxConnectionHref}
+            selectedModel={drafts.agent_model}
             sandboxConnectionLabel={
               data.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
             }

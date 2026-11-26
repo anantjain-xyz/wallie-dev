@@ -12807,6 +12807,40 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      curate_factory_benchmark_suite: {
+        Args: {
+          p_actor_user_id: string
+          p_allow_empty?: boolean
+          p_expected_revision_id?: string
+          p_factory_id: string
+          p_name: string
+          p_preserve_selection?: boolean
+          p_preview_task_revision_ids?: string[]
+          p_purpose: string
+          p_selection_tags?: string[]
+          p_suite_id?: string
+          p_task_revision_ids?: string[]
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          factory_id: string
+          id: string
+          name: string
+          purpose: string
+          revision_number: number
+          selection_tags: string[] | null
+          suite_id: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factory_benchmark_suite_revisions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       decide_factory_oauth_authorization: {
         Args: {
           p_actor_session_id: string
@@ -13713,6 +13747,9 @@ export type Database = {
           p_definition_revision_id?: string
           p_factory_id: string
           p_limit?: number
+          p_member_id?: string
+          p_observed_on?: string
+          p_run_search?: string
           p_workspace_id: string
         }
         Returns: Json
@@ -13785,6 +13822,7 @@ export type Database = {
           p_before_artifact_id?: string
           p_before_at?: string
           p_factory_id?: string
+          p_kind?: string
           p_workspace_id: string
         }
         Returns: Json
@@ -13873,6 +13911,19 @@ export type Database = {
           p_from: string
           p_to: string
           p_workspace_id: string
+        }
+        Returns: Json
+      }
+      get_filtered_pipeline_dashboard_page: {
+        Args: {
+          cursor_seen_ids?: string[]
+          page_limit?: number
+          search_query?: string
+          status_filter?: string
+          target_factory_id?: string
+          target_pipeline_id?: string
+          target_stage_id?: string
+          target_workspace_id: string
         }
         Returns: Json
       }
@@ -14018,6 +14069,7 @@ export type Database = {
           session_scope?: string
           sort_key?: string
           stage_filter_slug?: string
+          status_filter?: string
           target_factory_id?: string
           target_workspace_slug: string
         }
@@ -14379,6 +14431,10 @@ export type Database = {
       }
       list_due_factory_automation_schedules: { Args: never; Returns: Json }
       list_factory_actions_dispatches: { Args: never; Returns: Json }
+      list_factory_analytics_deployment_environments: {
+        Args: { p_factory_id: string; p_workspace_id: string }
+        Returns: string[]
+      }
       list_factory_automation_occurrence_history: {
         Args: {
           p_automation_id: string
@@ -14441,6 +14497,23 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      list_factory_benchmark_suites: {
+        Args: {
+          p_after?: string
+          p_factory_id: string
+          p_name?: string
+          p_purpose?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          name: string
+          purpose: string
+          revision_number: number
+          suite_id: string
+          task_count: number
+        }[]
       }
       list_factory_bindable_workspace_secrets: {
         Args: {
@@ -14648,6 +14721,7 @@ export type Database = {
           p_cohort_id?: string
           p_factory_id: string
           p_limit?: number
+          p_review_state?: string
           p_workspace_id: string
         }
         Returns: Json
@@ -14861,6 +14935,8 @@ export type Database = {
       }
       list_workspace_run_catalog: {
         Args: {
+          p_agent_id?: string
+          p_agent_prompt_revision_id?: string
           p_before_created_at?: string
           p_before_id?: string
           p_factory_id?: string
@@ -14878,6 +14954,7 @@ export type Database = {
           capture_interrupted: boolean
           cost_provenance: string
           created_at: string
+          factory_id: string
           failure_receipt: string
           finished_at: string
           has_events: boolean
@@ -14886,6 +14963,7 @@ export type Database = {
           last_activity_at: string
           model_name: string
           model_provider: string
+          newer_run_id: string
           output_tokens: number
           run_id: string
           session_id: string
@@ -14894,6 +14972,7 @@ export type Database = {
           source_recovery_required: boolean
           stage_id: string
           stage_name: string
+          stage_ordinal: number
           started_at: string
           status: Database["public"]["Enums"]["agent_run_status"]
           token_provenance: string

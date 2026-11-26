@@ -268,6 +268,48 @@ describe("revision review workspace", () => {
     comparison.focus();
     expect(comparison).toHaveFocus();
   });
+
+  it("uses readable metadata to choose between ambiguous versions without surfacing the IDs", async () => {
+    const date = "2026-11-07T11:24:50Z";
+    const artifact = {
+      id: "18711b65-8a86-4179-820d-2dccd0c0d624",
+      version: 1,
+      createdAt: date,
+      attempt: 1,
+      authorLabel: "Wallie",
+    };
+    setup((url) => {
+      if (url.includes(`artifactId=${artifact.id}`))
+        return Promise.resolve({
+          artifact: { id: artifact.id, payload: "Exact selected predecessor\n" },
+        });
+      if (url.includes("/artifacts?stage="))
+        return Promise.resolve({
+          artifacts: [
+            artifact,
+            {
+              ...artifact,
+              id: "2a140dfc-f54c-43a5-a5b1-0c9607696c58",
+              createdAt: "2026-11-07T11:44:50Z",
+              attempt: 2,
+              changesRequested: true,
+            },
+          ],
+        });
+      return undefined;
+    });
+    expect(await screen.findByText(/Choose a version by its date and attempt/)).toBeVisible();
+    const picker = screen.getByLabelText("Compare version 2 with");
+    expect(picker).toHaveAttribute("data-value", "");
+    await userEvent.click(picker);
+    const choice = screen.getByRole("option", {
+      name: `Version 1 · ${formatLocalizedTimestamp(date)} · Attempt 1 · Wallie`,
+    });
+    expect(screen.queryByText(/18711b65|2a140dfc/)).toBeNull();
+    await userEvent.click(choice);
+    expect(picker).toHaveAttribute("data-value", artifact.id);
+    expect(await screen.findByText("Exact selected predecessor")).toBeVisible();
+  });
   it("renders immutable submitted text as escaped text, with failed run and resubmission guidance", async () => {
     setup();
     fireEvent.click(

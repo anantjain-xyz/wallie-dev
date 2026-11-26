@@ -16,6 +16,7 @@ export type FactorySelectionOption = {
   id: string;
   canManage?: boolean;
   name: string;
+  slug?: string;
   isDefault: boolean;
   status: "active" | "archived";
 };
@@ -97,6 +98,7 @@ export const BASE_FACTORY_SWITCH_RESET_PARAMS = [
   "stageId",
   "sessionId",
   "create",
+  "returnTo",
   "after",
 ] as const;
 

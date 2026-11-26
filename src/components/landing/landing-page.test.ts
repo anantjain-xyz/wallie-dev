@@ -11,19 +11,22 @@ describe("LandingPage", () => {
     expect(html.match(/<h1(?:\s|>)/g)).toHaveLength(1);
     expect(html.match(/href="\/login"/g)).toHaveLength(2);
     expect(html).toContain("docs/deployment/self-hosting.md");
+    expect(html).toContain("Sign in by email, then set up your workspace.");
     expect(html).toContain("agent credentials");
     expect(html).toContain("Linear is optional");
   });
 
-  it("separates provider choices from the workflow without demo controls", () => {
+  it("server-renders the complete workflow before static provider lists", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html.match(/<figure(?:\s|>)/g)).toHaveLength(2);
-    expect(html).toContain("Choose your coding agent");
-    expect(html).toContain("Choose your sandbox");
-    expect(html).toContain("Design your workflow");
+    expect(html.match(/<figure(?:\s|>)/g)).toHaveLength(1);
+    expect(html).toContain("Example workflow");
+    expect(html).toContain("Supported coding agents");
+    expect(html).toContain("Supported sandboxes");
+    expect(html.indexOf("Example workflow")).toBeLessThan(html.indexOf("Supported coding agents"));
     expect(html).toContain("<ol");
-    expect(html).toContain("wait for your approval");
+    expect(html).toContain("Wallie starts the build after you approve the plan.");
+    expect(html).not.toContain("Add stage");
     expect(html).not.toContain("Add dark mode");
     expect(html).not.toMatch(/<(button|input|select|textarea)(?:\s|>)/);
   });

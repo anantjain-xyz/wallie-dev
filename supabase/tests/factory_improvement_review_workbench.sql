@@ -126,6 +126,9 @@ select throws_ok($$select pg_temp.workbench_review('first', 1, 72, 'investigate'
 select ok(pg_temp.workbench_review('first', 1, 73, 'revise', 'Keep the summary focused.') @>
   '{"event":{"version":2,"action":"revise"}}', 'a revision request is recorded separately from the compiled candidate');
 
+insert into workbench_receipts values
+  ('older', pg_temp.workbench_propose(65, 'State which check failed.')),
+  ('other', pg_temp.workbench_propose(64, 'Prioritize the failed check.'));
 insert into workbench_receipts
 select 'second', pg_temp.workbench_propose(63, 'Summarize the failed check.', (receipt->>'proposalId')::uuid, (receipt->>'revisionId')::uuid)
 from workbench_receipts where name = 'first';
@@ -152,14 +155,32 @@ select is((select workbench#>>'{review,events,0,action}' from diagnosis_scope sc
     (earlier.receipt->>'proposalId')::uuid, (earlier.receipt->>'revisionId')::uuid, 2) workbench),
   'comment', 'discussion pagination reads older events without changing the revision');
 select is((select workbench#>>'{proposals,0,revisionId}' from diagnosis_scope scope
-  cross join lateral public.list_factory_improvement_workbench(scope.workspace_id, scope.factory_id) workbench),
-  (select receipt->>'revisionId' from workbench_receipts where name = 'second'), 'the list presents the latest revision');
+  cross join lateral public.list_factory_improvement_workbench(scope.workspace_id, scope.factory_id, 1) workbench),
+  (select receipt->>'revisionId' from workbench_receipts where name = 'second'),
+  'an older proposal moves to the top when revised');
+select is((select workbench#>>'{proposals,0,revisionId}' from diagnosis_scope scope
+  join workbench_receipts cursor on cursor.name = 'second'
+  cross join lateral public.list_factory_improvement_workbench(scope.workspace_id, scope.factory_id, 1,
+    (cursor.receipt->>'proposalId')::uuid, null, 'open') workbench),
+  (select receipt->>'revisionId' from workbench_receipts where name = 'other'),
+  'a legacy proposal cursor uses its latest revision date');
+select is((select workbench->>'nextRevisionId' from diagnosis_scope scope
+  cross join lateral public.list_factory_improvement_workbench(scope.workspace_id, scope.factory_id, 2,
+    p_review_state => 'open') workbench),
+  (select receipt->>'revisionId' from workbench_receipts where name = 'other'),
+  'the next cursor pins the exact last displayed revision');
+select is((select jsonb_array_length(workbench->'proposals') from diagnosis_scope scope
+  cross join lateral public.list_factory_improvement_workbench(scope.workspace_id, scope.factory_id,
+    p_review_state => 'revise') workbench), 0, 'past revision requests do not count toward the current filter');
 select is((select jsonb_array_length(workbench->'proposals') from diagnosis_scope scope
   cross join lateral public.list_factory_improvement_workbench(scope.workspace_id, scope.factory_id, 24,
     null, pg_temp.diagnosis_fixture_id(99)) workbench), 0, 'the cohort filter is scoped and exact');
 select set_config('request.jwt.claim.sub', pg_temp.diagnosis_fixture_id(4)::text, true);
 select throws_ok($$select public.list_factory_improvement_workbench(workspace_id, factory_id) from diagnosis_scope$$,
   'P0002', null, 'an unrelated signed-in user cannot list this workbench');
+select throws_ok($$select public.list_factory_improvement_workbench(workspace_id, factory_id,
+  p_review_state => 'open') from diagnosis_scope$$, 'P0002', null,
+  'a review state filter does not broaden factory access');
 select throws_ok($$select public.read_factory_improvement_workbench(scope.workspace_id, scope.factory_id,
     (current.receipt->>'proposalId')::uuid) from diagnosis_scope scope
     join workbench_receipts current on current.name = 'second'$$,
@@ -182,6 +203,25 @@ select ok((select workbench->'review' @> '{"disposition":"dismissed","version":1
   from diagnosis_scope scope join workbench_receipts current on current.name = 'second'
   cross join lateral public.read_factory_improvement_workbench(scope.workspace_id, scope.factory_id,
     (current.receipt->>'proposalId')::uuid) workbench), 'dismissed proposals retain readable discussion');
+select is((select workbench#>>'{proposals,0,revisionId}' from diagnosis_scope scope
+  cross join lateral public.list_factory_improvement_workbench(scope.workspace_id, scope.factory_id, 1,
+    p_review_state => 'open') workbench),
+  (select receipt->>'revisionId' from workbench_receipts where name = 'other'),
+  'the review state filter excludes a newer dismissal before taking the page');
+reset role;
+set local request.jwt.claim.role = 'service_role';
+insert into workbench_receipts
+select 'other-second', pg_temp.workbench_propose(66, 'Lead with the failed check.',
+  (receipt->>'proposalId')::uuid, (receipt->>'revisionId')::uuid)
+from workbench_receipts where name = 'other';
+set local request.jwt.claim.role = 'authenticated';
+set local role authenticated;
+select is((select workbench#>>'{proposals,0,revisionId}' from diagnosis_scope scope
+  join workbench_receipts cursor on cursor.name = 'other'
+  cross join lateral public.list_factory_improvement_workbench(scope.workspace_id, scope.factory_id, 2,
+    (cursor.receipt->>'revisionId')::uuid) workbench),
+  (select receipt->>'revisionId' from workbench_receipts where name = 'older'),
+  'revising the boundary proposal does not repeat the previous page');
 reset role;
 select is((select count(*)::integer from public.factory_definition_activations
   where workspace_id = pg_temp.diagnosis_fixture_id(11)), 1, 'review decisions do not activate any candidate');

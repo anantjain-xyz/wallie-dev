@@ -14,10 +14,7 @@ const licenseUrl = "https://github.com/anantjain-xyz/wallie-dev/blob/main/LICENS
 
 export function LandingPage() {
   return (
-    <main
-      id="main-content"
-      className={`${styles.page} flex min-h-[100svh] flex-col bg-canvas text-foreground`}
-    >
+    <div className={`${styles.page} flex min-h-[100svh] flex-col bg-canvas text-foreground`}>
       <header className="pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-2 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] sm:gap-4 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))]">
           <Link
@@ -48,37 +45,43 @@ export function LandingPage() {
         </div>
       </header>
 
-      <section
+      <main
+        id="main-content"
         aria-labelledby="landing-title"
-        className="flex flex-1 items-center px-5 py-10 sm:px-8 lg:px-10"
+        tabIndex={-1}
+        className="flex flex-1 items-center py-10 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] max-[360px]:pt-4 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))] lg:px-10"
       >
-        <div className="mx-auto grid w-full max-w-[1120px] gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
+        <div className="mx-auto grid w-full max-w-[1120px] gap-8 max-[360px]:gap-4 sm:gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
           <div>
             <h1
               id="landing-title"
-              className="max-w-[640px] text-[38px] font-semibold leading-[1.06] tracking-[-0.035em] text-foreground sm:text-[48px] lg:text-[54px]"
+              className="max-w-[640px] text-[38px] font-semibold leading-[1.06] tracking-[-0.035em] text-foreground max-[360px]:text-[34px] sm:text-[48px] lg:text-[54px]"
             >
               Turn a task into a pull request you can trust
             </h1>
-            <p className="mt-5 max-w-[540px] text-[16px] leading-7 text-muted sm:text-[17px] sm:leading-8">
+            <p className="mt-5 max-w-[540px] text-[16px] leading-7 text-muted max-[360px]:mt-4 max-[360px]:leading-6 sm:text-[17px] sm:leading-8">
               Describe the work. Review the plan. Let your coding agent build it in an isolated
               sandbox, with your team in control at every stage.
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="mt-8 flex flex-wrap items-center gap-3 max-[360px]:mt-4 max-[360px]:gap-2">
               <Link
                 href="/login"
-                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+                aria-describedby="hosted-setup"
+                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas max-[360px]:px-4"
               >
                 Get started
               </Link>
               <a
                 href={selfHostingUrl}
-                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-border px-5 text-[14px] font-medium text-foreground transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-border px-5 text-[14px] font-medium text-foreground transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 max-[360px]:px-4"
               >
                 Self-host Wallie
               </a>
             </div>
-            <p className="mt-4 max-w-[440px] text-xs leading-5 text-muted">
+            <p id="hosted-setup" className="mt-3 text-sm leading-5 text-muted">
+              Sign in by email, then set up your workspace.
+            </p>
+            <p className="mt-2 max-w-[440px] text-xs leading-5 text-muted">
               Connect a GitHub repository, a sandbox provider, and your agent credentials to run
               your first task. Linear is optional.
             </p>
@@ -86,7 +89,7 @@ export function LandingPage() {
 
           <LandingIllustrations />
         </div>
-      </section>
+      </main>
 
       <footer className="pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto flex w-full max-w-[1120px] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-5 text-[13px] text-muted sm:px-8 lg:px-10">
@@ -111,6 +114,6 @@ export function LandingPage() {
           </a>
         </div>
       </footer>
-    </main>
+    </div>
   );
 }

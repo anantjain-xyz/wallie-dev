@@ -13,8 +13,12 @@ type ResourceProps = { data: GovernanceOAuthData; navigation?: ReactNode; worksp
 
 export function RegisteredOAuthClients({ data, navigation, workspaceId }: ResourceProps) {
   return (
-    <PageSection anchorId="oauth-clients" title="OAuth clients">
+    <PageSection anchorId="oauth-clients" title="Workspace OAuth clients">
       <div className="space-y-4">
+        <p className="type-secondary text-muted">
+          A registration can cover more than one factory. This list is not filtered by the factory
+          selector.
+        </p>
         {data.registered.length ? (
           <div className="ui-sheet divide-y divide-border">
             {data.registered.map((client) => (
@@ -28,6 +32,7 @@ export function RegisteredOAuthClients({ data, navigation, workspaceId }: Resour
                   ) : (
                     <RevokeOAuthAccess
                       command={{ action: "revoke-client", clientId: client.id }}
+                      factories={client.factories}
                       name={client.name}
                       workspaceId={workspaceId}
                     />
@@ -78,12 +83,33 @@ export function RegisteredOAuthClients({ data, navigation, workspaceId }: Resour
 
 export function ConnectedOAuthClients({
   data,
+  governanceScope,
   memberOptions,
   navigation,
   workspaceId,
-}: ResourceProps & { memberOptions?: Array<{ id: string; label: string }> }) {
+}: ResourceProps & {
+  governanceScope?: "workspace" | "personal";
+  memberOptions?: Array<{ id: string; label: string }>;
+}) {
   return (
-    <PageSection anchorId="connected-clients" title="Connected clients">
+    <PageSection
+      anchorId="connected-clients"
+      title={
+        governanceScope === "workspace"
+          ? "Workspace connected clients"
+          : governanceScope === "personal"
+            ? "Your connected clients"
+            : "Connected clients"
+      }
+    >
+      {governanceScope && (
+        <p className="mb-3 type-secondary text-muted">
+          {governanceScope === "workspace"
+            ? "Connections authorized by workspace members."
+            : "Only connections you authorized."}{" "}
+          The factory selector does not filter this list.
+        </p>
+      )}
       {data.connected.length ? (
         <div className="ui-sheet divide-y divide-border">
           {data.connected.map((grant) => {
@@ -101,6 +127,9 @@ export function ConnectedOAuthClients({
                   ) : (
                     <RevokeOAuthAccess
                       command={{ action: "revoke-grant", grantId: grant.id }}
+                      factories={
+                        governanceScope ? grant.factories.map(({ name }) => name) : undefined
+                      }
                       name={name}
                       workspaceId={workspaceId}
                     />
