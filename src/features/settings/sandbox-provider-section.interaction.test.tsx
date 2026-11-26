@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -350,46 +350,178 @@ describe("SandboxProviderSection saves", () => {
 describe("Vercel target discovery", () => {
   const northwind = { id: "team_123", name: "Northwind", slug: "northwind" };
   const acme = { id: "team_other", name: "acme", slug: "acme" };
+  const lookupUrl = `/api/workspaces/${workspaceId}/sandbox-connections/vercel/targets`;
 
   it("restores a saved target by name and scopes projects to the chosen team", async () => {
     const user = userEvent.setup();
+    const saveRequest = Promise.withResolvers<Response>();
     const requests = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(Response.json({ teams: [northwind, acme] }))
       .mockResolvedValueOnce(
-        Response.json({ projects: [{ id: "prj_123", name: "Wallie runner" }] }),
+        Response.json({
+          projects: [
+            { id: "prj_other", name: "Other runner" },
+            { id: "prj_123", name: "Wallie runner" },
+          ],
+        }),
       )
       .mockResolvedValueOnce(Response.json({ projects: [{ id: "prj_acme", name: "Acme runner" }] }))
-      .mockResolvedValueOnce(Response.json({ connection: vercelConnection }));
-    renderSection({ settings: sandboxSettings({ vercel: vercelConnection }), stateful: true });
+      .mockReturnValueOnce(saveRequest.promise);
+    const { onSettingsChange } = renderSection({
+      settings: sandboxSettings({ vercel: vercelConnection }),
+      stateful: true,
+    });
 
     await user.click(screen.getByRole("button", { name: "Replace connection" }));
     await user.type(screen.getByLabelText("Token"), "synthetic-token");
     await user.click(screen.getByRole("button", { name: "Find teams" }));
 
     const team = await screen.findByRole("combobox", { name: "Team" });
-    expect(team).toHaveValue("team_123");
-    expect(within(team).getByRole("option", { name: "acme" })).toHaveValue("team_other");
+    const form = team.closest("form")!;
+    expect(team).toHaveTextContent("Northwind · northwind");
+    expect(new FormData(form).get("vercel-team")).toBe("team_123");
     expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("prj_123");
-    await user.selectOptions(team, "team_other");
+
+    await user.click(screen.getByText("Team", { selector: "label" }));
+    const listbox = screen.getByRole("listbox");
+    expect(within(listbox).getByRole("option", { name: "Northwind · northwind" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(within(listbox).getByRole("option", { name: "acme" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(team).toHaveFocus();
+
+    await user.keyboard("{Enter}{Enter}");
+    expect(requests).toHaveBeenCalledTimes(2);
+    await user.keyboard("{Enter}{ArrowDown}{Enter}");
+    expect(team).toHaveFocus();
+    expect(team).toHaveTextContent("acme");
+    expect(new FormData(form).get("vercel-team")).toBe("team_other");
     expect(await screen.findByRole("option", { name: "Acme runner · acme" })).toBeInTheDocument();
     expect(
       screen.queryByRole("option", { name: "Wallie runner · northwind" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("prj_acme");
-    await user.click(screen.getByRole("button", { name: "Save connection" }));
     expect(
-      requests.mock.calls.slice(0, 3).map(([, init]) => JSON.parse(init!.body as string)),
+      requests.mock.calls.map(([url, init]) => [
+        url,
+        init?.method,
+        JSON.parse(init!.body as string),
+      ]),
     ).toEqual([
-      { token: "synthetic-token" },
-      { token: "synthetic-token", teamId: "team_123" },
-      { token: "synthetic-token", teamId: "team_other" },
+      [lookupUrl, "POST", { token: "synthetic-token" }],
+      [lookupUrl, "POST", { token: "synthetic-token", teamId: "team_123" }],
+      [lookupUrl, "POST", { token: "synthetic-token", teamId: "team_other" }],
     ]);
+    expect(onSettingsChange).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
     expect(JSON.parse(requests.mock.calls[3]![1]!.body as string)).toEqual({
       projectId: "prj_acme",
       teamId: "team_other",
       token: "synthetic-token",
     });
+    expect(team).toBeDisabled();
+    expect(new FormData(form).has("vercel-team")).toBe(false);
+    await user.click(team);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    await act(async () =>
+      saveRequest.resolve(
+        Response.json({
+          connection: { ...vercelConnection, teamId: "team_other", projectId: "prj_acme" },
+        }),
+      ),
+    );
+    expect(onSettingsChange).toHaveBeenCalledOnce();
+  });
+
+  it("aborts stale project lookups when onboarding changes or clears the team", async () => {
+    const user = userEvent.setup();
+    const stale = Promise.withResolvers<Response>();
+    const cleared = Promise.withResolvers<Response>();
+    const requests = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ teams: [northwind, acme] }))
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce(Response.json({ projects: [{ id: "prj_acme", name: "Acme runner" }] }))
+      .mockReturnValueOnce(cleared.promise);
+    const { onSettingsChange } = renderSection({ variant: "onboarding" });
+
+    await user.click(screen.getByRole("radio", { name: /Vercel Sandbox/ }));
+    await user.type(screen.getByLabelText("Token"), "synthetic-token");
+    await user.click(screen.getByRole("button", { name: "Find teams" }));
+    const team = await screen.findByRole("combobox", { name: "Team" });
+    const save = screen.getByRole("button", { name: "Save connection" });
+    expect(team).toHaveTextContent("Choose a team");
+    expect(requests).toHaveBeenCalledOnce();
+
+    await user.click(team);
+    await user.click(screen.getByRole("option", { name: "Northwind · northwind" }));
+    const staleSignal = requests.mock.calls[1]?.[1]?.signal;
+    expect(staleSignal?.aborted).toBe(false);
+    expect(team).toBeEnabled();
+    await user.click(team);
+    await user.click(screen.getByRole("option", { name: "acme" }));
+    expect(staleSignal?.aborted).toBe(true);
+    expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("prj_acme");
+
+    const staleProjects = { projects: [{ id: "prj_stale", name: "Stale runner" }] };
+    await act(async () => stale.resolve(Response.json(staleProjects)));
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("prj_acme");
+
+    await user.click(team);
+    await user.click(screen.getByRole("option", { name: "Northwind · northwind" }));
+    expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+    expect(save).toBeDisabled();
+    const clearedSignal = requests.mock.calls[3]?.[1]?.signal;
+    expect(clearedSignal?.aborted).toBe(false);
+    await user.click(team);
+    await user.click(screen.getByRole("option", { name: "Choose a team" }));
+    expect(clearedSignal?.aborted).toBe(true);
+    await act(async () => cleared.resolve(Response.json(staleProjects)));
+    expect(new FormData(team.closest("form")!).get("vercel-team")).toBe("");
+    expect(team).toHaveTextContent("Choose a team");
+    expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading projects…")).not.toBeInTheDocument();
+    expect(save).toBeDisabled();
+    expect(requests).toHaveBeenCalledTimes(4);
+    expect(onSettingsChange).not.toHaveBeenCalled();
+  });
+
+  it("hides Team for an empty result and automatically selects a lone team", async () => {
+    const user = userEvent.setup();
+    const requests = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ teams: [] }))
+      .mockResolvedValueOnce(Response.json({ teams: [northwind] }))
+      .mockResolvedValueOnce(
+        Response.json({ projects: [{ id: "prj_123", name: "Wallie runner" }] }),
+      );
+    renderSection();
+
+    await user.type(screen.getByLabelText("Token"), "synthetic-token");
+    const find = screen.getByRole("button", { name: "Find teams" });
+    await user.click(find);
+    expect(await screen.findByText(/No teams found/)).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Team" })).not.toBeInTheDocument();
+    expect(requests).toHaveBeenCalledOnce();
+
+    await user.click(find);
+    expect(await screen.findByRole("combobox", { name: "Team" })).toHaveTextContent(
+      "Northwind · northwind",
+    );
+    expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("prj_123");
+    expect(requests).toHaveBeenCalledTimes(3);
+    expect(requests).toHaveBeenLastCalledWith(
+      lookupUrl,
+      expect.objectContaining({
+        body: JSON.stringify({ token: "synthetic-token", teamId: "team_123" }),
+      }),
+    );
   });
 
   it("requires reselection when the saved project is missing and preserves the manual target", async () => {
