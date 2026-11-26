@@ -87,20 +87,31 @@ describe("SessionReviewBar", () => {
       anchor: { quote: "Exact earlier passage" },
     };
     let resolved = false;
+    const reviewPath = "/api/sessions/session-1/reviews";
+    const threadPath = `${reviewPath}/${first.threadId}`;
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method === "PATCH") {
+      const { pathname, searchParams } = new URL(url, "http://localhost");
+      if (pathname === threadPath && init?.method === "PATCH") {
         resolved = true;
-        return Response.json({ thread: { ...thread, status: "resolved" } });
+        return Response.json({ thread: { ...thread, status: "resolved", revision: 4 } });
       }
-      if (url.endsWith("/comments")) return Response.json({ comments: [], nextCursor: null });
-      if (url.endsWith("/reviews/first"))
-        return Response.json({ thread: { ...thread, status: resolved ? "resolved" : "open" } });
-      return Response.json({
-        threads: [],
-        submittedThreadRevisions: {},
-        counts: { total: 1, open: 1, blocking: 1 },
-        viewer: { memberId: "reviewer", canReview: true, readOnlyReason: null },
-      });
+      if (pathname === `${threadPath}/comments`)
+        return Response.json({ comments: [], nextCursor: null });
+      if (pathname === threadPath)
+        return Response.json({
+          thread: resolved ? { ...thread, status: "resolved", revision: 4 } : thread,
+          submittedThreadRevision: null,
+        });
+      if (pathname === reviewPath && searchParams.get("artifactId") === first.artifactId)
+        return Response.json({
+          threads: [],
+          nextCursor: null,
+          reviewRevision: resolved ? 8 : 7,
+          submittedThreadRevisions: {},
+          counts: { total: 1, open: resolved ? 0 : 1, blocking: resolved ? 0 : 1 },
+          viewer: { memberId: "reviewer", canReview: true, readOnlyReason: null },
+        });
+      return Response.json({ error: "Unexpected review request." }, { status: 404 });
     });
     vi.stubGlobal("fetch", fetcher);
     approvalState.value = { reviewRevision: 7, blockingCount: 2, blockingTarget: first };
@@ -134,7 +145,14 @@ describe("SessionReviewBar", () => {
     expect(await within(dialog).findByText("Thread resolved.")).toBeInTheDocument();
     expect(fetcher).toHaveBeenCalledWith(
       "/api/sessions/session-1/reviews/first",
-      expect.objectContaining({ method: "PATCH" }),
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          expectedRevision: 3,
+          status: "resolved",
+          reason: "Verified against the current material.",
+        }),
+      }),
     );
     view.rerender(
       <OverlayProvider>

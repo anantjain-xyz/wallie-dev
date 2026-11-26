@@ -131,6 +131,7 @@ test("review and activity work while the SDK loads, then authenticated recovery 
     expect(await approvalResponse.json()).toEqual({
       reviewRevision: expect.any(Number),
       blockingCount: 0,
+      blockingTarget: null,
     });
     await expectReviewReady(page);
     expect(fixture.joins).toHaveLength(0);

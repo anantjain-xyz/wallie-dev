@@ -542,10 +542,9 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();
     expect(screen.getByText(/Check the activity and timeout settings/)).toBeTruthy();
     expect(fake.messageQueries).toEqual([]);
-    const toggle = screen.getByRole("button", {
-      name: /^Failed Stage 1 run Attempt 1\b/,
-    });
+    const toggle = screen.getByRole("button", { name: "View full log", expanded: false });
     fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Hide full log", expanded: true })).toBe(toggle);
     await screen.findByText("Activity error details");
     expect(screen.getByText(/^Timeout: The run exceeded/)).toBeTruthy();
     expect(screen.getByText("Activity error details").closest("details")?.open).toBe(false);
@@ -1435,7 +1434,7 @@ describe("SessionWalliePanel activity states", () => {
       vi.fn(async () => new Response(JSON.stringify({ nextCursor: null, runs: [current] }))),
     );
     panel(data([current]), fake.supabase);
-    fireEvent.click(screen.getByRole("button", { name: /^Completed .* run Attempt/ }));
+    fireEvent.click(screen.getByRole("button", { name: "View full log", expanded: false }));
     const activity = within(screen.getByRole("list", { name: "Run activity" }));
     await activity.findByText("First canonical event");
     expect(activity.getAllByRole("listitem").map((entry) => entry.textContent)).toEqual([
@@ -1609,7 +1608,7 @@ describe("SessionWalliePanel activity states", () => {
 
     expect(screen.getByText("Waiting in queue")).not.toBeNull();
     expect(screen.getByText("Attempt 3")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Waiting in queue/ }));
+    fireEvent.click(screen.getByRole("button", { name: "View full log", expanded: false }));
     expect(screen.getByText("Attempt 3")).not.toBeNull();
   });
 
@@ -2031,7 +2030,7 @@ describe("live update recovery regression", () => {
     ];
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
     expect(screen.getByText("Completed")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /^Completed Build run Attempt 1\b/ }));
+    fireEvent.click(screen.getByRole("button", { name: "View full log", expanded: false }));
     expect(screen.getByText("Saved during the outage")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

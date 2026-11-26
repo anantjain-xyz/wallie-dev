@@ -215,15 +215,14 @@ export const WallieRunCard = memo(function WallieRunCard({
         )
       ) : (
         <>
-          {status}
-          <span className="text-muted">{formatStageRunLabel(run)}</span>
-          <span className="text-muted">Attempt {run.attemptCount}</span>
+          {status} <span className="text-muted">{formatStageRunLabel(run)}</span>{" "}
+          <span className="text-muted">Attempt {run.attemptCount}</span>{" "}
           <TimeDisplay
             className="text-xs tabular-nums text-muted"
             initialNow={renderNow}
             value={run.createdAt}
-          />
-          {historyLabel ? <span className="text-xs text-muted">{historyLabel}</span> : null}
+          />{" "}
+          {historyLabel ? <span className="text-xs text-muted">{historyLabel}</span> : null}{" "}
           {run.startedAt ? (
             <span className="type-annotation tabular-nums text-muted">
               ·{" "}
