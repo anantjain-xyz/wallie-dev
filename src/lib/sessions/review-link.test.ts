@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { parseSessionBrowseReturn } from "./browse-return";
 
 import {
   exactSessionReviewHref,
@@ -31,6 +32,38 @@ it("keeps ordinary artifact browsing available", () => {
   expect(
     parseSessionReviewTarget({ artifactStage: "specification", artifactId: target.artifactId }),
   ).toEqual({ kind: "ordinary" });
+});
+
+it("forwards only canonical browse context through session sign-in", () => {
+  const inbox = "/w/acme/inbox?factory=factory-id&kind=review&cursor=opaque";
+  const ledger = "/w/acme/sessions?scope=archived&q=API+schema&stage=plan";
+  const exact = new URL(href, "https://wallie.test");
+  exact.searchParams.set("returnTo", inbox);
+  expect(sessionReviewReturnPath(exact, "acme")).toBe(
+    `${href}&returnTo=${encodeURIComponent(inbox)}`,
+  );
+  exact.searchParams.append("returnTo", ledger);
+  expect(sessionReviewReturnPath(exact, "acme")).toBe(href);
+  const ordinary = new URL("/w/acme/sessions/12", "https://wallie.test");
+  ordinary.searchParams.set("returnTo", ledger);
+  expect(sessionReviewReturnPath(ordinary)).toBe(
+    `/w/acme/sessions/12?returnTo=${encodeURIComponent(ledger)}`,
+  );
+  expect(parseSessionBrowseReturn("acme", inbox)).toEqual({ href: inbox, label: "Inbox" });
+  expect(parseSessionBrowseReturn("acme", ledger)).toEqual({ href: ledger, label: "Sessions" });
+});
+
+it.each([
+  ["/w/acme/inbox"],
+  "https://wallie.test/w/acme/inbox",
+  "//wallie.test/w/acme/inbox",
+  "/w/neighbor/inbox",
+  "/w/acme/inbox#review",
+  "/w/acme/sessions/12",
+  "/w/acme/../acme/inbox",
+  "/w/acme/inbox/",
+])("ignores an unsupported return value %j", (input: unknown) => {
+  expect(parseSessionBrowseReturn("acme", input)).toBeNull();
 });
 
 it("fails closed on ambiguous targets and unsupported exact revisions", () => {

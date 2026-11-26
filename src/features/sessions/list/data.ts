@@ -126,14 +126,15 @@ export async function loadSessionListPageData(
   for (const [key, value] of Object.entries(searchParams)) {
     if (value !== undefined) search.set(key, Array.isArray(value) ? (value[0] ?? "") : value);
   }
-  const queryState = shouldRestoreSessionListPreferences({
+  const restoredQueryState = shouldRestoreSessionListPreferences({
     queryState: urlQueryState,
     search,
     stored,
   })
     ? { ...urlQueryState, ...stored }
     : urlQueryState;
-  const cursor = decodeCursor(queryState.cursor, queryState.sort);
+  const cursor = decodeCursor(restoredQueryState.cursor, restoredQueryState.sort);
+  const queryState = cursor ? restoredQueryState : { ...restoredQueryState, cursor: null };
 
   return withServerTiming(
     "sessions.list",
@@ -170,6 +171,7 @@ export async function loadSessionListPageData(
             session_scope: queryState.scope,
             sort_key: queryState.sort,
             stage_filter_slug: queryState.stageSlug ?? undefined,
+            ...(queryState.status ? { status_filter: queryState.status } : {}),
             target_workspace_slug: workspaceSlug,
             ...(factoryId ? { target_factory_id: factoryId } : {}),
           }),

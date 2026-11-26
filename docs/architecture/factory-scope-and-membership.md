@@ -66,10 +66,13 @@ scope displays an empty state with the factory selector so the viewer can
 choose their next scope. Switching factories resets stage and pagination
 filters. Session and run detail links keep their existing IDs and URLs.
 
-**Activity** opens across authorized factories. Its session and run totals use
-the same factory and actor filters as their recent rows. Each list has its own
-count and retrieval state. Factory and actor links drill into the same scope.
-Session and run links open the canonical resource.
+**Activity** opens across authorized factories. Its two lists are snapshots:
+sessions are ordered by last update and runs by creation, and each row shows the
+current status separately from its recorded actor. Actor search and selected-name
+lookup use memberships or recorded activity readable in the current factory scope.
+The factory and actor filters apply to both lists; run status applies only to
+Runs. Each list keeps its own exact filtered total, retrieval state, and bounded
+older-results cursor. Session and run links still open the canonical resource.
 
 ## Commands
 

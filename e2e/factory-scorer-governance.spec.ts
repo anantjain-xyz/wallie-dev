@@ -118,7 +118,10 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     await page.getByRole("button", { name: "Switch to light mode" }).click();
     await page.goto(`${scorer}&revision=${revision}`);
     const name = page.getByRole("textbox", { name: "Calibration set name" });
-    const firstCase = page.getByRole("checkbox", { name: new RegExp(note) });
+    const firstCase = page
+      .getByRole("listitem")
+      .filter({ hasText: note })
+      .getByRole("checkbox", { name: /Reconciliation regression/ });
     await name.fill(calibrationName);
     await expect(firstCase).toHaveCount(0);
     await page.getByRole("button", { name: "Load older calibration cases", exact: true }).click();
@@ -130,6 +133,14 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     const historical = new URL(page.url());
     historical.searchParams.set("revision", data.revisions[0]);
     await page.goto(historical.toString());
+    await expect(
+      page.getByText("Uses rubric revision 3 · Existing sets keep their original rubric pin."),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("checkbox", { name: /Reconciliation regression/ })
+        .and(page.locator(":checked")),
+    ).toHaveCount(1);
     await name.fill(revisedCalibrationName);
     await page.getByRole("button", { name: "Publish next version", exact: true }).click();
     const history = page.getByRole("list", { name: "Calibration version history" });
@@ -140,6 +151,8 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     for (const pin of await pins.all())
       await expect(pin).toHaveAttribute("href", new RegExp(`revision=${revision}`));
     await page.getByRole("button", { name: "Pause scorer", exact: true }).click();
+    await expect(page.getByRole("alertdialog")).toContainText("all rubric revisions");
+    await page.getByRole("button", { name: "Pause all revisions", exact: true }).click();
     await expect(page.getByRole("button", { name: "Resume scorer", exact: true })).toBeVisible();
     const health = page.locator("#scorer-health:visible");
     await expect(health.getByText("Evaluator errors / settled")).toBeVisible();
@@ -152,7 +165,7 @@ test("a factory operator disputes a verdict, creates a calibration set, and requ
     await capture(page, info, "02-scorer-health-and-calibration-desktop-light");
 
     await history.getByText("Inspect calibration cases", { exact: true }).first().click();
-    const savedCase = history.getByRole("link", { name: "Open case 1", exact: true }).first();
+    const savedCase = history.getByRole("link", { name: /Reconciliation regression/ }).first();
     await expect(savedCase).toHaveAttribute(
       "href",
       new RegExp(

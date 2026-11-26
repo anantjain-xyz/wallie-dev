@@ -4,6 +4,7 @@ import {
   factoryInboxCursorSchema,
   factoryInboxProjectionSchema,
   type FactoryInbox,
+  type FactoryInboxKind,
 } from "./inbox-schema";
 import type { WorkspaceAccessContext } from "@/lib/workspaces/access";
 
@@ -22,11 +23,13 @@ export async function loadFactoryInbox({
   supabase,
   workspaceId,
   factoryId,
+  kind,
   cursor,
 }: {
   supabase: WorkspaceAccessContext["supabase"];
   workspaceId: string;
   factoryId?: string | null;
+  kind?: FactoryInboxKind;
   cursor?: string | null;
 }): Promise<FactoryInbox | null> {
   const before = cursor == null ? null : parseCursor(cursor);
@@ -35,6 +38,7 @@ export async function loadFactoryInbox({
     p_factory_id: factoryId ?? undefined,
     p_before_at: before?.occurredAt,
     p_before_artifact_id: before?.artifactId,
+    ...(kind && { p_kind: kind }),
   });
   if (error) throw error;
   if (data === null) return null;

@@ -59,15 +59,23 @@ test("an operator copies, edits, and publishes a scorer preset", async ({
     const scale = page.getByRole("combobox", { name: "Score scale", exact: true });
     await selectDropdownOption(scale, "numeric");
     await page.getByRole("button", { name: "Restore preset", exact: true }).click();
+    await page.getByRole("button", { name: "Keep editing" }).click();
+    await expect(rubric).toHaveValue("Unsaved rubric change.");
+    await presets.getByRole("link", { name: "Verification", exact: true }).click();
+    await page.getByRole("button", { name: "Keep editing" }).click();
+    await expect(rubric).toHaveValue("Unsaved rubric change.");
+    await page.getByRole("button", { name: "Restore preset", exact: true }).click();
+    await page.getByRole("button", { name: "Discard changes" }).click();
     await expect(page.getByLabel("Scorer name", { exact: true })).toHaveValue(redundantPreset);
     await expect(rubric).toHaveValue(original);
     await expectDropdownValue(scale, "boolean");
 
     await page.getByLabel("Scorer name", { exact: true }).fill("Invoice regression coverage");
-    await page.getByLabel("Identifier", { exact: true }).fill("invoice-regression");
     await rubric.fill(customRubric);
     await page.getByRole("button", { name: "Validate rubric", exact: true }).click();
-    await expect(page.getByText("Rubric is valid.")).toBeVisible();
+    await expect(
+      page.getByText("Rubric settings are valid. No runs were evaluated."),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Publish scorer", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Invoice regression coverage" })).toBeVisible();
     await expect(page.getByRole("code").filter({ hasText: customRubric })).toBeVisible();
@@ -75,13 +83,16 @@ test("an operator copies, edits, and publishes a scorer preset", async ({
     await page.goto(scorers);
     await presets.getByRole("link", { name: redundantPreset, exact: true }).click();
     await expect(rubric).toHaveValue(original);
-    await expect(page.getByLabel("Identifier", { exact: true })).toHaveValue("redundant-tests");
+    await page.getByText("Advanced", { exact: true }).click();
+    await expect(page.getByLabel("Identifier", { exact: true })).toHaveValue("");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "Switch to dark mode" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await capture(page, info, "02-scorer-preset-mobile-dark");
 
+    await rubric.fill("Unpublished mobile edit.");
     await page.getByRole("link", { name: "Start with a blank draft" }).click();
+    await page.getByRole("button", { name: "Discard changes" }).click();
     await expect(rubric).toHaveValue("");
   } finally {
     await fixture.cleanup();

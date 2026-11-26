@@ -40,6 +40,7 @@ export type SelectOptionGroup = {
 export type SelectFieldProps = {
   align?: "start" | "end";
   "aria-describedby"?: string;
+  "aria-invalid"?: React.AriaAttributes["aria-invalid"];
   className?: string;
   contentClassName?: string;
   defaultValue?: string;
@@ -866,6 +867,7 @@ function SelectFieldTriggerLabel({
 export function SelectField({
   align = "start",
   "aria-describedby": ariaDescribedBy,
+  "aria-invalid": ariaInvalid,
   className,
   contentClassName,
   defaultValue,
@@ -936,6 +938,7 @@ export function SelectField({
       >
         <SelectTrigger
           aria-describedby={ariaDescribedBy}
+          aria-invalid={ariaInvalid}
           aria-labelledby={labelId}
           className={cn("w-full", triggerClassName)}
           fallbackLabel={resolvedFallbackLabel}

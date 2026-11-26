@@ -30,12 +30,14 @@ beforeEach(() => {
 
 describe("Inbox read route", () => {
   it("serves the scoped projection privately and round-trips an exact keyset cursor", async () => {
-    const response = await GET(request(`&factoryId=${factoryId}`));
+    const response = await GET(request(`&factoryId=${factoryId}&kind=clarification`));
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     const { nextCursor } = await response.json();
-    const next = await GET(request(`&factoryId=${factoryId}&cursor=${nextCursor}`));
+    const next = await GET(
+      request(`&factoryId=${factoryId}&kind=clarification&cursor=${nextCursor}`),
+    );
 
     expect(next.status).toBe(200);
     expect(requireWorkspaceAccessById).toHaveBeenCalledWith(workspaceId);
@@ -44,22 +46,31 @@ describe("Inbox read route", () => {
       p_factory_id: factoryId,
       p_before_at: anchor.occurredAt,
       p_before_artifact_id: anchor.artifactId,
+      p_kind: "clarification",
     });
   });
 
-  it.each(["&factoryId=unknown", `&factoryId=${factoryId}&factoryId=${factoryId}`])(
-    "rejects a malformed or ambiguous scope",
-    async (query) => {
-      const response = await GET(request(query));
-      expect(response.status).toBe(400);
-      expect(requireWorkspaceAccessById).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    "&factoryId=unknown",
+    `&factoryId=${factoryId}&factoryId=${factoryId}`,
+    "&kind=unknown",
+    "&kind=review&kind=clarification",
+  ])("rejects a malformed or ambiguous scope", async (query) => {
+    const response = await GET(request(query));
+    expect(response.status).toBe(400);
+    expect(requireWorkspaceAccessById).not.toHaveBeenCalled();
+  });
 
   it("rejects an invalid cursor before querying the Inbox projection", async () => {
     const response = await GET(request("&cursor=malformed"));
     expect(response.status).toBe(400);
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("keeps the original RPC call shape for All items", async () => {
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect(rpc.mock.lastCall?.[1]).not.toHaveProperty("p_kind");
   });
 
   it("returns a noncacheable 404 for an inaccessible factory without counts", async () => {
