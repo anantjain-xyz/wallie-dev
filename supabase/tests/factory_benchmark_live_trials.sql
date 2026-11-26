@@ -94,12 +94,17 @@ select ok(
   and not has_table_privilege('service_role','internal.factory_benchmark_inference_connections','SELECT'),
   'the inference key is reachable only through authorized service operations');
 
-create function pg_temp.freeze_live(slot integer, runtime text) returns jsonb language sql as $$
+create function pg_temp.freeze_live(slot integer, runtime text, pin text default null) returns jsonb language sql as $$
   select public.freeze_factory_benchmark_experiment_axes(scope.workspace_id, scope.factory_id, scope.owner_id,
     pg_temp.live_id(slot), suite.id, policy.id,
     (select jsonb_agg(jsonb_build_object('definitionRevisionId', pg_temp.live_id(43),
-      'qualificationId', pg_temp.live_id(qualification), 'workerRuntime', runtime) order by qualification)
-     from (values (51),(52)) checked(qualification)), 2, 211, 120000)
+      'qualificationId', pg_temp.live_id(qualification), 'workerRuntime', runtime)
+      || case when pin is null then '{}'::jsonb else jsonb_build_object('expectedToolchainDigest',
+        case when pin = 'recorded' then candidate.toolchain_digest else pin end) end order by qualification)
+     from (values (51),(52)) checked(qualification)
+     left join public.factory_benchmark_experiment_candidates candidate
+       on (candidate.workspace_id, candidate.factory_id, candidate.experiment_id, candidate.qualification_id) =
+         (scope.workspace_id, scope.factory_id, pg_temp.live_id(80), pg_temp.live_id(qualification))), 2, 211, 120000)
   from live_scope scope cross join live_suite suite cross join live_policy policy
 $$;
 create function pg_temp.configure_live(slot integer, reserve numeric default 0.50,
@@ -114,6 +119,16 @@ create function pg_temp.live_snapshot() returns jsonb language sql as $$
 $$;
 
 select is(pg_temp.freeze_live(80,'workerd')->>'expectedTrialCount', '4', 'a pinned managed runner freezes both harnesses');
+select throws_ok($$select pg_temp.freeze_live(82,'workerd',repeat('0',64))$$,
+  'PT412', null, 'a stale toolchain digest is rejected even with the same qualification ID');
+select is((select count(*) from public.factory_benchmark_experiments where id = pg_temp.live_id(82)),
+  0::bigint, 'the rejected freeze rolls back the matrix');
+select is(pg_temp.freeze_live(82,'workerd','recorded')->>'expectedTrialCount', '4',
+  'verified toolchain digests can freeze a comparison');
+select is(pg_temp.freeze_live(82,'workerd','recorded')->>'experimentId', pg_temp.live_id(82)::text,
+  'an exact digest retry returns the retained comparison');
+select throws_ok($$select pg_temp.freeze_live(82,'workerd',repeat('0',64))$$,
+  'PT412', null, 'retry checks retained pins instead of substituting a different digest');
 select is(pg_temp.freeze_live(81,'node')->>'expectedTrialCount', '4', 'existing Node axes can still be frozen');
 select throws_ok($$select pg_temp.configure_live(81)$$, 'PT422', null, 'a live schedule rejects Node-only axes');
 select throws_ok($$select pg_temp.configure_live(80, 0)$$, '22023', null, 'execution requires a positive reserve');

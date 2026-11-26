@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { PageSection } from "@/components/ui/page-shell";
 import { SelectField } from "@/components/ui/select";
+import { benchmarkScorerLabel } from "@/lib/factory-benchmarks/comparison-labels";
 import type {
   BenchmarkFrontier,
   BenchmarkFrontierCandidate,
@@ -82,10 +83,12 @@ function Constraints({
   frontier,
   action,
   preservedQuery,
+  requiresScorerChoice,
 }: {
   frontier: BenchmarkFrontier;
   action: string;
   preservedQuery: Readonly<Record<string, string | undefined>>;
+  requiresScorerChoice: boolean;
 }) {
   const { policy, scorer, scorers } = frontier;
   return (
@@ -103,15 +106,19 @@ function Constraints({
           )}
           <SelectField
             className="col-span-2 sm:min-w-48"
-            defaultValue={scorer.id}
-            key={scorer.id}
+            defaultValue={requiresScorerChoice ? "" : scorer.id}
+            emptyOption={
+              requiresScorerChoice ? { label: "Choose a frozen scorer", value: "" } : undefined
+            }
+            key={requiresScorerChoice ? "choose-scorer" : scorer.id}
             label="Frozen scorer"
             labelClassName="type-label"
             name="scorerRevisionId"
             options={scorers.map(({ id, name, revisionNumber }) => ({
-              label: `${name} · r${revisionNumber}`,
+              label: benchmarkScorerLabel(name, revisionNumber),
               value: id,
             }))}
+            required
             wrap
           />
           <label className="type-label grid gap-1.5">
@@ -140,21 +147,21 @@ function Constraints({
             />
           </label>
           <button className="ui-button col-span-2 justify-self-start" type="submit">
-            Apply constraints
+            {requiresScorerChoice ? "Show results for scorer" : "Apply constraints"}
           </button>
         </form>
       ) : null}
       <p className="type-secondary text-muted">
-        <span className="font-mono">{policy.revision}</span> · {rate(policy.qualityFloorBps)} pass
-        floor · {number.format(policy.minimumResolved)} resolved trials minimum. Cost includes
-        measured execution and all attempts of the selected scorer across the same eligible trials.
+        {rate(policy.qualityFloorBps)} pass floor · {number.format(policy.minimumResolved)} resolved
+        trials minimum. Cost includes measured execution and all attempts of the selected scorer
+        across the same eligible trials.
       </p>
     </div>
   );
 }
 
 function Recommendation({ frontier }: { frontier: BenchmarkFrontier }) {
-  const { cohort, recommendation } = frontier;
+  const { cohort, recommendation, scorer } = frontier;
   const { status, candidates, candidateCount, meanCostUsd, passRateBps, reason } = recommendation;
   const heading = {
     recommended: "Recommended configuration",
@@ -164,6 +171,11 @@ function Recommendation({ frontier }: { frontier: BenchmarkFrontier }) {
   return (
     <div className="space-y-2 px-4 py-4 sm:px-5">
       <h3 className="type-label font-semibold">{heading}</h3>
+      {scorer ? (
+        <p className="type-secondary">
+          Scoring basis: {benchmarkScorerLabel(scorer.name, scorer.revisionNumber)}
+        </p>
+      ) : null}
       {candidates.length ? (
         <ul className="type-secondary flex flex-wrap gap-x-4 gap-y-1">
           {candidates.map((candidate) => (
@@ -183,7 +195,15 @@ function Recommendation({ frontier }: { frontier: BenchmarkFrontier }) {
           ? `${usd(meanCostUsd)} per trial · ${rate(passRateBps)} pass rate. `
           : null}
         {unavailableReasons[reason]}
+        {reason === "no_scorer"
+          ? " Freeze a new comparison with the scorer you want to use."
+          : null}
       </p>
+      {status === "unavailable" && scorer ? (
+        <Link className="type-secondary underline underline-offset-4" href="#comparison-trials">
+          Inspect trial evidence
+        </Link>
+      ) : null}
       <dl className="type-secondary flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
         {Object.entries({
           "Configurations on frontier": frontier.frontierCount,
@@ -369,7 +389,7 @@ function FrontierChart({ frontier }: { frontier: BenchmarkFrontier }) {
           </ul>
           {points.some(({ candidate }) => qualitySpread(candidate) || costSpread(candidate)) ? (
             <p className="type-secondary text-muted">
-              Lines show the observed range across complete repetitions.
+              Lines show observed variability across complete repetitions, not confidence intervals.
             </p>
           ) : null}
         </>
@@ -527,6 +547,7 @@ export function BenchmarkComparisonFrontier({
   frontier,
   action,
   preservedQuery,
+  requiresScorerChoice,
   firstHref,
   nextHref,
   routingDraft,
@@ -534,15 +555,40 @@ export function BenchmarkComparisonFrontier({
   frontier: BenchmarkFrontier;
   action: string;
   preservedQuery: Readonly<Record<string, string | undefined>>;
+  requiresScorerChoice: boolean;
   firstHref?: string;
   nextHref?: string;
   routingDraft?: { workspaceId: string; workspaceSlug: string; factoryId: string };
 }) {
+  const constraints = (
+    <Constraints
+      frontier={frontier}
+      action={action}
+      preservedQuery={preservedQuery}
+      requiresScorerChoice={requiresScorerChoice}
+    />
+  );
+  if (requiresScorerChoice) {
+    return (
+      <PageSection anchorId="cost-quality-frontier" title="Cost and quality frontier">
+        <div className="ui-sheet min-w-0">
+          <div className="space-y-1 px-4 pt-4 sm:px-5">
+            <h3 className="type-label">Choose the scorer for this decision</h3>
+            <p className="type-secondary text-muted">
+              Multiple scorer revisions were frozen. Select the rubric you want before comparing
+              cost and quality or drafting a routing change.
+            </p>
+          </div>
+          {constraints}
+        </div>
+      </PageSection>
+    );
+  }
   return (
     <PageSection anchorId="cost-quality-frontier" title="Cost and quality frontier">
       <div className="ui-sheet min-w-0 divide-y divide-border">
-        <Constraints frontier={frontier} action={action} preservedQuery={preservedQuery} />
         <Recommendation frontier={frontier} />
+        {constraints}
         <FrontierChart frontier={frontier} />
         {frontier.items.length ? (
           routingDraft && frontier.scorer ? (
