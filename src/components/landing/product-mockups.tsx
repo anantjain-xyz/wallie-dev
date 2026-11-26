@@ -4,8 +4,6 @@ import {
 } from "@/components/shared/agent-provider-options";
 import { WallieMark } from "@/components/shared/wallie-mark";
 
-import { AnimatedFigure } from "./animated-figure";
-import { AnimatedProviderRow } from "./animated-provider-row";
 import { SandboxProviderLogo } from "./sandbox-provider-logo";
 import styles from "./landing.module.css";
 
@@ -19,94 +17,78 @@ const sandboxes = [
 export function LandingIllustrations() {
   return (
     <div className={styles.illustrations}>
-      <AnimatedFigure caption="Choose your coding agent">
-        <AnimatedProviderRow
-          className={styles.agents}
-          label="Supported coding agents"
-          intervalMs={1500}
-          choices={agents.map((provider) => ({
-            id: provider,
-            label: AGENT_PROVIDER_LABELS[provider],
-            logo: <AgentProviderLogo provider={provider} className="size-6" />,
-          }))}
-        />
-        <p className={`${styles.figureTitle} ${styles.sandboxTitle}`}>Choose your sandbox</p>
-        <AnimatedProviderRow
-          className={styles.sandboxes}
-          label="Supported sandbox providers"
-          intervalMs={2000}
-          choices={sandboxes.map(({ id, label }) => ({
-            id,
-            label,
-            logo: <SandboxProviderLogo brand={id} />,
-          }))}
-        />
-      </AnimatedFigure>
-
-      <AnimatedFigure caption="Design your workflow" className={styles.workflow}>
-        <div className={styles.workflowCanvas} aria-hidden="true">
-          <ol className={styles.stages}>
-            <li className={`${styles.stage} ${styles.planStage}`}>
-              <span className={styles.stageNode}>
-                <WallieMark className="size-5" />
-              </span>
-              <span className={styles.stageName}>Plan</span>
-              <span className={styles.stageOwner}>Wallie</span>
-            </li>
-            <li className={`${styles.stage} ${styles.reviewStage}`}>
-              <span className={styles.stageNode}>
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.5" />
-                  <path
-                    d="M5 21v-2a7 7 0 0 1 14 0v2"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </span>
-              <span className={styles.stageName}>Review</span>
-              <span className={styles.stageOwner}>You</span>
-            </li>
-            <li className={`${styles.stage} ${styles.buildStage}`}>
-              <span className={styles.stageNode}>
-                <WallieMark className="size-5" />
-              </span>
-              <span className={styles.stageName}>Build</span>
-              <span className={styles.stageOwner}>Wallie</span>
-            </li>
-          </ol>
-          <div className={styles.addStage}>
-            <span className={styles.addNode}>+</span>
-            <span className={styles.stageName}>Add stage</span>
-          </div>
-          <div className={styles.workflowCursor}>
-            <svg width="22" height="26" viewBox="0 0 22 26" fill="none">
-              <path
-                d="m3 2 15 13-7 1 4 7-3 2-4-8-5 5V2Z"
-                fill="var(--foreground)"
-                stroke="var(--canvas)"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-        </div>
-        <div className={styles.workflowStatus} aria-hidden="true">
-          <span className={styles.startStatus}>Start with your first stage</span>
-          <span className={styles.planStatus}>You add a planning stage</span>
-          <span className={styles.reviewStatus}>You add a human review</span>
-          <span className={styles.buildStatus}>You add a build stage</span>
-          <span className={styles.workingStatus}>Wallie is working on the plan</span>
-          <span className={styles.waitingStatus}>Waiting for your review</span>
-          <span className={styles.workflowSummary}>Wallie works. You review.</span>
-        </div>
-        <p className="sr-only">
-          Build your own workflow by adding as many stages as you need. In this example, you add
-          Plan, a human Review, and Build. Wallie agents work on the square nodes; human review
-          steps use round nodes and wait for your approval.
+      <figure
+        className={styles.workflow}
+        aria-labelledby="landing-workflow"
+        aria-describedby="landing-workflow-description"
+      >
+        <figcaption>
+          <h2 id="landing-workflow" className="type-section-title">
+            Example workflow
+          </h2>
+        </figcaption>
+        <ol className={styles.stages} role="list">
+          <li className={styles.stage}>
+            <span className={styles.stageNode}>
+              <WallieMark className="size-5" />
+            </span>
+            <span className="font-medium">Plan</span>
+            <span className="text-xs text-muted">Wallie</span>
+          </li>
+          <li className={styles.stage}>
+            <span className={`${styles.stageNode} ${styles.approvalNode}`}>
+              <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.5" />
+                <path
+                  d="M5 21v-2a7 7 0 0 1 14 0v2"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </span>
+            <span className="font-medium">Approve plan</span>
+            <span className="text-xs text-muted">You</span>
+          </li>
+          <li className={styles.stage}>
+            <span className={styles.stageNode}>
+              <WallieMark className="size-5" />
+            </span>
+            <span className="font-medium">Build</span>
+            <span className="text-xs text-muted">Wallie</span>
+          </li>
+        </ol>
+        <p id="landing-workflow-description" className="text-sm leading-5 text-muted">
+          Wallie starts the build after you approve the plan.
         </p>
-      </AnimatedFigure>
+      </figure>
+
+      <div className={styles.providers}>
+        <h2 id="landing-agents" className="type-label text-muted">
+          Supported coding agents
+        </h2>
+        <ul className={styles.agents} role="list" aria-labelledby="landing-agents">
+          {agents.map((provider) => (
+            <li key={provider} className={styles.provider} translate="no">
+              <AgentProviderLogo provider={provider} className="size-6" />
+              {AGENT_PROVIDER_LABELS[provider]}
+            </li>
+          ))}
+        </ul>
+        <h2 id="landing-sandboxes" className="type-label text-muted">
+          Supported sandboxes
+        </h2>
+        <ul className={styles.sandboxes} role="list" aria-labelledby="landing-sandboxes">
+          {sandboxes.map(({ id, label }) => (
+            <li key={id} className={styles.provider} translate="no">
+              <span className="grid size-6 place-items-center">
+                <SandboxProviderLogo brand={id} />
+              </span>
+              {label}
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
