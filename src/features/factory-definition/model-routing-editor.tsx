@@ -1,15 +1,25 @@
 import Link from "next/link";
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-import { AGENT_PROVIDER_LABELS } from "@/components/shared/agent-provider-options";
 import { SelectField } from "@/components/ui/select";
-import { AGENT_PROVIDERS } from "@/lib/agent-config/contracts";
 import {
-  modelRoutingConfigurationSchema,
+  routingConfigurationKey,
+  type NamedReference,
+} from "@/lib/factory-definitions/named-reference-contracts";
+import {
   modelRoutingPolicySchema,
   type ModelRoutingConfiguration,
   type ModelRoutingPolicy,
 } from "@/lib/model-routing/contracts";
+import type { RoutingQualificationStatus } from "@/lib/model-routing/qualification-status";
+
+import {
+  displayedReference,
+  findReference,
+  ReferenceDetails,
+  ReferencePicker,
+  type ReferencePickerCatalog,
+} from "./named-references";
 
 type RoutingRule = ModelRoutingPolicy["rules"][number];
 type Constraints = RoutingRule["constraints"];
@@ -38,15 +48,6 @@ const initialConstraints: Constraints = {
   maxLatencyMs: null,
   minConfidenceBps: null,
 };
-const configurationFields = [
-  ["agentId", "Agent ID"],
-  ["definitionRevisionId", "Definition revision ID"],
-  ["experimentId", "Benchmark comparison ID"],
-  ["qualificationId", "Capability qualification ID"],
-  ["scorerRevisionId", "Frozen scorer revision ID"],
-  ["modelKey", "Model ID"],
-] as const;
-
 const thresholdFields = [
   {
     key: "qualityFloorBps",
@@ -130,60 +131,53 @@ function FailureChoice({
 }
 
 function ConfigurationFields({
+  picker,
   title,
   value,
   onChange,
 }: {
+  picker: RoutingPicker;
   title: string;
   value: ModelRoutingConfiguration;
   onChange: (configuration: ModelRoutingConfiguration) => void;
 }) {
+  const { benchmarksHref, catalog, disabled, options } = picker;
+  const key = value.experimentId ? routingConfigurationKey(value) : "";
+  const selected = findReference(options, key);
   return (
     <fieldset className="min-w-0 rounded-md border border-border p-3">
       <legend className="px-1 text-sm font-medium">{title}</legend>
-      <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-        {configurationFields.map(([key, label]) => (
-          <RoutingField key={key} label={label}>
-            <input
-              className="ui-input font-mono"
-              value={value[key] ?? ""}
-              required={key !== "scorerRevisionId"}
-              onChange={(event) =>
-                onChange({
-                  ...value,
-                  [key]:
-                    key === "scorerRevisionId"
-                      ? event.target.value || undefined
-                      : event.target.value,
-                })
-              }
-            />
-          </RoutingField>
-        ))}
-        <SelectField
-          label="Harness"
-          onValueChange={(next) => {
-            const harness = modelRoutingConfigurationSchema.shape.harness.parse(next);
-            if (harness !== value.harness) onChange({ ...value, harness });
+      <div className="space-y-2">
+        <ReferencePicker
+          catalog={catalog}
+          kind="routing"
+          disabled={disabled}
+          label={title}
+          options={options}
+          value={key}
+          empty="Choose a qualified configuration"
+          unavailable="Qualification no longer available"
+          onChange={(id) => {
+            const option = findReference(options, id);
+            if (option?.configuration) onChange(option.configuration);
+            if (!id) onChange(emptyConfiguration);
           }}
-          options={AGENT_PROVIDERS.map((provider) => ({
-            label: AGENT_PROVIDER_LABELS[provider],
-            value: provider,
-          }))}
-          value={value.harness}
         />
-        <SelectField
-          label="Worker runtime"
-          onValueChange={(next) => {
-            const workerRuntime = modelRoutingConfigurationSchema.shape.workerRuntime.parse(next);
-            if (workerRuntime !== value.workerRuntime) onChange({ ...value, workerRuntime });
-          }}
-          options={[
-            { label: "Node.js", value: "node" },
-            { label: "Cloudflare Workers", value: "workerd" },
-          ]}
-          value={value.workerRuntime}
-        />
+        {key ? <ReferenceDetails value={JSON.stringify(value)} /> : null}
+        {key && (!selected || selected.unavailable) && benchmarksHref ? (
+          <p className="type-annotation text-muted">
+            Qualification no longer available. Choose a different configuration or{" "}
+            <Link
+              className="text-accent underline underline-offset-2"
+              href={benchmarksHref}
+              target="_blank"
+              rel="noreferrer"
+            >
+              requalify in Benchmarks (new tab)
+            </Link>
+            .
+          </p>
+        ) : null}
       </div>
     </fieldset>
   );
@@ -229,10 +223,19 @@ function ThresholdFields({
   );
 }
 
+type RoutingPicker = {
+  options: NamedReference[];
+  catalog?: ReferencePickerCatalog;
+  benchmarksHref?: string;
+  disabled?: boolean;
+};
+
 function RuleFields({
+  picker,
   value,
   onChange,
 }: {
+  picker: RoutingPicker;
   value: RoutingRule;
   onChange: (rule: RoutingRule) => void;
 }) {
@@ -240,6 +243,7 @@ function RuleFields({
   return (
     <div className="space-y-3">
       <ConfigurationFields
+        picker={picker}
         title="Primary configuration"
         value={value.configuration}
         onChange={(configuration) => onChange({ ...value, configuration })}
@@ -261,6 +265,7 @@ function RuleFields({
       />
       {onUnavailable.kind === "fallback" ? (
         <ConfigurationFields
+          picker={picker}
           title="Rule fallback configuration"
           value={onUnavailable.configuration}
           onChange={(configuration) =>
@@ -316,14 +321,33 @@ function moveItem<T>(items: T[], index: number, offset: -1 | 1) {
 
 export function ModelRoutingEditor({
   benchmarksHref,
+  catalog,
+  disabled,
+  qualification,
   value,
   onChange,
 }: {
   benchmarksHref?: string;
+  catalog?: ReferencePickerCatalog;
+  disabled?: boolean;
+  qualification?: RoutingQualificationStatus;
   value: ModelRoutingPolicy | undefined;
   onChange: (policy: ModelRoutingPolicy | undefined) => void;
 }) {
   const id = useId();
+  const stale = new Set(
+    qualification?.targets
+      .filter(({ reasons }) => reasons.length)
+      .map(({ configuration }) => routingConfigurationKey(configuration)),
+  );
+  const picker: RoutingPicker = {
+    catalog,
+    benchmarksHref,
+    disabled,
+    options: (catalog?.options.routing ?? []).map((option) =>
+      stale.has(option.id) ? { ...option, unavailable: true } : option,
+    ),
+  };
   const [expandedRule, setExpandedRule] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const focusNext = useRef<string>(null);
@@ -374,8 +398,15 @@ export function ModelRoutingEditor({
   }
 
   return (
-    <section aria-labelledby={id} className="min-w-0 space-y-4 border-t border-border pt-6">
-      <h3 className="type-section-title text-foreground" id={id}>
+    <section
+      aria-labelledby="definition-field-modelRouting"
+      className="min-w-0 space-y-4 border-t border-border pt-6"
+    >
+      <h3
+        className="type-section-title text-foreground"
+        id="definition-field-modelRouting"
+        tabIndex={-1}
+      >
         Model routing
       </h3>
       {!value ? (
@@ -534,7 +565,13 @@ export function ModelRoutingEditor({
                       />
                       {rule.configuration.modelKey ? (
                         <p className="type-secondary min-w-0 self-end break-words text-muted">
-                          {rule.configuration.modelKey}
+                          {displayedReference(
+                            findReference(
+                              picker.options,
+                              routingConfigurationKey(rule.configuration),
+                            ),
+                            "Qualification no longer available",
+                          )}
                         </p>
                       ) : null}
                     </div>
@@ -576,7 +613,11 @@ export function ModelRoutingEditor({
                     </div>
                     {expanded ? (
                       <div id={detailsId}>
-                        <RuleFields value={rule} onChange={(next) => updateRule(index, next)} />
+                        <RuleFields
+                          picker={picker}
+                          value={rule}
+                          onChange={(next) => updateRule(index, next)}
+                        />
                       </div>
                     ) : null}
                   </li>
@@ -608,6 +649,7 @@ export function ModelRoutingEditor({
           {onUnmatched.kind === "fallback" ? (
             <>
               <ConfigurationFields
+                picker={picker}
                 title="Unmatched-task fallback configuration"
                 value={onUnmatched.configuration}
                 onChange={(configuration) =>

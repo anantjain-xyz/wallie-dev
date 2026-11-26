@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import {
@@ -7,7 +8,9 @@ import {
   AGENT_EFFORT_SELECT_OPTIONS,
   AGENT_PROVIDER_LABELS,
 } from "@/components/shared/agent-provider-options";
+import { MultiSelectField } from "@/components/ui/multi-select-field";
 import { SelectField } from "@/components/ui/select";
+import { ContextDocumentsEditor } from "@/features/factory-definition/context-documents-editor";
 import { FactoryRepositoryBindingsEditor } from "@/features/factory-definition/repository-bindings-editor";
 import { ModelRoutingEditor } from "@/features/factory-definition/model-routing-editor";
 import {
@@ -20,14 +23,26 @@ import {
   stallTimeoutMinutesToMs,
   stallTimeoutMsToMinutes,
 } from "@/lib/agent-config/contracts";
-import type { FactoryEditorReferenceOptions } from "@/lib/factory-definitions/editor-reference-options";
+import { grantReferenceKey } from "@/lib/factory-definitions/named-reference-contracts";
+import type { ContextDocumentReference } from "@/lib/factory-context/contracts";
+import type { RoutingQualificationStatus } from "@/lib/model-routing/qualification-status";
 import {
   FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION,
   MAX_FACTORY_SCORER_REVISIONS,
   type SerialFactoryDefinition,
 } from "@/lib/factory-definitions/schema";
-import { MAX_MCP_BINDINGS } from "@/lib/factory-mcp/manifest";
+import { MAX_MCP_BINDINGS, mcpOperationScopeId } from "@/lib/factory-mcp/manifest";
+import { MAX_FACTORY_SKILL_REVISIONS } from "@/lib/factory-skills/contracts";
 import { SANDBOX_PROVIDERS, sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
+
+import {
+  displayedReference,
+  findReference,
+  ReferenceDetails,
+  ReferencePicker,
+  ReferenceSelectionList,
+  type ReferencePickerCatalog,
+} from "./named-references";
 
 type ToolBinding = NonNullable<SerialFactoryDefinition["mcpBindings"]>[number];
 type Stage = SerialFactoryDefinition["stages"][number];
@@ -39,21 +54,29 @@ const sandboxLabels = {
 } satisfies Record<SerialFactoryDefinition["sandboxProvider"], string>;
 
 const referenceFields = [
-  { key: "pipeline", label: "Pipeline", placeholder: "Pipeline ID or name" },
+  {
+    key: "pipeline",
+    label: "Pipeline",
+    empty: "Choose a pipeline",
+    unavailable: "Pipeline unavailable",
+  },
   {
     key: "executionPolicy",
     label: "Execution policy revision",
-    placeholder: "Optional revision ID",
+    empty: "No policy pinned",
+    unavailable: "Execution policy revision unavailable",
   },
   {
     key: "deliveryPolicy",
     label: "Delivery policy revision",
-    placeholder: "Optional revision ID",
+    empty: "No policy pinned",
+    unavailable: "Delivery policy revision unavailable",
   },
 ] as const satisfies readonly {
   key: keyof SerialFactoryDefinition;
   label: string;
-  placeholder: string;
+  empty: string;
+  unavailable: string;
 }[];
 
 const numericAgentFields = [
@@ -88,18 +111,14 @@ function Field({ children, label }: { children: ReactNode; label: string }) {
 function TextField({
   id,
   label,
-  list,
   maxLength,
   onChange,
-  placeholder,
   value,
 }: {
   id?: string;
   label: string;
-  list?: string;
   maxLength?: number;
   onChange: (value: string) => void;
-  placeholder?: string;
   value: string;
 }) {
   return (
@@ -107,10 +126,8 @@ function TextField({
       <input
         className="ui-input"
         id={id}
-        list={list}
         maxLength={maxLength}
         onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
         type="text"
         value={value}
       />
@@ -118,75 +135,80 @@ function TextField({
   );
 }
 
-function ReferenceList({
-  description,
-  label,
-  onChange,
-  values,
-}: {
-  description: string;
-  label: string;
-  onChange: (values: string[]) => void;
-  values: string[];
-}) {
-  const descriptionId = useId();
-  const source = values.join("\n");
-  const [input, setInput] = useState({ source, text: source });
-
-  return (
-    <div className="min-w-0 space-y-1.5">
-      <Field label={label}>
-        <textarea
-          aria-describedby={descriptionId}
-          className="ui-textarea font-mono"
-          onChange={(event) => {
-            const text = event.target.value;
-            const references = text
-              .split("\n")
-              .map((line) => line.trim())
-              .filter(Boolean);
-            setInput({ source: references.join("\n"), text });
-            onChange(references);
-          }}
-          rows={3}
-          value={input.source === source ? input.text : source}
-        />
-      </Field>
-      <p className="type-annotation text-muted" id={descriptionId}>
-        {description}
-      </p>
-    </div>
-  );
+export function withImplementationAgent(
+  value: SerialFactoryDefinition,
+  revisionId: string | undefined,
+  previousAgentId: string | undefined,
+  agentId: string | undefined,
+) {
+  const next = { ...value, implementationAgent: revisionId };
+  if (!agentId || agentId !== previousAgentId) {
+    delete next.credentialBindingId;
+    next.mcpBindings = value.mcpBindings?.map((binding) => ({
+      ...binding,
+      secretBindingId: undefined,
+    }));
+  }
+  return next;
 }
 
 export function StructuredFactoryDefinitionEditor({
+  agentsHref,
   benchmarksHref,
+  contextHref,
+  contextProposal,
+  governanceHref,
   disabled,
+  namedReferences,
   onChange,
-  referenceOptions,
+  publishedAgentRevision,
   repositories,
+  routingQualification,
+  workingAgent,
   value,
 }: {
+  agentsHref?: string;
   benchmarksHref?: string;
+  contextHref?: string;
+  contextProposal?: ContextDocumentReference;
+  governanceHref?: string;
   disabled?: boolean;
+  namedReferences?: ReferencePickerCatalog;
   onChange: (value: SerialFactoryDefinition) => void;
-  referenceOptions?: FactoryEditorReferenceOptions;
+  publishedAgentRevision?: string;
   repositories: Parameters<typeof FactoryRepositoryBindingsEditor>[0]["repositories"];
+  routingQualification?: RoutingQualificationStatus;
+  workingAgent?: { revisionId: string; agentId: string };
   value: SerialFactoryDefinition;
 }) {
   const editorId = useId();
   const focusNext = useRef<string>(null);
   const [stageAnnouncement, setStageAnnouncement] = useState("");
   const { agent, stages, mcpBindings = [], executionGrant } = value;
-  const skillOptions = referenceOptions?.skills.filter(({ id }) => !value.skills.includes(id));
+  const skillOptions = namedReferences?.options.skills ?? [];
   const scorerRevisionIds =
     value.schemaVersion === FACTORY_DEFINITION_SCORERS_SCHEMA_VERSION
       ? value.scorerRevisionIds
       : [];
-  const scorerOptions = referenceOptions?.scorers ?? [];
-  const availableScorers = scorerOptions.filter(({ id }) => !scorerRevisionIds.includes(id));
-  const toolOptions = referenceOptions?.tools ?? [];
-  const toolListId = `${editorId}-tool-revisions`;
+  const scorerOptions = namedReferences?.options.scorers ?? [];
+  const toolOptions = namedReferences?.options.tools ?? [];
+  const pipelineOptions = namedReferences?.options.pipeline ?? [];
+  const pipelineId = findReference(pipelineOptions, value.pipeline)?.id ?? value.pipeline;
+  const grantOptions = namedReferences?.options.grants ?? [];
+  const grantKey = executionGrant
+    ? grantReferenceKey(executionGrant.id, executionGrant.version)
+    : "";
+  const grant = findReference(grantOptions, grantKey);
+  const promptChoices = (namedReferences?.options.implementationAgent ?? []).map((option) =>
+    option.id === publishedAgentRevision
+      ? { ...option, label: `${option.label} · Published` }
+      : option,
+  );
+  const currentAgentId = value.implementationAgent
+    ? (findReference(promptChoices, value.implementationAgent)?.agentId ??
+      (workingAgent?.revisionId === value.implementationAgent ? workingAgent.agentId : undefined))
+    : undefined;
+  const approvers = namedReferences?.options.approvers ?? [];
   const stageKeys = new Set<string>();
 
   useLayoutEffect(() => {
@@ -239,7 +261,7 @@ export function StructuredFactoryDefinitionEditor({
     const usedSlugs = new Set(stages.map(({ slug }) => slug));
     let nextSlugNumber = stageNumber;
     while (usedSlugs.has(`stage-${nextSlugNumber}`)) nextSlugNumber += 1;
-    focusNext.current = `${editorId}-stage-${stages.length}-name`;
+    focusNext.current = `definition-field-stages-${stages.length}-name`;
     setStageAnnouncement(`Added stage ${stageNumber}.`);
     update("stages", [
       ...stages,
@@ -282,8 +304,12 @@ export function StructuredFactoryDefinitionEditor({
     <fieldset className="min-w-0 space-y-7" disabled={disabled}>
       <legend className="sr-only">Structured factory definition</legend>
 
-      <section aria-labelledby={`${editorId}-repositories`} className="min-w-0 space-y-4">
-        <h3 className="type-section-title text-foreground" id={`${editorId}-repositories`}>
+      <section aria-labelledby="definition-field-repositories" className="min-w-0 space-y-4">
+        <h3
+          className="type-section-title text-foreground"
+          id="definition-field-repositories"
+          tabIndex={-1}
+        >
           Repository bindings
         </h3>
         <FactoryRepositoryBindingsEditor
@@ -301,49 +327,93 @@ export function StructuredFactoryDefinitionEditor({
           References
         </h3>
         <div className="grid gap-4 sm:grid-cols-2">
-          {referenceFields.map(({ key, label, placeholder }) => (
-            <TextField
-              key={key}
-              label={label}
-              onChange={(next) => {
-                update(key, key === "pipeline" ? next : next || null);
-              }}
-              placeholder={placeholder}
-              value={value[key] ?? ""}
-            />
-          ))}
+          {referenceFields.map(({ key, label, empty, unavailable }) => {
+            const options = namedReferences?.options[key] ?? [];
+            const selected = findReference(options, value[key] ?? "");
+            const matchesPipeline =
+              key !== "deliveryPolicy" || !selected || selected.pipelineId === pipelineId;
+            return (
+              <ReferencePicker
+                key={key}
+                id={`definition-field-${key}`}
+                catalog={namedReferences}
+                kind={key}
+                options={
+                  key === "deliveryPolicy"
+                    ? options.filter(
+                        (option) => option.pipelineId === pipelineId || option.id === value[key],
+                      )
+                    : options
+                }
+                label={label}
+                empty={empty}
+                unavailable={unavailable}
+                selectedAllowed={matchesPipeline}
+                onChange={(next) => update(key, key === "pipeline" ? next : next || null)}
+                value={value[key] ?? ""}
+                disabled={disabled}
+              />
+            );
+          })}
           <div className="space-y-1.5">
-            <TextField
+            <ReferencePicker
+              catalog={namedReferences}
+              kind="implementationAgent"
+              id="definition-field-implementationAgent"
               label="Implementation agent prompt revision"
-              onChange={(next) => update("implementationAgent", next || undefined)}
-              placeholder="Optional immutable revision ID"
+              onChange={(next) =>
+                onChange(
+                  withImplementationAgent(
+                    value,
+                    next || undefined,
+                    currentAgentId,
+                    findReference(promptChoices, next)?.agentId,
+                  ),
+                )
+              }
+              empty="Use factory default"
+              unavailable="Agent prompt revision unavailable"
+              options={promptChoices}
               value={value.implementationAgent ?? ""}
+              disabled={disabled}
             />
+            {value.implementationAgent ? (
+              <ReferenceDetails value={value.implementationAgent} />
+            ) : null}
             <p className="type-annotation text-muted">
               Agent instructions are fixed text. Template variables stay literal.
+              {agentsHref ? (
+                <>
+                  {" "}
+                  <Link
+                    className="text-accent underline underline-offset-2"
+                    href={agentsHref}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Browse agents (new tab)
+                  </Link>
+                  .
+                </>
+              ) : null}
             </p>
           </div>
-          <div className="space-y-3">
-            <ReferenceList
-              description="One skill revision ID per line."
-              label="Skills"
-              onChange={(next) => update("skills", next)}
-              values={value.skills}
-            />
-            {skillOptions?.length ? (
-              <SelectField
-                disabled={disabled}
-                emptyOption={{ label: "Choose a skill revision", value: "" }}
-                label="Add a skill revision"
-                onValueChange={(next) => {
-                  if (!disabled && next) update("skills", [...value.skills, next]);
-                }}
-                options={skillOptions.map(({ id, label }) => ({ label, value: id }))}
-                value=""
-                wrap
-              />
-            ) : null}
-          </div>
+          <ReferenceSelectionList
+            id="definition-field-skills"
+            catalog={namedReferences}
+            kind="skills"
+            label="Skills"
+            addLabel="Add a skill revision"
+            empty="No skill revisions selected."
+            unavailable="Skill revision unavailable"
+            onChange={(next) => {
+              if (next.length <= MAX_FACTORY_SKILL_REVISIONS) update("skills", next);
+            }}
+            values={value.skills}
+            options={skillOptions}
+            disabled={disabled}
+            limit={MAX_FACTORY_SKILL_REVISIONS}
+          />
         </div>
       </section>
 
@@ -354,105 +424,143 @@ export function StructuredFactoryDefinitionEditor({
         <h3 className="type-section-title text-foreground" id={`${editorId}-scorers`}>
           Scorers
         </h3>
-        {scorerRevisionIds.length > 0 ? (
-          <ul className="divide-y divide-border rounded-md border border-border">
-            {scorerRevisionIds.map((id) => {
-              const label = scorerOptions.find((option) => option.id === id)?.label ?? id;
+        <ReferenceSelectionList
+          id="definition-field-scorerRevisionIds"
+          catalog={namedReferences}
+          kind="scorers"
+          label="Scorers"
+          addLabel="Add a scorer revision"
+          empty="No scorer revisions selected."
+          unavailable="Scorer revision unavailable"
+          onChange={(next) => {
+            if (next.length <= MAX_FACTORY_SCORER_REVISIONS) updateScorers(next);
+          }}
+          values={scorerRevisionIds}
+          options={scorerOptions}
+          disabled={disabled}
+          limit={MAX_FACTORY_SCORER_REVISIONS}
+        />
+      </section>
+
+      <section
+        aria-labelledby="definition-field-mcpBindings"
+        className="min-w-0 space-y-4 border-t border-border pt-6"
+      >
+        <h3
+          className="type-section-title text-foreground"
+          id="definition-field-mcpBindings"
+          tabIndex={-1}
+        >
+          Tool bindings
+        </h3>
+        {mcpBindings.length ? (
+          <ol className="space-y-4">
+            {mcpBindings.map((binding, index) => {
+              const tool = findReference(toolOptions, binding.toolRevisionId);
+              const permittedOperations =
+                tool?.operations?.filter(
+                  (operation) =>
+                    !grant?.unavailable &&
+                    grant?.toolIds?.includes(
+                      mcpOperationScopeId(binding.toolRevisionId, operation),
+                    ),
+                ) ?? [];
+              const credentials = namedReferences?.options.bindings ?? [];
+              const eligibleBinding = (option: (typeof credentials)[number]) =>
+                Boolean(
+                  tool?.authKind === "bearer" &&
+                  grant &&
+                  !grant.unavailable &&
+                  permittedOperations.length &&
+                  currentAgentId &&
+                  option.agentId === currentAgentId &&
+                  option.grantId === executionGrant?.id &&
+                  option.principalId === grant.principalId &&
+                  option.toolId === binding.toolRevisionId,
+                );
+              const selectedBinding = findReference(credentials, binding.secretBindingId ?? "");
               return (
-                <li
-                  className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
-                  key={id}
-                >
-                  <span className="min-w-0 break-all text-sm">{label}</span>
+                <li className="min-w-0 space-y-4 rounded-md border border-border p-4" key={index}>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <ReferencePicker
+                      catalog={namedReferences}
+                      kind="tools"
+                      id={`definition-field-mcpBindings-${index}-toolRevisionId`}
+                      label={`Tool revision ${index + 1}`}
+                      options={toolOptions.filter(
+                        ({ id }) =>
+                          id === binding.toolRevisionId ||
+                          !mcpBindings.some((other) => other.toolRevisionId === id),
+                      )}
+                      onChange={(toolRevisionId) =>
+                        updateTool(index, {
+                          toolRevisionId,
+                          operations: [],
+                          secretBindingId: undefined,
+                        })
+                      }
+                      empty="Choose an approved tool revision"
+                      unavailable="Tool revision unavailable"
+                      disabled={disabled}
+                      value={binding.toolRevisionId}
+                    />
+                    {tool?.authKind === "bearer" || binding.secretBindingId ? (
+                      <ReferencePicker
+                        catalog={namedReferences}
+                        kind="bindings"
+                        id={`definition-field-mcpBindings-${index}-secretBindingId`}
+                        label="MCP secret binding"
+                        options={credentials.filter(
+                          (option) =>
+                            eligibleBinding(option) || option.id === binding.secretBindingId,
+                        )}
+                        selectedAllowed={!selectedBinding || eligibleBinding(selectedBinding)}
+                        onChange={(id) => updateTool(index, { secretBindingId: id || undefined })}
+                        empty="Credential required · choose a saved binding"
+                        unavailable="Credential binding unavailable"
+                        value={binding.secretBindingId ?? ""}
+                        disabled={disabled}
+                      />
+                    ) : tool?.authKind === "none" ? (
+                      <p className="type-secondary self-end text-muted">
+                        No authentication required.
+                      </p>
+                    ) : null}
+                  </div>
+                  <MultiSelectField
+                    description="Choose operations approved by both this tool revision and the execution grant."
+                    disabled={disabled}
+                    emptyMessage="Choose a tool revision and a grant with approved operations."
+                    id={`definition-field-mcpBindings-${index}-operations`}
+                    label="Allowed operations"
+                    options={[...new Set([...permittedOperations, ...binding.operations])].map(
+                      (name) => ({
+                        value: name,
+                        label: permittedOperations.includes(name) ? name : `${name} · Unavailable`,
+                      }),
+                    )}
+                    summary={
+                      binding.operations.length
+                        ? `${binding.operations.length} selected`
+                        : "Choose operations"
+                    }
+                    onValuesChange={(operations) => updateTool(index, { operations })}
+                    values={binding.operations}
+                  />
                   <button
-                    aria-label={`Remove ${label}`}
+                    aria-label={`Remove tool binding ${index + 1}`}
                     className="ui-button"
-                    onClick={() => updateScorers(scorerRevisionIds.filter((bound) => bound !== id))}
+                    onClick={() => {
+                      const remaining = mcpBindings.filter((_, position) => position !== index);
+                      update("mcpBindings", remaining.length ? remaining : undefined);
+                    }}
                     type="button"
                   >
-                    Remove
+                    Remove binding
                   </button>
                 </li>
               );
             })}
-          </ul>
-        ) : (
-          <p className="type-secondary text-muted">No scorer revisions selected.</p>
-        )}
-        {availableScorers.length > 0 ? (
-          <SelectField
-            disabled={disabled || scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS}
-            emptyOption={{ label: "Choose a scorer revision", value: "" }}
-            label="Add a scorer revision"
-            onValueChange={(next) => {
-              if (!disabled && next) updateScorers([...scorerRevisionIds, next]);
-            }}
-            options={availableScorers.map(({ id, label }) => ({ label, value: id }))}
-            value=""
-            wrap
-          />
-        ) : null}
-        {scorerRevisionIds.length >= MAX_FACTORY_SCORER_REVISIONS ? (
-          <p className="type-annotation text-muted">
-            A definition can bind up to {MAX_FACTORY_SCORER_REVISIONS} scorer revisions.
-          </p>
-        ) : null}
-      </section>
-
-      <section
-        aria-labelledby={`${editorId}-tools`}
-        className="min-w-0 space-y-4 border-t border-border pt-6"
-      >
-        <h3 className="type-section-title text-foreground" id={`${editorId}-tools`}>
-          Tool bindings
-        </h3>
-        <datalist id={toolListId}>
-          {toolOptions.map(({ id, label }) => (
-            <option key={id} label={label} value={id} />
-          ))}
-        </datalist>
-        {mcpBindings.length ? (
-          <ol className="space-y-4">
-            {mcpBindings.map((binding, index) => (
-              <li className="min-w-0 space-y-4 rounded-md border border-border p-4" key={index}>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <TextField
-                    label={`Tool revision ${index + 1}`}
-                    list={toolListId}
-                    onChange={(toolRevisionId) => updateTool(index, { toolRevisionId })}
-                    placeholder="Approved MCP revision ID"
-                    value={binding.toolRevisionId}
-                  />
-                  <TextField
-                    label="MCP secret binding"
-                    onChange={(value) => updateTool(index, { secretBindingId: value || undefined })}
-                    placeholder="Optional binding ID"
-                    value={binding.secretBindingId ?? ""}
-                  />
-                </div>
-                <ReferenceList
-                  description={
-                    toolOptions
-                      .find(({ id }) => id === binding.toolRevisionId)
-                      ?.operations.join(", ") || "One approved operation name per line."
-                  }
-                  label="Allowed operations"
-                  onChange={(operations) => updateTool(index, { operations })}
-                  values={binding.operations}
-                />
-                <button
-                  aria-label={`Remove tool binding ${index + 1}`}
-                  className="ui-button"
-                  onClick={() => {
-                    const remaining = mcpBindings.filter((_, position) => position !== index);
-                    update("mcpBindings", remaining.length ? remaining : undefined);
-                  }}
-                  type="button"
-                >
-                  Remove binding
-                </button>
-              </li>
-            ))}
           </ol>
         ) : null}
         <button
@@ -475,42 +583,65 @@ export function StructuredFactoryDefinitionEditor({
           Execution authority
         </h3>
         <div className="grid gap-4 sm:grid-cols-2">
-          <TextField
+          <ReferencePicker
+            catalog={namedReferences}
+            kind="grants"
+            id="definition-field-executionGrant"
             label="Execution grant"
-            onChange={(id) =>
+            options={grantOptions}
+            onChange={(key) => {
+              const next = findReference(grantOptions, key);
+              if (key && (!next?.grantId || !next.version)) return;
               onChange({
                 ...value,
                 credentialBindingId: undefined,
-                executionGrant: id ? { id, version: executionGrant?.version ?? 1 } : undefined,
-              })
-            }
-            placeholder="Optional approved grant ID"
-            value={executionGrant?.id ?? ""}
+                executionGrant:
+                  next?.grantId && next.version
+                    ? { id: next.grantId, version: next.version }
+                    : undefined,
+                mcpBindings: value.mcpBindings?.map((binding) => ({
+                  ...binding,
+                  secretBindingId: undefined,
+                })),
+              });
+            }}
+            empty="Use session creator"
+            unavailable={`Grant unavailable${executionGrant ? ` · v${executionGrant.version}` : ""}`}
+            value={grantKey}
+            disabled={disabled}
           />
-          {executionGrant ? (
-            <Field label="Grant version">
-              <input
-                className="ui-input"
-                min={1}
-                onChange={(event) =>
-                  onChange({
-                    ...value,
-                    credentialBindingId: undefined,
-                    executionGrant: { ...executionGrant, version: event.target.valueAsNumber },
-                  })
-                }
-                required
-                type="number"
-                value={Number.isFinite(executionGrant.version) ? executionGrant.version : ""}
-              />
-            </Field>
-          ) : null}
         </div>
+        {executionGrant ? (
+          <ReferenceDetails value={`${executionGrant.id} · v${executionGrant.version}`} />
+        ) : null}
         <p className="type-annotation text-muted">
           Save the grant in the draft to attach its service credential. Secret values stay in
           Settings.
+          {governanceHref ? (
+            <>
+              {" "}
+              <Link
+                className="text-accent underline underline-offset-2"
+                href={governanceHref}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Review execution grants (new tab)
+              </Link>
+              .
+            </>
+          ) : null}
         </p>
       </section>
+      <ContextDocumentsEditor
+        catalog={namedReferences}
+        contextHref={contextHref}
+        grant={executionGrant}
+        value={value.contextDocuments}
+        proposal={contextProposal}
+        disabled={disabled}
+        onChange={(next) => update("contextDocuments", next)}
+      />
 
       <section
         aria-labelledby={`${editorId}-runtime`}
@@ -521,6 +652,7 @@ export function StructuredFactoryDefinitionEditor({
         </h3>
         <div className="grid gap-4 sm:grid-cols-2">
           <SelectField
+            id="definition-field-sandboxProvider"
             disabled={disabled}
             label="Sandbox provider"
             onValueChange={(next) => {
@@ -535,6 +667,7 @@ export function StructuredFactoryDefinitionEditor({
             value={value.sandboxProvider}
           />
           <SelectField
+            id="definition-field-agent-provider"
             disabled={disabled}
             label="Agent provider"
             onValueChange={(next) => {
@@ -554,11 +687,13 @@ export function StructuredFactoryDefinitionEditor({
             value={agent.provider}
           />
           <TextField
+            id="definition-field-agent-model"
             label="Model"
             onChange={(model) => updateAgent({ model })}
             value={agent.model}
           />
           <SelectField
+            id="definition-field-agent-effort"
             disabled={
               disabled || (!agentProviderSupportsEffort(agent.provider) && agent.effort === null)
             }
@@ -583,6 +718,7 @@ export function StructuredFactoryDefinitionEditor({
               <Field key={key} label={label}>
                 <input
                   className="ui-input"
+                  id={`definition-field-agent-${key}`}
                   max={max}
                   min={min}
                   onChange={(event) => {
@@ -602,11 +738,15 @@ export function StructuredFactoryDefinitionEditor({
       </section>
 
       <section
-        aria-labelledby={`${editorId}-workflow`}
+        aria-labelledby="definition-field-stages"
         className="min-w-0 space-y-4 border-t border-border pt-6"
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="type-section-title text-foreground" id={`${editorId}-workflow`}>
+          <h3
+            className="type-section-title text-foreground"
+            id="definition-field-stages"
+            tabIndex={-1}
+          >
             Workflow
           </h3>
           <button
@@ -621,6 +761,7 @@ export function StructuredFactoryDefinitionEditor({
         <Field label="Operating rules">
           <textarea
             className="ui-textarea font-mono"
+            id="definition-field-operatingRulesMd"
             maxLength={20_000}
             onChange={(event) => update("operatingRulesMd", event.target.value)}
             rows={4}
@@ -634,6 +775,7 @@ export function StructuredFactoryDefinitionEditor({
           {stages.map((stage, index) => {
             const stageLabel = stage.name.trim() || `Stage ${index + 1}`;
             const stagePrefix = `${editorId}-stage-${index}`;
+            const stageField = `definition-field-stages-${index}`;
             const key = stageKeys.has(stage.id) ? `${stage.id}:${index}` : stage.id;
             stageKeys.add(stage.id);
             return (
@@ -682,13 +824,14 @@ export function StructuredFactoryDefinitionEditor({
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <TextField
-                    id={`${stagePrefix}-name`}
+                    id={`${stageField}-name`}
                     label="Stage name"
                     maxLength={80}
                     onChange={(name) => updateStage(index, { name })}
                     value={stage.name}
                   />
                   <TextField
+                    id={`${stageField}-slug`}
                     label="Stage slug"
                     maxLength={64}
                     onChange={(slug) => updateStage(index, { slug })}
@@ -696,6 +839,7 @@ export function StructuredFactoryDefinitionEditor({
                   />
                 </div>
                 <TextField
+                  id={`${stageField}-description`}
                   label="Description"
                   maxLength={500}
                   onChange={(description) => updateStage(index, { description })}
@@ -704,6 +848,7 @@ export function StructuredFactoryDefinitionEditor({
                 <Field label="Stage prompt">
                   <textarea
                     className="ui-textarea font-mono"
+                    id={`${stageField}-promptTemplateMd`}
                     maxLength={20_000}
                     onChange={(event) =>
                       updateStage(index, { promptTemplateMd: event.target.value })
@@ -712,26 +857,72 @@ export function StructuredFactoryDefinitionEditor({
                     value={stage.promptTemplateMd}
                   />
                 </Field>
-                <label className="flex min-h-11 cursor-pointer items-center gap-3 text-[13px] font-medium text-foreground">
-                  <input
-                    checked={stage.anyoneCanApprove}
-                    className="h-4 w-4 shrink-0 accent-accent"
-                    onChange={(event) =>
-                      updateStage(index, { anyoneCanApprove: event.target.checked })
-                    }
-                    type="checkbox"
-                  />
-                  Anyone in the workspace can approve
-                </label>
-                <ReferenceList
-                  description="One workspace member ID per line."
-                  label="Approvers"
-                  onChange={(approverMemberIds) => updateStage(index, { approverMemberIds })}
-                  values={stage.approverMemberIds}
-                />
-                <p className="type-annotation text-muted">
-                  Stage ID <code className="break-all font-mono">{stage.id}</code>
-                </p>
+                <fieldset className="space-y-2">
+                  <legend className="text-[13px] font-medium">Who can approve?</legend>
+                  {[true, false].map((anyone) => (
+                    <label
+                      key={String(anyone)}
+                      className="flex min-h-9 items-center gap-2 text-[13px]"
+                    >
+                      <input
+                        checked={stage.anyoneCanApprove === anyone}
+                        className="size-4 accent-accent"
+                        id={anyone ? `${stageField}-anyoneCanApprove` : undefined}
+                        name={`${stagePrefix}-approval`}
+                        onChange={() => updateStage(index, { anyoneCanApprove: anyone })}
+                        type="radio"
+                      />
+                      {anyone ? "Anyone in the workspace" : "Specific members"}
+                    </label>
+                  ))}
+                  {!stage.anyoneCanApprove ? (
+                    <>
+                      <MultiSelectField
+                        id={`${stageField}-approverMemberIds`}
+                        label="Approvers"
+                        disabled={disabled}
+                        description="Choose who can approve this stage before the session advances."
+                        emptyMessage="No human members are available."
+                        onValuesChange={(approverMemberIds) =>
+                          updateStage(index, { approverMemberIds })
+                        }
+                        options={[
+                          ...new Set([
+                            ...stage.approverMemberIds,
+                            ...approvers
+                              .filter(({ unavailable }) => !unavailable)
+                              .map(({ id }) => id),
+                          ]),
+                        ].map((id) => ({
+                          value: id,
+                          label: displayedReference(
+                            findReference(approvers, id),
+                            "Workspace member unavailable",
+                          ),
+                        }))}
+                        summary={
+                          stage.approverMemberIds.length
+                            ? `${stage.approverMemberIds.length} selected`
+                            : "Choose members"
+                        }
+                        values={stage.approverMemberIds}
+                      />
+                      {namedReferences?.hasMore("approvers") ? (
+                        <button
+                          className="ui-button"
+                          disabled={disabled || Boolean(namedReferences.pending)}
+                          onClick={() => namedReferences.loadMore("approvers")}
+                          type="button"
+                        >
+                          {namedReferences.pending === "approvers"
+                            ? "Loading members…"
+                            : "Show more members"}
+                        </button>
+                      ) : null}
+                    </>
+                  ) : null}
+                </fieldset>
+                <ReferenceDetails value={stage.id} />
               </li>
             );
           })}
@@ -739,6 +930,9 @@ export function StructuredFactoryDefinitionEditor({
       </section>
       <ModelRoutingEditor
         benchmarksHref={benchmarksHref}
+        catalog={namedReferences}
+        qualification={routingQualification}
+        disabled={disabled}
         onChange={(next) => update("modelRouting", next)}
         value={value.modelRouting}
       />

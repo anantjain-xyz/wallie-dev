@@ -81,7 +81,7 @@ export function FactoryRepositoryBindingsEditor({
 
   function toSelected(reference: string) {
     const repo = repositoryFor(reference);
-    const name = repo?.fullName ?? reference;
+    const name = repo?.fullName ?? "Repository";
     return { value: reference, label: !repo || repo.isArchived ? `${name} (unavailable)` : name };
   }
 

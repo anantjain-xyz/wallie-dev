@@ -6,11 +6,18 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { StructuredFactoryDefinitionEditor } from "./structured-editor";
+import type { ReferencePickerCatalog } from "./named-references";
+import {
+  grantReferenceKey,
+  routingConfigurationKey,
+} from "@/lib/factory-definitions/named-reference-contracts";
+import { mcpOperationScopeId } from "@/lib/factory-mcp/manifest";
 import type { SerialFactoryDefinition } from "@/lib/factory-definitions/schema";
 
 const planId = "00000000-0000-4000-8000-000000000001";
 const buildId = "00000000-0000-4000-8000-000000000002";
 const memberId = "00000000-0000-4000-8000-000000000003";
+const namedId = (suffix: number) => `00000000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 const repositories = [
   { id: "00000000-0000-4000-8000-000000000007", fullName: "wallie/notes", isArchived: false },
   { id: "00000000-0000-4000-8000-000000000008", fullName: "wallie/runtime", isArchived: false },
@@ -60,7 +67,11 @@ const initialDefinition: SerialFactoryDefinition = {
   ],
 };
 
-function renderEditor(initial = initialDefinition, benchmarksHref?: string) {
+function renderEditor(
+  initial = initialDefinition,
+  benchmarksHref?: string,
+  options: ReferencePickerCatalog["options"] = {},
+) {
   const onChange = vi.fn<(definition: SerialFactoryDefinition) => void>();
 
   function Harness() {
@@ -68,6 +79,15 @@ function renderEditor(initial = initialDefinition, benchmarksHref?: string) {
     return (
       <StructuredFactoryDefinitionEditor
         benchmarksHref={benchmarksHref}
+        namedReferences={{
+          options: {
+            approvers: [{ id: memberId, label: "Alex Reviewer · alex@example.test · member" }],
+            ...options,
+          },
+          hasMore: () => false,
+          loadMore: () => undefined,
+          pending: null,
+        }}
         onChange={(next) => {
           onChange(next);
           setDefinition(next);
@@ -82,6 +102,16 @@ function renderEditor(initial = initialDefinition, benchmarksHref?: string) {
   return { current: () => onChange.mock.lastCall?.[0] ?? initial };
 }
 
+function choose(field: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: field, exact: true }));
+  fireEvent.click(
+    within(screen.getByRole("listbox", { name: field, exact: true })).getByRole("option", {
+      name: option,
+      exact: true,
+    }),
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -92,8 +122,8 @@ describe("structured factory definition editor", () => {
     const revisionId = "00000000-0000-4000-8000-000000000005";
     const { current } = renderEditor({ ...initialDefinition, implementationAgent: revisionId });
     expect(
-      screen.getByRole("textbox", { name: "Implementation agent prompt revision" }),
-    ).toHaveValue(revisionId);
+      screen.getByRole("combobox", { name: "Implementation agent prompt revision" }),
+    ).toHaveTextContent("Agent prompt revision unavailable");
     fireEvent.change(screen.getByRole("textbox", { name: "Operating rules" }), {
       target: { value: "Keep the agent identity." },
     });
@@ -117,17 +147,65 @@ describe("structured factory definition editor", () => {
   it("edits and removes exact tool revision bindings", () => {
     const toolRevisionId = "00000000-0000-4000-8000-000000000005";
     const secretBindingId = "00000000-0000-4000-8000-000000000006";
-    const { current } = renderEditor();
+    const grantId = namedId(11);
+    const principalId = namedId(12);
+    const agentId = namedId(13);
+    const implementationAgent = namedId(14);
+    const { current } = renderEditor(
+      { ...initialDefinition, implementationAgent, executionGrant: { id: grantId, version: 3 } },
+      undefined,
+      {
+        implementationAgent: [
+          { id: implementationAgent, agentId, label: "Operator agent · Revision 6" },
+        ],
+        tools: [
+          {
+            id: toolRevisionId,
+            label: "Issue reader · Revision 2",
+            authKind: "bearer",
+            operations: ["read_item", "list_items"],
+          },
+        ],
+        grants: [
+          {
+            id: grantReferenceKey(grantId, 3),
+            grantId,
+            version: 3,
+            principalId,
+            toolIds: ["read_item", "list_items"].map((name) =>
+              mcpOperationScopeId(toolRevisionId, name),
+            ),
+            label: "Release bot · Grant v3",
+          },
+        ],
+        bindings: [
+          {
+            id: secretBindingId,
+            label: "Release bot · Saved bearer binding",
+            grantId,
+            toolId: toolRevisionId,
+            principalId,
+            agentId,
+          },
+          {
+            id: namedId(16),
+            label: "Other agent binding",
+            grantId,
+            toolId: toolRevisionId,
+            principalId,
+            agentId: namedId(17),
+          },
+        ],
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "Add tool binding" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Tool revision 1" }), {
-      target: { value: toolRevisionId },
-    });
-    fireEvent.change(screen.getByRole("textbox", { name: "Allowed operations" }), {
-      target: { value: "read_item\nlist_items" },
-    });
-    fireEvent.change(screen.getByRole("textbox", { name: "MCP secret binding" }), {
-      target: { value: secretBindingId },
-    });
+    choose("Tool revision 1", "Issue reader · Revision 2");
+    fireEvent.click(screen.getByRole("button", { name: /Allowed operations/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "read_item" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "list_items" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "MCP secret binding" }));
+    expect(screen.queryByRole("option", { name: "Other agent binding" })).toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: "Release bot · Saved bearer binding" }));
     expect(current().mcpBindings).toEqual([
       { toolRevisionId, operations: ["read_item", "list_items"], secretBindingId },
     ]);
@@ -136,12 +214,17 @@ describe("structured factory definition editor", () => {
   });
 
   it("emits editable compiler input for references, runtime, and operating rules", () => {
-    const { current } = renderEditor();
-    const skills = screen.getByRole("textbox", { name: "Skills" });
-
-    fireEvent.change(skills, { target: { value: "issue-planning\n" } });
-    expect(skills).toHaveValue("issue-planning\n");
-    fireEvent.change(skills, { target: { value: "issue-planning\ncode-review" } });
+    const { current } = renderEditor(initialDefinition, undefined, {
+      skills: [
+        { id: namedId(21), label: "Issue planning · Revision 4" },
+        { id: namedId(22), label: "Code review · Revision 2" },
+      ],
+    });
+    choose("Add a skill revision", "Issue planning · Revision 4");
+    choose("Add a skill revision", "Code review · Revision 2");
+    expect(
+      within(screen.getByRole("list", { name: "Skills" })).getByText("Issue planning · Revision 4"),
+    ).toBeVisible();
     fireEvent.click(screen.getByRole("combobox", { name: "Default writable repository" }));
     fireEvent.click(
       within(screen.getByRole("listbox", { name: "Default writable repository" })).getByRole(
@@ -149,9 +232,7 @@ describe("structured factory definition editor", () => {
         { name: repositories[1].fullName },
       ),
     );
-    fireEvent.change(screen.getByRole("textbox", { name: "Delivery policy revision" }), {
-      target: { value: "" },
-    });
+    choose("Delivery policy revision", "No policy pinned");
     fireEvent.click(screen.getByRole("combobox", { name: "Sandbox provider" }));
     fireEvent.click(
       within(screen.getByRole("listbox", { name: "Sandbox provider" })).getByRole("option", {
@@ -175,7 +256,7 @@ describe("structured factory definition editor", () => {
       ...initialDefinition,
       repository: repositories[1].id,
       deliveryPolicy: null,
-      skills: ["issue-planning", "code-review"],
+      skills: [namedId(21), namedId(22)],
       sandboxProvider: "e2b",
       operatingRulesMd: "Validate each change.",
       agent: {
@@ -187,6 +268,37 @@ describe("structured factory definition editor", () => {
       },
     });
     expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeDisabled();
+  });
+
+  it("picks an exact routing tuple without transcribing components", () => {
+    const configuration = {
+      agentId: namedId(24),
+      definitionRevisionId: namedId(25),
+      experimentId: namedId(26),
+      qualificationId: namedId(27),
+      scorerRevisionId: namedId(28),
+      modelKey: "openai/gpt-5.6",
+      harness: "codex",
+      workerRuntime: "node",
+    } as const;
+    const label = "Planner · openai/gpt-5.6 · Readiness v2";
+    const { current } = renderEditor(initialDefinition, undefined, {
+      routing: [{ id: routingConfigurationKey(configuration), configuration, label }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add routing policy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add task class" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Task class name" }), {
+      target: { value: "Plan" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add routing rule" }));
+    choose("Primary configuration", label);
+    expect(current().modelRouting?.rules[0]).toMatchObject({
+      configuration,
+      onUnavailable: { kind: "escalate" },
+    });
+    expect(
+      screen.queryByRole("textbox", { name: "Capability qualification ID" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps writable and read-context assignments distinct while editing", () => {
@@ -265,9 +377,8 @@ describe("structured factory definition editor", () => {
     fireEvent.change(within(stage).getByRole("textbox", { name: "Stage prompt" }), {
       target: { value: "Review the changes." },
     });
-    fireEvent.change(within(stage).getByRole("textbox", { name: "Approvers" }), {
-      target: { value: memberId },
-    });
+    fireEvent.click(within(stage).getByRole("button", { name: /Approvers/ }));
+    fireEvent.click(within(stage).getByRole("checkbox", { name: /Alex Reviewer/ }));
     expect(current().stages[2]).toMatchObject({
       id: newId,
       name: "Review",
