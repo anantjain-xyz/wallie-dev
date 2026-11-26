@@ -114,7 +114,7 @@ it("saves a holdout suite by normalized tags with a separately described input",
   fireEvent.click(screen.getByRole("radio", { name: "Choose tasks" }));
   fireEvent.click(screen.getByRole("radio", { name: "Match tags" }));
   expect(screen.getByRole("textbox", { name: /^Selection tags$/ })).toHaveValue(" UI, invoice ");
-  expect(screen.getByRole("button", { name: "invoice", exact: true })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^invoice$/ })).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent("1 matching task");
   expect(screen.getByText(/Revision 2 · Eligible/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Save suite" }));
