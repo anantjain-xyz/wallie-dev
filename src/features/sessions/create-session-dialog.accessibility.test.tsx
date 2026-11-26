@@ -1024,6 +1024,79 @@ describe("CreateSessionDialog accessibility", () => {
     }
   });
 
+  it.each(["current", "superseded", "invalid"] as const)(
+    "confirms only the requested activation when the launch link is %s",
+    async (state) => {
+      const user = userEvent.setup();
+      const digest = "d".repeat(64);
+      const published = {
+        workflowId: "00000000-0000-4000-8000-000000000011",
+        activationId: "00000000-0000-4000-8000-000000000012",
+        label: "Release workflow",
+      };
+      const requested =
+        state === "invalid"
+          ? null
+          : state === "superseded"
+            ? "00000000-0000-4000-8000-000000000013"
+            : published.activationId;
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+        ...draftOptions(),
+        factoryDefinitionDigest: digest,
+      });
+      clientMocks.createSessionFromClient.mockResolvedValue({
+        canonicalUrl: "/w/acme/sessions/42",
+        number: 42,
+      });
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockImplementation(async () =>
+          Response.json({ definitionDigest: digest, options: [published] }),
+        );
+      try {
+        render(
+          <OverlayProvider>
+            <CreateSessionDialog
+              creationFactoryId="factory-1"
+              creationFactoryName="Central"
+              onClose={vi.fn()}
+              open
+              userId="user-1"
+              workspaceId="workspace-1"
+              workspaceSlug="acme"
+              workflowLaunchActivationId={requested}
+            />
+          </OverlayProvider>,
+        );
+        await user.type(screen.getByLabelText("Prompt"), "Use the named publication");
+        expect(screen.getByText(/will run in Central/)).toBeVisible();
+        expect(screen.queryByRole("combobox", { name: "Workflow" })).not.toBeInTheDocument();
+        const start = screen.getByRole("button", { name: "Start session" });
+        if (state === "current") {
+          expect(await screen.findByText(published.label)).toBeVisible();
+          expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+          await user.click(start);
+          expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+            expect.objectContaining({
+              workflowSelection: { workflowId: published.workflowId, activationId: requested },
+            }),
+          );
+        } else {
+          const reason =
+            state === "invalid" ? /workflow link is invalid/ : /publication is no longer available/;
+          expect(await screen.findByText(reason)).toBeVisible();
+          expect(start).toBeDisabled();
+          const form = start.closest("form");
+          expect(form).not.toBeNull();
+          fireEvent.submit(form!);
+          expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+        }
+      } finally {
+        fetch.mockRestore();
+      }
+    },
+  );
+
   it("offers a published workflow only on its factory’s default repository", async () => {
     const user = userEvent.setup();
     const definitionDigest = "d".repeat(64);

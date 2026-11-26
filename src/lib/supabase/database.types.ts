@@ -14771,6 +14771,15 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      list_factory_workflow_directory: {
+        Args: {
+          p_after_id?: string
+          p_factory_id: string
+          p_search?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       list_factory_workflow_intake_options: {
         Args: { p_factory_id: string; p_workspace_id: string }
         Returns: {

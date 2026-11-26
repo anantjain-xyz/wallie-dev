@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
 import { z } from "zod";
@@ -13,16 +14,30 @@ import { createWorkflowAuthoringSchema } from "@/lib/factory-workflows/authoring
 import { workflowTemplates } from "@/lib/factory-workflows/workflow-templates";
 import { workspaceWorkflowDetailPath } from "@/lib/routes";
 
+import {
+  workflowTemplateBlocker,
+  type WorkflowTemplatePrerequisites,
+} from "./workflow-directory-state";
+
 const receipt = z.object({ workflow: createWorkflowAuthoringSchema });
+const templateDescriptions = {
+  "product-delivery": "Approve a specification, route the work, then deliver and review it.",
+  "scoped-fix": "Start with an agreed scope and run implementation, support, and review.",
+  "incident-analysis": "Route an existing analysis for human review.",
+};
 
 export function CreateWorkflowForm({
   endpoint,
   factoryId,
   workspaceSlug,
+  prerequisites,
+  setupHref,
 }: {
   endpoint: string;
   factoryId: string;
   workspaceSlug: string;
+  prerequisites: WorkflowTemplatePrerequisites;
+  setupHref?: string;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -30,12 +45,13 @@ export function CreateWorkflowForm({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const attempt = useRef<z.input<typeof createWorkflowAuthoringSchema> | null>(null);
+  const template = workflowTemplates.find(({ id }) => id === templateId);
+  const prerequisite = workflowTemplateBlocker(prerequisites, template?.id);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending || !name.trim()) return;
     const displayName = name.trim();
-    const template = workflowTemplates.find(({ id }) => id === templateId);
     const command =
       attempt.current?.displayName === displayName && attempt.current.template?.id === template?.id
         ? attempt.current
@@ -59,8 +75,9 @@ export function CreateWorkflowForm({
   }
 
   return (
-    <form onSubmit={create} className="grid max-w-lg gap-2">
+    <form onSubmit={create} className="grid max-w-xl gap-3">
       <SelectField
+        aria-describedby="workflow-template-help"
         label="Start from"
         options={workflowTemplates.map(({ id, label, version }) => ({
           label: `${label} · v${version}`,
@@ -70,7 +87,32 @@ export function CreateWorkflowForm({
         value={templateId}
         onValueChange={setTemplateId}
         disabled={pending}
+        wrap
       />
+      <div
+        id="workflow-template-help"
+        className="type-secondary space-y-1 text-muted"
+        aria-live="polite"
+      >
+        <p>{template ? templateDescriptions[template.id] : "Build the workflow from scratch."}</p>
+        {prerequisite ? (
+          <>
+            <p className="text-warning">{prerequisite}</p>
+            <p>
+              Creating now saves a placeholder.{" "}
+              {setupHref ? (
+                <Link className="underline underline-offset-4" href={setupHref}>
+                  Open Factory Definition
+                </Link>
+              ) : (
+                "Ask a workspace owner or admin to update this factory’s definition."
+              )}
+            </p>
+          </>
+        ) : template ? (
+          <p>Choose compatible roles and save a draft in the editor before publishing.</p>
+        ) : null}
+      </div>
       <label htmlFor="workflow-name" className="type-label">
         Workflow name
       </label>
@@ -88,6 +130,9 @@ export function CreateWorkflowForm({
           {pending ? "Creating…" : "Create workflow"}
         </button>
       </div>
+      <p className="sr-only" role="status">
+        {pending ? "Creating workflow…" : ""}
+      </p>
       {error ? (
         <p role="alert" className="text-sm text-danger">
           {error}

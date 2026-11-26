@@ -18,6 +18,7 @@ import {
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { RouteEntrance } from "@/components/app-shell/navigation-motion";
 import {
+  readSessionLaunchActivation,
   resolveSessionReturnTo,
   sessionLaunchHref,
   shellFactoryScope,
@@ -358,12 +359,26 @@ export function ShellHeader({
     (scope.kind === "none" ||
       (scope.kind === "factory" && scope.factory.id === creationFactory.id));
   const createFromUrl = searchParams?.get("create") === "1";
+  const urlWorkflowActivation = createFromUrl
+    ? readSessionLaunchActivation(searchParams)
+    : undefined;
   const returnValues = searchParams?.getAll("returnTo");
   const returnTo =
     returnValues?.length === 1 ? resolveSessionReturnTo(returnValues[0], workspace.slug) : null;
   const [userCreateOpen, setUserCreateOpen] = useState(false);
+  const [recoverableWorkflowLaunch, setRecoverableWorkflowLaunch] = useState<{
+    location: string;
+    activationId: string | null;
+  } | null>(null);
+  if (
+    recoverableWorkflowLaunch &&
+    !createFromUrl &&
+    recoverableWorkflowLaunch.location !== locationKey
+  ) {
+    setRecoverableWorkflowLaunch(null);
+  }
   const createScope = `${viewerId}:${workspace.id}`;
-  const createUrlKey = `${createScope}:${pathname}`;
+  const createUrlKey = JSON.stringify([createScope, pathname, urlWorkflowActivation]);
   const [dismissedCreateUrlKey, setDismissedCreateUrlKey] = useState<string | null>(null);
   if (!createFromUrl && dismissedCreateUrlKey) setDismissedCreateUrlKey(null);
   // Leaving the direct scope closes the dialog but keeps it mounted: drafts and
@@ -469,6 +484,11 @@ export function ShellHeader({
     }
     if (previewActive) {
       if (createFromUrl) {
+        setRecoverableWorkflowLaunch(
+          urlWorkflowActivation === undefined
+            ? null
+            : { location: cleanHref, activationId: urlWorkflowActivation },
+        );
         previewReturn.current = returnTo ? { location: cleanHref, href: returnTo } : null;
         router.replace(cleanHref, { scroll: false });
       }
@@ -484,6 +504,7 @@ export function ShellHeader({
         ? workspaceSessionsPath(workspace.slug, { factory: creationFactory?.id })
         : cleanHref + window.location.hash);
     const launch = launchHistory.current;
+    setRecoverableWorkflowLaunch(null);
     previewReturn.current = null;
     launchHistory.current = null;
     pendingFocusHref.current = destination.split("#", 1)[0];
@@ -501,6 +522,7 @@ export function ShellHeader({
     router,
     search,
     sessionsHref,
+    urlWorkflowActivation,
     workspace.slug,
   ]);
 
@@ -620,6 +642,7 @@ export function ShellHeader({
         aria-label="New session"
         onClick={() => {
           startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
+          setRecoverableWorkflowLaunch(null);
           setUserCreateOpen(true);
         }}
         onFocus={preloadCreateDialog}
@@ -753,6 +776,13 @@ export function ShellHeader({
           userId={viewerId}
           workspaceId={workspace.id}
           workspaceSlug={workspace.slug}
+          workflowLaunchActivationId={
+            createFromUrl
+              ? urlWorkflowActivation
+              : recoverableWorkflowLaunch?.location === locationKey
+                ? recoverableWorkflowLaunch.activationId
+                : undefined
+          }
         />
       ) : null}
     </>
