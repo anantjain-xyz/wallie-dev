@@ -1,10 +1,11 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { EditableCombobox } from "@/components/ui/editable-combobox";
 import { Status } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
@@ -16,6 +17,11 @@ const namedProviders: Record<string, string> = {
   "opencode-go": "OpenCode Go",
   openrouter: "OpenRouter",
 };
+
+const providerOptions = Object.entries(namedProviders).map(([value, label]) => ({
+  label: `${label} · ${value}`,
+  value,
+}));
 
 export interface OpenCodeProviderCredentialStatus {
   providerId: string;
@@ -43,7 +49,6 @@ export function OpenCodeConnectionPanel({
   onStatusChange,
   selectedModel,
 }: OpenCodeConnectionPanelProps = {}) {
-  const providerListId = useId();
   const initialStatusRef = useRef(initialStatus);
   const [status, setStatus] = useState<OpenCodeConnectionStatus | null>(
     initialStatus ? { ...initialStatus, providers: initialStatus.providers ?? [] } : null,
@@ -214,6 +219,11 @@ export function OpenCodeConnectionPanel({
 
   const saveDisabled = isBusy || credential.trim().length === 0;
   const providers = status?.providers ?? [];
+  const providerQuery = trimmedProviderId.toLowerCase();
+  const providerSuggestions =
+    providerOverride === null || Object.hasOwn(namedProviders, trimmedProviderId)
+      ? providerOptions
+      : providerOptions.filter(({ label }) => label.toLowerCase().includes(providerQuery));
 
   return (
     <div className="space-y-6">
@@ -327,22 +337,20 @@ export function OpenCodeConnectionPanel({
         <form className="space-y-3" onSubmit={handleSaveProvider}>
           <label className="block space-y-1.5">
             <span className="text-xs font-medium text-foreground">Provider id</span>
-            <input
-              autoComplete="off"
-              className="ui-input font-mono text-[13px]"
+            <EditableCombobox
+              className="font-mono text-[13px]"
               disabled={isBusy}
-              list={providerListId}
-              onChange={(event) => setProviderOverride(event.target.value)}
+              listboxLabel="Provider suggestions"
+              onValueChange={(value) => {
+                if (value !== providerId) setProviderOverride(value);
+              }}
+              options={providerSuggestions}
               placeholder="opencode-go"
+              selectedValue={trimmedProviderId}
               spellCheck={false}
               value={providerId}
             />
           </label>
-          <datalist id={providerListId}>
-            {Object.entries(namedProviders).map(([id, name]) => (
-              <option key={id} label={name} value={id} />
-            ))}
-          </datalist>
           <label className="block space-y-1.5">
             <span className="text-xs font-medium text-foreground">Provider API key</span>
             <input
