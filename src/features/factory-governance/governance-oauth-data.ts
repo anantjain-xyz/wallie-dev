@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { GovernanceScope } from "@/features/factory-governance/governance-data";
+import { readGovernanceIds } from "./governance-evidence-data";
+import { factoryCommandLabels } from "@/lib/factory-machine-tokens/contracts";
 
 const pageSize = 20;
 
@@ -41,7 +43,9 @@ export async function loadOAuthClientData(
     isOperator
       ? supabase
           .from("factory_execution_grants")
-          .select("id, factory_id, version, command_scopes, service_principals(name)")
+          .select(
+            "id, factory_id, github_repository_id, version, command_scopes, expires_at, service_principals(name, slug)",
+          )
           .eq("workspace_id", workspaceId)
           .is("revoked_at", null)
           .gt("expires_at", asOf)
@@ -92,6 +96,16 @@ export async function loadOAuthClientData(
   }
 
   const factoryRows = factories.data ?? [];
+  const eligibleGrants = executionGrants?.data ?? [];
+  const repositories = await readGovernanceIds(
+    eligibleGrants.map(({ github_repository_id }) => github_repository_id),
+    (ids) =>
+      supabase
+        .from("github_repositories")
+        .select("id, factory_id, full_name")
+        .eq("workspace_id", workspaceId)
+        .in("id", ids),
+  );
   const factoryName = (id: string) =>
     factoryRows.find((factory) => factory.id === id)?.name ?? "Unavailable factory";
   return {
@@ -117,14 +131,23 @@ export async function loadOAuthClientData(
     nextGrant: (grants.data?.length ?? 0) > pageSize ? grantRows.at(-1)?.id : undefined,
     grantOptions: factoryRows.flatMap((factory) => {
       if (factory.status !== "active") return [];
-      const choices = (executionGrants?.data ?? [])
+      const choices = eligibleGrants
         .filter((grant) => grant.factory_id === factory.id)
-        .map((grant) => ({
-          id: grant.id,
-          version: grant.version,
-          scopes: grant.command_scopes,
-          label: `${grant.service_principals?.name ?? "Service principal"} · ${grant.id.slice(0, 8)} · v${grant.version}`,
-        }));
+        .map((grant) => {
+          const principal = grant.service_principals;
+          const repository = repositories.find(
+            ({ id, factory_id }) => id === grant.github_repository_id && factory_id === factory.id,
+          );
+          const scopeLabels = grant.command_scopes
+            .map((scope) => factoryCommandLabels[scope])
+            .join(", ");
+          return {
+            id: grant.id,
+            version: grant.version,
+            scopes: grant.command_scopes,
+            label: `${principal ? `${principal.name} (${principal.slug})` : "Service principal unavailable"} · ${repository?.full_name ?? "Repository unavailable"} · v${grant.version} · ${scopeLabels} · Expires ${grant.expires_at.slice(0, 16).replace("T", " ")} UTC`,
+          };
+        });
       return choices.length ? [{ id: factory.id, name: factory.name, choices }] : [];
     }),
   };
