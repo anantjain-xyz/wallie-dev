@@ -10,7 +10,10 @@ import type {
 import { readVerifiedFactoryDefinition } from "@/lib/factory-definitions/stored-definition";
 import { factoryProposalUuidSchema } from "@/lib/factory-proposals/contracts";
 import type { ImprovementWorkbench } from "@/lib/factory-proposals/workbench";
-import { modelRoutingPolicySchema } from "@/lib/model-routing/contracts";
+import {
+  modelRoutingPolicySchema,
+  type ModelRoutingConfiguration,
+} from "@/lib/model-routing/contracts";
 
 import type { loadImprovementScope } from "./improvement-scope";
 
@@ -83,7 +86,11 @@ export async function ImprovementDiff({
   );
   const targets = [...priorRules.values(), ...nextRules.values()]
     .filter(({ id }) => changedRules.has(id))
-    .map(({ configuration }) => configuration);
+    .flatMap(({ configuration, onUnavailable }) =>
+      onUnavailable.kind === "fallback"
+        ? [configuration, onUnavailable.configuration]
+        : [configuration],
+    );
   const routingAgentIds = [...new Set(targets.map(({ agentId }) => agentId))];
   const definitionIds = [
     ...new Set([
@@ -163,22 +170,31 @@ export async function ImprovementDiff({
     return Array.isArray(value) ? [...new Set(value.map(label))] : value;
   }
 
+  function routingTargetLabel(configuration: ModelRoutingConfiguration) {
+    const target = definitionsById.get(configuration.definitionRevisionId);
+    return [
+      configuration.modelKey,
+      configuration.harness,
+      agentNames.get(configuration.agentId) ?? "Agent name unavailable",
+      target
+        ? `Definition revision saved ${savedDate.format(new Date(target.created_at))} UTC`
+        : "Definition revision unavailable",
+    ].join(" · ");
+  }
+
   function routingLabels(policy: ReturnType<typeof routingPolicy>, value: FactoryDiffValue) {
     if (value === null) return null;
     if (!policy || !changedRules.size) return "See exact routing policy in technical details.";
     return policy.rules
       .filter(({ id }) => changedRules.has(id))
-      .map(({ taskClassId, configuration }) => {
+      .map(({ taskClassId, configuration, onUnavailable }) => {
         const taskClass = policy.taskClasses.find(({ id }) => id === taskClassId);
-        const target = definitionsById.get(configuration.definitionRevisionId);
         return [
           taskClass?.name ?? "Task class unavailable",
-          configuration.modelKey,
-          configuration.harness,
-          agentNames.get(configuration.agentId) ?? "Agent name unavailable",
-          target
-            ? `Definition revision saved ${savedDate.format(new Date(target.created_at))} UTC`
-            : "Definition revision unavailable",
+          routingTargetLabel(configuration),
+          onUnavailable.kind === "fallback"
+            ? `Fallback: ${routingTargetLabel(onUnavailable.configuration)}`
+            : "Escalate if unavailable",
         ].join(" · ");
       });
   }

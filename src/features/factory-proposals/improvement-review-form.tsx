@@ -31,6 +31,7 @@ const draftSchema = z.array(
   }),
 );
 type Draft = z.infer<typeof draftSchema>[number];
+type DraftFallback = { key: string; drafts: Draft[] };
 type ReviewTarget = { revisionId: string; version: number };
 const actionLabels: Record<ProposalReviewAction, string> = {
   comment: "Add comment",
@@ -94,7 +95,8 @@ export function ImprovementReviewForm({
   const [copyMessage, setCopyMessage] = useState("");
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
   const [pendingInMemory, setPendingInMemory] = useState<ProposalReviewCommand | null>(null);
-  const [draftsInMemory, setDraftsInMemory] = useState<Draft[] | null>(null);
+  const [draftsInMemory, setDraftsInMemory] = useState<DraftFallback | null>(null);
+  const draftFallback = useRef<DraftFallback | null>(null);
   const feedback = useRef<HTMLParagraphElement>(null);
   const recovery = useRef<HTMLDivElement>(null);
   const draftFieldId = useId();
@@ -115,7 +117,8 @@ export function ImprovementReviewForm({
     () => readStoredReview(draftKey),
     () => null,
   );
-  const drafts = draftsInMemory ?? parseDrafts(storedDrafts);
+  const drafts =
+    draftsInMemory?.key === draftKey ? draftsInMemory.drafts : parseDrafts(storedDrafts);
   const note = editing.revisionId === proposalRevisionId ? editing.note : "";
   const needsReload =
     conflict?.revisionId === proposalRevisionId && conflict.version === reviewVersion;
@@ -131,14 +134,21 @@ export function ImprovementReviewForm({
     setEditing({ revisionId: proposalRevisionId, note });
   }
 
-  function saveDrafts(value: Draft[]) {
+  function updateDrafts(update: (drafts: Draft[]) => Draft[]) {
+    const current = draftFallback.current;
+    const value = update(
+      current?.key === draftKey ? current.drafts : parseDrafts(readStoredReview(draftKey)),
+    );
     try {
       if (value.length) window.sessionStorage.setItem(draftKey, JSON.stringify(value));
       else window.sessionStorage.removeItem(draftKey);
+      draftFallback.current = null;
       setDraftsInMemory(null);
       window.dispatchEvent(new Event(storedReviewChanged));
     } catch {
-      setDraftsInMemory(value);
+      const fallback = { key: draftKey, drafts: value };
+      draftFallback.current = fallback;
+      setDraftsInMemory(fallback);
     }
   }
 
@@ -193,13 +203,16 @@ export function ImprovementReviewForm({
         if (response.status === 409) {
           remember(null);
           if (command.note) {
-            saveDrafts([
-              { revisionId: proposalRevisionId, revisionNumber, note: command.note },
-              ...drafts.filter(({ revisionId }) => revisionId !== proposalRevisionId),
+            updateDrafts((current) => [
+              { revisionId: command.proposalRevisionId, revisionNumber, note: command.note },
+              ...current.filter(({ revisionId }) => revisionId !== command.proposalRevisionId),
             ]);
           }
           setNote("");
-          setConflict({ revisionId: proposalRevisionId, version: reviewVersion });
+          setConflict({
+            revisionId: command.proposalRevisionId,
+            version: command.expectedReviewVersion,
+          });
         } else if (
           !retrying &&
           response.status >= 400 &&
@@ -416,7 +429,9 @@ export function ImprovementReviewForm({
                   className="ui-button"
                   type="button"
                   onClick={() => {
-                    saveDrafts(drafts.filter(({ revisionId }) => revisionId !== draft.revisionId));
+                    updateDrafts((current) =>
+                      current.filter(({ revisionId }) => revisionId !== draft.revisionId),
+                    );
                     setCopyMessage("");
                   }}
                 >

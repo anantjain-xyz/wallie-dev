@@ -88,6 +88,7 @@ export default async function ImprovementsPage({
   ]);
   const groupHref =
     cohort.data && workspaceFailureGroupPath(workspaceSlug, cohort.data, factoryQuery);
+  const nextCursor = page.nextRevisionId ?? page.nextProposalId;
 
   return (
     <PageContainer>
@@ -211,7 +212,7 @@ export default async function ImprovementsPage({
               ) : null}
             </div>
           )}
-          {after.data || page.nextProposalId ? (
+          {after.data || nextCursor ? (
             <nav
               aria-label="Proposal pages"
               className="flex flex-wrap gap-2 border-t border-border p-4"
@@ -221,12 +222,12 @@ export default async function ImprovementsPage({
                   First page
                 </Link>
               ) : null}
-              {page.nextProposalId ? (
+              {nextCursor ? (
                 <Link
                   className="ui-button"
                   href={workspaceImprovementsPath(workspaceSlug, {
                     ...query,
-                    after: page.nextProposalId,
+                    after: nextCursor,
                   })}
                 >
                   More proposals

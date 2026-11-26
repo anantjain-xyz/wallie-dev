@@ -38,6 +38,7 @@ const listSchema = z.object({
     }),
   ),
   nextProposalId: id.nullable(),
+  nextRevisionId: id.nullable().optional(),
 });
 
 const workbenchSchema = z.object({
