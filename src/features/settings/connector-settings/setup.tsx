@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { SelectField } from "@/components/ui/select";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -213,15 +214,17 @@ export function ConnectorSetup({
         )}
       </p>
       {provider === "linear" ? (
-        <ConnectorSelect
-          label="Resource type"
+        <SelectField
+          className="max-w-xs"
           disabled={inactive}
-          onChange={(event) => setLinearKind(event.target.value === "project" ? "project" : "team")}
+          label="Resource type"
+          onValueChange={(value) => setLinearKind(value === "project" ? "project" : "team")}
+          options={[
+            { label: "Team", value: "team" },
+            { label: "Project", value: "project" },
+          ]}
           value={linearKind}
-        >
-          <option value="team">Team</option>
-          <option value="project">Project</option>
-        </ConnectorSelect>
+        />
       ) : null}
       {provider !== "slack" || installation?.status === "connected" ? (
         <MapResource
