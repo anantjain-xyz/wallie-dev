@@ -129,7 +129,10 @@ describe("SessionReviewBar", () => {
     );
     const dialog = await screen.findByRole("dialog", { name: "Blocking request" });
     expect(dialog).toHaveAccessibleDescription("Planning · Version 1");
-    expect(await within(dialog).findByText("Exact earlier passage")).toBeVisible();
+    const selectedThread = await within(dialog).findByRole("region", {
+      name: "Selected review thread",
+    });
+    expect(within(selectedThread).getByText("Exact earlier passage")).toBeVisible();
     expect(fetcher).toHaveBeenCalledWith(
       "/api/sessions/session-1/reviews?artifactId=artifact-previous",
       expect.anything(),

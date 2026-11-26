@@ -950,6 +950,12 @@ describe("SessionDetailPageClient", () => {
   });
 
   it("asks before stopping a queued rerun and Undo only unarchives", async () => {
+    class ResizeObserverStub {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
     const data = makeSessionDetailData();
     data.session.phaseStatus = "rejected";
     const archivedAt = "2026-06-07T12:00:00.000Z";
@@ -991,8 +997,11 @@ describe("SessionDetailPageClient", () => {
     const confirmation = await screen.findByRole("alertdialog");
     expect(confirmation).toHaveAccessibleDescription(/Unarchiving won’t restart this run/);
     expect(requests).toEqual([]);
-    fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    const cancel = within(confirmation).getByRole("button", { name: "Cancel" });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    fireEvent.click(cancel);
     await waitFor(() => expect(archive).toHaveFocus());
+    expect(requests).toEqual([]);
     fireEvent.click(archive);
     await act(async () =>
       fireEvent.click(screen.getByRole("button", { name: "Stop run and archive" })),
@@ -1211,10 +1220,12 @@ describe("SessionDetailPageClient", () => {
   });
 
   it("folds the session number into the breadcrumb instead of an orphaned row", () => {
-    const html = renderDetail();
-    const breadcrumbMatch = html.match(/← Sessions[\s\S]*?#7/);
-    expect(breadcrumbMatch).not.toBeNull();
-    expect(html).toMatch(/aria-label="Breadcrumb"[\s\S]*?#7[\s\S]*?<\/nav>/);
+    const document = new DOMParser().parseFromString(renderDetail(), "text/html");
+    const breadcrumb = document.querySelector('nav[aria-label="Breadcrumb"]');
+    const backLink = breadcrumb?.querySelector("a");
+    expect(backLink?.getAttribute("href")).toBe("/w/acme/sessions");
+    expect(backLink?.querySelector('[aria-hidden="true"]')?.textContent?.trim()).toBe("←");
+    expect(breadcrumb?.textContent?.trim()).toMatch(/Sessions\s*\/\s*#7$/);
   });
 
   it("keeps creator and creation time in the compact session header", () => {
