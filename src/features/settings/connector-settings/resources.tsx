@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { SelectField } from "@/components/ui/select";
 import {
   connectorInventorySchema,
   type ConnectorInventory,
@@ -21,6 +22,7 @@ export type ConnectorResource = ConnectorInventory["resources"][number];
 export type ConnectorProvider = ConnectorResource["provider"];
 
 const providerLabel = { github: "GitHub", linear: "Linear", slack: "Slack" };
+const providerOptions = Object.entries(providerLabel).map(([value, label]) => ({ label, value }));
 const kindLabel = {
   repository: "Repository",
   team: "Team",
@@ -101,19 +103,17 @@ export function ConnectorResources({
 
   return (
     <div className="space-y-5 rounded-md border border-border bg-sheet p-4 sm:p-5">
-      <ConnectorSelect
-        label="Provider"
+      <SelectField
+        className="max-w-xs"
         disabled={!inventory}
-        onChange={(event) => {
-          const next = event.target.value;
+        label="Provider"
+        onValueChange={(next) => {
+          if (next === provider) return;
           if (next === "github" || next === "linear" || next === "slack") setProvider(next);
         }}
+        options={providerOptions}
         value={provider}
-      >
-        <option value="github">GitHub</option>
-        <option value="linear">Linear</option>
-        <option value="slack">Slack</option>
-      </ConnectorSelect>
+      />
       {error ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-danger" role="alert">

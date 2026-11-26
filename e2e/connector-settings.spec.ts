@@ -109,8 +109,12 @@ async function openSettings(
 
 async function selectProviderResource(panel: Locator, provider: Provider, resourceId: string) {
   const providerPicker = panel.getByRole("combobox", { name: "Provider", exact: true });
-  await expect(providerPicker).toBeVisible();
-  await providerPicker.selectOption({ label: provider });
+  await providerPicker.click();
+  await panel
+    .page()
+    .getByRole("listbox")
+    .getByRole("option", { name: provider, exact: true })
+    .click();
   const resourcePicker = panel.getByRole("combobox", { name: "Provider resource", exact: true });
   await expect(resourcePicker).toBeVisible();
   await resourcePicker.selectOption(resourceId);
