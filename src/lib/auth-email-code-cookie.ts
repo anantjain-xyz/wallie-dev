@@ -1,4 +1,5 @@
 export const emailCodeAuthCookieName = "wallie_email_code_address";
+export const emailSignInRetryCookieName = "wallie_email_retry_address";
 
 export const emailCodeAuthCookieOptions = {
   httpOnly: true,

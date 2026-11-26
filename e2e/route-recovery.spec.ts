@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { signIn } from "./helpers/auth";
+import { signIn, signInViaMagicLink } from "./helpers/auth";
 
 test("unavailable pages give a useful return destination", async ({ page }) => {
   await page.goto("/this-page-does-not-exist");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("This page isn’t available");
+  await expect(page).toHaveTitle("Page unavailable | Wallie");
   await expect(page.getByRole("link", { name: "Back to Wallie" })).toHaveAttribute("href", "/");
   await signIn(page);
   await page.goto("/w/acme-corp/sessions/999999");
@@ -12,6 +13,21 @@ test("unavailable pages give a useful return destination", async ({ page }) => {
     "href",
     "/w/acme-corp/sessions",
   );
+});
+
+test("workspace recovery is neutral for an account without memberships", async ({ page }) => {
+  const noMembershipEmail = `workspace-recovery-${crypto.randomUUID()}@example.test`;
+  const existing = "/w/acme-corp/sessions";
+  await signInViaMagicLink(page, existing, { email: noMembershipEmail });
+  for (const path of [existing, "/w/nonexistent-workspace/sessions"]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("This page isn’t available");
+    await expect(page.getByText(/ask the person who shared the link/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Use a different account" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Get help" })).toHaveAttribute("href", "/recovery");
+  }
+  await page.getByRole("button", { name: "Use a different account" }).click();
+  await expect(page.locator('input[name="next"]')).toHaveValue("/w/nonexistent-workspace/sessions");
 });
 
 test("slow navigation keeps feedback until the destination is usable", async ({
@@ -129,7 +145,7 @@ test("an active run does not keep navigation feedback visible", async ({ page },
   );
   try {
     await page
-      .locator('a[href="/w/acme-corp/sessions/8"]')
+      .locator('a[href="/w/acme-corp/sessions/8"], a[href^="/w/acme-corp/sessions/8?"]')
       .first()
       .evaluate((element: HTMLAnchorElement) => element.click());
     await expect(page.locator("[data-route-progress]")).toBeVisible();

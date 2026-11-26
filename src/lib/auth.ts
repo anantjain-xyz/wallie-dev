@@ -32,7 +32,7 @@ export function normalizeNextPath(value: string | null | undefined, fallback = "
       return fallback;
     }
 
-    if (!parsed.pathname.startsWith("/")) {
+    if (!parsed.pathname.startsWith("/") || parsed.pathname.startsWith("//")) {
       return fallback;
     }
 
@@ -136,10 +136,6 @@ export async function getWorkspaceBySlugForUser(
     >;
     workspace: WorkspaceSummary & { avatar_path: string | null };
   };
-}
-
-export async function hasAnyWorkspaceForUser(supabase: SupabaseServerClient) {
-  return (await getDefaultWorkspace(supabase)) !== null;
 }
 
 export async function resolveAuthenticatedHomePath(supabase: SupabaseServerClient) {

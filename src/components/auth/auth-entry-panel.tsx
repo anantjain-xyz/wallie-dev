@@ -9,24 +9,20 @@ import { loginPath } from "@/lib/routes";
 const authErrorMessages = {
   auth_callback_failed: "The sign-in callback did not complete. Start the flow again.",
   auth_confirmation_failed:
-    "The email link could not be confirmed. Request a fresh link and try again.",
+    "The sign-in link couldn’t be confirmed. Request a new sign-in email and try again.",
   email_code_failed:
     "That code could not be verified. Check all six digits or request a new code, then try again.",
   email_sign_in_failed:
     "We could not send a sign-in email. Check the address or your connection, then try again.",
-  invalid_provider: "That sign-in provider is not supported on this route.",
-  oauth_sign_in_failed: "That sign-in method could not start. Choose another method and try again.",
-} as const;
-
-const authStatusMessages = {
-  check_email:
-    "Check your inbox for a secure sign-in link or six-digit code. It will continue into your workspace flow.",
+  invalid_provider: "That sign-in method isn’t available. Use your email to sign in.",
+  oauth_sign_in_failed: "That sign-in method couldn’t start. Use your email to sign in.",
 } as const;
 
 type AuthEntryPanelProps = {
   canUseEmailCode?: boolean;
   errorCode?: string | null;
   next: string;
+  retryEmail?: string;
   statusCode?: string | null;
 };
 
@@ -36,20 +32,29 @@ export function AuthEntryPanel({
   canUseEmailCode = false,
   errorCode,
   next,
+  retryEmail,
   statusCode,
 }: AuthEntryPanelProps) {
-  const errorMessage = errorCode
-    ? (authErrorMessages[errorCode as keyof typeof authErrorMessages] ??
-      "Sign-in could not be completed. Try again or request a new sign-in email.")
-    : null;
-  const statusMessage = statusCode
-    ? authStatusMessages[statusCode as keyof typeof authStatusMessages]
-    : null;
   const showEmailCodeForm =
     canUseEmailCode &&
-    (statusCode === "check_email" || (errorCode ? emailCodeFallbackErrors.has(errorCode) : false));
+    (errorCode ? emailCodeFallbackErrors.has(errorCode) : statusCode === "check_email");
+  const missingContinuation =
+    !canUseEmailCode && (statusCode === "check_email" || errorCode === "email_code_failed");
+  const continuationMessage =
+    "This browser has no pending code request. Open the link in your email, or request a new sign-in email below.";
+  let errorMessage = null;
+  if (errorCode === "email_code_failed" && missingContinuation) {
+    errorMessage = continuationMessage;
+  } else if (errorCode === "auth_confirmation_failed" && showEmailCodeForm) {
+    errorMessage =
+      "The sign-in link couldn’t be confirmed. Enter the code from that email or request a new sign-in email.";
+  } else if (errorCode) {
+    errorMessage = Object.hasOwn(authErrorMessages, errorCode)
+      ? authErrorMessages[errorCode as keyof typeof authErrorMessages]
+      : "Sign-in could not be completed. Request a new sign-in email and try again.";
+  }
   const requestAnotherCodeHref = loginPath(next);
-  const emailStatusMessage = showEmailCodeForm ? null : statusMessage;
+  const emailStatusMessage = missingContinuation ? continuationMessage : null;
   const codeFeedback = errorMessage ? { kind: "error" as const, message: errorMessage } : null;
 
   return (
@@ -60,7 +65,9 @@ export function AuthEntryPanel({
           Sign in to Wallie
         </h1>
         <p className="mt-2 text-pretty text-sm leading-6 text-muted">
-          Continue to your workspace and review active sessions.
+          {next === "/"
+            ? "Use your email to create a workspace or open one you already have."
+            : "Sign in to continue to the page you opened."}
         </p>
       </div>
 
@@ -71,9 +78,17 @@ export function AuthEntryPanel({
               <p className="text-sm font-medium text-foreground">Sign in with email</p>
             </div>
             <EmailMagicLinkForm
+              defaultEmail={errorCode === "email_sign_in_failed" ? retryEmail : undefined}
               errorMessage={errorMessage}
               next={next}
               statusMessage={emailStatusMessage}
+              submitLabel={
+                errorCode === "email_sign_in_failed"
+                  ? "Try sending again"
+                  : missingContinuation || errorCode
+                    ? "Request a new sign-in email"
+                    : undefined
+              }
             />
             <p className="mt-3 text-xs leading-5 text-muted">
               We’ll email a secure link and a six-digit code. No password required.

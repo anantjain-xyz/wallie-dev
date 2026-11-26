@@ -4,8 +4,6 @@ import { workspaceSessionDetailPath } from "@/lib/routes";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-export const SESSION_REVIEW_RETURN_HEADER = "x-wallie-session-review-return";
-
 const reviewQueryKeys = [
   "artifactStage",
   "artifactId",

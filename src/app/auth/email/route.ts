@@ -5,6 +5,7 @@ import { normalizeNextPath } from "@/lib/auth";
 import {
   emailCodeAuthCookieName,
   emailCodeAuthCookieOptions,
+  emailSignInRetryCookieName,
   normalizeEmailCodeAddress,
 } from "@/lib/auth-email-code-cookie";
 import { loginPath } from "@/lib/routes";
@@ -22,15 +23,21 @@ function redirectToEntry(
   request: NextRequest,
   next: string,
   params: Record<string, string>,
-  email?: string,
+  email?: { kind: "sent" | "retry"; address: string },
 ) {
-  const response = NextResponse.redirect(new URL(getEntryPath(next, params), request.url), {
+  const retryId = email?.kind === "retry" ? crypto.randomUUID() : undefined;
+  const location = getEntryPath(next, retryId ? { ...params, retry: retryId } : params);
+  const response = NextResponse.redirect(new URL(location, request.url), {
     status: 303,
   });
 
-  if (email) {
-    response.cookies.set(emailCodeAuthCookieName, email, emailCodeAuthCookieOptions);
+  if (email?.kind === "sent") {
+    response.cookies.set(emailCodeAuthCookieName, email.address, emailCodeAuthCookieOptions);
   }
+  response.cookies.set(emailSignInRetryCookieName, retryId ? `${retryId}:${email?.address}` : "", {
+    ...emailCodeAuthCookieOptions,
+    maxAge: retryId ? emailCodeAuthCookieOptions.maxAge : 0,
+  });
 
   return response;
 }
@@ -57,8 +64,24 @@ export async function POST(request: NextRequest) {
   });
 
   if (error) {
-    return redirectToEntry(request, next, { error: "email_sign_in_failed" }, email);
+    return redirectToEntry(
+      request,
+      next,
+      { error: "email_sign_in_failed" },
+      {
+        kind: "retry",
+        address: email,
+      },
+    );
   }
 
-  return redirectToEntry(request, next, { status: "check_email" }, email);
+  return redirectToEntry(
+    request,
+    next,
+    { status: "check_email" },
+    {
+      kind: "sent",
+      address: email,
+    },
+  );
 }

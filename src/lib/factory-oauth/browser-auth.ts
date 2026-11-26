@@ -6,7 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function authenticateFactoryOAuthBrowser() {
   const supabase = await createSupabaseServerClient();
-  return getSupabaseAuthIdentityOrNull(supabase, { includeSessionId: true });
+  return getSupabaseAuthIdentityOrNull(supabase, { includeEmail: true, includeSessionId: true });
 }
 
 export function isSameOriginFactoryOAuthPost(request: Request) {

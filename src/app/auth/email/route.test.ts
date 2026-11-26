@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { emailCodeAuthCookieName } from "@/lib/auth-email-code-cookie";
+import { emailCodeAuthCookieName, emailSignInRetryCookieName } from "@/lib/auth-email-code-cookie";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
@@ -67,7 +67,7 @@ describe("POST /auth/email", () => {
     );
   });
 
-  it("keeps the email code cookie available when resend fails", async () => {
+  it("keeps the editable retry address without starting a pending code request when send fails", async () => {
     mocked.createSupabaseServerClient.mockResolvedValue({
       auth: {
         signInWithOtp: mocked.signInWithOtp,
@@ -85,12 +85,16 @@ describe("POST /auth/email", () => {
     );
 
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Fw%2Facme&error=email_sign_in_failed",
+    const location = new URL(response.headers.get("location")!);
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("next")).toBe("/w/acme");
+    expect(location.searchParams.get("error")).toBe("email_sign_in_failed");
+    expect(location.searchParams.get("retry")).toBeTruthy();
+    expect(location.href).not.toContain("example.com");
+    expect(response.cookies.get(emailSignInRetryCookieName)?.value).toBe(
+      `${location.searchParams.get("retry")}:owner@example.com`,
     );
-    expect(response.headers.get("set-cookie")).toContain(
-      `${emailCodeAuthCookieName}=owner%40example.com`,
-    );
+    expect(response.cookies.get(emailCodeAuthCookieName)).toBeUndefined();
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
     expect(response.headers.get("set-cookie")).not.toContain("Email rate limit exceeded");
   });

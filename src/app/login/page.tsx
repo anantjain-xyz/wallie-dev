@@ -10,7 +10,11 @@ import {
   normalizeNextPath,
   resolveAuthenticatedHomePath,
 } from "@/lib/auth";
-import { emailCodeAuthCookieName, normalizeEmailCodeAddress } from "@/lib/auth-email-code-cookie";
+import {
+  emailCodeAuthCookieName,
+  emailSignInRetryCookieName,
+  normalizeEmailCodeAddress,
+} from "@/lib/auth-email-code-cookie";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { readFirstValue } from "@/lib/utils";
@@ -30,8 +34,15 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const next = normalizeNextPath(readFirstValue(resolvedSearchParams.next));
   const errorCode = readFirstValue(resolvedSearchParams.error);
   const statusCode = readFirstValue(resolvedSearchParams.status);
+  const retryId = readFirstValue(resolvedSearchParams.retry);
   const cookieStore = await cookies();
   const requestedEmail = normalizeEmailCodeAddress(cookieStore.get(emailCodeAuthCookieName)?.value);
+  const failedSend = cookieStore.get(emailSignInRetryCookieName)?.value;
+  const retryPrefix = retryId ? `${retryId}:` : null;
+  const retryEmail =
+    errorCode === "email_sign_in_failed" && retryPrefix && failedSend?.startsWith(retryPrefix)
+      ? normalizeEmailCodeAddress(failedSend.slice(retryPrefix.length))
+      : undefined;
   const supabase = await createSupabaseServerClient();
   const user = await getSupabaseUserOrNull(supabase);
 
@@ -56,6 +67,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         canUseEmailCode={Boolean(requestedEmail)}
         errorCode={errorCode}
         next={next}
+        retryEmail={retryEmail}
         statusCode={statusCode}
       />
     </SplashShell>

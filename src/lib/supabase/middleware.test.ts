@@ -28,7 +28,7 @@ vi.mock("next/server", () => ({
 }));
 
 import { updateSupabaseSession } from "@/lib/supabase/middleware";
-import { SESSION_REVIEW_RETURN_HEADER } from "@/lib/sessions/review-link";
+import { WORKSPACE_RETURN_HEADER } from "@/lib/workspace-return-path";
 
 function createRequest(cookieNames = ["sb-example-auth-token"]) {
   const values = new Map(cookieNames.map((name) => [name, "cookie-value"]));
@@ -69,23 +69,23 @@ describe("Supabase session middleware", () => {
     expect(mocked.auth.getClaims).not.toHaveBeenCalled();
   });
 
-  it("replaces inbound review-return metadata with the path derived by middleware", async () => {
+  it("replaces inbound workspace-return metadata with the path derived by middleware", async () => {
     const request = createRequest([]);
-    request.headers.set(SESSION_REVIEW_RETURN_HEADER, "/w/foreign/sessions/7");
+    request.headers.set(WORKSPACE_RETURN_HEADER, "/w/foreign/sessions/7");
     const exact = "/w/local/sessions/42?reviewRevision=9";
 
     await updateSupabaseSession(request as never);
     expect(
       vi
         .mocked(NextResponse.next)
-        .mock.lastCall?.[0]?.request?.headers?.has(SESSION_REVIEW_RETURN_HEADER),
+        .mock.lastCall?.[0]?.request?.headers?.has(WORKSPACE_RETURN_HEADER),
     ).toBe(false);
 
     await updateSupabaseSession(request as never, exact);
     expect(
       vi
         .mocked(NextResponse.next)
-        .mock.lastCall?.[0]?.request?.headers?.get(SESSION_REVIEW_RETURN_HEADER),
+        .mock.lastCall?.[0]?.request?.headers?.get(WORKSPACE_RETURN_HEADER),
     ).toBe(exact);
   });
 

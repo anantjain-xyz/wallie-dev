@@ -36,6 +36,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import LoginPage, { metadata } from "@/app/login/page";
+import { emailCodeAuthCookieName, emailSignInRetryCookieName } from "@/lib/auth-email-code-cookie";
 
 const originalVercelEnv = process.env.VERCEL_ENV;
 
@@ -108,6 +109,7 @@ describe("/login page", () => {
     expect(html).toContain('name="email"');
     expect(html).toContain("you@company.com");
     expect(html).toContain("Sign in to Wallie");
+    expect(html).toContain("Use your email to create a workspace");
     expect(html).toContain("data-wallie-mark");
     expect(html).not.toContain("wallie-logo-minimal.png");
     expect(html).not.toContain('aria-label="Wallie home"');
@@ -133,5 +135,28 @@ describe("/login page", () => {
     expect(html).toContain("Continue with code");
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');
     expect(html).not.toContain("owner@example.com");
+  });
+
+  it("only fills the editable address after that email send failed", async () => {
+    mocked.cookies.mockResolvedValue({
+      get: (name: string) =>
+        name === emailSignInRetryCookieName
+          ? { value: "retry-attempt:Retry@Example.Test" }
+          : name === emailCodeAuthCookieName
+            ? { value: "old@example.test" }
+            : undefined,
+    });
+    const html = await LoginPage({
+      searchParams: Promise.resolve({ error: "email_sign_in_failed", retry: "retry-attempt" }),
+    });
+    expect(renderToStaticMarkup(html)).toContain('value="retry@example.test"');
+    expect(renderToStaticMarkup(html)).not.toContain("old@example.test");
+    expect(
+      renderToStaticMarkup(await LoginPage({ searchParams: Promise.resolve({}) })),
+    ).not.toContain("retry@example.test");
+    const anotherAttempt = await LoginPage({
+      searchParams: Promise.resolve({ error: "email_sign_in_failed", retry: "another-attempt" }),
+    });
+    expect(renderToStaticMarkup(anotherAttempt)).not.toContain("retry@example.test");
   });
 });
