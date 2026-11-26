@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { PortalRootProvider } from "@/components/ui/portal-root";
 import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import { RunsList } from "@/features/wallie/runs-list";
 import {
@@ -64,6 +67,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("Runs list", () => {
@@ -270,9 +274,10 @@ describe("Runs list", () => {
         expect(input.value).toBe("reliability");
       }
       fireEvent.keyDown(input, { key: "ArrowUp" });
-      expect(
-        screen.getByRole("option", { name: "Any session" }).getAttribute("aria-selected"),
-      ).toBe("true");
+      const clearOption = screen.getByRole("option", { name: "Any session" });
+      expect(clearOption).toHaveAttribute("data-highlighted");
+      expect(clearOption).toHaveAttribute("aria-selected", "false");
+      expect(input).toHaveAttribute("aria-activedescendant", clearOption.id);
       fireEvent.keyDown(input, { key: "Enter" });
       expect(input.value).toBe("Any session");
       fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
@@ -283,6 +288,138 @@ describe("Runs list", () => {
       });
     },
   );
+
+  it("keeps focus on the input and only applies a committed choice from the portaled listbox", async () => {
+    const user = userEvent.setup();
+    const selected = { id: SESSION_ID, label: "#42 Improve sign-in reliability" };
+    const other = {
+      id: "b0000000-0000-4000-8000-000000000002",
+      label: "#43 Check release logs",
+      factoryName: "Release lab",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json([selected, other])),
+    );
+    render(
+      <PortalRootProvider>
+        <RunsList
+          initialNow={now}
+          factoryQuery="all"
+          data={{
+            workspaceId: WORKSPACE_ID,
+            workspaceSlug: "acme",
+            query: {
+              sessionId: SESSION_ID,
+              status: "error",
+              cursor: "previous",
+              limit: 20,
+              agentId: RUN_ID,
+              agentPromptRevisionId: STAGE_ID,
+            },
+            sessionOption: selected,
+            state: { kind: "ready", page: { runs: [], nextCursor: null } },
+          }}
+        />
+      </PortalRootProvider>,
+    );
+    const form = screen.getByRole<HTMLFormElement>("form", { name: "Filter runs" });
+    const input = screen.getByRole("combobox", { name: "Session" });
+    await user.click(input);
+    const match = await screen.findByRole("option", {
+      name: /#43 Check release logs.*Release lab/,
+    });
+    const listbox = screen.getByRole("listbox", { name: "Session matches" });
+    expect(listbox.closest("[data-wallie-overlay-root]")).not.toBeNull();
+    expect(listbox.closest(".ui-select-content")).not.toBeNull();
+    expect(input).toHaveAttribute("aria-controls", listbox.id);
+    const committed = screen.getByRole("option", { name: selected.label });
+    expect(committed).toHaveAttribute("aria-selected", "true");
+    expect(committed.querySelector("svg")).toBeInTheDocument();
+    await user.hover(match);
+    expect(match).toHaveAttribute("data-highlighted");
+    expect(match).toHaveAttribute("aria-selected", "false");
+    expect(input).toHaveAttribute("aria-activedescendant", match.id);
+    expect(input).toHaveFocus();
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(new FormData(form).get("sessionId")).toBe(SESSION_ID);
+    expect(listbox).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue(selected.label);
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(listbox).not.toBeInTheDocument();
+    await user.keyboard("{ArrowDown}");
+    await user.click(await screen.findByRole("option", { name: /Check release logs/ }));
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue(other.label);
+    expect(new FormData(form).get("sessionId")).toBe(other.id);
+    expect(mocked.push).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const destination = new URL(mocked.push.mock.calls[0]?.[0], "https://wallie.test");
+    expect(Object.fromEntries(destination.searchParams)).toEqual({
+      status: "error",
+      factory: "all",
+      sessionId: other.id,
+      limit: "20",
+      agentId: RUN_ID,
+      agentPromptRevisionId: STAGE_ID,
+    });
+  });
+
+  it("debounces and aborts search, ignores superseded results, and keeps an unavailable ID on error", async () => {
+    vi.useFakeTimers();
+    const stale = Promise.withResolvers<Response>();
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockReturnValueOnce(new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <RunsList
+        initialNow={now}
+        data={{
+          workspaceId: WORKSPACE_ID,
+          workspaceSlug: "acme",
+          query: { sessionId: SESSION_ID },
+          state: { kind: "ready", page: { runs: [], nextCursor: null } },
+        }}
+      />,
+    );
+    const input = screen.getByRole("combobox", { name: "Session" });
+    expect(input).toHaveValue("Session unavailable");
+    fireEvent.change(input, { target: { value: "  first  " } });
+    expect(screen.getByText("Searching sessions…")).toBeInTheDocument();
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
+    await act(() => vi.advanceTimersByTimeAsync(179));
+    expect(fetch).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/workspaces/${WORKSPACE_ID}/runs/session-options?factory=all&q=first`,
+      { cache: "no-store", signal: expect.any(AbortSignal) },
+    );
+    fireEvent.change(input, { target: { value: "second" } });
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    await act(async () => {
+      stale.resolve(Response.json([{ id: SESSION_ID, label: "Stale session" }]));
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(screen.queryByRole("option", { name: "Stale session" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Couldn’t load sessions/)).toBeInTheDocument();
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
+
+    fireEvent.change(input, { target: { value: "third" } });
+    await act(() => vi.advanceTimersByTimeAsync(180));
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(fetch.mock.calls[2]?.[1]?.signal?.aborted).toBe(true);
+    expect(input).toHaveValue("Session unavailable");
+    expect(screen.queryByRole("listbox", { name: "Session matches" })).not.toBeInTheDocument();
+    const form = screen.getByRole<HTMLFormElement>("form", { name: "Filter runs" });
+    expect(new FormData(form).get("sessionId")).toBe(SESSION_ID);
+  });
 
   it("clears only the unavailable selection and restarts pagination", () => {
     render(
