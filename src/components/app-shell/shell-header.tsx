@@ -626,16 +626,21 @@ export function ShellHeader({
   );
 
   function renderPrimaryAction() {
-    if (!sessionsBrowse) return null;
     if (shouldResumeSetup) {
       return (
-        <Link className="ui-button-primary min-h-9 px-2.5 text-[13px]" href={onboardingHref}>
+        <Link
+          className={cn(
+            sessionsBrowse ? "ui-button-primary" : "ui-button",
+            "min-h-9 px-2.5 text-[13px]",
+          )}
+          href={onboardingHref}
+        >
           <span className="lg:hidden">Setup</span>
           <span className="hidden lg:inline">Resume setup</span>
         </Link>
       );
     }
-    if (!creationScope) return null;
+    if (!sessionsBrowse || !creationScope) return null;
 
     return (
       <button

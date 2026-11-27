@@ -96,6 +96,7 @@ type OverrideTarget = RoutingOverrideOptions["targets"][number];
 
 type SessionCreationAttempt = {
   input: CreateSessionInput;
+  launchKey?: string;
   recoverDraft: () => void;
   scopeKey: string;
   snapshot: PendingSessionSnapshot;
@@ -280,11 +281,17 @@ function CreateSessionDialogBody({
     dialogContextRef.current = { open, scopeKey };
   }, [open, scopeKey]);
   const workflowLaunchRequested = workflowLaunchActivationId !== undefined;
-  const workflowLaunchConflictsWithRetry =
-    workflowLaunchRequested &&
+  const launchConflictsWithRetry =
     unconfirmed &&
-    (!workflowLaunchActivationId ||
-      workflowLaunchActivationId !== unconfirmedAttempt.input.workflowSelection?.activationId);
+    (launchKey !== unconfirmedAttempt.launchKey ||
+      (workflowLaunchRequested &&
+        (!workflowLaunchActivationId ||
+          workflowLaunchActivationId !==
+            unconfirmedAttempt.input.workflowSelection?.activationId)));
+  const openOriginalDraft =
+    launchConflictsWithRetry && onReopen && unconfirmedAttempt.launchKey !== undefined
+      ? unconfirmedAttempt.recoverDraft
+      : null;
   const factoryConflictsWithRetry =
     unconfirmed && unconfirmedAttempt.input.factoryId !== targetFactoryId;
 
@@ -763,7 +770,7 @@ function CreateSessionDialogBody({
     if (
       submitInFlightRef.current ||
       !destination.catalogIsCurrent ||
-      workflowLaunchConflictsWithRetry ||
+      launchConflictsWithRetry ||
       factoryConflictsWithRetry
     ) {
       return;
@@ -848,6 +855,7 @@ function CreateSessionDialogBody({
     }
 
     const attempt: SessionCreationAttempt = {
+      launchKey,
       recoverDraft: () => onReopen?.(targetFactoryId),
       scopeKey,
       workflowLabel: workflow?.label ?? defaultWorkflowOption.label,
@@ -1421,11 +1429,24 @@ function CreateSessionDialogBody({
                     wrap
                   />
                 )}
-                {workflowLaunchConflictsWithRetry ? (
-                  <p className="type-secondary text-warning" role="status">
-                    Another request is unconfirmed. Close this link and reopen New session to retry
-                    that request first.
-                  </p>
+                {launchConflictsWithRetry ? (
+                  <div className="space-y-2">
+                    <p className="type-secondary text-warning" role="status">
+                      Another request is unconfirmed.
+                      {openOriginalDraft
+                        ? " Retry it from the original draft."
+                        : " Close this link and reopen New session to retry it."}
+                    </p>
+                    {openOriginalDraft ? (
+                      <button
+                        className="ui-button min-h-9"
+                        onClick={openOriginalDraft}
+                        type="button"
+                      >
+                        Open original draft
+                      </button>
+                    ) : null}
+                  </div>
                 ) : unconfirmed ? null : workflowLaunchActivationId === null ? (
                   <p className="type-secondary text-warning" role="status">
                     This workflow link is invalid. Close and start from Workflows again.
@@ -1588,7 +1609,7 @@ function CreateSessionDialogBody({
                 unconfirmed
                   ? isSubmitting ||
                     !destination.catalogIsCurrent ||
-                    workflowLaunchConflictsWithRetry ||
+                    launchConflictsWithRetry ||
                     factoryConflictsWithRetry
                   : specificationUnavailable ||
                     workflowSelectionUnavailable ||

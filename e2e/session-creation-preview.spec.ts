@@ -178,16 +178,21 @@ async function mockRepositoryOptions(page: Page, factoryDefinitionDigest?: strin
   );
 }
 
-test("a newer workflow launch keeps its publication and return while an earlier request settles", async ({
-  page,
-}) => {
-  const sessions = `${workspacePath}/sessions`;
+async function authorizedSessionFactoryId(page: Page) {
   const board = page.getByRole("navigation", { name: "Sessions views" }).getByRole("link", {
     name: "Board",
   });
   const boardHref = await board.getAttribute("href");
   const factoryId = boardHref && new URL(boardHref, page.url()).searchParams.get("factory");
   if (!factoryId) throw new Error("Missing the authorized Board factory.");
+  return factoryId;
+}
+
+test("a newer workflow launch keeps its publication and return while an earlier request settles", async ({
+  page,
+}) => {
+  const sessions = `${workspacePath}/sessions`;
+  const factoryId = await authorizedSessionFactoryId(page);
   const definitionDigest = "d".repeat(64);
   const earlier = {
     workflowId: "00000000-0000-4000-8000-000000000011",
@@ -247,6 +252,69 @@ test("a newer workflow launch keeps its publication and return while an earlier 
     await expect(page).toHaveURL(canonicalUrl);
   } finally {
     responseGate.release();
+  }
+});
+
+test("retry returns to the original launch when only the workflow return address changes", async ({
+  page,
+}) => {
+  const sessions = `${workspacePath}/sessions`;
+  const factoryId = await authorizedSessionFactoryId(page);
+  const definitionDigest = "d".repeat(64);
+  const workflow = {
+    workflowId: "00000000-0000-4000-8000-000000000011",
+    activationId: "00000000-0000-4000-8000-000000000012",
+    label: "Release publication",
+  };
+  const launch = (search: string) => {
+    const returnTo = `${workspacePath}/workflows?${new URLSearchParams({ factory: factoryId, q: search })}#workflow-${search}`;
+    return `${sessions}?${new URLSearchParams({ factory: factoryId, create: "1", returnTo, workflowActivation: workflow.activationId })}`;
+  };
+  const original = launch("release");
+  const later = launch("later");
+  await mockRepositoryOptions(page, definitionDigest);
+  await page.route("**/workflows/intake-options", (route) =>
+    route.fulfill({ json: { definitionDigest, options: [workflow] } }),
+  );
+  const lostResponse = deferred();
+  const requests: unknown[] = [];
+  const canonicalUrl = `${sessions}/1`;
+  await page.route("**/api/sessions", async (route) => {
+    requests.push(route.request().postDataJSON());
+    if (requests.length === 1) {
+      await lostResponse.promise;
+      await route.abort();
+      return;
+    }
+    await route.fulfill({ status: 201, json: { canonicalUrl, number: 1 } });
+  });
+
+  try {
+    await page.goto(original);
+    const dialog = page.getByRole("dialog", { name: "Start a new session", exact: true });
+    await dialog.getByLabel("Prompt", { exact: true }).fill("Prepare the release");
+    await dialog.getByRole("button", { name: "Start session", exact: true }).click();
+    await expect(page).toHaveURL(`${sessions}?factory=${factoryId}`);
+    await page.getByRole("button", { name: /Back to workspace/ }).click();
+    lostResponse.release();
+    await expect(page.getByRole("button", { name: "Open draft", exact: true })).toBeVisible();
+
+    await page.evaluate((href) => window.history.pushState(null, "", href), later);
+    await expect(page).toHaveURL(later);
+    const retry = dialog.getByRole("button", { name: "Retry creation", exact: true });
+    await expect(retry).toBeDisabled();
+    expect(requests).toHaveLength(1);
+    await dialog.getByRole("button", { name: "Open original draft", exact: true }).press("Enter");
+    await expect(page).toHaveURL(original);
+    await expect(dialog.getByText(workflow.label, { exact: true })).toBeVisible();
+    await expect(retry).toBeEnabled();
+    await retry.click();
+    await expect(page).toHaveURL(canonicalUrl);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({ factoryId, requestId: expect.any(String) });
+    expect(requests[1]).toEqual(requests[0]);
+  } finally {
+    lostResponse.release();
   }
 });
 

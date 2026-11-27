@@ -244,6 +244,20 @@ describe("ShellHeader", () => {
     expect(mocked.replace).toHaveBeenCalledWith("/w/acme-corp/onboarding");
   });
 
+  it.each(["runs", "sessions/42"])(
+    "offers a secondary Resume setup action on %s without a session launcher",
+    (path) => {
+      mocked.pathname = `/w/acme-corp/${path}`;
+      mountShell({ onboarding: { currentStep: "repository", status: "in_progress" } });
+
+      const resume = screen.getByRole("link", { name: /Resume setup/ });
+      expect(resume).toHaveAttribute("href", "/w/acme-corp/onboarding");
+      expect(resume).toHaveClass("ui-button");
+      expect(resume).not.toHaveClass("ui-button-primary");
+      expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    },
+  );
+
   it("blocks the default-factory creation deep link for an unauthorized viewer", () => {
     mocked.searchParams = new URLSearchParams("create=1&factory=factory-1");
     mountShell({ factories: [] });
@@ -723,6 +737,59 @@ describe("ShellHeader", () => {
       expect(screen.queryByText("Session #42 created.")).toBeNull();
     },
   );
+
+  it("blocks retry from a different return for the same publication and restores the exact draft", async () => {
+    const header = { viewerId: "same-publication-different-return" };
+    const sessions = "/w/acme-corp/sessions";
+    const canonicalUrl = `${sessions}/42`;
+    const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+    const nextOrigin = "/w/acme-corp/workflows?factory=factory-1&q=other#workflow-other";
+    const originalQuery = new URLSearchParams({
+      factory: creationFactory.id,
+      create: "1",
+      returnTo: workflowOrigin,
+      workflowActivation: releaseWorkflow.activationId,
+    });
+    clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
+    mockWorkflowSessionOptions();
+    mocked.pathname = sessions;
+    mocked.searchParams = originalQuery;
+    const view = mountShell(header);
+    fireEvent.change(await screen.findByLabelText("Prompt"), {
+      target: { value: "Prepare the original release" },
+    });
+    const submit = screen.getByRole("button", { name: "Start session" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    const [original] = clientMocks.createSessionFromClient.mock.calls[0];
+    expect(original.requestId).toEqual(expect.any(String));
+
+    mocked.searchParams = new URLSearchParams({ factory: creationFactory.id });
+    view.rerender(shellElement(header));
+    fireEvent.click(screen.getByRole("button", { name: /Back to workspace/ }));
+    await act(async () => pending.reject(new TypeError("Failed to fetch")));
+    expect(await screen.findByRole("button", { name: "Open draft" })).toBeVisible();
+
+    mocked.searchParams = new URLSearchParams(originalQuery);
+    mocked.searchParams.set("returnTo", nextOrigin);
+    view.rerender(shellElement(header));
+    const next = screen.getByRole("dialog", { name: "Start a new session" });
+    const blockedRetry = within(next).getByRole("button", { name: "Retry creation" });
+    expect(blockedRetry).toBeDisabled();
+    fireEvent.submit(blockedRetry.closest("form")!);
+    expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce();
+    expect(mocked.push).not.toHaveBeenCalled();
+
+    fireEvent.click(within(next).getByRole("button", { name: "Open original draft" }));
+    expect(mocked.push).toHaveBeenCalledExactlyOnceWith(`${sessions}?${originalQuery}`);
+    mocked.searchParams = originalQuery;
+    view.rerender(shellElement(header));
+    const retry = screen.getByRole("button", { name: "Retry creation" });
+    await waitFor(() => expect(retry).toBeEnabled());
+    clientMocks.createSessionFromClient.mockResolvedValueOnce({ canonicalUrl, number: 42 });
+    await act(async () => fireEvent.click(retry));
+    expect(clientMocks.createSessionFromClient).toHaveBeenNthCalledWith(2, original);
+  });
 
   it.each([
     { outcome: "success", close: "Escape" },
