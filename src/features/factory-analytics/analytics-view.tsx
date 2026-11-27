@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
@@ -43,46 +43,22 @@ export function AnalyticsView({
   factory,
   factorySelector,
   query,
-  environments,
-  labels,
   scorerFields,
   periods,
-  evidence,
   reportingHealth,
-  routingCanaryComparison,
-  scorerTrends,
+  details,
 }: {
   workspaceId: string;
   workspaceSlug: string;
   factory: FactorySelectionOption;
   factorySelector?: ReactNode;
   query: AnalyticsQuery;
-  environments: string[] | null;
-  labels: AnalyticsLabels;
   scorerFields: Record<string, string | undefined>;
-  periods: Awaited<ReturnType<typeof loadAnalyticsPeriods>>;
-  evidence: Awaited<ReturnType<typeof loadAnalyticsEvidence>>;
+  periods: ReturnType<typeof loadAnalyticsPeriods>;
   reportingHealth: ReactNode;
-  routingCanaryComparison?: ReactNode;
-  scorerTrends?: ReactNode;
+  details: ReactNode;
 }) {
   const action = workspaceAnalyticsPath(workspaceSlug);
-  const filterProps = { action, environments, factoryId: factory.id, query, scorerFields };
-  const href: AnalyticsHref = (selection) =>
-    analyticsCohortHref(workspaceSlug, factory.id, query, selection, scorerFields);
-
-  const bucket = query.evidence?.metric === "throughput" ? query.evidence.bucket : null;
-  const recordedBucketLabel = bucket
-    ? [periods.primary, periods.comparison]
-        .flatMap((period) =>
-          period?.throughput.status === "ready" ? period.throughput.data.buckets : [],
-        )
-        .find(({ key }) => key === bucket)?.label
-    : undefined;
-  const bucketLabel =
-    bucket && recordedBucketLabel
-      ? throughputLabel(labels.buckets, query.dimension, bucket, recordedBucketLabel)
-      : undefined;
   const exportFilters: AnalyticsExportFilters = {
     from: query.from.slice(0, 10),
     to: query.to.slice(0, 10),
@@ -90,11 +66,6 @@ export function AnalyticsView({
     dimension: query.dimension,
     environment: query.environment ?? undefined,
   };
-  const flow = periods.primary.flow;
-  const freshness = flow.status === "ready" ? flow.data.freshness : null;
-  const snapshot = freshness?.status === "ready" ? freshness.sourceSnapshotAt : null;
-  const delay = freshness && delayReasons[freshness.status];
-
   return (
     <PageContainer>
       <PageHeader
@@ -105,36 +76,31 @@ export function AnalyticsView({
       />
       <div className="space-y-5">
         <section aria-labelledby="overview-analytics" className="ui-sheet min-w-0">
-          <div className="space-y-1 border-b border-border px-4 py-3 sm:px-5">
+          <div className="space-y-1 px-4 pt-3 pb-1 sm:px-5">
             <h2 className="type-section-title scroll-mt-4" id="overview-analytics" tabIndex={-1}>
               Factory outcomes
             </h2>
             <p className="type-secondary text-muted">{windowLabel(query)} (end excluded)</p>
-            <div className="type-label flex flex-wrap items-center gap-x-2 gap-y-1 text-muted">
-              {snapshot ? (
-                <>
-                  <Status compact label="Flow and delivery current" value="healthy" />
-                  <time dateTime={snapshot}>Snapshot {timeLabel(snapshot)}</time>
-                </>
-              ) : delay ? (
-                <>
-                  <Status compact label="Flow and delivery delayed" value="needs_attention" />
-                  <span>{delay}. Sessions and outcome capture continue.</span>
-                </>
-              ) : (
-                <Status
-                  compact
-                  label="Flow and delivery freshness unavailable"
-                  value="not_started"
-                />
-              )}
-            </div>
           </div>
-          <AnalyticsHighlights period={periods.primary} />
+          <Suspense
+            fallback={
+              <p className="type-secondary px-4 py-3 text-muted sm:px-5">
+                Loading factory outcomes…
+              </p>
+            }
+          >
+            <AnalyticsOutcomeBody periods={periods} />
+          </Suspense>
           <div className="grid divide-y divide-border border-t border-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
             <details className="min-w-0">
               <summary className={disclosureClass}>Reporting filters</summary>
-              <AnalyticsReportingFilters {...filterProps} mode="period" />
+              <AnalyticsReportingFilters
+                action={action}
+                factoryId={factory.id}
+                query={query}
+                scorerFields={scorerFields}
+                mode="period"
+              />
             </details>
             <AnalyticsExportControls
               factoryId={factory.id}
@@ -152,42 +118,120 @@ export function AnalyticsView({
         >
           {reportingHealth}
         </section>
-        {(scorerTrends || routingCanaryComparison) && (
-          <nav className="flex flex-wrap gap-x-4 gap-y-2" aria-label="Additional reports">
-            {scorerTrends && (
-              <a className={reportLinkClass} href="#scorer-trends">
-                Scorer trends
-              </a>
-            )}
-            {routingCanaryComparison && (
-              <a className={reportLinkClass} href="#routing-canary">
-                Routing canary
-              </a>
-            )}
-          </nav>
-        )}
-
-        {query.evidence && (
-          <AnalyticsEvidence
-            bucketLabel={bucketLabel}
-            query={query}
-            evidence={evidence}
-            href={href}
-            labels={labels}
-            workspaceSlug={workspaceSlug}
-          />
-        )}
-        <AnalyticsMetrics
-          query={query}
-          periods={periods}
-          href={href}
-          bucketLabels={labels.buckets}
-          environmentFilter={<AnalyticsReportingFilters {...filterProps} mode="environment" />}
-          dimensionFilter={<AnalyticsReportingFilters {...filterProps} mode="dimension" />}
-        />
-        {scorerTrends}
-        {routingCanaryComparison}
+        {details}
       </div>
     </PageContainer>
+  );
+}
+
+async function AnalyticsOutcomeBody({
+  periods,
+}: {
+  periods: ReturnType<typeof loadAnalyticsPeriods>;
+}) {
+  const { primary } = await periods;
+  const freshness = primary.flow.status === "ready" ? primary.flow.data.freshness : null;
+  const snapshot = freshness?.status === "ready" ? freshness.sourceSnapshotAt : null;
+  const delay = freshness && delayReasons[freshness.status];
+  return (
+    <>
+      <div className="type-label flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-4 pb-3 text-muted sm:px-5">
+        {snapshot ? (
+          <>
+            <Status compact label="Flow and delivery current" value="healthy" />
+            <time dateTime={snapshot}>Snapshot {timeLabel(snapshot)}</time>
+          </>
+        ) : delay ? (
+          <>
+            <Status compact label="Flow and delivery delayed" value="needs_attention" />
+            <span>{delay}. Sessions and outcome capture continue.</span>
+          </>
+        ) : (
+          <Status compact label="Flow and delivery freshness unavailable" value="not_started" />
+        )}
+      </div>
+      <AnalyticsHighlights period={primary} />
+    </>
+  );
+}
+
+export function AnalyticsDetailsView({
+  workspaceSlug,
+  factoryId,
+  query,
+  environments,
+  labels,
+  scorerFields,
+  periods,
+  evidence,
+  routingCanaryComparison,
+  scorerTrends,
+}: {
+  workspaceSlug: string;
+  factoryId: string;
+  query: AnalyticsQuery;
+  environments: string[] | null;
+  labels: AnalyticsLabels;
+  scorerFields: Record<string, string | undefined>;
+  periods: Awaited<ReturnType<typeof loadAnalyticsPeriods>>;
+  evidence: Awaited<ReturnType<typeof loadAnalyticsEvidence>>;
+  routingCanaryComparison: ReactNode;
+  scorerTrends: ReactNode;
+}) {
+  const action = workspaceAnalyticsPath(workspaceSlug);
+  const filterProps = { action, environments, factoryId, query, scorerFields };
+  const href: AnalyticsHref = (selection) =>
+    analyticsCohortHref(workspaceSlug, factoryId, query, selection, scorerFields);
+  const bucket = query.evidence?.metric === "throughput" ? query.evidence.bucket : null;
+  const recordedBucketLabel = bucket
+    ? [periods.primary, periods.comparison]
+        .flatMap((period) =>
+          period?.throughput.status === "ready" ? period.throughput.data.buckets : [],
+        )
+        .find(({ key }) => key === bucket)?.label
+    : undefined;
+  const bucketLabel =
+    bucket && recordedBucketLabel
+      ? throughputLabel(labels.buckets, query.dimension, bucket, recordedBucketLabel)
+      : undefined;
+
+  return (
+    <>
+      {(scorerTrends || routingCanaryComparison) && (
+        <nav className="flex flex-wrap gap-x-4 gap-y-2" aria-label="Additional reports">
+          {scorerTrends && (
+            <a className={reportLinkClass} href="#scorer-trends">
+              Scorer trends
+            </a>
+          )}
+          {routingCanaryComparison && (
+            <a className={reportLinkClass} href="#routing-canary">
+              Routing canary
+            </a>
+          )}
+        </nav>
+      )}
+
+      {query.evidence && (
+        <AnalyticsEvidence
+          bucketLabel={bucketLabel}
+          query={query}
+          evidence={evidence}
+          href={href}
+          labels={labels}
+          workspaceSlug={workspaceSlug}
+        />
+      )}
+      <AnalyticsMetrics
+        query={query}
+        periods={periods}
+        href={href}
+        bucketLabels={labels.buckets}
+        environmentFilter={<AnalyticsReportingFilters {...filterProps} mode="environment" />}
+        dimensionFilter={<AnalyticsReportingFilters {...filterProps} mode="dimension" />}
+      />
+      {scorerTrends}
+      {routingCanaryComparison}
+    </>
   );
 }

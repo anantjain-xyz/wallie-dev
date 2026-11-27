@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ReactNode } from "react";
+
 import { Status, type StatusValue } from "@/components/ui/status";
 import { durationLabel, timeLabel } from "@/features/factory-analytics/analytics-view-shared";
 import { ProjectionControls } from "@/features/factory-overview/projection-controls";
@@ -31,7 +33,7 @@ export async function ReportingHealth({
   factoryId,
 }: {
   supabase: AuthenticatedWorkspaceContext["supabase"];
-  captureStartedAt: string | null;
+  captureStartedAt: ReactNode;
   workspaceId: string;
   factoryId: string;
 }) {
@@ -66,7 +68,7 @@ export async function ReportingHealth({
           </p>
         )}
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <HealthField label="Lifecycle capture began" text={timeLabel(captureStartedAt)} />
+          <HealthField label="Lifecycle capture began" text={captureStartedAt} />
           <HealthField label="Projection snapshot" text={timeLabel(health?.sourceSnapshotAt)} />
           <HealthField
             label="Oldest pending observation"
@@ -120,7 +122,7 @@ export async function ReportingHealth({
   );
 }
 
-function HealthField({ label, text }: { label: string; text: string }) {
+function HealthField({ label, text }: { label: string; text: ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="type-label text-muted">{label}</dt>

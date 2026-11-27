@@ -29,7 +29,7 @@ export function AnalyticsReportingFilters({
   action: string;
   factoryId: string;
   query: AnalyticsQuery;
-  environments: string[] | null;
+  environments?: string[] | null;
   scorerFields: Record<string, string | undefined>;
   errors?: AnalyticsFilterErrors;
   dates?: { from: string; to: string };
