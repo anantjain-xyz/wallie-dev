@@ -7,19 +7,9 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 
 type Client = SupabaseClient<Database>;
 
-export const factoryNameSchema = z.string().trim().min(1).max(120);
-export const factorySlugSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(60)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 export const factoryRoleSchema = z.enum(["manager", "member"]);
 export const factoryArchiveReasonSchema = z.string().trim().max(500).nullable().optional();
 
-export const createFactorySchema = z
-  .object({ name: factoryNameSchema, slug: factorySlugSchema })
-  .strict();
 export const factoryStatusCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("archive"), reason: factoryArchiveReasonSchema }).strict(),
   z.object({ action: z.literal("restore") }).strict(),

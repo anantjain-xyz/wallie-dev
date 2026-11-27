@@ -3,13 +3,16 @@ import {
   FACTORY_QUERY_PARAM,
   resolveFactorySelection,
 } from "@/features/factories/factory-selection";
-import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { parseBoardStatus } from "@/features/pipeline/board-browse-history";
 import { loadPipelineDashboardData } from "@/features/pipeline/data";
 import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
+import { SessionsFactoryControls } from "@/features/sessions/components/sessions-factory-controls";
 import { SessionsViewNavigation } from "@/features/sessions/components/sessions-view-navigation";
-import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import {
+  isWorkspaceOperator,
+  loadAuthenticatedWorkspaceContext,
+} from "@/features/workspaces/authenticated-context";
 
 type WorkspaceHomePageProps = {
   params: Promise<{
@@ -22,8 +25,20 @@ const boardFactoryResetParams = ["status"] as const;
 
 export default async function WorkspaceHomePage({ params, searchParams }: WorkspaceHomePageProps) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
+  const [factories, { currentMember, user }] = await Promise.all([
+    loadWorkspaceFactoryOptions(workspaceSlug),
+    loadAuthenticatedWorkspaceContext(workspaceSlug),
+  ]);
   const selection = resolveFactorySelection(factories, search[FACTORY_QUERY_PARAM]);
+  const factorySelector = (
+    <SessionsFactoryControls
+      canManageFactories={isWorkspaceOperator(currentMember)}
+      factories={factories}
+      resetParams={boardFactoryResetParams}
+      selectedValue={selection.kind === "factory" ? selection.factory.id : selection.kind}
+      workspaceSlug={workspaceSlug}
+    />
+  );
   if (selection.kind === "unavailable")
     return (
       <FactoryUnavailable
@@ -34,12 +49,7 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
               view="board"
               workspaceSlug={workspaceSlug}
             />
-            <FactorySelector
-              allowAll
-              factories={factories}
-              resetParams={boardFactoryResetParams}
-              selectedValue="unavailable"
-            />
+            {factorySelector}
           </>
         }
         title="Sessions"
@@ -48,22 +58,12 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
     );
 
   const factory = selection.kind === "factory" ? selection.factory : undefined;
-  const [data, { user }] = await Promise.all([
-    loadPipelineDashboardData(workspaceSlug, factory?.id),
-    loadAuthenticatedWorkspaceContext(workspaceSlug),
-  ]);
+  const data = await loadPipelineDashboardData(workspaceSlug, factory?.id);
   const initialNow = new Date().toISOString();
 
   return (
     <PipelinePageClient
-      factorySelector={
-        <FactorySelector
-          allowAll
-          factories={factories}
-          resetParams={boardFactoryResetParams}
-          selectedValue={factory ? factory.id : "all"}
-        />
-      }
+      factorySelector={factorySelector}
       initialData={{
         ...data,
         aggregateFactories: selection.kind === "all",

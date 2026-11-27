@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const workspaceSlugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+import { addressSlugPattern, slugifyAddress } from "@/lib/slugs";
+
+export const workspaceSlugPattern = addressSlugPattern;
 
 export const createWorkspaceInputSchema = z.object({
   name: z.string().trim().min(1, "Workspace name is required.").max(80),
@@ -42,12 +44,5 @@ export function normalizeWorkspaceSlug(value: string | null | undefined) {
 }
 
 export function slugifyWorkspaceName(value: string) {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  return slug || "workspace";
+  return slugifyAddress(value) || "workspace";
 }
