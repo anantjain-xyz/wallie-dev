@@ -1438,6 +1438,7 @@ function SessionDetailContent({
   );
 
   const pendingBriefArtifact = pendingPhaseAction?.briefArtifact;
+  const readOnlyReason = sessionReviewReadOnlyReason(session);
   const artifactViewer = artifactAvailable ? (
     <ArtifactPanel
       currentArtifactId={selectedStageIsCurrent ? (session.currentArtifactId ?? null) : undefined}
@@ -1457,14 +1458,11 @@ function SessionDetailContent({
       onViewingHistoricalChange={setViewingHistoricalArtifact}
       onDisplayedArtifactChange={setDisplayedArtifact}
       persistStageInUrl={!selectedStageIsCurrent}
-      readOnlyReason={
-        sessionReviewReadOnlyReason(session) ?? (exactReadOnly ? "historical_review" : null)
-      }
+      readOnlyReason={readOnlyReason ?? (exactReadOnly ? "historical_review" : null)}
       rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
       retainBriefFor={
         selectedStageIsCurrent &&
-        session.phaseStatus === "rejected" &&
-        !session.archivedAt &&
+        !readOnlyReason &&
         pendingBriefArtifact?.stageId === session.currentStageId &&
         pendingBriefArtifact.artifactId === session.currentArtifactId &&
         pendingBriefArtifact.version === session.currentArtifactVersion

@@ -244,7 +244,7 @@ async function queueBriefRejection(exact = false) {
       initialFormattedArtifactKey: `${initialData.session.id}:product:id:${initialData.session.currentArtifactId}`,
     });
   const view = render(detail(), { wrapper: OverlayProvider });
-  const brief = screen.getByRole("tabpanel", { name: "Review brief" });
+  const brief = await screen.findByRole("region", { name: "Artifact changes" });
   await within(brief).findByText(artifact.payload);
   const note = "Keep the keyboard focus visible.";
   fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
@@ -755,17 +755,23 @@ describe("SessionDetailPageClient", () => {
   });
 
   it.each([
-    { outcome: "success", exact: false, status: 200 },
-    { outcome: "conflict", exact: false, status: 409 },
-    { outcome: "conflict from an exact review link", exact: true, status: 409 },
+    { outcome: "success", exact: false, status: 200, workerStarted: false },
+    { outcome: "success after early worker start", exact: false, status: 200, workerStarted: true },
+    { outcome: "conflict", exact: false, status: 409, workerStarted: false },
+    {
+      outcome: "conflict from an exact review link",
+      exact: true,
+      status: 409,
+      workerStarted: false,
+    },
   ])(
     "keeps the same Brief mounted until rejection settles: $outcome",
-    async ({ exact, status }) => {
+    async ({ exact, status, workerStarted }) => {
       const { brief, data, note, request, settle, target } = await queueBriefRejection(exact);
       const dialog = screen.getByRole("dialog", { name: "Request changes" });
       expect(within(dialog).getByRole("button", { name: "Queueing…" })).toBeDisabled();
       expect(screen.getByText("rejected")).toBeInTheDocument();
-      expect(document.getElementById("artifact-brief-panel")).toBe(brief);
+      expect(brief).toBeInTheDocument();
       expect(document.getElementById("artifact-rendered-panel")).toBeNull();
 
       const phaseCalls = request.mock.calls.filter(([url]) =>
@@ -786,6 +792,36 @@ describe("SessionDetailPageClient", () => {
         },
       });
 
+      if (workerStarted) {
+        const { session } = data;
+        await waitFor(() => expect(mocked.handlers.has("sessions")).toBe(true));
+        act(() =>
+          mocked.handlers.get("sessions")!({
+            eventType: "UPDATE",
+            new: {
+              archived_at: null,
+              created_at: session.createdAt,
+              current_artifact_id: target.artifactId,
+              current_artifact_version: target.artifactVersion,
+              current_stage_id: target.stageId,
+              id: session.id,
+              linear_issue_id: session.linearIssueId,
+              linear_issue_url: session.linearIssueUrl,
+              number: session.number,
+              phase_status: "in_progress",
+              prompt_md: session.promptMd,
+              rejection_count: 1,
+              title: session.title,
+              updated_at: "2026-06-07T12:01:00.000Z",
+            },
+          }),
+        );
+        expect(screen.getByText("in_progress")).toBeInTheDocument();
+        expect(brief).toBeInTheDocument();
+        expect(document.getElementById("artifact-rendered-panel")).toBeNull();
+        expect(within(dialog).getByRole("button", { name: "Queueing…" })).toBeDisabled();
+      }
+
       if (status === 200) {
         await settle(
           Response.json({
@@ -802,7 +838,7 @@ describe("SessionDetailPageClient", () => {
         );
         expect(screen.queryByRole("dialog")).toBeNull();
         expect(screen.getByText("Previous artifact")).toBeVisible();
-        expect(screen.getByText("rejected")).toBeVisible();
+        expect(screen.getByText(workerStarted ? "in_progress" : "rejected")).toBeVisible();
         expect(document.getElementById("artifact-brief-panel")).toBeNull();
         expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
       } else {
@@ -810,7 +846,7 @@ describe("SessionDetailPageClient", () => {
           Response.json({ code: "stale_version", error: "Review changed." }, { status }),
         );
         expect(screen.getByText("awaiting_review")).toBeInTheDocument();
-        expect(document.getElementById("artifact-brief-panel")).toBe(brief);
+        expect(brief).toBeInTheDocument();
         expect(within(dialog).getByRole("alert")).toHaveTextContent("Review changed.");
         expect(within(dialog).getByRole("textbox", { name: "Feedback for Wallie" })).toHaveValue(
           note,
@@ -833,7 +869,8 @@ describe("SessionDetailPageClient", () => {
     view.rerender(detail(next));
 
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("tabpanel", { name: "Review brief" })).not.toBe(brief);
+    expect(brief).not.toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Review brief" })).toBeInTheDocument();
     await settle(Response.json({ error: "Old review changed." }, { status: 409 }));
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
     await screen.findByText("No inline comments on this artifact yet.");
