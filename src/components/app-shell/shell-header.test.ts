@@ -303,7 +303,7 @@ describe("ShellHeader", () => {
   });
 
   it("uses Sessions rather than a different workspace as the direct URL fallback", async () => {
-    mocked.pathname = "/w/acme-corp/overview";
+    mocked.pathname = "/w/acme-corp/analytics";
     mocked.searchParams = new URLSearchParams({
       create: "1",
       returnTo: "/w/another-workspace",
@@ -407,6 +407,7 @@ describe("ShellHeader", () => {
     expect(html).toContain("data-shell-header");
     expect(html).toContain(">Sessions</");
     expect(html).not.toContain(">Pipeline</");
+    expect(html).not.toContain(">Overview</");
     expect(html).toContain('href="/w/acme-corp"');
     expect(html).toContain('href="/w/acme-corp/runs"');
     expect(html).toContain('href="/w/acme-corp/settings"');
@@ -418,7 +419,6 @@ describe("ShellHeader", () => {
     ["/w/acme-corp/sessions", "Sessions"],
     ["/w/acme-corp/inbox", "Inbox"],
     ["/w/acme-corp/analytics", "Analytics"],
-    ["/w/acme-corp/overview", "Overview"],
     ["/w/acme-corp/settings/profile", "Settings"],
     ["/w/acme-corp/runs/run-id", "Runs"],
   ])("names the drawer trigger after the current destination at %s", (pathname, label) => {
@@ -508,10 +508,10 @@ describe("ShellHeader", () => {
       "/w/acme-corp/settings",
     );
     expect(
-      within(within(nav).getByRole("list", { name: "Work" })).getByRole("link", {
-        name: "Overview",
+      within(within(nav).getByRole("list", { name: "Improve" })).getByRole("link", {
+        name: "Analytics",
       }),
-    ).toHaveAttribute("href", "/w/acme-corp/overview?factory=factory-1");
+    ).toHaveAttribute("href", "/w/acme-corp/analytics?factory=factory-1");
   });
 
   it.each([
@@ -533,7 +533,8 @@ describe("ShellHeader", () => {
       "href",
       "/w/acme-corp/sessions?factory=all",
     );
-    expect(within(drawer).getByRole("link", { name: "Overview" })).toHaveAccessibleDescription(
+    expect(within(drawer).queryByRole("link", { name: "Overview" })).toBeNull();
+    expect(within(drawer).getByRole("link", { name: "Analytics" })).toHaveAccessibleDescription(
       "Opens in Default Factory",
     );
   });
@@ -549,7 +550,7 @@ describe("ShellHeader", () => {
   });
 
   it("prefetches desktop navigation links on mouse/pen hover or focus and skips touch pointers", () => {
-    mocked.pathname = "/w/acme-corp/overview";
+    mocked.pathname = "/w/acme-corp/analytics";
     mountShell();
 
     const sessionsLink = screen.getByRole("link", { name: "Sessions" });
@@ -581,10 +582,10 @@ describe("ShellHeader", () => {
   });
 
   it("prefetches drawer links on mouse hover or focus and skips touch pointers", async () => {
-    mocked.pathname = "/w/acme-corp/overview";
+    mocked.pathname = "/w/acme-corp/analytics";
     mountShell();
 
-    const drawerTrigger = screen.getByRole("button", { name: "Workspace navigation: Overview" });
+    const drawerTrigger = screen.getByRole("button", { name: "Workspace navigation: Analytics" });
     fireEvent.click(drawerTrigger);
 
     const drawer = await screen.findByRole("dialog", { name: "Workspace pages" });
@@ -666,7 +667,7 @@ describe("shell page title helpers", () => {
     expect(isActiveNavItem("/w/acme-corp", "acme-corp", sessions)).toBe(true);
     expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", sessions)).toBe(true);
     expect(isActiveNavItem("/w/acme-corp/sessions/42", "acme-corp", sessions)).toBe(true);
-    expect(isActiveNavItem("/w/acme-corp/overview", "acme-corp", sessions)).toBe(false);
+    expect(isActiveNavItem("/w/acme-corp/analytics", "acme-corp", sessions)).toBe(false);
     expect(isActiveNavItem("/w/acme-corp/runs/run-id", "acme-corp", sessions)).toBe(false);
   });
 });

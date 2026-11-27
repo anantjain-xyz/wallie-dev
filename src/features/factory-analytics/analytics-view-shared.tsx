@@ -132,8 +132,9 @@ export function MetricPanel({
   id,
   title,
   definition,
+  filters,
   metadata,
-  headline,
+  summary,
   groups,
   href,
   compare,
@@ -141,8 +142,9 @@ export function MetricPanel({
   id: string;
   title: string;
   definition: string;
+  filters?: ReactNode;
   metadata: ReactNode;
-  headline: ReactNode;
+  summary: ReactNode;
   groups: MetricGroup[];
   href: AnalyticsHref;
   compare: boolean;
@@ -156,14 +158,20 @@ export function MetricPanel({
       tabIndex={-1}
     >
       <header className="space-y-2 border-b border-border px-4 py-4 sm:px-6">
-        <h2 className="type-section-title" id={headingId}>
+        <h2 className="type-section-title scroll-mt-4" id={headingId}>
           {title}
         </h2>
-        {headline}
-        <p className="type-secondary max-w-3xl text-muted">{definition}</p>
+        <details className="type-secondary max-w-3xl text-muted">
+          <summary className="w-fit cursor-pointer rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+            Metric definition
+          </summary>
+          <p className="mt-1">{definition}</p>
+        </details>
+        {filters}
+        {summary}
         {metadata}
       </header>
-      <div className="overflow-x-auto border-t border-border">
+      <div className="overflow-x-auto">
         <table className="type-secondary w-full table-fixed text-left">
           <caption className="sr-only">{title} comparison table</caption>
           <thead className="text-muted">

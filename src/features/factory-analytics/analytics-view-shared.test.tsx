@@ -11,7 +11,7 @@ it("renders one evidence link per value and uses the full percentage scale", () 
     <MetricPanel
       compare
       definition="Test"
-      headline={null}
+      summary={null}
       href={(point) => `/analytics?metric=${point?.metric}&period=${point?.period}`}
       id="revert-rate"
       metadata={null}

@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
+
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 
 import { ProjectionControls } from "./projection-controls";
 
@@ -10,6 +12,17 @@ const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 const scope = { factoryId: "example-factory", workspaceId: "example-workspace" };
+
+function show(paused: boolean, rebuilding = false) {
+  render(
+    <OverlayProvider>
+      <section aria-label="Projection controls">
+        <ProjectionControls {...scope} paused={paused} rebuilding={rebuilding} />
+      </section>
+    </OverlayProvider>,
+  );
+  return within(screen.getByRole("region", { name: "Projection controls" }));
+}
 
 afterEach(() => {
   cleanup();
@@ -25,13 +38,16 @@ it.each([
   const response = Promise.withResolvers<Response>();
   const fetch = vi.fn().mockReturnValue(response.promise);
   vi.stubGlobal("fetch", fetch);
-  render(<ProjectionControls {...scope} paused={item.paused} rebuilding={false} />);
-  const status = screen.getByRole("status");
+  const controls = show(item.paused);
+  const status = controls.getByRole("status");
   const action = screen.getByRole("button", { name: item.label });
   action.focus();
   fireEvent.click(action);
+  const dialog = await screen.findByRole("alertdialog", { name: `${item.label}?` });
+  expect(fetch).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole("button", { name: item.label }));
   expect(action).toHaveAccessibleName(item.pending);
-  expect(action).toHaveFocus();
+  await waitFor(() => expect(action).toHaveFocus());
   expect(status).toHaveTextContent(item.pending);
   for (const button of screen.getAllByRole("button")) {
     expect(button).toHaveAttribute("aria-disabled", "true");
@@ -51,7 +67,7 @@ it.each([
     expect(action).toHaveAccessibleName(item.label);
     expect(action).toHaveAttribute("aria-disabled", "false");
   });
-  expect(screen.getByRole("status")).toBe(status);
+  expect(controls.getByRole("status")).toBe(status);
   expect(refresh).toHaveBeenCalledOnce();
 });
 
@@ -60,15 +76,23 @@ it("keeps queued rebuilds unavailable and reports a rejected action without refr
     .fn()
     .mockResolvedValue(Response.json({ error: "Action no longer available." }, { status: 409 }));
   vi.stubGlobal("fetch", fetch);
-  render(<ProjectionControls {...scope} paused rebuilding />);
+  const controls = show(true, true);
   const rebuild = screen.getByRole("button", { name: "Rebuild projection" });
   expect(rebuild).toHaveAttribute("aria-disabled", "true");
   fireEvent.click(rebuild);
   expect(fetch).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: "Resume projection" }));
+  const resume = screen.getByRole("button", { name: "Resume projection" });
+  fireEvent.click(resume);
+  const prompt = await screen.findByRole("alertdialog", { name: "Resume projection?" });
+  fireEvent.click(within(prompt).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(resume).toHaveFocus());
+  expect(fetch).not.toHaveBeenCalled();
+  fireEvent.click(resume);
+  const confirmed = await screen.findByRole("alertdialog", { name: "Resume projection?" });
+  fireEvent.click(within(confirmed).getByRole("button", { name: "Resume projection" }));
   await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent("Action no longer available."),
+    expect(controls.getByRole("status")).toHaveTextContent("Action no longer available."),
   );
   expect(refresh).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Resume projection" })).toHaveAttribute(

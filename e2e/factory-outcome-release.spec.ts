@@ -70,10 +70,11 @@ function analyticsValue(page: Page, section: string, label: string, period = "Cu
     .getByRole("link", { name: `${label}, ${period}, evidence,` });
 }
 
-function overviewValue(page: Page, section: string, label: string, period = "Current period") {
+function highlight(page: Page, name: string) {
   return page
-    .getByRole("region", { name: section, exact: true })
-    .getByRole("link", { name: `${label}, ${period},` });
+    .getByRole("region", { name: "Factory outcomes" })
+    .getByRole("link", { name, exact: true })
+    .locator("../..");
 }
 
 async function download(page: Page, format: "CSV" | "JSON") {
@@ -110,7 +111,7 @@ function csvRecord(value: string | undefined): unknown {
 
 test.use({ actionTimeout: 15_000 });
 
-test("factory outcome release reconciles the signed-in Overview, Analytics and private snapshots", async ({
+test("factory outcome release reconciles the signed-in Analytics report and private snapshots", async ({
   baseURL,
   browser,
   page,
@@ -150,45 +151,36 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     });
     await page
       .getByRole("navigation", { name: "Workspace navigation" })
-      .getByRole("link", { name: "Overview", exact: true })
+      .getByRole("link", { name: "Analytics", exact: true })
       .click();
     await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveAttribute(
       "data-value",
       fixture.factoryId,
     );
-    await page.getByLabel("From date", { exact: true }).fill(fixture.from);
-    await page.getByLabel("To date", { exact: true }).fill(fixture.to);
-    await page.getByLabel("Deployment environment", { exact: true }).fill("production");
-    await page.getByRole("checkbox", { name: "Compare with previous period" }).check();
-    await page.getByRole("button", { name: "Apply filters", exact: true }).click();
-    await expect(page.getByRole("link", { name: "Open Analytics" })).toHaveAttribute(
-      "href",
-      analytics,
-    );
+    await page.goto(overview);
+    await expect(page).toHaveURL(analytics);
     await expect(
-      page.getByRole("region", { name: "Projection health" }).getByText("Current", { exact: true }),
+      page.getByRole("region", { name: "Reporting health" }).getByText("Current", { exact: true }),
     ).toBeVisible();
-    await expect(overviewValue(page, "Time to delivery", "Request to merge")).toContainText(
-      mergeLead,
+    await expect(highlight(page, "Time to delivery")).toContainText(mergeLead);
+    await expect(highlight(page, "Time to delivery")).toContainText(deliveryLead);
+    await expect(highlight(page, "Cost per merged PR")).toContainText(
+      money.format(fixture.expected.costPerObservedMergeUsd),
     );
-    await expect(overviewValue(page, "Time to delivery", "Request to deployment")).toContainText(
-      deliveryLead,
-    );
-    await expect(overviewValue(page, "Cost per merged PR", "Delivery cost")).toContainText(
-      deliveryCost,
-    );
+    await expect(highlight(page, "Cost per merged PR")).toContainText("Known delivery · Partial");
     await expect(
-      overviewValue(page, "Cost per merged PR", "Delivery cost", "Previous period"),
+      analyticsValue(
+        page,
+        "Cost per merged PR",
+        "Delivery cost per observed merge",
+        "Previous period",
+      ),
     ).toContainText("No observed merges");
-    await expect(
-      overviewValue(page, "Pull request throughput", "Observed canonical merges"),
-    ).toContainText(String(fixture.expected.observedMergeCount));
-    await expect(overviewValue(page, "Revert rate", "Verified revert rate")).toContainText(
-      revertRate,
+    await expect(highlight(page, "PR throughput")).toContainText(
+      String(fixture.expected.observedMergeCount),
     );
-    await screenshot(page, info, "01-outcome-overview-light");
+    await expect(highlight(page, "Revert rate")).toContainText(revertRate);
 
-    await page.getByRole("link", { name: "Open Analytics" }).click();
     await expect(
       page.getByRole("heading", { name: "Analytics", exact: true, level: 1 }),
     ).toBeVisible();
@@ -363,7 +355,7 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
       page.getByRole("combobox", { name: /^Break down throughput by/u }),
       "model",
     );
-    await page.getByRole("button", { name: "Apply filters", exact: true }).click();
+    await page.getByRole("button", { name: "Apply breakdown", exact: true }).click();
     await expect(analyticsValue(page, "Pull request throughput", "gpt-5.5")).toHaveText("1");
     await expect(analyticsValue(page, "Pull request throughput", "Unlinked")).toHaveText("3");
     await analyticsValue(page, "Pull request throughput", "gpt-5.5").press("Enter");
@@ -376,7 +368,7 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
       page.getByRole("combobox", { name: /^Break down throughput by/u }),
       "person",
     );
-    await page.getByRole("button", { name: "Apply filters", exact: true }).click();
+    await page.getByRole("button", { name: "Apply breakdown", exact: true }).click();
     const requester = "Morgan Example · Owner";
     await expect(analyticsValue(page, "Pull request throughput", requester)).toHaveText("4");
 
@@ -397,9 +389,9 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     await expect(relationshipId).toBeHidden();
     await evidence
       .locator("details")
-      .filter({ has: relationshipId })
+      .filter({ has: page.getByText(fixture.verifiedRelationshipId, { exact: true }) })
       .last()
-      .locator("summary")
+      .locator(":scope > summary")
       .click();
     await expect(relationshipId).toBeVisible();
 
@@ -607,24 +599,23 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     await fixture.observeSiblingPendingRequest();
     await page.goto(overview);
     await expect(
-      page.getByRole("region", { name: "Projection health" }).getByText("Current", { exact: true }),
+      page.getByRole("region", { name: "Reporting health" }).getByText("Current", { exact: true }),
     ).toBeVisible();
 
     const correction = await fixture.applyLateCorrection();
     await fixture.drainProjections();
     await page.goto(overview);
-    await expect(overviewValue(page, "Time to delivery", "Request to merge")).toContainText(
+    await expect(highlight(page, "Time to delivery")).toContainText(
       duration(fixture.expected.correctedMergeMedianSeconds),
     );
-    await expect(overviewValue(page, "Time to delivery", "Request to deployment")).toContainText(
+    await expect(highlight(page, "Time to delivery")).toContainText(
       duration(fixture.expected.correctedDeploymentMedianSeconds),
     );
-    await expect(
-      overviewValue(page, "Pull request throughput", "Observed canonical merges"),
-    ).toContainText(String(fixture.expected.observedMergeCount));
+    await expect(highlight(page, "PR throughput")).toContainText(
+      String(fixture.expected.observedMergeCount),
+    );
     expect(await (await page.request.get(json.href)).body()).toEqual(json.bytes);
     expect(await (await page.request.get(csv.href)).body()).toEqual(csv.bytes);
-    await page.getByRole("link", { name: "Open Analytics" }).click();
     await expect(analyticsValue(page, "Work flow", "Delivery")).toContainText(
       duration(fixture.expected.correctedDeliveryPhaseSeconds),
     );
@@ -654,19 +645,17 @@ test("factory outcome release reconciles the signed-in Overview, Analytics and p
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(overview);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    const menu = page.getByRole("button", { name: "Workspace navigation: Overview" });
+    const menu = page.getByRole("button", { name: "Workspace navigation: Analytics" });
     await menu.press("Enter");
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
-    await expect(drawer.getByRole("link", { name: "Overview", exact: true })).toHaveAttribute(
+    await expect(drawer.getByRole("link", { name: "Analytics", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
     await page.keyboard.press("Escape");
     await expect(menu).toBeFocused();
-    await expect(overviewValue(page, "Time to delivery", "Request to deployment")).toContainText(
-      "5 h",
-    );
-    await screenshot(page, info, "06-outcome-overview-dark-mobile");
+    await expect(highlight(page, "Time to delivery")).toContainText("5 h");
+    await screenshot(page, info, "06-outcome-analytics-dark-mobile");
   } finally {
     try {
       await managerContext.close();

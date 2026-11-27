@@ -145,12 +145,12 @@ test("creation from a deep link closes immediately and lets navigation win over 
   await expect(page).toHaveURL(`${workspacePath}/sessions`);
   await page
     .getByRole("navigation", { name: "Workspace navigation" })
-    .getByRole("link", { name: "Overview", exact: true })
+    .getByRole("link", { name: "Analytics", exact: true })
     .click();
-  await expect(page).toHaveURL(`${workspacePath}/overview`);
+  await expect(page).toHaveURL(`${workspacePath}/analytics`);
   createGate.release();
   await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
-  await expect(page).toHaveURL(`${workspacePath}/overview`);
+  await expect(page).toHaveURL(`${workspacePath}/analytics`);
   await page.getByRole("button", { name: "Open session", exact: true }).click();
   await expect(page).toHaveURL(`${workspacePath}/sessions/1`);
 });

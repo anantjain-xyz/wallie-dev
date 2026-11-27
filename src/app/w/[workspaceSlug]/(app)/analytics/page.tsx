@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import {
   loadAnalyticsEvidence,
@@ -15,9 +17,11 @@ import { recoverAnalyticsFilters } from "@/features/factory-analytics/analytics-
 import { AnalyticsReportingFilters } from "@/features/factory-analytics/analytics-reporting-filters";
 import { RoutingCanaryComparison } from "@/features/factory-analytics/routing-canary-comparison";
 import { loadRoutingCanaryComparison } from "@/features/factory-analytics/routing-canary-data";
+import { ReportingHealth } from "@/features/factory-analytics/reporting-health";
 import { resolveAnalyticsFactory } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
-import { AnalyticsView } from "@/features/factory-analytics/analytics-view";
+import { AnalyticsDetailsView, AnalyticsView } from "@/features/factory-analytics/analytics-view";
+import { timeLabel } from "@/features/factory-analytics/analytics-view-shared";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { ScorerTrends } from "@/features/factory-scorers/scorer-trends";
@@ -58,11 +62,8 @@ export default async function AnalyticsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const { query, errors, dates } = recoverAnalyticsFilters(search);
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
-  const { currentMember, supabase, workspace } =
-    await loadAuthenticatedWorkspaceContext(workspaceSlug);
-  const factory = resolveAnalyticsFactory(factories, query.factoryId);
+  const factory = resolveAnalyticsFactory(factories, search.factory);
   if (!factory)
     return (
       <FactoryUnavailable
@@ -73,11 +74,21 @@ export default async function AnalyticsPage({
             selectedValue="unavailable"
           />
         }
+        description={
+          factories.length ? "Choose a factory you can access to see its reports." : undefined
+        }
         title="Analytics"
         workspaceSlug={workspaceSlug}
       />
     );
 
+  const { query, errors, dates } = recoverAnalyticsFilters(search);
+  if (search.overviewFilters === "invalid") {
+    errors.other =
+      "Some filters from this Overview bookmark couldn’t be carried over. Review and apply the filters to see the report.";
+  }
+  const { currentMember, supabase, workspace } =
+    await loadAuthenticatedWorkspaceContext(workspaceSlug);
   const scope = { supabase, workspaceId: workspace.id, factoryId: factory.id, query };
   const path = workspaceAnalyticsPath(workspaceSlug);
   const reportingWindow = {
@@ -86,8 +97,6 @@ export default async function AnalyticsPage({
   };
   const trendQuery = parseScorerTrendQuery({ ...search, ...reportingWindow });
   const scorerFields = analyticsScorerFields(trendQuery);
-  const coreFields = analyticsCoreFields(factory.id, query);
-  const evidenceFields = analyticsEvidenceFields(query.evidence);
   const environmentsRead = loadDeploymentEnvironments(scope);
   const factorySelector = (
     <FactorySelector
@@ -112,15 +121,98 @@ export default async function AnalyticsPage({
       </PageContainer>
     );
   }
+  const periodsRead = loadAnalyticsPeriods(scope);
+  return (
+    <AnalyticsView
+      workspaceId={workspace.id}
+      workspaceSlug={workspace.slug}
+      factory={factory}
+      factorySelector={factorySelector}
+      scorerFields={scorerFields}
+      query={query}
+      periods={periodsRead}
+      reportingHealth={
+        <Suspense
+          fallback={
+            <p className="type-secondary px-4 py-3 text-muted">Loading reporting health…</p>
+          }
+        >
+          <ReportingHealth
+            captureStartedAt={
+              <Suspense fallback="Loading…">
+                <LifecycleCaptureStart periods={periodsRead} />
+              </Suspense>
+            }
+            factoryId={factory.id}
+            supabase={supabase}
+            workspaceId={workspace.id}
+          />
+        </Suspense>
+      }
+      details={
+        <Suspense fallback={<p className="type-secondary text-muted">Loading report details…</p>}>
+          <AnalyticsDetails
+            scope={scope}
+            workspaceSlug={workspace.slug}
+            canReadCanary={factory.canManage === true}
+            canManageCanary={factory.status === "active" && isWorkspaceOperator(currentMember)}
+            periodsRead={periodsRead}
+            environmentsRead={environmentsRead}
+            reportingWindow={reportingWindow}
+            trendQuery={trendQuery}
+            scorerFields={scorerFields}
+          />
+        </Suspense>
+      }
+    />
+  );
+}
+
+async function LifecycleCaptureStart({
+  periods,
+}: {
+  periods: ReturnType<typeof loadAnalyticsPeriods>;
+}) {
+  const {
+    primary: { flow },
+  } = await periods;
+  return timeLabel(flow.status === "ready" ? flow.data.coverage.lifecycleFrom : null);
+}
+
+async function AnalyticsDetails({
+  scope,
+  workspaceSlug,
+  canReadCanary,
+  canManageCanary,
+  periodsRead,
+  environmentsRead,
+  reportingWindow,
+  trendQuery,
+  scorerFields,
+}: {
+  scope: Parameters<typeof loadAnalyticsPeriods>[0];
+  workspaceSlug: string;
+  canReadCanary: boolean;
+  canManageCanary: boolean;
+  periodsRead: ReturnType<typeof loadAnalyticsPeriods>;
+  environmentsRead: ReturnType<typeof loadDeploymentEnvironments>;
+  reportingWindow: { from: string; to: string };
+  trendQuery: ReturnType<typeof parseScorerTrendQuery>;
+  scorerFields: ReturnType<typeof analyticsScorerFields>;
+}) {
+  const { supabase, query, factoryId } = scope;
+  const path = workspaceAnalyticsPath(workspaceSlug);
+  const coreFields = analyticsCoreFields(factoryId, query);
+  const evidenceFields = analyticsEvidenceFields(query.evidence);
   const unavailableCanary = {
     kind: "unavailable",
     alertRequested: Boolean(query.routingAlertId),
   } as const;
   const [periods, evidence, trend, canary, environments] = await Promise.all([
-    loadAnalyticsPeriods(scope),
+    periodsRead,
     loadAnalyticsEvidence(scope),
     trendQuery ? loadScoreTrendPanel(supabase, scope, trendQuery).catch(() => null) : null,
-    factory.canManage
+    canReadCanary
       ? loadRoutingCanaryComparison(supabase, {
           ...scope,
           canaryId: query.routingCanaryId,
@@ -146,11 +238,9 @@ export default async function AnalyticsPage({
   const liveReportHref =
     canary?.kind === "retained" ? canaryHref({ routingAlert: undefined }) : undefined;
   return (
-    <AnalyticsView
-      workspaceId={workspace.id}
-      workspaceSlug={workspace.slug}
-      factory={factory}
-      factorySelector={factorySelector}
+    <AnalyticsDetailsView
+      workspaceSlug={workspaceSlug}
+      factoryId={factoryId}
       environments={environments}
       labels={labels}
       scorerFields={scorerFields}
@@ -162,8 +252,8 @@ export default async function AnalyticsPage({
           <RoutingCanaryComparison
             state={canary}
             workspaceSlug={workspaceSlug}
-            factoryId={factory.id}
-            canManageFactory={factory.status === "active" && isWorkspaceOperator(currentMember)}
+            factoryId={factoryId}
+            canManageFactory={canManageCanary}
             latestAlertHref={latestAlertHref}
             liveReportHref={liveReportHref}
           />
@@ -177,7 +267,7 @@ export default async function AnalyticsPage({
           query={trendQuery}
           reportingWindow={reportingWindow}
           selectRevision
-          workspaceSlug={workspace.slug}
+          workspaceSlug={workspaceSlug}
         />
       }
     />
