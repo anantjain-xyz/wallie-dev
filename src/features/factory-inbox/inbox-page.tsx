@@ -448,43 +448,42 @@ function InboxRow({
   workspaceSlug: string;
 }) {
   const clarification = item.kind === "clarification";
-  const action = clarification ? "Answer clarification" : "Open review";
   return (
-    <li className="grid min-w-0 items-start gap-x-6 gap-y-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:px-5">
+    <li className="grid min-w-0 items-start gap-x-5 gap-y-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:px-5">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <Status
-            compact
-            label={clarification ? "Clarification needed" : "Awaiting review"}
-            value="awaiting_review"
-          />
-          {item.hasBlockingFeedback ? (
-            <Status compact label="Blocking feedback" value="blocked" />
-          ) : null}
-        </div>
-        <h3 className="mt-2 text-sm font-semibold text-foreground [overflow-wrap:anywhere]">
-          {item.title}
+        <h3 className="text-sm font-semibold text-foreground [overflow-wrap:anywhere]">
+          <Link
+            className="underline decoration-border-strong underline-offset-4 hover:decoration-current"
+            href={workspaceSessionDetailPath(workspaceSlug, item.sessionNumber, {
+              ...sessionReviewQuery(item),
+              returnTo,
+            })}
+            prefetch={false}
+          >
+            {item.title}
+          </Link>
         </h3>
-        <p className="mt-1 text-xs text-muted [overflow-wrap:anywhere]">
-          {item.factoryName} · {item.stageName} · Version {item.artifactVersion}
-        </p>
-        <p className="mt-1 text-xs text-muted [overflow-wrap:anywhere]">
-          {item.sourceLabel}
-          {" · "}
-          <TimeDisplay initialNow={initialNow} value={item.occurredAt} variant="relative" />
-        </p>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted [overflow-wrap:anywhere]">
+          <p>
+            {item.factoryName} · {item.stageName} · Version {item.artifactVersion}
+          </p>
+          <p>
+            {item.sourceLabel}
+            {" · "}
+            <TimeDisplay initialNow={initialNow} value={item.occurredAt} variant="relative" />
+          </p>
+        </div>
       </div>
-      <Link
-        aria-label={`${action} for ${item.title}`}
-        className="ui-button min-h-11 justify-self-start sm:min-h-9 sm:justify-self-end"
-        href={workspaceSessionDetailPath(workspaceSlug, item.sessionNumber, {
-          ...sessionReviewQuery(item),
-          returnTo,
-        })}
-        prefetch={false}
-      >
-        {action}
-      </Link>
+      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+        <Status
+          compact
+          label={clarification ? "Clarification needed" : "Awaiting review"}
+          value="awaiting_review"
+        />
+        {item.hasBlockingFeedback ? (
+          <Status compact label="Blocking feedback" value="blocked" />
+        ) : null}
+      </div>
     </li>
   );
 }

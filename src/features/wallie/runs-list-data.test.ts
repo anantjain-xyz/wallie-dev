@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  loadWorkspaceFactoryOptions: vi.fn(),
   loadWorkspaceLayoutContext: vi.fn(),
   loadWorkspaceRunCatalogPage: vi.fn(),
   RunCatalogCursorError: class extends Error {},
   RunCatalogWorkspaceUnavailableError: class extends Error {},
+}));
+vi.mock("@/features/factories/factory-options-data", () => ({
+  loadWorkspaceFactoryOptions: mocked.loadWorkspaceFactoryOptions,
 }));
 vi.mock("@/features/workspaces/workspace-layout-data", () => ({
   loadWorkspaceLayoutContext: mocked.loadWorkspaceLayoutContext,
@@ -25,6 +29,7 @@ import { loadRunsListData } from "@/features/wallie/runs-list-data";
 const supabase = {};
 beforeEach(() => {
   vi.resetAllMocks();
+  mocked.loadWorkspaceFactoryOptions.mockResolvedValue([]);
   mocked.loadWorkspaceLayoutContext.mockResolvedValue({
     supabase,
     workspace: { id: "authorized-workspace", slug: "canonical" },
@@ -53,6 +58,21 @@ describe("Runs page data", () => {
     const data = await loadRunsListData("requested", { provider: "invalid" });
     expect(data.state).toEqual({ kind: "invalid-query" });
     expect(mocked.loadWorkspaceRunCatalogPage).not.toHaveBeenCalled();
+  });
+
+  it("uses only authenticated factory names on the cross-factory list", async () => {
+    mocked.loadWorkspaceFactoryOptions.mockResolvedValue([
+      { id: "visible-factory", name: "Release team" },
+    ]);
+    mocked.loadWorkspaceRunCatalogPage.mockResolvedValue({ runs: [], nextCursor: null });
+
+    expect((await loadRunsListData("requested", {})).factoryNames).toEqual({
+      "visible-factory": "Release team",
+    });
+    expect(
+      (await loadRunsListData("requested", {}, "visible-factory")).factoryNames,
+    ).toBeUndefined();
+    expect(mocked.loadWorkspaceFactoryOptions).toHaveBeenCalledExactlyOnceWith("requested");
   });
 
   it("keeps an invalid cursor distinct from an empty result and preserves valid filters", async () => {

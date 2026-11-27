@@ -9,7 +9,7 @@ import type { WorkspaceRunCatalogItem } from "@/features/wallie/run-catalog";
 import { RunsList } from "@/features/wallie/runs-list";
 import {
   parseRunsListQuery,
-  runCatalogActivityLabel,
+  runCatalogActivityWarning,
   runCatalogCostLabel,
   runListReturn,
   runsListPageHref,
@@ -99,6 +99,7 @@ describe("Runs list", () => {
       attemptCount: 1,
       stageOrdinal: 1,
       status: "error" as const,
+      usage: { ...run.usage, totalCostUsd: 0.125, costProvenance: "measured" as const },
     };
     render(
       <RunsList
@@ -107,25 +108,29 @@ describe("Runs list", () => {
           workspaceId: WORKSPACE_ID,
           workspaceSlug: "acme",
           query: {},
+          factoryNames: { [run.factoryId]: "Release lab" },
           state: { kind: "ready", page: { runs: [run, earlier], nextCursor: null } },
         }}
       />,
     );
+    const latest = screen.getByRole("link", {
+      name: "Improve sign-in reliability — Build, attempt 2",
+    });
+    expect(latest).toHaveAttribute("href", `/w/acme/runs/${RUN_ID}`);
+    expect(latest.closest("li")?.querySelectorAll("a")).toHaveLength(2);
     expect(
       screen
-        .getByRole("link", { name: "Inspect run for session 42, Build, attempt 2" })
-        .getAttribute("href"),
-    ).toBe(`/w/acme/runs/${RUN_ID}`);
-    expect(
-      screen
-        .getByRole("link", { name: "Inspect run for session 42, Build, attempt 1" })
+        .getByRole("link", { name: "Improve sign-in reliability — Build, attempt 1" })
         .getAttribute("href"),
     ).toBe(`/w/acme/runs/${earlier.id}`);
-    expect(screen.getAllByRole("link", { name: "#42" })[0]?.getAttribute("href")).toBe(
+    expect(screen.getAllByRole("link", { name: "Session #42" })[0]?.getAttribute("href")).toBe(
       run.sessionRunHref,
     );
     expect(screen.getByText("2 runs on this page")).toBeTruthy();
-    expect(screen.getAllByText("Cost unavailable")).toHaveLength(2);
+    expect(screen.getAllByText(/Release lab/)).toHaveLength(2);
+    expect(screen.getByText("$0.125 measured")).toBeVisible();
+    expect(screen.queryByText("Cost unavailable")).toBeNull();
+    expect(screen.queryByText("Structured activity")).toBeNull();
     expect(screen.queryByText("$0.00")).toBeNull();
   });
 
@@ -149,7 +154,7 @@ describe("Runs list", () => {
       />,
     );
     const older = new URL(
-      screen.getByRole("link", { name: "Older runs →" }).getAttribute("href") ?? "",
+      screen.getByRole("link", { name: "Older runs" }).getAttribute("href") ?? "",
       "http://localhost",
     );
     expect(Object.fromEntries(older.searchParams)).toEqual({
@@ -160,32 +165,26 @@ describe("Runs list", () => {
       stageId: STAGE_ID,
       factory: "all",
     });
-    const latest = screen.getByRole("link", { name: "Back to latest" }).getAttribute("href");
+    const latest = screen.getByRole("link", { name: "Latest runs" }).getAttribute("href");
     expect(latest).toContain("status=error");
     expect(latest).not.toContain("cursor=");
 
-    const inspectorLinks = [
-      screen.getByRole("link", { name: /Improve sign-in reliability/ }),
-      screen.getByRole("link", { name: "Inspect run for session 42, Build, attempt 2" }),
-    ];
-    for (const link of inspectorLinks) {
-      const inspector = new URL(link.getAttribute("href")!, "https://wallie.test");
-      expect(inspector.pathname).toBe(`/w/acme/runs/${RUN_ID}`);
-      const back = runListReturn("acme", inspector.searchParams.get("fromRuns")!);
-      expect(back?.label).toBe("Back to filtered runs");
-      expect(Object.fromEntries(new URL(back!.href, "https://wallie.test").searchParams)).toEqual({
-        cursor: "previous",
-        status: "error",
-        provider: "codex",
-        sessionId: SESSION_ID,
-        stageId: STAGE_ID,
-        factory: "all",
-      });
-    }
+    const link = screen.getByRole("link", { name: /Improve sign-in reliability/ });
+    const inspector = new URL(link.getAttribute("href")!, "https://wallie.test");
+    expect(inspector.pathname).toBe(`/w/acme/runs/${RUN_ID}`);
+    const back = runListReturn("acme", inspector.searchParams.get("fromRuns")!);
+    expect(back?.label).toBe("Back to filtered runs");
+    expect(Object.fromEntries(new URL(back!.href, "https://wallie.test").searchParams)).toEqual({
+      cursor: "previous",
+      status: "error",
+      provider: "codex",
+      sessionId: SESSION_ID,
+      stageId: STAGE_ID,
+      factory: "all",
+    });
 
     fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
     fireEvent.click(screen.getByRole("option", { name: "Canceled" }));
-    fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
     expect(mocked.push).toHaveBeenCalledTimes(1);
     const destination = new URL(mocked.push.mock.calls[0]?.[0], "http://localhost");
     expect(Object.fromEntries(destination.searchParams)).toEqual({
@@ -195,7 +194,8 @@ describe("Runs list", () => {
       stageId: STAGE_ID,
       factory: "all",
     });
-    expect(screen.getByRole("link", { name: "Clear" }).getAttribute("href")).toBe(
+    expect(mocked.push.mock.calls[0]?.[1]).toEqual({ scroll: false });
+    expect(screen.getByRole("link", { name: "Clear filters" }).getAttribute("href")).toBe(
       "/w/acme/runs?factory=all",
     );
   });
@@ -220,10 +220,8 @@ describe("Runs list", () => {
     expect(screen.getByRole("combobox", { name: "Stage" }).textContent).toContain(
       "Build (archived) · Release",
     );
-    fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
-    expect(mocked.push).toHaveBeenCalledWith(
-      `/w/acme/runs?sessionId=${SESSION_ID}&stageId=${STAGE_ID}`,
-    );
+    expect(screen.getAllByRole("link", { name: "Clear filters" })).toHaveLength(1);
+    expect(mocked.push).not.toHaveBeenCalled();
   });
 
   it.each(["reliability", "#42"])(
@@ -252,9 +250,9 @@ describe("Runs list", () => {
         `/api/workspaces/${WORKSPACE_ID}/runs/session-options?${new URLSearchParams({ factory: FACTORY_ID, q: query })}`,
         expect.anything(),
       );
+      expect(mocked.push).not.toHaveBeenCalled();
       fireEvent.keyDown(input, { key: "Enter" });
-      expect(input.value).toBe("#42 Improve sign-in reliability");
-      fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
+      expect(input).toHaveAttribute("aria-expanded", "false");
       const destination = new URL(mocked.push.mock.calls[0]?.[0], "https://wallie.test");
       expect(Object.fromEntries(destination.searchParams)).toEqual({
         status: "error",
@@ -300,8 +298,7 @@ describe("Runs list", () => {
       expect(clearOption).toHaveAttribute("aria-selected", "false");
       expect(input).toHaveAttribute("aria-activedescendant", clearOption.id);
       fireEvent.keyDown(input, { key: "Enter" });
-      expect(input.value).toBe("Any session");
-      fireEvent.submit(screen.getByRole("form", { name: "Filter runs" }));
+      expect(input).toHaveAttribute("aria-expanded", "false");
       const destination = new URL(mocked.push.mock.calls[0]?.[0], "https://wallie.test");
       expect(Object.fromEntries(destination.searchParams)).toEqual({
         status: "error",
@@ -344,7 +341,6 @@ describe("Runs list", () => {
         />
       </PortalRootProvider>,
     );
-    const form = screen.getByRole<HTMLFormElement>("form", { name: "Filter runs" });
     const input = screen.getByRole("combobox", { name: "Session" });
     await user.click(input);
     const match = await screen.findByRole("option", {
@@ -363,7 +359,7 @@ describe("Runs list", () => {
     expect(input).toHaveAttribute("aria-activedescendant", match.id);
     expect(input).toHaveFocus();
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
-    expect(new FormData(form).get("sessionId")).toBe(SESSION_ID);
+    expect(mocked.push).not.toHaveBeenCalled();
     expect(listbox).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
@@ -374,11 +370,7 @@ describe("Runs list", () => {
     await user.keyboard("{ArrowDown}");
     await user.click(await screen.findByRole("option", { name: /Check release logs/ }));
     expect(input).toHaveFocus();
-    expect(input).toHaveValue(other.label);
-    expect(new FormData(form).get("sessionId")).toBe(other.id);
-    expect(mocked.push).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(mocked.push).toHaveBeenCalledOnce();
     const destination = new URL(mocked.push.mock.calls[0]?.[0], "https://wallie.test");
     expect(Object.fromEntries(destination.searchParams)).toEqual({
       status: "error",
@@ -438,11 +430,10 @@ describe("Runs list", () => {
     expect(fetch.mock.calls[2]?.[1]?.signal?.aborted).toBe(true);
     expect(input).toHaveValue("Session unavailable");
     expect(screen.queryByRole("listbox", { name: "Session matches" })).not.toBeInTheDocument();
-    const form = screen.getByRole<HTMLFormElement>("form", { name: "Filter runs" });
-    expect(new FormData(form).get("sessionId")).toBe(SESSION_ID);
+    expect(mocked.push).not.toHaveBeenCalled();
   });
 
-  it("clears only the unavailable selection and restarts pagination", () => {
+  it("labels unavailable choices and clears the filters and cursor without changing factory", () => {
     render(
       <RunsList
         initialNow={now}
@@ -450,18 +441,23 @@ describe("Runs list", () => {
         data={{
           workspaceId: WORKSPACE_ID,
           workspaceSlug: "acme",
-          query: { cursor: "previous", status: "error", sessionId: SESSION_ID, stageId: STAGE_ID },
+          query: {
+            cursor: "previous",
+            status: "error",
+            sessionId: SESSION_ID,
+            stageId: STAGE_ID,
+            limit: 10,
+          },
           state: { kind: "ready", page: { runs: [], nextCursor: null } },
         }}
       />,
     );
-    const href = screen
-      .getByRole("link", { name: "Clear unavailable session" })
-      .getAttribute("href");
+    expect(screen.getByRole("combobox", { name: "Session" })).toHaveValue("Session unavailable");
+    expect(screen.getByRole("combobox", { name: "Stage" })).toHaveTextContent("Stage unavailable");
+    const href = screen.getByRole("link", { name: "Clear filters" }).getAttribute("href");
     expect(Object.fromEntries(new URL(href!, "https://wallie.test").searchParams)).toEqual({
       factory: FACTORY_ID,
-      status: "error",
-      stageId: STAGE_ID,
+      limit: "10",
     });
   });
 
@@ -565,7 +561,7 @@ describe("Runs list", () => {
 });
 
 describe("Runs list state", () => {
-  it("accepts blank GET form fields but rejects malformed or repeated filters", () => {
+  it("accepts legacy blank filter parameters but rejects malformed or repeated filters", () => {
     expect(parseRunsListQuery({ provider: "", status: "error", limit: "20" })).toMatchObject({
       success: true,
       data: { status: "error", limit: 20 },
@@ -585,37 +581,37 @@ describe("Runs list state", () => {
     );
   });
 
-  it("distinguishes unavailable, pending and interrupted capture", () => {
+  it("surfaces missing or interrupted capture without repeating routine activity states", () => {
     expect(
-      runCatalogActivityLabel({ ...run, transcript: { ...run.transcript, hasEvents: false } }),
+      runCatalogActivityWarning({ ...run, transcript: { ...run.transcript, hasEvents: false } }),
     ).toBe("Activity unavailable");
     expect(
-      runCatalogActivityLabel({
+      runCatalogActivityWarning({
         ...run,
         status: "running",
         transcript: { ...run.transcript, hasEvents: false },
       }),
-    ).toBe("No activity yet");
+    ).toBeNull();
     expect(
-      runCatalogActivityLabel({ ...run, transcript: { ...run.transcript, captureEnded: false } }),
+      runCatalogActivityWarning({ ...run, transcript: { ...run.transcript, captureEnded: false } }),
     ).toBe("Capture incomplete");
     expect(
-      runCatalogActivityLabel({
+      runCatalogActivityWarning({
         ...run,
         transcript: { ...run.transcript, captureInterrupted: true },
       }),
     ).toBe("Capture interrupted");
     expect(
-      runCatalogActivityLabel({
+      runCatalogActivityWarning({
         ...run,
         status: "running",
         transcript: { ...run.transcript, captureEnded: false },
       }),
-    ).toBe("Structured activity");
+    ).toBeNull();
   });
 
   it("distinguishes measured zero, estimates and unavailable cost", () => {
-    expect(runCatalogCostLabel(run)).toBe("Cost unavailable");
+    expect(runCatalogCostLabel(run)).toBeNull();
     expect(
       runCatalogCostLabel({
         ...run,

@@ -248,14 +248,12 @@ test("reopens an exact retained run after browser closure and worker restart", a
     await test.step("Inspect the same run and its accepted evidence after the restart", async () => {
       await inspected.goto(`${workspacePath}/runs`);
       const exactRun = inspected
-        .getByRole("list", { name: "Runs" })
-        .getByRole("link", { name: /^Inspect run for session / })
+        .getByRole("list", { name: /^Runs/ })
+        .getByRole("link")
         .and(inspected.locator(`a[href="${runPath}"], a[href^="${runPath}?fromRuns="]`));
       await expect(exactRun).toHaveCount(1);
       await exactRun.click();
-      await expect(
-        inspected.getByText("This attempt completed successfully.", { exact: true }),
-      ).toBeVisible();
+      await expect(inspected.getByText("Complete", { exact: true }).first()).toBeVisible();
       const activity = inspected.getByRole("list", { name: "Run activity" });
       for (const label of [run.initialText, run.reconnectText, "Completion", "Capture ended"]) {
         await expect(activity.getByText(label, { exact: true })).toHaveCount(1);
@@ -310,7 +308,10 @@ test("reopens an exact retained run after browser closure and worker restart", a
       });
       expect(bytes.toString()).toBe(outcome.payload.finalOutput);
 
-      const link = inspected.getByRole("link", { name: "Open artifact", exact: true });
+      const link = inspected.getByRole("link", {
+        name: `${run.stageSlug} · Version ${accepted.artifactVersion}`,
+        exact: true,
+      });
       await expect(link).toHaveCount(1);
       await link.click();
       await expect(inspected).toHaveURL(

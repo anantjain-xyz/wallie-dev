@@ -94,9 +94,9 @@ test("Settings and Sessions launches keep scoped recovery and exact run returns"
   const filteredRuns = `${runs}?status=success&factory=all`;
   await page.goto(filteredRuns);
   const row = main.getByRole("list", { name: "Runs", exact: true }).getByRole("listitem").first();
-  const session = row.getByRole("link", { name: /^#\d+$/u });
+  const session = row.getByRole("link", { name: /^Session #\d+$/u });
   await expect(session).toHaveAttribute("href", /\/sessions\/\d+#wallie-run-[\da-f-]+$/u);
-  await row.getByRole("link", { name: /^Inspect run for session /u }).click();
+  await row.getByRole("link", { name: /— .*?(?:attempt \d+|created )/u }).press("Enter");
   await expect(page).toHaveURL((url) => url.pathname.startsWith(`${runs}/`));
   const back = main.getByRole("link", { name: "← Back to filtered runs", exact: true });
   await expect(back).toHaveAttribute("href", filteredRuns);

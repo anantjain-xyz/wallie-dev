@@ -328,7 +328,7 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
   const rail = page.getByRole("navigation", { name: "Workspace navigation" });
   await rail.getByRole("link", { name: "Inbox", exact: true }).click();
   await expect(page).toHaveURL((url) => url.pathname === `${boardPath}/inbox`);
-  const review = page.getByRole("link", { name: `Open review for ${firstReviewTitle}` });
+  const review = page.getByRole("link", { name: firstReviewTitle, exact: true });
   const href = await review.getAttribute("href");
   expect(href).toBeTruthy();
   const exact = new URL(href!, page.url());
@@ -352,7 +352,8 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
   await expect(page).toHaveURL((url) => url.pathname === `${boardPath}/runs`);
   const runsFactory = await factory(page).getAttribute("data-value");
   const inspect = page
-    .getByRole("link", { name: /Inspect run for session .*attempt \d+/i })
+    .getByRole("list", { name: /^Runs/ })
+    .getByRole("link", { name: /— .*attempt \d+/i })
     .first();
   const run = await inspect.getAttribute("href");
   const runUrl = new URL(run!, page.url());

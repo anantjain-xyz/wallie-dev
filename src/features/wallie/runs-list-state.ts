@@ -30,21 +30,6 @@ export function runsListPageHref(
   return withFactoryQuery(workspaceRunsPath(workspaceSlug, { ...query, cursor }), factoryQuery);
 }
 
-export function runsListFilterHref(
-  workspaceSlug: string,
-  form: FormData,
-  limit?: number,
-  factoryQuery?: string,
-  revision?: Pick<RunCatalogQuery, "agentId" | "agentPromptRevisionId">,
-) {
-  const query: Record<string, string | number | undefined> = { limit, ...revision };
-  for (const key of ["status", "provider", "sessionId", "stageId"]) {
-    const value = form.get(key);
-    if (typeof value === "string" && value) query[key] = value;
-  }
-  return withFactoryQuery(workspaceRunsPath(workspaceSlug, query), factoryQuery);
-}
-
 export function runsListHasFilters(query: RunCatalogQuery) {
   return Boolean(
     query.status || query.provider || query.sessionId || query.stageId || query.agentId,
@@ -86,16 +71,16 @@ export function runListReturn(
   };
 }
 
-export function runCatalogActivityLabel(run: WorkspaceRunCatalogItem) {
+export function runCatalogActivityWarning(run: WorkspaceRunCatalogItem) {
   if (run.transcript.expiredAt) return "Transcript expired";
   if (run.transcript.hasEvents) {
     if (run.transcript.captureInterrupted) return "Capture interrupted";
     if (!run.transcript.captureEnded && isWallieRunTerminalStatus(run.status)) {
       return "Capture incomplete";
     }
-    return "Structured activity";
+    return null;
   }
-  return isWallieRunTerminalStatus(run.status) ? "Activity unavailable" : "No activity yet";
+  return isWallieRunTerminalStatus(run.status) ? "Activity unavailable" : null;
 }
 
 export function runCatalogRecoveryLabel(run: WorkspaceRunCatalogItem): string | null {
@@ -116,15 +101,15 @@ export function runCatalogRecoveryLabel(run: WorkspaceRunCatalogItem): string | 
 }
 
 export function runCatalogCostLabel(run: WorkspaceRunCatalogItem) {
-  const { totalCostUsd, costProvenance } = run.usage;
-  if (totalCostUsd === null || costProvenance === "unavailable") return "Cost unavailable";
+  const { totalCostUsd, costProvenance, finalized } = run.usage;
+  if (totalCostUsd === null || costProvenance === "unavailable") return null;
   const amount = totalCostUsd.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 2,
     maximumFractionDigits: 4,
   });
-  return costProvenance === "estimated" ? `${amount} estimated` : `${amount} measured`;
+  return `${amount} ${costProvenance}${finalized ? "" : " · Not final"}`;
 }
 
 export const RUN_PROVIDER_LABELS: Record<string, string> = {

@@ -245,7 +245,10 @@ test("desktop sidebar stays expanded and retains existing workbench, run and Set
   await runs.click();
   await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
   await expect(runs).toHaveAttribute("aria-current", "page");
-  const runLink = page.getByRole("link", { name: /Inspect run for session/ }).first();
+  const runLink = page
+    .getByRole("list", { name: /^Runs/ })
+    .getByRole("link", { name: /— .*?(?:attempt \d+|created )/u })
+    .first();
   const runHref = await runLink.getAttribute("href");
   if (!runHref) throw new Error("The seeded run link is missing.");
   await page.goto(runHref);
