@@ -16,6 +16,10 @@ export type SettingsDataChangedDetail = {
   update: SettingsDataUpdate;
   workspaceId: string;
 };
+export type SandboxChangedDetail = {
+  settings: SandboxSettingsResponse;
+  workspaceId: string;
+};
 
 export type SettingsDataReplayConsumer = "repository" | "runtime-sandbox" | "verify-setup";
 
@@ -90,8 +94,10 @@ export function subscribeToSettingsSandboxChanges(
   initialData: SettingsPageData,
   onChange: (settings: SandboxSettingsResponse) => void,
 ) {
-  const handleChange = (event: Event) =>
-    onChange((event as CustomEvent<SandboxSettingsResponse>).detail);
+  const handleChange = (event: Event) => {
+    const { settings, workspaceId } = (event as CustomEvent<SandboxChangedDetail>).detail;
+    if (workspaceId === initialData.workspace.id) onChange(settings);
+  };
   window.addEventListener(SETTINGS_SANDBOX_CHANGED, handleChange);
 
   const pending = replaySettingsDataChanges(initialData, "runtime-sandbox").sandboxSettings;

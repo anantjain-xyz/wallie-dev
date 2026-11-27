@@ -40,6 +40,7 @@ import {
   SETTINGS_SECRETS_CHANGED,
   type GithubChangedDetail,
   type PipelineChangedDetail,
+  type SandboxChangedDetail,
   type SecretsChangedDetail,
 } from "@/features/settings/settings-island-events";
 
@@ -129,6 +130,7 @@ export function RepositoryIntegrationIsland({ initialData }: { initialData: Sett
 
 export function VercelIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
   const [data, setData] = useState(initialData);
+  const workspaceId = data.workspace.id;
   const { feedback, setMessage } = useIslandFeedback();
   return (
     <>
@@ -137,15 +139,18 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
         canManage={data.canManage}
         onSettingsChange={(settings) => {
           setData((current) => applySandboxSettingsToData(current, settings));
-          dispatchSettingsEvent(SETTINGS_SANDBOX_CHANGED, settings);
-          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+          dispatchSettingsEvent<SandboxChangedDetail>(SETTINGS_SANDBOX_CHANGED, {
+            settings,
+            workspaceId,
+          });
+          dispatchSettingsDataChanged(workspaceId, (current: SettingsPageData) =>
             applySandboxSettingsToData(current, settings),
           );
         }}
         setFlashMessage={setMessage}
         settings={data.sandboxSettings}
         vercelConnection={data.vercelSandboxConnection}
-        workspaceId={data.workspace.id}
+        workspaceId={workspaceId}
       />
     </>
   );

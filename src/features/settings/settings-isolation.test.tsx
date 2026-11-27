@@ -62,9 +62,11 @@ vi.mock("@/features/settings/sandbox-provider-section", () => ({
   SandboxProviderSection: ({
     vercelConnection,
     onSettingsChange,
+    workspaceId,
   }: {
     vercelConnection: { projectId: string } | null;
     onSettingsChange: (settings: SandboxSettingsResponse) => void;
+    workspaceId: string;
   }) => {
     renders.vercel += 1;
     return (
@@ -81,7 +83,7 @@ vi.mock("@/features/settings/sandbox-provider-section", () => ({
                 lastValidationError: null,
                 status: "connected",
                 updatedAt: "2026-07-22T00:00:00.000Z",
-                workspaceId: "workspace-1",
+                workspaceId,
               },
               vercel: { projectId: "updated" } as never,
             },
@@ -127,7 +129,7 @@ import {
   SETTINGS_PIPELINE_CHANGED,
 } from "@/features/settings/settings-island-events";
 
-function data(): SettingsPageData {
+function data(workspaceId = "workspace-1"): SettingsPageData {
   return {
     canManage: true,
     currentMember: { id: "member-1", role: "owner" },
@@ -164,7 +166,7 @@ function data(): SettingsPageData {
     },
     vercelSandboxConnection: { projectId: "initial" },
     workspaceSecrets: [],
-    workspace: { id: "workspace-1", name: "Northwind", slug: "northwind" },
+    workspace: { id: workspaceId, name: "Northwind", slug: "northwind" },
   } as unknown as SettingsPageData;
 }
 
@@ -216,8 +218,7 @@ describe("Settings client-island isolation", () => {
   });
 
   it("applies a sandbox update published between runtime render and subscription", () => {
-    const initialData = data();
-    initialData.workspace.id = "workspace-mount-race";
+    const initialData = data("workspace-mount-race");
 
     function SaveBeforeRuntimeEffect() {
       useLayoutEffect(() => {
@@ -236,6 +237,19 @@ describe("Settings client-island isolation", () => {
 
     expect(screen.getByRole("button", { name: "Vercel updated" })).not.toBeNull();
     expect(screen.getByText("Sandbox E2B ready")).not.toBeNull();
+  });
+
+  it("ignores a live sandbox save from a different workspace", () => {
+    render(
+      <>
+        <VercelIntegrationIsland initialData={data("workspace-saving")} />
+        <RuntimeIntegrationIsland codexStatus={null} initialData={data("workspace-viewing")} />
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Vercel initial" }));
+    expect(screen.getByRole("button", { name: "Vercel updated" })).not.toBeNull();
+    expect(screen.getByText("Sandbox Vercel Sandbox blocked")).not.toBeNull();
   });
 
   it("does not rerender a sibling integration when local section state changes", () => {
