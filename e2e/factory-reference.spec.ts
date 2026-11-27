@@ -187,8 +187,15 @@ for (const viewport of viewports) {
       }, info) => {
         for (const [path, body] of [
           ["factory-definition/settings", { snapshot: null }],
-          ["run-retention", { retention: { transcriptDays: null, evidenceDays: null } }],
+          [
+            "run-retention",
+            { retention: { transcriptDays: null, evidenceDays: null, contextDays: null } },
+          ],
           ["run-exports", { exports: [] }],
+          [
+            "factories/22222222-2222-4222-8222-222222222222/connectors",
+            { canConfigure: false, installations: [], resources: [] },
+          ],
         ] as const) {
           await page.route(
             `**/api/workspaces/11111111-1111-4111-8111-111111111111/${path}`,
@@ -210,16 +217,20 @@ for (const viewport of viewports) {
         );
         await page.goto("/dev/settings?category=workspace#coding-agent");
         await expect(page).toHaveURL(/\/dev\/settings\?category=integrations#runtime$/u);
-        await expect(page.locator("#runtime")).toBeVisible();
-        await expect(page.getByRole("link", { name: "Agent", exact: true })).toHaveAttribute(
-          "href",
-          "#runtime",
-        );
         await expect(
-          page
-            .getByRole("navigation", { name: "Settings categories" })
-            .getByRole("link", { name: /^Workspace/ }),
-        ).toHaveAttribute("href", /\/settings\?category=workspace$/u);
+          page.locator("#runtime").getByRole("heading", { name: "Agent runtime", exact: true }),
+        ).toBeFocused();
+        const categoryNav = page.getByRole("navigation", { name: "Settings categories" });
+        const jump = categoryNav.getByRole("button", { name: "Jump to a section" });
+        if (viewport.width < 1024) await jump.click();
+        await expect(
+          categoryNav.getByRole("link", { name: "Agent runtime", exact: true }),
+        ).toHaveAttribute("href", "#runtime");
+        await expect(categoryNav.locator('a[href$="?category=workspace"]')).toHaveAttribute(
+          "href",
+          /\/settings\?category=workspace$/u,
+        );
+        if (viewport.width < 1024) await jump.click();
         await expect(page.locator('[role="status"][aria-busy="true"]')).toHaveCount(0);
         await page.evaluate(() => window.scrollTo(0, 0));
         await capture(page, info, "settings-integrations");
@@ -227,7 +238,7 @@ for (const viewport of viewports) {
 
         await page.goto("/dev/settings?category=advanced&state=missing-usage");
         const usage = page.locator("#usage");
-        await expect(usage.getByText("Total runs", { exact: true })).toBeVisible();
+        await expect(usage.getByText("Runs started", { exact: true })).toBeVisible();
         await expect(usage.getByText("Unavailable", { exact: true })).toHaveCount(3);
         await usage.scrollIntoViewIfNeeded();
         await capture(page, info, "settings-partial-usage");
