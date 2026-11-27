@@ -308,6 +308,9 @@ test("filter changes combine immediately, retain results, and preserve an in-pro
     await route.continue();
   });
   const table = page.getByRole("table", { name: "Sessions", exact: true });
+  await expect(
+    table.getByText("Add SSO login via Google Workspace", { exact: true }),
+  ).toBeVisible();
   const initialRows = await table.innerText();
   const archived = page.getByRole("radio", { name: /^Archived [1-9]\d*$/u });
   const sort = page.getByRole("combobox", { name: "Sort sessions", exact: true });
