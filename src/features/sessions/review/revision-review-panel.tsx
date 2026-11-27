@@ -289,16 +289,16 @@ export function RevisionReviewPanel({
       content = (
         <p className="text-sm text-muted">
           {predecessors.length > 1
-            ? "More than one artifact has the previous version number. Choose one by date and attempt in Compare versions."
+            ? "More than one artifact has the previous version number. Compare them by date and attempt."
             : compareOptions.length
-              ? "No exact previous version is available. Choose an artifact in Compare versions."
+              ? "No exact previous version is available. Choose an artifact to compare."
               : "No earlier version is available to compare."}
         </p>
       );
     } else if (comparison?.kind === "complete_sources") {
       content = (
         <p className="text-sm text-muted">
-          This revision is too large for a brief. Compare versions shows the complete sources.
+          This revision is too large for a brief. Compare versions to see both sources.
         </p>
       );
     } else if (!brief || brief.changes.length === 0) {
@@ -326,8 +326,7 @@ export function RevisionReviewPanel({
           </ul>
           {brief.remaining > 0 ? (
             <p className="text-xs text-muted">
-              {brief.remaining} more {brief.remaining === 1 ? "change" : "changes"} in Compare
-              versions.
+              {brief.remaining} more {brief.remaining === 1 ? "change" : "changes"}.
             </p>
           ) : null}
         </>

@@ -1,0 +1,27 @@
+.page {
+  display: flex;
+  min-block-size: calc(100svh - var(--shell-scroll-padding));
+  flex-direction: column;
+}
+
+.page > :first-child {
+  flex: 1 0 auto;
+}
+
+.decision {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 20;
+}
+
+@media (width < 64rem) {
+  .page:has([data-comments-open="true"]) .decision {
+    visibility: hidden;
+  }
+}
+
+@media (height < 28rem) {
+  .decision {
+    position: static;
+  }
+}

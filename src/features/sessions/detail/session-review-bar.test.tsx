@@ -345,7 +345,7 @@ describe("SessionReviewBar", () => {
     renderBar({ mode: { canApprove: false, kind: "reviewable" } });
     expect(screen.getByRole("button", { name: "Request changes" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
-    expect(screen.getByText(/not authorized to approve this stage/i)).toBeTruthy();
+    expect(screen.getByText("Only stage approvers can approve.")).toBeVisible();
   });
 
   it("shows an explicit read-only reason for archived sessions", () => {
@@ -392,7 +392,10 @@ describe("SessionReviewBar", () => {
     expect(container.innerHTML).toContain("pb-[max(0.75rem,env(safe-area-inset-bottom))]");
     expect(container.innerHTML).toContain("env(safe-area-inset-left)");
     expect(container.innerHTML).toContain("env(safe-area-inset-right)");
-    expect(container.innerHTML).toContain("sticky bottom-0");
+    expect(screen.getByRole("region", { name: "Stage decision" })).toHaveAttribute(
+      "id",
+      "session-review-decision",
+    );
   });
 
   it("keeps the actionable bottom section borderless", () => {
@@ -494,7 +497,10 @@ describe("SessionReviewBar", () => {
   });
 
   it("keeps one semantic request key across unchanged network retries and duplicate clicks", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(reviewPage())));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(reviewPage())),
+    );
     const onReject = vi.fn().mockResolvedValue(false);
     renderBar({ sessionId: "session-1", onReject });
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
@@ -507,6 +513,7 @@ describe("SessionReviewBar", () => {
       fireEvent.click(submit);
     });
     expect(onReject).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(submit).toBeEnabled());
     await act(async () => {
       fireEvent.click(submit);
     });
@@ -517,6 +524,8 @@ describe("SessionReviewBar", () => {
 
   it("blocks a changed review during pagination and refreshes explicitly without losing the note", async () => {
     let requests = 0;
+    const revised = reviewPage({ revision: 8, ids: ["thread-1", "thread-2", "thread-edited"] });
+    revised.threads[2]!.revision = 2;
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -524,10 +533,10 @@ describe("SessionReviewBar", () => {
         return Response.json(
           requests === 1
             ? reviewPage({
-                ids: ["thread-1"],
-                cursor: { createdAt: "2026-11-05T00:00:00Z", id: "thread-1" },
+                ids: ["thread-1", "thread-edited"],
+                cursor: { createdAt: "2026-11-05T00:00:00Z", id: "thread-edited" },
               })
-            : reviewPage({ revision: 8, ids: ["thread-1", "thread-2"] }),
+            : revised,
         );
       }),
     );
@@ -537,6 +546,7 @@ describe("SessionReviewBar", () => {
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Include thread: Review thread-1" }),
     );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include thread: Review thread-edited" }));
     fireEvent.change(screen.getByLabelText("Feedback for Wallie"), {
       target: { value: "Keep my note." },
     });
@@ -546,15 +556,17 @@ describe("SessionReviewBar", () => {
     );
     expect(screen.getByRole("button", { name: "Queue rerun" })).toBeDisabled();
     expect(onReject).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh comments" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review updated comments" }));
     await waitFor(() =>
       expect(
         screen.getByRole("checkbox", { name: "Include thread: Review thread-1" }),
       ).toBeEnabled(),
     );
+    expect(screen.getByRole("checkbox", { name: "Include thread: Review thread-1" })).toBeChecked();
     expect(
-      screen.getByRole("checkbox", { name: "Include thread: Review thread-1" }),
+      screen.getByRole("checkbox", { name: "Include thread: Review thread-edited" }),
     ).not.toBeChecked();
+    expect(screen.getByText("Changed or closed threads were deselected.")).toBeVisible();
     expect(screen.getByLabelText("Feedback for Wallie")).toHaveValue("Keep my note.");
     fireEvent.click(screen.getByRole("checkbox", { name: "Include thread: Review thread-2" }));
     fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
@@ -562,9 +574,76 @@ describe("SessionReviewBar", () => {
       expect(onReject).toHaveBeenCalledWith(
         "Keep my note.",
         reviewArtifact,
-        expect.objectContaining({ expectedReviewRevision: 8, selectedThreadIds: ["thread-2"] }),
+        expect.objectContaining({
+          expectedReviewRevision: 8,
+          selectedThreadIds: ["thread-1", "thread-2"],
+        }),
       ),
     );
+  });
+
+  it("refreshes on focus and retries an error without clearing the note or selections", async () => {
+    let fail = false;
+    const fetchComments = vi.fn(async () =>
+      fail
+        ? Response.json({ error: "Comments are unavailable." }, { status: 503 })
+        : Response.json(reviewPage({ ids: ["thread-1"] })),
+    );
+    vi.stubGlobal("fetch", fetchComments);
+    const { onReject } = renderBar({ sessionId: "session-1" });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const choice = await screen.findByRole("checkbox", { name: "Include thread: Review thread-1" });
+    fireEvent.click(choice);
+    const note = screen.getByRole("textbox", { name: "Feedback for Wallie" });
+    fireEvent.change(note, { target: { value: "Keep the recovery test." } });
+    expect(screen.queryByRole("button", { name: "Retry comments" })).toBeNull();
+
+    fail = true;
+    fireEvent.focus(window);
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(
+      "Comments are unavailable.",
+    );
+    const rerun = screen.getByRole("button", { name: "Queue rerun" });
+    expect(rerun).toBeDisabled();
+    expect(choice).toBeChecked();
+    expect(note).toHaveValue("Keep the recovery test.");
+
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry comments" }));
+    await waitFor(() => expect(rerun).toBeEnabled());
+    expect(choice).toBeChecked();
+    fireEvent.click(rerun);
+    await waitFor(() =>
+      expect(onReject).toHaveBeenCalledExactlyOnceWith("Keep the recovery test.", reviewArtifact, {
+        requestId: expect.any(String),
+        expectedReviewRevision: 7,
+        selectedThreadIds: ["thread-1"],
+      }),
+    );
+  });
+
+  it("never adopts newer comments for an exact review link", async () => {
+    let revision = 7;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(reviewPage({ revision, ids: ["thread-1"] }))),
+    );
+    const { onReject } = renderBar({ sessionId: "session-1", exactReviewRevision: 7 });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    const choice = await screen.findByRole("checkbox", { name: "Include thread: Review thread-1" });
+    fireEvent.click(choice);
+    const note = screen.getByRole("textbox", { name: "Feedback for Wallie" });
+    fireEvent.change(note, { target: { value: "Review version one." } });
+    revision = 8;
+    fireEvent.focus(window);
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(
+      "This review link is no longer current.",
+    );
+    expect(screen.queryByRole("button", { name: "Review updated comments" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Queue rerun" })).toBeDisabled();
+    expect(choice).toBeChecked();
+    expect(note).toHaveValue("Review version one.");
+    expect(onReject).not.toHaveBeenCalled();
   });
 
   it("requires a confirmed review token even for a whole-stage note", async () => {
@@ -673,6 +752,6 @@ it("keeps approval disabled when review evidence is unavailable", () => {
   renderBar({ sessionId: "session" });
   expect(screen.getByRole("button", { name: "Approve & advance" })).toBeDisabled();
   expect(screen.getByText("Could not confirm blocking requests.")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Reload review comments" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry comments" }));
   expect(approvalState.refresh).toHaveBeenCalled();
 });

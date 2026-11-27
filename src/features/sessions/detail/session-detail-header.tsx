@@ -11,6 +11,7 @@ export function SessionDetailHeader({
   actions,
   browseReturn,
   creatorDisplayName,
+  factoryName,
   initialNow,
   repository,
   reviewHandoff,
@@ -22,6 +23,7 @@ export function SessionDetailHeader({
   actions: ReactNode;
   browseReturn?: ReturnType<typeof parseSessionBrowseReturn>;
   creatorDisplayName: string | null;
+  factoryName?: string;
   initialNow: string;
   repository: SessionReviewRepository | null;
   reviewHandoff?: ReactNode;
@@ -32,23 +34,29 @@ export function SessionDetailHeader({
 }) {
   const monitoring = session.monitoring;
   return (
-    <header className="mb-6 min-w-0 space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs text-muted">
-          <Link
-            href={browseReturn?.href ?? workspaceSessionsPath(workspaceSlug)}
-            className="hover:text-foreground"
-          >
-            <span aria-hidden="true">← </span>
-            {browseReturn?.label ?? "Sessions"}
-          </Link>
-          <span aria-hidden="true">/</span>
-          <span className="font-mono">#{session.number}</span>
-        </nav>
+    <header className="mb-3 min-w-0 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+          <nav aria-label="Breadcrumb" className="flex shrink-0 items-center gap-2">
+            <Link
+              href={browseReturn?.href ?? workspaceSessionsPath(workspaceSlug)}
+              className="inline-flex min-h-11 items-center hover:text-foreground sm:min-h-8"
+            >
+              <span aria-hidden="true">← </span>
+              {browseReturn?.label ?? "Sessions"}
+            </Link>
+            <span aria-hidden="true">/</span>
+            <span className="font-mono">#{session.number}</span>
+          </nav>
+          {factoryName ? (
+            <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">
+              Factory: <span className="font-medium text-foreground">{factoryName}</span>
+            </span>
+          ) : null}
+        </div>
         {actions}
       </div>
       {title}
-      {reviewHandoff}
       <SessionInspector
         creatorDisplayName={creatorDisplayName}
         initialNow={initialNow}
@@ -104,6 +112,7 @@ export function SessionDetailHeader({
           </dl>
         </details>
       ) : null}
+      {reviewHandoff}
     </header>
   );
 }

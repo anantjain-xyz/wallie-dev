@@ -155,7 +155,7 @@ describe("ArtifactPanel", () => {
     expect(screen.getByText("v2 → v3")).toBeTruthy();
     expect(fetch).toHaveBeenCalledTimes(2);
 
-    fireEvent.click(screen.getByRole("tab", { name: "Compare versions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Compare versions" }));
     expect(await screen.findByLabelText("Source changes")).toBeTruthy();
     expect(screen.getByText("Keep the board as-is after reconnecting.")).toBeTruthy();
     expect(
@@ -173,7 +173,7 @@ describe("ArtifactPanel", () => {
     expect(await screen.findByText("Refresh the board manually.")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Review brief" }));
     expect(screen.getByText("v2 → v3")).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "Compare versions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Compare versions" }));
     expect(screen.getByLabelText("Compare version 3 with").getAttribute("data-value")).toBe(
       previous.id,
     );
@@ -452,6 +452,10 @@ describe("ArtifactPanel", () => {
     });
     expect(await screen.findByText("Historical artifact body")).toBeTruthy();
     expect(calls()).toEqual([selectedBodyUrl]);
+    const evidence = screen.getByRole("button", { name: "Evidence", expanded: false });
+    evidence.focus();
+    await user.keyboard("{Enter}");
+    expect(calls()).toEqual([selectedBodyUrl]);
     const inspector = screen.getByRole("button", {
       name: "Inspect artifact provenance",
       expanded: false,
@@ -471,6 +475,7 @@ describe("ArtifactPanel", () => {
       historicalItemUrl,
       historyUrl,
     ]);
+    await user.click(screen.getByRole("button", { name: "Evidence", expanded: false }));
     await user.click(
       screen.getByRole("button", { name: "Inspect artifact provenance", expanded: false }),
     );
