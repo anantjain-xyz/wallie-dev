@@ -31,6 +31,7 @@ export const createSessionPayloadSchema = z
       .string()
       .regex(/^[0-9a-f]{64}$/, "Factory definition digest is invalid.")
       .optional(),
+    factoryId: z.string().uuid("Factory id is invalid.").optional(),
     githubRepositoryId: z.string().uuid("Repository id is invalid.").nullable().optional(),
     linearIssueUrl: z.string().nullable().optional(),
     promptMd: z.string().nullable().optional(),
@@ -63,14 +64,19 @@ export const createSessionPayloadSchema = z
     }
 
     if (
-      (payload.restartOfSessionId || payload.factoryDefinitionDigest || payload.routingOverride) &&
+      (payload.restartOfSessionId ||
+        payload.factoryDefinitionDigest ||
+        payload.factoryId ||
+        payload.routingOverride) &&
       !payload.requestId
     ) {
       context.addIssue({
         code: "custom",
         message: payload.restartOfSessionId
           ? "A creation request id is required to restart a session."
-          : "A creation request id is required to confirm a factory definition.",
+          : payload.factoryId
+            ? "A creation request id is required to start a factory session."
+            : "A creation request id is required to confirm a factory definition.",
         path: ["requestId"],
       });
     }
@@ -115,6 +121,7 @@ export function normalizeCreateSessionPayload(payload: CreateSessionPayload) {
     ...(payload.factoryDefinitionDigest
       ? { factoryDefinitionDigest: payload.factoryDefinitionDigest }
       : {}),
+    ...(payload.factoryId ? { factoryId: payload.factoryId.toLowerCase() } : {}),
     githubRepositoryId: payload.githubRepositoryId?.trim() || null,
     linearIssueId: linearIssueUrl ? extractLinearIssueId(linearIssueUrl) : null,
     linearIssueUrl,

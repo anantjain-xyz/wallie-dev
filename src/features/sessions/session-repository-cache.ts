@@ -18,6 +18,7 @@ import {
 export const SESSION_REPOSITORY_CACHE_TTL_MS = 30_000;
 
 export type SessionRepositoryCacheKey = {
+  factoryId?: string;
   userId: string;
   workspaceId: string;
 };
@@ -28,9 +29,11 @@ export type SessionRepositorySnapshot = {
   isLoading: boolean;
   isRefreshing: boolean;
   isStale: boolean;
+  setupHref?: string;
 };
 
 type SessionRepositoryLoader = (input: {
+  factoryId?: string;
   workspaceId: string;
 }) => Promise<SessionRepositoryOptionsResult>;
 
@@ -56,7 +59,7 @@ let activeUserId: string | null = null;
 let invalidationListenerAttached = false;
 
 function serializeKey(key: SessionRepositoryCacheKey) {
-  return `${key.userId}:${key.workspaceId}`;
+  return `${key.userId}:${key.workspaceId}:${key.factoryId ?? ""}`;
 }
 
 function scopeCacheToUser(userId: string) {
@@ -174,7 +177,10 @@ export function loadSessionRepositories(
     while (true) {
       const generation = entry.generation;
       try {
-        const data = await load({ workspaceId: key.workspaceId });
+        const data = await load({
+          ...(key.factoryId ? { factoryId: key.factoryId } : {}),
+          workspaceId: key.workspaceId,
+        });
         if (!isCurrentEntry()) return data;
         if (generation !== entry.generation) continue;
         entry.updatedAt = options.now ?? Date.now();
@@ -195,6 +201,9 @@ export function loadSessionRepositories(
           isLoading: false,
           isRefreshing: false,
           isStale: entry.snapshot.data !== null,
+          ...(error instanceof Error && "setupHref" in error && typeof error.setupHref === "string"
+            ? { setupHref: error.setupHref }
+            : {}),
         });
         throw error;
       }
@@ -215,9 +224,13 @@ export function retrySessionRepositories(key: SessionRepositoryCacheKey) {
   return loadSessionRepositories(key, { force: true });
 }
 
-export function invalidateSessionRepositoryCache(workspaceId: string) {
+export function invalidateSessionRepositoryCache(workspaceId: string, factoryId?: string) {
   for (const entry of entries.values()) {
-    if (entry.key.workspaceId !== workspaceId) continue;
+    if (
+      entry.key.workspaceId !== workspaceId ||
+      (factoryId !== undefined && entry.key.factoryId !== factoryId)
+    )
+      continue;
     invalidateEntry(entry);
   }
 }
@@ -228,24 +241,24 @@ function subscribe(key: SessionRepositoryCacheKey, listener: () => void) {
   return () => entry.listeners.delete(listener);
 }
 
-export function useSessionRepositories(key: SessionRepositoryCacheKey) {
-  scopeCacheToUser(key.userId);
-  const serializedKey = serializeKey(key);
+export function useSessionRepositories(key: SessionRepositoryCacheKey | null) {
+  if (key) scopeCacheToUser(key.userId);
+  const serializedKey = key ? serializeKey(key) : null;
   const subscribeToKey = useCallback(
-    (listener: () => void) => subscribe(key, listener),
-    // The serialized user/workspace pair is the actual cache identity.
+    (listener: () => void) => (key ? subscribe(key, listener) : () => undefined),
+    // The serialized user, workspace and factory are the actual cache identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [serializedKey],
   );
   const readSnapshot = useCallback(
-    () => getSessionRepositorySnapshot(key),
+    () => (key ? getSessionRepositorySnapshot(key) : EMPTY_SNAPSHOT),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [serializedKey],
   );
   const snapshot = useSyncExternalStore(subscribeToKey, readSnapshot, () => EMPTY_SNAPSHOT);
 
   useEffect(() => {
-    void loadSessionRepositories(key).catch(() => undefined);
+    if (key) void loadSessionRepositories(key).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serializedKey]);
 

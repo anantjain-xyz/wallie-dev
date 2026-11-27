@@ -15,6 +15,7 @@ export type SessionRepositoryOptionsWithPrimary = {
 };
 
 export async function loadSessionRepositoryOptionsWithPrimary(input: {
+  factoryId: string;
   supabase: SupabaseLike;
   workspaceId: string;
 }): Promise<SessionRepositoryOptionsWithPrimary> {
@@ -24,9 +25,14 @@ export async function loadSessionRepositoryOptionsWithPrimary(input: {
   for (let from = 0; ; from += REPOSITORY_PAGE_SIZE) {
     const { data, error } = await input.supabase
       .from("github_repositories")
-      .select("id, full_name, workspace_repository_profiles(is_primary)")
+      .select(
+        "id, full_name, workspace_repository_profiles(is_primary), github_installations!inner(id)",
+      )
       .eq("workspace_id", input.workspaceId)
+      .eq("factory_id", input.factoryId)
       .eq("is_archived", false)
+      .eq("github_installations.workspace_id", input.workspaceId)
+      .eq("github_installations.suspended", false)
       .order("full_name", { ascending: true })
       .range(from, from + REPOSITORY_PAGE_SIZE - 1);
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createSessionPayloadSchema } from "@/features/sessions/create";
 import { workspaceSessionDetailPath } from "@/lib/routes";
+import { browserSessionSetupHref } from "@/lib/sessions/browser-factory";
 import { createSessionCommand } from "@/lib/sessions/creation-command";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -33,19 +34,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
+  const { currentMember, supabase, workspace } = access.context;
+  const setupHref = (code: string | undefined) =>
+    payload.factoryId
+      ? browserSessionSetupHref(code, {
+          factoryId: payload.factoryId.toLowerCase(),
+          member: currentMember,
+          workspaceSlug: workspace.slug,
+        })
+      : undefined;
   const result = await createSessionCommand({
-    actor: { memberId: access.context.currentMember.id, workspaceId },
+    actor: { member: currentMember, workspaceId },
     payload,
-    reader: access.context.supabase,
+    reader: supabase,
   });
   if (!result.ok) {
     const { failure } = result;
     if (failure.kind === "wallie_action") {
       const { body, status } = buildAgentRunActionErrorResponse(failure.cause);
-      return NextResponse.json(body, { status });
+      return NextResponse.json({ ...body, setupHref: setupHref(body.code) }, { status });
     }
     return NextResponse.json(
-      { code: failure.code, error: failure.message },
+      { code: failure.code, error: failure.message, setupHref: setupHref(failure.code) },
       { status: failureStatus[failure.kind] },
     );
   }
