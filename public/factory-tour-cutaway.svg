@@ -1,4 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440">
+  <style>
+    .factory-ticket {
+      animation: 1.6s ease-in-out 320ms backwards var(--factory-ticket-animation, none);
+    }
+    @keyframes factory-ticket-pass {
+      from { transform: translate(-48px, 17px); }
+      to { transform: none; }
+    }
+  </style>
   <defs>
     <g id="factory-cutaway" stroke-linecap="round" stroke-linejoin="round">
       <polygon points="538.40,131.33 684.56,236.66 684.56,224.66 538.40,119.33" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.6"/>
@@ -235,18 +244,20 @@
       <circle cx="574.13" cy="199.19" r="1.3" fill="var(--art-label)"/>
       <circle cx="597.13" cy="191.04" r="1.3" fill="var(--art-label)"/>
       <polygon points="156.91,310.87 172.55,305.33 167.51,301.70 192.07,306.54 191.45,318.95 186.41,315.32 170.77,320.86" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1"/>
-      <polygon points="339.79,237.94 371.92,261.10 371.92,255.10 339.79,231.94" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.35"/>
-      <polygon points="281.76,293.05 371.92,261.10 371.92,255.10 281.76,287.05" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.35"/>
-      <polygon points="249.63,263.89 339.79,231.94 371.92,255.10 281.76,287.05" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.35"/>
-      <polygon points="257.67,263.75 336.79,235.72 361.99,253.88 282.87,281.91" fill="var(--tour-accent)" stroke="var(--tour-accent)" stroke-width="0"/>
-      <text transform="matrix(.92 -.326 .63 .454 278.60 271.91)" fill="var(--on-accent)" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="19" font-weight="700" letter-spacing=".6">WO–024</text>
-      <polyline points="283.59,273.53 313.03,263.10" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
-      <polyline points="286.11,275.35 315.55,264.91" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
-      <polyline points="327.99,255.09 334.29,259.63" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
-      <polyline points="331.67,253.78 337.97,258.32" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
-      <polyline points="336.27,252.15 342.57,256.69" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
-      <polyline points="339.03,251.18 345.33,255.72" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
-      <polyline points="342.71,249.87 349.01,254.41" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      <g class="factory-ticket">
+        <polygon points="339.79,237.94 371.92,261.10 371.92,255.10 339.79,231.94" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.35"/>
+        <polygon points="281.76,293.05 371.92,261.10 371.92,255.10 281.76,287.05" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.35"/>
+        <polygon points="249.63,263.89 339.79,231.94 371.92,255.10 281.76,287.05" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.35"/>
+        <polygon points="257.67,263.75 336.79,235.72 361.99,253.88 282.87,281.91" fill="var(--tour-accent)" stroke="var(--tour-accent)" stroke-width="0"/>
+        <text transform="matrix(.92 -.326 .63 .454 278.60 271.91)" fill="var(--on-accent)" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="19" font-weight="700" letter-spacing=".6">WO–024</text>
+        <polyline points="283.59,273.53 313.03,263.10" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+        <polyline points="286.11,275.35 315.55,264.91" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+        <polyline points="327.99,255.09 334.29,259.63" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+        <polyline points="331.67,253.78 337.97,258.32" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+        <polyline points="336.27,252.15 342.57,256.69" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+        <polyline points="339.03,251.18 345.33,255.72" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+        <polyline points="342.71,249.87 349.01,254.41" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      </g>
       <polygon points="410.95,281.65 425.44,292.10 425.44,288.10 410.95,277.65" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.1"/>
       <polygon points="403.36,299.92 425.44,292.10 425.44,288.10 403.36,295.92" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.1"/>
       <polygon points="388.87,285.48 410.95,277.65 425.44,288.10 403.36,295.92" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.1"/>

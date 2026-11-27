@@ -213,6 +213,11 @@
   width: 100%;
   height: auto;
 }
+@media (prefers-reduced-motion: no-preference) {
+  .factoryArt {
+    --factory-ticket-animation: factory-ticket-pass;
+  }
+}
 .figureLegend {
   display: flex;
   justify-content: space-between;
