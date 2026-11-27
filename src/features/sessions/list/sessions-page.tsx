@@ -17,7 +17,7 @@ import {
 } from "@/features/sessions/list/sessions-list-mutations";
 import { SESSION_LIST_DEFAULT_SORT } from "@/features/sessions/list/sessions-list-query-state";
 import type { SessionFilterKey, SessionListQueryState } from "@/features/sessions/types";
-import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
+import { workspaceSessionsPath } from "@/lib/routes";
 
 type SessionsPageProps = {
   factoryId?: string;
@@ -92,7 +92,6 @@ function withExplicitScope(href: string, scope: SessionFilterKey) {
  */
 export function SessionsPage({
   factoryId,
-  factoryName,
   factoryQuery,
   factorySelector,
   initialData,
@@ -260,17 +259,7 @@ export function SessionsPage({
     <PageContainer className="pt-5 sm:pt-10">
       <VisibleInteractionBoundary action="pipeline_to_sessions" />
       <PageHeader
-        actions={
-          <>
-            {factorySelector}
-            <Link
-              className="ui-button"
-              href={withFactoryQuery(workspaceRunsPath(workspaceSlug), factoryQuery)}
-            >
-              Runs
-            </Link>
-          </>
-        }
+        actions={factorySelector}
         actionsRightOnDesktop
         className="mb-4 sm:mb-8"
         title={
@@ -286,7 +275,6 @@ export function SessionsPage({
 
       <SessionsCommandBar
         key={factoryQuery ?? ""}
-        factoryName={factoryName}
         factoryQuery={factoryQuery}
         queryState={initialData.queryState}
         scopeFacets={initialData.scopeFacets}
@@ -314,6 +302,7 @@ export function SessionsPage({
             {sessions.map((session) => (
               <SessionLedgerRow
                 key={session.id}
+                factoryName={initialData.factoriesByPipeline?.[session.pipelineId]?.name}
                 initialNow={renderNow}
                 readOnly={readOnly}
                 returnTo={returnTo}

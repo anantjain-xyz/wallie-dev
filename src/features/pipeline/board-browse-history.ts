@@ -41,12 +41,14 @@ export function readBoardBrowseHistory({ factory, pathname, viewerId }: BoardHis
 export function writeBoardBrowseHistory(
   { factory, pathname, viewerId }: BoardHistoryScope,
   changes: BoardBrowseChanges,
+  mode: "push" | "replace" = "replace",
 ) {
   const url = new URL(window.location.href);
   if (url.pathname !== pathname) return;
   const scope = JSON.stringify([pathname, factory, viewerId]);
   const stored = findEntry(scope);
-  const key = stored?.key ?? crypto.getRandomValues(new Uint32Array(4)).join("-");
+  const key =
+    (mode === "replace" && stored?.key) || crypto.getRandomValues(new Uint32Array(4)).join("-");
   const { status, ...entry } = changes;
   const next = { ...stored?.value, ...entry, scope };
   if (next.searchQuery) next.searchQuery = next.searchQuery.slice(0, PIPELINE_SEARCH_MAX_LENGTH);
@@ -59,6 +61,8 @@ export function writeBoardBrowseHistory(
   )
     url.searchParams.set("status", status);
   const destination = url.href === window.location.href ? undefined : url;
-  if (!stored || destination) window.history.replaceState({ wallieBoard: key }, "", destination);
+  if (mode === "push") window.history.pushState({ wallieBoard: key }, "", url);
+  else if (!stored || destination)
+    window.history.replaceState({ wallieBoard: key }, "", destination);
   return key;
 }
