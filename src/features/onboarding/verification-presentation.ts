@@ -6,15 +6,51 @@ import {
 } from "@/features/onboarding/runtime-readiness";
 import type { RuntimeCompletionState } from "@/features/onboarding/steps/types";
 
+const noActiveRepositories =
+  "No active repositories are available. Grant access using Manage on GitHub, then refresh repositories.";
+
+export function hasActiveGithubRepositories(github: WorkspaceOnboardingData["github"]) {
+  return github.repositories.some((repository) => !repository.isArchived);
+}
+
 export function getSetupVerificationChecklist(data: WorkspaceOnboardingData) {
   return buildVerifyChecklist({
     agentConfig: data.agentConfig,
     health: data.setupHealth,
     onboarding: data.onboarding,
-  }).sort((a, b) => onboardingStepIndex(a.step) - onboardingStepIndex(b.step));
+  })
+    .map((item): VerifyChecklistItem => {
+      if (item.id === "github") {
+        if (!item.passed) {
+          return { ...item, detail: githubSetupBlocker(data.github) ?? item.detail };
+        }
+        if (!hasActiveGithubRepositories(data.github)) {
+          return {
+            ...item,
+            detail: noActiveRepositories,
+            label: "GitHub repository access",
+            passed: false,
+          };
+        }
+      }
+      if (item.id === "pipeline" && !data.setupHealth.defaultPipeline.configured) {
+        return {
+          ...item,
+          detail: data.pipeline
+            ? "The current default pipeline has no stages."
+            : "This workspace has no default pipeline.",
+          label: "Current default pipeline",
+          passed: false,
+          statusLabel: "Missing",
+          statusTone: "warning",
+        };
+      }
+      return item;
+    })
+    .sort((a, b) => onboardingStepIndex(a.step) - onboardingStepIndex(b.step));
 }
 
-export const verificationRecovery = {
+const verificationRecovery = {
   github: {
     action: "Fix GitHub access",
     handoff: "restore GitHub access",
@@ -60,6 +96,24 @@ export const verificationRecovery = {
   { action: string; handoff: string; title: string }
 >;
 
+export function getVerificationRecovery(
+  data: WorkspaceOnboardingData,
+  blocker: VerifyChecklistItem | undefined,
+) {
+  if (!blocker || blocker.id === "sandbox") return null;
+  if (blocker.id === "pipeline" && !data.setupHealth.defaultPipeline.configured) {
+    return {
+      action: "Open pipeline step",
+      handoff: data.pipeline
+        ? "add at least one stage to the default pipeline"
+        : "contact Wallie support to restore the default pipeline",
+      step: blocker.step,
+      title: "Default pipeline unavailable",
+    };
+  }
+  return { ...verificationRecovery[blocker.id], step: blocker.step };
+}
+
 export function githubSetupBlocker(github: WorkspaceOnboardingData["github"]) {
   if (!github.installation) {
     return github.missingAppKeys.length
@@ -69,9 +123,7 @@ export function githubSetupBlocker(github: WorkspaceOnboardingData["github"]) {
   if (github.installation.suspended) {
     return "This GitHub installation is suspended. A GitHub account owner must restore it before repositories can be refreshed.";
   }
-  if (!github.repositories.some((repository) => !repository.isArchived)) {
-    return "No active repositories are available. Grant access using Manage on GitHub, then refresh repositories.";
-  }
+  if (!hasActiveGithubRepositories(github)) return noActiveRepositories;
   return null;
 }
 
@@ -80,7 +132,7 @@ export function repositoryStepBlocker(data: WorkspaceOnboardingData) {
   if (repositorySetup.status === "pr_open") {
     return "The setup pull request is open. Merge it before verifying this repository.";
   }
-  if (!data.github.repositories.some((repository) => !repository.isArchived)) return null;
+  if (!hasActiveGithubRepositories(data.github)) return null;
   if (!selectedRepository.configured) {
     return "Choose a repository below, then install Wallie skills and save its profile.";
   }

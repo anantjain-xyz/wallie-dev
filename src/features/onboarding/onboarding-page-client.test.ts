@@ -318,10 +318,14 @@ describe("OnboardingPageClient", () => {
     const data = verificationData();
     data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
     const html = renderVerifyStep(data);
-    expect(html.match(/<details[^>]*>/)?.[0]).not.toContain("open");
-    expect(html).toContain("Current verification result");
-    expect(html).toContain('dateTime="2026-09-06T19:00:00.000Z"');
-    expect(html).toContain('data-time-display="absolute"');
+    const disclosure = html
+      .match(/<details[^>]*>[\s\S]*?<\/details>/g)
+      ?.find((details) => details.includes("All checks</summary>"));
+    expect(disclosure).toBeDefined();
+    expect(disclosure?.match(/^<details[^>]*>/)?.[0]).not.toMatch(/\sopen(?=[ =>])/);
+    expect(disclosure).toContain("Current verification result");
+    expect(disclosure).toContain('dateTime="2026-09-06T19:00:00.000Z"');
+    expect(disclosure).toContain('data-time-display="absolute"');
   });
 
   it("renders a desktop rail and a collapsed mobile disclosure without a horizontal scroller", () => {
@@ -1376,6 +1380,13 @@ describe("OnboardingPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: null,
+            repositories: [repository("repo-a")],
+          },
           onboarding: {
             completedAt: null,
             completedSteps: ["github", "repository", "pipeline"],

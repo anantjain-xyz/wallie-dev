@@ -37,8 +37,9 @@ import { SetupCheck } from "@/features/onboarding/setup-check";
 import {
   executionStepBlocker,
   getSetupVerificationChecklist,
+  getVerificationRecovery,
+  hasActiveGithubRepositories,
   repositoryStepBlocker,
-  verificationRecovery,
 } from "@/features/onboarding/verification-presentation";
 import {
   mergeRepositoryOnboardingState,
@@ -252,10 +253,7 @@ function selectedRepositoryFromData(data: WorkspaceOnboardingData) {
 }
 
 function canCompleteGitHubSetupStep(data: WorkspaceOnboardingData) {
-  return (
-    data.setupHealth.githubInstallation.connected &&
-    data.github.repositories.some((repository) => !repository.isArchived)
-  );
+  return data.setupHealth.githubInstallation.connected && hasActiveGithubRepositories(data.github);
 }
 
 function hasSelectedRepositoryProfile(data: WorkspaceOnboardingData) {
@@ -388,10 +386,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   const firstBlocker = verifyChecklist.find((item) => !item.passed);
   const verifyCompletionBlocked = Boolean(firstBlocker);
   const verificationRunning = data.setupHealth.latestSandboxCapabilityCheck?.status === "running";
-  const prerequisite =
-    firstBlocker && firstBlocker.id !== "sandbox"
-      ? { ...verificationRecovery[firstBlocker.id], step: firstBlocker.step }
-      : null;
+  const prerequisite = getVerificationRecovery(data, firstBlocker);
   const sessionsDestination = workspaceSessionsPath(data.workspace.slug);
   const afterCompletionDestination = hasCompletedBefore
     ? sessionsDestination

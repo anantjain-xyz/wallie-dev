@@ -14,8 +14,7 @@ import {
 import { SetupCheck } from "@/features/onboarding/setup-check";
 import {
   getSetupVerificationChecklist,
-  githubSetupBlocker,
-  verificationRecovery,
+  getVerificationRecovery,
 } from "@/features/onboarding/verification-presentation";
 import { cn } from "@/lib/utils";
 import type {
@@ -59,9 +58,6 @@ const sandboxNames = {
 
 function describeCheck(item: VerifyChecklistItem, data: WorkspaceOnboardingData) {
   const { setupHealth } = data;
-  if (item.id === "github" && !item.passed) {
-    return githubSetupBlocker(data.github) ?? item.detail;
-  }
   if (
     item.id === "repository-setup" &&
     !item.passed &&
@@ -86,9 +82,6 @@ function describeCheck(item: VerifyChecklistItem, data: WorkspaceOnboardingData)
   if (item.id === "pipeline" && item.passed && setupHealth.defaultPipeline.configured) {
     const count = setupHealth.defaultPipeline.stageCount;
     return `${count} saved ${count === 1 ? "stage" : "stages"}.`;
-  }
-  if (item.id === "pipeline" && !item.passed && !data.pipeline) {
-    return "This workspace has no default pipeline. Ask a workspace owner to contact Wallie support.";
   }
   return item.detail;
 }
@@ -125,8 +118,7 @@ export default function VerifyStep({
   const primaryRepositoryId = data.setupHealth.primaryRepositoryProfile.repositoryId;
   const checklist = getSetupVerificationChecklist(data);
   const firstBlocker = checklist.find((item) => !item.passed);
-  const needsRepair =
-    firstBlocker && firstBlocker.id !== "sandbox" ? verificationRecovery[firstBlocker.id] : null;
+  const needsRepair = getVerificationRecovery(data, firstBlocker);
   const isPolling = check?.status === "running";
   const canRunCapabilityCheck =
     data.canManage &&

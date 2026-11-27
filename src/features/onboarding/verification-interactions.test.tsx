@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { verificationCheck, verificationData } from "@/features/onboarding/fixtures";
+import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { WORKSPACE_ONBOARDING_STEPS } from "@/lib/onboarding/contracts";
 import { OnboardingPageClient } from "@/features/onboarding/onboarding-page-client";
 import VerifyStep from "@/features/onboarding/steps/verify-step";
@@ -276,6 +277,82 @@ describe("onboarding verification", () => {
       expect.objectContaining({ method: "PATCH" }),
     );
   });
+
+  it.each([
+    {
+      archived: true,
+      blocker: "No active repositories are available.",
+      action: "Fix GitHub access",
+      step: "github",
+    },
+    {
+      archived: false,
+      blocker: "Select a repository before saving a repository profile.",
+      action: "Open repository setup",
+      step: "repository",
+    },
+  ])(
+    "opens $step when an installed GitHub App has archived-only access: $archived",
+    ({ archived, blocker, action, step }) => {
+      const data = verificationData();
+      data.onboarding.status = "completed";
+      data.onboarding.selectedGithubRepositoryId = null;
+      data.github.installation = {
+        appId: 123,
+        id: "installation-1",
+        installationId: 123,
+        installationUrl: "https://github.com/settings/installations/123",
+        permissions: {},
+        suspended: false,
+        targetName: "wallie",
+        targetType: "Organization",
+        updatedAt: "2026-09-06T19:00:00.000Z",
+      };
+      data.github.repositories[0]!.isArchived = archived;
+      data.github.primaryProfile = null;
+      Object.assign(data.setupHealth, buildRepositorySetupHealth(data.github));
+      render(<OnboardingPageClient initialData={data} />);
+
+      expect(verifyPanel().getByRole("status")).toHaveTextContent(blocker);
+      expect(verificationButton(action)).toHaveAttribute("data-step-link", step);
+      expect(verifyPanel().queryByRole("button", { name: "Verify setup" })).not.toBeInTheDocument();
+      fireEvent.click(verificationButton(action));
+      expect(screen.getByText(`Editing ${step}`)).toBeVisible();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["missing", "empty"] as const)(
+    "keeps prior completion distinct when the current default pipeline is %s",
+    (kind) => {
+      const data = verificationData();
+      data.onboarding.status = "completed";
+      data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
+      data.pipeline = kind === "missing" ? null : { ...data.pipeline!, stages: [] };
+      data.setupHealth.defaultPipeline = {
+        configured: false,
+        pipelineId: data.pipeline?.id ?? null,
+        stageCount: 0,
+        status: "missing",
+      };
+      render(<OnboardingPageClient initialData={data} />);
+
+      expect(verifyPanel().getByRole("status")).toHaveTextContent(
+        kind === "missing"
+          ? "This workspace has no default pipeline."
+          : "The current default pipeline has no stages.",
+      );
+      expect(screen.getByText("Setup was completed previously.")).toBeVisible();
+      expect(screen.queryByText("Setup is ready")).not.toBeInTheDocument();
+      expect(diagnosticRow("Current default pipeline")).toHaveTextContent("Missing");
+      expect(verificationButton("Open pipeline step")).toHaveAttribute(
+        "data-step-link",
+        "pipeline",
+      );
+      fireEvent.submit(document.getElementById("onboarding-verification")!);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not let a read-only member verify or complete setup", () => {
     const data = verificationData();
