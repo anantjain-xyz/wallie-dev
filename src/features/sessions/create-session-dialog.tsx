@@ -79,7 +79,7 @@ type CreateSessionDialogProps = {
   creationFactoryId?: string;
   creationFactoryName?: string;
   creationScope?: SessionCreationScope;
-  onClose: () => void;
+  onClose: (reason?: "preview") => void;
   onCloseAutoFocus?: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
   onReopen?: (submittedFactoryId?: string) => void;
@@ -228,7 +228,6 @@ function CreateSessionDialogBody({
       onReset();
     } else if (attemptRef.current?.scopeKey === scopeKey && isSubmitting && onPreviewChange) {
       showPendingPreview(attemptRef.current.snapshot);
-      onClose();
     } else if (!attemptRef.current && scopeOptionsReady) {
       refreshExpiredImages();
     }
@@ -855,6 +854,7 @@ function CreateSessionDialogBody({
       content: <PendingSessionCreation snapshot={snapshot} onDismiss={dismiss} />,
       dismiss,
     });
+    onClose("preview");
   }
 
   function keepDraftWithoutAttempt(attempt: SessionCreationAttempt) {
@@ -882,10 +882,7 @@ function CreateSessionDialogBody({
     setSetupHref(undefined);
     submitInFlightRef.current = true;
     setIsSubmitting(true);
-    if (onPreviewChange) {
-      showPendingPreview(attempt.snapshot);
-      onClose();
-    }
+    showPendingPreview(attempt.snapshot);
     try {
       const result = await createSessionFromClient(attempt.input);
       if (disposedRef.current) return;
@@ -1511,7 +1508,7 @@ function CreateSessionDialogBody({
             <button
               type="button"
               disabled={isSubmitting || hasActiveAttachmentOperation}
-              onClick={onClose}
+              onClick={() => onClose()}
               className="ui-button"
             >
               Close

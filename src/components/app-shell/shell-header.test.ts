@@ -113,6 +113,19 @@ function mountShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "chil
   return render(shellElement(props));
 }
 
+function mockScopedSessionOptions(definitionDigest?: string) {
+  clientMocks.loadSessionRepositoryOptionsFromClient.mockImplementation(({ factoryId }) =>
+    Promise.resolve({
+      defaultGithubRepositoryId: "repo",
+      ...(definitionDigest ? { factoryDefinitionDigest: definitionDigest } : {}),
+      factoryId,
+      pipelineId: "pipeline",
+      repositoryOptions: [{ id: "repo", fullName: "examples/product" }],
+      stageOptions: [{ id: "plan", name: "Plan", position: 0, description: "" }],
+    }),
+  );
+}
+
 describe("ShellHeader", () => {
   let originalMatchMediaDescriptor: PropertyDescriptor | undefined;
   let originalResizeObserverDescriptor: PropertyDescriptor | undefined;
@@ -384,16 +397,7 @@ describe("ShellHeader", () => {
     const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
     clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
     clientMocks.loadSessionCreationFactoriesFromClient.mockResolvedValue(defaultOptions);
-    clientMocks.loadSessionRepositoryOptionsFromClient.mockImplementation(({ factoryId }) =>
-      Promise.resolve({
-        defaultGithubRepositoryId: "repo",
-        ...(launch ? { factoryDefinitionDigest: definitionDigest } : {}),
-        factoryId,
-        pipelineId: "pipeline",
-        repositoryOptions: [{ id: "repo", fullName: "examples/product" }],
-        stageOptions: [{ id: "plan", name: "Plan", position: 0, description: "" }],
-      }),
-    );
+    mockScopedSessionOptions(launch ? definitionDigest : undefined);
 
     mocked.pathname = "/w/acme-corp/sessions";
     mocked.searchParams = new URLSearchParams({
@@ -520,6 +524,67 @@ describe("ShellHeader", () => {
       expect(replayed.requestId).not.toBe(original.requestId);
     }
   });
+
+  it.each(["canonical detail", "an archived switch"] as const)(
+    "honors the next workflow launch's exact return after confirming creation and opening %s",
+    async (destination) => {
+      const sessions = "/w/acme-corp/sessions";
+      const canonicalUrl = `${sessions}/42`;
+      const archivedFactory = {
+        id: "archive",
+        name: "Archive",
+        isDefault: false,
+        status: "archived",
+      } satisfies FactorySelectionOption;
+      const header = {
+        factories: [...defaultOptions, archivedFactory],
+        viewerId: `confirmed-${destination}`,
+      };
+      mocked.pathname = sessions;
+      mocked.searchParams = new URLSearchParams({ factory: creationFactory.id });
+      clientMocks.createSessionFromClient
+        .mockReset()
+        .mockResolvedValueOnce({ canonicalUrl, number: 42 });
+      mockScopedSessionOptions();
+      const view = mountShell(header);
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      fireEvent.change(await screen.findByLabelText("Prompt"), {
+        target: { value: "Document the completed request" },
+      });
+      const submit = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      await waitFor(() => expect(mocked.push).toHaveBeenCalledExactlyOnceWith(canonicalUrl));
+      expect(screen.getByRole("region", { name: "Creating session" })).toBeVisible();
+
+      if (destination === "canonical detail") {
+        mocked.pathname = canonicalUrl;
+        mocked.searchParams = new URLSearchParams();
+      } else {
+        fireEvent.click(screen.getByRole("combobox", { name: "Factory" }));
+        fireEvent.click(screen.getByRole("option", { name: "Archive (archived)" }));
+        expect(mocked.push).toHaveBeenLastCalledWith(`${sessions}?factory=archive`, {
+          scroll: false,
+        });
+        mocked.searchParams = new URLSearchParams({ factory: archivedFactory.id });
+      }
+      view.rerender(shellElement(header));
+      expect(screen.queryByRole("region", { name: "Creating session" })).toBeNull();
+
+      const origin = "/w/acme-corp/workflows?factory=factory-1&q=release#workflow-release";
+      mocked.pathname = sessions;
+      mocked.searchParams = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: origin,
+        workflowActivation: "00000000-0000-4000-8000-000000000012",
+      });
+      view.rerender(shellElement(header));
+      const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(mocked.replace).toHaveBeenLastCalledWith(origin, { scroll: true });
+    },
+  );
 
   it("renders the theme toggle with a hydration-safe accessible label", () => {
     const html = renderShell();

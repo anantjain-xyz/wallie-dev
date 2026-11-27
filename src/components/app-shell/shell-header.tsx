@@ -443,16 +443,14 @@ export function ShellHeader({
     locationKey: string;
     preview: SessionCreationPreview;
   } | null>(null);
-  const creationPreviewRef = useRef(creationPreview);
   const visibleCreationPreview =
     creationPreview?.locationKey === previewLocationKey ? creationPreview.preview : null;
   if (creationPreview && !visibleCreationPreview) setCreationPreview(null);
   const handleCreationPreview = useCallback(
     (preview: SessionCreationPreview | null) => {
-      const next =
-        preview && previewLocationKey ? { locationKey: previewLocationKey, preview } : null;
-      creationPreviewRef.current = next;
-      setCreationPreview(next);
+      setCreationPreview(
+        preview && previewLocationKey ? { locationKey: previewLocationKey, preview } : null,
+      );
     },
     [previewLocationKey],
   );
@@ -513,47 +511,48 @@ export function ShellHeader({
     return () => cancelAnimationFrame(frame);
   }, [locationKey, restoreCreateFocus]);
 
-  const handleCreateClose = useCallback(() => {
-    setUserCreateOpen(false);
-    const previewActive = creationPreviewRef.current?.locationKey === previewLocationKey;
-    const cleanHref = withoutSessionLaunch(pathname, search);
-    if (createFromUrl) {
-      setDismissedCreateUrlKey(createUrlKey);
-    }
-    if (previewActive) {
+  const handleCreateClose = useCallback(
+    (reason?: "preview") => {
+      setUserCreateOpen(false);
+      const cleanHref = withoutSessionLaunch(pathname, search);
       if (createFromUrl) {
-        setRecoverableLaunch({
-          location: cleanHref,
-          activationId: urlWorkflowActivation,
-          returnTo,
-        });
-        router.replace(cleanHref, { scroll: false });
+        setDismissedCreateUrlKey(createUrlKey);
       }
-      return;
-    }
-    const destination =
-      returnTo ??
-      (createFromUrl && pathname !== sessionsHref
-        ? workspaceSessionsPath(workspace.slug, { factory: creationFactoryQuery })
-        : cleanHref + window.location.hash);
-    setRecoverableLaunch(null);
-    pendingFocusHref.current = destination.split("#", 1)[0];
-    if (!createFromUrl && pendingFocusHref.current === locationKey) return;
-    router.replace(destination, { scroll: destination.split(/[?#]/u, 1)[0] !== pathname });
-  }, [
-    createFromUrl,
-    createUrlKey,
-    creationFactoryQuery,
-    locationKey,
-    pathname,
-    previewLocationKey,
-    returnTo,
-    router,
-    search,
-    sessionsHref,
-    urlWorkflowActivation,
-    workspace.slug,
-  ]);
+      if (reason === "preview") {
+        if (createFromUrl) {
+          setRecoverableLaunch({
+            location: cleanHref,
+            activationId: urlWorkflowActivation,
+            returnTo,
+          });
+          router.replace(cleanHref, { scroll: false });
+        }
+        return;
+      }
+      const destination =
+        returnTo ??
+        (createFromUrl && pathname !== sessionsHref
+          ? workspaceSessionsPath(workspace.slug, { factory: creationFactoryQuery })
+          : cleanHref + window.location.hash);
+      setRecoverableLaunch(null);
+      pendingFocusHref.current = destination.split("#", 1)[0];
+      if (!createFromUrl && pendingFocusHref.current === locationKey) return;
+      router.replace(destination, { scroll: destination.split(/[?#]/u, 1)[0] !== pathname });
+    },
+    [
+      createFromUrl,
+      createUrlKey,
+      creationFactoryQuery,
+      locationKey,
+      pathname,
+      returnTo,
+      router,
+      search,
+      sessionsHref,
+      urlWorkflowActivation,
+      workspace.slug,
+    ],
+  );
 
   function preloadCreateDialog() {
     createDialogPreloads.current ??= new Set();
