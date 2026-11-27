@@ -171,7 +171,7 @@ test("workspace factory creation preserves the default and lands in the returned
             })
             .throwOnError();
         }
-        return { role, email: user.email };
+        return { role, email: user.email, memberId: member.id };
       }),
     );
 
@@ -272,10 +272,11 @@ test("workspace factory creation preserves the default and lands in the returned
         { timeout: 3000 },
       )
       .toBeGreaterThanOrEqual(4);
-    await expect(setup.getByRole("heading", { name: "Choose repositories" })).toBeVisible();
-    await expect(setup.getByRole("heading", { name: "Set up pipeline" })).toBeVisible();
+    const configure = setup.getByRole("link", { name: "Configure factory" });
+    const definitionPath = `${settingsPath}/factory-definition?factory=${factory.id}#factory-setup`;
+    await expect(configure).toHaveAttribute("href", definitionPath);
     const viewSessions = setup.getByRole("link", { name: "View sessions" });
-    await expect(setup.getByRole("link")).toHaveCount(1);
+    await expect(setup.getByRole("link")).toHaveCount(2);
     await expect(viewSessions).toHaveAttribute("href", `${sessionsPath}?factory=${factory.id}`);
     await expect(
       factories.getByRole("listitem").filter({ hasText: defaultFactory.name }),
@@ -284,6 +285,20 @@ test("workspace factory creation preserves the default and lands in the returned
       "payments-ops",
     );
     await capture(page, info, "05-mobile-new-factory-setup");
+    await configure.press("Enter");
+    await expect(page).toHaveURL((url) => url.pathname + url.search + url.hash === definitionPath);
+    await expect(page.getByRole("heading", { name: "Setup", exact: true })).toBeVisible();
+    await capture(page, info, "08-canonical-setup-mobile");
+    await page.goBack();
+    await expect(setupHeading).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(configure).toHaveAttribute("href", definitionPath);
+    await capture(page, info, "09-desktop-new-factory-setup");
+    await configure.click();
+    await expect(page).toHaveURL((url) => url.pathname + url.search + url.hash === definitionPath);
+    await expect(page.getByRole("heading", { name: "Setup", exact: true })).toBeVisible();
+    await page.goBack();
+    await page.setViewportSize({ width: 390, height: 844 });
     await viewSessions.press("Enter");
     await expect(picker).toHaveAttribute("data-value", factory.id);
     await expect(page.getByText("No sessions in this factory yet.")).toBeVisible();
@@ -345,7 +360,7 @@ test("workspace factory creation preserves the default and lands in the returned
       ).toContainText("support-ops");
     });
 
-    for (const { role, email } of viewers) {
+    for (const { role, email, memberId } of viewers) {
       await page.context().clearCookies();
       await signInViaMagicLink(page, sessionsPath, { baseURL: base, email });
       await expect(manageFactories).toHaveCount(role === "admin" ? 1 : 0);
@@ -370,6 +385,21 @@ test("workspace factory creation preserves the default and lands in the returned
         await page.goto(`${settingsPath}?category=workspace&factory=${factory.id}#factory-setup`);
         await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
         await expect(page.locator("#factory-setup").getByRole("link")).toHaveCount(0);
+        if (role === "factory-manager") {
+          await admin
+            .rpc("grant_factory_membership", {
+              p_workspace_id: workspace.id,
+              p_factory_id: factory.id,
+              p_actor_user_id: owner.id,
+              p_member_id: memberId,
+              p_role: "manager",
+            })
+            .throwOnError();
+          await page.reload();
+          await expect(setupHeading).toBeVisible();
+          await expect(configure).toHaveCount(0);
+          await expect(viewSessions).toBeVisible();
+        }
       }
     }
   } finally {
