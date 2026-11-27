@@ -1,3 +1,4 @@
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import "server-only";
 
 import Link from "next/link";
@@ -217,6 +218,15 @@ export default async function BenchmarkComparisonPage({
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
+      <WorkspaceResourceScope
+        factoryId={factory.id}
+        pathname={workspaceBenchmarkComparisonPath(
+          workspaceSlug,
+          rawIds.suiteId,
+          rawIds.experimentId,
+        )}
+        workspaceSlug={workspaceSlug}
+      />
       <PageHeader
         title="Comparison results"
         description={`${comparison.suite.name} · Revision ${comparison.suite.revisionNumber}`}

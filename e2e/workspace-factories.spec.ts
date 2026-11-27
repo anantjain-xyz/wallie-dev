@@ -198,17 +198,19 @@ test("workspace factory creation preserves the default and lands in the returned
     await capture(page, info, "02-sessions-board-shortcut");
     await page.goto(sessionsPath);
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(picker).toHaveAttribute("data-value", defaultFactory.id);
+    await expect(picker).toHaveCount(0);
+    await expect(manageFactories).toHaveAttribute("href", factoriesPath);
+    await page.goto(`${sessionsPath}?factory=all`);
+    await expect(picker).toHaveAttribute("data-value", "all");
     await picker.press("Enter");
     const options = page.getByRole("listbox");
     await expect(options.getByRole("option", { name: "All factories" })).toBeVisible();
     await expect(options.getByText("Manage factories")).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(picker).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(manageFactories).toBeFocused();
+    await manageFactories.focus();
     await capture(page, info, "03-sessions-mobile-shortcut");
-    await page.keyboard.press("Enter");
+    await manageFactories.press("Enter");
     await expect(page).toHaveURL((url) => url.pathname + url.search + url.hash === factoriesPath);
     await expect(factoriesHeading).toBeFocused();
 
@@ -305,8 +307,19 @@ test("workspace factory creation preserves the default and lands in the returned
     await expect(picker).toHaveAttribute("data-value", factory.id);
     await expect(page.getByText("No sessions in this factory yet.")).toBeVisible();
     await expect(
-      page.getByRole("link", { name: `New session in ${defaultFactory.name}`, exact: true }),
-    ).toBeVisible();
+      page.getByRole("link", { name: "View sessions across factories" }),
+    ).toHaveAttribute("href", `${sessionsPath}?factory=all`);
+    const newSession = page.getByRole("button", { name: "New session", exact: true });
+    await newSession.press("Enter");
+    const composer = page.getByRole("dialog", { name: "Start a new session", exact: true });
+    await expect(composer.getByText("Payments Lab", { exact: true })).toBeVisible();
+    await expect(composer.getByLabel("Linear issue URL")).toHaveCount(0);
+    await expect(
+      composer.getByRole("button", { name: "Start session", exact: true }),
+    ).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(composer).toBeHidden();
+    await expect(newSession).toBeFocused();
     await capture(page, info, "06-new-factory-sessions");
     await selectDropdownOption(picker, defaultFactory.id);
     await expect(picker).toHaveAttribute("data-value", defaultFactory.id);

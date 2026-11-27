@@ -36,7 +36,11 @@ beforeEach(() => {
   mocks.options.mockResolvedValue([
     { id: factoryId, name: "Reporting factory", status: "active", canManage: true },
   ]);
-  mocks.context.mockResolvedValue({ workspace: { id: "workspace", slug: "example" }, supabase });
+  mocks.context.mockResolvedValue({
+    user: { id: "viewer" },
+    workspace: { id: "workspace", slug: "example" },
+    supabase,
+  });
 });
 
 function open(factory: string) {
@@ -51,7 +55,9 @@ it("starts one scoped outcome read without awaiting it or optional details befor
   mocks.periods.mockReturnValue(periods);
   mocks.environments.mockReturnValue(new Promise(() => {}));
 
-  const page = await open(factoryId);
+  const route = await open(factoryId);
+  const body = route.props.children[1];
+  const page = await body.type(body.props);
 
   expect(mocks.periods).toHaveBeenCalledExactlyOnceWith({
     supabase,

@@ -199,6 +199,26 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
       await selectDropdownOption(filter, "open");
       await expect(page).toHaveURL(filterUrl.href);
     });
+    await test.step("switches away from an exact scoped proposal page without carrying its cursor", async () => {
+      const firstPage = new URL(page.url());
+      const cursorPage = new URL(firstPage);
+      cursorPage.searchParams.set("after", first.revisionId);
+      await page.goto(cursorPage.href);
+      const header = page.locator("[data-shell-header]");
+      const factory = header.getByRole("combobox", { name: "Factory", exact: true });
+      await selectDropdownOption(factory, fixture.siblingFactoryId);
+      await expect(page).toHaveURL(
+        (url) =>
+          url.pathname === firstPage.pathname &&
+          url.searchParams.get("factory") === fixture.siblingFactoryId &&
+          url.searchParams.get("reviewState") === "open" &&
+          !url.searchParams.has("cohort") &&
+          !url.searchParams.has("after"),
+      );
+      await page.goBack();
+      await expect(page).toHaveURL(cursorPage.href);
+      await page.goto(firstPage.href);
+    });
     const proposal = main.getByRole("link", { name: rationale, exact: true });
     await expect(proposal).toBeVisible();
     const firstPath = z.string().parse(await proposal.getAttribute("href"));
@@ -213,6 +233,34 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await expect(
       page.getByRole("link", { name: "Back to improvements", exact: true }),
     ).toHaveAttribute("href", /reviewState=open/);
+
+    await test.step("keeps unavailable proposal revisions in the authorized factory", async () => {
+      const unavailable = new URL(firstPath, fixture.app);
+      const banner = page.getByRole("banner");
+      const failureGroups = page
+        .getByRole("navigation", { name: "Insights sections" })
+        .getByRole("link", { name: "Failure groups", exact: true });
+      for (const revision of ["not-a-revision", randomUUID()]) {
+        unavailable.searchParams.set("revision", revision);
+        await page.goto(unavailable.href, { waitUntil: "domcontentloaded" });
+        await expect(
+          main.getByRole("heading", { name: "Proposal revision unavailable", exact: true }),
+        ).toBeVisible();
+        await expect(banner.getByText("Product delivery", { exact: true })).toBeVisible();
+        await expect(banner.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
+        await expect(failureGroups).toHaveAttribute(
+          "href",
+          `${workspacePath}/failure-groups?factory=${fixture.factoryId}`,
+        );
+        await expect(
+          main.getByRole("link", { name: "Back to improvements", exact: true }),
+        ).toHaveAttribute(
+          "href",
+          `${workspacePath}/improvements?factory=${fixture.factoryId}&reviewState=open`,
+        );
+      }
+      await capture(page, info, "01a-unavailable-proposal-revision");
+    });
     await page.goto(firstPath, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Evidence and attribution" })).toBeVisible();
     await expect(main.getByText("Inconclusive evidence", { exact: true })).toBeVisible();
@@ -238,11 +286,21 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "Switch to dark mode" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await page.getByRole("button", { name: /^Workspace navigation:/ }).press("Enter");
+    const drawerTrigger = page.getByRole("button", { name: "Workspace navigation: Insights" });
+    await drawerTrigger.press("Enter");
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
-    await expect(drawer.getByRole("link", { name: "Improvements", exact: true })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Insights", exact: true })).toHaveAttribute(
+      "href",
+      `${workspacePath}/improvements?factory=${fixture.factoryId}`,
+    );
     await page.keyboard.press("Escape");
     await expect(drawer).toHaveCount(0);
+    await expect(drawerTrigger).toBeFocused();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Insights sections" })
+        .getByRole("link", { name: "Improvements", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
     await capture(page, info, "02-improvement-evidence-dark-mobile");
 
     const diff = main.locator("#candidate-diff:visible");

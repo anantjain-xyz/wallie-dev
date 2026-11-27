@@ -217,7 +217,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
       number: 1,
       title: defaultTitle,
     });
-    await seedReview(admin, {
+    const delegatedReview = await seedReview(admin, {
       workspaceId: workspace.id,
       factoryId: delegated.id,
       number: 2,
@@ -238,27 +238,32 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     });
 
     const workspacePath = `/w/${workspace.slug}`;
+    const allInboxHref = `${workspacePath}/inbox?factory=all`;
     const main = page.getByRole("main");
+    const rail = page.getByRole("navigation", { name: "Workspace navigation" });
+    const inbox = rail.getByRole("link", { name: "Inbox", exact: true });
     const factory = page.getByRole("combobox", { name: "Factory", exact: true });
     const defaultLink = main.getByRole("link", { name: defaultTitle, exact: true });
+    const delegatedLink = main.getByRole("link", { name: delegatedTitle, exact: true });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, `${workspacePath}/sessions`, {
       baseURL: app,
       email: memberEmail,
     });
+    await expect(inbox).toHaveAttribute("href", `${workspacePath}/inbox?factory=${primary.id}`);
     await Promise.all([
       page.waitForResponse(
         (response) => new URL(response.url()).pathname === "/api/factories/inbox" && response.ok(),
       ),
-      page.getByRole("link", { name: "Inbox", exact: true }).press("Enter"),
+      inbox.press("Enter"),
     ]);
     await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
     await expect(factory).toHaveAttribute("data-value", primary.id);
     await factory.press("Enter");
     await factory.press("Home");
     await factory.press("Enter");
-    await expect(page).toHaveURL((url) => url.searchParams.get("factory") === "all");
+    await expect(page).toHaveURL(allInboxHref);
     await expect(factory).toHaveText("All factories");
     await expect(factory).toHaveAttribute("data-value", "all");
     const itemTypes = main.getByRole("navigation", { name: "Inbox item type" });
@@ -267,7 +272,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
       "page",
     );
     await expect(itemTypes.getByRole("link", { name: "Clarifications 0" })).toBeVisible();
-    await expect(main.getByText(delegatedTitle, { exact: true })).toBeVisible();
+    await expect(delegatedLink).toBeVisible();
     await expect(main.getByText("Directors only", { exact: true })).toHaveCount(0);
     await expect(main.getByText("Private draft", { exact: true })).toHaveCount(0);
     await page.screenshot({
@@ -275,12 +280,33 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
       path: testInfo.outputPath("01-inbox-desktop-light.png"),
     });
 
+    const aggregateReviewHref = await delegatedLink.getAttribute("href");
+    if (!aggregateReviewHref) throw new Error("Missing the aggregate Inbox review link.");
+    const aggregateReview = new URL(aggregateReviewHref, app);
+    expect(aggregateReview.pathname).toBe(`${workspacePath}/sessions/2`);
+    expect(Object.fromEntries(aggregateReview.searchParams)).toMatchObject({
+      artifactStage: delegatedReview.stage.slug,
+      artifactId: delegatedReview.artifact.id,
+      artifactVersion: "1",
+      reviewStageId: delegatedReview.stage.id,
+      returnTo: allInboxHref,
+    });
+    await delegatedLink.press("Enter");
+    await expect(page).toHaveURL(aggregateReview.href);
+    await expect(inbox).toHaveAttribute("href", allInboxHref);
+    await expect(rail.getByRole("link", { name: "Activity", exact: true })).toHaveAttribute(
+      "href",
+      `${workspacePath}/runs?factory=${delegated.id}`,
+    );
+    await inbox.press("Enter");
+    await expect(page).toHaveURL(allInboxHref);
+
     const originalHref = await defaultLink.getAttribute("href");
     if (!originalHref) throw new Error("Missing the original exact review link.");
     expect(new URL(originalHref, app).searchParams.get("artifactId")).toBe(
       defaultReview.artifact.id,
     );
-    expect(new URL(originalHref, app).searchParams.get("returnTo")).toBe(`${workspacePath}/inbox`);
+    expect(new URL(originalHref, app).searchParams.get("returnTo")).toBe(allInboxHref);
     // Require the new item well before the periodic access recheck could update it.
     const replacement = await publishFixture(
       admin,
@@ -344,7 +370,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await expect(main.getByText("No pending clarifications in this factory.")).toBeVisible();
     await expect(main.getByRole("link", { name: "View all factories" })).toHaveAttribute(
       "href",
-      `${workspacePath}/inbox?kind=clarification`,
+      `${workspacePath}/inbox?factory=all&kind=clarification`,
     );
     await page.screenshot({
       animations: "disabled",
@@ -352,9 +378,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     });
     await itemTypes.getByRole("link", { name: "Reviews 1" }).press("Enter");
     await expect(main.getByText(delegatedTitle, { exact: true })).toBeVisible();
-    const delegatedHref = await main
-      .getByRole("link", { name: delegatedTitle, exact: true })
-      .getAttribute("href");
+    const delegatedHref = await delegatedLink.getAttribute("href");
     if (!delegatedHref) throw new Error("Missing the filtered review link.");
     expect(new URL(delegatedHref, app).searchParams.get("returnTo")).toBe(
       `${workspacePath}/inbox?factory=${delegated.id}&kind=review`,

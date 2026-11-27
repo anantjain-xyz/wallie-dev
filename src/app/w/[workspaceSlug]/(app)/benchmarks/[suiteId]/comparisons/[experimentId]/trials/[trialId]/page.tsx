@@ -12,7 +12,8 @@ import {
   benchmarkComparisonQuerySchema,
 } from "@/lib/factory-benchmarks/comparison-contracts";
 import { readBenchmarkTrialPageEvidence } from "@/lib/factory-benchmarks/trial-evidence";
-import { workspaceBenchmarkComparisonPath } from "@/lib/routes";
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
+import { workspaceBenchmarkComparisonPath, workspaceBenchmarkTrialPath } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const pathSchema = z.object({
@@ -67,15 +68,27 @@ export default async function BenchmarkTrialPage({
   );
 
   return (
-    <BenchmarkTrialEvidenceView
-      detail={detail}
-      endpoint={`/api/workspaces/${workspaceId}/factories/${factory.id}/benchmarks/experiments/${experimentId}/trials/${trialId}`}
-      transcript={transcript}
-      comparisonHref={`${workspaceBenchmarkComparisonPath(workspaceSlug, suiteId, experimentId, {
-        factory: factory.id,
-        afterTrialId: from.data.afterTrialId,
-        afterCandidateKey: from.data.afterCandidateKey,
-      })}#trial-${trialId}`}
-    />
+    <>
+      <WorkspaceResourceScope
+        factoryId={factory.id}
+        pathname={workspaceBenchmarkTrialPath(
+          workspaceSlug,
+          rawPath.suiteId,
+          rawPath.experimentId,
+          rawPath.trialId,
+        )}
+        workspaceSlug={workspaceSlug}
+      />
+      <BenchmarkTrialEvidenceView
+        detail={detail}
+        endpoint={`/api/workspaces/${workspaceId}/factories/${factory.id}/benchmarks/experiments/${experimentId}/trials/${trialId}`}
+        transcript={transcript}
+        comparisonHref={`${workspaceBenchmarkComparisonPath(workspaceSlug, suiteId, experimentId, {
+          factory: factory.id,
+          afterTrialId: from.data.afterTrialId,
+          afterCandidateKey: from.data.afterCandidateKey,
+        })}#trial-${trialId}`}
+      />
+    </>
   );
 }

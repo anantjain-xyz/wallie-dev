@@ -1,3 +1,4 @@
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -68,9 +69,17 @@ export default async function ImprovementPage({
       Back to improvements
     </Link>
   );
+  const resourceScope = (
+    <WorkspaceResourceScope
+      factoryId={scope.factoryId}
+      pathname={workspaceImprovementPath(workspaceSlug, proposalId)}
+      workspaceSlug={workspaceSlug}
+    />
+  );
   if (!data) {
     return (
       <PageContainer>
+        {resourceScope}
         <PageHeader title="Proposal revision unavailable" eyebrow={back} eyebrowAsPlain />
       </PageContainer>
     );
@@ -105,6 +114,7 @@ export default async function ImprovementPage({
 
   return (
     <PageContainer>
+      {resourceScope}
       <PageHeader
         title="Improvement proposal"
         eyebrow={back}

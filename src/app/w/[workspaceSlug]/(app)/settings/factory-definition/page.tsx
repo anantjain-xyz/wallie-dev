@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
@@ -53,7 +54,14 @@ const FACTORY_DEFINITION_RESET_PARAMS = [
   ...factoryContextHandoffKeys,
 ] as const;
 
-export default async function FactoryDefinitionPage({
+export default scopeFactoryIndex(FactoryDefinitionPage, {
+  picker: "guarded",
+  resetParams: FACTORY_DEFINITION_RESET_PARAMS,
+  route: "definition",
+  title: "Factory definition",
+});
+
+async function FactoryDefinitionPage({
   params,
   searchParams,
 }: {

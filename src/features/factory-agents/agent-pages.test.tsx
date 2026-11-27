@@ -345,3 +345,7 @@ it("distinguishes the legacy default from an agent outside an existing published
   expect(screen.getByText("This agent is not selected in the published definition")).toBeVisible();
   expect(screen.queryByText(/Legacy execution/)).not.toBeInTheDocument();
 });
+vi.mock("@/components/app-shell/workspace-factory-page.server", () => ({
+  scopeFactoryIndex: (Page: unknown) => Page,
+  WorkspaceResourceScope: () => null,
+}));

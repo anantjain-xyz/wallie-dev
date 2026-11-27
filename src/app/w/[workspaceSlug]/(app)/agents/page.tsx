@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { FactoryAuthoringFocus } from "@/features/factories/factory-authoring-focus";
 import {
@@ -12,7 +13,14 @@ import { loadAgentPageScope, loadAgentsList } from "@/features/factory-agents/ag
 import { AgentPromptForm } from "@/features/factory-agents/agent-prompt-form";
 import { workspaceAgentDetailPath, workspaceAgentsPath } from "@/lib/routes";
 
-export default async function AgentsPage({
+export default scopeFactoryIndex(AgentsPage, {
+  picker: "guarded",
+  resetParams: ["q", "new"],
+  route: "agents",
+  title: "Agents",
+});
+
+async function AgentsPage({
   params,
   searchParams,
 }: {

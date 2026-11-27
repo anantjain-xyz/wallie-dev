@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import {
   PAGE_HEADER_TITLE_CLASS,
   PageContainer,
@@ -34,7 +35,14 @@ const uuid = z
   .uuid()
   .transform((value) => value.toLowerCase());
 
-export default async function ScorersPage({
+export default scopeFactoryIndex(ScorersPage, {
+  picker: "guarded",
+  resetParams: ["revision", "preset", "q"],
+  route: "scorers",
+  title: "Scorers",
+});
+
+async function ScorersPage({
   params,
   searchParams,
 }: {

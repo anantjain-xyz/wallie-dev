@@ -1,40 +1,48 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   CreateSessionDialogLoading,
   CreateSessionDialogRequest,
-  isActiveNavItem,
   prefetchShellNavHrefOnIntent,
   preloadCreateSessionDialogOnce,
   ShellHeader,
 } from "@/components/app-shell/shell-header";
 import { normalizeTheme, resolveInitialTheme } from "@/components/app-shell/theme-toggle";
+import {
+  matchWorkspaceLocation,
+  readFactoryRequest,
+  resolveWorkspaceScope,
+  workspaceScopeLocationKey,
+} from "@/components/app-shell/workspace-location";
+import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
-import { getWorkspaceNavItems } from "@/lib/routes";
+import type { FactorySelectionOption } from "@/features/factories/factory-selection";
 
 const mocked = vi.hoisted(() => ({
   pathname: "/w/acme-corp",
   prefetch: vi.fn(),
+  push: vi.fn(),
   replace: vi.fn(),
   searchParams: new URLSearchParams(),
 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => mocked.pathname,
-  useRouter: () => ({ prefetch: mocked.prefetch, replace: mocked.replace }),
+  useRouter: () => ({ prefetch: mocked.prefetch, push: mocked.push, replace: mocked.replace }),
   useSearchParams: () => mocked.searchParams,
 }));
 
 const clientMocks = vi.hoisted(() => ({
   createSessionFromClient: vi.fn(),
   deletePendingSessionAttachmentFromClient: vi.fn().mockResolvedValue(undefined),
+  loadSessionCreationFactoriesFromClient: vi.fn().mockResolvedValue([]),
   loadSessionRepositoryOptionsFromClient: vi.fn(),
   uploadSessionAttachmentFromClient: vi.fn(),
 }));
@@ -42,16 +50,24 @@ const clientMocks = vi.hoisted(() => ({
 vi.mock("@/features/sessions/client", () => clientMocks);
 
 const workspace = { id: "workspace-1", name: "Acme Corp", slug: "acme-corp" };
-const navItems = getWorkspaceNavItems(workspace.slug);
 const creationFactory = { id: "factory-1", name: "Default Factory" };
+const defaultOptions = [
+  { ...creationFactory, isDefault: true, status: "active", canManage: true },
+  { id: "other-factory", name: "Mobile", isDefault: false, status: "active" },
+] satisfies FactorySelectionOption[];
+const releaseWorkflow = {
+  workflowId: "00000000-0000-4000-8000-000000000011",
+  activationId: "00000000-0000-4000-8000-000000000012",
+  label: "Release workflow",
+};
+const workflowOrigin = "/w/acme-corp/workflows?factory=factory-1&q=release#workflow-release";
 
-function createShellProps(
-  props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {},
-): Omit<Parameters<typeof ShellHeader>[0], "children"> {
+type HeaderProps = Omit<Parameters<typeof ShellHeader>[0], "children">;
+
+function createShellProps(props: Partial<HeaderProps>): HeaderProps {
   return {
-    creationFactory,
-    navItems,
-    onboarding: { currentStep: "verify", status: "completed" } as const,
+    factories: defaultOptions,
+    onboarding: { currentStep: "verify", status: "completed" },
     viewerAvatarUrl: null,
     viewerEmail: "owner@example.com",
     viewerId: "user-1",
@@ -61,20 +77,67 @@ function createShellProps(
   };
 }
 
-function renderShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
+function renderShell(props: Partial<HeaderProps> = {}) {
   return renderToStaticMarkup(createElement(ShellHeader, createShellProps(props), "Page body"));
 }
 
-function shellElement(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
+function shellElement(props: Partial<HeaderProps> = {}, children: ReactNode = "Page body") {
+  const header = createShellProps(props);
+  const location = matchWorkspaceLocation(mocked.pathname, header.workspace.slug);
+  const factories = header.factories ?? [];
+  const query = readFactoryRequest(mocked.searchParams);
   return createElement(
     OverlayProvider,
     null,
-    createElement(ShellHeader, createShellProps(props), "Page body"),
+    createElement(
+      ShellHeader,
+      header,
+      createElement(WorkspaceScopeHandoff, {
+        snapshot: {
+          factories,
+          locationKey: workspaceScopeLocationKey(
+            mocked.pathname,
+            location?.detail ? undefined : query,
+          ),
+          picker: location?.detail ? "locked" : "header",
+          scope: resolveWorkspaceScope(
+            location,
+            factories,
+            query,
+            location?.detail ? null : undefined,
+          ),
+          viewerId: header.viewerId,
+          workspaceId: header.workspace.id,
+        },
+      }),
+      children,
+    ),
   );
 }
 
 function mountShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
   return render(shellElement(props));
+}
+
+function mockScopedSessionOptions(definitionDigest?: string) {
+  clientMocks.loadSessionRepositoryOptionsFromClient.mockImplementation(({ factoryId }) =>
+    Promise.resolve({
+      defaultGithubRepositoryId: "repo",
+      ...(definitionDigest ? { factoryDefinitionDigest: definitionDigest } : {}),
+      factoryId,
+      pipelineId: "pipeline",
+      repositoryOptions: [{ id: "repo", fullName: "examples/product" }],
+      stageOptions: [{ id: "plan", name: "Plan", position: 0, description: "" }],
+    }),
+  );
+}
+
+function mockWorkflowSessionOptions(options = [releaseWorkflow]) {
+  const definitionDigest = "d".repeat(64);
+  mockScopedSessionOptions(definitionDigest);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    Response.json({ definitionDigest, options }),
+  );
 }
 
 describe("ShellHeader", () => {
@@ -129,9 +192,11 @@ describe("ShellHeader", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     mocked.pathname = "/w/acme-corp";
     mocked.prefetch.mockClear();
+    mocked.push.mockClear();
     mocked.replace.mockClear();
     mocked.searchParams = new URLSearchParams();
     window.localStorage.clear();
+    vi.restoreAllMocks();
   });
 
   afterAll(() => {
@@ -160,63 +225,75 @@ describe("ShellHeader", () => {
   });
 
   it("keeps New session available after onboarding is complete", () => {
-    mocked.searchParams = new URLSearchParams("create=1");
-
-    const html = renderShell();
-
-    expect(html).toContain("New session");
-    expect(html).not.toContain("Resume setup");
-    expect(html).not.toContain("Loading session form…");
+    mountShell();
+    expect(screen.getByRole("button", { name: "New session" })).toBeVisible();
+    expect(screen.queryByText("Resume setup")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("blocks the default-factory creation deep link for an unauthorized viewer", () => {
-    mocked.searchParams = new URLSearchParams("create=1");
-    mountShell({ creationFactory: null });
+  it("blocks creation on the eligible Board while workspace onboarding is incomplete", () => {
+    mocked.searchParams = new URLSearchParams({ factory: creationFactory.id, create: "1" });
+    mountShell({ onboarding: { currentStep: "repository", status: "in_progress" } });
 
+    expect(screen.getByRole("link", { name: /Resume setup/ })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/onboarding",
+    );
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "New session" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+    expect(mocked.replace).toHaveBeenCalledWith("/w/acme-corp/onboarding");
+  });
+
+  it.each(["runs", "sessions/42"])(
+    "offers a secondary Resume setup action on %s without a session launcher",
+    (path) => {
+      mocked.pathname = `/w/acme-corp/${path}`;
+      mountShell({ onboarding: { currentStep: "repository", status: "in_progress" } });
+
+      const resume = screen.getByRole("link", { name: /Resume setup/ });
+      expect(resume).toHaveAttribute("href", "/w/acme-corp/onboarding");
+      expect(resume).toHaveClass("ui-button");
+      expect(resume).not.toHaveClass("ui-button-primary");
+      expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    },
+  );
+
+  it("blocks the default-factory creation deep link for an unauthorized viewer", () => {
+    mocked.searchParams = new URLSearchParams("create=1&factory=factory-1");
+    mountShell({ factories: [] });
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it.each([
-    ["the workspace home", "/w/acme-corp", ""],
-    ["the explicit default factory scope", "/w/acme-corp", "factory=factory-1"],
-    ["a case-insensitive default factory id", "/w/acme-corp", "factory=FACTORY-1"],
-    ["a runs list page", "/w/acme-corp/runs", ""],
-    ["an unscoped session detail page", "/w/acme-corp/sessions/42", ""],
-    ["an unscoped run detail page", "/w/acme-corp/runs/run-1", ""],
-  ])("keeps the New session launcher on %s", (_label, pathname, query) => {
-    mocked.pathname = pathname;
-    mocked.searchParams = new URLSearchParams(query);
-    const html = renderShell();
-
-    expect(html).toContain("New session");
-    expect(html).not.toContain("Switch to create");
-    expect(html).not.toContain("New session in ");
-    expect(html).not.toContain("Default Factory");
-  });
+    ["the workspace home", "/w/acme-corp", "", true],
+    ["the explicit default factory scope", "/w/acme-corp", "factory=factory-1", true],
+    ["a case-insensitive default factory id", "/w/acme-corp", "factory=FACTORY-1", true],
+    ["a runs list page", "/w/acme-corp/runs", "", false],
+    ["an unscoped session detail page", "/w/acme-corp/sessions/42", "", false],
+    ["an unscoped run detail page", "/w/acme-corp/runs/run-1", "", false],
+  ])(
+    "places the New session launcher according to the view at %s",
+    (_label, pathname, query, show) => {
+      mocked.pathname = pathname;
+      mocked.searchParams = new URLSearchParams(query);
+      mountShell();
+      expect(Boolean(screen.queryByRole("button", { name: "New session" }))).toBe(show);
+      expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
+    },
+  );
 
   it.each([
-    ["another factory", "factory=other-factory"],
-    ["the all-factories aggregate", "factory=all"],
-    ["a repeated malformed scope", "factory=factory-1&factory=other-factory"],
-    ["an unknown factory id", "factory=missing-factory"],
-  ])("routes New session to the default factory from %s", (_label, query) => {
+    ["another factory", "factory=other-factory", true],
+    ["the all-factories aggregate", "factory=all", true],
+    ["a repeated malformed scope", "factory=factory-1&factory=other-factory", false],
+    ["an unknown factory id", "factory=missing-factory", false],
+  ])("never rewrites New session to the default factory from %s", (_label, query, allowed) => {
     mocked.searchParams = new URLSearchParams(query);
     mountShell();
-
-    const link = screen.getByRole("link", {
-      name: "New session in Default Factory",
-    });
-    const href = new URL((link as HTMLAnchorElement).href);
-    expect(href.pathname).toBe("/w/acme-corp/sessions");
-    expect(Object.fromEntries(href.searchParams)).toEqual({
-      factory: "factory-1",
-      create: "1",
-      returnTo: `/w/acme-corp?${query}`,
-    });
-    expect(link).toHaveTextContent("New session in Default Factory");
-    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(Boolean(screen.queryByRole("button", { name: "New session" }))).toBe(allowed);
+    expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
+    expect(mocked.replace).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -225,56 +302,36 @@ describe("ShellHeader", () => {
     ["Governance", "/w/acme-corp/governance"],
     ["Context", "/w/acme-corp/context"],
     ["Memory", "/w/acme-corp/memory"],
-  ])("routes creation through the default factory from implicit %s scope", (_label, pathname) => {
+  ])("does not route an implicit %s scope to a default-factory launch", (_label, pathname) => {
     mocked.pathname = pathname;
-    mountShell({
-      navItems: getWorkspaceNavItems(workspace.slug, { canManageGovernance: true }),
-      factories: [
-        { ...creationFactory, isDefault: true, status: "active" },
-        { id: "managed", name: "Managed", isDefault: false, status: "active", canManage: true },
-      ],
-    });
-
-    const link = screen.getByRole("link", { name: "New session in Default Factory" });
-    const href = new URL((link as HTMLAnchorElement).href);
-    expect(href.searchParams.get("returnTo")).toBe(pathname);
-    expect(href.searchParams.get("factory")).toBe("factory-1");
-    expect(link).toHaveTextContent("New session in Default Factory");
+    mountShell();
+    expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
   });
 
-  it("links to default-factory creation for a create deep link outside the default scope", () => {
-    mocked.searchParams = new URLSearchParams("create=1&factory=other-factory");
+  it("blocks a create deep link in an unknown scope without offering a different factory", () => {
+    mocked.searchParams = new URLSearchParams("create=1&factory=missing-factory");
     mountShell();
-
     expect(screen.queryByRole("dialog")).toBeNull();
-    const link = screen.getByRole("link", {
-      name: "New session in Default Factory",
-    }) as HTMLAnchorElement;
-    expect(new URL(link.href).searchParams.get("returnTo")).toBe(
-      "/w/acme-corp?factory=other-factory",
-    );
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
   });
 
-  it("includes the current hash in copyable launch links and updates when it changes", async () => {
-    mocked.pathname = "/w/acme-corp/activity";
-    mocked.searchParams = new URLSearchParams("actor=example");
+  it("updates the active factory section when an existing setup anchor is opened", async () => {
+    mocked.pathname = "/w/acme-corp/settings/factory-definition";
+    mocked.searchParams = new URLSearchParams("factory=factory-1");
     const initialUrl = window.location.href;
-    window.history.replaceState(null, "", "#recent");
     try {
-      mountShell();
-      const link = screen.getByRole("link", {
-        name: "New session in Default Factory",
-      }) as HTMLAnchorElement;
-      expect(new URL(link.href).searchParams.get("returnTo")).toBe(
-        "/w/acme-corp/activity?actor=example#recent",
+      mountShell({ canManageFactoryDefinition: true });
+      const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
+      const pipeline = sections.getByRole("link", { name: "Pipeline" });
+      expect(pipeline).toHaveAttribute(
+        "href",
+        "/w/acme-corp/settings/factory-definition?factory=factory-1#definition-field-stages",
       );
-      window.location.hash = "latest";
-      await waitFor(() =>
-        expect(new URL(link.href).searchParams.get("returnTo")).toBe(
-          "/w/acme-corp/activity?actor=example#latest",
-        ),
-      );
+      expect(pipeline).not.toHaveAttribute("aria-current");
+      window.location.hash = "definition-field-stages";
+      await waitFor(() => expect(pipeline).toHaveAttribute("aria-current", "page"));
     } finally {
       window.history.replaceState(null, "", initialUrl);
     }
@@ -297,13 +354,11 @@ describe("ShellHeader", () => {
     mocked.pathname = "/w/acme-corp/activity";
     mocked.searchParams = new URLSearchParams("factory=all&actor=example");
     rerender(shellElement());
-    await waitFor(() =>
-      expect(screen.getByRole("link", { name: "New session in Default Factory" })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
   });
 
   it("uses Sessions rather than a different workspace as the direct URL fallback", async () => {
-    mocked.pathname = "/w/acme-corp/analytics";
+    mocked.pathname = "/w/acme-corp";
     mocked.searchParams = new URLSearchParams({
       create: "1",
       returnTo: "/w/another-workspace",
@@ -327,13 +382,7 @@ describe("ShellHeader", () => {
       repositoryOptions: [],
       stageOptions: [],
     });
-    const shell = (props: Parameters<typeof createShellProps>[0] = {}) =>
-      createElement(
-        OverlayProvider,
-        null,
-        createElement(ShellHeader, createShellProps(props), "Page body"),
-      );
-    const view = render(shell());
+    const view = mountShell();
 
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
     const prompt = await screen.findByLabelText("Prompt");
@@ -341,15 +390,511 @@ describe("ShellHeader", () => {
     expect(prompt).toHaveValue("Keep this draft");
 
     mocked.searchParams = new URLSearchParams("factory=other-factory");
-    view.rerender(shell());
+    view.rerender(shellElement());
     await waitFor(() => expect(screen.queryByLabelText("Prompt")).toBeNull());
-    expect(screen.getByRole("link", { name: "New session in Default Factory" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "New session" })).toBeVisible();
 
     mocked.searchParams = new URLSearchParams();
-    view.rerender(shell());
+    view.rerender(shellElement());
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
     expect(await screen.findByLabelText("Prompt")).toHaveValue("Keep this draft");
   });
+
+  it.each([
+    ["success before the switch commits", "success"],
+    ["a rejected request after the switch commits", "rejected"],
+    ["an unconfirmed request started from All factories", "unconfirmed"],
+    ["a rejected workflow launch after its URL is cleaned", "workflow"],
+    ["loss of eligibility without a picker interaction", "ineligible"],
+  ] as const)("releases the creation preview for %s", async (_label, outcome) => {
+    const fromAll = outcome === "unconfirmed";
+    const launch = outcome === "workflow";
+    const target = fromAll ? defaultOptions[1] : creationFactory;
+    const archivedFactory = {
+      id: "archive",
+      name: "Archive",
+      isDefault: false,
+      status: "archived",
+    } satisfies FactorySelectionOption;
+    const header = {
+      factories: [...defaultOptions, archivedFactory],
+      viewerId: `creation-${outcome}`,
+    };
+    const archiveHref = "/w/acme-corp/sessions?factory=archive";
+    const canonicalUrl = "/w/acme-corp/sessions/42";
+    const draftPrompt = "Document the new approval flow";
+    const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+    clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
+    clientMocks.loadSessionCreationFactoriesFromClient.mockResolvedValue(defaultOptions);
+    if (launch) mockWorkflowSessionOptions();
+    else mockScopedSessionOptions();
+
+    mocked.pathname = "/w/acme-corp/sessions";
+    mocked.searchParams = new URLSearchParams({
+      factory: fromAll ? "all" : target.id,
+      ...(launch
+        ? {
+            create: "1",
+            returnTo: workflowOrigin,
+            workflowActivation: releaseWorkflow.activationId,
+          }
+        : {}),
+    });
+    const view = render(shellElement(header, createElement("h1", null, "Sessions")));
+    if (!launch) fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    const prompt = await screen.findByLabelText("Prompt");
+    const dialog = screen.getByRole("dialog", { name: "Start a new session" });
+    if (fromAll) {
+      fireEvent.click(await within(dialog).findByRole("combobox", { name: "Factory" }));
+      fireEvent.click(screen.getByRole("option", { name: target.name }));
+    }
+    fireEvent.change(prompt, {
+      target: { value: draftPrompt },
+    });
+    const submit = within(dialog).getByRole("button", { name: "Start session" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    expect(await screen.findByRole("region", { name: "Creating session" })).toBeVisible();
+    const [original] = clientMocks.createSessionFromClient.mock.calls[0];
+    expect(original.factoryId).toBe(target.id);
+    if (launch) {
+      const cleanUrl = `${mocked.pathname}?factory=${target.id}`;
+      expect(mocked.replace).toHaveBeenCalledExactlyOnceWith(cleanUrl, { scroll: false });
+      expect(original.workflowSelection).toEqual({
+        workflowId: releaseWorkflow.workflowId,
+        activationId: releaseWorkflow.activationId,
+      });
+      mocked.searchParams = new URLSearchParams({ factory: target.id });
+      view.rerender(shellElement(header, createElement("h1", null, "Sessions")));
+      expect(screen.getByRole("region", { name: "Creating session" })).toBeVisible();
+    }
+
+    if (outcome !== "ineligible") {
+      fireEvent.click(screen.getByRole("combobox", { name: "Factory" }));
+      fireEvent.click(screen.getByRole("option", { name: "Archive (archived)" }));
+      expect(mocked.push).toHaveBeenCalledExactlyOnceWith(archiveHref, { scroll: false });
+      expect(screen.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    }
+
+    const settle = () =>
+      act(async () => {
+        if (outcome === "unconfirmed") pending.reject(new TypeError("Failed to fetch"));
+        else if (outcome === "rejected" || launch)
+          pending.reject(
+            Object.assign(new Error("Repository unavailable"), { creationRejected: true }),
+          );
+        else pending.resolve({ canonicalUrl, number: 42 });
+      });
+    if (outcome === "success") await settle();
+    if (outcome === "ineligible") {
+      view.rerender(
+        shellElement(
+          {
+            ...header,
+            factories: header.factories.map((factory) =>
+              factory.id === target.id ? { ...factory, status: "archived" } : factory,
+            ),
+          },
+          createElement("h1", null, "Archived sessions"),
+        ),
+      );
+    } else {
+      mocked.searchParams = new URLSearchParams("factory=archive");
+      view.rerender(shellElement(header, createElement("h1", null, "Archived sessions")));
+    }
+    expect(screen.getByRole("heading", { name: "Archived sessions" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Creating session" })).toBeNull();
+    if (outcome !== "success") await settle();
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+    expect(mocked.push).toHaveBeenCalledTimes(outcome === "ineligible" ? 0 : 1);
+
+    if (outcome === "success" || outcome === "ineligible") {
+      fireEvent.click(await screen.findByRole("button", { name: "Open session" }));
+      expect(mocked.push).toHaveBeenLastCalledWith(canonicalUrl);
+      return;
+    }
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open draft" }));
+    const recoveryQuery = new URLSearchParams({
+      factory: target.id,
+      create: "1",
+      ...(launch
+        ? { returnTo: workflowOrigin, workflowActivation: releaseWorkflow.activationId }
+        : {}),
+    });
+    expect(mocked.push.mock.lastCall?.[0]).toBe(`${mocked.pathname}?${recoveryQuery}`);
+    expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+    mocked.searchParams = recoveryQuery;
+    if (outcome === "rejected") {
+      view.rerender(
+        shellElement({
+          ...header,
+          factories: header.factories.filter(({ id }) => id !== target.id),
+        }),
+      );
+      expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    }
+    view.rerender(shellElement(header));
+    const recovered = await screen.findByRole("dialog", { name: "Start a new session" });
+    expect(within(recovered).getByLabelText("Prompt")).toHaveValue(draftPrompt);
+    if (launch) {
+      expect(await within(recovered).findByText(releaseWorkflow.label)).toBeVisible();
+      fireEvent.keyDown(recovered, { key: "Escape" });
+      expect(mocked.replace).toHaveBeenLastCalledWith(workflowOrigin, { scroll: true });
+      return;
+    }
+    const unconfirmed = outcome === "unconfirmed";
+    const retry = within(recovered).getByRole("button", {
+      name: unconfirmed ? "Retry creation" : "Start session",
+    });
+    clientMocks.createSessionFromClient.mockResolvedValueOnce({ canonicalUrl, number: 42 });
+    await waitFor(() => expect(retry).toBeEnabled());
+    await act(async () => fireEvent.click(retry));
+    expect(clientMocks.createSessionFromClient).toHaveBeenCalledTimes(2);
+    const [replayed] = clientMocks.createSessionFromClient.mock.calls[1];
+    if (unconfirmed) expect(replayed).toEqual(original);
+    else {
+      expect(replayed).toEqual({ ...original, requestId: expect.any(String) });
+      expect(replayed.requestId).not.toBe(original.requestId);
+    }
+  });
+
+  it.each(["canonical detail", "an archived switch"] as const)(
+    "honors the next workflow launch's exact return after confirming creation and opening %s",
+    async (destination) => {
+      const sessions = "/w/acme-corp/sessions";
+      const canonicalUrl = `${sessions}/42`;
+      const archivedFactory = {
+        id: "archive",
+        name: "Archive",
+        isDefault: false,
+        status: "archived",
+      } satisfies FactorySelectionOption;
+      const header = {
+        factories: [...defaultOptions, archivedFactory],
+        viewerId: `confirmed-${destination}`,
+      };
+      mocked.pathname = sessions;
+      mocked.searchParams = new URLSearchParams({ factory: creationFactory.id });
+      clientMocks.createSessionFromClient
+        .mockReset()
+        .mockResolvedValueOnce({ canonicalUrl, number: 42 });
+      mockScopedSessionOptions();
+      const view = mountShell(header);
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      fireEvent.change(await screen.findByLabelText("Prompt"), {
+        target: { value: "Document the completed request" },
+      });
+      const submit = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      await waitFor(() => expect(mocked.push).toHaveBeenCalledExactlyOnceWith(canonicalUrl));
+      expect(screen.getByRole("region", { name: "Creating session" })).toBeVisible();
+
+      if (destination === "canonical detail") {
+        mocked.pathname = canonicalUrl;
+        mocked.searchParams = new URLSearchParams();
+      } else {
+        fireEvent.click(screen.getByRole("combobox", { name: "Factory" }));
+        fireEvent.click(screen.getByRole("option", { name: "Archive (archived)" }));
+        expect(mocked.push).toHaveBeenLastCalledWith(`${sessions}?factory=archive`, {
+          scroll: false,
+        });
+        mocked.searchParams = new URLSearchParams({ factory: archivedFactory.id });
+      }
+      view.rerender(shellElement(header));
+      expect(screen.queryByRole("region", { name: "Creating session" })).toBeNull();
+
+      mocked.pathname = sessions;
+      mocked.searchParams = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: workflowOrigin,
+        workflowActivation: releaseWorkflow.activationId,
+      });
+      view.rerender(shellElement(header));
+      const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(mocked.replace).toHaveBeenLastCalledWith(workflowOrigin, { scroll: true });
+    },
+  );
+
+  it.each(["resume the preview", "resume after Back", "start after completion"] as const)(
+    "keeps a launch for its pending draft only when choosing to %s",
+    async (action) => {
+      const header = { viewerId: `launch-${action}` };
+      const canonicalUrl = "/w/acme-corp/sessions/42";
+      const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+      const rejected = Object.assign(new Error("Repository unavailable"), {
+        creationRejected: true,
+      });
+      const draft = "Prepare the release checklist";
+      clientMocks.createSessionFromClient
+        .mockReset()
+        .mockReturnValueOnce(pending.promise)
+        .mockRejectedValueOnce(rejected);
+      mockWorkflowSessionOptions();
+      mocked.pathname = "/w/acme-corp/sessions";
+      mocked.searchParams = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: workflowOrigin,
+        workflowActivation: releaseWorkflow.activationId,
+      });
+      const view = mountShell(header);
+      fireEvent.change(await screen.findByLabelText("Prompt"), { target: { value: draft } });
+      const submit = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      const [original] = clientMocks.createSessionFromClient.mock.calls[0];
+      expect(original.workflowSelection).toEqual({
+        workflowId: releaseWorkflow.workflowId,
+        activationId: releaseWorkflow.activationId,
+      });
+      mocked.searchParams = new URLSearchParams({ factory: creationFactory.id });
+      view.rerender(shellElement(header));
+      const back = screen.getByRole("button", { name: /Back to workspace/ });
+      if (action !== "resume the preview") fireEvent.click(back);
+
+      if (action === "start after completion") {
+        await act(async () => pending.resolve({ canonicalUrl, number: 42 }));
+        expect(mocked.push).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+        expect(await screen.findByLabelText("Prompt")).toHaveValue("");
+        expect(await screen.findByRole("combobox", { name: "Workflow" })).toHaveTextContent(
+          "Default pipeline",
+        );
+        return;
+      }
+
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      expect(screen.getByRole("region", { name: "Creating session" })).toBeVisible();
+      await act(async () => pending.reject(rejected));
+      expect(await screen.findByText(releaseWorkflow.label)).toBeVisible();
+      expect(screen.getByLabelText("Prompt")).toHaveValue(draft);
+      const retry = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(retry).toBeEnabled());
+      await act(async () => fireEvent.click(retry));
+      const [resubmitted] = clientMocks.createSessionFromClient.mock.calls[1];
+      expect(resubmitted.workflowSelection).toEqual(original.workflowSelection);
+      fireEvent.keyDown(screen.getByRole("dialog", { name: "Start a new session" }), {
+        key: "Escape",
+      });
+      expect(mocked.replace).toHaveBeenLastCalledWith(workflowOrigin, { scroll: true });
+    },
+  );
+
+  it.each(["viewer", "workspace"] as const)(
+    "does not carry a saved workflow launch across a change of %s at the same URL",
+    async (identity) => {
+      const owner = { viewerId: `workflow-owner-${identity}` };
+      const next =
+        identity === "viewer"
+          ? { viewerId: "another-viewer" }
+          : { ...owner, workspace: { ...workspace, id: "another-workspace" } };
+      const canonicalUrl = "/w/acme-corp/sessions/42";
+      const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+      clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
+      mockWorkflowSessionOptions();
+      mocked.pathname = "/w/acme-corp/sessions";
+      mocked.searchParams = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: workflowOrigin,
+        workflowActivation: releaseWorkflow.activationId,
+      });
+      const view = mountShell(owner);
+      fireEvent.change(await screen.findByLabelText("Prompt"), {
+        target: { value: "Prepare the original release" },
+      });
+      const submit = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+
+      mocked.searchParams = new URLSearchParams({ factory: creationFactory.id });
+      view.rerender(shellElement(owner));
+      fireEvent.click(screen.getByRole("button", { name: /Back to workspace/ }));
+      mocked.replace.mockClear();
+      view.rerender(shellElement(next));
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+      expect(within(dialog).getByLabelText("Prompt")).toHaveValue("");
+      expect(await within(dialog).findByRole("combobox", { name: "Workflow" })).toHaveTextContent(
+        "Default pipeline",
+      );
+      expect(within(dialog).queryByText(releaseWorkflow.label)).toBeNull();
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(mocked.replace).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      expect(screen.getByRole("dialog", { name: "Start a new session" })).toBeVisible();
+      view.rerender(shellElement(owner));
+      expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+      await act(async () => pending.resolve({ canonicalUrl, number: 42 }));
+      expect(mocked.push).not.toHaveBeenCalled();
+      expect(screen.queryByText("Session #42 created.")).toBeNull();
+    },
+  );
+
+  it("blocks retry from a different return for the same publication and restores the exact draft", async () => {
+    const header = { viewerId: "same-publication-different-return" };
+    const sessions = "/w/acme-corp/sessions";
+    const canonicalUrl = `${sessions}/42`;
+    const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+    const nextOrigin = "/w/acme-corp/workflows?factory=factory-1&q=other#workflow-other";
+    const originalQuery = new URLSearchParams({
+      factory: creationFactory.id,
+      create: "1",
+      returnTo: workflowOrigin,
+      workflowActivation: releaseWorkflow.activationId,
+    });
+    clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
+    mockWorkflowSessionOptions();
+    mocked.pathname = sessions;
+    mocked.searchParams = originalQuery;
+    const view = mountShell(header);
+    fireEvent.change(await screen.findByLabelText("Prompt"), {
+      target: { value: "Prepare the original release" },
+    });
+    const submit = screen.getByRole("button", { name: "Start session" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    const [original] = clientMocks.createSessionFromClient.mock.calls[0];
+    expect(original.requestId).toEqual(expect.any(String));
+
+    mocked.searchParams = new URLSearchParams({ factory: creationFactory.id });
+    view.rerender(shellElement(header));
+    fireEvent.click(screen.getByRole("button", { name: /Back to workspace/ }));
+    await act(async () => pending.reject(new TypeError("Failed to fetch")));
+    expect(await screen.findByRole("button", { name: "Open draft" })).toBeVisible();
+
+    mocked.searchParams = new URLSearchParams(originalQuery);
+    mocked.searchParams.set("returnTo", nextOrigin);
+    view.rerender(shellElement(header));
+    const next = screen.getByRole("dialog", { name: "Start a new session" });
+    const blockedRetry = within(next).getByRole("button", { name: "Retry creation" });
+    expect(blockedRetry).toBeDisabled();
+    fireEvent.submit(blockedRetry.closest("form")!);
+    expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce();
+    expect(mocked.push).not.toHaveBeenCalled();
+
+    fireEvent.click(within(next).getByRole("button", { name: "Open original draft" }));
+    expect(mocked.push).toHaveBeenCalledExactlyOnceWith(`${sessions}?${originalQuery}`);
+    mocked.searchParams = originalQuery;
+    view.rerender(shellElement(header));
+    const retry = screen.getByRole("button", { name: "Retry creation" });
+    await waitFor(() => expect(retry).toBeEnabled());
+    clientMocks.createSessionFromClient.mockResolvedValueOnce({ canonicalUrl, number: 42 });
+    await act(async () => fireEvent.click(retry));
+    expect(clientMocks.createSessionFromClient).toHaveBeenNthCalledWith(2, original);
+  });
+
+  it.each([
+    { outcome: "success", close: "Escape" },
+    { outcome: "rejected", close: "Escape" },
+    { outcome: "unconfirmed", close: "Escape" },
+    { outcome: "success", close: "Discard draft" },
+    { outcome: "rejected", close: "Discard draft" },
+  ] as const)(
+    "keeps the newer workflow launch open after $outcome, until $close",
+    async ({ outcome, close }) => {
+      const header = { viewerId: `overlapping-launches-${outcome}-${close}` };
+      const sessions = "/w/acme-corp/sessions";
+      const canonicalUrl = "/w/acme-corp/sessions/42";
+      const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+      const nextWorkflow = {
+        ...releaseWorkflow,
+        activationId: "00000000-0000-4000-8000-000000000013",
+        label: "Next release workflow",
+      };
+      const nextOrigin = "/w/acme-corp/workflows?factory=factory-1&q=next#workflow-next";
+      const originalQuery = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: workflowOrigin,
+        workflowActivation: releaseWorkflow.activationId,
+      });
+      clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
+      mockWorkflowSessionOptions([releaseWorkflow, nextWorkflow]);
+      mocked.pathname = sessions;
+      mocked.searchParams = originalQuery;
+      const view = mountShell(header);
+      fireEvent.change(await screen.findByLabelText("Prompt"), {
+        target: { value: "Publish the earlier release" },
+      });
+      const submit = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      expect(screen.getByRole("region", { name: "Creating session" })).toBeVisible();
+      const [original] = clientMocks.createSessionFromClient.mock.calls[0];
+      expect(mocked.replace).toHaveBeenCalledExactlyOnceWith(
+        `${sessions}?factory=${creationFactory.id}`,
+        { scroll: false },
+      );
+
+      mocked.searchParams = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: nextOrigin,
+        workflowActivation: nextWorkflow.activationId,
+      });
+      view.rerender(shellElement(header));
+      const nextDialog = screen.getByRole("dialog", { name: "Start a new session" });
+      expect(screen.queryByRole("region", { name: "Creating session" })).toBeNull();
+      expect(within(nextDialog).getByRole("button", { name: "Close" })).toBeEnabled();
+      expect(mocked.replace).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        if (outcome === "success") pending.resolve({ canonicalUrl, number: 42 });
+        else if (outcome === "rejected")
+          pending.reject(
+            Object.assign(new Error("Repository unavailable"), { creationRejected: true }),
+          );
+        else pending.reject(new TypeError("Failed to fetch"));
+      });
+      expect(nextDialog).toBeVisible();
+      if (outcome !== "unconfirmed") {
+        expect(await within(nextDialog).findByText(nextWorkflow.label)).toBeVisible();
+      } else {
+        expect(within(nextDialog).getByRole("button", { name: "Retry creation" })).toBeDisabled();
+      }
+      expect(mocked.push).not.toHaveBeenCalled();
+      expect(mocked.replace).toHaveBeenCalledTimes(1);
+      const resultTitle =
+        outcome === "success" ? "Session #42 created." : "Session creation needs attention.";
+      expect(screen.queryByText(resultTitle)).toBeNull();
+      if (close === "Escape") fireEvent.keyDown(nextDialog, { key: "Escape" });
+      else fireEvent.click(within(nextDialog).getByRole("button", { name: close }));
+      expect(mocked.replace).toHaveBeenLastCalledWith(nextOrigin, { scroll: true });
+      expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+      if (close === "Discard draft" && outcome === "rejected") {
+        expect(screen.queryByText(resultTitle)).toBeNull();
+        return;
+      }
+      expect(await screen.findByText(resultTitle)).toBeVisible();
+      if (outcome === "success") {
+        fireEvent.click(await screen.findByRole("button", { name: "Open session" }));
+        expect(mocked.push).toHaveBeenCalledExactlyOnceWith(canonicalUrl);
+      } else {
+        fireEvent.click(await screen.findByRole("button", { name: "Open draft" }));
+        expect(mocked.push).toHaveBeenCalledExactlyOnceWith(`${sessions}?${originalQuery}`);
+        mocked.searchParams = originalQuery;
+        view.rerender(shellElement(header));
+        const recovered = screen.getByRole("dialog", { name: "Start a new session" });
+        expect(await within(recovered).findByText(releaseWorkflow.label)).toBeVisible();
+        expect(within(recovered).getByLabelText("Prompt")).toHaveValue(original.promptMd);
+        if (outcome === "unconfirmed") {
+          const retry = within(recovered).getByRole("button", { name: "Retry creation" });
+          await waitFor(() => expect(retry).toBeEnabled());
+          clientMocks.createSessionFromClient.mockResolvedValueOnce({ canonicalUrl, number: 42 });
+          await act(async () => fireEvent.click(retry));
+          expect(clientMocks.createSessionFromClient).toHaveBeenNthCalledWith(2, original);
+        }
+      }
+    },
+  );
 
   it("renders the theme toggle with a hydration-safe accessible label", () => {
     const html = renderShell();
@@ -418,9 +963,9 @@ describe("ShellHeader", () => {
     ["/w/acme-corp", "Sessions"],
     ["/w/acme-corp/sessions", "Sessions"],
     ["/w/acme-corp/inbox", "Inbox"],
-    ["/w/acme-corp/analytics", "Analytics"],
+    ["/w/acme-corp/analytics", "Insights"],
     ["/w/acme-corp/settings/profile", "Settings"],
-    ["/w/acme-corp/runs/run-id", "Runs"],
+    ["/w/acme-corp/runs/run-id", "Activity"],
   ])("names the drawer trigger after the current destination at %s", (pathname, label) => {
     mocked.pathname = pathname;
 
@@ -439,79 +984,48 @@ describe("ShellHeader", () => {
   });
 
   it.each([true, false])(
-    "preserves Workflows scope only for a manageable factory and names the fallback (%s)",
+    "addresses the selected factory on Graph workflows without falling back (%s)",
     (manageable) => {
-      const managedFactory = "00000000-0000-4000-8000-000000000010";
-      const selectedFactory = manageable ? managedFactory : "00000000-0000-4000-8000-000000000011";
+      const selectedFactory = manageable ? creationFactory.id : "other-factory";
+      mocked.pathname = "/w/acme-corp/agents";
       mocked.searchParams = new URLSearchParams({ factory: selectedFactory });
-      mountShell({
-        navItems: getWorkspaceNavItems(workspace.slug, { canManageWorkflows: true }),
-        factories: [
-          { ...creationFactory, isDefault: true, status: "active" },
-          {
-            id: managedFactory,
-            name: "Managed",
-            canManage: true,
-            isDefault: false,
-            status: "active",
-          },
-          { id: selectedFactory, name: "Other", isDefault: false, status: "active" },
-        ],
-      });
-
-      const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-      const workflows = within(nav).getByRole("link", { name: "Workflows" });
-      expect(workflows).toHaveAttribute("href", `/w/acme-corp/workflows?factory=${managedFactory}`);
-      expect(workflows).toHaveAccessibleDescription(manageable ? "" : "Opens in Managed");
+      mountShell();
+      const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
+      expect(sections.getByRole("link", { name: "Graph workflows" })).toHaveAttribute(
+        "href",
+        `/w/acme-corp/workflows?factory=${selectedFactory}`,
+      );
     },
   );
 
-  it("shows the definition route under Configure only when authorized", () => {
-    mocked.pathname = "/w/acme-corp/settings/factory-definition";
-    mountShell({
-      navItems: getWorkspaceNavItems(workspace.slug, { canManageFactoryDefinition: true }),
-    });
-
-    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-    const configure = within(nav).getByRole("list", { name: "Configure" });
-    expect(within(configure).getByRole("link", { name: "Factory definition" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(within(nav).getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
-    const improve = within(nav).getByRole("list", { name: "Improve" });
-    expect(within(improve).getByRole("link", { name: "Analytics" })).toHaveAttribute(
+  it("shows the definition route within Factory only when authorized", () => {
+    mocked.pathname = "/w/acme-corp/agents";
+    mocked.searchParams = new URLSearchParams("factory=factory-1");
+    const view = mountShell({ canManageFactoryDefinition: true });
+    const nav = within(screen.getByRole("navigation", { name: "Workspace navigation" }));
+    const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
+    expect(nav.getByRole("link", { name: "Factory" })).toHaveAttribute("aria-current", "page");
+    expect(nav.getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
+    expect(sections.getByRole("link", { name: "Definition" })).toHaveAttribute(
       "href",
-      "/w/acme-corp/analytics",
+      "/w/acme-corp/settings/factory-definition?factory=factory-1",
     );
-    expect(within(nav).queryByRole("list", { name: "Platform" })).toBeNull();
+    view.rerender(shellElement({ canManageFactoryDefinition: false }));
+    expect(sections.queryByRole("link", { name: "Definition" })).toBeNull();
   });
 
   it("keeps scope on aggregate links and preserves workspace Settings URLs", () => {
     mocked.searchParams = new URLSearchParams("factory=all");
     mountShell();
-
-    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-    expect(within(nav).getByRole("link", { name: "Sessions" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp?factory=all",
-    );
-    expect(within(nav).getByRole("link", { name: "Runs" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp/runs?factory=all",
-    );
-    expect(
-      within(within(nav).getByRole("list", { name: "Work" })).getByRole("link", { name: "Inbox" }),
-    ).toHaveAttribute("href", "/w/acme-corp/inbox?factory=all");
-    expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp/settings",
-    );
-    expect(
-      within(within(nav).getByRole("list", { name: "Improve" })).getByRole("link", {
-        name: "Analytics",
-      }),
-    ).toHaveAttribute("href", "/w/acme-corp/analytics?factory=factory-1");
+    const nav = within(screen.getByRole("navigation", { name: "Workspace navigation" }));
+    for (const [name, href] of [
+      ["Sessions", "/w/acme-corp?factory=all"],
+      ["Activity", "/w/acme-corp/runs?factory=all"],
+      ["Inbox", "/w/acme-corp/inbox?factory=all"],
+      ["Settings", "/w/acme-corp/settings"],
+      ["Insights", "/w/acme-corp/analytics?factory=all"],
+    ])
+      expect(nav.getByRole("link", { name })).toHaveAttribute("href", href);
   });
 
   it.each([
@@ -534,8 +1048,9 @@ describe("ShellHeader", () => {
       "/w/acme-corp/sessions?factory=all",
     );
     expect(within(drawer).queryByRole("link", { name: "Overview" })).toBeNull();
-    expect(within(drawer).getByRole("link", { name: "Analytics" })).toHaveAccessibleDescription(
-      "Opens in Default Factory",
+    expect(within(drawer).getByRole("link", { name: "Insights" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/analytics?factory=all",
     );
   });
 
@@ -546,7 +1061,7 @@ describe("ShellHeader", () => {
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Expand sidebar" })).toBeNull();
     expect(document.querySelector("[data-shell-rail]")).not.toHaveAttribute("data-collapsed");
-    expect(screen.getByRole("link", { name: "Runs" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Activity" })).toBeVisible();
   });
 
   it("prefetches desktop navigation links on mouse/pen hover or focus and skips touch pointers", () => {
@@ -554,14 +1069,14 @@ describe("ShellHeader", () => {
     mountShell();
 
     const sessionsLink = screen.getByRole("link", { name: "Sessions" });
-    expect(sessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions");
+    expect(sessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions?factory=all");
 
     fireEvent.pointerEnter(sessionsLink, { pointerType: "touch" });
     expect(mocked.prefetch).not.toHaveBeenCalled();
 
     fireEvent.pointerEnter(sessionsLink, { pointerType: "mouse" });
     expect(mocked.prefetch).toHaveBeenCalledTimes(1);
-    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions", {
+    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions?factory=all", {
       kind: PrefetchKind.FULL,
     });
 
@@ -585,19 +1100,19 @@ describe("ShellHeader", () => {
     mocked.pathname = "/w/acme-corp/analytics";
     mountShell();
 
-    const drawerTrigger = screen.getByRole("button", { name: "Workspace navigation: Analytics" });
+    const drawerTrigger = screen.getByRole("button", { name: "Workspace navigation: Insights" });
     fireEvent.click(drawerTrigger);
 
     const drawer = await screen.findByRole("dialog", { name: "Workspace pages" });
     const compactSessionsLink = within(drawer).getByRole("link", { name: "Sessions" });
-    expect(compactSessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions");
+    expect(compactSessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions?factory=all");
 
     fireEvent.pointerEnter(compactSessionsLink, { pointerType: "touch" });
     expect(mocked.prefetch).not.toHaveBeenCalled();
 
     fireEvent.pointerEnter(compactSessionsLink, { pointerType: "mouse" });
     expect(mocked.prefetch).toHaveBeenCalledTimes(1);
-    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions", {
+    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions?factory=all", {
       kind: PrefetchKind.FULL,
     });
 
@@ -663,12 +1178,16 @@ describe("ShellHeader", () => {
 
 describe("shell page title helpers", () => {
   it("marks the board root, list, and detail under one Sessions item", () => {
-    const sessions = navItems.find((item) => item.id === "sessions")!;
-    expect(isActiveNavItem("/w/acme-corp", "acme-corp", sessions)).toBe(true);
-    expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", sessions)).toBe(true);
-    expect(isActiveNavItem("/w/acme-corp/sessions/42", "acme-corp", sessions)).toBe(true);
-    expect(isActiveNavItem("/w/acme-corp/analytics", "acme-corp", sessions)).toBe(false);
-    expect(isActiveNavItem("/w/acme-corp/runs/run-id", "acme-corp", sessions)).toBe(false);
+    for (const suffix of ["", "/sessions", "/sessions/42"]) {
+      expect(matchWorkspaceLocation(`/w/acme-corp${suffix}`, "acme-corp")?.destination).toBe(
+        "sessions",
+      );
+    }
+    for (const suffix of ["/analytics", "/runs/run-id"]) {
+      expect(matchWorkspaceLocation(`/w/acme-corp${suffix}`, "acme-corp")?.destination).not.toBe(
+        "sessions",
+      );
+    }
   });
 });
 
@@ -771,7 +1290,7 @@ describe("create-session dialog loading", () => {
   });
 
   it("deduplicates preloads for one shell mount", () => {
-    const startedKey = { current: null };
+    const startedKey = new Set<string>();
     const preloadSessionRepositories = vi.fn(async () => ({
       defaultGithubRepositoryId: null,
       pipelineId: null,
@@ -779,7 +1298,7 @@ describe("create-session dialog loading", () => {
       stageOptions: [],
     }));
     const load = vi.fn(async () => ({ preloadSessionRepositories }));
-    const input = { userId: "user-1", workspaceId: "workspace-1" };
+    const input = { userId: "user-1", workspaceId: "workspace-1", factoryId: "factory-1" };
 
     preloadCreateSessionDialogOnce(startedKey, input, load);
     preloadCreateSessionDialogOnce(startedKey, input, load);
@@ -789,23 +1308,23 @@ describe("create-session dialog loading", () => {
   });
 
   it("resets the guard so a failed preload can retry", async () => {
-    const startedKey = { current: null };
+    const startedKey = new Set<string>();
     const preloadSessionRepositories = vi.fn(async () => {
       throw new Error("repositories failed");
     });
     const load = vi.fn(async () => ({ preloadSessionRepositories }));
-    const input = { userId: "user-1", workspaceId: "workspace-1" };
+    const input = { userId: "user-1", workspaceId: "workspace-1", factoryId: "factory-1" };
 
     preloadCreateSessionDialogOnce(startedKey, input, load);
-    await vi.waitFor(() => expect(startedKey.current).toBeNull());
+    await vi.waitFor(() => expect(startedKey.size).toBe(0));
 
     preloadCreateSessionDialogOnce(startedKey, input, load);
 
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it("starts a separate preload after the workspace changes", async () => {
-    const startedKey = { current: null };
+  it("keys repository preloads by account, workspace and factory and only loads the chunk from All", async () => {
+    const startedKey = new Set<string>();
     const preloadSessionRepositories = vi.fn(async () => ({
       defaultGithubRepositoryId: null,
       pipelineId: null,
@@ -814,19 +1333,20 @@ describe("create-session dialog loading", () => {
     }));
     const load = vi.fn(async () => ({ preloadSessionRepositories }));
 
-    preloadCreateSessionDialogOnce(
-      startedKey,
-      { userId: "user-1", workspaceId: "workspace-1" },
-      load,
-    );
-    preloadCreateSessionDialogOnce(
-      startedKey,
-      { userId: "user-1", workspaceId: "workspace-2" },
-      load,
-    );
+    const input = { userId: "user-1", workspaceId: "workspace-1", factoryId: "factory-1" };
+    preloadCreateSessionDialogOnce(startedKey, input, load);
+    preloadCreateSessionDialogOnce(startedKey, { ...input, workspaceId: "workspace-2" }, load);
+    preloadCreateSessionDialogOnce(startedKey, { ...input, userId: "user-2" }, load);
+    preloadCreateSessionDialogOnce(startedKey, { ...input, factoryId: "factory-2" }, load);
+    preloadCreateSessionDialogOnce(startedKey, { ...input, factoryId: undefined }, load);
+    preloadCreateSessionDialogOnce(startedKey, input, load);
 
-    expect(load).toHaveBeenCalledTimes(2);
-    await vi.waitFor(() => expect(preloadSessionRepositories).toHaveBeenCalledTimes(2));
+    expect(load).toHaveBeenCalledTimes(5);
+    await vi.waitFor(() => expect(preloadSessionRepositories).toHaveBeenCalledTimes(4));
+    expect(preloadSessionRepositories).not.toHaveBeenCalledWith({
+      ...input,
+      factoryId: undefined,
+    });
   });
 });
 

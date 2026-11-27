@@ -1,11 +1,8 @@
 import Link from "next/link";
 
+import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
+import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import {
-  FACTORY_QUERY_PARAM,
-  resolveFactorySelection,
-} from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { loadSelectedActivityActor } from "@/features/factory-activity/activity-actors-data";
 import { loadFactoryActivityData } from "@/features/factory-activity/activity-data";
@@ -16,7 +13,6 @@ import {
   type ActivityQuery,
 } from "@/features/factory-activity/activity-query";
 import {
-  activityFactoryQuery,
   activityIdQuery,
   activityStatusQuery,
   readActivityCursor,
@@ -31,12 +27,17 @@ export default async function ActivityPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const [{ supabase, workspace }, factories] = await Promise.all([
+  const [{ supabase, workspace }, snapshot] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
-    loadWorkspaceFactoryOptions(workspaceSlug),
+    loadWorkspaceRouteScope({
+      route: "feed",
+      workspaceSlug,
+      search,
+      resetParams: ACTIVITY_CURSOR_PARAMS,
+    }),
   ]);
-  const factory = activityFactoryQuery.safeParse(search[FACTORY_QUERY_PARAM]);
-  const selection = resolveFactorySelection(factories, factory.success ? factory.data : "");
+  const { factories, scope: selection } = snapshot;
+  const handoff = <WorkspaceScopeHandoff snapshot={snapshot} />;
   const actor = activityIdQuery.optional().safeParse(search.actor);
   const status = activityStatusQuery.safeParse(search.status);
   const factoryId = selection.kind === "factory" ? selection.factory.id : "all";
@@ -58,6 +59,7 @@ export default async function ActivityPage({
     const unavailableFactory = selection.kind === "unavailable";
     return (
       <PageContainer className="pt-5 sm:pt-10">
+        {handoff}
         <PageHeader actions={selector} actionsRightOnDesktop title="Activity" />
         <section className="ui-sheet px-6 py-12 text-center">
           <h2 className="type-section-title">
@@ -105,14 +107,17 @@ export default async function ActivityPage({
   ]);
 
   return (
-    <FactoryActivityPage
-      actorLabel={selectedActor?.label ?? (query.actor ? "Actor unavailable" : "All actors")}
-      data={data}
-      factorySelector={selector}
-      invalidCursors={invalidCursors}
-      invalidStatus={!status.success}
-      query={query}
-      workspaceSlug={workspace.slug}
-    />
+    <>
+      {handoff}
+      <FactoryActivityPage
+        actorLabel={selectedActor?.label ?? (query.actor ? "Actor unavailable" : "All actors")}
+        data={data}
+        factorySelector={selector}
+        invalidCursors={invalidCursors}
+        invalidStatus={!status.success}
+        query={query}
+        workspaceSlug={workspace.slug}
+      />
+    </>
   );
 }

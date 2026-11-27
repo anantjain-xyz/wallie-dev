@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import { failureValidationPath } from "@/features/factory-failures/failure-evidence-path";
@@ -60,9 +61,17 @@ export default async function FailureValidationPage({
       Back to failure group
     </Link>
   );
+  const resourceScope = (
+    <WorkspaceResourceScope
+      factoryId={scope?.factoryId ?? null}
+      pathname={failureValidationPath(workspaceSlug, cohortId, memberId, {})}
+      workspaceSlug={workspaceSlug}
+    />
+  );
   if (!result?.evidence || !member) {
     return (
       <PageContainer>
+        {resourceScope}
         <PageHeader title="Validation evidence" eyebrow={back} eyebrowAsPlain />
         <section className="ui-sheet space-y-2 p-5">
           <h2 className="type-label">
@@ -82,6 +91,7 @@ export default async function FailureValidationPage({
   const assetBase = `/api/sessions/${member.session_id}/validation-evidence/assets`;
   return (
     <PageContainer className="space-y-6">
+      {resourceScope}
       <PageHeader
         title="Validation evidence"
         eyebrow={back}

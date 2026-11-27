@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { failureGroupTitle } from "@/features/factory-failures/failure-group-summary";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
@@ -24,7 +25,7 @@ import {
 
 const IMPROVEMENTS_FACTORY_RESET_PARAMS = ["cohort"] as const;
 
-export default async function ImprovementsPage({
+async function ImprovementsPage({
   params,
   searchParams,
 }: {
@@ -220,3 +221,9 @@ export default async function ImprovementsPage({
     </PageContainer>
   );
 }
+
+export default scopeFactoryIndex(ImprovementsPage, {
+  route: "improvements",
+  title: "Improvements",
+  resetParams: IMPROVEMENTS_FACTORY_RESET_PARAMS,
+});

@@ -58,7 +58,7 @@ export function workflowDirectoryAvailability(
   if (!isDefault) {
     return {
       canLaunch: false,
-      message: "The session launcher only supports the workspace’s default factory.",
+      message: "Graph workflow launches are available only in the workspace’s default factory.",
     };
   }
   if (setupRequired) {

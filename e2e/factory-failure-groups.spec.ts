@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -64,6 +65,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
   const groupsPath = `/w/${fixture.slug}/failure-groups?factory=${fixture.factoryId}`;
   const reviewedLabel = "Recurring reconciliation checks";
   const main = page.locator("#main-content");
+  const banner = page.getByRole("banner");
 
   try {
     const scores = scorerSeed.parse(
@@ -85,7 +87,9 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await expect(page.getByRole("link", { name: /^reconciliation-tests · .+ · / })).toBeVisible();
     await expect(main.getByText("Qualified evidence", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: /^Reconciliation quality · .+ · / })).toBeVisible();
-    await expect(main.getByRole("link", { name: "Improvements", exact: true })).toHaveAttribute(
+    const insightsSections = page.getByRole("navigation", { name: "Insights sections" });
+    const improvements = insightsSections.getByRole("link", { name: "Improvements", exact: true });
+    await expect(improvements).toHaveAttribute(
       "href",
       `/w/${fixture.slug}/improvements?factory=${fixture.factoryId}`,
     );
@@ -95,12 +99,20 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "Switch to dark mode" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await page.getByRole("button", { name: /^Workspace navigation:/ }).press("Enter");
+    const drawerTrigger = page.getByRole("button", { name: "Workspace navigation: Insights" });
+    await drawerTrigger.press("Enter");
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
-    await expect(drawer.getByRole("link", { name: "Failure groups", exact: true })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Insights", exact: true })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     await capture(page, info, "02a-failure-groups-mobile-navigation", true);
     await page.keyboard.press("Escape");
     await expect(drawer).toHaveCount(0);
+    await expect(drawerTrigger).toBeFocused();
+    await expect(
+      insightsSections.getByRole("link", { name: "Failure groups", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
     const symptom = page.getByRole("combobox", { name: "Symptom", exact: true });
     const revision = page.getByRole("combobox", {
       name: "Factory definition revision",
@@ -171,6 +183,36 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await page.goto(evaluationPath, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(/evaluationAttempt=/);
     await expect(page.getByRole("heading", { name: "Adjudication", exact: true })).toBeVisible();
+
+    await test.step("keeps unavailable failure groups in the authorized factory", async () => {
+      const detail = `/w/${fixture.slug}/failure-groups/${scorerGroupId}?factory=${fixture.factoryId}`;
+      for (const [parameter, value, recovery] of [
+        ["observedOn", "not-a-date", "Reset group filters"],
+        ["revision", randomUUID(), "Clear revision filter"],
+      ]) {
+        await page.goto(`${detail}&${parameter}=${value}`, { waitUntil: "domcontentloaded" });
+        await expect(
+          main.getByRole("heading", { name: "Failure group unavailable", exact: true }),
+        ).toBeVisible();
+        await expect(banner.getByText("Product delivery", { exact: true })).toBeVisible();
+        await expect(banner.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
+        await expect(improvements).toHaveAttribute(
+          "href",
+          `/w/${fixture.slug}/improvements?factory=${fixture.factoryId}`,
+        );
+        await expect(
+          main.getByRole("link", { name: "Back to failure groups", exact: true }),
+        ).toHaveAttribute(
+          "href",
+          parameter === "revision" ? `${groupsPath}&revision=${value}` : groupsPath,
+        );
+        await expect(main.getByRole("link", { name: recovery, exact: true })).toHaveAttribute(
+          "href",
+          detail,
+        );
+      }
+      await capture(page, info, "04b-unavailable-failure-group");
+    });
     await page.goto(scorerGroupPath);
 
     const dismiss = page.getByRole("button", { name: "Dismiss group", exact: true });
@@ -318,6 +360,20 @@ test("reviews recurring failures and preserves source evidence across filters, s
       ],
     });
     await capture(page, info, "08a-exact-validation-evidence");
+
+    const unavailableEvidence = new URL(page.url());
+    const memberSegment = unavailableEvidence.pathname.lastIndexOf("/");
+    unavailableEvidence.pathname = `${unavailableEvidence.pathname.slice(0, memberSegment + 1)}${randomUUID()}`;
+    await page.goto(unavailableEvidence.href);
+    await expect(main.getByRole("heading", { name: "Evidence unavailable" })).toBeVisible();
+    await expect(banner.getByText("Product delivery", { exact: true })).toBeVisible();
+    await expect(banner.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
+    await expect(improvements).toHaveAttribute(
+      "href",
+      `/w/${fixture.slug}/improvements?factory=${fixture.factoryId}`,
+    );
+    await expect(main.getByRole("link", { name: "View technical receipt (JSON)" })).toHaveCount(0);
+    await capture(page, info, "08b-unavailable-validation-evidence");
 
     const reader = await browser.newPage({ viewport: { width: 390, height: 844 } });
     try {

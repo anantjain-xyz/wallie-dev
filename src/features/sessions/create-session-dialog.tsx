@@ -14,7 +14,7 @@ import {
   useOptionalRouteProgress,
 } from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
-import { useOptionalToast } from "@/components/ui/toast";
+import { useOptionalToast, type ToastInput } from "@/components/ui/toast";
 import {
   createSessionFromClient,
   deletePendingSessionAttachmentFromClient,
@@ -79,10 +79,12 @@ type CreateSessionDialogProps = {
   creationFactoryId?: string;
   creationFactoryName?: string;
   creationScope?: SessionCreationScope;
-  onClose: () => void;
+  launchKey?: string;
+  onClose: (reason?: "preview") => void;
   onCloseAutoFocus?: () => void;
+  onDraftReset?: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
-  onReopen?: () => void;
+  onReopen?: (submittedFactoryId?: string) => void;
   open: boolean;
   userId: string;
   workspaceId: string;
@@ -94,9 +96,16 @@ type OverrideTarget = RoutingOverrideOptions["targets"][number];
 
 type SessionCreationAttempt = {
   input: CreateSessionInput;
+  launchKey?: string;
+  recoverDraft: () => void;
   scopeKey: string;
   snapshot: PendingSessionSnapshot;
   workflowLabel: string;
+};
+
+type SessionCreationNotice = {
+  kind: "created" | "recovery";
+  toast: ToastInput;
 };
 
 function routingTargetKey({ ruleId, target }: OverrideTarget) {
@@ -153,21 +162,80 @@ export function isCreateSessionSubmitDisabled(input: {
 // Keep a draft in the workspace shell's memory until it is submitted or discarded.
 // The key also prevents a draft from crossing account or workspace boundaries.
 export function CreateSessionDialog(props: CreateSessionDialogProps) {
+  return <ScopedCreateSessionDialog {...props} key={`${props.userId}:${props.workspaceId}`} />;
+}
+
+function ScopedCreateSessionDialog({ onDraftReset, ...props }: CreateSessionDialogProps) {
   const [revision, setRevision] = useState(0);
-  const reset = useCallback(() => setRevision((current) => current + 1), []);
+  const { dismissToast, pushToast } = useOptionalToast();
+  const recoveryToastRef = useRef<number | null>(null);
+  const deferredNoticeRef = useRef<SessionCreationNotice | null>(null);
+  const deferNotice = props.open && Boolean(props.onPreviewChange);
+  const deferNoticeRef = useRef(deferNotice);
+  useLayoutEffect(() => {
+    deferNoticeRef.current = deferNotice;
+  }, [deferNotice]);
+
+  const dismissRecoveryToast = useCallback(() => {
+    if (recoveryToastRef.current !== null) {
+      dismissToast(recoveryToastRef.current);
+      recoveryToastRef.current = null;
+    }
+  }, [dismissToast]);
+  const clearRecoveryToast = useCallback(() => {
+    if (deferredNoticeRef.current?.kind === "recovery") deferredNoticeRef.current = null;
+    dismissRecoveryToast();
+  }, [dismissRecoveryToast]);
+  const publishNotice = useCallback(
+    ({ kind, toast }: SessionCreationNotice) => {
+      const id = pushToast(toast);
+      if (kind === "recovery") recoveryToastRef.current = id;
+    },
+    [pushToast],
+  );
+  const notifyResult = useCallback(
+    (kind: SessionCreationNotice["kind"], toast: ToastInput) => {
+      const notice = { kind, toast };
+      if (deferNoticeRef.current) deferredNoticeRef.current = notice;
+      else publishNotice(notice);
+    },
+    [publishNotice],
+  );
+  useEffect(() => {
+    if (props.open) {
+      dismissRecoveryToast();
+      return;
+    }
+    const notice = deferredNoticeRef.current;
+    if (!notice) return;
+    deferredNoticeRef.current = null;
+    publishNotice(notice);
+  }, [dismissRecoveryToast, props.open, publishNotice]);
+  useEffect(() => dismissRecoveryToast, [dismissRecoveryToast]);
+
+  const reset = useCallback(() => {
+    clearRecoveryToast();
+    onDraftReset?.();
+    setRevision((current) => current + 1);
+  }, [clearRecoveryToast, onDraftReset]);
   return (
     <CreateSessionDialogBody
       {...props}
-      key={`${props.userId}:${props.workspaceId}:${revision}`}
+      clearRecoveryToast={clearRecoveryToast}
+      key={revision}
+      notifyResult={notifyResult}
       onReset={reset}
     />
   );
 }
 
 function CreateSessionDialogBody({
+  clearRecoveryToast,
   creationFactoryId,
   creationFactoryName,
   creationScope,
+  launchKey,
+  notifyResult,
   onClose,
   onCloseAutoFocus,
   onPreviewChange,
@@ -177,17 +245,13 @@ function CreateSessionDialogBody({
   userId,
   workspaceId,
   workflowLaunchActivationId,
-}: CreateSessionDialogProps & { onReset: () => void }) {
+}: CreateSessionDialogProps & {
+  clearRecoveryToast: () => void;
+  notifyResult: (kind: SessionCreationNotice["kind"], toast: ToastInput) => void;
+  onReset: () => void;
+}) {
   const router = useRouter();
   const pathname = usePathname();
-  const { dismissToast, pushToast } = useOptionalToast();
-  const recoveryToastRef = useRef<number | null>(null);
-  const clearRecoveryToast = useCallback(() => {
-    if (recoveryToastRef.current !== null) {
-      dismissToast(recoveryToastRef.current);
-      recoveryToastRef.current = null;
-    }
-  }, [dismissToast]);
   const { startNavigation } = useOptionalRouteProgress();
   const errorRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -207,34 +271,42 @@ function CreateSessionDialogBody({
       : undefined
     : creationFactoryName;
   const workflowFactoryId = creationScope ? targetFactoryId : creationFactoryId;
-  const scopeKey = `${creationScope?.kind ?? "legacy"}:${targetFactoryId ?? ""}`;
+  const scopeKey = JSON.stringify([
+    creationScope?.kind ?? "legacy",
+    targetFactoryId,
+    launchKey ?? { workflowLaunchActivationId },
+  ]);
   const dialogContextRef = useRef({ open, scopeKey });
   useLayoutEffect(() => {
     dialogContextRef.current = { open, scopeKey };
   }, [open, scopeKey]);
   const workflowLaunchRequested = workflowLaunchActivationId !== undefined;
-  const workflowLaunchConflictsWithRetry =
-    workflowLaunchRequested &&
+  const launchConflictsWithRetry =
     unconfirmed &&
-    (!workflowLaunchActivationId ||
-      workflowLaunchActivationId !== unconfirmedAttempt.input.workflowSelection?.activationId);
+    (launchKey !== unconfirmedAttempt.launchKey ||
+      (workflowLaunchRequested &&
+        (!workflowLaunchActivationId ||
+          workflowLaunchActivationId !==
+            unconfirmedAttempt.input.workflowSelection?.activationId)));
+  const openOriginalDraft =
+    launchConflictsWithRetry && onReopen && unconfirmedAttempt.launchKey !== undefined
+      ? unconfirmedAttempt.recoverDraft
+      : null;
   const factoryConflictsWithRetry =
     unconfirmed && unconfirmedAttempt.input.factoryId !== targetFactoryId;
 
   const refreshImagesOnOpen = useEffectEvent(() => {
-    clearRecoveryToast();
     if (sessionCommittedRef.current) {
       onPreviewChange?.(null);
       onReset();
     } else if (attemptRef.current?.scopeKey === scopeKey && isSubmitting && onPreviewChange) {
       showPendingPreview(attemptRef.current.snapshot);
-      onClose();
     } else if (!attemptRef.current && scopeOptionsReady) {
       refreshExpiredImages();
     }
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (sessionCommittedRef.current) onReset();
     if (previewVisibleRef.current) {
       previewVisibleRef.current = false;
@@ -308,7 +380,9 @@ function CreateSessionDialogBody({
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [setupHref, setSetupHref] = useState<string>();
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittingScopeKey, setSubmittingScopeKey] = useState<string | null>(null);
+  const isSubmitting = submittingScopeKey !== null;
+  const isSubmittingHere = submittingScopeKey === scopeKey;
   const [fieldsFactoryId, setFieldsFactoryId] = useState(targetFactoryId);
   if (fieldsFactoryId !== targetFactoryId) {
     setFieldsFactoryId(targetFactoryId);
@@ -413,7 +487,6 @@ function CreateSessionDialogBody({
     disposedRef.current = false;
     return () => {
       disposedRef.current = true;
-      clearRecoveryToast();
       for (const image of imageDraftsRef.current) {
         URL.revokeObjectURL(image.previewUrl);
         if (!sessionCommittedRef.current && !attemptRef.current && image.attachmentId) {
@@ -424,7 +497,7 @@ function CreateSessionDialogBody({
         }
       }
     };
-  }, [workspaceId, clearRecoveryToast]);
+  }, [workspaceId]);
 
   function updateImageDrafts(
     update: SessionImageDraft[] | ((current: SessionImageDraft[]) => SessionImageDraft[]),
@@ -697,7 +770,7 @@ function CreateSessionDialogBody({
     if (
       submitInFlightRef.current ||
       !destination.catalogIsCurrent ||
-      workflowLaunchConflictsWithRetry ||
+      launchConflictsWithRetry ||
       factoryConflictsWithRetry
     ) {
       return;
@@ -782,6 +855,8 @@ function CreateSessionDialogBody({
     }
 
     const attempt: SessionCreationAttempt = {
+      launchKey,
+      recoverDraft: () => onReopen?.(targetFactoryId),
       scopeKey,
       workflowLabel: workflow?.label ?? defaultWorkflowOption.label,
       input: {
@@ -855,6 +930,7 @@ function CreateSessionDialogBody({
       content: <PendingSessionCreation snapshot={snapshot} onDismiss={dismiss} />,
       dismiss,
     });
+    onClose("preview");
   }
 
   function keepDraftWithoutAttempt(attempt: SessionCreationAttempt) {
@@ -881,15 +957,11 @@ function CreateSessionDialogBody({
     setErrorMessage(null);
     setSetupHref(undefined);
     submitInFlightRef.current = true;
-    setIsSubmitting(true);
-    if (onPreviewChange) {
-      showPendingPreview(attempt.snapshot);
-      onClose();
-    }
+    setSubmittingScopeKey(attempt.scopeKey);
+    showPendingPreview(attempt.snapshot);
     try {
       const result = await createSessionFromClient(attempt.input);
       if (disposedRef.current) return;
-      clearRecoveryToast();
       const scopeCurrent = dialogContextRef.current.scopeKey === attempt.scopeKey;
       sessionCommittedRef.current = scopeCurrent;
       const navigateToSession = scopeCurrent && (!onPreviewChange || previewVisibleRef.current);
@@ -903,13 +975,13 @@ function CreateSessionDialogBody({
       } else {
         keepDraftWithoutAttempt(attempt);
         submitInFlightRef.current = false;
-        setIsSubmitting(false);
+        setSubmittingScopeKey(null);
       }
       if (navigateToSession) {
         startNavigation(result.canonicalUrl);
         router.push(result.canonicalUrl);
       } else {
-        pushToast({
+        notifyResult("created", {
           title: `Session #${result.number} created.`,
           ...(attempt.snapshot.factoryName
             ? { description: `Factory: ${attempt.snapshot.factoryName}` }
@@ -974,14 +1046,15 @@ function CreateSessionDialogBody({
           setSetupHref(error.setupHref);
         }
       }
-      setIsSubmitting(false);
+      setSubmittingScopeKey(null);
       const reopen = scopeCurrent && previewVisibleRef.current;
+      const shouldOfferRecovery =
+        rejected || !dialogContextRef.current.open || (onPreviewChange && !scopeCurrent);
       previewVisibleRef.current = false;
       onPreviewChange?.(null);
       if (reopen) onReopen?.();
-      else if ((onPreviewChange || !scopeCurrent) && (rejected || !dialogContextRef.current.open)) {
-        clearRecoveryToast();
-        recoveryToastRef.current = pushToast({
+      else if ((onPreviewChange || !scopeCurrent) && shouldOfferRecovery) {
+        notifyResult("recovery", {
           title: "Session creation needs attention.",
           description: "Your draft is saved.",
           tone: "danger",
@@ -989,7 +1062,7 @@ function CreateSessionDialogBody({
           action: {
             label: "Open draft",
             altText: "Recover the session creation draft",
-            onClick: () => onReopen?.(),
+            onClick: attempt.recoverDraft,
           },
         });
       }
@@ -1008,6 +1081,13 @@ function CreateSessionDialogBody({
     }
   }
 
+  const visibleErrorMessage =
+    launchConflictsWithRetry || factoryConflictsWithRetry ? null : errorMessage;
+  const originalDraftAction = openOriginalDraft ? (
+    <button className="ui-button min-h-9" onClick={openOriginalDraft} type="button">
+      Open original draft
+    </button>
+  ) : null;
   const draftHasEdits = Boolean(
     prompt ||
     title ||
@@ -1039,17 +1119,17 @@ function CreateSessionDialogBody({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && !isSubmitting && !hasActiveAttachmentOperation) onClose();
+        if (!nextOpen && !isSubmittingHere && !hasActiveAttachmentOperation) onClose();
       }}
     >
       <DialogContent
         bodyClassName="flex min-h-0 flex-col"
         className="flex max-w-xl flex-col overflow-hidden"
-        dismissible={!isSubmitting && !hasActiveAttachmentOperation}
+        dismissible={!isSubmittingHere && !hasActiveAttachmentOperation}
         title="Start a new session"
         onCloseAutoFocus={onCloseAutoFocus}
         onOpenAutoFocus={(event) => {
-          if (errorMessage) {
+          if (visibleErrorMessage) {
             event.preventDefault();
             errorRef.current?.focus();
           }
@@ -1076,7 +1156,18 @@ function CreateSessionDialogBody({
               }
             }}
           >
-            {errorMessage ? (
+            {launchConflictsWithRetry && !factoryConflictsWithRetry ? (
+              <div className="space-y-2 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2">
+                <p className="text-sm text-warning" role="status">
+                  Another request is unconfirmed.
+                  {openOriginalDraft
+                    ? " Retry it from the original draft."
+                    : " Close this link and reopen New session to retry it."}
+                </p>
+                {originalDraftAction}
+              </div>
+            ) : null}
+            {visibleErrorMessage ? (
               <div
                 aria-live="polite"
                 id="create-session-error"
@@ -1085,7 +1176,7 @@ function CreateSessionDialogBody({
                 tabIndex={-1}
                 className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
               >
-                <p>{errorMessage}</p>
+                <p>{visibleErrorMessage}</p>
                 {setupHref ? (
                   <Link className="mt-1 inline-block underline" href={setupHref}>
                     Open setup
@@ -1143,6 +1234,7 @@ function CreateSessionDialogBody({
                   {unconfirmedAttempt.snapshot.factoryName ?? "the default factory"}. A session may
                   already exist. Return there to retry.
                 </p>
+                {originalDraftAction}
                 {scopeOptionsReady && targetFactoryId ? (
                   <button
                     className="ui-button min-h-9"
@@ -1166,9 +1258,9 @@ function CreateSessionDialogBody({
               <textarea
                 id="session-prompt"
                 disabled={dialogDisabled}
-                aria-describedby={errorMessage ? "create-session-error" : undefined}
+                aria-describedby={visibleErrorMessage ? "create-session-error" : undefined}
                 autoComplete="off"
-                autoFocus={!errorMessage && creationScope?.kind !== "all"}
+                autoFocus={!visibleErrorMessage && creationScope?.kind !== "all"}
                 name="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -1210,7 +1302,7 @@ function CreateSessionDialogBody({
                   aria-describedby={
                     [
                       linearError ? "session-linear-error" : null,
-                      errorMessage ? "create-session-error" : null,
+                      visibleErrorMessage ? "create-session-error" : null,
                     ]
                       .filter(Boolean)
                       .join(" ") || undefined
@@ -1356,12 +1448,7 @@ function CreateSessionDialogBody({
                     wrap
                   />
                 )}
-                {workflowLaunchConflictsWithRetry ? (
-                  <p className="type-secondary text-warning" role="status">
-                    Another request is unconfirmed. Close this link and reopen New session to retry
-                    that request first.
-                  </p>
-                ) : unconfirmed ? null : workflowLaunchActivationId === null ? (
+                {unconfirmed ? null : workflowLaunchActivationId === null ? (
                   <p className="type-secondary text-warning" role="status">
                     This workflow link is invalid. Close and start from Workflows again.
                   </p>
@@ -1510,8 +1597,8 @@ function CreateSessionDialogBody({
           <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
             <button
               type="button"
-              disabled={isSubmitting || hasActiveAttachmentOperation}
-              onClick={onClose}
+              disabled={isSubmittingHere || hasActiveAttachmentOperation}
+              onClick={() => onClose()}
               className="ui-button"
             >
               Close
@@ -1523,7 +1610,7 @@ function CreateSessionDialogBody({
                 unconfirmed
                   ? isSubmitting ||
                     !destination.catalogIsCurrent ||
-                    workflowLaunchConflictsWithRetry ||
+                    launchConflictsWithRetry ||
                     factoryConflictsWithRetry
                   : specificationUnavailable ||
                     workflowSelectionUnavailable ||
@@ -1546,7 +1633,7 @@ function CreateSessionDialogBody({
             >
               <ActionButtonLabel
                 idle={unconfirmed ? "Retry creation" : "Start session"}
-                pending={isSubmitting}
+                pending={isSubmittingHere}
                 pendingLabel="Starting…"
               />
             </button>

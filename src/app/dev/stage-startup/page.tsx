@@ -9,7 +9,6 @@ export default function StageStartupPage() {
   if (isProductionDeploy()) notFound();
   return (
     <AppShell
-      creationFactory={{ id: "proof-default-factory", name: "Proof Factory" }}
       workspace={{ id: "stage-proof", name: "Wallie", slug: "proof" }}
       onboarding={null}
       pathnameOverride="/w/proof/sessions/1"

@@ -1,3 +1,4 @@
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import "server-only";
 
 import Link from "next/link";
@@ -114,6 +115,11 @@ export default async function BenchmarkSuitePage({
   const now = new Date().toISOString();
   return (
     <PageContainer className="pt-5 sm:pt-10">
+      <WorkspaceResourceScope
+        factoryId={factory.id}
+        pathname={workspaceBenchmarkSuitePath(workspaceSlug, rawSuiteId)}
+        workspaceSlug={workspaceSlug}
+      />
       <PageHeader
         title={selected.name}
         description={`${factory.name} · ${benchmarkPurposeLabel(selected.purpose)}${factory.status === "archived" ? " · Archived" : ""}`}

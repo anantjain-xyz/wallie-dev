@@ -1,14 +1,18 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useId, useTransition } from "react";
+import { useContext, useId, useTransition } from "react";
+import { createPortal } from "react-dom";
 
+import { workspaceFactorySwitchHref } from "@/components/app-shell/workspace-location";
+import { WorkspaceScopeContext } from "@/components/app-shell/workspace-scope-context";
 import { FilterSelectTrigger } from "@/components/ui/filter-controls";
 import { Select, SelectContent, SelectItem } from "@/components/ui/select";
 import {
   factorySwitchHref,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
+import { WORKSPACE_FACTORY_TRIGGER_CLASS } from "@/features/factories/factory-selector";
 
 import { useScorerDraftGuard } from "./scorer-draft-guard";
 import { scorerFactoryLabel } from "./scorer-factory-label";
@@ -26,17 +30,16 @@ export function ScorerFactorySelector({
   const triggerId = useId();
   const [pending, startTransition] = useTransition();
   const draft = useScorerDraftGuard();
+  const guarded = useContext(WorkspaceScopeContext)?.guardedPicker;
+  if (guarded && !guarded.target) return null;
 
-  return (
+  const selector = (
     <Select
       value={selectedValue}
       onValueChange={(value) => {
         if (value === selectedValue || value === "unavailable") return;
-        const href = factorySwitchHref(pathname, search.toString(), value, [
-          "revision",
-          "preset",
-          "q",
-        ]);
+        const switchHref = guarded ? workspaceFactorySwitchHref : factorySwitchHref;
+        const href = switchHref(pathname, search.toString(), value, ["revision", "preset", "q"]);
         const navigate = () => startTransition(() => router.push(href, { scroll: false }));
         if (draft) draft.guard(navigate, document.getElementById(triggerId) ?? undefined);
         else navigate();
@@ -45,11 +48,11 @@ export function ScorerFactorySelector({
       <FilterSelectTrigger
         accessibleLabel="Factory"
         aria-busy={pending}
-        className="max-w-full sm:max-w-64"
+        className={guarded ? WORKSPACE_FACTORY_TRIGGER_CLASS : "max-w-full sm:max-w-64"}
         id={triggerId}
       />
       <SelectContent
-        align="end"
+        align={guarded ? "start" : "end"}
         className="w-max min-w-[max(12rem,var(--radix-select-trigger-width))] max-w-[min(24rem,var(--radix-select-content-available-width,100vw),calc(100vw-(var(--overlay-gutter-inline)*2)))]"
       >
         {selectedValue === "unavailable" ? (
@@ -67,4 +70,5 @@ export function ScorerFactorySelector({
       </SelectContent>
     </Select>
   );
+  return guarded?.target ? createPortal(selector, guarded.target) : selector;
 }

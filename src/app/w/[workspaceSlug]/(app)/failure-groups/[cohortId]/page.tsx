@@ -1,3 +1,4 @@
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import Form from "next/form";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -193,9 +194,17 @@ export default async function FailureGroupPage({
       Back to failure groups
     </Link>
   );
+  const resourceScope = (
+    <WorkspaceResourceScope
+      factoryId={scope.factoryId}
+      pathname={workspaceFailureGroupPath(workspaceSlug, cohortId)}
+      workspaceSlug={workspaceSlug}
+    />
+  );
   if (!data || !query.success || !evidenceQuery.success) {
     return (
       <PageContainer>
+        {resourceScope}
         <PageHeader title="Failure group unavailable" eyebrow={back} eyebrowAsPlain />
         {!evidenceQuery.success || !query.success ? (
           <Link
@@ -272,6 +281,7 @@ export default async function FailureGroupPage({
           : "Only factory managers can review this group.";
   return (
     <PageContainer>
+      {resourceScope}
       <PageHeader
         actions={
           <Link

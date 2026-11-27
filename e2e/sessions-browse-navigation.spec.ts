@@ -6,6 +6,7 @@ const boardPath = "/w/acme-corp";
 const listPath = `${boardPath}/sessions`;
 const archivedTitle = "CI/CD pipeline with GitHub Actions";
 const firstReviewTitle = "Add SSO login via Google Workspace";
+const firstReviewFactoryId = "e1b2c3d4-0001-4000-8000-000000000001";
 const views = (page: Page) => page.getByRole("navigation", { name: "Sessions views" });
 const currentView = (page: Page) => views(page).locator('[aria-current="page"]');
 const status = (page: Page) => page.getByRole("combobox", { name: "Filter by status" });
@@ -25,8 +26,14 @@ test("one Sessions entry marks both views and carries compatible factory and sta
   await signIn(page, boardPath);
   const rail = page.getByRole("navigation", { name: "Workspace navigation" });
   const sessions = rail.getByRole("link", { name: "Sessions", exact: true });
+  const listLink = views(page).getByRole("link", { name: "List" });
+  const factoryId = new URL((await listLink.getAttribute("href"))!, page.url()).searchParams.get(
+    "factory",
+  );
+  expect(factoryId).toMatch(/^[a-f\d-]{36}$/u);
+  const scopedBoard = `${boardPath}?factory=${factoryId}`;
   await expect(sessions).toHaveCount(1);
-  await expect(sessions).toHaveAttribute("href", boardPath);
+  await expect(sessions).toHaveAttribute("href", scopedBoard);
   await expect(rail.getByRole("link", { name: "Pipeline", exact: true })).toHaveCount(0);
   await expect(sessions).toHaveAttribute("aria-current", "page");
   await expect(currentView(page)).toHaveText("Board");
@@ -42,11 +49,9 @@ test("one Sessions entry marks both views and carries compatible factory and sta
   await expect(
     page.getByRole("link", { name: "Review session Dark mode and theme customization" }),
   ).toHaveCount(0);
-  const factoryId = await factory(page).getAttribute("data-value");
-  expect(factoryId).toMatch(/^[a-f\d-]{36}$/u);
+  await expect(factory(page)).toHaveCount(0);
   await expect(page).toHaveURL(`${boardPath}?status=awaiting_review`);
 
-  const listLink = views(page).getByRole("link", { name: "List" });
   const listHref = `${listPath}?factory=${factoryId}&scope=active&status=awaiting_review`;
   await expect(listLink).toHaveAttribute("href", listHref);
   await listLink.press("Enter");
@@ -54,7 +59,7 @@ test("one Sessions entry marks both views and carries compatible factory and sta
   await expect(sessions).toHaveAttribute("aria-current", "page");
   await expect(sessions).toHaveAttribute("href", `${listPath}?factory=${factoryId}`);
   await expect(currentView(page)).toHaveText("List");
-  await expect(factory(page)).toHaveAttribute("data-value", factoryId!);
+  await expect(factory(page)).toHaveCount(0);
   await expect(status(page)).toHaveText("Awaiting review");
   await expect(page.getByRole("searchbox")).toHaveValue("");
   await expect(page.getByText("Dark mode and theme customization", { exact: true })).toBeVisible();
@@ -75,7 +80,7 @@ test("one Sessions entry marks both views and carries compatible factory and sta
   await expect(boardSearch).toHaveValue("Google Workspace");
   await expect(status(page)).toHaveText("Awaiting review");
   await sessions.click();
-  await expect(page).toHaveURL(boardPath);
+  await expect(page).toHaveURL(scopedBoard);
   await expect(boardSearch).toHaveValue("");
   await expect(status(page)).toHaveText("All statuses");
   await page.goBack();
@@ -378,8 +383,11 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, boardPath);
   const rail = page.getByRole("navigation", { name: "Workspace navigation" });
-  await rail.getByRole("link", { name: "Inbox", exact: true }).click();
-  await expect(page).toHaveURL((url) => url.pathname === `${boardPath}/inbox`);
+  const inbox = rail.getByRole("link", { name: "Inbox", exact: true });
+  const inboxHref = `${boardPath}/inbox?factory=${firstReviewFactoryId}`;
+  await expect(inbox).toHaveAttribute("href", inboxHref);
+  await inbox.click();
+  await expect(page).toHaveURL(inboxHref);
   const review = page.getByRole("link", { name: firstReviewTitle, exact: true });
   const href = await review.getAttribute("href");
   expect(href).toBeTruthy();
@@ -391,7 +399,7 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
     expect(exact.searchParams.get(key)).toMatch(/^[a-f\d-]{36}$/u);
   }
   expect(exact.searchParams.get("reviewRevision")).toMatch(/^\d+$/u);
-  expect(exact.searchParams.get("returnTo")).toMatch(/^\/w\/acme-corp\/inbox/u);
+  expect(exact.searchParams.get("returnTo")).toBe(inboxHref);
   await review.click();
   await expect(page).toHaveURL(exact.href);
   await expect(
@@ -399,10 +407,14 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
       .getByRole("region", { name: "Artifact text" })
       .getByRole("heading", { name: firstReviewTitle }),
   ).toBeVisible();
+  await expect(inbox).toHaveAttribute("href", inboxHref);
 
-  await rail.getByRole("link", { name: "Runs", exact: true }).click();
-  await expect(page).toHaveURL((url) => url.pathname === `${boardPath}/runs`);
-  const runsFactory = await factory(page).getAttribute("data-value");
+  const activity = rail.getByRole("link", { name: "Activity", exact: true });
+  const runsHref = `${boardPath}/runs?factory=${firstReviewFactoryId}`;
+  await expect(activity).toHaveAttribute("href", runsHref);
+  await activity.click();
+  await expect(page).toHaveURL(runsHref);
+  await expect(factory(page)).toHaveCount(0);
   const inspect = page
     .getByRole("list", { name: /^Runs/ })
     .getByRole("link", { name: /— .*attempt \d+/i })
@@ -411,14 +423,11 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
   const runUrl = new URL(run!, page.url());
   expect(runUrl.pathname).toMatch(/^\/w\/acme-corp\/runs\/[a-f\d-]{36}$/u);
   expect(new URLSearchParams(runUrl.searchParams.get("fromRuns") ?? "").get("factory")).toBe(
-    runsFactory,
+    firstReviewFactoryId,
   );
   await inspect.click();
   await expect(page).toHaveURL(runUrl.href);
-  await expect(rail.getByRole("link", { name: "Runs", exact: true })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
+  await expect(activity).toHaveAttribute("aria-current", "page");
   runUrl.searchParams.set("attempt", "1");
   const attempt = await page.goto(runUrl.href);
   expect(attempt?.ok()).toBe(true);

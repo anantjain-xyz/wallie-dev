@@ -10,10 +10,10 @@ const automations = `${settings}/automations`;
 const definition = `${settings}/factory-definition`;
 
 const destinations = [
-  { title: "Runs", path: runs, oldLink: "← Sessions" },
-  { title: "Automations", path: automations, oldLink: "Back to Settings" },
-  { title: "Factory definition", path: definition, oldLink: "Settings" },
-];
+  { title: "Runs", path: runs, group: "Activity", oldLink: "← Sessions" },
+  { title: "Factory definition", path: definition, group: "Factory", oldLink: "Settings" },
+  { title: "Automations", path: automations, group: "Factory", oldLink: "Back to Settings" },
+] as const;
 
 async function expectPeerHeader(
   page: Page,
@@ -40,9 +40,18 @@ for (const width of [1440, 390]) {
     }
 
     await page.goto(sessions);
-    const navigation = page.getByRole("navigation", { name: "Workspace navigation" });
-    let current = "Sessions";
+    const drawer = page.getByRole("dialog", { name: "Workspace pages" });
+    const navigation =
+      width === 390 ? drawer : page.getByRole("navigation", { name: "Workspace navigation" });
+    let current: string = "Sessions";
     for (const destination of destinations) {
+      if (current === destination.group) {
+        const sections = page.getByRole("navigation", { name: "Factory sections" });
+        await sections.getByRole("link", { name: destination.title, exact: true }).press("Enter");
+        await expectPeerHeader(page, destination);
+        await expect(sections.locator('[aria-current="page"]')).toHaveText(destination.title);
+        continue;
+      }
       if (width === 390) {
         await page.getByRole("button", { name: `Workspace navigation: ${current}` }).press("Enter");
         await expect(navigation.getByRole("link", { name: current, exact: true })).toHaveAttribute(
@@ -50,18 +59,18 @@ for (const width of [1440, 390]) {
           "page",
         );
       }
-      const link = navigation.getByRole("link", { name: destination.title, exact: true });
+      const link = navigation.getByRole("link", { name: destination.group, exact: true });
       await link.press("Enter");
       await expectPeerHeader(page, destination);
       if (width === 390) {
         await expect(page.getByRole("dialog", { name: "Workspace pages" })).toBeHidden();
         await expect(
-          page.getByRole("button", { name: `Workspace navigation: ${destination.title}` }),
+          page.getByRole("button", { name: `Workspace navigation: ${destination.group}` }),
         ).toBeVisible();
       } else {
         await expect(link).toHaveAttribute("aria-current", "page");
       }
-      current = destination.title;
+      current = destination.group;
     }
   });
 }
@@ -89,7 +98,10 @@ test("Settings and Sessions launches keep scoped recovery and exact run returns"
   await expect(page).toHaveURL((url) => url.pathname === definition);
 
   await page.goto(sessions);
-  await main.getByRole("link", { name: "Runs", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Workspace navigation" })
+    .getByRole("link", { name: "Activity", exact: true })
+    .click();
   await expect(page).toHaveURL((url) => url.pathname === runs);
   const filteredRuns = `${runs}?status=success&factory=all`;
   await page.goto(filteredRuns);

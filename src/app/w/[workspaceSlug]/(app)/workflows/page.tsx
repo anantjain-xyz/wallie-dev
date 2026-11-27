@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { sessionLaunchHref } from "@/components/app-shell/shell-navigation";
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { loadWorkflowAuthoringScope } from "@/features/factory-workflows/authoring-page-data";
@@ -41,7 +42,13 @@ type Props = {
   }>;
 };
 
-export default function WorkflowsPage(props: Props) {
+export default scopeFactoryIndex(WorkflowsPage, {
+  resetParams: ["after"],
+  route: "workflows",
+  title: "Workflows",
+});
+
+function WorkflowsPage(props: Props) {
   return (
     <Suspense
       fallback={
@@ -137,7 +144,6 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
     <PageContainer>
       <PageHeader
         title="Workflows"
-        description={isDefault ? undefined : "New session still opens in the default factory."}
         actions={
           <>
             {selector}

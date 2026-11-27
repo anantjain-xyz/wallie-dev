@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -16,18 +17,34 @@ import {
 } from "react";
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
+import {
+  getGroupedWorkspaceNavigation,
+  WorkspaceGroupTabs,
+} from "@/components/app-shell/grouped-workspace-navigation";
 import { RouteEntrance } from "@/components/app-shell/navigation-motion";
 import {
   readSessionLaunchActivation,
   resolveSessionReturnTo,
   sessionLaunchHref,
-  shellFactoryScope,
-  shellNavDestination,
   withoutSessionLaunch,
 } from "@/components/app-shell/shell-navigation";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
+import { WorkspaceFactoryPicker } from "@/components/app-shell/workspace-factory-picker";
+import {
+  matchWorkspaceLocation,
+  readFactoryRequest,
+  workspaceScopeHref,
+  workspaceScopeLocationKey,
+  workspaceScopeOptions,
+} from "@/components/app-shell/workspace-location";
+import {
+  useRememberedWorkspaceScope,
+  useWorkspaceScopeSnapshot,
+  WorkspaceScopeContext,
+} from "@/components/app-shell/workspace-scope-context";
 import {
   NavigationMenuIcon,
+  type ShellNavItem,
   WorkspaceNavLinks,
   WorkspaceSidebar,
 } from "@/components/app-shell/workspace-sidebar";
@@ -37,21 +54,14 @@ import {
 } from "@/components/app-shell/workspace-switcher";
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
-import {
-  FACTORY_QUERY_PARAM,
-  type FactorySelectionOption,
-} from "@/features/factories/factory-selection";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
+import type { FactorySelectionOption } from "@/features/factories/factory-selection";
 import {
   shouldShowOnboardingResumeCta,
   type OnboardingResumeState,
 } from "@/features/onboarding/resume";
 import type { WorkspaceSummary } from "@/lib/auth";
-import {
-  type WorkspaceNavItem,
-  workspaceBasePath,
-  workspaceOnboardingPath,
-  workspaceSessionsPath,
-} from "@/lib/routes";
+import { workspaceBasePath, workspaceOnboardingPath, workspaceSessionsPath } from "@/lib/routes";
 import {
   finishInteraction,
   interactionRouteTemplateForPath,
@@ -60,17 +70,12 @@ import {
 } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 import type { SessionCreationPreview } from "@/features/sessions/pending-session-creation";
-
-export type CreationFactory = {
-  id: string;
-  name: string;
-};
+import type { SessionCreationScope } from "@/features/sessions/create-session-dialog";
 
 type ShellHeaderProps = {
-  creationFactory: CreationFactory | null;
+  canManageFactoryDefinition?: boolean;
   factories?: readonly FactorySelectionOption[];
   children?: ReactNode;
-  navItems: WorkspaceNavItem[];
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
   pathnameOverride?: string;
@@ -126,24 +131,20 @@ function retainCreateSessionDialogModule() {
 }
 
 export function preloadCreateSessionDialogOnce(
-  startedKey: { current: string | null },
-  input: { userId: string; workspaceId: string },
+  startedKeys: Set<string>,
+  input: { userId: string; workspaceId: string; factoryId?: string },
   load: () => Promise<PreloadedCreateSessionDialogModule> = loadCreateSessionDialogModule,
 ) {
-  const key = `${input.userId}:${input.workspaceId}`;
-  if (startedKey.current === key) {
-    return;
-  }
-
-  startedKey.current = key;
-  // Reset on failure so a transient chunk error allows retry, not a permanent preload lockout.
+  const key = JSON.stringify([input.userId, input.workspaceId, input.factoryId ?? null]);
+  if (startedKeys.has(key)) return;
+  startedKeys.add(key);
   load()
     .then((module) => {
       if (module.CreateSessionDialog) publishCreateSessionDialog(module.CreateSessionDialog);
-      return module.preloadSessionRepositories(input);
+      if (input.factoryId) return module.preloadSessionRepositories(input);
     })
     .catch(() => {
-      if (startedKey.current === key) startedKey.current = null;
+      startedKeys.delete(key);
     });
 }
 
@@ -246,14 +247,6 @@ function CreateSessionDialog(props: CreateSessionDialogProps) {
   return <DialogImpl {...props} />;
 }
 
-export function isActiveNavItem(pathname: string, workspaceSlug: string, item: WorkspaceNavItem) {
-  return (
-    (item.id === "sessions" && pathname === workspaceBasePath(workspaceSlug)) ||
-    pathname === item.href ||
-    pathname.startsWith(`${item.href}/`)
-  );
-}
-
 function isShellNavIntentPointer(pointerType: string) {
   return pointerType === "" || pointerType === "mouse" || pointerType === "pen";
 }
@@ -292,10 +285,9 @@ export function prefetchShellNavHrefOnIntent(
 }
 
 export function ShellHeader({
-  creationFactory,
-  factories = creationFactory ? [{ ...creationFactory, isDefault: true, status: "active" }] : [],
+  canManageFactoryDefinition = false,
+  factories = [],
   children,
-  navItems,
   onboarding,
   pathnameOverride,
   viewerAvatarUrl,
@@ -308,12 +300,15 @@ export function ShellHeader({
   const routedPathname = usePathname();
   const pathname = pathnameOverride ?? routedPathname ?? workspaceBasePath(workspace.slug);
   const searchParams = useSearchParams();
+  const returnValues = searchParams?.getAll("returnTo");
+  const returnParam = returnValues?.length === 1 ? returnValues[0] : null;
   const locationHash = useSyncExternalStore(
     subscribeToLocationHash,
     () => window.location.hash,
     () => "",
   );
   const router = useRouter();
+  const { startNavigation } = useOptionalRouteProgress();
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
   const onboardingHref = workspaceOnboardingPath(workspace.slug);
   const headerRef = useRef<HTMLElement>(null);
@@ -325,9 +320,41 @@ export function ShellHeader({
   const locationKey = search ? `${pathname}?${search}` : pathname;
   const pipelineHref = workspaceBasePath(workspace.slug);
   const sessionsHref = workspaceSessionsPath(workspace.slug);
-  const sessionsNavItem = navItems.find((item) => item.id === "sessions");
-  const boardNavItem = sessionsNavItem && { ...sessionsNavItem, href: pipelineHref };
-  const activeNavItem = navItems.find((item) => isActiveNavItem(pathname, workspace.slug, item));
+  const location = matchWorkspaceLocation(pathname, workspace.slug);
+  const factoryRequest = readFactoryRequest(searchParams);
+  const { snapshot, publish } = useWorkspaceScopeSnapshot(
+    viewerId,
+    workspace.id,
+    workspaceScopeLocationKey(pathname, location?.detail ? undefined : factoryRequest),
+  );
+  const currentFactories = snapshot?.factories ?? factories;
+  const scoped = snapshot?.scope ?? { kind: "global" };
+  const globalScope = location?.mode === "global";
+  const remembered = useRememberedWorkspaceScope({
+    factories: currentFactories,
+    snapshot,
+    viewerId,
+    workspaceId: workspace.id,
+  });
+  const { activeItem, sections, sidebar, tabs } = getGroupedWorkspaceNavigation({
+    canManageDefinition: canManageFactoryDefinition,
+    factories: currentFactories,
+    hash: locationHash,
+    pathname,
+    preferRememberedScope: globalScope,
+    returnTo: returnParam,
+    scope: globalScope ? remembered : scoped,
+    workspaceSlug: workspace.slug,
+  });
+  const [guardedPickerTarget, setGuardedPickerTarget] = useState<HTMLDivElement | null>(null);
+  const scopeContext = useMemo(
+    () => ({
+      guardedPicker: snapshot?.picker === "guarded" ? { target: guardedPickerTarget } : null,
+      ownsPicker: snapshot?.picker === "header",
+      publish,
+    }),
+    [guardedPickerTarget, publish, snapshot?.picker],
+  );
   const [drawerLocation, setDrawerLocation] = useState<string | null>(null);
   const drawerOpen = drawerLocation === locationKey;
   if (drawerLocation !== null && !drawerOpen) setDrawerLocation(null);
@@ -360,84 +387,118 @@ export function ShellHeader({
     return () => desktop.removeEventListener("change", closeDrawer);
   }, [sidebarMediaQuery]);
 
-  // `?create=1` is a deep-link entrypoint (legacy redirect targets, bookmarks)
-  // that auto-opens the dialog regardless of which page in the workspace the
-  // user lands on. Creation only targets the workspace default factory, so the
-  // dialog stays closed outside that factory's explicit scope.
-  const scope = shellFactoryScope({
-    factories,
-    item: pathname === pipelineHref ? boardNavItem : activeNavItem,
-    pathname,
-    query: searchParams?.getAll(FACTORY_QUERY_PARAM) ?? [],
-    slug: workspace.slug,
-  });
-  const isDirectCreationScope =
-    creationFactory !== null &&
-    (scope.kind === "none" ||
-      (scope.kind === "factory" && scope.factory.id === creationFactory.id));
+  const sessionsBrowse = location?.destination === "sessions" && !location.detail;
+  const creationScope = useMemo<SessionCreationScope | null>(() => {
+    if (!sessionsBrowse || !snapshot) return null;
+    const { factories, scope } = snapshot;
+    if (scope.kind === "all")
+      return factories.some(({ status }) => status === "active") ? scope : null;
+    if (scope.kind !== "factory" || scope.factory.status !== "active") return null;
+    const { id, name } = scope.factory;
+    return { kind: "factory", factory: { id, name } };
+  }, [sessionsBrowse, snapshot]);
+  const creationFactoryQuery =
+    creationScope?.kind === "factory" ? creationScope.factory.id : creationScope?.kind;
   const createFromUrl = searchParams?.get("create") === "1";
   const urlWorkflowActivation = createFromUrl
     ? readSessionLaunchActivation(searchParams)
     : undefined;
-  const returnValues = searchParams?.getAll("returnTo");
-  const returnTo =
-    returnValues?.length === 1 ? resolveSessionReturnTo(returnValues[0], workspace.slug) : null;
-  const [userCreateOpen, setUserCreateOpen] = useState(false);
-  const [recoverableWorkflowLaunch, setRecoverableWorkflowLaunch] = useState<{
+  const composerKey = `${viewerId}:${workspace.id}`;
+  const [userCreateOwner, setUserCreateOwner] = useState<string | null>(null);
+  const [recoverableLaunch, setRecoverableLaunch] = useState<{
+    composerKey: string;
     location: string;
-    activationId: string | null;
+    activationId?: string | null;
+    returnTo: string | null;
   } | null>(null);
-  if (
-    recoverableWorkflowLaunch &&
-    !createFromUrl &&
-    recoverableWorkflowLaunch.location !== locationKey
-  ) {
-    setRecoverableWorkflowLaunch(null);
+  const ownedLaunch = recoverableLaunch?.composerKey === composerKey ? recoverableLaunch : null;
+  const launchOnLocation = ownedLaunch?.location === locationKey ? ownedLaunch : null;
+  if (recoverableLaunch && (!ownedLaunch || (!createFromUrl && !launchOnLocation))) {
+    setRecoverableLaunch(null);
   }
-  const createScope = `${viewerId}:${workspace.id}`;
-  const createUrlKey = JSON.stringify([createScope, pathname, urlWorkflowActivation]);
+  const clearRecoverableLaunch = useCallback(() => setRecoverableLaunch(null), []);
+  const returnTo = createFromUrl
+    ? resolveSessionReturnTo(returnParam, workspace.slug)
+    : (launchOnLocation?.returnTo ?? null);
+  const workflowLaunchActivationId = createFromUrl
+    ? urlWorkflowActivation
+    : launchOnLocation?.activationId;
+  const launchKey = JSON.stringify({ workflowLaunchActivationId, returnTo });
+  const createUrlKey = JSON.stringify([composerKey, pathname, creationFactoryQuery, launchKey]);
   const [dismissedCreateUrlKey, setDismissedCreateUrlKey] = useState<string | null>(null);
   if (!createFromUrl && dismissedCreateUrlKey) setDismissedCreateUrlKey(null);
   // Leaving the direct scope closes the dialog but keeps it mounted: drafts and
   // attachments live inside it. Reopening takes an explicit new action.
-  if (!isDirectCreationScope && userCreateOpen) setUserCreateOpen(false);
+  if (userCreateOwner !== null && (userCreateOwner !== composerKey || !creationScope)) {
+    setUserCreateOwner(null);
+  }
   const createOpen =
-    isDirectCreationScope &&
+    creationScope !== null &&
     !shouldResumeSetup &&
-    (userCreateOpen || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
+    (userCreateOwner === composerKey || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
+  const previewLocationKey = creationFactoryQuery && !shouldResumeSetup ? createUrlKey : null;
   const [creationPreview, setCreationPreview] = useState<{
-    scope: string;
-    pathname: string;
+    locationKey: string;
     preview: SessionCreationPreview;
   } | null>(null);
-  const creationPreviewRef = useRef(creationPreview);
   const visibleCreationPreview =
-    creationPreview?.scope === createScope && creationPreview.pathname === pathname
-      ? creationPreview.preview
-      : null;
-  if (creationPreview && creationPreview.pathname !== pathname) setCreationPreview(null);
+    creationPreview?.locationKey === previewLocationKey ? creationPreview.preview : null;
+  if (creationPreview && !visibleCreationPreview) setCreationPreview(null);
   const handleCreationPreview = useCallback(
     (preview: SessionCreationPreview | null) => {
-      const next = preview ? { scope: createScope, pathname, preview } : null;
-      creationPreviewRef.current = next;
-      setCreationPreview(next);
+      setCreationPreview(
+        preview && previewLocationKey ? { locationKey: previewLocationKey, preview } : null,
+      );
     },
-    [createScope, pathname],
+    [previewLocationKey],
   );
-  const handleCreateReopen = useCallback(() => setUserCreateOpen(true), []);
-  const [mountedCreateScope, setMountedCreateScope] = useState<string | null>(null);
-  if (createOpen && mountedCreateScope !== createScope) {
-    setMountedCreateScope(createScope);
-  }
-  const createTriggerRef = useRef<HTMLButtonElement | HTMLAnchorElement | null>(null);
+  const handleCreateReopen = useCallback(
+    (submittedFactoryId?: string) => {
+      if (!submittedFactoryId) {
+        setUserCreateOwner(composerKey);
+        return;
+      }
+      const href = sessionLaunchHref(
+        workspace.slug,
+        submittedFactoryId,
+        returnTo ?? undefined,
+        workflowLaunchActivationId ?? undefined,
+      );
+      const recoveryKey = JSON.stringify([
+        composerKey,
+        sessionsHref,
+        submittedFactoryId,
+        launchKey,
+      ]);
+      setDismissedCreateUrlKey((dismissed) => (dismissed === recoveryKey ? null : dismissed));
+      startNavigation(href);
+      router.push(href);
+    },
+    [
+      composerKey,
+      launchKey,
+      returnTo,
+      router,
+      sessionsHref,
+      startNavigation,
+      workflowLaunchActivationId,
+      workspace.slug,
+    ],
+  );
+  const [mountedComposer, setMountedComposer] = useState<{
+    key: string;
+    scope: SessionCreationScope;
+  } | null>(null);
+  if (
+    creationScope &&
+    (createOpen || mountedComposer?.key === composerKey) &&
+    (mountedComposer?.key !== composerKey || mountedComposer.scope !== creationScope)
+  )
+    setMountedComposer({ key: composerKey, scope: creationScope });
+  const createTriggerRef = useRef<HTMLButtonElement | null>(null);
   const pendingFocusHref = useRef<string | null>(null);
   const committedLocation = useRef(locationKey);
-  const launchHistory = useRef<{ returnTo: string; origin: string; arrived: boolean } | null>(null);
-  const previewReturn = useRef<{ location: string; href: string } | null>(null);
-  const setCreateTrigger = useCallback((element: HTMLButtonElement | HTMLAnchorElement | null) => {
-    createTriggerRef.current = element;
-  }, []);
-  const createDialogPreloadStartedKey = useRef<string | null>(null);
+  const createDialogPreloads = useRef<Set<string> | null>(null);
   const prefetchedNavKeysRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     if (shouldResumeSetup && createFromUrl) {
@@ -458,95 +519,63 @@ export function ShellHeader({
 
   useEffect(() => {
     committedLocation.current = locationKey;
-    const launch = launchHistory.current;
-    const atLaunch =
-      launch &&
-      createFromUrl &&
-      isDirectCreationScope &&
-      pathname === sessionsHref &&
-      returnTo === launch.returnTo;
-    if (atLaunch) launch.arrived = true;
-    if (launch?.arrived && !atLaunch && previewReturn.current?.location !== locationKey) {
-      launchHistory.current = null;
-      if (launch.origin.split("#", 1)[0] === locationKey) pendingFocusHref.current = locationKey;
-    }
-    if (
-      previewReturn.current &&
-      previewReturn.current.location !== locationKey &&
-      createFromUrl === false
-    ) {
-      previewReturn.current = null;
-    }
     if (pendingFocusHref.current !== locationKey) return;
     const frame = requestAnimationFrame(restoreCreateFocus);
     return () => cancelAnimationFrame(frame);
-  }, [
-    createFromUrl,
-    isDirectCreationScope,
-    locationKey,
-    pathname,
-    restoreCreateFocus,
-    returnTo,
-    sessionsHref,
-  ]);
+  }, [locationKey, restoreCreateFocus]);
 
-  const handleCreateClose = useCallback(() => {
-    setUserCreateOpen(false);
-    const previewActive =
-      creationPreviewRef.current?.scope === createScope &&
-      creationPreviewRef.current.pathname === pathname;
-    const cleanHref = withoutSessionLaunch(pathname, search);
-    if (createFromUrl) {
-      setDismissedCreateUrlKey(createUrlKey);
-    }
-    if (previewActive) {
+  const handleCreateClose = useCallback(
+    (reason?: "preview") => {
+      setUserCreateOwner(null);
+      const cleanHref = withoutSessionLaunch(pathname, search);
       if (createFromUrl) {
-        setRecoverableWorkflowLaunch(
-          urlWorkflowActivation === undefined
-            ? null
-            : { location: cleanHref, activationId: urlWorkflowActivation },
-        );
-        previewReturn.current = returnTo ? { location: cleanHref, href: returnTo } : null;
-        router.replace(cleanHref, { scroll: false });
+        setDismissedCreateUrlKey(createUrlKey);
       }
-      return;
-    }
-    const destination =
-      (createFromUrl
-        ? returnTo
-        : previewReturn.current?.location === locationKey
-          ? previewReturn.current.href
-          : null) ??
-      (createFromUrl && pathname !== sessionsHref
-        ? workspaceSessionsPath(workspace.slug, { factory: creationFactory?.id })
-        : cleanHref + window.location.hash);
-    const launch = launchHistory.current;
-    setRecoverableWorkflowLaunch(null);
-    previewReturn.current = null;
-    launchHistory.current = null;
-    pendingFocusHref.current = destination.split("#", 1)[0];
-    if (!createFromUrl && pendingFocusHref.current === locationKey) return;
-    if (launch?.arrived && launch.origin === destination) router.back();
-    else router.replace(destination, { scroll: destination.split(/[?#]/u, 1)[0] !== pathname });
-  }, [
-    createFromUrl,
-    createScope,
-    createUrlKey,
-    creationFactory?.id,
-    locationKey,
-    pathname,
-    returnTo,
-    router,
-    search,
-    sessionsHref,
-    urlWorkflowActivation,
-    workspace.slug,
-  ]);
+      if (reason === "preview") {
+        if (createFromUrl) {
+          setRecoverableLaunch({
+            composerKey,
+            location: cleanHref,
+            activationId: urlWorkflowActivation,
+            returnTo,
+          });
+          router.replace(cleanHref, { scroll: false });
+        }
+        return;
+      }
+      const destination =
+        returnTo ??
+        (createFromUrl && pathname !== sessionsHref
+          ? workspaceSessionsPath(workspace.slug, { factory: creationFactoryQuery })
+          : cleanHref + window.location.hash);
+      clearRecoverableLaunch();
+      pendingFocusHref.current = destination.split("#", 1)[0];
+      if (!createFromUrl && pendingFocusHref.current === locationKey) return;
+      router.replace(destination, { scroll: destination.split(/[?#]/u, 1)[0] !== pathname });
+    },
+    [
+      clearRecoverableLaunch,
+      composerKey,
+      createFromUrl,
+      createUrlKey,
+      creationFactoryQuery,
+      locationKey,
+      pathname,
+      returnTo,
+      router,
+      search,
+      sessionsHref,
+      urlWorkflowActivation,
+      workspace.slug,
+    ],
+  );
 
   function preloadCreateDialog() {
-    preloadCreateSessionDialogOnce(createDialogPreloadStartedKey, {
+    createDialogPreloads.current ??= new Set();
+    preloadCreateSessionDialogOnce(createDialogPreloads.current, {
       userId: viewerId,
       workspaceId: workspace.id,
+      factoryId: creationScope?.kind === "factory" ? creationScope.factory.id : undefined,
     });
   }
 
@@ -572,90 +601,56 @@ export function ShellHeader({
     };
   }
 
-  function navLinkProps(item: WorkspaceNavItem, mobile = false) {
-    const destination =
-      boardNavItem && item.id === "sessions" && pathname === pipelineHref ? boardNavItem : item;
-    const { href, scopeNote } = shellNavDestination(destination, workspace.slug, factories, scope);
-    const skipPrefetch = item.id === "inbox" || item.id === "analytics";
+  function navLinkProps(item: ShellNavItem, mobile = false) {
+    const { href, id } = item;
+    const skipPrefetch = id === "inbox" || id === "insights";
     return {
       href,
-      scopeNote,
       // From the pipeline, load the real page ahead of the click. The default
       // stops at loading.tsx, and prefetching every page from every page
       // competes with opening a session.
       prefetch: skipPrefetch
         ? false
-        : item !== activeNavItem && pathname === pipelineHref
+        : item !== activeItem && pathname === pipelineHref
           ? true
           : undefined,
       onClick: (event: MouseEvent<HTMLAnchorElement>) => handleNavClick(event, mobile),
       ...(skipPrefetch ? {} : navPrefetchHandlers(href)),
     };
   }
-  const scopedPipelineHref = boardNavItem
-    ? shellNavDestination(boardNavItem, workspace.slug, factories, scope).href
-    : pipelineHref;
+  const scopedPipelineHref = workspaceScopeHref(
+    "board",
+    workspace.slug,
+    globalScope ? remembered : scoped,
+    globalScope,
+  );
 
   function renderPrimaryAction() {
     if (shouldResumeSetup) {
       return (
-        <Link className="ui-button-primary min-h-9 px-2.5 text-[13px]" href={onboardingHref}>
+        <Link
+          className={cn(
+            sessionsBrowse ? "ui-button-primary" : "ui-button",
+            "min-h-9 px-2.5 text-[13px]",
+          )}
+          href={onboardingHref}
+        >
           <span className="lg:hidden">Setup</span>
           <span className="hidden lg:inline">Resume setup</span>
         </Link>
       );
     }
-    if (!creationFactory) return null;
-
-    const createActionClassName =
-      "ui-button-primary inline-flex size-9 items-center justify-center gap-2 whitespace-nowrap px-0 lg:min-h-9 lg:w-auto lg:px-3";
-
-    if (!isDirectCreationScope) {
-      const creationSwitchHref = sessionLaunchHref(
-        workspace.slug,
-        creationFactory.id,
-        withoutSessionLaunch(pathname, search, locationHash),
-      );
-      return (
-        <Link
-          className="ui-button-primary inline-flex min-h-9 max-w-[min(44vw,18rem)] items-center gap-1.5 px-2 py-1 text-left text-[13px] leading-tight"
-          href={creationSwitchHref}
-          onNavigate={(event) => {
-            const hash = window.location.hash;
-            visibleCreationPreview?.dismiss();
-            const origin = withoutSessionLaunch(pathname, search, hash);
-            const href = sessionLaunchHref(workspace.slug, creationFactory.id, origin);
-            launchHistory.current = {
-              returnTo: origin,
-              origin: locationKey + hash,
-              arrived: false,
-            };
-            if (href !== creationSwitchHref) {
-              event.preventDefault();
-              router.push(href);
-            }
-          }}
-          ref={setCreateTrigger}
-          {...navPrefetchHandlers(creationSwitchHref)}
-        >
-          <PlusIcon className="size-3.5 shrink-0" />
-          <span className="min-w-0 [overflow-wrap:anywhere]">
-            New session in {creationFactory.name}
-          </span>
-        </Link>
-      );
-    }
+    if (!sessionsBrowse || !creationScope) return null;
 
     return (
       <button
-        ref={setCreateTrigger}
+        ref={createTriggerRef}
         type="button"
-        className={createActionClassName}
+        className="ui-button-primary inline-flex size-9 items-center justify-center gap-2 whitespace-nowrap px-0 lg:min-h-9 lg:w-auto lg:px-3"
         aria-label="New session"
         onClick={() => {
           startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
-          setRecoverableWorkflowLaunch(null);
-          setUserCreateOpen(true);
+          setUserCreateOwner(composerKey);
         }}
         onFocus={preloadCreateDialog}
         onPointerEnter={preloadCreateDialog}
@@ -667,7 +662,7 @@ export function ShellHeader({
   }
 
   return (
-    <>
+    <WorkspaceScopeContext.Provider value={scopeContext}>
       <div className="flex min-h-[100svh] min-w-0 flex-col bg-sheet">
         <header
           className="ui-shell-header sticky top-0 z-20 min-w-0 border-b border-border bg-sheet"
@@ -688,7 +683,18 @@ export function ShellHeader({
                 }}
                 options={workspaceOptions}
               />
-              {activeNavItem ? (
+              {location && snapshot ? (
+                <WorkspaceFactoryPicker
+                  allowAll={location.mode === "aggregate" && !location.detail}
+                  choices={workspaceScopeOptions(location, currentFactories)}
+                  guardTarget={snapshot.picker === "guarded" ? setGuardedPickerTarget : undefined}
+                  locked={snapshot.picker !== "header"}
+                  resetParams={snapshot.resetParams}
+                  scope={scoped}
+                  visibleFactoryCount={currentFactories.length}
+                />
+              ) : null}
+              {activeItem ? (
                 <span
                   aria-hidden="true"
                   className={cn(
@@ -696,7 +702,7 @@ export function ShellHeader({
                     wideContent ? "xl:inline" : "lg:inline",
                   )}
                 >
-                  {activeNavItem.label}
+                  {activeItem.label}
                 </span>
               ) : null}
               <Dialog
@@ -706,14 +712,13 @@ export function ShellHeader({
                 <DialogTrigger asChild>
                   <button
                     type="button"
-                    aria-label={`Workspace navigation: ${activeNavItem?.label ?? "Pages"}`}
+                    aria-label={`Workspace navigation: ${activeItem?.label ?? "Pages"}`}
                     className={cn(
-                      "ui-shell-nav-link ui-shell-nav-link-active min-h-11 max-w-full gap-1.5 whitespace-normal px-2 text-left",
+                      "ui-shell-nav-link order-first min-h-11 min-w-10 justify-center px-2",
                       wideContent ? "xl:hidden" : "lg:hidden",
                     )}
                   >
                     <NavigationMenuIcon />
-                    <span className="min-w-0 truncate">{activeNavItem?.label ?? "Pages"}</span>
                   </button>
                 </DialogTrigger>
                 <DialogContent
@@ -730,10 +735,17 @@ export function ShellHeader({
                   variant="navigation"
                 >
                   <nav aria-label="Workspace navigation" className="flex flex-1 flex-col gap-4">
+                    {snapshot &&
+                    (scoped.kind === "all" ||
+                      (scoped.kind === "factory" && currentFactories.length > 1)) ? (
+                      <p className="min-w-0 px-2.5 type-secondary break-words text-muted">
+                        {workspace.name} /{" "}
+                        {scoped.kind === "all" ? "All factories" : scoped.factory.name}
+                      </p>
+                    ) : null}
                     <WorkspaceNavLinks
-                      activeItem={activeNavItem}
                       getLinkProps={(item) => navLinkProps(item, true)}
-                      items={navItems}
+                      items={sidebar}
                       mobile
                     />
                   </nav>
@@ -750,9 +762,8 @@ export function ShellHeader({
 
         <div className="flex min-w-0 flex-1">
           <WorkspaceSidebar
-            activeItem={activeNavItem}
             getLinkProps={navLinkProps}
-            items={navItems}
+            items={sidebar}
             pathname={pathname}
             sidebarRef={sidebarRef}
             wideContent={wideContent}
@@ -764,6 +775,9 @@ export function ShellHeader({
             ref={mainRef}
           >
             <RouteEntrance pathname={pathname} />
+            {activeItem ? (
+              <WorkspaceGroupTabs label={activeItem.label} tabs={tabs} sections={sections} />
+            ) : null}
             {visibleCreationPreview?.content}
             <div
               className={visibleCreationPreview ? "hidden" : "contents"}
@@ -775,28 +789,23 @@ export function ShellHeader({
         </div>
       </div>
 
-      {creationFactory && mountedCreateScope === createScope ? (
+      {mountedComposer?.key === composerKey ? (
         <CreateSessionDialog
-          key={createScope}
-          creationFactoryId={creationFactory.id}
-          creationFactoryName={creationFactory.name}
+          key={composerKey}
+          creationScope={mountedComposer.scope}
+          launchKey={launchKey}
           open={createOpen}
           onClose={handleCreateClose}
           onCloseAutoFocus={handleCreateCloseAutoFocus}
+          onDraftReset={clearRecoverableLaunch}
           onPreviewChange={handleCreationPreview}
           onReopen={handleCreateReopen}
           userId={viewerId}
           workspaceId={workspace.id}
           workspaceSlug={workspace.slug}
-          workflowLaunchActivationId={
-            createFromUrl
-              ? urlWorkflowActivation
-              : recoverableWorkflowLaunch?.location === locationKey
-                ? recoverableWorkflowLaunch.activationId
-                : undefined
-          }
+          workflowLaunchActivationId={workflowLaunchActivationId}
         />
       ) : null}
-    </>
+    </WorkspaceScopeContext.Provider>
   );
 }

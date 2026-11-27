@@ -15,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
 }));
 vi.mock("@/features/factory-scorers/scorer-pages-data", () => mocks);
+vi.mock("@/components/app-shell/workspace-factory-page.server", () => ({
+  scopeFactoryIndex: (Page: unknown) => Page,
+  WorkspaceResourceScope: () => null,
+}));
+
 vi.mock("next/navigation", () => ({
   notFound: () => {
     throw new Error("Not found");

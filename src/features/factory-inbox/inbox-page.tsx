@@ -92,7 +92,7 @@ export function FactoryInboxPage({
   const [manualRefresh, setManualRefresh] = useState<"idle" | "pending" | "success">("idle");
   const manualRequest = useRef<symbol | null>(null);
   const inbox = view.kind === "ready" ? view.inbox : null;
-  const scope = { factory: factoryId ?? undefined, kind };
+  const scope = { factory: factoryId ?? "all", kind };
   const returnTo = workspaceInboxPath(workspaceSlug, { ...scope, cursor: cursor ?? undefined });
 
   useEffect(() => {
@@ -341,7 +341,10 @@ export function FactoryInboxPage({
               <p className="mt-1 text-muted">
                 Reviews and clarification requests appear here when a session needs your attention.
               </p>
-              <Link className="ui-button mt-4" href={workspaceSessionsPath(workspaceSlug)}>
+              <Link
+                className="ui-button mt-4"
+                href={workspaceSessionsPath(workspaceSlug, { factory: "all" })}
+              >
                 View sessions
               </Link>
             </div>
@@ -429,7 +432,10 @@ function InboxScopeRecovery({
       <p className="text-muted" role="status">
         {message}
       </p>
-      <Link className="ui-button mt-4" href={workspaceInboxPath(workspaceSlug, { kind })}>
+      <Link
+        className="ui-button mt-4"
+        href={workspaceInboxPath(workspaceSlug, { factory: "all", kind })}
+      >
         View all factories
       </Link>
     </div>

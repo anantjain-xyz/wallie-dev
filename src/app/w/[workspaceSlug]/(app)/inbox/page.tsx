@@ -1,10 +1,7 @@
 import { notFound } from "next/navigation";
 
-import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import {
-  FACTORY_QUERY_PARAM,
-  resolveFactorySelection,
-} from "@/features/factories/factory-selection";
+import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
+import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryInboxPage, FactoryInboxUnavailable } from "@/features/factory-inbox/inbox-page";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
@@ -19,22 +16,25 @@ export default async function InboxPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const factoryQuery = search[FACTORY_QUERY_PARAM] ?? "all";
   const kind = factoryInboxKindSchema.safeParse(search.kind).data;
-  const [{ currentMember, supabase, workspace }, factories] = await Promise.all([
+  const [{ currentMember, supabase, workspace }, snapshot] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
-    loadWorkspaceFactoryOptions(workspaceSlug),
+    loadWorkspaceRouteScope({ route: "inbox", workspaceSlug, search }),
   ]);
-  const selection = resolveFactorySelection(factories, factoryQuery);
+  const { factories, scope: selection } = snapshot;
+  const handoff = <WorkspaceScopeHandoff snapshot={snapshot} />;
   if (selection.kind === "unavailable")
     return (
-      <FactoryInboxUnavailable
-        factorySelector={
-          <FactorySelector allowAll factories={factories} selectedValue="unavailable" />
-        }
-        kind={kind}
-        workspaceSlug={workspace.slug}
-      />
+      <>
+        {handoff}
+        <FactoryInboxUnavailable
+          factorySelector={
+            <FactorySelector allowAll factories={factories} selectedValue="unavailable" />
+          }
+          kind={kind}
+          workspaceSlug={workspace.slug}
+        />
+      </>
     );
 
   const factoryId = selection.kind === "factory" ? selection.factory.id : null;
@@ -52,19 +52,22 @@ export default async function InboxPage({
   });
 
   return (
-    <FactoryInboxPage
-      key={JSON.stringify([workspace.id, factoryId, kind, cursor])}
-      cursor={cursor}
-      factoryId={factoryId}
-      factorySelector={
-        <FactorySelector allowAll factories={factories} selectedValue={factoryId ?? "all"} />
-      }
-      initialInbox={inbox}
-      initialNow={new Date().toISOString()}
-      kind={kind}
-      memberId={currentMember.id}
-      workspaceId={workspace.id}
-      workspaceSlug={workspace.slug}
-    />
+    <>
+      {handoff}
+      <FactoryInboxPage
+        key={JSON.stringify([workspace.id, factoryId, kind, cursor])}
+        cursor={cursor}
+        factoryId={factoryId}
+        factorySelector={
+          <FactorySelector allowAll factories={factories} selectedValue={factoryId ?? "all"} />
+        }
+        initialInbox={inbox}
+        initialNow={new Date().toISOString()}
+        kind={kind}
+        memberId={currentMember.id}
+        workspaceId={workspace.id}
+        workspaceSlug={workspace.slug}
+      />
+    </>
   );
 }

@@ -1,32 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useId, type ComponentProps, type ReactNode, type Ref } from "react";
+import type { ComponentProps, ReactNode, Ref } from "react";
 
 import { WorkspaceNavigation } from "@/components/app-shell/navigation-motion";
-import { workspaceNavSections, type WorkspaceNavItem } from "@/lib/routes";
+import type { WorkspaceDestination } from "@/components/app-shell/workspace-location";
 import { cn } from "@/lib/utils";
+
+export type ShellNavItem = {
+  active: boolean;
+  href: string;
+  id: WorkspaceDestination;
+  label: string;
+};
 
 const navIconPaths = {
   sessions: "M5 4h8M5 8h8m-8 4h8M2.5 4h.1m-.1 4h.1m-.1 4h.1",
   inbox: "M2.5 8.5 4.5 3.5h7l2 5v4h-11zM2.5 8.5h3l1 1.5h3l1-1.5h3",
-  runs: "M2.5 8h2l1.7-4 3.4 8 1.7-4h2.2",
   activity: "M3 12V8m5 4V4m5 8V6M2 13.5h12",
-  analytics: "M3 3.5v9h10.5M5.5 10l2.3-3 2 1.5 3.2-4",
-  benchmarks: "M3 13h10M4.5 10V7m3.5 3V4m3.5 6V5.5",
-  "failure-groups": "M8 3 2.5 12.5h11zM8 6.5v2.8m0 1.6h.01",
-  improvements: "M3 12.5 7 8.5l2 2 4-5m-3 0h3v3",
-  context: "M2.5 4.5h4l1 1.5h6v6.5h-11zM5 8.5h6m-6 2h4",
-  memory: "M4 3h8v10H4zM6.5 5.5h3m-3 2h3m-3 2h2",
-  governance: "M8 2.5 13 4.5v3.2c0 3-2 4.9-5 6-3-1.1-5-3-5-6V4.5zM6 8l1.4 1.4L10 6.8",
-  agents:
-    "M4 13v-1.5A3.5 3.5 0 0 1 7.5 8h1a3.5 3.5 0 0 1 3.5 3.5V13zM10 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z",
-  scorers: "M3 4h2m-2 4h2m-2 4h2m2-8h6M7 8h6m-6 4h3",
-  workflows: "M2.5 7h3v3h-3zM10.5 3.5h3v3h-3zM10.5 10.5h3v3h-3zM5.5 8.5H8V5h2.5M8 8.5V12h2.5",
-  automations: "M8.5 2.5 4 8.5h3l-.5 5 5.5-6h-3l.5-5z",
-  "factory-definition": "M4 2.5h5l3 3v8H4zM9 2.5v3h3M6 8.5h4m-4 2h4",
+  insights: "M3 3.5v9h10.5M5.5 10l2.3-3 2 1.5 3.2-4",
+  factory: "M2.5 13V6.5L6 8V5l3.5 2 1-4h2l1 10zM5 10h.1m2.9 0h.1m2.9 0h.1",
   settings: "M3 4.5h10m-10 7h10M6 3v3m4 4v3",
-} satisfies Record<WorkspaceNavItem["id"], string>;
+} satisfies Record<ShellNavItem["id"], string>;
 
 function NavigationIcon({ children }: { children: ReactNode }) {
   return (
@@ -54,76 +49,48 @@ export function NavigationMenuIcon() {
 }
 
 type WorkspaceNavLinksProps = {
-  activeItem: WorkspaceNavItem | undefined;
   getLinkProps: (
-    item: WorkspaceNavItem,
+    item: ShellNavItem,
   ) => Pick<
     ComponentProps<typeof Link>,
     "href" | "onClick" | "onFocus" | "onPointerEnter" | "prefetch"
-  > & { scopeNote?: string };
-  items: WorkspaceNavItem[];
+  >;
+  items: ShellNavItem[];
 };
 
 export function WorkspaceNavLinks({
-  activeItem,
   getLinkProps,
   items,
   mobile = false,
 }: WorkspaceNavLinksProps & { mobile?: boolean }) {
-  const descriptionId = useId();
-  return workspaceNavSections.map((section) => {
-    const sectionItems = items.filter((item) => item.section === section);
-    if (sectionItems.length === 0) return null;
-
-    const footer = section === "Footer";
-    return (
-      <div key={section} className={cn(footer && "mt-auto border-t border-border pt-2")}>
-        {footer ? null : <p className="px-2.5 pb-1.5 type-label text-muted">{section}</p>}
-        <ul aria-label={footer ? undefined : section} className="space-y-0.5">
-          {sectionItems.map((item) => {
-            const active = item.id === activeItem?.id;
-            const { scopeNote, ...linkProps } = getLinkProps(item);
-            const noteId = `${descriptionId}-${item.id}`;
-
-            return (
-              <li key={item.id}>
-                <Link
-                  {...linkProps}
-                  aria-current={active ? "page" : undefined}
-                  aria-describedby={scopeNote ? noteId : undefined}
-                  className={cn(
-                    "ui-shell-nav-link w-full min-w-0 gap-2.5",
-                    active && "ui-shell-nav-link-active",
-                    mobile && "min-h-11",
-                  )}
-                >
-                  <NavigationIcon>
-                    <path d={navIconPaths[item.id]} />
-                  </NavigationIcon>
-                  <span className="min-w-0 [overflow-wrap:anywhere]">
-                    {item.label}
-                    {scopeNote ? (
-                      <span
-                        aria-hidden="true"
-                        id={noteId}
-                        className="block type-annotation text-muted"
-                      >
-                        {scopeNote}
-                      </span>
-                    ) : null}
-                  </span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    );
-  });
+  return (
+    <ul className="flex flex-1 flex-col gap-0.5">
+      {items.map((item) => (
+        <li
+          className={cn(item.id === "settings" && "mt-auto border-t border-border pt-2")}
+          key={item.id}
+        >
+          <Link
+            {...getLinkProps(item)}
+            aria-current={item.active ? "page" : undefined}
+            className={cn(
+              "ui-shell-nav-link w-full min-w-0 gap-2.5",
+              item.active && "ui-shell-nav-link-active",
+              mobile && "min-h-11",
+            )}
+          >
+            <NavigationIcon>
+              <path d={navIconPaths[item.id]} />
+            </NavigationIcon>
+            {item.label}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function WorkspaceSidebar({
-  activeItem,
   getLinkProps,
   items,
   pathname,
@@ -145,7 +112,7 @@ export function WorkspaceSidebar({
     >
       <div className="flex h-full flex-col overflow-y-auto overscroll-contain p-2 pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))]">
         <WorkspaceNavigation pathname={pathname} className="flex flex-1 flex-col gap-4">
-          <WorkspaceNavLinks activeItem={activeItem} getLinkProps={getLinkProps} items={items} />
+          <WorkspaceNavLinks getLinkProps={getLinkProps} items={items} />
         </WorkspaceNavigation>
       </div>
     </aside>
