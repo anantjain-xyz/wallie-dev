@@ -615,6 +615,10 @@ it("shows credential rotation status and saves only the selected binding referen
     },
   });
   expect(await screen.findByText(/Material revision 3/)).toBeVisible();
+  expect(screen.getByRole("link", { name: "Rotate in workspace secrets" })).toHaveAttribute(
+    "href",
+    "/w/acme/settings#workspace-secrets",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Use in working definition" }));
   fireEvent.click(screen.getByRole("button", { name: "JSON source" }));
   const json = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Definition JSON" });
@@ -650,6 +654,10 @@ it("uses the upstream provider from the saved OpenCode model for service credent
     credentials: { binding: null, availableBinding: null, grantMatches: true, eligibleSecrets: [] },
   });
   expect(await screen.findByText("openrouter", { exact: true })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open workspace secrets" })).toHaveAttribute(
+    "href",
+    "/w/acme/settings#workspace-secrets",
+  );
   await waitFor(() => expect(credentialReads).toHaveLength(1));
   const query = new URL(credentialReads[0] ?? "/", "http://localhost").searchParams;
   expect(query.get("openCodeProviderId")).toBe("openrouter");

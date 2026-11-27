@@ -849,15 +849,6 @@ export function FactoryDefinitionEditor({
             ? `Edit the configuration new sessions use in ${factoryName} and inspect its published revisions.`
             : "Edit the configuration new sessions use and inspect published revisions."
         }
-        eyebrow={
-          <Link
-            className="text-accent underline underline-offset-2"
-            href={workspaceSettingsPath(workspaceSlug)}
-          >
-            Settings
-          </Link>
-        }
-        eyebrowAsPlain
         actions={
           <>
             {factorySelection ? (
