@@ -140,6 +140,12 @@ select is(
   ) -> 'lanes') lane where lane ->> 'name' = 'Plan' and lane ->> 'factoryName' = 'Customer tools'),
   0::bigint, 'a restricted member cannot see a sibling factory lane or owner name'
 );
+select is(
+  public.get_filtered_pipeline_dashboard_page(s.workspace_id,
+    target_factory_id => s.factory_id, status_filter => 'in_progress')->'lanes',
+  '[]'::jsonb, 'non-Failed filtering cannot reveal lanes in a restricted factory'
+)
+from pipeline_scope s where not s.is_default;
 set local request.jwt.claim.sub = '46000000-0001-4000-8000-000000000001';
 select results_eq($$
   select lane ->> 'factoryName', lane ->> 'totalCount'
