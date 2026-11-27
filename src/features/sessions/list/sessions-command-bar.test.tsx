@@ -517,31 +517,29 @@ describe("SessionsCommandBar sticky filters", () => {
     expect(mocked.push).not.toHaveBeenCalled();
   });
 
-  it.each(["Clear search", "Clear"])(
-    "restores history results after %s discards a draft without navigation",
-    async (action) => {
-      const user = userEvent.setup();
-      const { rerenderQueryState } = renderCommandBar();
-      const search = screen.getByRole("searchbox", {
-        name: "Search sessions by title, prompt, session number, or Linear issue key",
-      });
-      await user.type(search, "discarded");
-      await user.click(screen.getByRole("button", { name: action }));
-      expect(mocked.push).not.toHaveBeenCalled();
-      await user.type(search, "another draft");
+  it("restores history after clearing the only draft control without navigation", async () => {
+    const user = userEvent.setup();
+    const { rerenderQueryState } = renderCommandBar();
+    const search = screen.getByRole("searchbox", {
+      name: "Search sessions by title, prompt, session number, or Linear issue key",
+    });
+    await user.type(search, "discarded");
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(mocked.push).not.toHaveBeenCalled();
+    await user.type(search, "another draft");
 
-      rerenderQueryState({ ...defaultQueryState, query: "history" });
+    rerenderQueryState({ ...defaultQueryState, query: "history" });
 
-      expect(search).toHaveValue("history");
-      expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
-        "Results for “history”",
-      );
-      expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
-        "Press Enter to search.",
-      );
-      expect(mocked.push).not.toHaveBeenCalled();
-    },
-  );
+    expect(search).toHaveValue("history");
+    expect(screen.getByRole("status", { name: "Sessions search status" })).toHaveTextContent(
+      "Results for “history”",
+    );
+    expect(screen.getByRole("status", { name: "Sessions search status" })).not.toHaveTextContent(
+      "Press Enter to search.",
+    );
+    expect(mocked.push).not.toHaveBeenCalled();
+  });
 
   it("restores history when it differs from a submitted query whose results never arrived", async () => {
     const user = userEvent.setup();

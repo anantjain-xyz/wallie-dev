@@ -7,6 +7,7 @@ import type { SessionFilterKey, SessionListItem } from "@/features/sessions/type
 import { workspaceSessionDetailPath } from "@/lib/routes";
 
 type SessionLedgerRowProps = {
+  factoryName?: string;
   initialNow: string;
   readOnly?: boolean;
   returnTo?: string;
@@ -20,6 +21,7 @@ type SessionLedgerRowProps = {
  * server; the title/overflow/archive island hydrates independently.
  */
 export function SessionLedgerRow({
+  factoryName,
   initialNow,
   readOnly,
   returnTo,
@@ -53,6 +55,7 @@ export function SessionLedgerRow({
         />
       }
       detailHref={detailHref}
+      factoryName={factoryName}
       readOnly={readOnly}
       repositoryLabel={repositoryLabel}
       scope={scope}

@@ -312,9 +312,16 @@ function GovernanceResources({
     }
   }
 
+  const newPrincipal = canApprove ? (
+    <CreateServicePrincipal factoryName={factory.name} key={factory.id} scope={actionScope} />
+  ) : null;
   return (
     <>
-      <PageSection anchorId="service-principals" title="Service principals">
+      <PageSection
+        actions={principalList.entries.length ? newPrincipal : null}
+        anchorId="service-principals"
+        title="Service principals"
+      >
         {principalList.entries.length ? (
           <div className="ui-sheet divide-y divide-border">
             {principalList.entries.map((principal) => (
@@ -322,7 +329,14 @@ function GovernanceResources({
             ))}
           </div>
         ) : (
-          <p className="type-secondary text-muted">No service principals on this page.</p>
+          <div className="space-y-3">
+            <p className="type-secondary text-muted">
+              {query.afterPrincipal
+                ? "No service principals on this page."
+                : "No service principals yet."}
+            </p>
+            {!query.afterPrincipal ? newPrincipal : null}
+          </div>
         )}
         <GovernanceResourcePages
           href={`${filterHref("afterPrincipal")}#service-principals`}
@@ -332,11 +346,6 @@ function GovernanceResources({
           }
           previous={Boolean(query.afterPrincipal)}
         />
-        {canApprove && (
-          <div className="mt-4">
-            <CreateServicePrincipal key={factory.id} scope={actionScope} />
-          </div>
-        )}
       </PageSection>
       <PageSection anchorId="execution-grants" title="Execution grants">
         {grantList.entries.length ? (

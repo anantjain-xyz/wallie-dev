@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { mapOnboardingResumeState } from "@/features/onboarding/flow";
 import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type {
@@ -11,6 +12,7 @@ import type {
   PipelineDashboardLanePage,
 } from "@/features/pipeline/types";
 import { PIPELINE_DASHBOARD_PAGE_SIZE } from "@/features/pipeline/types";
+import { loadBrowsePipelineOwners } from "@/features/sessions/browse-pipeline-owners";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import type { Database } from "@/lib/supabase/database.types";
@@ -182,17 +184,30 @@ export async function loadPipelineDashboardSnapshot({
   if (onboardingResult.error) throw onboardingResult.error;
   if (archivedStages.error) throw archivedStages.error;
   if (anySessionResult.error) throw anySessionResult.error;
+  const lanes = filterArchivedPipelineDashboardLanes(
+    normalizePipelineDashboardRpcPayload(dashboard.data).lanes,
+    new Set(
+      (archivedStages.data ?? [])
+        .filter((stage) => stage.archived_at !== null)
+        .map((stage) => stage.id),
+    ),
+  );
+  const owners = factoryId
+    ? null
+    : await loadBrowsePipelineOwners(
+        supabase,
+        workspaceId,
+        lanes.map((lane) => lane.pipeline.id),
+      );
   return {
     hasAnySession: (anySessionResult.data?.length ?? 0) > 0,
     onboarding: mapOnboardingResumeState(onboardingResult.data),
-    lanes: filterArchivedPipelineDashboardLanes(
-      normalizePipelineDashboardRpcPayload(dashboard.data).lanes,
-      new Set(
-        (archivedStages.data ?? [])
-          .filter((stage) => stage.archived_at !== null)
-          .map((stage) => stage.id),
-      ),
-    ),
+    lanes: owners
+      ? lanes.flatMap((lane) => {
+          const factory = owners.get(lane.pipeline.id);
+          return factory ? [{ ...lane, factory }] : [];
+        })
+      : lanes,
   };
 }
 
@@ -202,7 +217,7 @@ export async function loadPipelineDashboardData(
 ): Promise<PipelineDashboardData> {
   return withServerTiming(
     "pipeline.dashboard",
-    { pageSize: PIPELINE_DASHBOARD_PAGE_SIZE, queryCount: 4, workspaceSlug },
+    { pageSize: PIPELINE_DASHBOARD_PAGE_SIZE, workspaceSlug },
     async (timing) => {
       const { supabase, workspace } = await timing.segment(
         "auth-workspace-context",
@@ -210,18 +225,24 @@ export async function loadPipelineDashboardData(
         (context) => ({ rows: 1, workspaceId: context.workspace.id }),
       );
 
-      const snapshot = await timing.segment(
-        "pipeline.snapshot",
-        () => loadPipelineDashboardSnapshot({ factoryId, supabase, workspaceId: workspace.id }),
-        (snapshot) => ({
-          payloadBytes: approximatePayloadSizeBytes(snapshot),
-          rows: snapshot.lanes.reduce((count, lane) => count + lane.cards.length, 0),
-        }),
-      );
+      const [snapshot, factories] = await Promise.all([
+        timing.segment(
+          "pipeline.snapshot",
+          () => loadPipelineDashboardSnapshot({ factoryId, supabase, workspaceId: workspace.id }),
+          (snapshot) => ({
+            payloadBytes: approximatePayloadSizeBytes(snapshot),
+            rows: snapshot.lanes.reduce((count, lane) => count + lane.cards.length, 0),
+          }),
+        ),
+        factoryId ? undefined : loadWorkspaceFactoryOptions(workspaceSlug),
+      ]);
 
       const result: PipelineDashboardData = {
         ...snapshot,
         ...(factoryId ? { factoryId } : {}),
+        ...(factories
+          ? { overviewFactories: factories.map(({ id, name, status }) => ({ id, name, status })) }
+          : {}),
         workspace: {
           id: workspace.id,
           name: workspace.name,

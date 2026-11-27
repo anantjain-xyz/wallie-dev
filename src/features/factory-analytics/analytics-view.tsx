@@ -14,6 +14,11 @@ import {
   AnalyticsMetrics,
 } from "@/features/factory-analytics/analytics-view-metrics";
 import { type AnalyticsLabels, throughputLabel } from "./analytics-labels";
+import {
+  analyticsCoreFields,
+  analyticsEvidenceFields,
+  analyticsFieldsHref,
+} from "./analytics-navigation";
 import type { AnalyticsQuery } from "@/features/factory-analytics/analytics-query";
 import { AnalyticsReportingFilters } from "@/features/factory-analytics/analytics-reporting-filters";
 import {
@@ -59,6 +64,11 @@ export function AnalyticsView({
   details: ReactNode;
 }) {
   const action = workspaceAnalyticsPath(workspaceSlug);
+  const retryHref = analyticsFieldsHref(action, {
+    ...analyticsCoreFields(factory.id, query),
+    ...analyticsEvidenceFields(query.evidence),
+    ...scorerFields,
+  });
   const exportFilters: AnalyticsExportFilters = {
     from: query.from.slice(0, 10),
     to: query.to.slice(0, 10),
@@ -89,7 +99,7 @@ export function AnalyticsView({
               </p>
             }
           >
-            <AnalyticsOutcomeBody periods={periods} />
+            <AnalyticsOutcomeBody periods={periods} retryHref={retryHref} />
           </Suspense>
           <div className="grid divide-y divide-border border-t border-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
             <details className="min-w-0">
@@ -126,31 +136,33 @@ export function AnalyticsView({
 
 async function AnalyticsOutcomeBody({
   periods,
+  retryHref,
 }: {
   periods: ReturnType<typeof loadAnalyticsPeriods>;
+  retryHref: string;
 }) {
-  const { primary } = await periods;
+  const { primary, comparison } = await periods;
   const freshness = primary.flow.status === "ready" ? primary.flow.data.freshness : null;
   const snapshot = freshness?.status === "ready" ? freshness.sourceSnapshotAt : null;
   const delay = freshness && delayReasons[freshness.status];
   return (
     <>
-      <div className="type-label flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-4 pb-3 text-muted sm:px-5">
-        {snapshot ? (
-          <>
-            <Status compact label="Flow and delivery current" value="healthy" />
-            <time dateTime={snapshot}>Snapshot {timeLabel(snapshot)}</time>
-          </>
-        ) : delay ? (
-          <>
-            <Status compact label="Flow and delivery delayed" value="needs_attention" />
-            <span>{delay}. Sessions and outcome capture continue.</span>
-          </>
-        ) : (
-          <Status compact label="Flow and delivery freshness unavailable" value="not_started" />
-        )}
-      </div>
-      <AnalyticsHighlights period={primary} />
+      {(snapshot || delay) && (
+        <div className="type-label flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-4 pb-3 text-muted sm:px-5">
+          {snapshot ? (
+            <>
+              <Status compact label="Flow and delivery current" value="healthy" />
+              <time dateTime={snapshot}>Snapshot {timeLabel(snapshot)}</time>
+            </>
+          ) : (
+            <>
+              <Status compact label="Flow and delivery delayed" value="needs_attention" />
+              <span>{delay}. Sessions and outcome capture continue.</span>
+            </>
+          )}
+        </div>
+      )}
+      <AnalyticsHighlights comparison={comparison} period={primary} retryHref={retryHref} />
     </>
   );
 }
@@ -166,6 +178,7 @@ export function AnalyticsDetailsView({
   evidence,
   routingCanaryComparison,
   scorerTrends,
+  noScorerCohorts,
 }: {
   workspaceSlug: string;
   factoryId: string;
@@ -177,6 +190,7 @@ export function AnalyticsDetailsView({
   evidence: Awaited<ReturnType<typeof loadAnalyticsEvidence>>;
   routingCanaryComparison: ReactNode;
   scorerTrends: ReactNode;
+  noScorerCohorts: boolean;
 }) {
   const action = workspaceAnalyticsPath(workspaceSlug);
   const filterProps = { action, environments, factoryId, query, scorerFields };
@@ -229,6 +243,7 @@ export function AnalyticsDetailsView({
         bucketLabels={labels.buckets}
         environmentFilter={<AnalyticsReportingFilters {...filterProps} mode="environment" />}
         dimensionFilter={<AnalyticsReportingFilters {...filterProps} mode="dimension" />}
+        noScorerCohorts={noScorerCohorts}
       />
       {scorerTrends}
       {routingCanaryComparison}

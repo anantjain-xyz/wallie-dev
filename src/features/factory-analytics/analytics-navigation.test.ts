@@ -77,24 +77,22 @@ describe("Analytics navigation", () => {
   it("clears evidence and scorer selection state only when their scopes change", () => {
     const { query } = recoverAnalyticsFilters({ ...dates, dimension: "person" });
     const core = analyticsCoreFields(factoryId, query);
-    const form = new FormData();
-    for (const [name, value] of Object.entries({ ...dates, dimension: "person" }))
-      form.set(name, value);
-    expect(applyAnalyticsFields(form, core, evidence, scorer)).toMatchObject({
+    const fields = { ...dates, dimension: "person" };
+    expect(applyAnalyticsFields(fields, core, evidence, scorer)).toMatchObject({
       ...scorer,
       ...evidence,
     });
-    form.set("dimension", "definition");
-    expect(applyAnalyticsFields(form, core, evidence, scorer)).toMatchObject(scorer);
-    expect(applyAnalyticsFields(form, core, evidence, scorer)).not.toHaveProperty("bucket");
-    form.set("from", "2026-11-02");
-    const changed = applyAnalyticsFields(form, core, evidence, scorer);
+    fields.dimension = "definition";
+    expect(applyAnalyticsFields(fields, core, evidence, scorer)).toMatchObject(scorer);
+    expect(applyAnalyticsFields(fields, core, evidence, scorer)).not.toHaveProperty("bucket");
+    fields.from = "2026-11-02";
+    const changed = applyAnalyticsFields(fields, core, evidence, scorer);
     expect(changed).toMatchObject({ scorerRevision: scorer.scorerRevision, cohort: scorer.cohort });
     for (const key of ["cursor", "scoreSnapshot", "beforeScoreRun", "evaluationDay"]) {
       expect(changed).not.toHaveProperty(key);
     }
     expect(
-      applyAnalyticsFields(form, core, { ...evidence, period: "compare" }, scorer),
+      applyAnalyticsFields(fields, core, { ...evidence, period: "compare" }, scorer),
     ).not.toHaveProperty("metric");
   });
 });

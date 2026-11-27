@@ -117,7 +117,9 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await expect(page.getByRole("heading", { name: "Reconciliation quality" })).toBeVisible();
 
     await page.goto(`${workspacePath}/improvements?factory=${fixture.factoryId}`);
-    await expect(main.getByText(/Proposals are based on completed diagnoses/)).toBeVisible();
+    await expect(
+      main.getByText(/Improvement proposals come from completed failure diagnoses/),
+    ).toBeVisible();
     await expect(
       main.getByRole("link", { name: "View failure groups", exact: true }),
     ).toHaveAttribute("href", `${workspacePath}/failure-groups?factory=${fixture.factoryId}`);
@@ -151,10 +153,9 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await expect(
       main.getByRole("link", { name: "Failure group: Reconciliation quality", exact: true }),
     ).toBeVisible();
-    await test.step("changes the review state only when the filter is applied", async () => {
+    await test.step("updates the review state on selection and preserves the failure group", async () => {
       const filter = main.getByRole("combobox", { name: "Review state", exact: true });
       const listbox = page.getByRole("listbox", { name: "Review state", exact: true });
-      const apply = main.getByRole("button", { name: "Apply filter", exact: true });
       const filterUrl = new URL(page.url());
 
       await expect(filter).toHaveText("All");
@@ -176,12 +177,10 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
 
       await selectDropdownOption(filter, "dismissed");
       await expect(filter).toHaveText("Dismissed");
-      await expect(page).toHaveURL(filterUrl.href);
       filterUrl.searchParams.set("reviewState", "dismissed");
-      await apply.click();
       await expect(page).toHaveURL(filterUrl.href);
       await expect(
-        main.getByText("No improvement proposals match this review state."),
+        main.getByRole("heading", { name: "No proposals match this review state" }),
       ).toBeVisible();
 
       await filter.press("ArrowDown");
@@ -191,9 +190,13 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
       await page.keyboard.press("Enter");
       await expect(filter).toBeFocused();
       await expect(filter).toHaveText("Open");
-      await expect(page).toHaveURL(filterUrl.href);
       filterUrl.searchParams.set("reviewState", "open");
-      await apply.click();
+      await expect(page).toHaveURL(filterUrl.href);
+
+      await main.getByRole("link", { name: "Clear filters", exact: true }).click();
+      await expect(filter).toHaveText("All");
+      expect(new URL(page.url()).searchParams.get("cohort")).toBe(source.cohortId);
+      await selectDropdownOption(filter, "open");
       await expect(page).toHaveURL(filterUrl.href);
     });
     const proposal = main.getByRole("link", { name: rationale, exact: true });

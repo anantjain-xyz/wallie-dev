@@ -1,7 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  loadBrowsePipelineOwners: vi.fn(),
   loadAuthenticatedWorkspaceContext: vi.fn(),
+  loadWorkspaceFactoryOptions: vi.fn(),
+}));
+
+vi.mock("@/features/factories/factory-options-data", () => ({
+  loadWorkspaceFactoryOptions: mocked.loadWorkspaceFactoryOptions,
+}));
+
+vi.mock("@/features/sessions/browse-pipeline-owners", () => ({
+  loadBrowsePipelineOwners: mocked.loadBrowsePipelineOwners,
 }));
 
 vi.mock("@/features/workspaces/authenticated-context", () => ({
@@ -176,6 +186,9 @@ describe("Pipeline dashboard data", () => {
   });
 
   it("starts onboarding, board, and session-history queries concurrently after auth", async () => {
+    const factory = { id: "factory-1", name: "Factory with Plan", status: "active" };
+    mocked.loadWorkspaceFactoryOptions.mockResolvedValue([factory]);
+    mocked.loadBrowsePipelineOwners.mockResolvedValue(new Map([[DEFAULT_PIPELINE_ID, factory]]));
     const starts: string[] = [];
     let resolveOnboarding!: (value: unknown) => void;
     let resolveDashboard!: (value: unknown) => void;
@@ -229,8 +242,12 @@ describe("Pipeline dashboard data", () => {
     await expect(resultPromise).resolves.toMatchObject({
       hasAnySession: true,
       onboarding: { currentStep: "verify", status: "completed" },
-      lanes: [{ cards: [], id: PLAN_STAGE_ID }],
+      lanes: [{ cards: [], id: PLAN_STAGE_ID, factory }],
+      overviewFactories: [factory],
     });
+    expect(mocked.loadBrowsePipelineOwners).toHaveBeenCalledWith(supabase, WORKSPACE_ID, [
+      DEFAULT_PIPELINE_ID,
+    ]);
   });
 
   it("distinguishes RLS-null access loss from an empty board and lane", async () => {
@@ -255,6 +272,7 @@ describe("Pipeline dashboard data", () => {
       }),
     ).rejects.toBeInstanceOf(PipelineWorkspaceUnavailableError);
     supabase.rpc.mockResolvedValue({ data: { lanes: [] }, error: null });
+    mocked.loadBrowsePipelineOwners.mockResolvedValue(new Map());
     await expect(
       loadPipelineDashboardSnapshot({ supabase: supabase as never, workspaceId: WORKSPACE_ID }),
     ).resolves.toMatchObject({

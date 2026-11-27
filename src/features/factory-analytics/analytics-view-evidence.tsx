@@ -474,13 +474,12 @@ export function AnalyticsEvidence({
             </TechnicalDetails>
           )}
         </div>
-        <Link
+        <a
           className="ui-button px-3 py-2 text-sm"
           href={href() + "#" + metricPanelIds[selection.metric]}
-          prefetch={false}
         >
           Close evidence
-        </Link>
+        </a>
       </header>
       {!result || rows.length === 0 ? (
         <p className="type-secondary border-t border-border p-4 text-muted sm:px-6">

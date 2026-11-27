@@ -115,7 +115,8 @@ export function AgentPromptForm({
       if (destination.origin !== window.location.origin) return;
       if (
         destination.pathname === window.location.pathname &&
-        (destination.searchParams.get("factory") ?? factoryId) === factoryId
+        (destination.searchParams.get("factory") ?? factoryId) === factoryId &&
+        (!create || destination.searchParams.get("new") === "1")
       )
         return;
       if (window.confirm("Leave without saving your agent draft?")) return;
@@ -128,7 +129,7 @@ export function AgentPromptForm({
       window.removeEventListener("beforeunload", warnOnUnload);
       document.removeEventListener("click", guardLink, true);
     };
-  }, [dirty, factoryId]);
+  }, [create, dirty, factoryId]);
 
   const review = useApiAction<unknown>({
     call: () => fetch(`${endpoint}?limit=1`, { cache: "no-store" }),
@@ -292,42 +293,18 @@ export function AgentPromptForm({
           </div>
         )}
         {create && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block min-w-0 space-y-1.5">
-              <span className="type-label text-foreground">Agent name</span>
-              <input
-                autoComplete="off"
-                className="ui-input"
-                name="name"
-                maxLength={120}
-                onChange={(event) => setName(event.target.value)}
-                required
-                value={name}
-              />
-            </label>
-            <div className="min-w-0 space-y-1.5">
-              <label className="block type-label text-foreground" htmlFor={identifierId}>
-                Identifier
-              </label>
-              <input
-                aria-describedby={`${identifierId}-help`}
-                autoComplete="off"
-                className="ui-input"
-                id={identifierId}
-                name="slug"
-                maxLength={60}
-                onChange={(event) => setEditedIdentifier(event.target.value || null)}
-                pattern="[a-z0-9]+(-[a-z0-9]+)*"
-                required
-                spellCheck={false}
-                value={slug}
-              />
-              <p className="type-annotation text-muted" id={`${identifierId}-help`}>
-                Generated from the name. Edit this stable identifier before creating the agent if
-                you want a different URL name.
-              </p>
-            </div>
-          </div>
+          <label className="block min-w-0 space-y-1.5">
+            <span className="type-label text-foreground">Agent name</span>
+            <input
+              autoComplete="off"
+              className="ui-input"
+              name="name"
+              maxLength={120}
+              onChange={(event) => setName(event.target.value)}
+              required
+              value={name}
+            />
+          </label>
         )}
         <label className="block min-w-0 space-y-1.5">
           <span className="type-label text-foreground">Implementation prompt</span>
@@ -347,6 +324,36 @@ export function AgentPromptForm({
             value={prompt}
           />
         </label>
+        {create && (
+          <details className="space-y-2">
+            <summary className="type-label cursor-pointer">Advanced</summary>
+            <div className="min-w-0 max-w-sm space-y-1.5">
+              <label className="block type-label text-foreground" htmlFor={identifierId}>
+                Identifier
+              </label>
+              <input
+                aria-describedby={`${identifierId}-help`}
+                autoComplete="off"
+                className="ui-input"
+                id={identifierId}
+                name="slug"
+                maxLength={60}
+                onChange={(event) => setEditedIdentifier(event.target.value || null)}
+                onInvalid={(event) =>
+                  event.currentTarget.closest("details")?.setAttribute("open", "")
+                }
+                pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                required
+                spellCheck={false}
+                value={slug}
+              />
+              <p className="type-annotation text-muted" id={`${identifierId}-help`}>
+                Generated from the name. Set a different stable identifier before creating the
+                agent.
+              </p>
+            </div>
+          </details>
+        )}
         <button
           className="ui-button ui-button-primary"
           disabled={conflict || needsReview}

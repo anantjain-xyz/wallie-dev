@@ -115,11 +115,22 @@ it("searches beyond the principal display page and submits the exact reviewed pe
 });
 
 it("suggests an editable machine identifier and reports identifier collisions", async () => {
+  const user = userEvent.setup();
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => Response.json({}, { status: 409 })),
   );
-  mount(<CreateServicePrincipal scope={scope} />);
+  mount(<CreateServicePrincipal factoryName="Release factory" scope={scope} />);
+  const trigger = screen.getByRole("button", { name: "New service principal" });
+  expect(screen.queryByRole("textbox", { name: "Principal name" })).not.toBeInTheDocument();
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  const dialog = await screen.findByRole("dialog", { name: "New service principal" });
+  expect(dialog).toHaveAccessibleDescription(
+    /Release factory.*does not grant access or issue credentials/,
+  );
+  const principalName = within(dialog).getByRole("textbox", { name: "Principal name" });
+  await waitFor(() => expect(principalName).toHaveFocus());
   fireEvent.change(screen.getByRole("textbox", { name: "Principal name" }), {
     target: { value: "Rélease runner" },
   });
@@ -130,10 +141,19 @@ it("suggests an editable machine identifier and reports identifier collisions", 
     target: { value: "Candidate runner" },
   });
   expect(identifier).toHaveValue("release-candidate");
-  await userEvent.click(screen.getByRole("button", { name: "Create service principal" }));
+  await user.click(screen.getByRole("button", { name: "Create service principal" }));
   expect(
     await screen.findByText("This identifier is already in use. Choose a different one."),
   ).toBeVisible();
+  expect(principalName).toHaveValue("Candidate runner");
+  expect(identifier).toHaveValue("release-candidate");
+  expect(push).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(trigger).toHaveFocus());
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("textbox", { name: "Identifier" })).toHaveValue(
+    "release-candidate",
+  );
 });
 
 it.each([true, false])(

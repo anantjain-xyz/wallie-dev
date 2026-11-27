@@ -137,7 +137,7 @@ describe("SessionsPage accessibility", () => {
     const search = screen.getByRole("searchbox", {
       name: "Search sessions by title, prompt, session number, or Linear issue key",
     });
-    expect(search).toHaveAccessibleDescription("Title, prompt, session #42, or Linear OP-517");
+    expect(search).toHaveAccessibleDescription("For example: session #42 or Linear issue OP-517.");
     await user.type(search, "OP-339{Enter}");
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?stage=build&q=OP-339", {
       scroll: false,
@@ -409,7 +409,11 @@ describe("SessionsPage accessibility", () => {
     );
     expect(screen.getByRole("combobox", { name: "Filter by stage" })).toHaveTextContent("Build");
     expect(screen.getByRole("combobox", { name: "Filter by status" })).toHaveTextContent("Failed");
-    expect(screen.getByText("Scope: Payments · Not archived")).toBeVisible();
+    expect(screen.getByRole("radio", { name: /^Not archived / })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.queryByText(/^Scope:/)).toBeNull();
     expect(
       screen.getByRole("link", { name: "Search all sessions in accessible factories" }),
     ).toHaveAttribute("href", "/w/acme/sessions?q=%2342&scope=all&factory=all");
