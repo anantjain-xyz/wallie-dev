@@ -2,11 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useId, useState, type FormEvent } from "react";
+import { useId, useState, useTransition, type FormEvent } from "react";
 import type { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
 import {
   GovernanceSelect,
@@ -143,8 +144,16 @@ function ScopeChoices({
   );
 }
 
-export function CreateServicePrincipal({ scope }: { scope: Scope }) {
+export function CreateServicePrincipal({
+  scope,
+  factoryName,
+}: {
+  scope: Scope;
+  factoryName: string;
+}) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [navigating, navigate] = useTransition();
   const [name, setName] = useState("");
   const [identifier, setIdentifier] = useState<string>();
   const [feedback, setFeedback] = useState<FlashMessage | null>(null);
@@ -170,11 +179,16 @@ export function CreateServicePrincipal({ scope }: { scope: Scope }) {
     },
     errorText: "Could not create the service principal.",
     onSuccess: ({ principal }) => {
-      router.push(
-        workspaceGovernancePath(scope.workspaceSlug, {
-          factory: scope.factoryId,
-          principal: principal.id,
-        }),
+      setOpen(false);
+      setName("");
+      setIdentifier(undefined);
+      navigate(() =>
+        router.push(
+          workspaceGovernancePath(scope.workspaceSlug, {
+            factory: scope.factoryId,
+            principal: principal.id,
+          }),
+        ),
       );
     },
     setFlashMessage: setFeedback,
@@ -196,52 +210,84 @@ export function CreateServicePrincipal({ scope }: { scope: Scope }) {
   }
 
   return (
-    <form className="ui-sheet min-w-0 space-y-4 p-4 sm:p-5" onSubmit={submit}>
-      <InlineActionMessage message={feedback} />
-      <fieldset className="min-w-0 space-y-4" disabled={action.isBusy}>
-        <legend className="sr-only">Service principal details</legend>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block min-w-0 space-y-1.5">
-            <span className="type-label text-foreground">Principal name</span>
-            <input
-              className="ui-input"
-              maxLength={120}
-              name="name"
-              onChange={(event) => setName(event.currentTarget.value)}
-              required
-              value={name}
-            />
-          </label>
-          <div className="min-w-0 space-y-1.5">
-            <label className="block type-label text-foreground" htmlFor={slugId}>
-              Identifier
-            </label>
-            <input
-              aria-describedby={hint}
-              className="ui-input"
-              id={slugId}
-              maxLength={60}
-              name="slug"
-              onChange={(event) => setIdentifier(event.currentTarget.value)}
-              pattern="[a-z0-9]+(-[a-z0-9]+)*"
-              required
-              value={identifier ?? suggestedIdentifier}
-            />
-            <span className="block type-secondary text-muted" id={hint}>
-              A stable identifier for integrations, such as release-runner. Use lowercase letters,
-              numbers, and hyphens.
-            </span>
-          </div>
-        </div>
-        <button className="ui-button ui-button-primary" type="submit">
-          <ActionButtonLabel
-            idle="Create service principal"
-            pending={action.isBusy}
-            pendingLabel="Creating…"
-          />
+    <Dialog open={open} onOpenChange={(next) => !action.isBusy && !navigating && setOpen(next)}>
+      <DialogTrigger asChild>
+        <button className="ui-button ui-button-primary" disabled={navigating} type="button">
+          New service principal
         </button>
-      </fieldset>
-    </form>
+      </DialogTrigger>
+      <DialogContent
+        description={
+          <>
+            Create an identity in <strong className="wrap-anywhere">{factoryName}</strong>. This
+            does not grant access or issue credentials.
+          </>
+        }
+        dismissible={!action.isBusy}
+        title="New service principal"
+      >
+        <form className="min-w-0 space-y-4" onSubmit={submit}>
+          <InlineActionMessage message={feedback} />
+          <fieldset
+            aria-busy={action.isBusy}
+            className="min-w-0 space-y-4"
+            disabled={action.isBusy}
+          >
+            <legend className="sr-only">Service principal details</legend>
+            <div className="grid gap-4">
+              <label className="block min-w-0 space-y-1.5">
+                <span className="type-label text-foreground">Principal name</span>
+                <input
+                  autoComplete="off"
+                  className="ui-input"
+                  maxLength={120}
+                  name="name"
+                  onChange={(event) => setName(event.currentTarget.value)}
+                  required
+                  value={name}
+                />
+              </label>
+              <div className="min-w-0 space-y-1.5">
+                <label className="block type-label text-foreground" htmlFor={slugId}>
+                  Identifier
+                </label>
+                <input
+                  aria-describedby={hint}
+                  autoComplete="off"
+                  className="ui-input"
+                  id={slugId}
+                  maxLength={60}
+                  name="slug"
+                  onChange={(event) => setIdentifier(event.currentTarget.value)}
+                  pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                  required
+                  spellCheck={false}
+                  value={identifier ?? suggestedIdentifier}
+                />
+                <span className="block type-secondary text-muted" id={hint}>
+                  A stable identifier for integrations, such as release-runner. Use lowercase
+                  letters, numbers, and hyphens.
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <DialogClose asChild>
+                <button className="ui-button" type="button">
+                  Close
+                </button>
+              </DialogClose>
+              <button className="ui-button ui-button-primary" type="submit">
+                <ActionButtonLabel
+                  idle="Create service principal"
+                  pending={action.isBusy}
+                  pendingLabel="Creating…"
+                />
+              </button>
+            </div>
+          </fieldset>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

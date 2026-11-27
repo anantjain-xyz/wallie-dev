@@ -50,9 +50,15 @@ const data: PipelineDashboardData = {
   })),
 };
 
+const proofFactories = [
+  { id: "product-engineering", name: "Product engineering", status: "active" },
+  { id: "customer-tools", name: "Customer tools", status: "active" },
+] as const;
+
 const aggregateData: PipelineDashboardData = {
   ...data,
   aggregateFactories: true,
+  overviewFactories: [...proofFactories],
   lanes: [
     "Plan the first production release",
     "Implement the accepted delivery plan",
@@ -61,14 +67,14 @@ const aggregateData: PipelineDashboardData = {
   ].map((name, position) => {
     const original = data.lanes[position % data.lanes.length]!;
     const id = `aggregate-stage-${position}`;
-    const factoryName = position < 2 ? "Product engineering" : "Customer tools";
-    const pipeline = { ...original.pipeline, id: `proof-pipeline-${Math.floor(position / 2)}` };
+    const factory = proofFactories[position < 2 ? 0 : 1];
+    const pipeline = { ...original.pipeline, id: `proof-pipeline-${factory.id}` };
     return {
       ...original,
       id,
       name,
       cursor: null,
-      factoryName,
+      factory,
       pipeline,
       position,
       cards: original.cards.map((card, index) => ({
@@ -82,11 +88,27 @@ const aggregateData: PipelineDashboardData = {
   }),
 };
 
+const longStageData: PipelineDashboardData = {
+  ...data,
+  lanes: aggregateData.lanes.map((lane) => ({
+    ...lane,
+    factory: undefined,
+    pipeline: data.lanes[0]!.pipeline,
+    cards: lane.cards.map((card) => ({ ...card, pipelineId: data.lanes[0]!.pipeline.id })),
+  })),
+};
+
 /** Non-production fixture for loading/loaded geometry and viewport regression tests. */
 export default async function PipelineLayoutPreview({
   searchParams,
 }: {
-  searchParams: Promise<{ loading?: string; empty?: string; partial?: string; aggregate?: string }>;
+  searchParams: Promise<{
+    loading?: string;
+    empty?: string;
+    partial?: string;
+    aggregate?: string;
+    longStages?: string;
+  }>;
 }) {
   if (isProductionDeploy()) notFound();
   const params = await searchParams;
@@ -105,7 +127,9 @@ export default async function PipelineLayoutPreview({
           }
         : params.aggregate === "1"
           ? aggregateData
-          : data;
+          : params.longStages === "1"
+            ? longStageData
+            : data;
   return (
     <AppShell
       creationFactory={{ id: "proof-default-factory", name: "Proof Factory" }}

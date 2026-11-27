@@ -28,15 +28,14 @@ export function analyticsScorerFields(query: ScorerTrendQuery | null): Fields {
 }
 
 export function applyAnalyticsFields(
-  form: FormData,
+  changes: Partial<
+    Record<"from" | "to" | "compare" | "dimension" | "environment", string | undefined>
+  >,
   core: Fields,
   evidence: Fields,
   scorer: Fields,
 ) {
-  const next = { ...core };
-  for (const name of ["from", "to", "compare", "dimension", "environment"]) {
-    next[name] = form.get(name)?.toString() || undefined;
-  }
+  const next = { ...core, ...changes };
   const dateChanged = next.from !== core.from || next.to !== core.to;
   const dimensionChanged = next.dimension !== core.dimension;
   const environmentChanged = next.environment !== core.environment;

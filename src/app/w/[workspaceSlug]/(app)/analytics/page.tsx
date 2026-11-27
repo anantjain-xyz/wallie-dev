@@ -237,6 +237,9 @@ async function AnalyticsDetails({
     : undefined;
   const liveReportHref =
     canary?.kind === "retained" ? canaryHref({ routingAlert: undefined }) : undefined;
+  const noScorerCohorts = Boolean(
+    trend && !trend.revisionId && !trend.policyId && !Object.keys(scorerFields).length,
+  );
   return (
     <AnalyticsDetailsView
       workspaceSlug={workspaceSlug}
@@ -259,16 +262,19 @@ async function AnalyticsDetails({
           />
         ) : null
       }
+      noScorerCohorts={noScorerCohorts}
       scorerTrends={
-        <ScorerTrends
-          data={trend}
-          path={path}
-          preserved={{ ...coreFields, ...evidenceFields }}
-          query={trendQuery}
-          reportingWindow={reportingWindow}
-          selectRevision
-          workspaceSlug={workspaceSlug}
-        />
+        noScorerCohorts ? null : (
+          <ScorerTrends
+            data={trend}
+            path={path}
+            preserved={{ ...coreFields, ...evidenceFields }}
+            query={trendQuery}
+            reportingWindow={reportingWindow}
+            selectRevision
+            workspaceSlug={workspaceSlug}
+          />
+        )
       }
     />
   );

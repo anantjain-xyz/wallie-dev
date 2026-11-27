@@ -5,23 +5,24 @@ import {
   useMemo,
   useOptimistic,
   useRef,
-  useState,
   useTransition,
   type KeyboardEvent,
 } from "react";
 import { useRouter } from "next/navigation";
 
 import {
-  FilterSearch,
   FilterSelectTrigger,
   ClearFilters,
   FILTER_BAR_CLASS,
-  FILTER_SEARCH_CLASS,
 } from "@/components/ui/filter-controls";
 import { CommandBar } from "@/components/ui/page-shell";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Select, SelectContent, SelectItem } from "@/components/ui/select";
 import { resolveStatusDefinition } from "@/components/ui/status";
+import {
+  SessionsSearchForm,
+  useSessionsSearchDraft,
+} from "@/features/sessions/components/sessions-search-form";
 import type { SessionScopeFacets, SessionStageFacet } from "@/features/sessions/list/data";
 import {
   SESSION_LIST_SORT_OPTIONS,
@@ -48,7 +49,6 @@ import { cn } from "@/lib/utils";
 import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-list-return-path";
 
 export type SessionsCommandBarProps = {
-  factoryName?: string;
   factoryQuery?: string;
   queryState: SessionListQueryState;
   scopeFacets: SessionScopeFacets;
@@ -69,14 +69,11 @@ const DEFAULT_QUERY_STATE: SessionListQueryState = {
   ...SESSION_LIST_DEFAULT_FILTERS,
 };
 
-const SEARCH_HINT = "Title, prompt, session #42, or Linear OP-517";
-
 function hasActiveFilters(queryState: SessionListQueryState) {
   return queryState.query.trim().length > 0 || !areDefaultSessionListFilters(queryState);
 }
 
 export function SessionsCommandBar({
-  factoryName,
   factoryQuery,
   queryState,
   scopeFacets,
@@ -89,31 +86,15 @@ export function SessionsCommandBar({
   const [optimisticQuery, setOptimisticQuery] = useOptimistic(queryState);
   const latestQueryRef = useRef(queryState);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const [search, setSearch] = useState<{
-    appliedQuery: string;
-    draft: string;
-    submitted: string | null;
-  }>({ appliedQuery: queryState.query, draft: queryState.query, submitted: null });
-
-  if (search.appliedQuery !== queryState.query) {
-    setSearch({
-      appliedQuery: queryState.query,
-      // A response must not overwrite edits made after its submission.
-      draft:
-        search.submitted === queryState.query.trim() && search.draft.trim() !== search.submitted
-          ? search.draft
-          : queryState.query,
-      submitted: null,
-    });
-  }
+  const { search, setSearch } = useSessionsSearchDraft(queryState.query);
 
   const basePath = workspaceSessionsPath(workspaceSlug);
-  const clearEnabled = hasActiveFilters(optimisticQuery) || search.draft.length > 0;
+  const clearEnabled = !areDefaultSessionListFilters(optimisticQuery);
+  const aggregate = factoryQuery === "all";
   const searchUnapplied = search.draft.trim() !== optimisticQuery.query.trim();
   const appliedSearchSummary = queryState.query.trim()
     ? `Results for “${queryState.query.trim()}”`
     : "";
-  const scopeLabel = SCOPE_OPTIONS.find((option) => option.key === queryState.scope)?.label;
 
   useEffect(() => {
     if (!isPending) latestQueryRef.current = queryState;
@@ -169,9 +150,7 @@ export function SessionsCommandBar({
     });
   }
 
-  function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const value = search.draft.trim();
+  function handleSearchSubmit(value: string) {
     if (isPending || value === latestQueryRef.current.query.trim()) return;
     setSearch({ ...search, submitted: value });
     updateQueryState({ query: value });
@@ -229,21 +208,24 @@ export function SessionsCommandBar({
   }
 
   const stageGroups = useMemo(() => {
-    const order = [...stageFacets].sort(
-      (a, b) => a.position - b.position || a.name.localeCompare(b.name),
+    const order = [...stageFacets].sort((a, b) =>
+      aggregate
+        ? a.slug.localeCompare(b.slug)
+        : a.position - b.position || a.name.localeCompare(b.name),
     );
     const counts = new Map(order.map((stage) => [stage.slug, stage.count]));
 
     return { counts, order };
-  }, [stageFacets]);
+  }, [aggregate, stageFacets]);
 
   const stageValueLabel = useMemo(() => {
-    if (!optimisticQuery.stageSlug) return "All stages";
+    if (!optimisticQuery.stageSlug) return aggregate ? "All stage keys" : "All stages";
+    if (aggregate) return `Stage key: ${optimisticQuery.stageSlug}`;
     return (
       stageGroups.order.find((stage) => stage.slug === optimisticQuery.stageSlug)?.name ??
       "Selected stage"
     );
-  }, [optimisticQuery.stageSlug, stageGroups.order]);
+  }, [aggregate, optimisticQuery.stageSlug, stageGroups.order]);
 
   const sortValueLabel =
     SESSION_LIST_SORT_OPTIONS.find((option) => option.key === optimisticQuery.sort)?.label ??
@@ -293,41 +275,22 @@ export function SessionsCommandBar({
 
       <div
         aria-busy={isPending}
-        className={cn(FILTER_BAR_CLASS, "items-stretch gap-1.5 border-t-0 py-1.5 sm:items-center")}
+        className={cn(FILTER_BAR_CLASS, "items-stretch gap-1.5 border-t-0 py-1.5 sm:items-end")}
       >
-        <form
-          onSubmit={handleSearchSubmit}
-          className={cn("flex min-w-0 flex-1 items-center gap-1.5", FILTER_SEARCH_CLASS)}
-          aria-label="Search sessions"
-        >
-          <FilterSearch
-            ref={searchInputRef}
-            id="sessions-search"
-            className="h-9 min-h-9 text-sm md:h-9 md:text-[13px]"
-            value={search.draft}
-            onChange={(event) => setSearch({ ...search, draft: event.target.value })}
-            aria-label="Search sessions by title, prompt, session number, or Linear issue key"
-            autoComplete="off"
-            description={SEARCH_HINT}
-            name="q"
-          />
-          {search.draft || optimisticQuery.query ? (
-            <button
-              type="button"
-              className="ui-button h-9 min-h-9 shrink-0 px-2 text-sm md:text-[13px]"
-              onClick={handleClearSearch}
-            >
-              Clear search
-            </button>
-          ) : null}
-          <button
-            type="submit"
-            className="ui-button h-9 min-h-9 shrink-0 px-3 text-sm md:text-[13px]"
-            disabled={isPending || search.draft.trim() === queryState.query.trim()}
-          >
-            Search
-          </button>
-        </form>
+        <SessionsSearchForm
+          accessibleLabel="Search sessions by title, prompt, session number, or Linear issue key"
+          appliedQuery={queryState.query}
+          description="For example: session #42 or Linear issue OP-517."
+          draft={search.draft}
+          inputId="sessions-search"
+          inputRef={searchInputRef}
+          onClear={handleClearSearch}
+          onDraftChange={(draft) => setSearch({ ...search, draft })}
+          onSearch={handleSearchSubmit}
+          pending={isPending}
+          placeholder="Title, prompt, #, or Linear key…"
+          showClear={Boolean(search.draft || optimisticQuery.query)}
+        />
 
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <Select
@@ -339,19 +302,21 @@ export function SessionsCommandBar({
             }
           >
             <FilterSelectTrigger
-              accessibleLabel="Filter by stage"
+              accessibleLabel={aggregate ? "Filter by stage key" : "Filter by stage"}
               className="h-9 min-h-9 min-w-0 max-w-[10rem] px-2 text-sm md:h-9 md:max-w-[12rem] md:text-[13px]"
             >
               <span className="truncate">{stageValueLabel}</span>
             </FilterSelectTrigger>
             <SelectContent>
-              <SelectItem value="__all__">All stages</SelectItem>
+              <SelectItem value="__all__">{aggregate ? "All stage keys" : "All stages"}</SelectItem>
               {stageGroups.order.map((stage) => {
                 const count = stageGroups.counts.get(stage.slug) ?? 0;
                 return (
                   <SelectItem key={stage.slug} value={stage.slug}>
                     <span className="flex w-full items-center justify-between gap-3">
-                      <span className="truncate">{stage.name}</span>
+                      <span className="min-w-0 break-words">
+                        {aggregate ? stage.slug : stage.name}
+                      </span>
                       <span className="type-annotation shrink-0 text-muted">{count}</span>
                     </span>
                   </SelectItem>
@@ -417,22 +382,12 @@ export function SessionsCommandBar({
           ) : null}
         </div>
       </div>
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-        <p aria-hidden="true">{SEARCH_HINT}</p>
-        <p className="min-w-0 [overflow-wrap:anywhere]">
-          Scope:{" "}
-          {factoryName ?? (factoryQuery === "all" ? "All accessible factories" : "This factory")}
-          {" · "}
-          {scopeLabel}
-          {factoryQuery === "all" ? " · Choose a factory to use row actions." : null}
-        </p>
-      </div>
       <div
         role="status"
         aria-label="Sessions search status"
         aria-live="polite"
         aria-atomic="true"
-        className="mt-1 text-xs text-muted [overflow-wrap:anywhere]"
+        className="mt-1 min-h-4 text-xs text-muted [overflow-wrap:anywhere]"
       >
         {isPending ? <span>{search.submitted !== null ? "Searching…" : "Updating…"} </span> : null}
         {searchUnapplied ? (

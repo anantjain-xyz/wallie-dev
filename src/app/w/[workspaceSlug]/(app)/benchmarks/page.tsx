@@ -2,10 +2,10 @@ import Link from "next/link";
 import { z } from "zod";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { SelectField } from "@/components/ui/select";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { BenchmarkCatalogEditor } from "@/features/factory-benchmarks/benchmark-catalog-editor";
+import { BenchmarkCatalogFilters } from "@/features/factory-benchmarks/benchmark-catalog-filters";
 import { benchmarkPurposeLabel } from "@/features/factory-benchmarks/curation-labels";
 import {
   hasBenchmarkTasks,
@@ -113,7 +113,6 @@ export default async function BenchmarksPage({
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         title="Benchmarks"
-        description="Build suites of captured tasks to compare factory configurations against the same work."
         actionsRightOnDesktop
         actions={
           <>
@@ -124,7 +123,7 @@ export default async function BenchmarksPage({
             />
             {canEdit ? (
               <Link
-                className="ui-button ui-button-primary"
+                className={firstRun ? "ui-button" : "ui-button ui-button-primary"}
                 href={`${workspaceBenchmarksPath(workspaceSlug, { ...filters, after: after.data, newSuite: "1" })}#new-suite`}
               >
                 New suite
@@ -133,57 +132,22 @@ export default async function BenchmarksPage({
           </>
         }
       />
-      {!canEdit ? (
+      {factory.status === "archived" ? (
         <p className="type-secondary mb-4 text-muted">
-          {factory.status === "archived"
-            ? "This factory is archived. Existing suites are read-only."
-            : "Only factory managers can create or edit benchmark suites."}
+          This factory is archived. Existing suites are read-only.
         </p>
       ) : null}
       <section aria-label="Benchmark suites" className="ui-sheet divide-y divide-border">
-        <form
-          action={catalogPath}
-          className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(9rem,0.45fr)_auto] sm:items-end sm:px-5"
-          key={firstPage}
-          role="search"
-          aria-label="Benchmark suites"
-        >
-          <input name="factory" type="hidden" value={factory.id} />
-          <label className="block min-w-0 space-y-1.5">
-            <span className="type-label">Suite name</span>
-            <input
-              className="ui-input"
-              defaultValue={name}
-              maxLength={120}
-              name="q"
-              type="search"
-            />
-          </label>
-          <SelectField
-            defaultValue={purpose ?? "all"}
-            label="Purpose"
-            labelClassName="type-label"
-            name="purpose"
-            options={[
-              { label: "Any purpose", value: "all" },
-              { label: "Regression", value: "regression" },
-              { label: "Holdout", value: "holdout" },
-            ]}
+        {!emptyCatalog && (
+          <BenchmarkCatalogFilters
+            clearHref={workspaceBenchmarksPath(workspaceSlug, factoryQuery)}
+            factoryId={factory.id}
+            key={factory.id}
+            name={name}
+            path={catalogPath}
+            purpose={purpose ?? ""}
           />
-          <div className="flex flex-wrap gap-2">
-            <button className="ui-button" type="submit">
-              Search
-            </button>
-            {filtered ? (
-              <Link
-                className="ui-button"
-                href={workspaceBenchmarksPath(workspaceSlug, factoryQuery)}
-              >
-                Clear filters
-              </Link>
-            ) : null}
-          </div>
-        </form>
+        )}
         {suites.length ? (
           <ul className="divide-y divide-border">
             {suites.map((suite) => (
@@ -208,23 +172,34 @@ export default async function BenchmarksPage({
             ))}
           </ul>
         ) : (
-          <div className="type-secondary space-y-2 px-4 py-5 text-muted sm:px-5">
-            <p>
+          <div className="space-y-2 px-4 py-6 sm:px-5">
+            <h2 className="type-section-title">
               {!after.success
-                ? "This page link is invalid. Return to the first page to continue."
+                ? "This page link is invalid"
                 : after.data
-                  ? "No benchmark suites on this page."
+                  ? "No suites on this page"
                   : filtered
-                    ? "No benchmark suites match these filters."
-                    : "No benchmark suites in this factory yet."}
-            </p>
+                    ? "No suites match these filters"
+                    : "No benchmark suites yet"}
+            </h2>
             {firstRun ? (
               <>
-                <p>Open a finished run and choose “Add to benchmark” to capture your first task.</p>
-                <Link className="ui-button" href={workspaceRunsPath(workspaceSlug, factoryQuery)}>
+                <p className="type-secondary text-muted">
+                  Capture your first task from a finished run with “Add to benchmark”.
+                </p>
+                <Link
+                  className="ui-button ui-button-primary"
+                  href={workspaceRunsPath(workspaceSlug, factoryQuery)}
+                >
                   Browse runs
                 </Link>
               </>
+            ) : emptyCatalog && factory.status === "active" ? (
+              <p className="type-secondary text-muted">
+                {canEdit
+                  ? "Create a suite of captured tasks to compare configurations on the same work."
+                  : "A factory manager can create a suite to compare configurations on the same work."}
+              </p>
             ) : null}
           </div>
         )}

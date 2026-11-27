@@ -23,7 +23,7 @@ import {
   type RefObject,
 } from "react";
 
-import { FilterSearch, FilterSelectTrigger, ClearFilters } from "@/components/ui/filter-controls";
+import { FilterSelectTrigger, ClearFilters } from "@/components/ui/filter-controls";
 import { Select, SelectContent, SelectItem } from "@/components/ui/select";
 import {
   sessionDisplayStatus,
@@ -46,6 +46,7 @@ import {
   type BoardBrowseStage,
 } from "@/features/pipeline/board-browse-history";
 import { pipelineLayout } from "@/features/pipeline/layout";
+import { PipelineFactoryOverview } from "@/features/pipeline/pipeline-factory-overview";
 import {
   createPipelineBoardState,
   pipelineBoardReducer,
@@ -67,6 +68,10 @@ import {
   SessionDetailLink,
   SessionDetailLinkPrefetchBoundary,
 } from "@/features/sessions/components/session-detail-link";
+import {
+  SessionsSearchForm,
+  useSessionsSearchDraft,
+} from "@/features/sessions/components/sessions-search-form";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import { SessionsViewTitle } from "@/features/sessions/components/sessions-view-navigation";
 import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
@@ -289,8 +294,9 @@ function PipelinePageContent({
   );
   const historyEntryKey = useRef<string | undefined>(undefined);
   const saveBrowseHistory = useCallback(
-    (changes: BoardBrowseChanges) => {
-      if (historyScope) historyEntryKey.current = writeBoardBrowseHistory(historyScope, changes);
+    (changes: BoardBrowseChanges, mode?: "push" | "replace") => {
+      if (historyScope)
+        historyEntryKey.current = writeBoardBrowseHistory(historyScope, changes, mode);
     },
     [historyScope],
   );
@@ -318,14 +324,15 @@ function PipelinePageContent({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatus);
   const updateFilters = useCallback(
     (query: string, status: StatusFilter) => {
+      if (query === searchQuery && status === statusFilter) return;
       setSearchQuery(query);
       setStatusFilter(status);
       setLaneSelection((selection) =>
         selection.restored ? { key: selection.key, origin: selection.origin } : selection,
       );
-      saveBrowseHistory({ searchQuery: query, status });
+      saveBrowseHistory({ searchQuery: query, status }, "push");
     },
-    [saveBrowseHistory],
+    [saveBrowseHistory, searchQuery, statusFilter],
   );
 
   useEffect(() => {
@@ -376,20 +383,23 @@ function PipelinePageContent({
   const [filterResult, setFilterResult] = useState<{
     href: string;
     revision: number;
-    board?: PipelineBoardState;
-    failed?: boolean;
+    board: PipelineBoardState;
   }>();
+  const [filterError, setFilterError] = useState<{ href: string; revision: number }>();
   const [filterRevision, invalidateFilters] = useReducer((revision: number) => revision + 1, 0);
   const filterRevisionRef = useRef(filterRevision);
   filterRevisionRef.current = filterRevision;
   const matchingFilterResult = filterResult?.href === filterHref ? filterResult : undefined;
+  const matchingFilterError = filterError?.href === filterHref ? filterError : undefined;
   const filteredBoard = matchingFilterResult?.board;
-  const settledFilterRevision = matchingFilterResult?.revision;
+  const hasMatchingFilter = Boolean(filteredBoard);
+  const settledFilterRevision = matchingFilterError?.revision ?? matchingFilterResult?.revision;
   const filterRefreshPending = !!filterHref && settledFilterRevision !== filterRevision;
   const filtersPending = filterRefreshPending && !filteredBoard;
-  const filterFailed = !!matchingFilterResult?.failed && !filterRefreshPending;
+  const filterFailed = !!matchingFilterError && !filterRefreshPending;
   const filterPagingBlocked = filterRefreshPending || filterFailed;
-  const board = filteredBoard ?? unfilteredBoard;
+  const displayedFilterResult = filterHref ? filterResult : undefined;
+  const board = displayedFilterResult?.board ?? unfilteredBoard;
   const [hasObservedSession, setHasObservedSession] = useState(false);
   const [recoveredOnboarding, setRecoveredOnboarding] = useState<{
     initial: PipelineDashboardData["onboarding"];
@@ -435,75 +445,77 @@ function PipelinePageContent({
     loadingLaneKeyRef.current = null;
     setLoadingLaneKey(null);
     setLaneErrors({});
-    setFilterResult(undefined);
+    setFilterError(undefined);
+    if (!filterHref) setFilterResult(undefined);
   }, [filterHref]);
 
   useEffect(() => {
     if (!filterHref || !filterRefreshPending || accessLost || loadingLaneKey) return;
     const controller = new AbortController();
     const { signal } = controller;
-    const timer = window.setTimeout(async () => {
-      const current = () =>
-        !signal.aborted && !accessLostRef.current && filterHrefRef.current === filterHref;
-      const requestRevision = filterRevisionRef.current;
-      if (!current() || loadingLaneKeyRef.current || requestRevision === settledFilterRevision)
-        return;
-      const previous =
-        visibleBoardRef.current !== boardRef.current ? visibleBoardRef.current : null;
-      try {
-        const response = await fetch(filterHref, { cache: "no-store", signal });
-        if (!current()) return;
-        if ([401, 403, 404, 409].includes(response.status)) {
-          leaveUnavailableWorkspace(response.status);
+    const timer = window.setTimeout(
+      async () => {
+        const current = () =>
+          !signal.aborted && !accessLostRef.current && filterHrefRef.current === filterHref;
+        const requestRevision = filterRevisionRef.current;
+        if (!current() || loadingLaneKeyRef.current || requestRevision === settledFilterRevision)
           return;
-        }
-        if (!response.ok) throw new Error("Failed to filter the Pipeline.");
-        const snapshot = (await response.json()) as Pick<PipelineDashboardData, "lanes">;
-        if (!current()) return;
-        let nextBoard = createPipelineBoardState(snapshot.lanes);
-        const previousDepths = new Map<string, number>(
-          previous?.lanes.map((lane) => [pipelineLaneKey(lane), lane.cardIds.length]),
-        );
-        for (let index = 0; index < nextBoard.lanes.length; index++) {
-          let lane = nextBoard.lanes[index]!;
-          const depth = previousDepths.get(pipelineLaneKey(lane)) ?? 0;
-          while (lane.cursor && lane.cardIds.length < depth) {
-            const page = await fetchPipelineLanePage(filterHref, lane, {
-              current,
-              leaveUnavailableWorkspace,
-              signal,
+        const previous =
+          hasMatchingFilter && visibleBoardRef.current !== boardRef.current
+            ? visibleBoardRef.current
+            : null;
+        try {
+          const response = await fetch(filterHref, { cache: "no-store", signal });
+          if (!current()) return;
+          if ([401, 403, 404, 409].includes(response.status)) {
+            leaveUnavailableWorkspace(response.status);
+            return;
+          }
+          if (!response.ok) throw new Error("Failed to filter the Pipeline.");
+          const snapshot = (await response.json()) as Pick<PipelineDashboardData, "lanes">;
+          if (!current()) return;
+          let nextBoard = createPipelineBoardState(snapshot.lanes);
+          const previousDepths = new Map<string, number>(
+            previous?.lanes.map((lane) => [pipelineLaneKey(lane), lane.cardIds.length]),
+          );
+          for (let index = 0; index < nextBoard.lanes.length; index++) {
+            let lane = nextBoard.lanes[index]!;
+            const depth = previousDepths.get(pipelineLaneKey(lane)) ?? 0;
+            while (lane.cursor && lane.cardIds.length < depth) {
+              const page = await fetchPipelineLanePage(filterHref, lane, {
+                current,
+                leaveUnavailableWorkspace,
+                signal,
+              });
+              if (!page || !current()) return;
+              nextBoard = pipelineBoardReducer(nextBoard, { page, type: "append-page" });
+              const nextLane = nextBoard.lanes[index]!;
+              if (nextLane.cardIds.length <= lane.cardIds.length) break;
+              lane = nextLane;
+            }
+          }
+          const match = nextBoard.lanes.find((lane) => lane.totalCount > 0);
+          if (!previous && match) {
+            setLaneSelection((selection) => {
+              const preferred = selection.origin === "manual" || selection.restored;
+              return nextBoard.lanes.some(
+                (lane) =>
+                  pipelineLaneKey(lane) === selection.key && (lane.totalCount > 0 || preferred),
+              )
+                ? selection
+                : { key: pipelineLaneKey(match), origin: "automatic" };
             });
-            if (!page || !current()) return;
-            nextBoard = pipelineBoardReducer(nextBoard, { page, type: "append-page" });
-            const nextLane = nextBoard.lanes[index]!;
-            if (nextLane.cardIds.length <= lane.cardIds.length) break;
-            lane = nextLane;
+          }
+          setFilterResult({ href: filterHref, revision: requestRevision, board: nextBoard });
+          setFilterError(undefined);
+        } catch {
+          if (current()) {
+            setFilterError({ href: filterHref, revision: requestRevision });
           }
         }
-        const match = nextBoard.lanes.find((lane) => lane.totalCount > 0);
-        if (!previous && match) {
-          setLaneSelection((selection) => {
-            const preferred = selection.origin === "manual" || selection.restored;
-            return nextBoard.lanes.some(
-              (lane) =>
-                pipelineLaneKey(lane) === selection.key && (lane.totalCount > 0 || preferred),
-            )
-              ? selection
-              : { key: pipelineLaneKey(match), origin: "automatic" };
-          });
-        }
-        setFilterResult({ href: filterHref, revision: requestRevision, board: nextBoard });
-      } catch {
-        if (current()) {
-          setFilterResult((result) => ({
-            href: filterHref,
-            revision: requestRevision,
-            board: result?.href === filterHref ? result.board : undefined,
-            failed: true,
-          }));
-        }
-      }
-    }, FILTER_REQUEST_DELAY_MS);
+      },
+      hasMatchingFilter ? FILTER_REQUEST_DELAY_MS : 0,
+    );
     return () => {
       window.clearTimeout(timer);
       controller.abort();
@@ -512,6 +524,7 @@ function PipelinePageContent({
     accessLost,
     filterHref,
     filterRefreshPending,
+    hasMatchingFilter,
     leaveUnavailableWorkspace,
     loadingLaneKey,
     settledFilterRevision,
@@ -960,9 +973,9 @@ function PipelinePageContent({
   const hasActiveSessions = unfilteredBoard.lanes.some((lane) => lane.totalCount > 0);
   const showBoard = hasActiveSessions || filtersActive;
   const hasEverHadSession = initialData.hasAnySession || hasObservedSession;
-  const matchCount = filtersActive
-    ? board.lanes.reduce((total, lane) => total + lane.totalCount, 0)
-    : 0;
+  const matchCount = filteredBoard?.lanes.reduce((total, lane) => total + lane.totalCount, 0);
+  const aggregate = initialData.aggregateFactories === true;
+  const displayedFiltersActive = Boolean(displayedFilterResult);
   const stageCount = Math.max(board.lanes.length, 1);
   const laneKeys = board.lanes.map((lane) => pipelineLaneKey(lane));
   const visibleCardsCacheRef = useRef<Map<string, LaneVisibleCardsCacheEntry>>(new Map());
@@ -1034,13 +1047,26 @@ function PipelinePageContent({
 
   if (accessLost) return null;
 
+  function paginationState(key: string): LanePaginationState {
+    if (refreshPending || filterRefreshPending || loadingLaneKey === key) return "loading";
+    return filterFailed ? "blocked" : "idle";
+  }
+
   return (
-    <div className={showBoard ? pipelineLayout.page : pipelineLayout.emptyPage}>
-      <div className={showBoard ? pipelineLayout.controlsArea : undefined}>
+    <div
+      className={
+        aggregate
+          ? pipelineLayout.overviewPage
+          : showBoard
+            ? pipelineLayout.page
+            : pipelineLayout.emptyPage
+      }
+    >
+      <div className={!aggregate && showBoard ? pipelineLayout.controlsArea : undefined}>
         <PageHeader
           actions={factorySelector}
           actionsRightOnDesktop
-          className={showBoard ? pipelineLayout.header : undefined}
+          className={aggregate ? "mb-4 sm:mb-8" : showBoard ? pipelineLayout.header : undefined}
           title={
             <SessionsViewTitle
               factory={boardFactory}
@@ -1052,8 +1078,10 @@ function PipelinePageContent({
           titleAsChild
         />
 
-        {showBoard ? (
+        {showBoard || aggregate ? (
           <PipelineFilters
+            matchCount={matchCount}
+            pending={filtersPending}
             searchQuery={searchQuery}
             statusFilter={statusFilter}
             updateFilters={updateFilters}
@@ -1062,7 +1090,9 @@ function PipelinePageContent({
         {filterFailed ? (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <p className="text-sm text-danger" role="alert">
-              {filteredBoard ? "Couldn’t refresh matching sessions." : "Couldn’t filter sessions."}
+              {filteredBoard
+                ? "Couldn’t refresh matching sessions."
+                : "Couldn’t apply filters. Showing previous results."}
             </p>
             <button className="ui-button" onClick={() => invalidateFilters()} type="button">
               Try again
@@ -1070,17 +1100,45 @@ function PipelinePageContent({
           </div>
         ) : null}
       </div>
-      <p className="sr-only" role="status">
-        {filtersPending
-          ? "Filtering sessions…"
-          : filteredBoard
-            ? matchCount === 1
-              ? "1 matching session"
-              : `${matchCount} matching sessions`
-            : ""}
-      </p>
 
-      {!showBoard ? (
+      {aggregate ? (
+        <PipelineFactoryOverview
+          busy={filtersPending}
+          factories={initialData.overviewFactories ?? []}
+          filtersActive={displayedFiltersActive}
+          lanes={board.lanes}
+          renderStage={(lane) => {
+            const key = pipelineLaneKey(lane);
+            return (
+              <>
+                <div className="divide-y divide-border/60">
+                  <PipelineLaneCards
+                    cards={visibleCardsByLane.get(key)?.visibleCards ?? []}
+                    initialNow={renderNow}
+                    overview
+                    workspaceSlug={initialData.workspace.slug}
+                  />
+                </div>
+                {lane.cursor || laneErrors[key] ? (
+                  <div className="px-4 pb-3">
+                    <PipelineLanePagination
+                      cursor={lane.cursor}
+                      error={laneErrors[key]}
+                      laneKey={key}
+                      laneName={lane.name}
+                      loadedCount={lane.cardIds.length}
+                      onLoadMore={loadMore}
+                      state={paginationState(key)}
+                      totalCount={lane.totalCount}
+                    />
+                  </div>
+                ) : null}
+              </>
+            );
+          }}
+          workspaceSlug={initialData.workspace.slug}
+        />
+      ) : !showBoard ? (
         <div>
           {initialData.showCreationOnboarding === false ? (
             <section className="ui-sheet border-dashed px-6 py-14 text-center">
@@ -1100,11 +1158,7 @@ function PipelinePageContent({
             />
           )}
         </div>
-      ) : filtersPending ? (
-        <p aria-hidden="true" className="px-4 text-sm text-muted pipeline-wide:px-8">
-          Filtering sessions…
-        </p>
-      ) : filtersActive && !filteredBoard ? null : (
+      ) : (
         <>
           <div className={pipelineLayout.stageTabs}>
             <p className="sr-only" id="pipeline-stage-label">
@@ -1120,12 +1174,12 @@ function PipelinePageContent({
               {board.lanes.map((lane) => {
                 const key = pipelineLaneKey(lane);
                 const selected = activeLaneKey === key;
-                const context = laneContext(lane, initialData.aggregateFactories);
+                const context = !lane.pipeline.isDefault ? lane.pipeline.name : undefined;
                 const label = context ? `${context} — ${lane.name}` : lane.name;
                 return (
                   <button
                     aria-controls={`pipeline-lane-panel-${key}`}
-                    aria-label={`${label}, ${lane.totalCount} ${filtersActive ? "matching " : ""}${lane.totalCount === 1 ? "session" : "sessions"}`}
+                    aria-label={`${label}, ${lane.totalCount} ${displayedFiltersActive ? "matching " : ""}${lane.totalCount === 1 ? "session" : "sessions"}`}
                     aria-selected={selected}
                     className={cn(
                       "ui-filter-chip max-w-full shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
@@ -1150,6 +1204,7 @@ function PipelinePageContent({
           </div>
 
           <div
+            aria-busy={filtersPending}
             aria-label="Pipeline board"
             className={pipelineLayout.board}
             role="region"
@@ -1173,19 +1228,13 @@ function PipelinePageContent({
                   <PipelineLane
                     key={key}
                     error={laneErrors[key]}
-                    filtersActive={filtersActive}
+                    filtersActive={displayedFiltersActive}
                     initialNow={renderNow}
                     isMobileActive={activeLaneKey === key}
                     lane={lane}
-                    context={laneContext(lane, initialData.aggregateFactories)}
+                    context={!lane.pipeline.isDefault ? lane.pipeline.name : ""}
                     onLoadMore={loadMore}
-                    paginationState={
-                      refreshPending || filterRefreshPending || loadingLaneKey === key
-                        ? "loading"
-                        : filterFailed
-                          ? "blocked"
-                          : "idle"
-                    }
+                    paginationState={paginationState(key)}
                     visibleCards={visibleCards}
                     workspaceSlug={initialData.workspace.slug}
                   />
@@ -1199,62 +1248,80 @@ function PipelinePageContent({
   );
 }
 
-function laneContext(lane: PipelineBoardLane, aggregateFactories?: boolean) {
-  const factory = aggregateFactories ? lane.factoryName : undefined;
-  const pipeline =
-    !lane.pipeline.isDefault && lane.pipeline.name !== factory ? lane.pipeline.name : undefined;
-  return [factory, pipeline].filter(Boolean).join(" · ");
-}
-
 const PipelineFilters = memo(function PipelineFilters({
+  matchCount,
+  pending,
   searchQuery,
   statusFilter,
   updateFilters,
 }: {
+  matchCount: number | undefined;
+  pending: boolean;
   searchQuery: string;
   statusFilter: StatusFilter;
   updateFilters: (query: string, status: StatusFilter) => void;
 }) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const filtersActive = searchQuery.trim().length > 0 || statusFilter !== "all";
+  const { search, setSearch } = useSessionsSearchDraft(searchQuery);
+  const searchUnapplied = search.draft.trim() !== searchQuery;
+  function clearSearch(status: StatusFilter) {
+    setSearch({ ...search, draft: "", submitted: searchQuery ? "" : null });
+    updateFilters("", status);
+    searchInputRef.current?.focus();
+  }
+
   return (
-    <CommandBar aria-label="Pipeline filters" className={pipelineLayout.controls}>
-      <FilterSearch
-        ref={searchInputRef}
-        aria-label="Search active board"
-        autoComplete="off"
-        description="Search all stages by title, session number, Linear issue key (e.g. OP-353), or PR number."
-        maxLength={PIPELINE_SEARCH_MAX_LENGTH}
-        name="q"
-        onChange={(event) => updateFilters(event.target.value, statusFilter)}
-        placeholder="Search active board…"
-        spellCheck={false}
-        value={searchQuery}
-      />
-      <Select
-        value={statusFilter}
-        onValueChange={(value) => updateFilters(searchQuery, parseBoardStatus(value))}
-      >
-        <FilterSelectTrigger accessibleLabel="Filter by status">
-          {STATUS_FILTER_OPTIONS.find((option) => option.key === statusFilter)?.label}
-        </FilterSelectTrigger>
-        <SelectContent>
-          {STATUS_FILTER_OPTIONS.map((option) => (
-            <SelectItem key={option.key} value={option.key}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {filtersActive ? (
-        <ClearFilters
-          onClick={() => {
-            updateFilters("", "all");
-            searchInputRef.current?.focus();
+    <>
+      <CommandBar aria-label="Pipeline filters" className={pipelineLayout.controls}>
+        <SessionsSearchForm
+          accessibleLabel="Search active board"
+          appliedQuery={searchQuery}
+          description="Find a session by title, session number, Linear issue key, or PR number."
+          draft={search.draft}
+          inputId="board-search"
+          inputRef={searchInputRef}
+          maxLength={PIPELINE_SEARCH_MAX_LENGTH}
+          onClear={() => clearSearch(statusFilter)}
+          onDraftChange={(draft) => setSearch({ ...search, draft })}
+          onSearch={(query) => {
+            setSearch({ ...search, submitted: query });
+            updateFilters(query, statusFilter);
           }}
+          pending={pending}
+          placeholder="Title, #, Linear key, or PR…"
+          showClear={Boolean(search.draft || searchQuery)}
         />
-      ) : null}
-    </CommandBar>
+        <Select
+          value={statusFilter}
+          onValueChange={(value) => updateFilters(searchQuery, parseBoardStatus(value))}
+        >
+          <FilterSelectTrigger accessibleLabel="Filter by status">
+            {STATUS_FILTER_OPTIONS.find((option) => option.key === statusFilter)?.label}
+          </FilterSelectTrigger>
+          <SelectContent>
+            {STATUS_FILTER_OPTIONS.map((option) => (
+              <SelectItem key={option.key} value={option.key}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {statusFilter !== "all" ? <ClearFilters onClick={() => clearSearch("all")} /> : null}
+      </CommandBar>
+      <p
+        aria-label="Sessions search status"
+        className={pipelineLayout.searchFeedback}
+        role="status"
+      >
+        {pending ? <span>Updating results… </span> : null}
+        {searchUnapplied ? (
+          <span>{pending ? "New edits not searched." : "Press Enter to search."} </span>
+        ) : null}
+        {!pending && matchCount !== undefined ? (
+          <span>{matchCount === 1 ? "1 matching session" : `${matchCount} matching sessions`}</span>
+        ) : null}
+      </p>
+    </>
   );
 });
 
@@ -1305,7 +1372,10 @@ const PipelineLane = memo(
       >
         <header className={pipelineLayout.laneHeader}>
           <div className="flex items-baseline justify-between gap-3">
-            <h2 className="truncate text-[15px] font-semibold text-foreground" id={headingId}>
+            <h2
+              className="min-w-0 break-words text-[15px] font-semibold text-foreground"
+              id={headingId}
+            >
               {lane.name}
             </h2>
             <span className="font-mono type-annotation tabular-nums text-muted">
@@ -1350,23 +1420,11 @@ const PipelineLane = memo(
             </p>
           ) : null}
 
-          {visibleCards.map((card) => (
-            <PipelineCard
-              key={card.id}
-              id={card.id}
-              initialNow={initialNow}
-              linearIssueId={card.linearIssueId}
-              linearIssueUrl={card.linearIssueUrl}
-              latestRunStatus={card.latestRunStatus}
-              number={card.number}
-              phaseStatus={card.phaseStatus}
-              pullRequestsJson={JSON.stringify(card.pullRequests ?? [])}
-              rejectionCount={card.rejectionCount}
-              title={card.title}
-              updatedAt={card.updatedAt}
-              workspaceSlug={workspaceSlug}
-            />
-          ))}
+          <PipelineLaneCards
+            cards={visibleCards}
+            initialNow={initialNow}
+            workspaceSlug={workspaceSlug}
+          />
 
           <PipelineLanePagination
             cursor={lane.cursor}
@@ -1394,6 +1452,37 @@ const PipelineLane = memo(
     previous.visibleCards === next.visibleCards &&
     previous.workspaceSlug === next.workspaceSlug,
 );
+
+const PipelineLaneCards = memo(function PipelineLaneCards({
+  cards,
+  initialNow,
+  overview,
+  workspaceSlug,
+}: {
+  cards: PipelineDashboardCard[];
+  initialNow: string;
+  overview?: boolean;
+  workspaceSlug: string;
+}) {
+  return cards.map((card) => (
+    <PipelineCard
+      key={card.id}
+      id={card.id}
+      initialNow={initialNow}
+      linearIssueId={card.linearIssueId}
+      linearIssueUrl={card.linearIssueUrl}
+      latestRunStatus={card.latestRunStatus}
+      number={card.number}
+      overview={overview}
+      phaseStatus={card.phaseStatus}
+      pullRequestsJson={JSON.stringify(card.pullRequests ?? [])}
+      rejectionCount={card.rejectionCount}
+      title={card.title}
+      updatedAt={card.updatedAt}
+      workspaceSlug={workspaceSlug}
+    />
+  ));
+});
 
 const PipelineLanePagination = memo(function PipelineLanePagination({
   cursor,
@@ -1518,6 +1607,7 @@ export const PipelineCard = memo(function PipelineCard({
   linearIssueUrl,
   latestRunStatus,
   number,
+  overview = false,
   phaseStatus,
   pullRequestsJson,
   rejectionCount,
@@ -1531,6 +1621,7 @@ export const PipelineCard = memo(function PipelineCard({
   linearIssueUrl: string | null;
   latestRunStatus: PipelineDashboardCard["latestRunStatus"];
   number: number;
+  overview?: boolean;
   phaseStatus: SessionPhaseStatus;
   pullRequestsJson: string;
   rejectionCount: number;
@@ -1583,38 +1674,57 @@ export const PipelineCard = memo(function PipelineCard({
     });
   }
 
+  const Title = overview ? "h4" : "h3";
+  const heading = (
+    <Title className="min-w-0 text-[13px] font-semibold leading-5 text-foreground">
+      <SessionDetailLink
+        href={sessionHref}
+        aria-label={`${awaitingReview ? "Review" : "Open"} session ${title}`}
+        className="underline decoration-border underline-offset-2 after:absolute after:inset-0 after:z-10 after:rounded-[6px] hover:decoration-current focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-accent focus-visible:after:ring-offset-2 focus-visible:after:ring-offset-canvas"
+        onClick={cancelPreviousActivation}
+        onDeferredNavigation={openAfterPrefetch}
+      >
+        <span className={cn("break-words", !overview && "line-clamp-3")}>{title}</span>
+      </SessionDetailLink>
+    </Title>
+  );
+  const references = (
+    <CardReferenceLine
+      linearIssueId={linearIssueId}
+      linearIssueUrl={linearIssueUrl}
+      number={number}
+      pullRequests={pullRequests}
+      rejectionCount={rejectionCount}
+    />
+  );
+
   return (
     <article
       className={cn(
-        "ui-sheet relative isolate space-y-2 border-border/80 p-3 transition-colors duration-150 hover:bg-control-hover motion-reduce:transition-none",
-        displayStatus === "rejected" && "border-l-[3px] border-l-warning/50",
-        displayStatus === "failed" && "border-l-[3px] border-l-danger/50",
+        "relative isolate transition-colors duration-150 hover:bg-control-hover motion-reduce:transition-none",
+        overview
+          ? "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_9rem_8rem]"
+          : "ui-sheet space-y-2 border-border/80 p-3",
+        !overview && displayStatus === "rejected" && "border-l-[3px] border-l-warning/50",
+        !overview && displayStatus === "failed" && "border-l-[3px] border-l-danger/50",
       )}
       data-session-id={id}
     >
-      <h3 className="min-w-0 text-[13px] font-semibold leading-5 text-foreground">
-        <SessionDetailLink
-          href={sessionHref}
-          aria-label={`${awaitingReview ? "Review" : "Open"} session ${title}`}
-          className="underline decoration-border underline-offset-2 after:absolute after:inset-0 after:z-10 after:rounded-[6px] hover:decoration-current focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-accent focus-visible:after:ring-offset-2 focus-visible:after:ring-offset-canvas"
-          onClick={cancelPreviousActivation}
-          onDeferredNavigation={openAfterPrefetch}
-        >
-          <span className="line-clamp-3 break-words">{title}</span>
-        </SessionDetailLink>
-      </h3>
-
-      <Status compact value={displayStatus} />
-
-      <CardReferenceLine
-        linearIssueId={linearIssueId}
-        linearIssueUrl={linearIssueUrl}
-        number={number}
-        pullRequests={pullRequests}
-        rejectionCount={rejectionCount}
+      {overview ? (
+        <div className="col-span-2 min-w-0 space-y-0.5 sm:col-span-1">
+          {heading}
+          {references}
+        </div>
+      ) : (
+        heading
+      )}
+      <Status
+        className={overview ? "justify-self-start" : undefined}
+        compact
+        value={displayStatus}
       />
-
-      <div className="type-annotation leading-4 text-muted">
+      {!overview ? references : null}
+      <div className={cn("type-annotation leading-4 text-muted", overview && "justify-self-end")}>
         {!opening && (
           <p>
             Updated <TimeDisplay initialNow={initialNow} value={updatedAt} variant="relative" />
