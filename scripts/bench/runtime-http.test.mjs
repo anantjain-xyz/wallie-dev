@@ -39,6 +39,14 @@ const server = createServer((req, res) => {
   }
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.write("<h1>✓ Sessions</h1>");
+  if (req.url === "/html-flight-error") {
+    const first = JSON.stringify([1, '0:"Ready list"\n1:E{"di']);
+    const rest = JSON.stringify([3, Buffer.from('gest":"123"}\n').toString("base64")]);
+    res.end(
+      `<p>Ready list</p><script nonce="fixture">self.__next_f.push(${first})</script><script>self.__next_f.push(${rest})</script>`,
+    );
+    return;
+  }
   res.end(req.url === "/ready" ? "<p>Ready list</p>" : "<p>Login</p>");
 });
 
@@ -76,6 +84,13 @@ test("rejects a redirect without following it and a streamed error despite its m
     (await sample({ path: "/flight-error", type: "text/x-component" })).error,
     "stream_error",
   );
+});
+
+test("rejects an HTML response whose inline Flight chunks carry a generic error", async () => {
+  const result = await sample({ path: "/html-flight-error", maxBytes: 512 });
+  assert.equal(result.status, 200);
+  assert.equal(result.error, "stream_error");
+  assert.equal(result.readyMs, undefined);
 });
 
 test("rejects a response larger than the capped body before reporting readiness", async () => {

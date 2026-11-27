@@ -4,14 +4,14 @@
 
 ## Run locally
 
-Use a clean, disposable checkout with dependencies installed, Supabase CLI 2.113.0, Docker, and `psql`. Don't point it at a shared database or run it with a dev server, worker, or other benchmarks active. The checkout must not contain auto-loaded `.env` files. If stale generated types from `next dev` break the build, recreate the checkout rather than bypassing TypeScript.
+Use a clean checkout and a **disposable Supabase stack** with dependencies installed, Supabase CLI 2.113.0, Docker, and `psql`. A second checkout on the same host doesn't isolate Supabase: the default project shares container names and ports. Run on a separate machine if another local stack must stay up. The benchmark refuses a stack started from another checkout, and doesn't start, reset, or stop the database for you. Don't run a dev server, worker, or other benchmarks alongside it. The checkout must not contain auto-loaded `.env` files. If stale generated types from `next dev` break the build, recreate the checkout rather than bypassing TypeScript.
 
 ```sh
 SUPABASE_TELEMETRY_DISABLED=1 supabase start --exclude studio,edge-runtime,logflare,vector,supavisor
 pnpm bench:authenticated
 ```
 
-The benchmark requires the stock demo seed. It adds 160 sessions, then grows the same fixture to 3,200 (178 and 3,218 total). The fixed IDs, stage and status mix, archived rows, failed runs, and 4,063 B / 112,562 B Markdown artifacts reproduce the audit workload. The seed refuses other data and doesn't enqueue work. Run `supabase db reset --local` on the **disposable stack only** before a replay. The benchmark uses the normal `pnpm build`, with its TypeScript gate enabled, and starts Next on `127.0.0.1:3102`. It reads the loopback keys from the local CLI and signs in via the real email confirmation route without sending mail. No hosted keys, remote agent runs, or provider integrations are used.
+The benchmark requires the stock demo seed. It adds 160 sessions, then grows the same fixture to 3,200 (178 and 3,218 total). The fixed IDs, stage and status mix, archived rows, failed runs, and 4,063 B / 112,562 B Markdown artifacts reproduce the audit workload. The seed refuses other data and doesn't enqueue work. Fixture rows remain even if a later check fails; run `supabase db reset --local` on the **disposable stack only** before a replay. The benchmark uses the normal `pnpm build`, with its TypeScript gate enabled, and starts Next on `127.0.0.1:3102`. It reads the loopback keys from the local CLI and signs in via the real email confirmation route without sending mail. No hosted keys, remote agent runs, or provider integrations are used.
 
 The default is two warmups and five measured sweeps per volume, with the case order reversed on alternating measured sweeps. Use `--runs N` (1–15) to change the number of measured sweeps, and `--out FILE` to retain multiple reports. Run comparisons on the same machine and stack configuration, alternating the revisions and preserving the fixture and sample count. Don't run a build, trace, or inspector alongside the timed sweeps.
 

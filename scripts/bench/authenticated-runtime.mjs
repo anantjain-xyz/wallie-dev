@@ -26,6 +26,29 @@ function localStack() {
   if (readdirSync(root).some((name) => /^\.env(?:\.|$)/.test(name) && name !== ".env.example")) {
     throw new BenchError("Use a disposable checkout without auto-loaded .env files.");
   }
+  const container = spawnSync(
+    "docker",
+    [
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      '{{index .Config.Labels "com.supabase.cli.workdir"}}',
+      "supabase_db_wallie-dev",
+    ],
+    {
+      cwd: root,
+      env: baseEnv,
+      encoding: "utf8",
+      timeout: 15_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  if (container.status !== 0 || container.stdout.trim() !== resolve(root)) {
+    throw new BenchError(
+      "Start a disposable local Supabase stack from this checkout, not another checkout.",
+    );
+  }
   const status = spawnSync("supabase", ["status", "-o", "env"], {
     cwd: root,
     env: { ...baseEnv, SUPABASE_TELEMETRY_DISABLED: "1" },

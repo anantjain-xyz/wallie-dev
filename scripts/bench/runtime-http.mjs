@@ -44,6 +44,27 @@ function markerEnd(body, marker) {
   return match ? match.index + match[0].length : 0;
 }
 
+const flightError = /NEXT_REDIRECT|NEXT_HTTP_ERROR_FALLBACK|(?:^|\n)[\da-f]+:E\{/;
+
+function hasStreamError(body, type) {
+  if (flightError.test(body)) return true;
+  if (type !== "text/html") return false;
+
+  const chunks = [];
+  for (const [, packet] of body.matchAll(
+    /<script\b[^>]*>self\.__next_f\.push\((\[[13],[^\n<]*\])\)<\/script>/g,
+  )) {
+    try {
+      const [kind, payload] = JSON.parse(packet);
+      if (typeof payload !== "string") return true;
+      chunks.push(Buffer.from(payload, kind === 3 ? "base64" : "utf8"));
+    } catch {
+      return true;
+    }
+  }
+  return flightError.test(Buffer.concat(chunks).toString("utf8"));
+}
+
 export async function sampleRoute(origin, route, { agent, cookie }) {
   let response;
   try {
@@ -81,8 +102,7 @@ export async function sampleRoute(origin, route, { agent, cookie }) {
     return { ...sample, readyMs: fullMs, work };
   }
 
-  if (/NEXT_REDIRECT|NEXT_HTTP_ERROR_FALLBACK|(?:^|\n)[\da-f]+:E\{"digest"/.test(body))
-    return failed("stream_error");
+  if (hasStreamError(body, route.type)) return failed("stream_error");
   const markers = typeof route.markers === "function" ? route.markers(body) : route.markers;
   const offsets = markers.map((marker) => markerEnd(body, marker));
   if (offsets.some((end) => end === 0)) return failed("missing_marker");
