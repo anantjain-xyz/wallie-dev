@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import {
   loadAnalyticsEvidence,
@@ -15,6 +17,7 @@ import { recoverAnalyticsFilters } from "@/features/factory-analytics/analytics-
 import { AnalyticsReportingFilters } from "@/features/factory-analytics/analytics-reporting-filters";
 import { RoutingCanaryComparison } from "@/features/factory-analytics/routing-canary-comparison";
 import { loadRoutingCanaryComparison } from "@/features/factory-analytics/routing-canary-data";
+import { ReportingHealth } from "@/features/factory-analytics/reporting-health";
 import { resolveAnalyticsFactory } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { AnalyticsView } from "@/features/factory-analytics/analytics-view";
@@ -58,11 +61,8 @@ export default async function AnalyticsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const { query, errors, dates } = recoverAnalyticsFilters(search);
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
-  const { currentMember, supabase, workspace } =
-    await loadAuthenticatedWorkspaceContext(workspaceSlug);
-  const factory = resolveAnalyticsFactory(factories, query.factoryId);
+  const factory = resolveAnalyticsFactory(factories, search.factory);
   if (!factory)
     return (
       <FactoryUnavailable
@@ -73,11 +73,21 @@ export default async function AnalyticsPage({
             selectedValue="unavailable"
           />
         }
+        description={
+          factories.length ? "Choose a factory you can access to see its reports." : undefined
+        }
         title="Analytics"
         workspaceSlug={workspaceSlug}
       />
     );
 
+  const { query, errors, dates } = recoverAnalyticsFilters(search);
+  if (search.overviewFilters === "invalid") {
+    errors.other =
+      "Some filters from this Overview bookmark couldn’t be carried over. Review and apply the filters to see the report.";
+  }
+  const { currentMember, supabase, workspace } =
+    await loadAuthenticatedWorkspaceContext(workspaceSlug);
   const scope = { supabase, workspaceId: workspace.id, factoryId: factory.id, query };
   const path = workspaceAnalyticsPath(workspaceSlug);
   const reportingWindow = {
@@ -157,6 +167,24 @@ export default async function AnalyticsPage({
       query={query}
       periods={periods}
       evidence={evidence}
+      reportingHealth={
+        <Suspense
+          fallback={
+            <p className="type-secondary px-4 py-3 text-muted">Loading reporting health…</p>
+          }
+        >
+          <ReportingHealth
+            captureStartedAt={
+              periods.primary.flow.status === "ready"
+                ? periods.primary.flow.data.coverage.lifecycleFrom
+                : null
+            }
+            factoryId={factory.id}
+            supabase={supabase}
+            workspaceId={workspace.id}
+          />
+        </Suspense>
+      }
       routingCanaryComparison={
         canary ? (
           <RoutingCanaryComparison

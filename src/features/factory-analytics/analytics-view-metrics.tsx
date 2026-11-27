@@ -25,29 +25,18 @@ import {
 type Periods = { primary: AnalyticsPeriodData; comparison: AnalyticsPeriodData | null };
 type MetricViewProps = { periods: Periods; href: AnalyticsHref };
 
-function decision(
+function comparisonNote(
   label: string,
   value: number | null,
   previous: number | null,
   format: (value: number) => string = (value) => numberFormat.format(value),
-  context?: string,
-  deltaFormat = format,
 ) {
-  if (value === null) return null;
-  const delta = previous === null ? null : value - previous;
+  if (value === null || previous === null) return null;
+  const delta = value - previous;
   return (
-    <p className="type-secondary tabular-nums">
-      <strong>{format(value)}</strong> {label}
-      {context && <span className="text-muted"> · {context}</span>}
-      {delta !== null && (
-        <span className="text-muted">
-          {" · "}
-          {delta === 0
-            ? "No change"
-            : `${delta > 0 ? "+" : "−"}${deltaFormat(Math.abs(delta))}`}{" "}
-          vs. previous
-        </span>
-      )}
+    <p className="type-secondary text-muted tabular-nums">
+      {label}: {delta === 0 ? "No change" : `${delta > 0 ? "+" : "−"}${format(Math.abs(delta))}`}{" "}
+      vs. previous period
     </p>
   );
 }
@@ -129,11 +118,16 @@ function flowSummary(period: AnalyticsPeriodData) {
   return ready(period.flow);
 }
 
+function flowTotal(
+  summary: NonNullable<ReturnType<typeof flowSummary>>,
+  key: "segments" | "seconds",
+) {
+  return Object.values(summary.flow).reduce((sum, phase) => sum + phase[key], 0);
+}
+
 function FlowPanel({ periods, href }: MetricViewProps) {
   const current = flowSummary(periods.primary);
   const previous = periods.comparison && flowSummary(periods.comparison);
-  const total = (summary: NonNullable<typeof current>, key: "segments" | "seconds") =>
-    Object.values(summary.flow).reduce((sum, phase) => sum + phase[key], 0);
   const comparable =
     current?.coverage.lifecycleWindowCovered &&
     previous?.coverage.lifecycleWindowCovered &&
@@ -174,15 +168,15 @@ function FlowPanel({ periods, href }: MetricViewProps) {
     <MetricPanel
       id="work-flow"
       title="Work flow"
-      headline={
+      summary={
         current &&
-        (total(current, "segments") > 0 || current.coverage.lifecycleWindowCovered) &&
-        decision(
-          "recorded across phases",
-          total(current, "seconds"),
-          comparable && previous ? total(previous, "seconds") : null,
+        previous &&
+        comparable &&
+        comparisonNote(
+          "Recorded phase time",
+          flowTotal(current, "seconds"),
+          flowTotal(previous, "seconds"),
           durationLabel,
-          `${numberFormat.format(total(current, "segments"))} segments`,
         )
       }
       definition="Wall-clock time summed across recorded session phase segments that intersect the dates shown. Open phases have no completed segment to contribute. Concurrent sessions can add time in parallel."
@@ -199,6 +193,7 @@ function FlowPanel({ periods, href }: MetricViewProps) {
               (total, count) => total + count,
               0,
             );
+            const segments = flowTotal(summary, "segments");
             return (
               <>
                 Revision {summary.metricRevisions.workflow_flow}.{" "}
@@ -206,6 +201,8 @@ function FlowPanel({ periods, href }: MetricViewProps) {
                   ? "Lifecycle window covered."
                   : "Partial lifecycle coverage."}{" "}
                 Live capture began {timeLabel(summary.coverage.lifecycleFrom)}.{" "}
+                {(segments > 0 || summary.coverage.lifecycleWindowCovered) &&
+                  `${numberFormat.format(segments)} recorded phase segments. `}
                 {numberFormat.format(openRequests)} open-phase memberships,{" "}
                 {numberFormat.format(summary.coverage.unplacedSessions)} sessions with unknown
                 request dates. {flowFreshness(summary.freshness)}
@@ -236,10 +233,10 @@ function DeliveryPanel({
   periods,
   href,
   query,
-  clearEnvironmentHref,
+  environmentFilter,
 }: MetricViewProps & {
   query: AnalyticsQuery;
-  clearEnvironmentHref: string;
+  environmentFilter: ReactNode;
 }) {
   const current = flowSummary(periods.primary);
   const previous = periods.comparison && flowSummary(periods.comparison);
@@ -313,7 +310,8 @@ function DeliveryPanel({
     <MetricPanel
       id="time-to-delivery"
       title="Time to delivery"
-      headline={
+      filters={environmentFilter}
+      summary={
         <>
           {(Object.keys(deliveryKinds) as (keyof typeof deliveryKinds)[]).map((metric) => {
             const now = current?.[metric];
@@ -334,13 +332,19 @@ function DeliveryPanel({
             return (
               <div key={metric}>
                 {now?.distribution ? (
-                  decision(
-                    `median · ${deliveryKinds[metric].toLowerCase()}`,
-                    now.distribution.p50Seconds,
-                    comparable ? (before?.distribution?.p50Seconds ?? null) : null,
-                    durationLabel,
-                    `${numberFormat.format(now.measured)} of ${numberFormat.format(now.total)} requests measured`,
-                  )
+                  <>
+                    <p className="type-secondary text-muted">
+                      {deliveryKinds[metric]}: {numberFormat.format(now.measured)} of{" "}
+                      {numberFormat.format(now.total)} requests measured.
+                    </p>
+                    {comparable &&
+                      comparisonNote(
+                        `${deliveryKinds[metric]} median`,
+                        now.distribution.p50Seconds,
+                        before.distribution?.p50Seconds ?? null,
+                        durationLabel,
+                      )}
+                  </>
                 ) : (
                   <p className="type-secondary">
                     <strong>{deliveryKinds[metric]}:</strong> {timingState(current, metric)}
@@ -362,11 +366,6 @@ function DeliveryPanel({
                 <a className="underline underline-offset-4" href="#analytics-filters">
                   Change dates
                 </a>
-                {query.environment && !current.deployment.distribution && (
-                  <a className="underline underline-offset-4" href={clearEnvironmentHref}>
-                    Clear environment
-                  </a>
-                )}
               </p>
             )
           )}
@@ -402,6 +401,30 @@ function DeliveryPanel({
 }
 
 const costBases = { delivery: "Delivery", operating: "Operating" } as const;
+const costRatioLabels = {
+  no_observed_merges: "No observed merges",
+  unavailable: "Cost unavailable",
+  partial: "Partial",
+  estimated: "Estimated",
+  measured: "Measured",
+} satisfies Record<
+  NonNullable<ReturnType<typeof readyCost>>["costs"]["delivery"]["ratioState"],
+  string
+>;
+
+function readyCost(period: AnalyticsPeriodData) {
+  return ready(period.cost);
+}
+
+function partialCostCoverage(
+  period: AnalyticsPeriodData,
+  summary: NonNullable<ReturnType<typeof readyCost>>,
+) {
+  return (
+    summary.mergeCohort.partialCoverage ||
+    Date.parse(period.window.to) > Date.parse(summary.observedAt)
+  );
+}
 const costAttempts = {
   measured: { field: "measuredAttempts", label: "Measured attempts" },
   estimated: { field: "estimatedAttempts", label: "Estimated attempts" },
@@ -425,13 +448,7 @@ function CostPanel({ periods, href }: MetricViewProps) {
         const evidence = { metric, facet: "known" } as const;
         if (!measure) return measuredPoint(null, evidence);
         const value = measure.knownCostPerObservedMergeUsd;
-        const state = {
-          no_observed_merges: "No observed merges",
-          unavailable: "Cost unavailable",
-          partial: "Partial",
-          estimated: "Estimated",
-          measured: "Measured",
-        }[measure.ratioState];
+        const state = costRatioLabels[measure.ratioState];
         return {
           value,
           label: value === null ? state : `${moneyFormat.format(value)} · ${state.toLowerCase()}`,
@@ -490,7 +507,7 @@ function CostPanel({ periods, href }: MetricViewProps) {
     <MetricPanel
       id="cost-per-merge"
       title="Cost per merged PR"
-      headline={
+      summary={
         current &&
         (["delivery", "operating"] as const).map((basis) => {
           const now = current.costs[basis];
@@ -502,20 +519,19 @@ function CostPanel({ periods, href }: MetricViewProps) {
             now.ratioState === "measured" &&
             before.ratioState === "measured" &&
             now.metricRevision === before.metricRevision &&
-            !current.mergeCohort.partialCoverage &&
-            !previous.mergeCohort.partialCoverage &&
-            Date.parse(periods.primary.window.to) <= Date.parse(current.observedAt) &&
-            Date.parse(periods.comparison.window.to) <= Date.parse(previous.observedAt);
+            !partialCostCoverage(periods.primary, current) &&
+            !partialCostCoverage(periods.comparison, previous);
           return (
-            <div key={basis}>
-              {decision(
-                `known ${basis} cost per observed merge`,
-                now.knownCostPerObservedMergeUsd,
-                comparable ? before.knownCostPerObservedMergeUsd : null,
-                (value) => moneyFormat.format(value),
-                `${numberFormat.format(current.mergeCohort.observedMergeCount)} observed merges`,
-              )}
-            </div>
+            comparable && (
+              <div key={basis}>
+                {comparisonNote(
+                  `Known ${basis} cost per observed merge`,
+                  now.knownCostPerObservedMergeUsd,
+                  before.knownCostPerObservedMergeUsd,
+                  (value) => moneyFormat.format(value),
+                )}
+              </div>
+            )
           );
         })
       }
@@ -537,8 +553,7 @@ function CostPanel({ periods, href }: MetricViewProps) {
               <>
                 Delivery revision {costs.delivery.metricRevision}. Operating revision{" "}
                 {costs.operating.metricRevision}.{" "}
-                {mergeCohort.partialCoverage ||
-                Date.parse(period.window.to) > Date.parse(summary.observedAt)
+                {partialCostCoverage(period, summary)
                   ? "Partial merge coverage."
                   : "Merge window covered."}{" "}
                 PR capture began {timeLabel(mergeCohort.captureStartedAt)}.{" "}
@@ -554,14 +569,27 @@ function CostPanel({ periods, href }: MetricViewProps) {
   );
 }
 
+function readyThroughput(period: AnalyticsPeriodData) {
+  return ready(period.throughput);
+}
+
+function partialThroughputCoverage(
+  period: AnalyticsPeriodData,
+  summary: NonNullable<ReturnType<typeof readyThroughput>>,
+) {
+  return summary.coverage.partial || Date.parse(period.window.to) > Date.parse(summary.evaluatedAt);
+}
+
 function ThroughputPanel({
   periods,
   href,
   query,
   bucketLabels,
+  dimensionFilter,
 }: MetricViewProps & {
   query: AnalyticsQuery;
   bucketLabels: ReadonlyMap<string, string>;
+  dimensionFilter: ReactNode;
 }) {
   const primary = ready(periods.primary.throughput);
   const comparison = periods.comparison && ready(periods.comparison.throughput);
@@ -569,10 +597,8 @@ function ThroughputPanel({
     primary &&
     comparison &&
     periods.comparison &&
-    !primary.coverage.partial &&
-    !comparison.coverage.partial &&
-    Date.parse(periods.primary.window.to) <= Date.parse(primary.evaluatedAt) &&
-    Date.parse(periods.comparison.window.to) <= Date.parse(comparison.evaluatedAt) &&
+    !partialThroughputCoverage(periods.primary, primary) &&
+    !partialThroughputCoverage(periods.comparison, comparison) &&
     primary.metricRevision === comparison.metricRevision;
   const buckets = new Map(
     [...(primary?.buckets ?? []), ...(comparison?.buckets ?? [])].map(({ key, label }) => [
@@ -620,8 +646,9 @@ function ThroughputPanel({
     <MetricPanel
       id="throughput"
       title="Pull request throughput"
-      headline={decision(
-        "observed canonical merges",
+      filters={dimensionFilter}
+      summary={comparisonNote(
+        "Observed canonical merges",
         primary?.observedMergeCount ?? null,
         comparable ? comparison.observedMergeCount : null,
       )}
@@ -639,7 +666,7 @@ function ThroughputPanel({
             return (
               <>
                 Revision {summary.metricRevision}.{" "}
-                {coverage.partial || Date.parse(period.window.to) > Date.parse(summary.evaluatedAt)
+                {partialThroughputCoverage(period, summary)
                   ? "Partial merge coverage."
                   : "Merge window covered."}{" "}
                 PR capture began {timeLabel(coverage.captureStartedAt)}.{" "}
@@ -721,14 +748,12 @@ function RevertPanel({ periods, href }: MetricViewProps) {
     <MetricPanel
       id="revert-rate"
       title="Revert rate"
-      headline={
+      summary={
         current &&
-        decision(
-          "verified revert rate",
+        comparisonNote(
+          "Verified revert rate",
           current.revertRate,
           comparable ? previous.revertRate : null,
-          (value) => percentFormat.format(value),
-          `${numberFormat.format(current.revertedCoveredCount)} of ${numberFormat.format(current.coveredMatureCount)} covered mature merges`,
           (value) =>
             `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value * 100)} pp`,
         )
@@ -761,16 +786,157 @@ function RevertPanel({ periods, href }: MetricViewProps) {
   );
 }
 
+export function AnalyticsHighlights({ period }: { period: AnalyticsPeriodData }) {
+  const flow = flowSummary(period);
+  const cost = readyCost(period);
+  const throughput = readyThroughput(period);
+  const revert = ready(period.revert);
+  const flowDelayed = flow && ["paused", "building", "failed"].includes(flow.freshness.status);
+  const flowCurrent = flow?.freshness.status === "ready" && flow.freshness.sourceSnapshotAt;
+  const fullFlowCoverage =
+    flow?.coverage.lifecycleWindowCovered &&
+    Date.parse(period.window.to) <= Date.parse(flow.freshness.evaluatedAt);
+  const state = flowDelayed ? "Delayed" : "Unavailable";
+  const partialThroughput = throughput && partialThroughputCoverage(period, throughput);
+  const outcomes = [
+    {
+      id: "work-flow",
+      title: "Work flow",
+      values: [
+        {
+          value:
+            !flowCurrent || !flow
+              ? state
+              : fullFlowCoverage || flowTotal(flow, "segments") > 0
+                ? durationLabel(flowTotal(flow, "seconds"))
+                : "No covered time",
+          note: !flowCurrent
+            ? undefined
+            : fullFlowCoverage
+              ? "Recorded phase time"
+              : "Partial lifecycle coverage",
+        },
+      ],
+    },
+    {
+      id: "time-to-delivery",
+      title: "Time to delivery",
+      values:
+        flowCurrent && flow
+          ? (["merge", "deployment"] as const).map((kind) => {
+              const duration = flow[kind].distribution?.p50Seconds;
+              return {
+                value: duration === undefined ? "No measured samples" : durationLabel(duration),
+                note: kind === "merge" ? "Median to merge" : "Median to deploy",
+              };
+            })
+          : [{ value: state }],
+    },
+    {
+      id: "cost-per-merge",
+      title: "Cost per merged PR",
+      values: cost
+        ? (["delivery", "operating"] as const).map((basis) => {
+            const measure = cost.costs[basis];
+            const value = measure.knownCostPerObservedMergeUsd;
+            return {
+              value:
+                value === null ? costRatioLabels[measure.ratioState] : moneyFormat.format(value),
+              note: [
+                value === null
+                  ? costBases[basis]
+                  : basis === "delivery"
+                    ? "Known delivery"
+                    : "Known operating",
+                value === null || measure.ratioState === "measured"
+                  ? null
+                  : costRatioLabels[measure.ratioState],
+                partialCostCoverage(period, cost) && measure.ratioState !== "partial"
+                  ? "partial merge coverage"
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            };
+          })
+        : [{ value: "Unavailable" }],
+    },
+    {
+      id: "throughput",
+      title: "PR throughput",
+      values: [
+        {
+          value: throughput
+            ? partialThroughput && throughput.observedMergeCount === 0
+              ? "Incomplete"
+              : numberFormat.format(throughput.observedMergeCount)
+            : "Unavailable",
+          note: throughput
+            ? partialThroughput
+              ? "Partial merge coverage"
+              : "Observed merges"
+            : undefined,
+        },
+      ],
+    },
+    {
+      id: "revert-rate",
+      title: "Revert rate",
+      values: [
+        {
+          value: !revert
+            ? "Unavailable"
+            : revert.revertRate === null
+              ? "No covered mature merges"
+              : percentFormat.format(revert.revertRate),
+          note:
+            revert?.revertRate != null
+              ? "Of covered mature merges"
+              : revert?.coverage.partial
+                ? "Partial revert coverage"
+                : undefined,
+        },
+      ],
+    },
+  ];
+  return (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-4 px-4 py-4 sm:grid-cols-3 sm:px-5 lg:grid-cols-5">
+      {outcomes.map(({ id, title, values }) => (
+        <div className="min-w-0 space-y-1" key={id}>
+          <dt className="type-label font-medium">
+            <a
+              className="rounded-sm underline decoration-border-strong underline-offset-4 hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              href={`#${id}`}
+            >
+              {title}
+            </a>
+          </dt>
+          {values.map(({ value, note }: { value: string; note?: string }, index) => (
+            <dd className="min-w-0" key={index}>
+              <span className="type-secondary block break-words font-semibold tabular-nums">
+                {value}
+              </span>
+              {note && <span className="type-label block break-words text-muted">{note}</span>}
+            </dd>
+          ))}
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function AnalyticsMetrics({
   periods,
   href,
   query,
   bucketLabels,
-  clearEnvironmentHref,
+  environmentFilter,
+  dimensionFilter,
 }: MetricViewProps & {
   query: AnalyticsQuery;
   bucketLabels: ReadonlyMap<string, string>;
-  clearEnvironmentHref: string;
+  environmentFilter: ReactNode;
+  dimensionFilter: ReactNode;
 }) {
   return (
     <div className="space-y-6">
@@ -779,10 +945,16 @@ export function AnalyticsMetrics({
         periods={periods}
         href={href}
         query={query}
-        clearEnvironmentHref={clearEnvironmentHref}
+        environmentFilter={environmentFilter}
       />
       <CostPanel periods={periods} href={href} />
-      <ThroughputPanel periods={periods} href={href} query={query} bucketLabels={bucketLabels} />
+      <ThroughputPanel
+        periods={periods}
+        href={href}
+        query={query}
+        bucketLabels={bucketLabels}
+        dimensionFilter={dimensionFilter}
+      />
       <RevertPanel periods={periods} href={href} />
     </div>
   );

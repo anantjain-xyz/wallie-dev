@@ -576,7 +576,7 @@ export function ShellHeader({
     const destination =
       boardNavItem && item.id === "sessions" && pathname === pipelineHref ? boardNavItem : item;
     const { href, scopeNote } = shellNavDestination(destination, workspace.slug, factories, scope);
-    const skipPrefetch = item.id === "inbox" || item.id === "analytics" || item.id === "overview";
+    const skipPrefetch = item.id === "inbox" || item.id === "analytics";
     return {
       href,
       scopeNote,

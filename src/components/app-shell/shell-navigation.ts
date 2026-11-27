@@ -17,7 +17,6 @@ type ShellFactoryScope =
 
 const singleFactoryPolicies: Partial<Record<WorkspaceNavItem["id"], FactoryPolicy>> = {
   agents: "default",
-  overview: "visible",
   analytics: "visible",
   benchmarks: "visible",
   "failure-groups": "visible",

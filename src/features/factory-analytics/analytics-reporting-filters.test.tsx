@@ -5,7 +5,6 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { AnalyticsFilters } from "./analytics-filters";
 import { recoverAnalyticsFilters } from "./analytics-query";
 import { AnalyticsReportingFilters } from "./analytics-reporting-filters";
 
@@ -16,19 +15,35 @@ const action = "/w/demo/analytics";
 
 afterEach(cleanup);
 
-it("preserves the Overview caller's native GET form and free-text environment", () => {
+it("keeps the applied factory and other dimensions in the native date form", () => {
   const { query } = recoverAnalyticsFilters({
     from: "2026-11-01",
     to: "2026-11-08",
+    dimension: "model",
     environment: "production",
   });
-  render(<AnalyticsFilters action="/w/demo/overview" factoryId={factoryId} query={query} />);
-  const environment = screen.getByRole("textbox", { name: "Deployment environment" });
-  expect(environment).toHaveValue("production");
-  expect(screen.getByLabelText("From date", { exact: true })).toHaveValue("2026-11-01");
-  expect(environment.closest("form")).toHaveAttribute("action", "/w/demo/overview");
-  expect(environment.closest("form")).toHaveAttribute("method", "get");
-  expect(screen.queryByText(/Could not load deployment environments/)).not.toBeInTheDocument();
+  render(
+    <AnalyticsReportingFilters
+      action={action}
+      environments={["production"]}
+      factoryId={factoryId}
+      mode="period"
+      query={query}
+      scorerFields={{}}
+    />,
+  );
+  const from = screen.getByLabelText("From date (UTC)", { exact: true });
+  const form = from.closest("form")!;
+  expect(form).toHaveAttribute("action", action);
+  expect(form).toHaveAttribute("method", "get");
+  expect(Object.fromEntries(new FormData(form))).toEqual({
+    factory: factoryId,
+    from: "2026-11-01",
+    to: "2026-11-08",
+    dimension: "model",
+    environment: "production",
+  });
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
 });
 
 it("offers loaded deployment environments in the Analytics form", () => {
@@ -38,11 +53,17 @@ it("offers loaded deployment environments in the Analytics form", () => {
       action={action}
       environments={["production"]}
       factoryId={factoryId}
+      mode="environment"
       query={query}
       scorerFields={{}}
     />,
   );
-  fireEvent.click(screen.getByRole("combobox", { name: "Deployment environment" }));
+  const environment = screen.getByRole("combobox", { name: "Deployment environment" });
+  expect(environment.closest("form")).toHaveAttribute("action", action + "#time-to-delivery");
+  expect(
+    screen.queryByRole("combobox", { name: "Break down throughput by" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(environment);
   expect(screen.getByRole("option", { name: "production" })).toBeVisible();
   expect(screen.queryByText(/Could not load deployment environments/)).not.toBeInTheDocument();
 });

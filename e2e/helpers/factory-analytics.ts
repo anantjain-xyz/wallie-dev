@@ -148,6 +148,32 @@ export async function seedFactoryAnalytics(baseURL: string | undefined, windowDa
       viewerEmail,
       runFixtureFile,
       cleanup,
+      async grantViewerManager() {
+        const member = await admin
+          .from("workspace_members")
+          .select("id")
+          .eq("workspace_id", data.workspaceId)
+          .eq("user_id", viewerId)
+          .single();
+        if (member.error) throw member.error;
+        const { error } = await admin.rpc("grant_factory_membership", {
+          p_workspace_id: data.workspaceId,
+          p_factory_id: data.factoryId,
+          p_actor_user_id: ownerId,
+          p_member_id: member.data.id,
+          p_role: "manager",
+        });
+        if (error) throw error;
+      },
+      async archiveFactory() {
+        const { error } = await admin.rpc("archive_factory", {
+          p_workspace_id: data.workspaceId,
+          p_factory_id: data.factoryId,
+          p_actor_user_id: ownerId,
+          p_reason: "Verify archived reporting access",
+        });
+        if (error) throw error;
+      },
       async observePendingRequest() {
         const { error } = await admin.from("sessions").insert({
           workspace_id: data.workspaceId,

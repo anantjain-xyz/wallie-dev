@@ -70,15 +70,15 @@ describe("navigation factory scope", () => {
   });
 
   it("names the factory when a destination cannot use the current scope", () => {
-    expect(navigation("activity", "overview", [])).toEqual({
-      href: "/w/northwind/overview?factory=default",
+    expect(navigation("activity", "analytics", [])).toEqual({
+      href: "/w/northwind/analytics?factory=default",
       scopeNote: "Opens in Central",
     });
     expect(navigation("sessions", "workflows", ["default"])).toEqual({
       href: "/w/northwind/workflows?factory=second",
       scopeNote: "Opens in Maker",
     });
-    expect(navigation("overview", "settings", ["second"])).toEqual({
+    expect(navigation("analytics", "settings", ["second"])).toEqual({
       href: "/w/northwind/settings",
     });
   });
@@ -96,7 +96,7 @@ describe("navigation factory scope", () => {
     expect(navigation("governance", "sessions", ["default"]).href).toBe(
       "/w/northwind/sessions?factory=unavailable",
     );
-    expect(navigation("overview", "sessions", ["all"]).href).toBe(
+    expect(navigation("analytics", "sessions", ["all"]).href).toBe(
       "/w/northwind/sessions?factory=unavailable",
     );
   });
@@ -136,7 +136,7 @@ describe("session launcher URL", () => {
   });
 
   it("keeps the in-workspace path, repeated filters and anchor but not another launch", () => {
-    const origin = "/w/northwind/overview?factory=second&tag=a&tag=b#recent";
+    const origin = "/w/northwind/analytics?factory=second&tag=a&tag=b#reporting-health";
     const link = new URL(sessionLaunchHref(slug, primary.id, origin), "https://example.com");
     expect(link.pathname).toBe("/w/northwind/sessions");
     expect(Object.fromEntries(link.searchParams)).toEqual({

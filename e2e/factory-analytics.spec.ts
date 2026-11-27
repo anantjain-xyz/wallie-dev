@@ -65,14 +65,17 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
       .locator(`[role="option"][data-value="${fixture.factoryId}"]`)
       .click();
     await expect(page).toHaveURL(new RegExp(`[?&]factory=${fixture.factoryId}(?:&|$)`));
+    const editDates = () => page.getByText("Reporting filters", { exact: true }).click();
+    await editDates();
     await page.getByLabel("From date (UTC)", { exact: true }).fill(fixture.from);
     await page.getByLabel("To date (UTC, exclusive)", { exact: true }).fill(fixture.to);
-    await page.getByRole("combobox", { name: "Deployment environment", exact: true }).click();
-    await page.getByRole("option", { name: "production", exact: true }).click();
     await page.getByRole("checkbox", { name: "Compare with previous period" }).check();
     await page.getByRole("button", { name: "Apply filters", exact: true }).click();
     await expect(page).toHaveURL(/[?&]compare=previous(?:&|$)/);
-    await expect(page).toHaveURL(/[?&]environment=production(?:&|$)/);
+    await page.getByRole("combobox", { name: "Deployment environment", exact: true }).click();
+    await page.getByRole("option", { name: "production", exact: true }).click();
+    await page.getByRole("button", { name: "Apply environment", exact: true }).click();
+    await expect(page).toHaveURL(/[?&]environment=production(?:&|#|$)/);
     await expect(page.getByLabel("From date (UTC)", { exact: true })).toHaveValue(fixture.from);
     await expect(page.getByLabel("To date (UTC, exclusive)", { exact: true })).toHaveValue(
       fixture.to,
@@ -94,18 +97,17 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
     await page.goto(`${analyticsPath}?${staleEnvironment}`);
     await expect(page.getByText("Saved environment (not listed)", { exact: true })).toBeVisible();
     await page
-      .getByRole("region", { name: "Reporting filters" })
+      .getByRole("region", { name: "Deployment filter" })
       .getByRole("link", { name: "Clear environment", exact: true })
       .click();
     await expect(page).not.toHaveURL(/[?&]environment=/);
-    await expect(page.getByLabel("To date (UTC, exclusive)", { exact: true })).toHaveValue(
-      fixture.to,
-    );
+    expect(new URL(page.url()).searchParams.get("to")).toBe(fixture.to);
     await page.goto(comparison);
+    await editDates();
     const formatDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
     await expect(
       page.getByText(
-        new RegExp(`Previous period ${formatDate.format(new Date(fixture.comparisonFrom))}`, "u"),
+        new RegExp(`Previous period: ${formatDate.format(new Date(fixture.comparisonFrom))}`, "u"),
       ),
     ).toBeVisible();
 

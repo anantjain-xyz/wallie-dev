@@ -138,24 +138,31 @@ export function AnalyticsExportControls({
   return (
     <section
       aria-labelledby="analytics-export-heading"
-      className="ui-sheet mb-6 space-y-3 px-4 py-4 sm:px-6"
+      className="min-w-0 space-y-2 px-4 py-2 sm:px-5"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <h2 className="type-section-title" id="analytics-export-heading">
+        <div className="min-w-0">
+          <h2 className="sr-only" id="analytics-export-heading">
             Export analytics
           </h2>
-          <p className="type-secondary text-muted">
-            Factory outcomes for the applied filters. Excludes scorer trends and routing canaries.
-            Selecting an evidence facet does not narrow the export.
-          </p>
-          <p className="type-label text-muted">
-            {filters.from} to {filters.to} UTC (end excluded) ·{" "}
-            {filters.compare ? "Includes previous period" : "Current period only"}
-          </p>
+          <details className="type-secondary text-muted">
+            <summary className="w-fit cursor-pointer rounded-sm py-1 font-medium hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+              Export scope
+            </summary>
+            <div className="mt-1 max-w-96 space-y-1">
+              <p>
+                Factory outcomes for the applied filters. Excludes scorer trends and routing
+                canaries. Selecting an evidence facet does not narrow the export.
+              </p>
+              <p className="type-label">
+                {filters.from} to {filters.to} UTC (end excluded) ·{" "}
+                {filters.compare ? "Includes previous period" : "Current period only"}
+              </p>
+            </div>
+          </details>
         </div>
         <button
-          className="ui-button px-3 py-2 text-sm"
+          className="ui-button min-h-9 px-3 py-1.5 text-sm"
           disabled={action.isBusy || downloading !== null}
           onClick={() => {
             setMessage(null);

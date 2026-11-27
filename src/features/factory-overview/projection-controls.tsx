@@ -4,6 +4,14 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import type { ProjectionAction } from "@/features/factory-overview/projection-health-contracts";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { toneClass } from "@/features/settings/settings-ui";
@@ -13,6 +21,17 @@ const confirmations = {
   pause: "Analytics projection paused.",
   resume: "Analytics projection resumed.",
   rebuild: "Rebuild requested.",
+} satisfies Record<ProjectionAction, string>;
+const actionLabels = {
+  pause: "Pause projection",
+  resume: "Resume projection",
+  rebuild: "Rebuild projection",
+} satisfies Record<ProjectionAction, string>;
+const actionDescriptions = {
+  pause: "Flow and delivery reports stop updating. Sessions and outcome capture continue.",
+  resume: "Reporting updates resume. A queued rebuild can start when reporting resumes.",
+  rebuild:
+    "Queue a rebuild of flow and delivery reports from captured outcomes. If reporting is paused, the rebuild waits until it resumes.",
 } satisfies Record<ProjectionAction, string>;
 const pendingLabels = {
   pause: "Pausing…",
@@ -64,30 +83,46 @@ export function ProjectionControls({
   return (
     <div className="space-y-2 border-t border-border px-4 py-3 sm:px-5">
       <div className="flex flex-wrap gap-2" aria-busy={busy}>
-        <button
-          aria-disabled={busy}
-          className="ui-button min-h-9 px-3 py-1.5 text-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
-          onClick={() => run(toggleAction)}
-          type="button"
-        >
-          <ActionButtonLabel
-            idle={paused ? "Resume projection" : "Pause projection"}
-            pending={activeToggleAction !== null}
-            pendingLabel={pendingLabels[activeToggleAction ?? toggleAction]}
-          />
-        </button>
-        <button
-          aria-disabled={busy || rebuilding}
-          className="ui-button min-h-9 px-3 py-1.5 text-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
-          onClick={() => run("rebuild")}
-          type="button"
-        >
-          <ActionButtonLabel
-            idle="Rebuild projection"
-            pending={activeAction === "rebuild"}
-            pendingLabel={pendingLabels.rebuild}
-          />
-        </button>
+        {([toggleAction, "rebuild"] as const).map((action) => {
+          const isRebuild = action === "rebuild";
+          const disabled = busy || (isRebuild && rebuilding);
+          const pending = isRebuild
+            ? activeAction === "rebuild"
+              ? "rebuild"
+              : null
+            : activeToggleAction;
+          return (
+            <AlertDialog key={isRebuild ? "rebuild" : "toggle"}>
+              <AlertDialogTrigger asChild>
+                <button
+                  aria-disabled={disabled}
+                  className="ui-button min-h-9 px-3 py-1.5 text-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+                  onClick={(event) => {
+                    if (disabled) event.preventDefault();
+                  }}
+                  type="button"
+                >
+                  <ActionButtonLabel
+                    idle={actionLabels[action]}
+                    pending={pending !== null}
+                    pendingLabel={pendingLabels[pending ?? action]}
+                  />
+                </button>
+              </AlertDialogTrigger>
+              <AlertDialogContent
+                title={`${actionLabels[action]}?`}
+                description={actionDescriptions[action]}
+              >
+                <AlertDialogFooter className="flex-wrap">
+                  <AlertDialogCancel className="ui-button">Cancel</AlertDialogCancel>
+                  <AlertDialogAction className="ui-button" onClick={() => run(action)}>
+                    {actionLabels[action]}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          );
+        })}
       </div>
       <div
         className={
