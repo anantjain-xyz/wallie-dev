@@ -179,7 +179,7 @@ test("workspace factory creation preserves the default and lands in the returned
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, settingsPath, { baseURL: base, email: owner.email });
     const settings = page.getByRole("navigation", { name: "Settings categories" });
-    await settings.getByRole("link", { name: /^Workspace Workspace identity/ }).click();
+    await settings.getByRole("link", { name: "Workspace", exact: true }).click();
     await settings.getByRole("link", { name: "Factories", exact: true }).press("Enter");
     await expect(page).toHaveURL(
       (url) => url.hash === "#factories" && url.searchParams.get("category") === "workspace",

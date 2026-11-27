@@ -56,11 +56,10 @@ function renderSection(
     <AgentConfigSection
       canManage
       initialAgentConfig={agentConfig as typeof initialAgentConfig}
-      initialClaudeCodeStatus={{ checkedAt, connected: false }}
-      initialCodexStatus={{ checkedAt, connected: false }}
       initialCursorStatus={initialCursorStatus}
       setFlashMessage={setFlashMessage}
       workspaceId="00000000-0000-4000-8000-000000000001"
+      workspaceSlug="northwind"
     />
   );
   render(withOverlays ? <OverlayProvider>{section}</OverlayProvider> : section);

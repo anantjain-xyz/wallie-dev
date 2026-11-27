@@ -647,7 +647,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     ).toBeVisible();
     await expect(page.getByRole("link", { name: "Manage your connected clients" })).toHaveAttribute(
       "href",
-      /\/settings\?category=workspace#connected-clients$/,
+      /\/settings\?category=personal#connected-clients$/,
     );
 
     await write(

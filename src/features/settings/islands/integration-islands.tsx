@@ -20,10 +20,7 @@ import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
 import {
   updateAgentConfigInSettingsData,
-  updateClaudeCodeConnectionInSettingsData,
-  updateCodexConnectionInSettingsData,
   updateCursorConnectionInSettingsData,
-  updateOpenCodeConnectionInSettingsData,
   updateGithubInSettingsData,
   updateLinearRoutingInSettingsData,
   updateSecretsInSettingsData,
@@ -270,11 +267,9 @@ export function WorkspaceSecretsIntegrationIsland({
 }
 
 export function RuntimeIntegrationIsland({
-  codexStatus,
   defaultFactoryName,
   initialData,
 }: {
-  codexStatus: string | null;
   defaultFactoryName?: string;
   initialData: SettingsPageData;
 }) {
@@ -294,7 +289,6 @@ export function RuntimeIntegrationIsland({
       <AgentConfigSection
         anchorId="runtime"
         canManage={initialData.canManage}
-        codexConnectFlash={codexStatus}
         defaultFactoryName={defaultFactoryName}
         extraContent={
           <>
@@ -317,22 +311,6 @@ export function RuntimeIntegrationIsland({
           </>
         }
         initialAgentConfig={initialData.agentConfig}
-        initialClaudeCodeStatus={{
-          checkedAt: initialData.setupHealth.claudeCodeConnection.checkedAt,
-          connected: initialData.setupHealth.claudeCodeConnection.connected,
-          updatedAt: initialData.setupHealth.claudeCodeConnection.updatedAt,
-        }}
-        initialCodexStatus={{
-          accountEmail: initialData.setupHealth.codexConnection.accountEmail,
-          checkedAt: initialData.setupHealth.codexConnection.checkedAt,
-          connected: initialData.setupHealth.codexConnection.connected,
-          credentialType: initialData.setupHealth.codexConnection.credentialType,
-          expired: initialData.setupHealth.codexConnection.status === "expired",
-          expiresAt: initialData.setupHealth.codexConnection.expiresAt,
-          reconnectReason: initialData.setupHealth.codexConnection.reconnectReason,
-          reconnectRequired: initialData.setupHealth.codexConnection.reconnectRequired,
-          updatedAt: initialData.setupHealth.codexConnection.updatedAt,
-        }}
         initialCursorStatus={
           initialData.setupHealth.cursorConnection
             ? {
@@ -347,29 +325,9 @@ export function RuntimeIntegrationIsland({
               }
             : undefined
         }
-        initialOpenCodeStatus={
-          initialData.setupHealth.openCodeConnection
-            ? {
-                checkedAt: initialData.setupHealth.openCodeConnection.checkedAt,
-                connected: initialData.setupHealth.openCodeConnection.connected,
-                providers: initialData.setupHealth.openCodeConnection.providers,
-                updatedAt: initialData.setupHealth.openCodeConnection.updatedAt,
-              }
-            : undefined
-        }
         onAgentConfigSaved={(entries) =>
           dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             updateAgentConfigInSettingsData(current, entries),
-          )
-        }
-        onClaudeCodeStatusChange={(status) =>
-          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
-            updateClaudeCodeConnectionInSettingsData(current, status),
-          )
-        }
-        onCodexStatusChange={(status) =>
-          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
-            updateCodexConnectionInSettingsData(current, status),
           )
         }
         onCursorStatusChange={(status) =>
@@ -377,22 +335,10 @@ export function RuntimeIntegrationIsland({
             updateCursorConnectionInSettingsData(current, status),
           )
         }
-        onOpenCodeStatusChange={(status) =>
-          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
-            updateOpenCodeConnectionInSettingsData(current, status),
-          )
-        }
-        sandboxConnectionHref="#sandbox"
-        sandboxConnectionLabel={
-          sandboxData.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
-        }
-        sandboxConnectionReady={
-          sandboxData.setupHealth.sandboxConnection?.connected ??
-          sandboxData.setupHealth.vercelSandboxConnection.connected
-        }
         setFlashMessage={setMessage}
         title="Agent runtime"
         workspaceId={initialData.workspace.id}
+        workspaceSlug={initialData.workspace.slug}
       />
     </>
   );

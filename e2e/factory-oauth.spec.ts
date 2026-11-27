@@ -237,6 +237,13 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
 
     const governance = `/w/${workspace.slug}/governance`;
     await signInViaMagicLink(page, governance, { baseURL: app, email });
+    const workspaceOAuthPath = `/w/${workspace.slug}/settings?category=workspace#oauth-clients`;
+    const workspaceOAuth = page.getByRole("link", { name: "Manage workspace OAuth clients" });
+    await expect(workspaceOAuth).toHaveAttribute("href", workspaceOAuthPath);
+    await workspaceOAuth.click();
+    await expect(page).toHaveURL(
+      (url) => url.pathname + url.search + url.hash === workspaceOAuthPath,
+    );
     const clients = page.locator("#oauth-clients");
     await clients.getByLabel("Client name").fill(clientName);
     await clients.getByLabel("Redirect URIs").fill(callback.href);
@@ -265,6 +272,10 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
       baseURL: app,
       email: consentingEmail,
     });
+    await memberPage.goto(workspaceOAuthPath);
+    await expect(memberPage.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    await expect(memberPage.locator("#oauth-clients")).toHaveCount(0);
+    await expect(memberPage.getByText(clientName, { exact: true })).toHaveCount(0);
     function authorizationQuery(verifier: string, state: string, resource?: string) {
       const query = new URLSearchParams({
         response_type: "code",
@@ -537,7 +548,7 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
     await memberPage.getByRole("link", { name: "Settings", exact: true }).click();
     await memberPage
       .getByRole("navigation", { name: "Settings categories" })
-      .locator(`a[href="/w/${workspace.slug}/settings?category=workspace"]`)
+      .locator(`a[href="/w/${workspace.slug}/settings?category=personal"]`)
       .click();
     await memberPage.getByRole("link", { name: "Connected clients", exact: true }).click();
     const connections = memberPage.locator("#connected-clients");

@@ -4,6 +4,7 @@ const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   createWorkspaceOnboardingSnapshot: vi.fn(),
   loadAuthenticatedWorkspaceContext: vi.fn(),
+  loadWorkspaceSandboxOverview: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error("not-found");
   }),
@@ -48,6 +49,10 @@ vi.mock("@/lib/storage/workspace-avatar", () => ({
 
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: mocked.createSupabaseAdminClient,
+}));
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxOverview: mocked.loadWorkspaceSandboxOverview,
+  providerLabel: () => "E2B",
 }));
 
 import { loadSettingsPageData, mapWorkspaceUsageRow } from "@/features/settings/data";
@@ -374,11 +379,9 @@ describe("loadSettingsPageData", () => {
     });
   });
 
-  it("loads the roster and the authenticated user's profile without the onboarding snapshot", async () => {
+  it("loads the workspace roster without personal data or the onboarding snapshot", async () => {
     const {
       currentMember,
-      profileEq,
-      profileSelect,
       supabase,
       workspaceMembersEq,
       workspaceMembersOrder,
@@ -386,10 +389,6 @@ describe("loadSettingsPageData", () => {
     } = buildSupabase({
       member: { id: "member-1", is_active: true, kind: "human", role: "owner" },
       usageResult: Promise.resolve({ data: null, error: null }),
-      profileResult: Promise.resolve({
-        data: { avatar_url: "https://cdn.example.com/ada.png", full_name: "Ada Lovelace" },
-        error: null,
-      }),
       workspaceMembersResult: Promise.resolve({
         data: [
           {
@@ -416,11 +415,10 @@ describe("loadSettingsPageData", () => {
 
     expect(mocked.loadAuthenticatedWorkspaceContext).toHaveBeenCalledWith("acme");
     expect(mocked.createWorkspaceOnboardingSnapshot).not.toHaveBeenCalled();
-    expect(supabase.from).toHaveBeenCalledTimes(2);
+    expect(supabase.from).toHaveBeenCalledTimes(1);
     expect(supabase.from).toHaveBeenCalledWith("workspace_members");
-    expect(supabase.from).toHaveBeenCalledWith("profiles");
-    expect(profileSelect).toHaveBeenCalledWith("full_name, avatar_url");
-    expect(profileEq).toHaveBeenCalledWith("id", user.id);
+    expect(supabase.from).not.toHaveBeenCalledWith("profiles");
+    expect(mocked.loadWorkspaceSandboxOverview).not.toHaveBeenCalled();
     expect(workspaceMembersSelect).toHaveBeenCalledWith("id, full_name, email, avatar_url, role");
     expect(workspaceMembersEq).toHaveBeenNthCalledWith(1, "workspace_id", workspace.id);
     expect(workspaceMembersEq).toHaveBeenNthCalledWith(2, "kind", "human");
@@ -462,10 +460,7 @@ describe("loadSettingsPageData", () => {
       asOf: expect.any(Number),
       invitations: [],
     });
-    await expect(loader.workspaceProfile).resolves.toEqual({
-      avatarUrl: "https://cdn.example.com/ada.png",
-      fullName: "Ada Lovelace",
-    });
+    expect(loader.workspaceProfile).toBeUndefined();
     await expect(loader.usage).resolves.toMatchObject({ totalRuns: 0 });
   });
 
@@ -490,8 +485,69 @@ describe("loadSettingsPageData", () => {
     await expect(loader.setupData).rejects.toThrow(
       "Failed to load workspace members: permission denied",
     );
-    await expect(loader.workspaceProfile).resolves.toEqual({ avatarUrl: null, fullName: null });
+    expect(loader.workspaceProfile).toBeUndefined();
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("uses only the actor profile and safe sandbox readiness for Personal settings", async () => {
+    const { currentMember, profileEq, profileSelect, supabase } = buildSupabase({
+      member: { id: "member-1", is_active: true, kind: "human", role: "member" },
+      profileResult: Promise.resolve({
+        data: { avatar_url: null, full_name: "Riley Park" },
+        error: null,
+      }),
+      usageResult: Promise.resolve({ data: null, error: null }),
+    });
+    const matchKeys = vi.fn().mockResolvedValue({
+      data: [
+        { key: "agent_provider", value_json: "cursor" },
+        { key: "agent_model", value_json: "auto" },
+      ],
+      error: null,
+    });
+    const eq = vi.fn(() => ({ in: matchKeys }));
+    const select = vi.fn(() => ({ eq }));
+    const admin = { from: vi.fn(() => ({ select })), rpc: vi.fn() };
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.loadWorkspaceSandboxOverview.mockResolvedValue({
+      activeProvider: "e2b",
+      connections: {
+        e2b: {
+          apiKeyPreview: "credential-preview-not-for-personal-settings",
+          status: "connected",
+        },
+      },
+      enabledProviders: ["e2b"],
+    });
+
+    const loader = await loadSettingsPageData("acme", "personal");
+
+    expect(mocked.createWorkspaceOnboardingSnapshot).not.toHaveBeenCalled();
+    expect(supabase.from).toHaveBeenCalledTimes(1);
+    expect(supabase.from).toHaveBeenCalledWith("profiles");
+    expect(profileSelect).toHaveBeenCalledWith("full_name, avatar_url");
+    expect(profileEq).toHaveBeenCalledWith("id", user.id);
+    expect(admin.from).toHaveBeenCalledExactlyOnceWith("workspace_agent_config");
+    expect(eq).toHaveBeenCalledWith("workspace_id", workspace.id);
+    expect(matchKeys).toHaveBeenCalledWith("key", ["agent_provider", "agent_model"]);
+    expect(admin.rpc).not.toHaveBeenCalled();
+    await expect(loader.personalProviderContext).resolves.toEqual({
+      model: "auto",
+      provider: "cursor",
+      sandboxLabel: "E2B",
+      sandboxReady: true,
+    });
+    await expect(loader.workspaceProfile).resolves.toEqual({
+      avatarUrl: null,
+      fullName: "Riley Park",
+    });
+    await expect(loader.workspaceInvitations).resolves.toEqual({ asOf: 0, invitations: [] });
   });
 
   it("observes below-fold failures before the above-fold section resolves", async () => {

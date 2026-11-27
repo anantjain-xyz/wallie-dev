@@ -75,18 +75,17 @@ export async function PersonalOAuthConnections({
     });
   } catch {
     return (
-      <Section anchorId="connected-clients" heading="h3" title="Connected clients">
+      <Section anchorId="connected-clients" title="Connected clients">
         <WorkspaceSettingsLoadError label="connected clients" />
       </Section>
     );
   }
 
   const pageHref = (showHistory: boolean, after?: string) =>
-    `${workspaceSettingsPath(workspace.slug, { category: "workspace", oauthView: showHistory ? "history" : undefined, afterOAuthGrant: after })}#connected-clients`;
+    `${workspaceSettingsPath(workspace.slug, { category: "personal", oauthView: showHistory ? "history" : undefined, afterOAuthGrant: after })}#connected-clients`;
   return (
     <Section
       anchorId="connected-clients"
-      heading="h3"
       tagline={`Clients you’ve authorized to act as you in ${workspace.name}, within the factory permissions listed below.`}
       title="Connected clients"
     >
