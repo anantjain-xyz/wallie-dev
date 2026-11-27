@@ -189,7 +189,6 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
   const ownerId = await createUser(admin, email);
   let workspaceId: string | undefined;
   const createResponse = Promise.withResolvers<void>();
-  const archiveRequest = Promise.withResolvers<void>();
   const archiveResponse = Promise.withResolvers<void>();
   const failures: { step: string; error: unknown }[] = [];
   try {
@@ -244,6 +243,8 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
     const sessions = `/w/${slug}/sessions`;
     const source = `${sessions}?factory=${original.id}`;
     const archived = `${sessions}?factory=${archive.id}`;
+    const isArchivedSessions = (target: URL) =>
+      target.pathname === sessions && target.searchParams.get("factory") === archive.id;
     const canonicalUrl = `${sessions}/1`;
     const prompt = "Write the next studio brief";
     const requests: unknown[] = [];
@@ -261,8 +262,9 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
           },
         }),
     );
-    await page.route("**/api/sessions", async (route) => {
-      requests.push(route.request().postDataJSON());
+    await page.route("**/api/sessions", async (route, request) => {
+      if (request.method() !== "POST") return route.fallback();
+      requests.push(request.postDataJSON());
       if (requests.length === 1) {
         await createResponse.promise;
         await route.abort("failed");
@@ -270,14 +272,10 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
         await route.fulfill({ status: 201, json: { canonicalUrl, number: 1 } });
       }
     });
-    await page.route(
-      (target) => target.pathname === sessions && target.searchParams.get("factory") === archive.id,
-      async (route) => {
-        archiveRequest.resolve();
-        await archiveResponse.promise;
-        await route.continue();
-      },
-    );
+    await page.route(isArchivedSessions, async (route) => {
+      await archiveResponse.promise;
+      await route.continue();
+    });
     await signInViaMagicLink(page, source, { baseURL: app, email });
     await page.getByRole("button", { name: "New session", exact: true }).click();
     const composer = page.getByRole("dialog", { name: "Start a new session", exact: true });
@@ -285,8 +283,12 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
     await composer.getByRole("button", { name: "Start session", exact: true }).click();
     const preview = page.locator("[data-session-creation]");
     await expect(preview).toBeVisible();
-    await selectFactory(page, "Legacy studio (archived)");
-    await archiveRequest.promise;
+    await Promise.all([
+      page.waitForRequest((request) => isArchivedSessions(new URL(request.url())), {
+        timeout: 5_000,
+      }),
+      selectFactory(page, "Legacy studio (archived)"),
+    ]);
     await expect(page).toHaveURL(source);
     await expect(preview).toBeHidden();
     createResponse.resolve();
@@ -311,7 +313,13 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
     await composer.getByRole("button", { name: "Retry creation", exact: true }).click();
     await expect(page).toHaveURL(canonicalUrl);
     expect(requests).toHaveLength(2);
-    expect(requests[0]).toMatchObject({ factoryId: original.id, promptMd: prompt });
+    expect(requests[0]).toMatchObject({
+      factoryId: original.id,
+      promptMd: prompt,
+      requestId: expect.stringMatching(
+        /^[a-f\d]{8}-[a-f\d]{4}-4[a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/iu,
+      ),
+    });
     expect(requests[1]).toEqual(requests[0]);
   } catch (error) {
     failures.push({ step: "Draft recovery", error });
