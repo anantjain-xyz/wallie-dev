@@ -9,10 +9,10 @@ import {
 import type { WallieSessionRepository } from "@/features/wallie/types";
 import { factoryWritableRepositoryIds } from "@/lib/factory-definitions/repository-bindings";
 import { loadActiveFactoryExecution } from "@/lib/factory-definitions/runtime-definition";
-import { selectDefaultFactory } from "@/lib/factory-definitions/storage";
 import { fetchLinearIssue, type LinearIssue } from "@/lib/linear/client";
 import { selectReviewedFactoryRoutingActivation } from "@/lib/model-routing/reviewed-activation";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
+import { loadBrowserSessionFactories } from "@/lib/sessions/browser-factory";
 import { generateSessionTitle } from "@/lib/sessions/generate-title";
 import { fingerprintSessionCreation } from "@/lib/sessions/creation-request";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -27,6 +27,7 @@ import {
   loadSessionFirstRunPrerequisites,
   WallieActionError,
 } from "@/lib/wallie/service";
+import type { WorkspaceAccessContext } from "@/lib/workspaces/access";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
@@ -41,9 +42,14 @@ type SessionCreationFailureKind =
 type SessionCreationErrorCode =
   | "factory_access_denied"
   | "factory_archived"
+  | "factory_definition_required"
+  | "factory_execution_unready"
+  | "factory_pipeline_unavailable"
+  | "factory_repository_unavailable"
   | "session_attachments_changed"
   | "session_options_changed"
-  | "session_request_conflict";
+  | "session_request_conflict"
+  | "workspace_setup_required";
 
 type SessionCreationFailure =
   | { kind: SessionCreationFailureKind; message: string; code?: SessionCreationErrorCode }
@@ -129,30 +135,23 @@ function mapWallieSessionRepository(row: {
 
 async function loadSessionRepositoryById(input: {
   admin: AdminClient;
-  factoryId?: string;
+  factoryId: string;
   repositoryId: string;
   requireActive?: boolean;
   workspaceId: string;
 }): Promise<WallieSessionRepository | null> {
-  const repositories = input.admin.from("github_repositories");
-  let query = (
-    input.factoryId
-      ? repositories.select(`${repositoryPreflightSelect}, github_installations!inner(id)`)
-      : repositories.select(repositoryPreflightSelect)
-  )
+  let query = input.admin
+    .from("github_repositories")
+    .select(`${repositoryPreflightSelect}, github_installations!inner(id)`)
     .eq("id", input.repositoryId)
-    .eq("workspace_id", input.workspaceId);
+    .eq("workspace_id", input.workspaceId)
+    .eq("factory_id", input.factoryId)
+    .eq("github_installations.workspace_id", input.workspaceId)
+    .eq("github_installations.suspended", false);
 
   if (input.requireActive) {
     query = query.eq("is_archived", false);
   }
-  if (input.factoryId) {
-    query = query
-      .eq("factory_id", input.factoryId)
-      .eq("github_installations.workspace_id", input.workspaceId)
-      .eq("github_installations.suspended", false);
-  }
-
   const { data, error } = await query.maybeSingle();
 
   if (error) {
@@ -164,13 +163,17 @@ async function loadSessionRepositoryById(input: {
 
 async function loadFirstAvailableSessionRepository(input: {
   admin: AdminClient;
+  factoryId: string;
   workspaceId: string;
 }): Promise<WallieSessionRepository | null> {
   const { data, error } = await input.admin
     .from("github_repositories")
-    .select(repositoryPreflightSelect)
+    .select(`${repositoryPreflightSelect}, github_installations!inner(id)`)
     .eq("workspace_id", input.workspaceId)
+    .eq("factory_id", input.factoryId)
     .eq("is_archived", false)
+    .eq("github_installations.workspace_id", input.workspaceId)
+    .eq("github_installations.suspended", false)
     .order("full_name", { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -184,6 +187,7 @@ async function loadFirstAvailableSessionRepository(input: {
 
 async function loadDefaultSessionRepository(input: {
   admin: AdminClient;
+  factoryId: string;
   onboardingRepositoryId: string | null;
   workspaceId: string;
 }): Promise<{
@@ -211,6 +215,7 @@ async function loadDefaultSessionRepository(input: {
   for (const repositoryId of candidateIds) {
     const repository = await loadSessionRepositoryById({
       admin: input.admin,
+      factoryId: input.factoryId,
       repositoryId,
       workspaceId: input.workspaceId,
     });
@@ -262,20 +267,23 @@ async function loadWorkspaceLinearIssue(input: {
 
 /**
  * The caller supplies an authenticated member and a reader authorized for their restart source.
- * The optional factory fences admission to the intended workspace default.
+ * A browser-selected factory is an exact admission target. Omitted scope keeps
+ * the contract for older workspace-default callers.
  */
 export async function createSessionCommand({
   actor,
   payload,
   reader,
 }: {
-  actor: { factoryId?: string; memberId: string; workspaceId: string };
+  actor: { member: WorkspaceAccessContext["currentMember"]; workspaceId: string };
   payload: Omit<CreateSessionPayload, "workspaceId">;
   reader: Pick<SupabaseClient<Database>, "from">;
 }): Promise<SessionCreationCommandResult> {
   const intent = { ...payload, workspaceId: actor.workspaceId };
   const normalized = normalizeCreateSessionPayload(intent);
-  if (actor.factoryId && !normalized.requestId) {
+  const { factoryId } = normalized;
+  const memberId = actor.member.id;
+  if (factoryId && !normalized.requestId) {
     return creationFailure(
       "invalid_input",
       "A creation request id is required to start a factory session.",
@@ -289,9 +297,9 @@ export async function createSessionCommand({
     try {
       const existing = await findSessionCreationRequest({
         admin,
-        commandFactoryId: actor.factoryId ?? null,
+        commandFactoryId: factoryId ?? null,
         creationRequest,
-        creatorMemberId: actor.memberId,
+        creatorMemberId: memberId,
         ...(normalized.draftSpecification ? { draftSpecification: true } : {}),
         ...(normalized.workflowSelection
           ? { workflowSelection: normalized.workflowSelection }
@@ -309,20 +317,50 @@ export async function createSessionCommand({
     }
   }
   let pinned: Awaited<ReturnType<typeof loadActiveFactoryExecution>>;
+  let repositoryFactoryId: string;
   let reviewedRouting = false;
   try {
-    pinned = await loadActiveFactoryExecution(admin, actor.workspaceId);
-    if (actor.factoryId) {
-      let defaultFactoryId = pinned?.factoryId;
-      if (!defaultFactoryId) {
-        const { data, error } = await selectDefaultFactory(admin, actor.workspaceId);
-        if (error) throw error;
-        defaultFactoryId = data?.id;
-      }
-      if (actor.factoryId !== defaultFactoryId) {
+    const [factory] = await loadBrowserSessionFactories({
+      supabase: reader,
+      workspaceId: actor.workspaceId,
+      member: actor.member,
+      ...(factoryId ? { factoryId } : { defaultOnly: true }),
+    });
+    if (!factory) {
+      return creationFailure(
+        "not_found",
+        "The selected factory is unavailable for session creation.",
+      );
+    }
+    if (factory.status !== "active") {
+      return creationFailure(
+        "conflict",
+        "Restore the archived factory before starting a session.",
+        "factory_archived",
+      );
+    }
+    pinned = factoryId
+      ? await loadActiveFactoryExecution(reader, actor.workspaceId, factoryId)
+      : await loadActiveFactoryExecution(admin, actor.workspaceId);
+    repositoryFactoryId = factory.id;
+    if (!factory.isDefault) {
+      if (!pinned) {
         return creationFailure(
-          "not_found",
-          "The selected factory is unavailable for session creation.",
+          "unready",
+          "Publish a factory definition before starting a session here.",
+          "factory_definition_required",
+        );
+      }
+      if (normalized.linearIssueId) {
+        return creationFailure(
+          "invalid_input",
+          "Direct Linear issue links are only available in the default factory. Enter a prompt to start here.",
+        );
+      }
+      if (normalized.restartOfSessionId) {
+        return creationFailure(
+          "invalid_input",
+          "Start a new session instead of restarting into this factory.",
         );
       }
     }
@@ -342,7 +380,7 @@ export async function createSessionCommand({
     );
   }
   if (
-    normalized.factoryDefinitionDigest &&
+    (factoryId || normalized.factoryDefinitionDigest) &&
     normalized.factoryDefinitionDigest !== pinned?.canonicalDigest
   ) {
     return sessionOptionsChanged();
@@ -371,7 +409,7 @@ export async function createSessionCommand({
       .select("execute_pinned_definition")
       .eq("workspace_id", actor.workspaceId)
       .eq("id", normalized.restartOfSessionId);
-    if (actor.factoryId) query = query.eq("factory_id", actor.factoryId);
+    if (factoryId) query = query.eq("factory_id", factoryId);
     const { data: source, error } = await query.maybeSingle();
     if (error) return creationFailure("failed", error.message);
     if (!source) {
@@ -429,7 +467,11 @@ export async function createSessionCommand({
     return creationFailure("failed", onboardingError.message);
   }
   if (onboardingRow?.status !== "completed") {
-    return creationFailure("conflict", "Complete workspace setup before starting a session.");
+    return creationFailure(
+      "conflict",
+      "Complete workspace setup before starting a session.",
+      factoryId ? "workspace_setup_required" : undefined,
+    );
   }
 
   if (linearIssueResult.error) {
@@ -447,22 +489,35 @@ export async function createSessionCommand({
     if (requestedRepositoryId) {
       const repository = await loadSessionRepositoryById({
         admin,
-        ...(pinned ? { factoryId: pinned.factoryId } : {}),
+        factoryId: repositoryFactoryId,
         repositoryId: requestedRepositoryId,
         requireActive: true,
         workspaceId: actor.workspaceId,
       });
 
       if (!repository) {
-        if (pinned) return sessionOptionsChanged();
-        return creationFailure("invalid_input", "Repository is not available for this workspace.");
+        if (pinned) {
+          if (!factoryId) return sessionOptionsChanged();
+          return creationFailure(
+            "unready",
+            "Reconnect the selected writable repository or choose another repository in this factory.",
+            "factory_repository_unavailable",
+          );
+        }
+        return creationFailure(
+          "invalid_input",
+          factoryId
+            ? "The repository is not available in the selected factory."
+            : "Repository is not available for this workspace.",
+        );
       }
 
       githubRepositoryId = repository.id;
       repositoryForPreflight = repository;
-    } else {
+    } else if (!factoryId) {
       const { configuredRepository, sessionRepository } = await loadDefaultSessionRepository({
         admin,
+        factoryId: repositoryFactoryId,
         onboardingRepositoryId: onboardingRow.selected_github_repository_id,
         workspaceId: actor.workspaceId,
       });
@@ -487,7 +542,7 @@ export async function createSessionCommand({
       if (pinned) {
         await assertSessionFactoryCredentialReady({
           admin,
-          creatorMemberId: actor.memberId,
+          creatorMemberId: memberId,
           definition: pinned,
           factoryId: pinned.factoryId,
           workspaceId: actor.workspaceId,
@@ -511,6 +566,9 @@ export async function createSessionCommand({
     }
   } catch (error) {
     if (error instanceof WallieActionError) {
+      if (factoryId && pinned?.executionGrant && error.code === "factory_credential_unavailable") {
+        return creationFailure("unready", error.message, "factory_execution_unready");
+      }
       return { ok: false, failure: { kind: "wallie_action", cause: error } };
     }
     return creationFailure("failed", getErrorMessage(error, "Wallie is not ready to run."));
@@ -529,9 +587,9 @@ export async function createSessionCommand({
     const result = await createSessionWithFirstJob({
       admin,
       attachmentIds: normalized.attachmentIds,
-      commandFactoryId: actor.factoryId ?? null,
+      commandFactoryId: factoryId ?? null,
       creationRequest: confirmedRequest,
-      creatorMemberId: actor.memberId,
+      creatorMemberId: memberId,
       factoryDefinitionDigest: pinned?.canonicalDigest ?? null,
       ...(normalized.draftSpecification ? { draftSpecification: true } : {}),
       githubRepositoryId,
@@ -574,6 +632,7 @@ export async function createSessionCommand({
         return creationFailure(
           "unready",
           getErrorMessage(error, "The pinned factory is not ready to start."),
+          factoryId ? "factory_execution_unready" : undefined,
         );
       case "PT409":
         if (normalized.routingOverride || normalized.workflowSelection) {
@@ -590,6 +649,11 @@ export async function createSessionCommand({
         return creationFailure(
           "conflict",
           getErrorMessage(error, "Workspace pipeline is not configured."),
+          factoryId
+            ? pinned
+              ? "factory_execution_unready"
+              : "factory_pipeline_unavailable"
+            : undefined,
         );
       case "P0003":
         return sessionOptionsChanged();

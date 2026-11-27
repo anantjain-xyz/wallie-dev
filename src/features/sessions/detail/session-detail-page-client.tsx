@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type FocusEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -67,7 +68,6 @@ import { SessionReviewEvidenceView } from "@/features/sessions/detail/session-re
 import { isWallieRunActiveStatus } from "@/features/wallie/utils";
 import {
   SessionReviewBar,
-  reviewDeliveryState,
   type SessionFeedbackSubmission,
   type SessionReviewArtifact,
 } from "@/features/sessions/detail/session-review-bar";
@@ -96,6 +96,7 @@ import {
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
+import reviewLayout from "./session-review-layout.module.css";
 import { sessionReviewReadOnlyReason } from "@/features/sessions/review/comment-access";
 import { publishArtifactFeedbackSubmission } from "@/features/sessions/review/submission-events";
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -600,8 +601,8 @@ function SessionDetailContent({
       ? stickyReviewMode
       : ({ kind: "running" } as const);
   const approvalEffect = nextStage
-    ? `Approval queues the next selected stage (currently ${nextStage.name}).`
-    : "Final-stage approval completes the session and may archive it. It doesn’t merge or deploy.";
+    ? `Approval queues ${nextStage.name}.`
+    : "Approval completes this session and may archive it. It doesn’t merge or deploy.";
   const reviewVersion =
     exactTarget?.artifactVersion ??
     (displayedArtifact?.stageSlug === selectedStageSlug ? displayedArtifact.version : undefined);
@@ -654,6 +655,7 @@ function SessionDetailContent({
           : exactReviewState === "error"
             ? "Could not verify this review link."
             : "Checking this review link…",
+      onRetry: approvalReview.error ? () => void approvalReview.refresh() : undefined,
     };
   } else if (showsSpecificationControl) {
     const pendingClarification = specification.view.clarification?.status === "pending";
@@ -666,53 +668,19 @@ function SessionDetailContent({
     handoff = {
       title: artifactTitle,
       status: "Read-only version.",
-      detail: "To act, choose Latest in History → Versions.",
+      detail: "Choose Latest under Versions to review.",
     };
   } else if (artifactNamedAbove && session.archivedAt) {
-    handoff = { title: artifactTitle, status: "Archived. Review is read-only." };
+    handoff = { title: artifactTitle, status: "This archived session is read-only." };
   } else if (artifactNamedAbove && decisionMode.kind === "failed") {
     handoff = { title: artifactTitle, status: "The latest run failed. Review is paused." };
   } else if (artifactNamedAbove || (selectedStageIsCurrent && reviewIdentityUnavailable)) {
-    const deliveryState = reviewDeliveryState(approvalReview.value?.delivery, verificationState);
-    const blockingCount = approvalReview.value?.blockingCount ?? 0;
-    const canAct =
-      decisionMode.kind === "reviewable" &&
-      Boolean(reviewArtifact && (!exactTarget || approvalReview.value));
-    const canApproveNow =
-      canApprove &&
-      approvalReview.value &&
-      blockingCount === 0 &&
-      (deliveryState === null || deliveryState === "ready");
     handoff = { title: reviewTitle };
     if (decisionMode.kind === "reviewable" && reviewArtifact)
       handoff.jumpLabel = "Jump to decision";
-    if (!canAct) {
-      handoff.status = reviewIdentityUnavailable
-        ? "The current artifact can’t be verified."
-        : displayedArtifact && !reviewArtifact
-          ? "This output doesn’t match the current review. Reload the session before acting."
-          : "Checking this artifact before you can act…";
-    } else {
-      handoff.status = canApproveNow
-        ? "You can approve or request changes."
-        : canApprove
-          ? "You can request changes."
-          : "You can request changes. Only stage approvers can approve.";
-      handoff.detail = nextStage ? `Next: ${nextStage.name}.` : "Final-stage review.";
-      if (canApprove) {
-        if (blockingCount) {
-          handoff.detail = `${blockingCount} open blocking request${blockingCount === 1 ? "" : "s"} must be resolved before approval.`;
-        } else if (approvalReview.error) {
-          handoff.detail = "Reload review comments before approving.";
-        } else if (!approvalReview.value) {
-          handoff.detail = "Checking approval blockers…";
-        } else if (deliveryState === "checking") {
-          handoff.detail = "Checking GitHub verification…";
-        } else if (deliveryState && deliveryState !== "ready") {
-          handoff.detail = "GitHub verification is blocking approval.";
-        }
-      }
-    }
+    if (stickyReviewMode.kind === "unavailable") handoff.status = stickyReviewMode.reason;
+    else if (displayedArtifact && !reviewArtifact && decisionMode.kind === "reviewable")
+      handoff.status = "This output doesn’t match the current review. Reload before acting.";
   }
   if (
     exactTarget &&
@@ -1672,155 +1640,181 @@ function SessionDetailContent({
     phaseActionPending === null &&
     archivePending === null ? undefined : null;
 
+  function keepFocusedContentAboveDecision(event: FocusEvent<HTMLDivElement>) {
+    const target = event.target;
+    if (!event.currentTarget.contains(target) || !target.matches(":focus-visible")) return;
+    const bar = document.getElementById(SESSION_REVIEW_DECISION_ID)?.closest("section");
+    if (!bar?.classList.contains(reviewLayout.decision)) return;
+    requestAnimationFrame(() => {
+      if (document.activeElement !== target) return;
+      const style = getComputedStyle(bar);
+      if (style.position !== "sticky" || style.visibility !== "visible") return;
+      const content = target.getBoundingClientRect();
+      const decision = bar.getBoundingClientRect();
+      const focusBottom = Math.min(content.bottom, content.top + 80);
+      if (focusBottom > decision.top && content.top < decision.bottom) {
+        window.scrollBy({
+          behavior: "instant",
+          top: focusBottom - decision.top + 8,
+        });
+      }
+    });
+  }
+
   return (
-    <PageContainer className="pb-4">
-      <VisibleInteractionBoundary action="sessions_to_detail" />
-      <SessionDetailHeader
-        actions={headerActions}
-        browseReturn={browseReturn}
-        creatorDisplayName={creatorDisplayName}
-        initialNow={renderNow}
-        repository={repository}
-        reviewHandoff={<SessionReviewHandoff {...handoff} />}
-        session={session}
-        workspaceSlug={initialData.workspaceSlug}
-        workflowInspection={workflowInspection}
-        title={
-          <EditableSessionTitle
-            onTitleChanged={handleTitleChanged}
-            sessionId={session.id}
-            sessionNumber={session.number}
-            title={session.title}
+    <PageContainer className={`px-3 pb-4 pt-4 sm:pt-7 ${reviewLayout.page}`}>
+      <div onFocusCapture={keepFocusedContentAboveDecision}>
+        <VisibleInteractionBoundary action="sessions_to_detail" />
+        <SessionDetailHeader
+          actions={headerActions}
+          browseReturn={browseReturn}
+          creatorDisplayName={creatorDisplayName}
+          factoryName={initialData.factoryName}
+          initialNow={renderNow}
+          repository={repository}
+          reviewHandoff={<SessionReviewHandoff {...handoff} />}
+          session={session}
+          workspaceSlug={initialData.workspaceSlug}
+          workflowInspection={workflowInspection}
+          title={
+            <EditableSessionTitle
+              onTitleChanged={handleTitleChanged}
+              sessionId={session.id}
+              sessionNumber={session.number}
+              title={session.title}
+            />
+          }
+        />
+        <DestructiveConfirmationDialog
+          actionDisabled={Boolean(session.archivedAt) || phaseActionPending !== null || stopPending}
+          actionLabel="Stop run and archive"
+          description="This stops active work and cancels queued work. Unarchiving won’t restart this run."
+          errorMessage={archiveError}
+          onConfirm={() => void handleArchive(true)}
+          onOpenChange={setArchiveDialogOpen}
+          open={archiveDialogOpen}
+          pending={archivePending === "archive"}
+          pendingLabel="Stopping and archiving…"
+          restoreFocusRef={archiveFocusRef}
+          title={`Stop work and archive session #${session.number}?`}
+        />
+        <SessionCompletionSummary session={session} />
+        <div className="mb-3">
+          <StageTimeline
+            onSelect={handleSelectStage}
+            selectionDisabled={Boolean(exactTarget)}
+            selectedStageSlug={selectedStageSlug}
+            timeline={stageTimeline}
           />
-        }
-      />
-      <DestructiveConfirmationDialog
-        actionDisabled={Boolean(session.archivedAt) || phaseActionPending !== null || stopPending}
-        actionLabel="Stop run and archive"
-        description="This stops active work and cancels queued work. Unarchiving won’t restart this run."
-        errorMessage={archiveError}
-        onConfirm={() => void handleArchive(true)}
-        onOpenChange={setArchiveDialogOpen}
-        open={archiveDialogOpen}
-        pending={archivePending === "archive"}
-        pendingLabel="Stopping and archiving…"
-        restoreFocusRef={archiveFocusRef}
-        title={`Stop work and archive session #${session.number}?`}
-      />
-      <SessionCompletionSummary session={session} />
-      <div className="mb-5">
-        <StageTimeline
-          onSelect={handleSelectStage}
-          selectionDisabled={Boolean(exactTarget)}
-          selectedStageSlug={selectedStageSlug}
-          timeline={stageTimeline}
+        </div>
+        <SessionStageWorkspace
+          stageName={selectedStageName}
+          stageSlug={selectedStageSlug}
+          specification={selectedStageIsSpecification}
+          focus={stageFocus}
+          emptyText={
+            selectedStagePosition > currentStagePosition
+              ? "This stage has not started yet."
+              : "No output was recorded for this stage."
+          }
+          artifact={artifactViewer}
+          artifactNamedAbove={artifactNamedAbove}
+          evidence={
+            stageFocus === "run" || exactReadOnly ? null : (
+              <SessionReviewEvidenceView
+                evidence={reviewEvidence}
+                historical={!selectedStageIsCurrent || viewingHistoricalArtifact}
+                initialNow={renderNow}
+                onBlockingChange={refreshReview}
+                sessionId={session.id}
+              />
+            )
+          }
+          reviewControls={
+            showsSpecificationControl ? (
+              <div
+                className="scroll-mt-20 focus-visible:outline-accent"
+                id={SESSION_REVIEW_DECISION_ID}
+                tabIndex={-1}
+              >
+                <SessionSpecificationControl
+                  canAnswer={
+                    Boolean(reviewArtifact) &&
+                    !actionPending &&
+                    (!exactTarget || exactReviewState === "clarification")
+                  }
+                  onAccepted={(receipt, artifactId) => {
+                    if (receipt.feedbackBatchId) {
+                      publishArtifactFeedbackSubmission({
+                        sessionId: session.id,
+                        artifactId,
+                        batchId: receipt.feedbackBatchId,
+                      });
+                    }
+                    queuedMutationRefreshRef.current = true;
+                    setPostMutationRefreshRequested(true);
+                  }}
+                  refresh={async () => {
+                    refreshSession();
+                    await specification.refresh();
+                  }}
+                  sessionId={session.id}
+                  view={specification.view}
+                />
+              </div>
+            ) : null
+          }
+          activity={
+            <SessionRefreshContext.Provider
+              value={{ refresh: refreshSession, pending: refreshPending || actionPending }}
+            >
+              <SessionActivityPresentationProvider
+                value={{
+                  currentStage: {
+                    id: session.currentStageId,
+                    name: currentStageName,
+                    phaseStatus: session.phaseStatus,
+                  },
+                  reviewIdentityUnavailable,
+                  retryUnavailableReason: specificationExhausted
+                    ? "The specification’s execution budget is exhausted."
+                    : undefined,
+                  stopControl,
+                }}
+              >
+                <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+                  {activity}
+                </SessionActivityArchivedAtProvider>
+              </SessionActivityPresentationProvider>
+            </SessionRefreshContext.Provider>
+          }
         />
       </div>
-      <SessionStageWorkspace
+      <SessionReviewBar
+        sessionId={session.id}
+        approvalReview={approvalReview}
+        verificationState={verificationState}
+        deliveryEvidenceAvailable={verification?.requirements.deliveryMode === "code"}
+        onRefreshReview={refreshReview}
+        stageNames={stageNames}
+        exactReviewRevision={exactTarget?.reviewRevision}
+        approveLabel={`Approve ${selectedStageName}`}
+        approveDescription={approvalEffect}
+        mode={
+          showsSpecificationControl || (decisionMode.kind !== "reviewable" && handoff.status)
+            ? { kind: "running" }
+            : decisionMode
+        }
+        onApprove={(artifact, revision) =>
+          void handlePhaseAction("approve", artifact, undefined, undefined, revision)
+        }
+        onReject={(feedback, artifact, submission) =>
+          handlePhaseAction("reject", artifact, feedback, submission)
+        }
+        requestError={phaseActionError}
+        reviewArtifact={reviewArtifact}
+        phaseActionPending={phaseActionPending}
         stageName={selectedStageName}
-        stageSlug={selectedStageSlug}
-        specification={selectedStageIsSpecification}
-        focus={stageFocus}
-        emptyText={
-          selectedStagePosition > currentStagePosition
-            ? "This stage has not started yet."
-            : "No output was recorded for this stage."
-        }
-        artifact={artifactViewer}
-        artifactNamedAbove={artifactNamedAbove}
-        evidence={
-          stageFocus === "run" || exactReadOnly ? null : (
-            <SessionReviewEvidenceView
-              evidence={reviewEvidence}
-              historical={!selectedStageIsCurrent || viewingHistoricalArtifact}
-              initialNow={renderNow}
-              onBlockingChange={refreshReview}
-              sessionId={session.id}
-            />
-          )
-        }
-        reviewControls={
-          showsSpecificationControl ? (
-            <div
-              className="scroll-mt-20 focus-visible:outline-accent"
-              id={SESSION_REVIEW_DECISION_ID}
-              tabIndex={-1}
-            >
-              <SessionSpecificationControl
-                canAnswer={
-                  Boolean(reviewArtifact) &&
-                  !actionPending &&
-                  (!exactTarget || exactReviewState === "clarification")
-                }
-                onAccepted={(receipt, artifactId) => {
-                  if (receipt.feedbackBatchId) {
-                    publishArtifactFeedbackSubmission({
-                      sessionId: session.id,
-                      artifactId,
-                      batchId: receipt.feedbackBatchId,
-                    });
-                  }
-                  queuedMutationRefreshRef.current = true;
-                  setPostMutationRefreshRequested(true);
-                }}
-                refresh={async () => {
-                  refreshSession();
-                  await specification.refresh();
-                }}
-                sessionId={session.id}
-                view={specification.view}
-              />
-            </div>
-          ) : (
-            <SessionReviewBar
-              attached
-              sessionId={session.id}
-              approvalReview={approvalReview}
-              verificationState={verificationState}
-              deliveryEvidenceAvailable={verification?.requirements.deliveryMode === "code"}
-              onRefreshReview={refreshReview}
-              stageNames={stageNames}
-              exactReviewRevision={exactTarget?.reviewRevision}
-              approveLabel={`Approve ${selectedStageName}`}
-              approveDescription={approvalEffect}
-              mode={decisionMode}
-              onApprove={(artifact, revision) =>
-                void handlePhaseAction("approve", artifact, undefined, undefined, revision)
-              }
-              onReject={(feedback, artifact, submission) =>
-                handlePhaseAction("reject", artifact, feedback, submission)
-              }
-              requestError={phaseActionError}
-              reviewArtifact={reviewArtifact}
-              phaseActionPending={phaseActionPending}
-              stageName={selectedStageName}
-            />
-          )
-        }
-        activity={
-          <SessionRefreshContext.Provider
-            value={{ refresh: refreshSession, pending: refreshPending || actionPending }}
-          >
-            <SessionActivityPresentationProvider
-              value={{
-                currentStage: {
-                  id: session.currentStageId,
-                  name: currentStageName,
-                  phaseStatus: session.phaseStatus,
-                },
-                reviewIdentityUnavailable,
-                retryUnavailableReason: specificationExhausted
-                  ? "The specification’s execution budget is exhausted."
-                  : undefined,
-                stopControl,
-              }}
-            >
-              <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
-                {activity}
-              </SessionActivityArchivedAtProvider>
-            </SessionActivityPresentationProvider>
-          </SessionRefreshContext.Provider>
-        }
       />
     </PageContainer>
   );

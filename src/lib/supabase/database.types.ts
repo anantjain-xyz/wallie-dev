@@ -14831,6 +14831,13 @@ export type Database = {
           workspace_secret_id: string
         }[]
       }
+      list_factory_setup_repositories: {
+        Args: { p_factory_id: string; p_workspace_id: string }
+        Returns: {
+          full_name: string
+          id: string
+        }[]
+      }
       list_factory_throughput_contributions: {
         Args: {
           p_bucket_key?: string
@@ -15516,6 +15523,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      provision_factory_serial_setup: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_activation_number: number
+          p_expected_draft_id?: string
+          p_factory_id: string
+          p_repository_id?: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       prune_factory_analytics_exports: {
         Args: { p_limit?: number }

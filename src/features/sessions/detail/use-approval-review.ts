@@ -99,7 +99,7 @@ export function useApprovalReview(
           scope,
           confirmedRevision: null,
           value: null,
-          error: "Could not confirm blocking requests. Reload review comments before approving.",
+          error: "Could not confirm review comments.",
         });
     }
   }, []);

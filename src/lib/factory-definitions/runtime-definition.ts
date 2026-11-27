@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { factoryWritableRepositoryIds } from "./repository-bindings";
-import { selectDefaultFactory } from "./storage";
+import { selectFactory } from "./storage";
 import { readVerifiedFactoryDefinition } from "./stored-definition";
 
 type DefinitionClient = Pick<SupabaseClient<Database>, "from">;
@@ -29,8 +29,16 @@ export async function loadPinnedFactoryExecution(
   );
 }
 
-export async function loadActiveFactoryExecution(client: DefinitionClient, workspaceId: string) {
-  const { data: factory, error: factoryError } = await selectDefaultFactory(client, workspaceId);
+export async function loadActiveFactoryExecution(
+  client: DefinitionClient,
+  workspaceId: string,
+  factoryId?: string,
+) {
+  const { data: factory, error: factoryError } = await selectFactory(
+    client,
+    workspaceId,
+    factoryId,
+  );
   if (factoryError) throw factoryError;
   if (!factory) return null;
 

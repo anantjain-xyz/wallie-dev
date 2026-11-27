@@ -13,6 +13,7 @@ const mocked = vi.hoisted(() => ({
   findSessionCreationRequest: vi.fn(),
   generateSessionTitle: vi.fn(),
   loadActiveFactoryExecution: vi.fn(),
+  loadBrowserSessionFactories: vi.fn(),
   loadSessionFirstRunPrerequisites: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
@@ -35,6 +36,11 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
   loadActiveFactoryExecution: mocked.loadActiveFactoryExecution,
+}));
+
+vi.mock("@/lib/sessions/browser-factory", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/sessions/browser-factory")>()),
+  loadBrowserSessionFactories: mocked.loadBrowserSessionFactories,
 }));
 
 vi.mock("@/lib/wallie/service", async () => {
@@ -265,6 +271,11 @@ describe("POST /api/sessions", () => {
     mocked.generateSessionTitle.mockResolvedValue(null);
     mocked.findSessionCreationRequest.mockResolvedValue(null);
     mocked.loadActiveFactoryExecution.mockResolvedValue(null);
+    mocked.loadBrowserSessionFactories
+      .mockReset()
+      .mockResolvedValue([
+        { id: FACTORY_ID, isDefault: true, name: "Default factory", status: "active" },
+      ]);
     setupAccess();
     mocked.createSupabaseAdminClient.mockReturnValue(
       buildAdminMock({
@@ -338,6 +349,84 @@ describe("POST /api/sessions", () => {
     );
     expect(mocked.loadSessionFirstRunPrerequisites).not.toHaveBeenCalled();
     expect(mocked.generateSessionTitle).not.toHaveBeenCalled();
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
+
+  it("confirms the requested non-default factory definition and repository with the original request id", async () => {
+    const pinned = {
+      factoryId: FACTORY_ID,
+      canonicalDigest: "a".repeat(64),
+      pipelineId: "bench-pipeline",
+      repositoryId: REPOSITORY_ID,
+    };
+    mocked.loadBrowserSessionFactories.mockResolvedValueOnce([
+      { id: FACTORY_ID, isDefault: false, name: "Bench factory", status: "active" },
+    ]);
+    mocked.loadActiveFactoryExecution.mockResolvedValueOnce(pinned);
+    const response = await POST(
+      makeRequest({
+        factoryId: FACTORY_ID,
+        factoryDefinitionDigest: pinned.canonicalDigest,
+        promptMd: "Run the benchmark",
+        requestId: ATTACHMENT_ID,
+        selectedStageIds: [STAGE_ID],
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocked.loadActiveFactoryExecution).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ from: expect.any(Function) }),
+      WORKSPACE_ID,
+      FACTORY_ID,
+    );
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commandFactoryId: FACTORY_ID,
+        creationRequest: { id: ATTACHMENT_ID, fingerprint: expect.any(String) },
+        factoryDefinitionDigest: pinned.canonicalDigest,
+        githubRepositoryId: REPOSITORY_ID,
+        selectedStageIds: [STAGE_ID],
+      }),
+    );
+  });
+
+  it.each([
+    { factory: null, status: 404 },
+    { factory: "archived", status: 409 },
+    { factory: "active", status: 422 },
+  ])("does not create work for a $factory non-default target", async ({ factory, status }) => {
+    mocked.loadBrowserSessionFactories.mockResolvedValueOnce(
+      factory ? [{ id: FACTORY_ID, isDefault: false, name: "Bench factory", status: factory }] : [],
+    );
+    const response = await POST(
+      makeRequest({
+        factoryId: FACTORY_ID,
+        promptMd: "Do not create this session",
+        requestId: ATTACHMENT_ID,
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+    expect(response.status).toBe(status);
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+    expect(mocked.loadSessionFirstRunPrerequisites).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch a workspace Linear issue into an explicit non-default factory", async () => {
+    mocked.loadBrowserSessionFactories.mockResolvedValueOnce([
+      { id: FACTORY_ID, isDefault: false, name: "Bench factory", status: "active" },
+    ]);
+    mocked.loadActiveFactoryExecution.mockResolvedValueOnce({ factoryId: FACTORY_ID });
+    const response = await POST(
+      makeRequest({
+        factoryId: FACTORY_ID,
+        linearIssueUrl: "https://linear.app/acme/issue/TEAM-42",
+        requestId: ATTACHMENT_ID,
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(mocked.fetchLinearIssue).not.toHaveBeenCalled();
     expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 

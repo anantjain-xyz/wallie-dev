@@ -324,7 +324,8 @@ describe("StageTimeline", () => {
       }),
     );
 
-    expect(html).toContain("min-w-0 max-w-full");
+    expect(html).toContain("overflow-x-auto");
+    expect(html).toContain("max-w-52");
     expect(html).toContain("[overflow-wrap:anywhere]");
   });
 });

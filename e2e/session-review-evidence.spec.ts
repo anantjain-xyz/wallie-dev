@@ -234,12 +234,12 @@ test("blocking comments and GitHub verification have separate recovery actions",
   await signIn(page, sessionPath);
 
   const summary = page.getByRole("region", { name: "Review Land v1" });
-  await expect(
-    summary.getByText("1 open blocking request must be resolved before approval."),
-  ).toBeVisible();
   await summary.getByRole("link", { name: "Jump to decision" }).press("Enter");
-  await expect(page.getByRole("heading", { name: "Stage decision" })).toBeFocused();
   const decision = page.getByRole("region", { name: "Stage decision" });
+  await expect(decision).toBeFocused();
+  await expect(
+    decision.getByText("1 open blocking request must be resolved before approval."),
+  ).toBeVisible();
   await expect(decision.getByRole("button", { name: "Approve Land" })).toBeDisabled();
   await expect(decision.getByRole("button", { name: "Request changes" })).toBeEnabled();
   await expect(decision.getByRole("link", { name: "View GitHub evidence" })).toHaveAttribute(
@@ -252,7 +252,7 @@ test("blocking comments and GitHub verification have separate recovery actions",
   const commentsRead = page.waitForRequest((request) =>
     request.url().includes("/approval-review?include=blockingTarget"),
   );
-  await decision.getByRole("button", { name: "Reload review comments" }).click();
+  await decision.getByRole("button", { name: "Find blocking request" }).click();
   await commentsRead;
   expect(verificationRequests).toBe(0);
 
@@ -273,13 +273,17 @@ test("historical blocked view lists sources and bounded large/binary diffs", asy
   await expect(page.getByRole("link", { name: /Open GitHub checks/ }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve Land" })).toBeDisabled();
   await page.getByRole("button", { name: /^Plan:/ }).click();
-  await expect(page.getByRole("note")).toContainText("Historical view");
+  await expect(page.getByRole("note")).toContainText(
+    "Readiness and changes reflect the current PR, not this historical artifact.",
+  );
   await page.getByRole("button", { name: "Show code changes" }).click();
   await expect(page.getByText(/Current canonical PR diff/)).toBeVisible();
   await expect(page.getByText(/Only the first 100 changed files/)).toBeVisible();
   await expect(page.getByText(/binary or too large/)).toBeVisible();
   await expect(page.getByText(/This file's diff is truncated/)).toBeVisible();
-  await expect(page.getByText(/Refresh delivery readiness before approving/)).toBeVisible();
+  await expect(
+    page.getByText("Refresh delivery readiness to locate the blocking feedback."),
+  ).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("op509-blocked-desktop.png"),
     fullPage: true,
@@ -291,16 +295,14 @@ test("readiness API failure is recoverable and refresh pending is visible", asyn
     route.fulfill({ status: 503, json: { error: "unavailable" } }),
   );
   await signIn(page, sessionPath);
-  await expect(
-    page.getByRole("alert").filter({ hasText: "Delivery evidence is unavailable" }),
-  ).toBeVisible();
+  const error = page
+    .getByRole("region", { name: "Delivery readiness" })
+    .getByRole("alert")
+    .filter({ hasText: "Evidence unavailable. Retry to confirm readiness." });
+  await expect(error).toBeVisible();
   await page.unroute(/\/api\/sessions\/[^/]+\/review-evidence$/);
   await mockReadiness(page, readyDelivery());
-  await page
-    .getByRole("alert")
-    .filter({ hasText: "Delivery evidence is unavailable" })
-    .getByRole("button", { name: "Retry" })
-    .click();
+  await error.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByRole("heading", { name: "Delivery readiness" })).toBeVisible();
 
   await page.route(/\/api\/sessions\/[^/]+\/pr-verification\/refresh$/, (route) =>
@@ -385,11 +387,13 @@ test("gated approval follows refreshed verification from blocked to ready and ba
       page.getByText(target === "ready" ? "Ready" : "Blocked", { exact: true }),
     ).toBeVisible();
     release();
-    if (target === "ready") await expect(approve).toBeEnabled();
-    else await expect(approve).toBeDisabled();
-    await expect(
-      page.getByText(`GitHub delivery readiness: ${target === "ready" ? "Ready" : "Blocked"}.`),
-    ).toBeVisible();
+    if (target === "ready") {
+      await expect(approve).toBeEnabled();
+      await expect(page.getByText("GitHub delivery readiness: Ready.")).toHaveCount(0);
+    } else {
+      await expect(approve).toBeDisabled();
+      await expect(page.getByText("GitHub delivery readiness: Blocked.")).toBeVisible();
+    }
   }
 });
 

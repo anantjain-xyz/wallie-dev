@@ -12,6 +12,7 @@ import {
 import { factoryAgentPromptSnapshotSchema } from "@/lib/factory-agents/contracts";
 import { mapStageRow } from "@/lib/pipeline/stages";
 import { loadWorkspaceSandboxSettings } from "@/lib/sandbox-connections/server";
+import type { SandboxProvider } from "@/lib/sandbox/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 import { loadFactoryDefinitionRepositories } from "./authority";
@@ -21,6 +22,10 @@ import { factorySettingsAgentSchema } from "./settings-contracts";
 import { factoryStageDefinition } from "./stored-definition";
 
 type Client = SupabaseClient<Database>;
+export type FactoryBaselineSetup = {
+  repositories: Awaited<ReturnType<typeof loadFactoryDefinitionRepositories>>;
+  sandboxProvider: SandboxProvider;
+};
 
 export async function loadSettingsBaseline(
   client: Client,
@@ -29,11 +34,13 @@ export async function loadSettingsBaseline(
   stageRows: Tables<"pipeline_stages">[],
   operatingRulesMd: string,
   factory: { id: string; is_default: boolean },
+  setup?: FactoryBaselineSetup,
 ): Promise<CompiledFactoryDefinition | null> {
   const stages = stageRows.filter(({ archived_at }) => !archived_at);
-  if (!stages.length) return null;
+  const initialSetup = !factory.is_default && !stages.length ? setup : undefined;
+  if (!stages.length && !initialSetup) return null;
   const [repositories, profile, onboarding] = await Promise.all([
-    loadFactoryDefinitionRepositories(client, workspaceId, factory.id),
+    setup?.repositories ?? loadFactoryDefinitionRepositories(client, workspaceId, factory.id),
     factory.is_default
       ? client
           .from("workspace_repository_profiles")
@@ -65,19 +72,30 @@ export async function loadSettingsBaseline(
   if (!repositoryId) return null;
 
   const [execution, delivery, sandbox, agent, implementationAgent] = await Promise.all([
-    client
-      .from("execution_policies")
-      .select("current_revision_id")
-      .eq("workspace_id", workspaceId)
-      .maybeSingle(),
-    client
-      .from("delivery_policies")
-      .select("current_revision_id")
-      .eq("workspace_id", workspaceId)
-      .eq("pipeline_id", pipelineId)
-      .maybeSingle(),
-    loadWorkspaceSandboxSettings(client, workspaceId),
-    client.from("workspace_agent_config").select("key,value_json").eq("workspace_id", workspaceId),
+    initialSetup
+      ? null
+      : client
+          .from("execution_policies")
+          .select("current_revision_id")
+          .eq("workspace_id", workspaceId)
+          .maybeSingle(),
+    initialSetup
+      ? null
+      : client
+          .from("delivery_policies")
+          .select("current_revision_id")
+          .eq("workspace_id", workspaceId)
+          .eq("pipeline_id", pipelineId)
+          .maybeSingle(),
+    initialSetup
+      ? { activeProvider: initialSetup.sandboxProvider }
+      : loadWorkspaceSandboxSettings(client, workspaceId),
+    initialSetup
+      ? null
+      : client
+          .from("workspace_agent_config")
+          .select("key,value_json")
+          .eq("workspace_id", workspaceId),
     client
       .from("factory_agent_prompt_revisions")
       .select("id, agent_id, prompt_md, prompt_sha256, factory_agents!inner(is_default)")
@@ -87,14 +105,15 @@ export async function loadSettingsBaseline(
       .eq("revision_number", 1)
       .single(),
   ]);
-  if (execution.error) throw execution.error;
-  if (delivery.error) throw delivery.error;
-  if (agent.error) throw agent.error;
+  if (execution?.error) throw execution.error;
+  if (delivery?.error) throw delivery.error;
+  if (agent?.error) throw agent.error;
   if (implementationAgent.error) throw implementationAgent.error;
 
+  const agentConfig = agent?.data ?? [];
   const config = {
     ...defaults,
-    ...Object.fromEntries(agent.data.map(({ key, value_json }) => [key, value_json])),
+    ...Object.fromEntries(agentConfig.map(({ key, value_json }) => [key, value_json])),
   };
   const provider = normalizeAgentProviderName(config.agent_provider) ?? defaults.agent_provider;
   return {
@@ -110,8 +129,8 @@ export async function loadSettingsBaseline(
     repositoryId,
     operatingRulesMd,
     sandboxProvider: sandbox.activeProvider,
-    executionPolicyRevisionId: execution.data?.current_revision_id ?? null,
-    deliveryPolicyRevisionId: delivery.data?.current_revision_id ?? null,
+    executionPolicyRevisionId: execution?.data?.current_revision_id ?? null,
+    deliveryPolicyRevisionId: delivery?.data?.current_revision_id ?? null,
     skillIds: [],
     toolIds: [],
     operatingRuleStageIds: [],
@@ -122,7 +141,7 @@ export async function loadSettingsBaseline(
     agent: factorySettingsAgentSchema.parse({
       provider,
       model:
-        agent.data.find(({ key }) => key === "agent_model")?.value_json ??
+        agentConfig.find(({ key }) => key === "agent_model")?.value_json ??
         getRecommendedAgentModel(provider),
       effort: agentProviderSupportsEffort(provider) ? config.agent_effort : null,
       concurrencyLimit: config.concurrency_limit,

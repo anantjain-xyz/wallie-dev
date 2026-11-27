@@ -13,6 +13,7 @@ export function SessionReviewHandoff({
   detail,
   confirmation,
   jumpLabel,
+  onRetry,
   recoveryHref,
   recoveryLabel = "Open current review",
 }: {
@@ -21,6 +22,7 @@ export function SessionReviewHandoff({
   detail?: string;
   confirmation?: string;
   jumpLabel?: string;
+  onRetry?: () => void;
   recoveryHref?: string;
   recoveryLabel?: string;
 }) {
@@ -47,14 +49,14 @@ export function SessionReviewHandoff({
     if (!target) return;
     event.preventDefault();
     target.focus({ preventScroll: true });
-    target.scrollIntoView({ block: "start", behavior: "instant" });
+    target.scrollIntoView({ block: "nearest", behavior: "instant" });
   }
 
   if (!title) return null;
   return (
     <section
       aria-labelledby="session-review-handoff-heading"
-      className="flex min-w-0 items-start gap-2.5 py-2"
+      className="relative flex min-w-0 items-start gap-2 py-1"
     >
       <span ref={markRef} className="mt-0.5 shrink-0 text-accent">
         <WallieMark className="size-5" />
@@ -70,6 +72,15 @@ export function SessionReviewHandoff({
           {status ? <p className="mt-1 text-sm text-foreground">{status}</p> : null}
           {detail ? <p className="mt-1 text-sm text-muted">{detail}</p> : null}
         </div>
+        {onRetry ? (
+          <button
+            type="button"
+            className="mr-4 inline-flex min-h-11 items-center rounded-[4px] text-sm text-accent underline underline-offset-2 focus-visible:outline-accent sm:min-h-8"
+            onClick={onRetry}
+          >
+            Retry review
+          </button>
+        ) : null}
         {recoveryHref ? (
           <Link
             className="inline-flex min-h-11 items-center rounded-[4px] text-sm text-accent hover:underline focus-visible:outline-accent sm:min-h-8"
@@ -79,7 +90,11 @@ export function SessionReviewHandoff({
           </Link>
         ) : jumpLabel ? (
           <a
-            className="inline-flex min-h-11 items-center gap-1 rounded-[4px] text-sm text-muted hover:text-foreground hover:underline focus-visible:outline-accent sm:min-h-8"
+            className={
+              jumpLabel === "Jump to decision"
+                ? "sr-only focus:not-sr-only focus:absolute focus:z-10 focus:rounded-md focus:bg-sheet focus:p-2 focus:text-accent focus:outline-accent"
+                : "inline-flex min-h-11 items-center gap-1 rounded-[4px] text-sm text-muted hover:text-foreground hover:underline focus-visible:outline-accent sm:min-h-8"
+            }
             href={`#${SESSION_REVIEW_DECISION_ID}`}
             onClick={jumpToDecision}
           >
