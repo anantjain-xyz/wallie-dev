@@ -9,11 +9,17 @@ import { CreateFactoryDialog } from "@/features/settings/create-factory-dialog";
 import type { SettingsInitialData } from "@/features/settings/data";
 import { Section } from "@/features/settings/settings-ui";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
-import { workspaceFactoryDefinitionPath, workspaceSessionsPath } from "@/lib/routes";
+import { WorkspaceFactoryManagement } from "@/features/settings/workspace-factory-management";
+import {
+  workspaceFactoryDefinitionPath,
+  workspaceSessionsPath,
+  workspaceSettingsPath,
+} from "@/lib/routes";
 
 type WorkspaceFactoriesSectionProps = {
   canManage: boolean;
   factories: Promise<readonly FactorySelectionOption[]>;
+  requestedManagement?: string;
   requestedSetup?: string | string[];
   workspace: Pick<SettingsInitialData["workspace"], "id" | "name" | "slug">;
 };
@@ -21,9 +27,13 @@ type WorkspaceFactoriesSectionProps = {
 async function FactoryList({
   canManage,
   factories,
+  requestedManagement,
   requestedSetup,
   workspaceSlug,
-}: Pick<WorkspaceFactoriesSectionProps, "canManage" | "factories" | "requestedSetup"> & {
+}: Pick<
+  WorkspaceFactoriesSectionProps,
+  "canManage" | "factories" | "requestedManagement" | "requestedSetup"
+> & {
   workspaceSlug: string;
 }) {
   const options = await factories.catch(() => null);
@@ -97,7 +107,7 @@ async function FactoryList({
                   {factory.slug}
                 </code>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {factory.isDefault ? (
                   <span className="rounded border border-border px-2 py-0.5 type-label text-muted">
                     Default
@@ -108,6 +118,18 @@ async function FactoryList({
                     Archived
                   </span>
                 ) : null}
+                {factory.canManage ? (
+                  <Link
+                    aria-current={requestedManagement === factory.id ? "location" : undefined}
+                    aria-label={`Manage ${factory.name}`}
+                    className="ui-button min-h-11 sm:min-h-9"
+                    href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace", manageFactory: factory.id })}#factory-management`}
+                    prefetch={false}
+                    scroll={false}
+                  >
+                    Manage
+                  </Link>
+                ) : null}
               </div>
             </li>
           ))}
@@ -117,6 +139,20 @@ async function FactoryList({
           No factories are available to your account.
         </p>
       )}
+      {requestedManagement ? (
+        <Suspense
+          fallback={
+            <p className="type-secondary text-muted" role="status">
+              Loading factory management…
+            </p>
+          }
+        >
+          <WorkspaceFactoryManagement
+            factoryId={requestedManagement}
+            workspaceSlug={workspaceSlug}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
@@ -124,6 +160,7 @@ async function FactoryList({
 export function WorkspaceFactoriesSection({
   canManage,
   factories,
+  requestedManagement,
   requestedSetup,
   workspace,
 }: WorkspaceFactoriesSectionProps) {
@@ -156,6 +193,7 @@ export function WorkspaceFactoriesSection({
         <FactoryList
           canManage={canManage}
           factories={factories}
+          requestedManagement={requestedManagement}
           requestedSetup={requestedSetup}
           workspaceSlug={workspace.slug}
         />

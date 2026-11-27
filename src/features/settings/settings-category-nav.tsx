@@ -30,6 +30,7 @@ const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   "danger-zone": { anchor: "danger-zone", category: "workspace" },
   factories: { anchor: "factories", category: "workspace" },
   "factory-configuration": { anchor: "factory-configuration", category: "integrations" },
+  "factory-management": { anchor: "factory-management", category: "workspace" },
   "factory-setup": { anchor: "factory-setup", category: "workspace" },
   github: { anchor: "github", category: "integrations" },
   linear: { anchor: "linear", category: "integrations" },
@@ -137,7 +138,10 @@ export function SettingsCategoryNav({
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
   const { stopNavigation: stopPersonalNavigation, warning: personalWarning } =
     usePersonalSettingsGuard();
-  const activeSection = activeAnchor === "factory-setup" ? "factories" : activeAnchor;
+  const activeSection =
+    activeAnchor === "factory-setup" || activeAnchor === "factory-management"
+      ? "factories"
+      : activeAnchor;
   const [jumpOpen, setJumpOpen] = useState(false);
   const jumpId = useId();
   const workspaceLabelId = useId();

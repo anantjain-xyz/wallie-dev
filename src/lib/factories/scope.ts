@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
+import { FACTORY_NAME_MAX_LENGTH, factoryNameSchema } from "@/lib/factories/contracts";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 type Client = SupabaseClient<Database>;
@@ -10,10 +11,18 @@ type Client = SupabaseClient<Database>;
 export const factoryRoleSchema = z.enum(["manager", "member"]);
 export const factoryArchiveReasonSchema = z.string().trim().max(500).nullable().optional();
 
-export const factoryStatusCommandSchema = z.discriminatedUnion("action", [
+export const factoryManagementCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("archive"), reason: factoryArchiveReasonSchema }).strict(),
   z.object({ action: z.literal("restore") }).strict(),
+  z
+    .object({
+      action: z.literal("rename"),
+      expectedName: z.string().min(1).max(FACTORY_NAME_MAX_LENGTH),
+      name: factoryNameSchema,
+    })
+    .strict(),
 ]);
+export type FactoryManagementCommand = z.infer<typeof factoryManagementCommandSchema>;
 export const grantFactoryMembershipSchema = z
   .object({ memberId: z.string().uuid(), role: factoryRoleSchema.default("member") })
   .strict();
@@ -108,7 +117,7 @@ export async function createFactory(
   return mapFactoryRecord(data);
 }
 
-export async function archiveFactory(
+export async function archiveAdditionalFactory(
   admin: Client,
   input: {
     workspaceId: string;
@@ -118,7 +127,7 @@ export async function archiveFactory(
   },
 ): Promise<FactoryRecord> {
   const { data, error } = await admin
-    .rpc("archive_factory", {
+    .rpc("archive_additional_factory", {
       p_workspace_id: input.workspaceId,
       p_factory_id: input.factoryId,
       p_actor_user_id: input.actorUserId,
@@ -126,6 +135,29 @@ export async function archiveFactory(
     })
     .single();
   if (error || !data) throw error ?? new Error("Factory archive returned no record.");
+  return mapFactoryRecord(data);
+}
+
+export async function renameFactory(
+  admin: Client,
+  input: {
+    workspaceId: string;
+    factoryId: string;
+    actorUserId: string;
+    expectedName: string;
+    name: string;
+  },
+): Promise<FactoryRecord> {
+  const { data, error } = await admin
+    .rpc("rename_factory", {
+      p_workspace_id: input.workspaceId,
+      p_factory_id: input.factoryId,
+      p_actor_user_id: input.actorUserId,
+      p_expected_name: input.expectedName,
+      p_name: input.name,
+    })
+    .single();
+  if (error || !data) throw error ?? new Error("Factory rename returned no record.");
   return mapFactoryRecord(data);
 }
 

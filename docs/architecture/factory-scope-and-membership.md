@@ -7,12 +7,12 @@ every existing workspace resource into the workspace default factory without
 rewriting the resource ID, workspace number, pipeline pin, artifact history or
 URL.
 
-| Record              | What it records                                                                                                                                                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Factory             | Stable UUID, workspace ownership, name, workspace-unique slug, `active`/`archived` status and archive attribution. `is_default` marks the migration target.                                                                       |
-| Factory membership  | A workspace member's `manager` or `member` grant for one factory, with grant attribution, revocation attribution and append-only history. Active grants are unique per factory/member.                                            |
-| Factory audit event | Immutable `factory.created`, `factory.archived`, `factory.restored`, `membership.granted`, `membership.revoked`, `membership.suspended` and `membership.reinstated` events. Actor and subject attribution survive member removal. |
-| Scoped resource     | `sessions.factory_id`, `pipelines.factory_id` and `github_repositories.factory_id`. A resource stays in its factory for its full lifetime.                                                                                        |
+| Record              | What it records                                                                                                                                                                                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Factory             | Stable UUID, workspace ownership, name, workspace-unique slug, `active`/`archived` status and archive attribution. `is_default` marks the migration target.                                                                                                                       |
+| Factory membership  | A workspace member's `manager` or `member` grant for one factory, with grant attribution, revocation attribution and append-only history. Active grants are unique per factory/member.                                                                                            |
+| Factory audit event | Immutable `factory.created`, `factory.renamed` (only when the name changes), `factory.archived`, `factory.restored`, `membership.granted`, `membership.revoked`, `membership.suspended` and `membership.reinstated` events. Actor and subject attribution survive member removal. |
+| Scoped resource     | `sessions.factory_id`, `pipelines.factory_id` and `github_repositories.factory_id`. A resource stays in its factory for its full lifetime.                                                                                                                                        |
 
 ## Access resolution
 
@@ -90,6 +90,13 @@ The browser edge exposes these through
 membership and audit routes. Routes call the service-role command RPCs only after
 `requireWorkspaceAccessById`; the database independently checks the same actor
 and factory-manager authority.
+
+In Workspace Settings, managers can rename the selected active factory without
+changing its address (`rename_factory` rejects stale names). Archive goes through
+`archive_additional_factory`, which preserves the workspace default and calls the
+existing archive command for every other factory. Archived factories keep their
+history and grants; restore before editing them in Settings. Factory grants never
+change workspace roles or access to other factories.
 
 See [Factory definition records](factory-definition-records.md) for definition
 draft, revision and activation history.

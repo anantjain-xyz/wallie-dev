@@ -24,6 +24,7 @@ type SettingsPageProps = {
     codex_connect?: string;
     category?: string | string[];
     factory?: string | string[];
+    manageFactory?: string | string[];
     afterOAuthClient?: string | string[];
     afterOAuthGrant?: string | string[];
     oauthView?: string | string[];
@@ -104,6 +105,11 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
           <WorkspaceFactoriesSection
             canManage={initialData.canManage}
             factories={loadWorkspaceFactoryOptions(workspaceSlug)}
+            requestedManagement={z
+              .string()
+              .uuid()
+              .safeParse(resolvedSearchParams.manageFactory)
+              .data?.toLowerCase()}
             requestedSetup={resolvedSearchParams.factory}
             workspace={initialData.workspace}
           />

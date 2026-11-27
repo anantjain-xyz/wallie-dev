@@ -12,29 +12,28 @@ afterEach(() => {
 });
 
 describe("LandingPage accessibility", () => {
-  it("has no detectable axe violations and exposes a readable, noninteractive example", async () => {
+  it("has no detectable axe violations and names the artwork and work-order controls", async () => {
     const { container } = render(<LandingPage />);
     const results = await act(() =>
       axe.run(container, { rules: { "color-contrast": { enabled: false } } }),
     );
 
     expect(results.violations).toEqual([]);
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
-    const figure = screen.getByRole("figure", { name: "Example workflow" });
-    expect(figure).toHaveAccessibleDescription(
-      "Wallie starts the build after you approve the plan.",
+    const cutaway = screen.getByRole("img", {
+      name: "Cutaway drawing of the Wallie software factory",
+    });
+    expect(cutaway).toHaveAccessibleDescription(
+      /A terminal and drafting bench feed a roller conveyor/,
     );
-    const steps = within(figure).getAllByRole("listitem");
-    expect(steps).toHaveLength(3);
-    expect(steps[0]).toHaveTextContent(/Plan\s*Wallie/);
-    expect(steps[1]).toHaveTextContent(/Approve plan\s*You/);
-    expect(steps[2]).toHaveTextContent(/Build\s*Wallie/);
-    const providers = within(screen.getByRole("region", { name: "Works with" }));
-    expect(providers.getByRole("list", { name: "Coding agents" })).toHaveTextContent("Cursor");
-    expect(providers.getByRole("list", { name: "Sandboxes" })).toHaveTextContent("Daytona");
+    const stations = within(screen.getByRole("group", { name: "Work order stations" }));
+    expect(stations.getAllByRole("button")).toHaveLength(4);
+    expect(stations.getByRole("button", { name: "Intake", pressed: true })).toHaveAttribute(
+      "aria-controls",
+      "station-intake",
+    );
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "Turn a task into a pull request you can trust",
+      /^Self-improving software factory$/,
     );
   });
 
@@ -46,28 +45,48 @@ describe("LandingPage accessibility", () => {
     expect(main).toHaveAttribute("tabindex", "-1");
     expect(main).not.toContainElement(screen.getByRole("banner"));
     expect(main).not.toContainElement(screen.getByRole("contentinfo"));
-    expect(main).toContainElement(screen.getByRole("link", { name: "Start with email" }));
+    expect(main).toContainElement(screen.getByRole("link", { name: "Try hosted Wallie" }));
   });
 
   it("keeps CTA links keyboard-focusable and names their destinations", () => {
     render(<LandingPage />);
 
-    const hosted = screen.getByRole("link", { name: "Start with email" });
+    const hosted = screen.getByRole("link", { name: "Try hosted Wallie" });
     hosted.focus();
     expect(hosted).toHaveFocus();
     expect(hosted).toHaveAttribute("href", "/login");
     expect(hosted).toHaveAccessibleDescription(
-      "For a new hosted workspace, connect a GitHub repository, a sandbox, and your agent credentials. Linear is optional.",
+      "For a hosted workspace, connect your GitHub repository, a sandbox, and your coding agent credentials. Linear is optional. You can also run Wallie yourself.",
     );
-    expect(screen.getByRole("link", { name: /^Sign in$/ })).toHaveAttribute("href", "/login");
     expect(screen.getByRole("link", { name: "Self-host Wallie" })).toHaveAttribute(
       "href",
       "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/deployment/self-hosting.md",
     );
 
-    const docs = within(screen.getByRole("contentinfo")).getByRole("link", {
-      name: "Docs & source",
-    });
-    expect(docs).toHaveAttribute("href", "https://github.com/anantjain-xyz/wallie-dev#readme");
+    const footer = within(screen.getByRole("contentinfo"));
+    expect(footer.getByRole("link", { name: "Docs & source" })).toHaveAttribute(
+      "href",
+      "https://github.com/anantjain-xyz/wallie-dev#readme",
+    );
+    expect(footer.getByRole("link", { name: "MIT License" })).toHaveAttribute(
+      "href",
+      "https://github.com/anantjain-xyz/wallie-dev/blob/main/LICENSE",
+    );
+  });
+
+  it("links to each chapter and the gate with focusable fragment targets", () => {
+    render(<LandingPage />);
+
+    for (const [name, target] of [
+      ["Start the tour", "studio"],
+      ["Studio", "studio"],
+      ["The line", "line"],
+      ["Improvements", "improve"],
+      ["Try Wallie", "start"],
+      ["Back to the gate", "top"],
+    ]) {
+      expect(screen.getByRole("link", { name })).toHaveAttribute("href", `#${target}`);
+      expect(document.getElementById(target)).toHaveAttribute("tabindex", "-1");
+    }
   });
 });
